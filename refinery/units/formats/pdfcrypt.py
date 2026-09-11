@@ -3,7 +3,7 @@ from __future__ import annotations
 import codecs
 
 from refinery.lib.structures import MemoryFile
-from refinery.lib.types import buf, Param
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 

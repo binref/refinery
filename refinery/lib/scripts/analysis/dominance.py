@@ -33,7 +33,8 @@ extra refusal, which `refinery.lib.scripts.analysis.reaching` makes.
 """
 from __future__ import annotations
 
-from typing import AbstractSet as Set, Iterator
+from typing import AbstractSet as Set
+from typing import Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import (

@@ -16,14 +16,14 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
-from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
     opens_a_redirection_target,
     takes_output_away,
 )
+from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
+from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
+from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
@@ -59,11 +59,11 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     detect_encoding_chain,
     dotnet_regex_replace,
     extract_foreach_scriptblock,
-    stands_where_only_a_command_may,
     ps_divide,
     ps_modulo,
     ps_shift_left,
     ps_shift_right,
+    stands_where_only_a_command_may,
     switch_matches,
 )
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan

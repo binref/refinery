@@ -32,7 +32,8 @@ import enum
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import AbstractSet as Set, Callable, Iterable, Iterator, Sequence
+from typing import AbstractSet as Set
+from typing import Callable, Iterable, Iterator, Sequence
 
 from refinery.lib.scripts import Node
 

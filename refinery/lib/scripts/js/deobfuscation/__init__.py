@@ -4,6 +4,7 @@ JavaScript AST deobfuscation transforms.
 from __future__ import annotations
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder
@@ -28,7 +29,6 @@ from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResol
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
-from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.pipeline import (

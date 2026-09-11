@@ -18,10 +18,12 @@ from refinery.lib.scripts.ps1.data import (
     GET_MEMBER_ALIASES,
     TYPE_ACCELERATORS,
     canonical_member,
+)
+from refinery.lib.scripts.ps1.data import resolve_member_type as data_member_type
+from refinery.lib.scripts.ps1.data import (
     resolve_type,
     view_members,
 )
-from refinery.lib.scripts.ps1.data import resolve_member_type as data_member_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName, parse_type_name
 from refinery.lib.scripts.ps1.model import (
     Expression,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _ABOVE_THE_BASIC_PLANE = re.compile('[\U00010000-\U0010FFFF]')
 
 SURROGATE_PAIR = re.compile('[\ud800-\udbff][\udc00-\udfff]')

@@ -30,10 +30,6 @@ from refinery.lib.scripts.ps1.analysis.model import (
 from refinery.lib.scripts.ps1.analysis.mutation import value_after
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
-from refinery.lib.scripts.ps1.analysis.variable_types import (
-    constraint_converts,
-    value_under_declared_constraint,
-)
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     folded_binary,
@@ -44,6 +40,10 @@ from refinery.lib.scripts.ps1.analysis.values import (
     survives_being_written,
     type_of,
     unwrap_to_array_literal,
+)
+from refinery.lib.scripts.ps1.analysis.variable_types import (
+    constraint_converts,
+    value_under_declared_constraint,
 )
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,

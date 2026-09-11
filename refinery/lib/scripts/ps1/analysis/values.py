@@ -52,6 +52,8 @@ from typing import Callable, TypeAlias, TypeVar
 from weakref import WeakKeyDictionary
 
 from refinery.lib.scripts import Node, _clone_node, mutation_epoch
+from refinery.lib.scripts.ps1.analysis.blocks import binds_the_pipeline_variable
+from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     extract_first_positional_string,
     fault_operand,
@@ -60,8 +62,6 @@ from refinery.lib.scripts.ps1.ast import (
     is_builtin_variable,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.analysis.blocks import binds_the_pipeline_variable
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.data import (
     OBJ_COMMANDS,
     TYPE_ARG_COMMANDS,

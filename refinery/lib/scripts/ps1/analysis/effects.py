@@ -39,7 +39,6 @@ from typing import Iterator, NamedTuple, Sequence
 from refinery.lib.scripts import Block, Node, tree_root
 from refinery.lib.scripts.analysis.cfg import ControlFlowGraph
 from refinery.lib.scripts.ps1 import data
-from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
@@ -61,7 +60,6 @@ from refinery.lib.scripts.ps1.ast import (
     fault_operand,
     get_body,
     get_command_name,
-    resolve_command_name,
     get_member_name,
     get_named_blocks,
     get_param_block,
@@ -69,8 +67,10 @@ from refinery.lib.scripts.ps1.ast import (
     is_null_discard,
     is_reference_cast,
     is_void_cast,
+    resolve_command_name,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,

@@ -192,7 +192,7 @@ from refinery.lib.exceptions import (
 from refinery.lib.frame import MAGIC, MSIZE, Chunk, Framed, generate_frame_header
 from refinery.lib.meta import MV, check_variable_names_of_unit
 from refinery.lib.structures import MemoryFile
-from refinery.lib.types import buf, isbuffer, asbuffer, isstream
+from refinery.lib.types import asbuffer, buf, isbuffer, isstream
 
 if TYPE_CHECKING:
     from argparse import _MutuallyExclusiveGroup

@@ -14,14 +14,18 @@ import re
 from fnmatch import translate as fnmatch_translate
 from typing import Iterable
 
-from refinery.lib.scripts.ps1.analysis.values import Ps1VariableTyping, resolve_expression_type
+from refinery.lib.scripts.ps1.analysis.values import (
+    Ps1VariableTyping,
+    make_string_literal,
+    resolve_expression_type,
+)
 from refinery.lib.scripts.ps1.ast import (
     argument_text,
     binds_parameter,
+    bound_argument_value,
     free_positional_values,
     get_command_name,
     get_member_name,
-    bound_argument_value,
     resolve_command_name,
     string_value,
     unwrap_parens,
@@ -33,7 +37,6 @@ from refinery.lib.scripts.ps1.data import (
     PS1_KNOWN_VARIABLES,
     member_names,
 )
-from refinery.lib.scripts.ps1.analysis.values import make_string_literal
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substituted
 from refinery.lib.scripts.ps1.deobfuscation.typenames import VariableTypeAwareTransformer
 from refinery.lib.scripts.ps1.model import (

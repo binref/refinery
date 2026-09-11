@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     remove_declarator,
 )
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     JsAssignmentExpression,
     JsBlockStatement,
     JsCallExpression,
@@ -53,7 +54,6 @@ from refinery.lib.scripts.js.model import (
     JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
-    FUNCTION_NODES,
     strip_parens,
 )
 

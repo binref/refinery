@@ -46,7 +46,6 @@ from refinery.lib.scripts.js.numbers import (
 )
 from refinery.lib.scripts.js.strict import strict_mode_at
 
-
 _MAX_PARAMETERS = 65535
 """
 The largest truncation length this pass will rewrite into a formal parameter list. A larger one does

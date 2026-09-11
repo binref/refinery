@@ -42,6 +42,7 @@ from typing import (
 )
 from urllib.parse import unquote
 
+from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.ifps import (
@@ -65,7 +66,6 @@ from refinery.lib.inno.ifps import (
     VariableSpec,
     VariableType,
 )
-from refinery.lib import json
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
 from refinery.lib.types import AST, INF

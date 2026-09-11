@@ -16,9 +16,9 @@ from refinery.lib import json as libjson
 from refinery.lib.argformats import pathvar
 from refinery.lib.loader import load
 from refinery.lib.meta import (
+    MV,
     ByteStringWrapper,
     LazyMetaOracle,
-    MV,
     check_variable_names_of_unit,
     metavars,
 )

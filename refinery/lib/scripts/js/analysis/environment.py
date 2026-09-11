@@ -29,6 +29,7 @@ is the pin for a dedicated worker rather than a service worker.
 from __future__ import annotations
 
 import enum
+
 from dataclasses import dataclass
 
 

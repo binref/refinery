@@ -12,7 +12,6 @@ from typing import Iterator, NamedTuple, TypeGuard
 from refinery.lib.scripts import Node, Transformer, canonical, reattach
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.effects import is_fault_free, may_be_dropped
-from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.analysis.values import (
     NULL,
     Ps1Constant,
@@ -28,25 +27,28 @@ from refinery.lib.scripts.ps1.analysis.values import (
     integer_of,
     invariant_text,
     is_truthy,
-    read_operand,
     make_string_literal,
     pattern_at,
     read,
+    read_operand,
     render,
     text_of,
     type_of,
     type_test,
     unwrap_to_array_literal,
 )
+from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import get_member_name, unwrap_parens
 from refinery.lib.scripts.ps1.data import (
     ENCODING_MAP,
     SHAPE_MEMBERS,
+    MemberLookup,
     instance_overloads,
+    member_record,
     named_type,
     resolve_type,
+    type_names,
 )
-from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     StringMethodError,
@@ -65,7 +67,7 @@ from refinery.lib.scripts.ps1.deobfuscation.substitution import (
     substitute_list,
     substituted,
 )
-from refinery.lib.scripts.ps1.data import MemberLookup, member_record, type_names
+from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,

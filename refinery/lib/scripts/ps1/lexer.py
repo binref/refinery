@@ -12,11 +12,11 @@ from refinery.lib.scripts.ps1.token import (
     DASHES,
     DOUBLE_QUOTES,
     SINGLE_QUOTES,
+    Ps1Token,
+    Ps1TokenKind,
     forces_new_token,
     forces_new_token_after_number,
     is_whitespace,
-    Ps1Token,
-    Ps1TokenKind,
 )
 
 
