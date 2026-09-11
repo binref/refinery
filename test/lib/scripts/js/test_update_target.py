@@ -1,7 +1,10 @@
 """
 An update operator, `++` or `--`, writes its operand back, so §13.4 requires that operand to be a
-reference: a name, a member access, or — in the sloppy code a script is until a directive makes it
-strict — a call. A parenthesis wraps a reference only where what it holds is one, and a single `?.`
+reference: a name or a member access. A call is not one by the specification, whose
+`AssignmentTargetType` for a call is `invalid` in every mode, yet V8 — the engine this tool mirrors —
+accepts a call as an update target at parse time whichever mode the code runs in and defers the
+failure to a runtime `ReferenceError`, so a call is well formed as an update operand here. A
+parenthesis wraps a reference only where what it holds is one, and a single `?.`
 anywhere in the member-and-call chain makes the whole an optional expression the language forbids
 an update from writing to. A value made on the spot — a function, an arrow, a class, a literal, an
 array, `this`, a `new`, a sequence — is no reference, and an update written against one is an early
@@ -27,11 +30,12 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.ledger import well_formed
 
 
-#: Each expression an update is written against, mapped to whether it is a reference the operator
-#: may write back to. A name, a member access and a call are references; a call because a script is
-#: sloppy code until a directive makes it strict, where the same operand would be refused. An
-#: optional link anywhere in a chain, a value made on the spot, a literal, `this`, a bare `new` and
-#: a sequence are not, and a parenthesis is one exactly when what it wraps is.
+#: Each expression an update is written against, mapped to whether V8 reads it as a well-formed
+#: update operand. A name and a member access are references; a call is not one by the
+#: specification, but V8 accepts it as an update target at parse time in every mode and defers the
+#: failure to a runtime `ReferenceError`, so it is well formed here whichever mode the code runs in.
+#: An optional link anywhere in a chain, a value made on the spot, a literal, `this`, a bare `new`
+#: and a sequence are not, and a parenthesis is one exactly when what it wraps is.
 AN_UPDATE_OPERAND = {
     'a': True,
     'a.b': True,

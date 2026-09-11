@@ -14,9 +14,12 @@ every generated program upholds four invariants:
   increment), and a declared function body calls only functions already in scope, while a function
   that is reassigned or passed to an array method is given a call-free body, so the call graph stays
   acyclic and no recursion can diverge.
-- **Deterministic**: it uses no clock, randomness, `this`, host object, or reflective construct,
-  so two runs of the same source always agree; that is the precondition the self-test checks
-  before trusting any original-versus-deobfuscated comparison.
+- **Deterministic**: it reads no clock and no randomness, names no host object, and writes no bare
+  context-dependent `this`, so two runs of the same source always agree. The reflective constructs
+  it does emit — an indirect `eval`, a `Function` body, the `Function('return this')` global idiom,
+  and a `globalThis` round-trip — are each used in a form whose value is fixed, so they do not break
+  that agreement; that is the precondition the self-test checks before trusting any
+  original-versus-deobfuscated comparison.
 - **Observable**: a shared `SINK` array accumulates values that statements and impure functions
   push, and it is logged at the end, so a dropped effect, a mis-evaluation, or a reorder shows up.
 

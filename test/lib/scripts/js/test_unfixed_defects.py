@@ -11,10 +11,13 @@ something, reduces it to something uglier, or mishandles a file no engine runs. 
 file an entry sits in says what it costs and never how well it is understood, so an entry moves
 across when that is reassessed.
 
-Every test states what a correct implementation would do, never what the code does today, and is
-marked `unittest.expectedFailure`. An entry that starts passing is therefore reported as an
+Every ledger entry states what a correct implementation would do, never what the code does today,
+and is marked `unittest.expectedFailure`. An entry that starts passing is therefore reported as an
 unexpected success, which fails the suite: an entry leaves this file when its defect is fixed and
-its marker is removed, and never by quietly ceasing to be true.
+its marker is removed, and never by quietly ceasing to be true. Alongside the entries the file also
+carries companion tests that are not marked — guards pinning the behavior a defect must not spread
+to, and engine-anchors checking that a pinned behavior is what an engine really does — and those
+pass in the ordinary way.
 
 Where the question is one about JavaScript rather than about this project, the answer was
 established with Node.js and is quoted in the docstring of the test that pins it.
