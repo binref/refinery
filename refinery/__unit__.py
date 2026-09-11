@@ -371,6 +371,7 @@ UNITS = {
     'dnasm'                                      : 'refinery.units.sinks.dnasm',
     'd2p'                                        : 'refinery.units.sinks.dump',
     'dump'                                       : 'refinery.units.sinks.dump',
+    'dumprel'                                    : 'refinery.units.sinks.dump',
     'hl'                                         : 'refinery.units.sinks.hl',
     'hlb'                                        : 'refinery.units.sinks.hl',
     'hlg'                                        : 'refinery.units.sinks.hl',

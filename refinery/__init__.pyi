@@ -372,6 +372,7 @@ from refinery.units.sinks.asm import asm as asm
 from refinery.units.sinks.dnasm import dnasm as dnasm
 from refinery.units.sinks.dump import d2p as d2p
 from refinery.units.sinks.dump import dump as dump
+from refinery.units.sinks.dump import dumprel as dumprel
 from refinery.units.sinks.hl import hl as hl
 from refinery.units.sinks.hl import hlb as hlb
 from refinery.units.sinks.hl import hlg as hlg
