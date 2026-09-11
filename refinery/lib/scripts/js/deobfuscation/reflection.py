@@ -22,6 +22,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
     REFLECTIVE_INTRINSICS,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
@@ -81,6 +82,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
+from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
 from refinery.lib.scripts.js.options import runs_as_module
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
@@ -89,6 +91,13 @@ from refinery.lib.scripts.js.strict import (
 )
 
 _REFLECTIVE_CALLEE_NAMES = REFLECTIVE_INTRINSICS | TIMER_NAMES | SYNC_EVAL_NAMES
+
+_CONSTRUCTOR_ALIAS_LIMIT = 8
+"""
+How many name-to-name hops `_function_intrinsic_callee` follows in search of the `Function`
+intrinsic. A chain longer than any real spelling of it is a cycle, and the limit answers before
+walking it.
+"""
 
 
 class ReflectedScope(enum.Enum):
@@ -290,21 +299,25 @@ def _extract_string_call_code(
 def _extract_function_body_code(
     constructor_call: JsCallExpression | JsNewExpression,
     *,
-    free_global_name: Callable[[Expression | None], str | None],
+    intrinsic_callee: Callable[[Expression | None], bool],
     eval_string: Callable[[Expression | None], str | None],
-) -> str | None:
+) -> tuple[str, bool] | None:
     """
-    Extract the body code string from Function constructor calls:
+    The body code string of a `Function` construction together with whether the construction binds
+    parameters, or `None` when it is not one. The shapes are the ones the callee can take:
 
-        Function("code")
-        Function("a", "b", "code")
-        new Function("code")
+        Function("code")                          the free global, by name
+        new Function("code")                      the same, constructed
+        (function(){}).constructor("code")        a `.constructor` navigation
+        var g = f.constructor; g("code")          a name holding one of those
 
-    The callee must be the free global `Function`; a locally-shadowed `Function` names an ordinary
-    value and is left alone. The last string argument is the function body; preceding string arguments
-    are parameter names (ignored for now).
+    The last string argument is the function body; every preceding argument must be a string literal,
+    because those name parameters. A single leading argument that is empty or whitespace names a
+    zero-parameter function (`Function(" ", code)` — the parameter text is trimmed before the list is
+    parsed) and binds nothing; anything else the leading arguments spell is taken as binding, which
+    declines the inline rather than guessing the parameter list.
     """
-    if free_global_name(constructor_call.callee) != 'Function':
+    if not intrinsic_callee(constructor_call.callee):
         return None
     args = constructor_call.arguments
     if not args:
@@ -315,17 +328,33 @@ def _extract_function_body_code(
         return None
     if not all(isinstance(a, JsStringLiteral) for a in args[:-1]):
         return None
-    return body
+    return body, _leading_arguments_bind_parameters(args[:-1])
+
+
+def _leading_arguments_bind_parameters(leading: list[Node]) -> bool:
+    """
+    Whether the leading string arguments of a `Function` construction bind parameters. None do when
+    there are none — `Function(code)` is zero-parameter — and none when there is exactly one that is
+    empty or whitespace. Two empty arguments are parameter
+    text `','`, a `SyntaxError` the construction itself raises, and a construction that may not parse
+    is left standing rather than replaced by its body.
+    """
+    if len(leading) != 1:
+        return bool(leading)
+    text = string_value(leading[0])
+    return bool(text and text.strip(TRIMMABLE_WHITESPACE))
 
 
 def _denotes_function_constructor(
-    expr: Expression | None, read_effect: Callable[[Node], bool] | None = None,
+    expr: Expression | None,
+    read_effect: Callable[[Node], bool] | None = None,
+    resolved_member: Callable[[JsMemberExpression], bool] | None = None,
 ) -> bool:
     """
     Whether *expr* evaluates to the `Function` intrinsic, reached by `.constructor` navigation from a
     side-effect-free base. `Function` is what the reflective `Function("code")` idiom calls, so a callee
     that denotes it under another spelling constructs a function from the same code. Two spellings reach
-    it:
+    it without the model:
 
         <function literal>.constructor          (a plain function or arrow literal)
         <literal>.constructor.constructor        (any side-effect-free base)
@@ -339,9 +368,16 @@ def _denotes_function_constructor(
     literal always is, and for the double hop *read_effect* rejects a bare-identifier base that resolves
     through a `with` body's dynamic scope (firing a getter or throwing), which the model-free check
     cannot see.
+
+    The one spelling left is a `.constructor` read whose base is a *name* rather than a literal —
+    `f.constructor`, `f[key]` — where only the model can pin the base to one function value and only
+    the interpreter can read the key. That arm is *resolved_member*, a resolver the caller injects for
+    exactly those questions, keeping this predicate model-free.
     """
-    if not isinstance(expr, JsMemberExpression) or access_key(expr) != 'constructor':
+    if not isinstance(expr, JsMemberExpression):
         return False
+    if access_key(expr) != 'constructor':
+        return resolved_member is not None and resolved_member(expr)
     base = strip_parens(expr.object)
     if base is None:
         return False
@@ -350,58 +386,26 @@ def _denotes_function_constructor(
     if isinstance(base, JsMemberExpression) and access_key(base) == 'constructor':
         inner = base.object
         return inner is not None and side_effect_free(inner, read_effect=read_effect)
-    return False
-
-
-def _extract_constructor_chain_code(
-    ctor_call: Node,
-    read_effect: Callable[[Node], bool] | None = None,
-    *,
-    eval_string: Callable[[Expression | None], str | None],
-) -> str | None:
-    """
-    Extract the body code from a constructor-navigation call that constructs a function:
-
-        (function() {}).constructor("code")
-        "".constructor.constructor("code")
-        [].constructor.constructor("code")
-
-    *ctor_call* is the construction itself (the call to the navigated `Function` intrinsic), not its
-    later invocation; its callee must denote `Function` (`_denotes_function_constructor`).
-    """
-    if not isinstance(ctor_call, JsCallExpression):
-        return None
-    if not _denotes_function_constructor(ctor_call.callee, read_effect):
-        return None
-    if len(ctor_call.arguments) != 1:
-        return None
-    return string_value(ctor_call.arguments[0]) or eval_string(ctor_call.arguments[0])
+    return resolved_member is not None and resolved_member(expr)
 
 
 def _function_constructor_body(
     ctor_call: Node,
-    read_effect: Callable[[Node], bool] | None = None,
     *,
-    free_global_name: Callable[[Expression | None], str | None],
+    intrinsic_callee: Callable[[Expression | None], bool],
     eval_string: Callable[[Expression | None], str | None],
 ) -> tuple[str, bool] | None:
     """
-    Given the construction *ctor_call* itself — `Function("code")`, `new Function("code")`, or a
-    `<literal>.constructor…("code")` navigation — return its body code together with whether the
-    construction binds parameters (a leading string argument to the `Function` form). Returns `None`
-    when *ctor_call* is not such a construction. The caller decides how the constructed function is
-    invoked and ORs in whether that invocation passes arguments, since a body that binds either a
-    parameter or a call argument cannot be inlined.
+    Given the construction *ctor_call* itself — `Function("code")`, `new Function("code")`, or any
+    other spelling of the intrinsic its callee denotes — return its body code together with whether
+    the construction binds parameters. Returns `None` when *ctor_call* is not such a construction.
+    The caller decides how the constructed function is invoked and ORs in whether that invocation
+    passes arguments, since a body that binds either a parameter or a call argument cannot be inlined.
     """
-    if isinstance(ctor_call, (JsCallExpression, JsNewExpression)):
-        code = _extract_function_body_code(
-            ctor_call, free_global_name=free_global_name, eval_string=eval_string)
-        if code is not None:
-            return code, len(ctor_call.arguments) > 1
-    chain = _extract_constructor_chain_code(ctor_call, read_effect, eval_string=eval_string)
-    if chain is not None:
-        return chain, False
-    return None
+    if not isinstance(ctor_call, (JsCallExpression, JsNewExpression)):
+        return None
+    return _extract_function_body_code(
+        ctor_call, intrinsic_callee=intrinsic_callee, eval_string=eval_string)
 
 
 def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression | None:
@@ -802,6 +806,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
     _alias_name: Callable[[Expression | None], str | None]
     _free_global: Callable[[Expression | None], str | None]
     _eval_string: Callable[[Expression | None], str | None]
+    _intrinsic_callee: Callable[[Expression | None], bool]
     _pending_retire: dict[int, Binding]
     _retire_candidates: dict[int, JsIdentifier]
     _spliced_names: set[str]
@@ -841,6 +846,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             self._free_global = self._free_global_name(node)
             self._base_droppable = self._reflective_base_droppable(node)
             self._eval_string = self._string_argument_value(node)
+            self._intrinsic_callee = self._function_intrinsic_callee(node)
             self._pending_retire = {}
             self._retire_candidates = {}
             self._inline_statements(node)
@@ -1048,6 +1054,75 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return _try_eval_string_arg(node, model)
         return resolve
 
+    def _function_intrinsic_callee(self, root: JsScript) -> Callable[[Expression | None], bool]:
+        """
+        A resolver reporting whether a callee expression denotes the `Function` intrinsic — the
+        bare free global, a `.constructor` navigation (from a literal, or from a name the model pins
+        to one function), or a name holding one of those, transitively. This is the callee half of
+        every `Function`-construction extraction: a construction spelled with any of those
+        spellings builds the function the named intrinsic does, from the same arguments.
+
+        Every spelling is behind one gate first: a program that writes the `constructor` key on a
+        chain rooted at `Function` (`Function.prototype.constructor = f`) has replaced the intrinsic
+        every navigation hands out, so all of them are refused at once. The navigation off a name —
+        `f.constructor`, `f[key]` — asks two more model questions a literal needs no answer to:
+        that the name holds one plain function value (`wraps_return` refuses an `async` or
+        generator, whose constructor builds a different kind of function), established before the
+        read (`binding_established_before`, so the read cannot see a temporal-dead-zone value), and
+        that the key, where the obfuscator computed it, denotes `'constructor'` — the interpreter
+        answers that through `_eval_string`, the same string resolution a code argument gets. A name
+        holding one of those spellings is resolved through `singular_value` and asked again, one hop
+        at a time, so `g = f.constructor; h = g` answers for `h` as well; each hop must be a value
+        the model can pin, which is what keeps a name that may hold something else out.
+        """
+        def resolved_member(member: JsMemberExpression) -> bool:
+            model = model_cache(self, root).model
+            if model.scope_of(member) is None:
+                return False
+            if access_key(member) is None:
+                if member.computed:
+                    if self._eval_string(member.property) != 'constructor':
+                        return False
+                else:
+                    return False
+            base = strip_parens(member.object)
+            if not isinstance(base, JsIdentifier) or base.name in self._spliced_names:
+                return False
+            if model.scope_of(base) is None:
+                return False
+            binding = model.resolve(base)
+            if binding is None:
+                return False
+            value = model.singular_value(binding)
+            if not isinstance(value, FUNCTION_NODES) or wraps_return(value):
+                return False
+            cache = model_cache(self, root)
+            return cache.dominance.binding_established_before(binding, member)
+
+        def resolve(callee: Expression | None, depth: int = 0) -> bool:
+            expr = strip_parens(callee) if callee is not None else None
+            if expr is None or depth > _CONSTRUCTOR_ALIAS_LIMIT:
+                return False
+            if self._free_global(expr) == 'Function':
+                return True
+            if model_cache(self, root).effects.global_key_written('Function', 'constructor'):
+                return False
+            if isinstance(expr, JsMemberExpression):
+                return _denotes_function_constructor(
+                    expr, self._read_effect, resolved_member)
+            if not isinstance(expr, JsIdentifier) or expr.name in self._spliced_names:
+                return False
+            model = model_cache(self, root).model
+            if model.scope_of(expr) is None:
+                return False
+            binding = model.resolve(expr)
+            if binding is None:
+                return False
+            value = model.singular_value(binding)
+            return value is not None and resolve(value, depth + 1)
+
+        return resolve
+
     def _inline_statements(self, root: JsScript) -> None:
         for container in list(root.walk()):
             body = get_body(container)
@@ -1251,7 +1326,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if resolved is not None:
             ctor_call, retire = resolved
             body = _function_constructor_body(
-                ctor_call, read_effect, free_global_name=free_global_name,
+                ctor_call, intrinsic_callee=self._intrinsic_callee,
                 eval_string=self._eval_string)
             if body is not None:
                 code, ctor_binds = body
@@ -1294,7 +1369,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         temporal dead zone — and not at all for a script-scope name while the program stores a property
         on the global object under a runtime key (`SemanticModel.has_opaque_global_write`): under the
         script execution model such a name is a property of that object, the one such a write may
-        rebind, so its spelled value is not what the call runs. The body is inlined at *node*, never the
+        rebind, so its spelled value is not what the call runs. A value that is not itself a
+        construction may still denote the intrinsic (`_function_intrinsic_callee`, the alias spelling
+        `var g = f.constructor`), and then the invocation *node* is the construction — one that
+        runs what the intrinsic builds from its arguments. The body is inlined at *node*, never the
         construction relocated, so a `Function` reference in the initializer keeps its original scope;
         retiring the dead temporary is
         left to `_retire_consumed_temporaries` on the model rebuilt after the pass.
@@ -1316,7 +1394,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         value = strip_parens(cache.model.singular_value(binding))
         if not isinstance(value, (JsCallExpression, JsNewExpression)):
-            return None
+            if not self._intrinsic_callee(value):
+                return None
+            value = node
         if not cache.dominance.binding_established_before(binding, node):
             return None
         return value, binding

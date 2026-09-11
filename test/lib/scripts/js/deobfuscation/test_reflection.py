@@ -570,6 +570,96 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'var x = 1;',
             self._reflect("const m = (function(){}).constructor('return 1'); var x = m();"))
 
+    def test_a_constructor_alias_off_a_function_name_inlines(self):
+        """
+        A `.constructor` read off a name the model pins to one plain function hands out the `Function`
+        intrinsic, so a call through the alias is a construction and inlines like the named spelling.
+        The alias declarator stays: retirement wants a construction initializer, and the folded key
+        escaping into the name is a surface the dead sweep keeps.
+        """
+        self.assertEqual(
+            'function d() {}\nvar g = d.constructor;\nvar x = 42;',
+            self._reflect('function d() {} var g = d.constructor; var x = g("return 42")();'))
+
+    def test_a_constructor_alias_through_a_resolved_computed_key_inlines(self):
+        self.assertEqual(
+            "function d() {}\nvar g = d['con' + 'structor'];\nvar x = 42;",
+            self._reflect(
+                "function d() {} var g = d['con' + 'structor']; var x = g('return 42')();"))
+
+    def test_a_constructor_alias_through_a_name_chain_inlines(self):
+        self.assertEqual(
+            'function d() {}\nvar g = d.constructor;\nvar h = g;\nvar x = 42;',
+            self._reflect(
+                'function d() {} var g = d.constructor; var h = g; var x = h("return 42")();'))
+
+    def test_a_construction_held_through_an_alias_folds_and_retires_the_temporary(self):
+        self.assertEqual(
+            'function d() {}\nvar x = 42;',
+            self._reflect("function d() {} var c = d.constructor('return 42'); var x = c();"))
+
+    def test_a_constructor_alias_off_an_async_function_declines(self):
+        """
+        An `async` function's `.constructor` is `AsyncFunction`, which builds a coroutine rather than
+        the plain function `Function` builds — the refusal the literal bases get, applied to a name.
+        """
+        source = 'async function d() {} var g = d.constructor; var x = g("return 42")();'
+        self.assertEqual(
+            'async function d() {}\nvar g = d.constructor;\nvar x = g("return 42")();',
+            self._reflect(source))
+
+    def test_a_constructor_alias_off_a_generator_function_declines(self):
+        source = 'function* d() {} var g = d.constructor; var x = g("return 42")();'
+        self.assertEqual(
+            'function* d() {}\nvar g = d.constructor;\nvar x = g("return 42")();',
+            self._reflect(source))
+
+    def test_a_constructor_alias_read_before_its_base_holds_its_value_declines(self):
+        """
+        The member read may see the base's temporal-dead-zone value, so the alias is not proven to
+        hold the intrinsic when it is called.
+        """
+        source = 'var g = d.constructor; let d = function () {}; var x = g("return 42")();'
+        self.assertEqual(
+            'var g = d.constructor;\nlet d = function() {};\nvar x = g("return 42")();',
+            self._reflect(source))
+
+    def test_a_constructor_alias_off_a_reassigned_base_declines(self):
+        source = 'var d = function () {}; d = function () {}; var g = d.constructor;'
+        self.assertEqual(
+            'var d = function() {};\nd = function() {};\nvar g = d.constructor;\n'
+            'var x = g("return 42")();',
+            self._reflect(source + ' var x = g("return 42")();'))
+
+    def test_a_constructor_alias_that_may_hold_another_value_declines(self):
+        source = 'var e = function () {}; var g = d.constructor; g = e; var x = g("return 42")();'
+        self.assertEqual(
+            'var e = function() {};\nvar g = d.constructor;\ng = e;\nvar x = g("return 42")();',
+            self._reflect(source))
+
+    def test_a_single_empty_parameter_argument_names_no_parameters(self):
+        """
+        `Function(" ", code)` builds a zero-parameter function — the parameter text is trimmed before
+        the list is parsed — so an empty leading argument binds nothing and the construction inlines
+        like the one-argument form.
+        """
+        self.assertEqual(
+            'var x = 42;',
+            self._reflect("var x = Function(' ', 'return 42')();"))
+
+    def test_two_empty_parameter_arguments_name_a_comma(self):
+        """
+        `Function("", "", code)` has parameter text `","`, a `SyntaxError` the construction raises
+        itself; the construction stays so the program keeps throwing what it threw.
+        """
+        source = "var x = Function('', '', 'return 42')();"
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_constructor_alias_with_a_named_parameter_declines(self):
+        self.assertEqual(
+            "function d() {}\nvar g = d.constructor;\nvar x = g('a', 'return 42')(1);",
+            self._reflect("function d() {} var g = d.constructor; var x = g('a', 'return 42')(1);"))
+
     def test_separated_temporary_with_another_read_is_kept(self):
         """
         The invocation folds, but the temporary keeps its declarator: retirement requires that every
@@ -2377,3 +2467,40 @@ class TestAStringTimerBodyIsWeighedAgainstItsWrapper(TestJsDeobfuscator):
             ),
             self._reflect('function* g() { setInterval("console.log(typeof yield)", 10); }'),
         )
+
+
+#: Every spelling of a `Function` construction whose callee is reached by `.constructor` navigation,
+#: each preceded by a write replacing what that navigation hands out. The write cannot reach the
+#: named intrinsic — `Function("return 42")()` still answers `42` under it — but every navigation
+#: spellings answers what was installed, and each program prints what the replacement returns.
+_NAVIGATION_SPELLINGS_A_REPLACED_CONSTRUCTOR_REACHES = [
+    "console.log((function(){}).constructor('return 42')());",
+    "console.log(''.constructor.constructor('return 42')());",
+    'function d() {} console.log(d.constructor("return 42")());',
+    'function d() {} var g = d.constructor; console.log(g("return 42")());',
+]
+
+_EVIL_CONSTRUCTOR = (
+    'var evil = function (code) { return function () { return 999; }; };'
+    ' Function.prototype.constructor = evil;'
+)
+"""
+A write that redirects `.constructor` navigation to a constructor of the program's own.
+"""
+
+
+@unittest.skipUnless(node_executable() is not None, 'node.js is required')
+class TestAReplacedFunctionPrototypeConstructorRedirectsNavigation(TestJsDeobfuscator):
+    """
+    A program that writes the `constructor` key on a chain rooted at `Function` has replaced the
+    intrinsic every `.constructor` navigation hands out, so no spelling of a construction reached
+    that way inlines as the named one — the replaced constructor runs instead, and what it returns
+    is what both the program and its deobfuscation print.
+    """
+
+    def test_each_navigation_spelling_keeps_what_the_replacement_returns(self):
+        for spelling in _NAVIGATION_SPELLINGS_A_REPLACED_CONSTRUCTOR_REACHES:
+            source = F'{_EVIL_CONSTRUCTOR} {spelling}'
+            deobfuscated = deobfuscate_source(source)
+            with self.subTest(spelling):
+                self.assertEqual(behavior(source), behavior(deobfuscated))
