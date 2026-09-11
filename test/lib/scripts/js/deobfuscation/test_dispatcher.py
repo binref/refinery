@@ -27,6 +27,11 @@ def a_dispatcher(dict_lines: list, tail_lines: list) -> str:
     reads that callee's arguments out of the one shared payload array `p`. *dict_lines* spell
     the entries of the map and *tail_lines* the calls made through it.
 
+    The create-flag branch hands back a wrapper that fills the payload from its own call arguments
+    before invoking the entry, which is the js-confuser idiom the unwrapper reads as the entry's
+    parameters: a reference taken through it and then called with `fn(42)` genuinely reaches the
+    entry with `42` as its first payload element, so the fixture prints what the unwrap claims.
+
     It is written here, where the law about unwrapping it is stated, and read from wherever
     else a program built around one is needed.
     """
@@ -40,7 +45,7 @@ def a_dispatcher(dict_lines: list, tail_lines: list) -> str:
         '  };',
         '  if (flag === "initF") { p = []; }',
         '  if (flag === "createF") {',
-        '    output = c[name] || (c[name] = fns[name]);',
+        '    output = c[name] || (c[name] = function() { p = [...arguments]; return fns[name](); });',
         '  } else {',
         '    output = fns[name]();',
         '  }',
@@ -397,6 +402,38 @@ A_DISPATCH_ARGUMENT_THE_REWRITE_WOULD_DROP = {
         tail_lines=['console.log((p = ["a"], d("f1", (p = ["b"], d("f2")))));'],
     ): 'Ab\n',
 }
+
+
+#: A wrapped reference taken through the create/wrap flags and then called, mapped to what Node
+#: prints for it. Calling the reference fills the payload from its own arguments, so `fn(42)` reaches
+#: the entry with `42` as its first payload element; the unwrapper reads that entry's payload
+#: destructuring as its parameters, so the direct call it builds carries `42` the same way.
+A_WRAPPED_REFERENCE_THAT_IS_CALLED = {
+    a_dispatcher(
+        dict_lines=['"id": function() { var [x] = p; return x; }'],
+        tail_lines=[
+            'var fn = new d("id", "createF", "wrapF")["wk"];',
+            'console.log(fn(42));',
+        ],
+    ): '42\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWrappedReferenceIsCallableAfterUnwrapping(TestBase):
+    """
+    The wrapped-reference form names a table entry rather than calling it, and the entry is called
+    later through the reference. Unwrapping it to the extracted function must keep that call
+    behaving as it did: the payload the entry destructured becomes the function's parameters, so a
+    later `fn(42)` reaches the same value it reached through the payload.
+    """
+
+    def test_a_called_wrapped_reference_still_prints(self):
+        rows = A_WRAPPED_REFERENCE_THAT_IS_CALLED
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

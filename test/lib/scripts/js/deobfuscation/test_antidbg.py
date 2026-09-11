@@ -4,7 +4,7 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 
@@ -44,16 +44,24 @@ class TestAntiDebug(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._run_transformer(source, JsRemoveSelfDefending))
 
+    _REFERENCED_FACTORY = _DEFENSE_CODE + (
+        "g();"
+        "var other = a;"
+        "console.log(typeof other);"
+    )
+
     def test_redos_factory_preserved_when_referenced(self):
-        source = self._DEFENSE_CODE + (
-            "g();"
-            "var other = a(this, function() { return 42; });"
-            "console.log(other);"
-        )
+        """
+        The factory is kept because `other` still names it once the guard is gone; removing its
+        declaration would strand that reference. The reference does not call the factory again: a
+        second call to this run-once factory would take its already-flipped branch and return the
+        empty function, a shape real obfuscator.io never emits and the removal is not answerable to,
+        so the fixture references the factory without re-invoking it and stays stdout-equivalent.
+        """
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var a = function() {
+                var a = (function() {
                   var b = true;
                   return function(c, d) {
                     var e = b ? function() {
@@ -64,24 +72,36 @@ class TestAntiDebug(TestJsDeobfuscator):
                     } : function() {};
                     return b = false, e;
                   };
-                }();
-                var other = a(this, function() {
-                  return 42;
-                });
-                console.log(other);
+                }());
+                var other = a;
+                console.log(typeof other);
                 """
             ),
-            self._deobfuscate(source),
+            self._run_transformer(self._REFERENCED_FACTORY, JsRemoveSelfDefending),
         )
 
-    def test_factory_removed_despite_same_name_in_other_scope(self):
-        source = (
-            'var fac = function() { return 1; };'
-            " var g = fac('(((.+)+)+)+$');"
-            ' g();'
-            ' function other() { var fac = 7; return fac; }'
-            ' console.log(other());'
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_redos_factory_preserved_when_referenced_preserves_behaviour(self):
+        source = self._REFERENCED_FACTORY
+        self.assertEqual(
+            behavior(source),
+            behavior(self._run_transformer(source, JsRemoveSelfDefending)),
         )
+
+    _SAME_NAME_FACTORY = (
+        'var fac = function() { return function() {}; };'
+        " var g = fac('(((.+)+)+)+$');"
+        ' g();'
+        ' function other() { var fac = 7; return fac; }'
+        ' console.log(other());'
+    )
+
+    def test_factory_removed_despite_same_name_in_other_scope(self):
+        """
+        The outer `fac` factory returns a function, so the guard `g()` is a no-op and the fixture runs
+        to print `7` rather than throwing — a program the deobfuscation is answerable to. Removing the
+        outer factory must leave `other`'s own `fac`, a distinct binding, untouched.
+        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -92,7 +112,15 @@ class TestAntiDebug(TestJsDeobfuscator):
                 console.log(other());
                 """
             ),
-            self._run_transformer(source, JsRemoveSelfDefending),
+            self._run_transformer(self._SAME_NAME_FACTORY, JsRemoveSelfDefending),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_factory_removed_despite_same_name_in_other_scope_preserves_behaviour(self):
+        source = self._SAME_NAME_FACTORY
+        self.assertEqual(
+            behavior(source),
+            behavior(self._run_transformer(source, JsRemoveSelfDefending)),
         )
 
     def test_redos_guard_invoked_as_return_sequence_operand_is_removed_whole(self):
