@@ -66,6 +66,7 @@ from refinery.lib.scripts.js.model import (
     JsConditionalExpression,
     JsContinueStatement,
     JsDoWhileStatement,
+    JsEmptyStatement,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
@@ -1338,6 +1339,8 @@ class JsInterpreter:
         elif isinstance(stmt, JsFunctionDeclaration):
             if isinstance(stmt.id, JsIdentifier):
                 self._env[stmt.id.name] = stmt
+        elif isinstance(stmt, JsEmptyStatement):
+            return
         else:
             raise InterpreterError
 

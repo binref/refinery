@@ -63,6 +63,30 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         )
         self.assertEqual("var x = '12';", self._evaluate(source))
 
+    def test_interleaved_empty_statement_in_function_body(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                ;
+                return 'ab'.charAt(1);
+            }
+            SINK(f());
+            """
+        )
+        self.assertEqual("SINK('b');", self._evaluate(source))
+
+    def test_consecutive_empty_statements_in_function_body(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = 'ab';;
+                return a.charAt(1);
+            }
+            SINK(f());
+            """
+        )
+        self.assertEqual("SINK('b');", self._evaluate(source))
+
     def test_concise_arrow_irreducible_tail_substitutes_whole_expression(self):
         """
         An arrow whose tail expression cannot be reduced folds to that whole tail with the argument
