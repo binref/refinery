@@ -114,12 +114,11 @@ Offer a prompt to me where they can select any number of the following agents to
 
 Run these plus a separate general purpose adversarial critic in parallel and revise the plan according to their feedback.
 
-A critic panel confirms a plan that already carries its own evidence; it is not how a plan gets checked.
-Before offering one:
-
+- **Reviewer independence.** Do **not** give the agents specific instructions for what to investigate,
+  only specify their expertise and focus area.
 - **Census before design.** For every question the plan touches,
   find the mechanism that already answers it and every guard on the code paths the plan alters.
-  Most designs are placement problems: A new mechanism needs evidence that no existing one owns the question.
+  Most designs are placement problems: A new mechanism needs evidence that no existing one already owns the question.
 - **Falsify your own claims first.** Label every load-bearing claim in the plan measured
   (probe and output) or argued (file:line). If a ten-line probe could break a claim, run it before any critic does.
 - **A fix drafted from panel feedback is new, unreviewed design.**
