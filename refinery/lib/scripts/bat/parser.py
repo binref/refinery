@@ -567,15 +567,16 @@ class BatchParser:
         return AstLabel(offset, None, silenced, line, label, comment)
 
     def statement(self, parent: AstNode | None, tokens: LookAhead, in_group: bool):
-        at, _ = self.skip_prefix(tokens)
-        silenced = at > 0
-        if at <= 1 and (s := self.label(tokens, silenced)):
-            return s
-        if s := self.ifthen(parent, tokens, in_group, silenced):
-            return s
-        if s := self.forloop(parent, tokens, in_group, silenced):
-            return s
-        return self.pipeline(parent, tokens, in_group, silenced)
+        with self.state.context.descend():
+            at, _ = self.skip_prefix(tokens)
+            silenced = at > 0
+            if at <= 1 and (s := self.label(tokens, silenced)):
+                return s
+            if s := self.ifthen(parent, tokens, in_group, silenced):
+                return s
+            if s := self.forloop(parent, tokens, in_group, silenced):
+                return s
+            return self.pipeline(parent, tokens, in_group, silenced)
 
     def sequence(self, parent: AstNode | None, tokens: LookAhead, in_group: bool) -> AstSequence | None:
         tokens.skip_space()

@@ -362,6 +362,7 @@ class BatchEmulator:
             cwd=state.cwd,
             filename=filename,
             cmdline=cmdline,
+            context=state.context,
         )
 
     def get_for_variable_regex(self, vars: Iterable[str]):
@@ -1578,7 +1579,8 @@ class BatchEmulator:
             handler = self._node.handlers[statement.__class__]
         except KeyError:
             raise RuntimeError(statement)
-        yield from handler(self, statement, std, in_group)
+        with self.state.context.descend():
+            yield from handler(self, statement, std, in_group)
 
     def emulate_commands(self, allow_junk=False):
         for syn in self.trace():

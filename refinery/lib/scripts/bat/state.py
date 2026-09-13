@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ntpath
 
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from random import Random
@@ -17,6 +19,45 @@ STATEMENT_BUDGET = 100_000
 The maximum number of statements a single emulation may execute. Scripts stuck in
 an undetectable loop are cut off at this bound instead of running forever.
 """
+
+DEPTH_LIMIT = 100
+"""
+The maximum nesting depth, counting both structural nesting (parentheses and blocks) and nested
+sub-shells (CALL, START, CMD, FOR /F), that a single emulation may reach. Scripts nested past this
+bound are cut off instead of exhausting the Python call stack.
+"""
+
+
+@dataclass
+class ExecutionContext:
+    """
+    Resource guards shared by every `BatchState` cloned during one emulation. The statement budget
+    and the nesting depth are enforced across the whole clone tree, so nested sub-shells cannot each
+    spend a fresh budget or a fresh recursion allowance and thereby multiply the bound.
+    """
+    statement_budget: int = STATEMENT_BUDGET
+    depth_limit: int = DEPTH_LIMIT
+    statement_count: int = 0
+    depth: int = 0
+
+    def count_statement(self):
+        self.statement_count += 1
+        if self.statement_count > self.statement_budget:
+            raise EmulatorException(
+                F'The emulation exceeded its budget of {self.statement_budget} statements '
+                'and was aborted, likely because it is stuck in a loop.')
+
+    @contextmanager
+    def descend(self):
+        self.depth += 1
+        try:
+            if self.depth > self.depth_limit:
+                raise EmulatorException(
+                    F'The emulation exceeded its maximum nesting depth of {self.depth_limit} '
+                    'and was aborted.')
+            yield
+        finally:
+            self.depth -= 1
 
 
 class ErrorZero(int, Enum):
@@ -65,6 +106,7 @@ class BatchState:
         echo: bool = True,
         codec: str = 'cp1252',
         cmdline: bool = False,
+        context: ExecutionContext | None = None,
     ):
         self.extensions_version = extensions_version
         file_system = file_system or {}
@@ -83,7 +125,7 @@ class BatchState:
         self.now = now
         self.start_time = now
         self._random = Random()
-        self._statement_count = 0
+        self.context = context if context is not None else ExecutionContext()
         self.hostname = hostname
         self.username = username
         self.labels = {}
@@ -187,11 +229,7 @@ class BatchState:
         return ntpath.normcase(ntpath.normpath(path))
 
     def count_statement(self):
-        self._statement_count += 1
-        if self._statement_count > STATEMENT_BUDGET:
-            raise EmulatorException(
-                F'The emulation exceeded its budget of {STATEMENT_BUDGET} statements '
-                'and was aborted, likely because it is stuck in a loop.')
+        self.context.count_statement()
 
     def create_file(self, path: str, data: str = ''):
         self.file_system[self.resolve_path(path)] = data

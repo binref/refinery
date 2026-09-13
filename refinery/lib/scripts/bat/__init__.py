@@ -49,11 +49,12 @@ from __future__ import annotations
 from .emulator import BatchEmulator
 from .lexer import BatchLexer
 from .parser import BatchParser
-from .state import BatchState
+from .state import BatchState, ExecutionContext
 
 __all__ = [
     'BatchEmulator',
     'BatchLexer',
     'BatchParser',
     'BatchState',
+    'ExecutionContext',
 ]

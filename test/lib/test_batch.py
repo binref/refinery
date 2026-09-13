@@ -5,7 +5,7 @@ import unittest
 
 from inspect import getdoc
 
-from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState
+from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState, ExecutionContext
 from refinery.lib.scripts.bat.emulator import Error
 from refinery.lib.scripts.bat.synth import SynCommand
 from refinery.lib.scripts.bat.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
@@ -2198,6 +2198,43 @@ class TestBatchCmdSemantics(TestBase):
         budget and reported as an error instead of running forever.
         """
         bat = BatchEmulator(':LOOP\r\nset X=1\r\ngoto LOOP\r\n')
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_structural_nesting_is_bounded_instead_of_crashing(self):
+        """
+        Parentheses nested past the emulation's depth limit are reported as an error rather than
+        exhausting the Python call stack.
+        """
+        state = BatchState(context=ExecutionContext(depth_limit=16))
+        code = '(' * 64 + 'echo hi' + ')' * 64
+        bat = BatchEmulator(F'{code}\n', state)
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertEqual(
+            errors,
+            ['The emulation exceeded its maximum nesting depth of 16 and was aborted.'])
+
+    def test_nested_calls_share_one_depth_limit(self):
+        """
+        Nested CALLs draw on a single depth allowance shared across sub-shells, so a self-calling
+        script is bounded rather than recursing until the Python stack is exhausted.
+        """
+        state = BatchState(context=ExecutionContext(depth_limit=8))
+        state.create_file('r.bat', 'call r.bat\r\n')
+        bat = BatchEmulator('call r.bat\n', state)
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_a_called_subscript_shares_its_callers_statement_budget(self):
+        """
+        A called sub-script draws statements from the same budget as its caller: a caller and
+        callee that together exceed the budget are bounded even though neither exceeds it alone,
+        so nested emulations cannot each spend a fresh budget.
+        """
+        state = BatchState(context=ExecutionContext(statement_budget=25))
+        state.create_file('sub.bat', 'echo from_sub\r\n' * 15)
+        parent = 'echo from_parent\r\n' * 15 + 'call sub.bat'
+        bat = BatchEmulator(F'{parent}\n', state)
         errors = [s for s in bat.trace() if isinstance(s, Error)]
         self.assertNotEqual(errors, [])
 
