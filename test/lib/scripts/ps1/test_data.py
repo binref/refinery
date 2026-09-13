@@ -347,5 +347,35 @@ class TestPs1TypeIdentity(unittest.TestCase):
         self.assertFalse(data.is_type('System.Int32', 'NotARealType'))
 
 
+class TestPs1AbbreviatedParameter(unittest.TestCase):
+    """
+    The full parameter name a prefix binds on a cmdlet, measured on 5.1: a prefix unique among the
+    cmdlet's own parameters expands to it, one shared by two or more of them is ambiguous and binds
+    nothing, and a common parameter answers only where no own parameter is a prefix at all.
+    """
+
+    def test_a_prefix_unique_among_own_parameters_expands(self):
+        self.assertEqual(data.abbreviated_parameter('New-Item', 'p'), 'Path')
+
+    def test_a_prefix_shared_by_two_own_parameters_binds_nothing(self):
+        for command in ('Copy-Item', 'Set-Content', 'Get-ChildItem', 'Move-Item'):
+            with self.subTest(command):
+                self.assertIsNone(data.abbreviated_parameter(command, 'p'))
+
+    def test_an_own_ambiguity_is_not_reached_past_to_a_common_parameter(self):
+        """
+        5.1 rejects `Copy-Item x y -p` as ambiguous between `Path` and `PassThru`; reading own
+        ambiguity as a licence to expand the common `-PipelineVariable` binds an argument the script
+        never wrote.
+        """
+        self.assertIsNone(data.abbreviated_parameter('Copy-Item', 'pa'))
+
+    def test_a_prefix_narrowed_to_one_own_parameter_expands(self):
+        self.assertEqual(data.abbreviated_parameter('Copy-Item', 'pas'), 'PassThru')
+
+    def test_an_own_parameter_wins_a_prefix_a_common_parameter_also_starts(self):
+        self.assertEqual(data.abbreviated_parameter('Set-Alias', 'v'), 'Value')
+
+
 if __name__ == '__main__':
     unittest.main()

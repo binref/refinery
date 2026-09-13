@@ -415,6 +415,12 @@ def abbreviated_parameter(command: str, written: str) -> str | None:
     considered, which is the discriminating case for `Add-Member -Type`: the alias names
     `MemberType` and no prefix question is asked.
 
+    A prefix that names two or more of the cmdlet's own parameters binds nothing — 5.1 reports it
+    ambiguous rather than reaching past them to a common parameter — so the common pool is consulted
+    only where no own parameter is a prefix at all. Reading own ambiguity as a licence to expand a
+    common name would rewrite `Copy-Item x y -p`, which 5.1 rejects between `Path` and `PassThru`,
+    into a `-PipelineVariable` bind the script never had.
+
     The pools are the command's own record and never the union tables, because the common
     parameters are per-cmdlet on 5.1 — measured, `Get-Date -c` is `NamedParameterNotFound` where
     `Remove-Item -c` asks whether to confirm. The residual of reading a collected surface rather
@@ -432,10 +438,14 @@ def abbreviated_parameter(command: str, written: str) -> str | None:
         for spelling, parameter in pool:
             if spelling == written:
                 return parameter
-    for pool in (own, common):
-        found = {parameter for spelling, parameter in pool if spelling.startswith(written)}
-        if len(found) == 1:
-            return next(iter(found))
+    own_prefixed = {parameter for spelling, parameter in own if spelling.startswith(written)}
+    if len(own_prefixed) == 1:
+        return next(iter(own_prefixed))
+    if own_prefixed:
+        return None
+    common_prefixed = {parameter for spelling, parameter in common if spelling.startswith(written)}
+    if len(common_prefixed) == 1:
+        return next(iter(common_prefixed))
     return None
 
 
