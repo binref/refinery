@@ -2428,10 +2428,12 @@ class SemanticModel:
         this holds.
 
         Detection is model-aware, distinct from the spelling-level exemption
-        `_is_reflective_member` grants the same sites: a base is the global object here whenever
-        the model resolves it to one (`_holds_the_global_object`), so a local holding the object
-        (`var g = globalThis; g[k] = 1`) is counted, not only its spelled names — the alias would
-        otherwise store a global under a key the spelling never saw. Every store form counts
+        `_is_reflective_member` grants the same sites: a base may be the global object here
+        (`may_be_the_global_object`), so a local holding the object (`var g = globalThis;
+        g[k] = 1`) and the receiver a sloppy call supplies a write through (`this[k] = 1`) are
+        both counted, not only its spelled names — the alias would otherwise store a global under
+        a key the spelling never saw, and the receiver is the one spelling a callee can choose
+        freely. Every store form counts
         (`is_member_write_target`: plain and compound assignment, update, `delete`, `for-in`/`for-of`
         heads, destructuring patterns), so the fact stands on its own wherever a consumer consults it.
         Computed lazily and memoized,
@@ -2458,7 +2460,7 @@ class SemanticModel:
             return False
         if not is_member_write_target(member):
             return False
-        return self._holds_the_global_object(member.object)
+        return self.may_be_the_global_object(member.object)
 
     def reflection_can_reach(self, binding: Binding) -> bool:
         """
@@ -2734,8 +2736,39 @@ class SemanticModel:
             elif isinstance(node, JsCallExpression):
                 if _is_string_timer(node):
                     sites.append(node)
+            elif isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
+                if self._destructures_a_reflective_intrinsic(node):
+                    sites.append(node)
         self._opaque_surface_sites = sites
         self._reflection_surface = saw_with or bool(sites)
+
+    def _destructures_a_reflective_intrinsic(
+        self, node: JsVariableDeclarator | JsAssignmentExpression,
+    ) -> bool:
+        """
+        Whether *node* binds one of the reflective intrinsics out of the global object: an object
+        pattern whose source may be the object (`may_be_the_global_object`) and that names `eval` or
+        `Function` among its keys. `const {eval} = globalThis` is the same value-read of the
+        intrinsic that the bare name spells — the pattern reads the property off the object and
+        binds its value — so it is a reflection surface just as the bare spelling is. A pattern
+        destructuring anything else, or the same names out of any other object, binds a value the
+        program chose and is no surface.
+        """
+        if isinstance(node, JsVariableDeclarator):
+            pattern, source = node.id, node.init
+        else:
+            pattern, source = node.left, node.right
+        if not isinstance(pattern, JsObjectPattern) or not self.may_be_the_global_object(source):
+            return False
+        for prop in pattern.properties:
+            if not isinstance(prop, JsProperty) or prop.computed:
+                continue
+            key = prop.key
+            name = key.value if isinstance(key, JsStringLiteral) else (
+                key.name if isinstance(key, JsIdentifier) else None)
+            if name in REFLECTIVE_INTRINSICS:
+                return True
+        return False
 
     def _opaque_reflection_sites(self) -> list[Node]:
         """
@@ -2966,6 +2999,18 @@ class SemanticModel:
         return (
             may_be_global_object_base(base) and not self._is_bound_here(base)
         ) or self.names_the_global_object(base)
+
+    def may_be_the_global_object(self, node: Node | None) -> bool:
+        """
+        Whether *node* may be the global object once the program runs, asked of the node alone:
+        spelled as one and not bound to something else, a receiver any call may supply (`this`), or
+        a name any value of which the file gives the object. The node-level form of the base
+        question `may_name_a_global` asks of a member access, so a consumer deciding whether a
+        write, an install, or a hand-over reached the global object shares this one reading rather
+        than each spelling a narrower one — the miss of one narrower spelling is how a written
+        global went unrecorded while the fold kept trusting it.
+        """
+        return self._base_may_be_the_global_object(node)
 
     def _is_bound_here(self, node: Node | None) -> bool:
         return (
@@ -3211,8 +3256,6 @@ class SemanticModel:
         obfuscated samples that use a finder at their original size.
         """
         bindings = list(self.root_scope.bindings.values())
-        if not bindings:
-            return
         observed: list[ReferenceNode] = []
         for node in self.root.walk():
             if not isinstance(node, (JsIdentifier, JsThisExpression)):
@@ -3221,6 +3264,13 @@ class SemanticModel:
                 continue
             if self.global_object_argument_is_observed(node):
                 observed.append(node)
+        if observed:
+            # A callee that could read a property of the object it was handed could write one under
+            # a key no text spells, which is the opaque global write's own question, so an observed
+            # hand-over makes that fact hold: `t(globalThis)` and `Reflect.set(globalThis, …)` are
+            # otherwise invisible to every consumer of `has_opaque_global_write`. The walk runs
+            # even where no binding exists to record against, because the fact is not a binding's.
+            self._opaque_global_write = True
         for node in observed:
             for binding in bindings:
                 binding.reachable_through_a_handed_object = True

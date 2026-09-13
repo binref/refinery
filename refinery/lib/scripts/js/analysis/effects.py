@@ -2558,6 +2558,9 @@ def _global_writes_by_name(model: SemanticModel) -> _GlobalWrites:
         if isinstance(node, JsCallExpression):
             for base in _accessor_install_targets(node):
                 record(aliases.names_denoted_by(base), _installed_key(node))
+            install_key = _installed_key(node)
+            if install_key is not None and _install_reaches_the_global_object(model, node):
+                record(frozenset({install_key}), None)
             continue
         target = None
         if isinstance(node, JsAssignmentExpression):
@@ -2572,6 +2575,9 @@ def _global_writes_by_name(model: SemanticModel) -> _GlobalWrites:
             base = _member_chain_root(member)
             if base is not None:
                 record(aliases.names_denoted_by(base), static_property_key(member))
+            written_global = model.may_name_a_global(member)
+            if written_global is not None:
+                record(frozenset({written_global}), None)
     return _GlobalWrites(
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},
@@ -2600,19 +2606,40 @@ def _installed_key(call: JsCallExpression) -> str | None:
     The property name the descriptor install *call* names, or `None` where it names more than one or
     none this analysis can read. `Object.defineProperty(o, 'k', d)` and `o.__defineGetter__('k', f)`
     both name it in the argument before the descriptor; `defineProperties` names a whole object of
-    them, which is not one key and is reported as unbounded.
+    them, which is not one key and is reported as unbounded. The method is read through
+    `accessor_install_method`, so a computed key a fold will collapse — `Object['define' +
+    'Property']` — already names the install here, which keeps the answer from changing as the
+    pipeline respells the call.
     """
     callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression) or callee.computed:
+    if not isinstance(callee, JsMemberExpression):
         return None
-    prop = callee.property
-    if not isinstance(prop, JsIdentifier):
-        return None
-    if prop.name == 'defineProperty':
+    method = accessor_install_method(callee)
+    if method == 'defineProperty':
         return static_string(call.arguments[1]) if len(call.arguments) > 1 else None
-    if prop.name in ('__defineGetter__', '__defineSetter__'):
+    if method in ('__defineGetter__', '__defineSetter__'):
         return static_string(call.arguments[0]) if call.arguments else None
     return None
+
+
+def _install_reaches_the_global_object(model: SemanticModel, call: JsCallExpression) -> bool:
+    """
+    Whether the descriptor install *call* installs on the global object: its receiver form
+    (`globalThis.__defineGetter__`) or its argument form (`Object.defineProperty(globalThis, …)`)
+    names the object the installed key then becomes a global under. `may_be_the_global_object` is
+    the reading, so a local holding the object installs on it too; a receiver that is any other
+    object installs on that object and records nothing here. The method is read through
+    `accessor_install_method` for the same reason `_installed_key` reads it there.
+    """
+    callee = strip_parens(call.callee)
+    if not isinstance(callee, JsMemberExpression):
+        return False
+    method = accessor_install_method(callee)
+    if method in ('__defineGetter__', '__defineSetter__'):
+        return model.may_be_the_global_object(callee.object)
+    if method == 'defineProperty' and call.arguments:
+        return model.may_be_the_global_object(call.arguments[0])
+    return False
 
 
 def _value_escapes(
