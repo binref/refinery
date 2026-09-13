@@ -1661,7 +1661,7 @@ class BatchEmulator:
                 break
             except (InvalidLabel, InputLocked):
                 raise
-            except (EmulatorException, ValueError, RecursionError) as error:
+            except EmulatorException as error:
                 yield Error(str(error))
                 self.state.ec = 1
                 break

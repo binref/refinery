@@ -2238,6 +2238,22 @@ class TestBatchCmdSemantics(TestBase):
         errors = [s for s in bat.trace() if isinstance(s, Error)]
         self.assertNotEqual(errors, [])
 
+    def test_a_bug_shaped_exception_from_a_handler_propagates(self):
+        """
+        A non-EmulatorException raised inside a command handler is a genuine emulator bug; it must
+        propagate out of `trace()` rather than be downgraded to a benign error chunk that hides it.
+        """
+        def boom(self, cmd, std, *_):
+            raise ValueError('simulated emulator bug')
+        handlers = BatchEmulator._command.handlers
+        original = handlers['ECHO']
+        handlers['ECHO'] = boom
+        try:
+            with self.assertRaises(ValueError):
+                list(BatchEmulator('echo hi\n').trace())
+        finally:
+            handlers['ECHO'] = original
+
     def test_lexer_switch_parameter_colon_stays_attached(self):
         """
         A colon directly after a switch token belongs to that token: `findstr
