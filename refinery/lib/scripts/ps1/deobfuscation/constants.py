@@ -127,7 +127,7 @@ PS1_ENV_CONSTANTS = {
     and '{h}' not in value
 }
 
-_PS1_AUTOMATIC_VARIABLES = frozenset({
+PS1_AUTOMATIC_VARIABLES = frozenset({
     '?',
     '_',
     'args',
@@ -166,7 +166,7 @@ _PS1_AUTOMATIC_VARIABLES = frozenset({
 })
 
 _PS1_SKIP_VARIABLES = (
-    _PS1_AUTOMATIC_VARIABLES
+    PS1_AUTOMATIC_VARIABLES
     | frozenset(PS1_KNOWN_VARIABLES)
     | frozenset(_PS1_DEFAULT_VARIABLES)
 )
@@ -175,7 +175,7 @@ _PS1_SKIP_VARIABLES = (
 #: what it is worth at the next read: `$_` is rebound per pipeline object, `$Matches` at every
 #: `-match`, `$LASTEXITCODE` by every native command, and a preference variable is read by the
 #: engine itself. No write of one of these establishes a value this pass may carry to a reader.
-_PS1_ENGINE_VARIABLES = _PS1_AUTOMATIC_VARIABLES | frozenset(_PS1_DEFAULT_VARIABLES)
+PS1_ENGINE_VARIABLES = PS1_AUTOMATIC_VARIABLES | frozenset(_PS1_DEFAULT_VARIABLES)
 
 _MIN_EXPANSION_BUDGET = 256
 
@@ -669,7 +669,7 @@ class _ConstantTable:
             if len(targets) != 1:
                 continue
             key = binding_key(targets[0])
-            if key in _PS1_ENGINE_VARIABLES:
+            if key in PS1_ENGINE_VARIABLES:
                 # A preference or automatic variable is the engine's as much as the script's, so a
                 # write of one is not recorded here; the ambient table answers for it, and only
                 # while the script leaves the name alone.
@@ -1100,7 +1100,7 @@ class Ps1NullVariableInlining(Transformer):
                 continue
             if key in _PS1_DEFAULT_VARIABLES:
                 continue
-            if key in _PS1_AUTOMATIC_VARIABLES:
+            if key in PS1_AUTOMATIC_VARIABLES:
                 continue
             if key.startswith('env:'):
                 continue

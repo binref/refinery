@@ -446,6 +446,25 @@ BEHAVIOURS: tuple[str, ...] = (
     "trap { continue }; zzq0000=5; Write-Host 'after'",
     "trap { Write-Host 'trapped'; continue }; zzq0000=5; Write-Host 'after'",
     "try { zzq0000=5 } finally { Write-Host 'fin' }; Write-Host 'after'",
+
+    #: What a sub-expression that stores and loops is asked to preserve the behaviour of. The first
+    #: two are bodies the sub-expression evaluator folds, so the differential holds the transcript
+    #: the fold has to keep; each of the rest is a body it must refuse, and each names the one thing
+    #: that makes the fold unsound — a name the enclosing scope wrote, a name the body writes that
+    #: a later statement observes, the state a second evaluation of one site would carry, the
+    #: `$null` 5.1 keeps where the interpreter's stream drops it, and a write no occurrence in the
+    #: tree names.
+    "Write-Output $($r = ''; foreach ($e in 'a', 'b') { $r = $r + $e }; $r)",
+    'Write-Output $(foreach ($e in \'a\', \'b\') { $e })',
+    "$q = 'a'; Write-Output $($q + 'b')",
+    'Write-Output $($w = \'x\'; $w); Write-Output $w',
+    "Set-Variable s 'A'; Write-Output $($s + 'B')",
+    "foreach ($i in 1..2) { Write-Output $($c = $c + 'x'; $c) }",
+    'foreach ($i in 1..2) { Write-Output $(if (0) { $m = \'A\' }; $o = "${m}"; '
+    "$m = 'B'; $o) }",
+    "Write-Output @($('a'; $z; 'b')).Count",
+    'iex \'$u = "U"\'; Write-Output $($u + \'x\')',
+    "Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)",
 )
 
 

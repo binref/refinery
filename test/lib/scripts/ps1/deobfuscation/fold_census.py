@@ -1532,4 +1532,23 @@ FOLDS: dict[str, str] = {
         "Write-Output 'abc'",
     "$c = 'Write-Out'; $c += 'put 5'; Invoke-Expression $c":
         'Write-Output 5',
+    "Write-Output $($r = ''; foreach ($e in 'a', 'b') { $r = $r + $e }; $r)":
+        "Write-Output 'ab'",
+    "Write-Output $(foreach ($e in 'a', 'b') { $e })":
+        "Write-Output $('a', 'b')",
+    "$q = 'a'; Write-Output $($q + 'b')":
+        "Write-Output 'ab'",
+    "Write-Output $($w = 'x'; $w); Write-Output $w":
+        "Write-Output 'x'\nWrite-Output 'x'",
+    "Set-Variable s 'A'; Write-Output $($s + 'B')":
+        "Write-Output 'AB'",
+    "foreach ($i in 1..2) { Write-Output $($c = $c + 'x'; $c) }":
+        "foreach ($i in 1, 2) {\n  Write-Output $($c = $c + 'x'\n  $c)\n}",
+    'foreach ($i in 1..2) { Write-Output $(if (0) { $m = \'A\' }; $o = "${m}"; $m = \'B\'; $o) }':
+        'foreach ($i in 1, 2) {\n  Write-Output $(if (0) {\n    $m = \'A\'\n  }\n  $o = "${m}"\n'
+        '  $m = \'B\'\n  $o)\n}',
+    'iex \'$u = "U"\'; Write-Output $($u + \'x\')':
+        "Write-Output 'Ux'",
+    'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)':
+        '$q = 5\nfunction fq {\n  $q + 1\n}\nWrite-Output (fq)',
 }

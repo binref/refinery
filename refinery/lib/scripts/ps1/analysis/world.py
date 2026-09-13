@@ -515,6 +515,20 @@ def build_closed_world(root: Ps1Script) -> Ps1TypeWorld:
     return measure_world(root).world
 
 
+def runs_code_supplied_as_data(measurement: Ps1WorldMeasurement) -> bool:
+    """
+    Whether any opener the measurement recorded runs code this analysis cannot read — the
+    `WorldRole.LEAK` and `WorldRole.UNKNOWN` openers, the ones that can write script state out of
+    data the tree does not contain. A driver asked to read a name no binding claims may answer
+    `$null` only where this says no such site exists, because an `Invoke-Expression` payload writing
+    that name is state no collection in the tree sees.
+    """
+    return any(
+        _opens_world(node, _identity_redefinitions(node)) in (WorldRole.LEAK, WorldRole.UNKNOWN)
+        for node in measurement.openers
+    )
+
+
 def _opens_world_only_by_binding_an_alias(node) -> bool:
     """
     Whether the sole reason `node` opens the world is that it is a `Set-Alias` — see

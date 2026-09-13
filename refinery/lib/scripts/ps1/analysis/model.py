@@ -849,6 +849,35 @@ class Ps1SemanticModel:
                     names.add(name)
         return names
 
+    def write_sites(self) -> dict[str, list[Node]]:
+        """
+        Every name a write in this script claims, with the node of each write — the variable writes
+        and the string-addressed writes that land on the same bindings. A driver that evaluates a
+        body without the scopes around it asks this what those scopes may hold: a name with a write
+        outside the body it is read in is a value the fold does not carry, and a name with no entry
+        at all is claimed by no write anywhere in the script.
+        """
+        sites: dict[str, list[Node]] = {}
+        for write in self._every_write():
+            sites.setdefault(write.key, []).append(write.node)
+        return sites
+
+    @property
+    def writes_unreadable_names(self) -> bool:
+        """
+        Whether any scope here carries a write whose name nobody can read — every scope's
+        `Scope.writes_unreadable_names` flag, aggregated. Which name such a write landed on is not
+        a question anything can answer, so one anywhere puts every read of a name no binding
+        claims in doubt rather than only the scope the write sat in.
+        """
+        stack: list[Scope] = [self.root_scope]
+        while stack:
+            scope = stack.pop()
+            stack.extend(scope.children)
+            if scope.writes_unreadable_names:
+                return True
+        return False
+
     def _populate(self, scope: Scope):
         for node in scope_local_nodes(scope.node):
             if isinstance(node, Ps1ScriptBlock):

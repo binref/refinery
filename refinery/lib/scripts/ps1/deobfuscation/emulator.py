@@ -14,17 +14,25 @@ if TYPE_CHECKING:
 
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
-from refinery.lib.scripts import Block, Transformer
+from refinery.lib.scripts import Block, Node, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
+    MATCH_OPERATORS,
     opens_a_redirection_target,
     takes_output_away,
 )
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
+from refinery.lib.scripts.ps1.analysis.model import (
+    Ps1SemanticModel,
+    Scope,
+    ScopeKind,
+    occurrence_role,
+)
+from refinery.lib.scripts.ps1.analysis.naming import named_references
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
+from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     Ps1Constant,
@@ -52,6 +60,10 @@ from refinery.lib.scripts.ps1.data import (
     named_type,
     resolve_type,
 )
+from refinery.lib.scripts.ps1.deobfuscation.constants import (
+    PS1_AUTOMATIC_VARIABLES,
+    PS1_ENGINE_VARIABLES,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     StringMethodError,
     apply_format_string,
@@ -69,6 +81,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan
 from refinery.lib.scripts.ps1.deobfuscation.substitution import (
     carried_redirections,
+    substitute_list,
     substituted,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
@@ -396,28 +409,55 @@ def _wildcard_to_regex(pattern: str) -> str:
     return ''.join(regex)
 
 
-def script_scope_write_names(root) -> frozenset[str]:
+def script_scope_write_names(model: Ps1SemanticModel) -> frozenset[str]:
     """
-    The variable names an assignment, a `foreach` header, a `++`/`--`, a parameter or a `[ref]`
-    binds outside every function body — the script scope above a folded call. A body that reads one
-    of these before it writes it observes the enclosing value the fold does not hold, so
-    `_Ps1Interpreter` refuses that read rather than answering it `$null`. A name bound only inside a
-    function is that function's own local and is not here, which is what keeps an accumulator like
-    `$r = $r + …` folding: its first `$r` is genuinely unset and reads as `$null`.
+    The variable names a write outside every function body claims — the script scope above a
+    folded call. A body that reads one of these before it writes it observes the enclosing value
+    the fold does not hold, so `_Ps1Interpreter` refuses that read rather than answering it
+    `$null`. A name bound only inside a function is that function's own local and is not here,
+    which is what keeps an accumulator like `$r = $r + …` folding: its first `$r` is genuinely
+    unset and reads as `$null`.
 
-    The name is taken bare of any scope qualifier, since `$script:q = 5` and a later `$q` are one
-    variable, so a write under either spelling withholds the fold of a read under the other.
+    The names come from the semantic model rather than a variable-occurrence walk, because a write
+    does not have to be spelled as a variable to be one: `Set-Variable q 5` writes `$q`, and a walk
+    that sees no occurrence of it folds a call that reads `q` across the write. The scope the model
+    files a write in is the answer to whether it sits above a folded call, so a
+    `Set-Variable q 5 -Scope Script` inside a function counts here while the same command without
+    the scope in that function does not.
     """
     names: set[str] = set()
-    for node in root.walk():
-        if not isinstance(node, Ps1Variable) or not is_write_occurrence(node):
+    stack: list[Scope] = [model.root_scope]
+    while stack:
+        scope = stack.pop()
+        stack.extend(scope.children)
+        if any(ancestor.kind is ScopeKind.FUNCTION for ancestor in _scope_chain(scope)):
             continue
-        parent = node.parent
-        while parent is not None and not isinstance(parent, Ps1FunctionDefinition):
-            parent = parent.parent
-        if parent is None:
-            names.add(node.name.lower())
+        names.update(binding.name for binding in scope.bindings.values() if binding.writes)
     return frozenset(names)
+
+
+def _scope_chain(scope: Scope):
+    """
+    *scope* and every scope it is nested in, innermost first.
+    """
+    cursor: Scope | None = scope
+    while cursor is not None:
+        yield cursor
+        cursor = cursor.parent
+
+
+def _strict_mode_flags(cache) -> tuple[bool, bool]:
+    """
+    The two strict-mode questions every driver that emulates a body asks of the fault reach: whether
+    `Set-StrictMode -Version 2` may be in force, under which the object adapter's faked `Count` on
+    `$null` raises, and whether any `Set-StrictMode` may be, under which a read of a never-assigned
+    name is a statement-terminating error. One place reads them, so a driver that emulates a body
+    cannot leave one of the two out.
+    """
+    return (
+        cache.faults.strict_mode_v2_may_be_in_force(),
+        cache.faults.strict_mode_may_be_in_force(),
+    )
 
 
 class _Ps1Interpreter:
@@ -456,6 +496,10 @@ class _Ps1Interpreter:
         #: writes the driver gives it. A read of one before this body writes it is refused, not
         #: read as `$null`; see `_eval_variable`.
         self._caller_scope_names = caller_scope_names
+        #: Whether a statement has handed `$null` to the success stream, which `_append` drops —
+        #: the registered mid-stream defect, held as a fact a driver with the choice may refuse
+        #: the fold over rather than install a stream shorter than the one 5.1 assembles.
+        self._dropped_null = False
 
     def _lookup(self, key: str) -> _Value:
         """
@@ -534,9 +578,9 @@ class _Ps1Interpreter:
             self._emit_stmt(stmt, stream)
         return self._collapse(stream)
 
-    @staticmethod
-    def _append(stream: list, value: _Value):
+    def _append(self, stream: list, value: _Value):
         if value is None:
+            self._dropped_null = True
             return
         if isinstance(value, list):
             stream.extend(value)
@@ -965,6 +1009,14 @@ class _Ps1Interpreter:
             return None
         if name == 'psitem':
             name = '_'
+        if name in PS1_AUTOMATIC_VARIABLES and not self._written(name):
+            # An automatic variable holds engine state this body does not carry: the pipeline item
+            # of the caller, `$args` of a call that supplied none, the `$Matches` an earlier match
+            # left. Reading one as `$null` because no scope here wrote it is a wrong answer every
+            # caller of the interpreter shares, so the refusal lives here and not in one driver.
+            # A write the emulated code itself performed — the `matches` a `-match` inside the body
+            # refills, the `_` a driver seeds — is what `_written` clears it on.
+            raise _Ps1InterpreterError
         if name in self._caller_scope_names and not self._written(name):
             # A name an enclosing scope binds, read before this body writes it, is refused rather
             # than read as `$null`: the caller scope this fold is entered without may hold the value
@@ -1853,15 +1905,14 @@ class Ps1FunctionEvaluator(Transformer):
             self._collect_functions(node)
             if not self._functions:
                 return None
-            self._caller_scope_names = script_scope_write_names(node)
             # Read before the fold rather than after it: folding a call into its value can neither
             # create nor destroy an `Export-ModuleMember` invocation, and asking afterwards drops
             # the whole shared model on the mutation counter to rebuild it for one boolean.
             cache = model_cache(self, node)
             exports = cache.call_graph.exports_a_name
             self._commands = cache.commands
-            self._strict_v2 = cache.faults.strict_mode_v2_may_be_in_force()
-            self._strict = cache.faults.strict_mode_may_be_in_force()
+            self._caller_scope_names = script_scope_write_names(cache.model)
+            self._strict_v2, self._strict = _strict_mode_flags(cache)
             self._unreached = cache.used_before_defined
             super().visit(node)
             # Folding a call into its value preserves meaning whoever else can reach the name, so
@@ -2246,6 +2297,358 @@ class Ps1FunctionEvaluator(Transformer):
             plan.propose(statement)
         if plan.commit():
             self.mark_changed()
+
+
+class Ps1SubExpressionEvaluator(Transformer):
+    """
+    Evaluate a `$(...)` whose body the interpreter can run, replacing the body with one statement
+    that spells the value it produced.
+
+    The value domain folds only the bodies it can pin as literal structure; every other body — a
+    statement, an operator, an unbound name — is `UNKNOWN` to it and is exactly what this pass may
+    fold instead. No fold the domain performs is revisited: a body it pinned reads as a fact and
+    this pass declines it.
+
+    A sub-expression runs in the scope it is written in, so a fold is a claim about everything
+    around it, and each part of that claim is a refusal here rather than a guess: the names the
+    body reads were written nowhere it can see, the names it writes are read nowhere else, and its
+    state does not carry between evaluations of the one site. The value is the stream the body
+    emits, collapsed the way a function result collapses.
+    """
+
+    def __init__(
+        self,
+        max_iterations: int = _MAX_INTERPRETER_ITERATIONS,
+        max_string_len: int = _MAX_INTERPRETER_STRING_LEN,
+    ):
+        super().__init__()
+        self.max_iterations = max_iterations
+        self.max_string_len = max_string_len
+        self._entry = False
+        self._model: Ps1SemanticModel | None = None
+        self._write_sites: dict[str, list[Node]] = {}
+        self._doubts_names = False
+        self._runs_data_code = False
+        self._strict_v2 = True
+        self._strict = False
+
+    def visit(self, node: Node):
+        if self._entry or not isinstance(node, Ps1Script):
+            return super().visit(node)
+        self._entry = True
+        try:
+            cache = model_cache(self, node)
+            self._model = cache.model
+            self._write_sites = cache.model.write_sites()
+            self._doubts_names = cache.model.writes_unreadable_names
+            self._runs_data_code = runs_code_supplied_as_data(cache.world_measurement)
+            self._strict_v2, self._strict = _strict_mode_flags(cache)
+            return super().visit(node)
+        finally:
+            self._entry = False
+            self._model = None
+            self._write_sites = {}
+
+    def visit_Ps1SubExpression(self, node: Ps1SubExpression):
+        self.generic_visit(node)
+        model = self._model
+        if model is None or read(node) is not UNKNOWN:
+            return None
+        reads, written = self._body_names(node)
+        if not self._may_evaluate(node, reads, written):
+            return None
+        value = self._evaluate(node, reads)
+        if value is None:
+            return None
+        literal = Ps1FunctionEvaluator._value_to_node(value)
+        if literal is None:
+            return None
+        if not substitute_list(node, 'body', [Ps1ExpressionStatement(expression=literal)]):
+            return None
+        self.mark_changed()
+        return None
+
+    def _body_names(self, node: Ps1SubExpression) -> tuple[set[str], set[str]]:
+        """
+        The names the body reads and the names it writes. A read is every occurrence that observes
+        a value — a plain read as much as the target of a `+=`, the operand of a `++` or the
+        container a store reaches through — and a write is every occurrence that changes what a
+        read observes, `matches` included whenever the body holds a `-match` operator that refills
+        it. A name a `foreach` header binds is a write and not a read: the header supplies it
+        before the body runs.
+        """
+        reads: set[str] = set()
+        written: set[str] = set()
+        for descendant in node.walk():
+            if isinstance(descendant, Ps1Variable):
+                if descendant.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+                    continue
+                role = occurrence_role(descendant)
+                name = descendant.name.lower()
+                if name == 'psitem':
+                    name = '_'
+                if role.observes:
+                    reads.add(name)
+                if role.stores:
+                    written.add(name)
+            elif (
+                isinstance(descendant, Ps1BinaryExpression)
+                and descendant.operator.lower() in MATCH_OPERATORS
+            ):
+                written.add(_MATCHES_NAME)
+        return reads, written
+
+    def _may_evaluate(self, node: Ps1SubExpression, reads: set[str], written: set[str]) -> bool:
+        for descendant in node.walk():
+            if isinstance(
+                descendant,
+                (Ps1ReturnStatement, Ps1BreakStatement, Ps1ContinueStatement),
+            ):
+                # These act on the scope the sub-expression is written in — a `return` exits the
+                # enclosing function, a `break` the enclosing loop — so the value this would
+                # install is not the value the script produces.
+                return False
+            if getattr(descendant, 'redirections', None):
+                # 5.1 keeps what a redirected stage writes out of the stream this folds, and the
+                # interpreter refuses the spelling already; this is the one scan that keeps the
+                # driver sound should a parser change ever open a path the interpreter does not.
+                return False
+        if not self._reads_follow_certain_writes(node, written):
+            return False
+        if written and self._leaks_a_written_name(node, written):
+            return False
+        if self._doubts_names or self._runs_data_code:
+            if reads - written - self._write_sites.keys() - PS1_AUTOMATIC_VARIABLES:
+                # A name no write anywhere in the script claims reads as `$null` only where
+                # nothing outside the syntax can have written it: a write aimed at a name nobody
+                # can read, or code a site runs out of data this tree does not contain.
+                return False
+        return True
+
+    def _reads_follow_certain_writes(
+        self, node: Ps1SubExpression, written: set[str],
+    ) -> bool:
+        """
+        Whether every read of a name the body writes follows a write of it that certainly ran.
+        A read that can execute with the name unset answers `$null` on a fresh evaluation and the
+        value the previous evaluation left on the host, and a sub-expression inside a loop is
+        evaluated more than once. Textual order alone does not certify: a write nested in a branch
+        that does not run leaves the read seeing the store the last evaluation made.
+        """
+        certain: set[str] = set()
+        for statement in node.body:
+            target = _plain_statement_store_target(statement)
+            if target is not None:
+                if not self._reads_certified(statement.expression.value, written, certain):
+                    return False
+                certain.add(target)
+                continue
+            if isinstance(statement, Ps1ForLoop):
+                if not self._for_reads_follow(statement, written, certain):
+                    return False
+                continue
+            if not self._reads_certified(statement, written, certain):
+                return False
+        return True
+
+    def _for_reads_follow(
+        self, loop: Ps1ForLoop, written: set[str], certain: set[str],
+    ) -> bool:
+        """
+        A top-level `for` initializer runs exactly once, before the condition, the iterator and the
+        body, so a plain store it carries certifies every read after it — its own right side
+        excepted, which a store does not reach across: `for($c = $c + 'x'; …)` reads the value the
+        previous evaluation left.
+        """
+        parts: list[Node] = []
+        initializer = loop.initializer
+        if initializer is not None:
+            target = _plain_store_target(initializer)
+            if target is not None:
+                if not self._reads_certified(initializer.value, written, certain):
+                    return False
+                certain.add(target)
+            else:
+                parts.append(initializer)
+        parts.extend(
+            part for part in (loop.condition, loop.iterator, loop.body) if part is not None
+        )
+        return all(self._reads_certified(part, written, certain) for part in parts)
+
+    def _reads_certified(self, root: Node | None, written: set[str], certain: set[str]) -> bool:
+        """
+        Whether every observing read under *root* of a name written somewhere in the body is
+        covered by *certain* — the names a store that certainly ran has bound — or by the
+        header of a `foreach` the read sits inside, a body running only after its binding.
+        """
+        if root is None:
+            return True
+        for descendant in root.walk():
+            if not isinstance(descendant, Ps1Variable):
+                continue
+            if descendant.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+                continue
+            if not occurrence_role(descendant).observes:
+                continue
+            name = descendant.name.lower()
+            if name == 'psitem':
+                name = '_'
+            if name not in written or name in certain:
+                continue
+            if self._bound_by_a_foreach_body(descendant, name):
+                continue
+            return False
+        return True
+
+    def _bound_by_a_foreach_body(self, var: Ps1Variable, name: str) -> bool:
+        """
+        Whether *var* sits inside the body of a `foreach` whose header binds *name*.
+        """
+        cursor: Node = var
+        inside_a_body = False
+        while (parent := cursor.parent) is not None:
+            if isinstance(parent, Ps1ForEachLoop):
+                if inside_a_body:
+                    bound = parent.variable
+                    if isinstance(bound, Ps1Variable) and bound.name.lower() == name:
+                        return True
+                inside_a_body = False
+            elif (
+                isinstance(parent, Block)
+                and isinstance(parent.parent, Ps1ForEachLoop)
+                and parent.parent.body is parent
+            ):
+                inside_a_body = True
+            cursor = parent
+        return False
+
+    def _leaks_a_written_name(self, node: Ps1SubExpression, written: set[str]) -> bool:
+        for name in sorted(written):
+            if name in PS1_ENGINE_VARIABLES:
+                # The engine reads these between statements — `$OFS` at the next collection
+                # coercion, `$ErrorActionPreference` at the next failing cmdlet — so a reader of
+                # one observes the body's write without any occurrence in the tree.
+                return True
+            if self._occurs_outside(node, name):
+                return True
+        return False
+
+    def _occurs_outside(self, node: Ps1SubExpression, name: str) -> bool:
+        """
+        Whether *name* is referenced anywhere outside *node*' subtree. A name a binding claims is
+        asked through the semantic model, so a same-named local of another scope is not a reader of
+        this write while a reader inside a nested function or a captured scriptblock is — and a
+        binding a qualifier or a dynamic reach can arrive at refuses. A name no binding claims,
+        `matches` among them, is scanned by spelling: a variable occurrence outside, or a command
+        that addresses the name as a string.
+        """
+        model = self._model
+        if model is None:
+            return True
+        bindings = set()
+        for descendant in node.walk():
+            if (
+                isinstance(descendant, Ps1Variable)
+                and descendant.name.lower() == name
+                and (binding := model.binding_of(descendant)) is not None
+            ):
+                bindings.add(binding)
+        if not bindings:
+            for descendant in self._outside(model, node):
+                if isinstance(descendant, Ps1Variable):
+                    if descendant.name.lower() == name:
+                        return True
+                elif isinstance(descendant, Ps1CommandInvocation):
+                    if any(reference.key == name for reference in named_references(descendant)):
+                        return True
+            return False
+        for binding in bindings:
+            if binding.dynamic_or_qualified:
+                return True
+            for occurrence in (*binding.reads, *binding.writes):
+                if not self._inside(occurrence.node, node):
+                    return True
+        return False
+
+    def _outside(self, model: Ps1SemanticModel, excluded: Node):
+        """
+        Every node of the script the sweep runs on except the ones inside *excluded*'s subtree.
+        """
+        stack: list[Node] = list(model.root.children())
+        while stack:
+            cursor = stack.pop()
+            if cursor is excluded:
+                continue
+            yield cursor
+            stack.extend(cursor.children())
+
+    @staticmethod
+    def _inside(inner: Node, outer: Node) -> bool:
+        cursor: Node | None = inner
+        while cursor is not None:
+            if cursor is outer:
+                return True
+            cursor = cursor.parent
+        return False
+
+    def _evaluate(self, node: Ps1SubExpression, reads: set[str]) -> _Value | None:
+        """
+        The value the body's success stream collapses to, or `None` where this will not answer.
+        The interpreter is refused every name an enclosing scope may hold and given no functions:
+        a user-function call inside a `$(...)` declines, because the call-site bookkeeping that
+        licenses folding a call is the function evaluator's and does not transfer to a value
+        position. An `Invoke-Expression` the body raises refuses the fold rather than installing
+        the command the function evaluator substitutes, which would drop the rest of the stream.
+        """
+        interpreter = _Ps1Interpreter(
+            max_iterations=self.max_iterations,
+            max_string_len=self.max_string_len,
+            caller_scope_names=frozenset(
+                name for name in reads if self._written_outside(node, name)
+            ),
+            strict_v2_may_be_in_force=self._strict_v2,
+            strict_may_be_in_force=self._strict,
+        )
+        try:
+            value = interpreter._exec_statements(node.body)
+        except (InvokeExpression, _Ps1InterpreterError):
+            return None
+        if interpreter._dropped_null:
+            # 5.1 keeps a `$null` a statement hands the stream while the interpreter drops it, so
+            # a fold would install a shorter stream than the one the host assembles.
+            return None
+        return value
+
+    def _written_outside(self, node: Ps1SubExpression, name: str) -> bool:
+        return any(
+            not self._inside(site, node) for site in self._write_sites.get(name, ())
+        )
+
+
+def _plain_store_target(expression: Node | None) -> str | None:
+    """
+    The name a plain `=` onto an unqualified variable stores, or `None` for any other expression
+    shape.
+    """
+    if not isinstance(expression, Ps1AssignmentExpression) or expression.operator != '=':
+        return None
+    target = expression.target
+    if not isinstance(target, Ps1Variable):
+        return None
+    if target.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+        return None
+    return target.name.lower()
+
+
+def _plain_statement_store_target(statement) -> str | None:
+    """
+    The name a top-level statement of a statement list stores with a plain `=` onto an unqualified
+    variable. Such a statement runs exactly once per evaluation of the list, before every later
+    statement, which is what makes it the one certain write.
+    """
+    if not isinstance(statement, Ps1ExpressionStatement):
+        return None
+    return _plain_store_target(statement.expression)
 
 
 class Ps1ForEachPipeline(Transformer):

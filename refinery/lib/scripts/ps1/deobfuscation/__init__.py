@@ -12,7 +12,11 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     Ps1SuccessFlagInlining,
 )
 from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeElimination
-from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline, Ps1FunctionEvaluator
+from refinery.lib.scripts.ps1.deobfuscation.emulator import (
+    Ps1ForEachPipeline,
+    Ps1FunctionEvaluator,
+    Ps1SubExpressionEvaluator,
+)
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
 from refinery.lib.scripts.ps1.deobfuscation.iexinline import Ps1IexInlining
@@ -55,6 +59,7 @@ _emulate = TransformerGroup(
     'emulate',
     Ps1ForEachPipeline,
     Ps1FunctionEvaluator,
+    Ps1SubExpressionEvaluator,
 )
 
 _normalize = TransformerGroup(

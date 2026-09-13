@@ -335,7 +335,7 @@ _WRITING_PARAMETERS = _writing_parameters()
 #: The binary operators whose evaluation writes the automatic `$Matches` variable, so an expression
 #: built on one is a store to engine state rather than a value. Every case-sensitivity and negation
 #: spelling is listed, because the engine populates `$Matches` for all of them.
-_MATCH_OPERATORS = frozenset({
+MATCH_OPERATORS = frozenset({
     '-cmatch',
     '-cnotmatch',
     '-imatch',
@@ -852,7 +852,7 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
         # that is a store to shared engine state, not a value the expression merely yields, so the
         # operator has to be read and not just the operands. Deleting `$s -match 'p(.*)q'` left the
         # `$Matches[1]` that carries the payload reading an unset variable.
-        if node.operator.lower() in _MATCH_OPERATORS:
+        if node.operator.lower() in MATCH_OPERATORS:
             return False
         return is_side_effect_free(node.left, world) and is_side_effect_free(node.right, world)
     if isinstance(node, Ps1RangeExpression):
@@ -2202,7 +2202,7 @@ def _skipped_writes(element: Node) -> tuple[bool, list[str]]:
                 names.append(operand.name.lower())
             else:
                 escapes = True
-        elif isinstance(node, Ps1BinaryExpression) and node.operator.lower() in _MATCH_OPERATORS:
+        elif isinstance(node, Ps1BinaryExpression) and node.operator.lower() in MATCH_OPERATORS:
             escapes = True
     return escapes, names
 
