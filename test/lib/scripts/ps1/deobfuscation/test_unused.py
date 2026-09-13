@@ -242,12 +242,13 @@ class TestPs1JunkStatementRemoval(TestPs1):
         self.assertIn('done', result)
 
     def test_a_command_that_fills_a_variable_is_kept(self):
-        # `-OutVariable d` is what sets `$d`. The parsed parameter name keeps its leading dash and
-        # PowerShell binds abbreviations, so a name table consulted by exact match matches nothing.
+        # `-OutVariable d` is what sets `$d`. The abbreviation expansion spells an abbreviated
+        # parameter out, so the name a table consults by exact match is the full one every
+        # spelling binds.
         for source, marker in (
             ('Get-Date -OutVariable d\nWrite-Host $d', 'OutVariable'),
-            ('Get-Date -OutVar d\nWrite-Host $d', 'OutVar'),
-            ('Get-Date -ov d\nWrite-Host $d', '-ov'),
+            ('Get-Date -OutVar d\nWrite-Host $d', 'OutVariable'),
+            ('Get-Date -ov d\nWrite-Host $d', 'OutVariable'),
             ('Get-ChildItem -ErrorVariable e\nWrite-Host $e', 'ErrorVariable'),
             ('Get-Date | Out-Null -ErrorVariable e\nWrite-Host $e', 'ErrorVariable'),
             ('Get-Random -SetSeed 5\nWrite-Host done', 'SetSeed'),

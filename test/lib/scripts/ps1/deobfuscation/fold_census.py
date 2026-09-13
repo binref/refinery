@@ -1551,4 +1551,18 @@ FOLDS: dict[str, str] = {
         "Write-Output 'Ux'",
     'Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)':
         '$q = 5\nfunction fq {\n  $q + 1\n}\nWrite-Output (fq)',
+    "Set-Alias q1 -V Write-Output; q1 'x'":
+        "Write-Output 'x'",
+    "Set-Alias q2 -v Write-Output; q2 'y'":
+        "Write-Output 'y'",
+    '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k':
+        '$o = [pscustomobject]@{}\nAdd-Member -MemberType NoteProperty k v -InputObject $o\n$o.k',
+    'Write-Output (Get-Date -Y 2020 -Month 1 -Day 1).Year':
+        'Write-Output (Get-Date -Year 2020 -Month 1 -Day 1).Year',
+    "Get-Item nope -ErrorAc Stop; Write-Host 'after'":
+        "Get-Item nope -ErrorAction Stop\nWrite-Host 'after'",
+    "Get-Item nope -e Stop; Write-Host 'after'":
+        "Get-Item nope -Exclude Stop\nWrite-Host 'after'",
+    "Get-Item nope -errora Stop; Write-Host 'after'":
+        "Get-Item nope -ErrorAction Stop\nWrite-Host 'after'",
 }

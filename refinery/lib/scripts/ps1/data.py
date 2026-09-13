@@ -374,6 +374,71 @@ def value_parameters(command: str) -> frozenset[str]:
     return found
 
 
+_ABBREVIATION_POOLS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]] = {}
+
+
+def _abbreviation_pools(command: str):
+    """
+    The two pools *command* binds a parameter out of: its own parameter names and aliases, and its
+    per-cmdlet common ones, each entry the lowercased spelling paired with the full-cased parameter
+    it names. `None` for a command the collected surface does not carry.
+
+    Memoized for the same reason `value_parameters` is: the table carries thousands of commands and
+    a caller asks about a handful.
+    """
+    command = command.lower()
+    found = _ABBREVIATION_POOLS.get(command)
+    if found is not None:
+        return found
+    record = _COMMAND_RECORDS.get(command)
+    if record is None:
+        return None
+    own: list[tuple[str, str]] = []
+    common: list[tuple[str, str]] = []
+    for _parameter, _info in record['parameters'].items():
+        _pool = common if _info['common'] else own
+        _pool.append((_parameter.lower(), _parameter))
+        _pool.extend((_alias.lower(), _parameter) for _alias in _info['aliases'])
+    found = _ABBREVIATION_POOLS[command] = (tuple(own), tuple(common))
+    return found
+
+
+def abbreviated_parameter(command: str, written: str) -> str | None:
+    """
+    The full parameter name *written* binds on *command*, or `None` where it binds none, is
+    ambiguous, or the collected surface carries no record for the command.
+
+    PowerShell binds a parameter by its full name or by any alias, and by any prefix that names one
+    parameter unambiguously; a cmdlet's own parameters win over the common ones where a prefix
+    matches both pools — measured on 5.1, `Set-Alias q -V Write-Output` binds `-Value` although
+    the common `Verbose` also matches `v`. An exact hit on an alias is taken before any prefix is
+    considered, which is the discriminating case for `Add-Member -Type`: the alias names
+    `MemberType` and no prefix question is asked.
+
+    The pools are the command's own record and never the union tables, because the common
+    parameters are per-cmdlet on 5.1 — measured, `Get-Date -c` is `NamedParameterNotFound` where
+    `Remove-Item -c` asks whether to confirm. The residual of reading a collected surface rather
+    than the cmdlet itself is stated where the rewrite is done: a prefix unique here but ambiguous
+    on the real cmdlet would be expanded, and closing it means re-collecting the surface from 5.1.
+    """
+    pools = _abbreviation_pools(command)
+    if pools is None:
+        return None
+    written = written.lower().lstrip('-')
+    if not written:
+        return None
+    own, common = pools
+    for pool in (own, common):
+        for spelling, parameter in pool:
+            if spelling == written:
+                return parameter
+    for pool in (own, common):
+        found = {parameter for spelling, parameter in pool if spelling.startswith(written)}
+        if len(found) == 1:
+            return next(iter(found))
+    return None
+
+
 def scriptblock_parameters(command: str) -> frozenset[str]:
     """
     The lowercased parameter names and aliases of *command* that are declared to take a script

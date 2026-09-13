@@ -16,6 +16,7 @@ from refinery.lib.scripts.ps1.data import (
     PS1_KNOWN_VARIABLES,
     SIMPLE_IDENTIFIER,
     TYPE_ARG_COMMANDS,
+    abbreviated_parameter,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     is_bare_command_name,
@@ -217,7 +218,13 @@ class Ps1Simplifications(Transformer):
                 self.mark_changed()
             if self._binds_parameters_by_name(node):
                 name_lower = node.name.lower()
-                normalized = KNOWN_PS_OPERATORS.get(name_lower)
+                # The command's own record answers first: an exact spelling can be the alias of
+                # a longer parameter on this cmdlet — `Add-Member -Type` names `MemberType` —
+                # and the union tables below would read that spelling as the full name of a
+                # different command's parameter.
+                normalized = self._expanded_abbreviation(node)
+                if normalized is None:
+                    normalized = KNOWN_PS_OPERATORS.get(name_lower)
                 if normalized is None:
                     normalized = KNOWN_PS_SWITCHES.get(name_lower)
                 if normalized is None:
@@ -230,6 +237,32 @@ class Ps1Simplifications(Transformer):
                     set_value(node, 'name', normalized)
                     self.mark_changed()
         return None
+
+    def _expanded_abbreviation(self, node: Ps1CommandArgument) -> str | None:
+        """
+        The full spelling of an abbreviated parameter *node* writes, or `None` where the command it
+        is written against is not a cmdlet the collected surface carries.
+
+        An abbreviated parameter binds only where the command it names resolves to that cmdlet, so
+        the gate is the denotation's resolved target and not the spelling: an alias invocation
+        expands through the alias, and a script function — which binds prefixes just the same,
+        measured — is left, because the collected surface carries no function parameters. A
+        function defined by the script also beats the cmdlet of the same name in resolution, so a
+        `function Remove-Item { param($EA) }` cannot be mis-expanded. The rewrite spells the full
+        name with the casing the record carries; a value a colon-form parameter holds is a field
+        the parser has already split, so this touches the name alone.
+        """
+        command = node.parent
+        if self._commands is None or not isinstance(command, Ps1CommandInvocation):
+            return None
+        denotation = self._commands.denotation(command)
+        if denotation.kind not in (CommandKind.CMDLET, CommandKind.ALIAS):
+            return None
+        target = denotation.target
+        if target is None:
+            return None
+        expanded = abbreviated_parameter(target, node.name)
+        return None if expanded is None else F'-{expanded}'
 
     def _binds_parameters_by_name(self, argument: Ps1CommandArgument) -> bool:
         """

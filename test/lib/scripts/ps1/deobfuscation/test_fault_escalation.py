@@ -1329,18 +1329,27 @@ class TestPs1EverySpellingOfTheErrorActionParameterCarriesTheStopItIsGiven(_Ps1F
     the command answers to, `-EA` is the documented alias of `-ErrorAction`, and an argument may be
     attached to the parameter with a colon rather than written beside it. Each spelling below hands
     the command the same `Stop` the written-out name does, so each ends the script over the error
-    the command reports and each leaves the `trap` load bearing.
+    the command reports and each leaves the `trap` load bearing. Each is also *spelled out* by the
+    deobfuscation — the abbreviation expansion writes the parameter every spelling binds — so the
+    expected output names it in full.
     """
 
-    def _assertTheTrapOverTheCommandIsKept(self, command: str) -> None:
-        self._assertKept(F"""
+    def _assertTheTrapOverTheCommandIsKept(self, command: str, expected: str) -> None:
+        self._assertDeobfuscatesTo(F"""
             trap {{ continue }}
             {command}
+            {_FOLLOWER}
+        """, F"""
+            trap {{ continue }}
+            {expected}
             {_FOLLOWER}
         """)
 
     def _assertTheTrapOverTheParameterIsKept(self, parameter: str) -> None:
-        self._assertTheTrapOverTheCommandIsKept(F'Get-Item nope {parameter} Stop')
+        self._assertTheTrapOverTheCommandIsKept(
+            F'Get-Item nope {parameter} Stop',
+            'Get-Item nope -ErrorAction Stop',
+        )
 
     def test_a_prefix_no_other_parameter_answers_to_binds_the_action(self):
         for parameter in ['-ErrorAction', '-erroraction', '-ErrorActio', '-ErrorAc', '-ErrorA']:
@@ -1353,9 +1362,14 @@ class TestPs1EverySpellingOfTheErrorActionParameterCarriesTheStopItIsGiven(_Ps1F
                 self._assertTheTrapOverTheParameterIsKept(parameter)
 
     def test_an_action_attached_to_the_parameter_with_a_colon_binds_it(self):
-        for command in ['Get-Item nope -ErrorAction:Stop', 'Get-Item nope -EA:Stop']:
+        for command in [
+            'Get-Item nope -ErrorAction:Stop',
+            'Get-Item nope -EA:Stop',
+        ]:
             with self.subTest(command):
-                self._assertTheTrapOverTheCommandIsKept(command)
+                self._assertTheTrapOverTheCommandIsKept(
+                    command, 'Get-Item nope -ErrorAction:Stop',
+                )
 
 
 class TestPs1EverySpellingOfAnActionOtherThanStopLeavesTheTrapRemovable(_Ps1FaultEscalation):
@@ -1366,13 +1380,14 @@ class TestPs1EverySpellingOfAnActionOtherThanStopLeavesTheTrapRemovable(_Ps1Faul
     argument being one it cannot name, would break.
     """
 
-    def _assertTheTrapOverTheCommandIsRemoved(self, command: str) -> None:
+    def _assertTheTrapOverTheCommandIsRemoved(self, command: str, expected: str | None = None) -> None:
+        expected = command if expected is None else expected
         self._assertDeobfuscatesTo(F"""
             trap {{ continue }}
             {command}
             {_FOLLOWER}
         """, F"""
-            {command}
+            {expected}
             {_FOLLOWER}
         """)
 
@@ -1396,9 +1411,13 @@ class TestPs1EverySpellingOfAnActionOtherThanStopLeavesTheTrapRemovable(_Ps1Faul
 
     def test_a_member_other_than_stop_attached_with_a_colon_leaves_the_trap_removable(self):
         commands = ['Get-Item nope -ErrorAction:Continue', 'Get-Item nope -EA:SilentlyContinue']
-        for command in commands:
+        expected = [
+            'Get-Item nope -ErrorAction:Continue',
+            'Get-Item nope -ErrorAction:SilentlyContinue',
+        ]
+        for command, spelled in zip(commands, expected):
             with self.subTest(command):
-                self._assertTheTrapOverTheCommandIsRemoved(command)
+                self._assertTheTrapOverTheCommandIsRemoved(command, spelled)
 
 
 class TestPs1AnActionThatArrivesBySplattingIsTheActionTheCommandRunsUnder(_Ps1FaultEscalation):

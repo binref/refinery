@@ -465,6 +465,19 @@ BEHAVIOURS: tuple[str, ...] = (
     "Write-Output @($('a'; $z; 'b')).Count",
     'iex \'$u = "U"\'; Write-Output $($u + \'x\')',
     "Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)",
+
+    #: What an abbreviated parameter is asked to preserve the behaviour of. Each binding was
+    #: measured on 5.1: the alias and any unambiguous prefix name the parameter the written-out
+    #: spelling does, a cmdlet's own parameters winning over the common ones where a prefix matches
+    #: both, and a prefix that names two parameters or a common parameter the cmdlet does not carry
+    #: binding nothing at all. Spelling one out therefore changes nothing the script does, and the
+    #: two that bind nothing are left as written.
+    "Set-Alias q1 -V Write-Output; q1 'x'",
+    "Set-Alias q2 -v Write-Output; q2 'y'",
+    "$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k",
+    "$o = [pscustomobject]@{}; Add-Member -ty NoteProperty k v -InputObject $o; $o.k",
+    "Get-Date -c; Write-Output 'ran'",
+    "Write-Output (Get-Date -Y 2020 -Month 1 -Day 1).Year",
 )
 
 
