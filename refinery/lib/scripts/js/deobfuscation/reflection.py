@@ -20,7 +20,7 @@ from refinery.lib.scripts import (
     spells_its_source,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.effects import side_effect_free
+from refinery.lib.scripts.js.analysis.effects import EffectModel, side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     REFLECTIVE_INTRINSICS,
     SYNC_EVAL_NAMES,
@@ -42,12 +42,14 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
+    extract_literal_value,
     get_body,
     names_this_realms_global_object,
     nothing_still_names,
     property_key,
     references_receiver_this,
     remove_declarator,
+    replace_with_value,
     rewrite_receiver_this_to_global,
     string_value,
     walk_scope,
@@ -186,7 +188,15 @@ def _try_parse(
     return parsed
 
 
-def _try_eval_string_arg(node: Expression, model: SemanticModel) -> str | None:
+def _try_eval_string_arg(node: Expression, model: SemanticModel, effects: EffectModel) -> str | None:
+    """
+    Fold an expression to the string it denotes by interpreting it, or `None` where that refuses.
+    The interpreter runs with the real effect model — every caller here is an extraction arm on a
+    file that carries a reflection surface by definition, so a builtin the program may have replaced
+    is not one this fold may trust on the strength of having no question to ask. The model answers
+    name resolution alone: a caller that holds only the semantic model passes it and pays no effect
+    model it never consults, which is why the two arrive separately.
+    """
     from refinery.lib.scripts.js.deobfuscation.interpreter import (
         InterpreterError,
         IrreducibleExpression,
@@ -194,7 +204,7 @@ def _try_eval_string_arg(node: Expression, model: SemanticModel) -> str | None:
         _ThrowSignal,
     )
     try:
-        result = JsInterpreter(model=model).eval_expression(node)
+        result = JsInterpreter(model=model, effects=effects).eval_expression(node)
     except (InterpreterError, IrreducibleExpression, _ThrowSignal, RecursionError, ValueError, OverflowError):
         return None
     if isinstance(result, str):
@@ -352,6 +362,45 @@ def _function_constructor_body(
         return None
     return _extract_function_body_code(
         ctor_call, intrinsic_callee=intrinsic_callee, eval_string=eval_string)
+
+
+def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, JsFunctionExpression] | None:
+    """
+    The script wrapping a `Function` construction's body as the function the construction builds,
+    together with that script, or `None` where the body is not one this package can execute: it does
+    not parse as a plain function's body, its parameters — the construction's leading string
+    arguments, spliced into the wrapper's parameter list — are not a plain comma-separated
+    identifier list, or it declares strict mode, which changes what `arguments`, `this` and a
+    global assignment mean in ways the execution below does not model.
+
+    The wrapper is a function expression rather than a bare statement list so the fragment model
+    built over it sees the function's own scope: the `arguments` binding the body reads lives there,
+    and the execution's question — may this call hand the body an arguments object — is one the
+    model can answer only for a function it placed.
+    """
+    leading = [string_value(argument) for argument in ctor_call.arguments[:-1]]
+    if any(text is None for text in leading):
+        return None
+    parameters = ','.join(text for text in leading if text is not None)
+    parsed = _try_parse(
+        F'(function ({parameters}) {{ {code} }})',
+        strict=False,
+        module=False,
+        context=function_context(False, False),
+    )
+    if parsed is None or not parsed.body:
+        return None
+    statement = parsed.body[0]
+    if not isinstance(statement, JsExpressionStatement) or statement.expression is None:
+        return None
+    function = strip_parens(statement.expression)
+    if not isinstance(function, JsFunctionExpression):
+        return None
+    if not all(isinstance(param, JsIdentifier) for param in function.params):
+        return None
+    if declares_use_strict(function.body):
+        return None
+    return parsed, function
 
 
 def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression | None:
@@ -987,9 +1036,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         A resolver folding an argument expression to the string it denotes — `atob('...')` to the code
         it decodes — or `None`. The interpreter is given *root*'s semantic model, because a call it
-        answers from the built-in registry is the built-in only where nothing has bound that name; the
-        effect model is not built, since none of the questions asked here are about effects. Resolved
-        lazily against *root*'s current model, mirroring `_dynamic_read_effect`.
+        answers from the built-in registry is the built-in only where nothing has bound that name,
+        and the run's effect model, because whether it is the built-in at all is the trust question
+        no model-free fold may skip. Resolved lazily against *root*'s current models, mirroring
+        `_dynamic_read_effect`.
         """
         def resolve(node: Expression | None) -> str | None:
             if node is None:
@@ -999,10 +1049,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 for ident in node.walk()
             ):
                 return None
-            model = model_cache(self, root).model
-            if model.scope_of(node) is None:
+            cache = model_cache(self, root)
+            if cache.model.scope_of(node) is None:
                 return None
-            return _try_eval_string_arg(node, model)
+            return _try_eval_string_arg(node, cache.model, cache.effects)
         return resolve
 
     def _function_intrinsic_callee(self, root: JsScript) -> Callable[[Expression | None], bool]:
@@ -1228,6 +1278,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         a fresh global-scope function; a direct `eval` runs in the caller's scope; an indirect `eval`
         runs in the global scope. A string timer is not inlined here: its value is a handle, not the
         code's completion value, and its deferred execution is preserved instead by `_lower_timers`.
+
+        A construction whose body the inline route declines — one that binds parameters or reads its
+        `arguments`, or a call that passes any — is not the end: `_try_evaluate_construction` executes
+        the constructed body over the call's argument values, so a body too entangled to splice as
+        text can still resolve the call to the value it answers.
         """
         read_effect = self._read_effect
         alias_name = self._alias_name
@@ -1247,6 +1302,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if parsed is not None:
                     self._note_retirement(site, retire)
                     return ReflectedScope.FUNCTION_CONSTRUCTOR, parsed
+                self._try_evaluate_construction(node, site, ctor_call, code, retire, root)
                 return None
         direct = _extract_eval_code(
             node, free_global_name=free_global_name, eval_string=self._eval_string)
@@ -1313,6 +1369,133 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not cache.dominance.binding_established_before(binding, node):
             return None
         return value, binding
+
+    def _try_evaluate_construction(
+        self,
+        node: JsCallExpression,
+        site: Node,
+        ctor_call: Node,
+        code: str,
+        retire: Binding | None,
+        root: JsScript,
+    ) -> None:
+        """
+        The evaluation route: execute the body a `Function` construction builds over the argument
+        values the call passes, and replace the call with the value it answers. Where the inline
+        route splices the body's text — sound only where nothing in it binds parameters, reads
+        `arguments`, or observes the call's arguments — this route runs the body as an interpreter
+        would, so exactly the bodies the inline route exists for are the ones this one resolves:
+        the decoders that fold their arguments through `arguments[p]`.
+
+        The interpreter runs the parsed fragment against two models, one question per model. The
+        real program's effect model answers name integrity — which built-in is still the built-in
+        — and the tampering oracle vouches for it at *node*, the anchor: a construction a later
+        tampering site would not reach may trust what the program-wide questions refuse. The
+        fragment model over the parsed body answers name resolution, so a free name in the fragment
+        denotes the host global or nothing, never a binding of the real tree.
+
+        Two static gates refuse before anything runs. The fragment may not write a free name —
+        every write form, through the role machinery — for an execution that replaced the call
+        would drop the write the real program performs. And the fragment's free names must be
+        disjoint from the real tree's root-scope bindings: script-level `let`, `const`, `class`
+        and `var` names live in the global lexical environment, visible to a `Function`-constructed
+        body, so a fragment reading one answers a binding this route cannot see. Root scope only —
+        a binding nested inside a function is invisible to code the global scope runs, and reading
+        it as though it were reachable is what the tree-binding gate exists to stop.
+
+        A third gate refuses a fragment reading a name this pass has spliced in. The route runs
+        inside the pass's pinned-model window, so a statement an earlier site of the same pass
+        inlined — the write an `eval` carried, spliced after the models were built — is one no
+        pinned fact records: the name's write is invisible to the effect model that would refuse
+        it, and the fragment would answer a value the program replaced. The names the pass has
+        spliced are the gate's own record, the same one the inline route refuses through.
+
+        The route's remaining safety is the two-leg argument
+        `refinery.lib.scripts.js.analysis.tampering` states — the model-backed site enumeration
+        that fails closed on the nodes this pass splices in.
+        """
+        fragment = _parse_construction_function(ctor_call, code)
+        if fragment is None:
+            return
+        fragment_script, function = fragment
+        cache = model_cache(self, root)
+        fragment_model = build_semantic_model(fragment_script)
+        if _body_written_free_names(fragment_model, fragment_script):
+            return
+        free = _body_free_names(fragment_model, fragment_script)
+        if not free.isdisjoint(cache.model.root_scope.bindings):
+            return
+        if not free.isdisjoint(self._spliced_names):
+            return
+        argument_values = self._construction_argument_values(node, root)
+        if argument_values is None:
+            return
+        from refinery.lib.scripts.js.deobfuscation.interpreter import (
+            InterpreterError,
+            IrreducibleExpression,
+            JsInterpreter,
+            _ThrowSignal,
+        )
+        interpreter = JsInterpreter(
+            effects=cache.effects,
+            model=fragment_model,
+            anchor=node,
+            tampering=cache.tampering,
+        )
+        try:
+            result = interpreter.execute(function, argument_values)
+        except (InterpreterError, IrreducibleExpression, _ThrowSignal, RecursionError, ValueError, OverflowError):
+            return
+        if not replace_with_value(node, result):
+            return
+        self._note_retirement(site, retire)
+        self._confirm_retirement(site)
+        self.mark_changed()
+
+    def _construction_argument_values(
+        self, node: JsCallExpression, root: JsScript,
+    ) -> list | None:
+        """
+        The values of *node*'s arguments, extracted under the evaluator's gates: a literal value,
+        or an interpreter evaluation — anchored at *node*, like the execution it feeds — of an
+        argument whose evaluation is side-effect free and cannot throw before the body runs.
+        `None` refuses the call: an argument with an effect or a throw is the program's business,
+        not a value this route may consume silently. Passing the values, rather than substituting
+        their text, is what keeps call-time binding — the value is read at the call, whatever the
+        name held when the fragment was written.
+        """
+        cache = model_cache(self, root)
+        values: list = []
+        for argument in node.arguments:
+            if argument is None:
+                return None
+            ok, value = extract_literal_value(argument)
+            if ok:
+                values.append(value)
+                continue
+            if not cache.effects.is_side_effect_free(
+                argument, None,
+                call_established=cache.call_established, discarded=True,
+                reads_may_throw=True, read_established=cache.read_established,
+            ):
+                return None
+            from refinery.lib.scripts.js.deobfuscation.interpreter import (
+                InterpreterError,
+                IrreducibleExpression,
+                JsInterpreter,
+                _ThrowSignal,
+            )
+            interpreter = JsInterpreter(
+                effects=cache.effects,
+                anchor=node,
+                tampering=cache.tampering,
+                established=lambda callee: cache.dominance.established_before(callee, node),
+            )
+            try:
+                values.append(interpreter.eval_expression(argument))
+            except (InterpreterError, IrreducibleExpression, _ThrowSignal, RecursionError, ValueError, OverflowError):
+                return None
+        return values
 
     def _destination_may_be_strict(self, site: Node, root: JsScript) -> bool:
         """

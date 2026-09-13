@@ -31,6 +31,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     names_global_value,
     references_receiver_this,
     remove_declarator,
+    replace_with_value,
     substitute_params,
     value_to_node,
     walk_scope,
@@ -69,8 +70,6 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     strip_parens,
 )
-
-MAX_RESULT_ARRAY_LEN = 260
 
 _FuncNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
@@ -563,33 +562,42 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         Evaluate *node* as a standalone expression and replace it with the result. Returns whether the
         replacement happened.
 
+        The interpreter is anchored at *node* and handed the tampering oracle, so the trust questions
+        its arms ask are answered for the moment this call runs rather than the whole program: a
+        tampering site guaranteed to follow the call no longer refuses a builtin this expression
+        reads.
+
         `_ThrowSignal` is caught alongside the interpreter's own refusals: a JavaScript exception raised
         inside the evaluated expression is the program's business, not a value this fold may produce, and it
         reaches here as its own exception type rather than an `InterpreterError`. An `IrreducibleExpression`
         is a refusal too — the parameter substitution that makes it useful at a call site has no meaning for
         an expression that takes no parameters.
         """
-        interpreter = JsInterpreter(effects=self._effects)
+        cache = self._cache_for(node)
+        interpreter = JsInterpreter(
+            effects=self._effects,
+            anchor=node,
+            tampering=cache.tampering if cache is not None else None,
+        )
         try:
             result = interpreter.eval_expression(node)
         except (InterpreterError, IrreducibleExpression, _ThrowSignal):
             return False
-        return self._replace_with_value(node, result)
-
-    def _replace_with_value(self, node: JsCallExpression, result: Value) -> bool:
-        """
-        Replace *node* with a literal denoting *result*, refusing when no such literal exists or when the
-        literal would be larger than the expression it replaces. Every path that folds a call to a value
-        shares this, so the result guards cannot be present at one and missing at another.
-        """
-        if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
+        if not replace_with_value(node, result):
             return False
-        replacement = value_to_node(result)
-        if replacement is None:
-            return False
-        _replace_in_parent(node, replacement)
         self.mark_changed()
         return True
+
+    def _cache_for(self, node: JsCallExpression):
+        """
+        The model cache of the script holding *node*, for the anchor the interpreter's trust
+        questions are asked through — or `None` where no script holds it, leaving the interpreter
+        unanchored and its trust questions on their no-anchor arms.
+        """
+        script = self._script
+        if script is None or not node.is_descendant_of(script):
+            return None
+        return model_cache(self, script)
 
     def _established_before(self, func: _FuncNode, call: JsCallExpression) -> bool:
         """
@@ -665,10 +673,18 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         """
         Run the interpreter on *func* with *args* and, on success, replace *node* with the result.
         Returns True if the call site was resolved (either to a value or a substituted expression).
+
+        The interpreter is anchored at *node* and handed the tampering oracle, so the trust
+        questions its arms ask are answered for the moment this call runs rather than the whole
+        program — the decoder a file carries before the call it blocks still refuses it, the one
+        guaranteed to run after does not.
         """
         closure = closure_override if closure_override is not None else self._closure_env.get(id(func))
+        cache = self._cache_for(node)
         interpreter = JsInterpreter(
             effects=self._effects,
+            anchor=node,
+            tampering=cache.tampering if cache is not None else None,
             closure=closure,
             closure_env=self._closure_env,
             established=lambda callee: self._established_before(callee, node),
@@ -694,8 +710,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return True
         except InterpreterError:
             return False
-        if not self._replace_with_value(node, result):
+        if not replace_with_value(node, result):
             return False
+        self.mark_changed()
         if closure is not None and closure_override is None:
             for name in closure:
                 if name in interpreter._env:

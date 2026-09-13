@@ -391,6 +391,44 @@ class TestASloppyListOfPlainNamesIsAliasedByTheObject(TestBase):
         self.assertEqual(_said_after_deobfuscation(rows), _printed(rows))
 
 
+#: A call to a name the `Function` constructor built, mapped to what Node prints for it. Such a body
+#: binds parameters and reads its `arguments`, so it is the shape the inline route declines and the
+#: evaluation route executes over the call's argument values. The aliasing rows answer the value the
+#: aliasing carries, exactly as the spelled function does; the strict constructed body answers the
+#: value the call passed, its parameters an independent copy; the free-name row is one Node refuses
+#: to run at all, and the tool keeps the refusal standing.
+_A_CALL_TO_A_NAME_THE_CONSTRUCTOR_BUILT: dict[str, tuple[str, str | None]] = {
+    "var f = Function('a', 'b', 'return arguments[1];'); console.log(f(1, 2));": ('2\n', None),
+    "var f = Function('return arguments.length'); console.log(f(1, 2));": ('2\n', None),
+    "var f = Function('a', 'a = 2; return arguments[0];'); console.log(f(1));": ('2\n', None),
+    "var f = Function('a', 'arguments[0] = 2; return a;'); console.log(f(1));": ('2\n', None),
+    "var f = Function('a', 'return a;'); console.log(f(1));": ('1\n', None),
+    "'use strict'; var f = Function('a', \"'use strict'; a = 2; return arguments[0];\");"
+    ' console.log(f(1));': ('1\n', None),
+    'var i = 0; var f = Function(\'a\', \'return arguments[i];\'); console.log(f(1));':
+        ('', 'ReferenceError'),
+    'var k = \'q\'; global[k] = 5; var f = Function(\'a\', \'return arguments[0].split(",")\');'
+    " console.log(f('x,y,z')[1]);": ('y\n', None),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallToANameTheConstructorBuilt(TestBase):
+    """
+    The rows of `_A_LIST_OF_PLAIN_NAMES_IN_A_SLOPPY_BODY` re-spelled so the function whose aliasing
+    they observe is one the `Function` constructor built. Whatever the route that resolves the call
+    does with it, the aliasing it cannot decide is the aliasing the program has.
+    """
+
+    def test_node_answers_each_program_the_way_the_row_records(self):
+        rows = _A_CALL_TO_A_NAME_THE_CONSTRUCTOR_BUILT
+        self.assertEqual(_said_by_node(rows), dict(rows))
+
+    def test_the_deobfuscation_answers_each_program_the_same_way(self):
+        rows = _A_CALL_TO_A_NAME_THE_CONSTRUCTOR_BUILT
+        self.assertEqual(_said_after_deobfuscation(rows), dict(rows))
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFunctionWhoseObjectAliasesNothing(TestBase):
 

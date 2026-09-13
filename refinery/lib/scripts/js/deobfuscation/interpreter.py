@@ -46,6 +46,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     canonical_array_index,
     code_points,
     coerces_uninterceptably,
+    coerces_uninterceptably_from_written_chain,
     eval_binary_op,
     js_typeof,
     name_is_unbound,
@@ -2088,7 +2089,7 @@ class JsInterpreter:
         builtin = BUILTIN_REGISTRY.get((None, name))
         if builtin is not None and self._names_a_runtime_builtin(callee):
             if name in _COERCING_GLOBALS and not all(
-                coerces_uninterceptably(self._effects, arg) for arg in args
+                self._coerces_uninterceptably(arg) for arg in args
             ):
                 raise InterpreterError
             return builtin(args)
@@ -2187,11 +2188,21 @@ class JsInterpreter:
         """
         Refuse where converting *value* to the primitive an operator, a key, or a template hole needs
         could run a conversion the program installed. `coerces_uninterceptably` decides, against the
-        effect model this interpreter holds; without one there is no chain to vouch for an object,
+        effect model this interpreter holds — or its surface-free half, where the oracle has vouched
+        for the anchor; without an effect model there is no chain to vouch for an object,
         so every object conversion refuses rather than assuming a file that replaced none.
         """
-        if not coerces_uninterceptably(self._effects, value):
+        if not self._coerces_uninterceptably(value):
             raise InterpreterError
+
+    def _coerces_uninterceptably(self, value: Value) -> bool:
+        """
+        The coercion guard the operator, key, and template arms ask: `coerces_uninterceptably`, or
+        its written-chain half where the oracle has vouched for the anchor.
+        """
+        if self._builtins_intact():
+            return coerces_uninterceptably_from_written_chain(self._effects, value)
+        return coerces_uninterceptably(self._effects, value)
 
     def _prototype_is_intact(self, value_type: type) -> bool:
         """

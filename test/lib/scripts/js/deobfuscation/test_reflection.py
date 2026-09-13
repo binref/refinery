@@ -655,9 +655,14 @@ class TestReflectionInlining(TestJsDeobfuscator):
         source = "var x = Function('', '', 'return 42')();"
         self.assertEqual(source, self._reflect(source))
 
-    def test_a_constructor_alias_with_a_named_parameter_declines(self):
+    def test_a_constructor_alias_with_a_named_parameter_folds_by_evaluation(self):
+        """
+        The alias names the intrinsic constructor, so the call resolves to a construction whose body
+        binds a parameter — the shape the inline route declines and the evaluation route resolves by
+        executing the body over the call's argument value.
+        """
         self.assertEqual(
-            "function d() {}\nvar g = d.constructor;\nvar x = g('a', 'return 42')(1);",
+            "function d() {}\nvar g = d.constructor;\nvar x = 42;",
             self._reflect("function d() {} var g = d.constructor; var x = g('a', 'return 42')(1);"))
 
     def test_separated_temporary_with_another_read_is_kept(self):
@@ -728,9 +733,14 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(
             source, self._reflect("let m = Function('return 1'); m = other; var x = m();"))
 
-    def test_separated_temporary_binding_parameters_not_inlined(self):
-        source = "const m = Function('a', 'return a');\nvar x = m(1);"
-        self.assertEqual(source, self._reflect("const m = Function('a','return a'); var x = m(1);"))
+    def test_separated_temporary_binding_parameters_evaluate(self):
+        """
+        The body binds a parameter, so the inline route declines and the evaluation route executes it
+        over the call's argument value, folding the invocation and retiring the temporary.
+        """
+        self.assertEqual(
+            "var x = 1;",
+            self._reflect("const m = Function('a','return a'); var x = m(1);"))
 
     def test_separated_temporary_used_before_established_not_inlined(self):
         """
@@ -972,9 +982,9 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("var g = ''.constructor.constructor('return this')();"),
         )
 
-    def test_function_constructor_with_parameter_not_inlined(self):
+    def test_function_constructor_with_parameter_folds_by_evaluation(self):
         self.assertEqual(
-            "new Function('a', 'return a')(5);",
+            '5;',
             self._reflect("new Function('a', 'return a')(5);"),
         )
 
@@ -1085,27 +1095,37 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_function_constructor_body_var_redeclares_caller_not_inlined(self):
+    def test_function_constructor_body_var_redeclaring_the_caller_folds_by_evaluation(self):
+        """
+        The body's `var x` is local to the constructed function — a scope the caller never sees — so
+        executing the body answers `undefined` and leaves the caller's `x` untouched. The inline
+        route declines: splicing the declaration would redeclare the caller's binding.
+        """
         source = inspect.cleandoc(
             """
             var x = 1;
-            new Function('var x = 2;')();
+            void 0;
             console.log(x);
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect("var x = 1; new Function('var x = 2;')(); console.log(x);"))
 
-    def test_function_constructor_body_function_declaration_hoists_not_inlined(self):
+    def test_function_constructor_body_function_declaration_folds_by_evaluation(self):
+        """
+        Same locality as a body `var`: the declared function is the constructed function's own, so the
+        caller's `g` still returns 1 after the invocation folds.
+        """
         source = inspect.cleandoc(
             """
             function g() {
               return 1;
             }
-            new Function('function g(){ return 2; }')();
+            void 0;
             g();
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect(
+            "function g() { return 1; } new Function('function g(){ return 2; }')(); g();"))
 
     def test_function_constructor_body_lexical_redeclaration_not_inlined(self):
         source = inspect.cleandoc(
@@ -1119,18 +1139,23 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_function_constructor_body_var_captured_by_caller_closure_not_inlined(self):
+    def test_function_constructor_body_var_a_caller_closure_reads_folds_by_evaluation(self):
+        """
+        The body's `var x` is the constructed function's own, so the closure the caller returns reads
+        the caller's `x` — unbound, exactly as before the fold.
+        """
         source = inspect.cleandoc(
             """
             function f() {
-              new Function('var x = 1;')();
+              void 0;
               return function() {
                 return x;
               };
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect(
+            "function f() { new Function('var x = 1;')(); return function() { return x; }; }"))
 
     def test_function_constructor_body_fresh_declarations_inlined(self):
         self.assertEqual(
@@ -1236,28 +1261,33 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("new Function('\"use strict\"; undeclared = 1;')();"),
         )
 
-    def test_function_constructor_body_var_crosses_block_let_not_inlined(self):
+    def test_function_constructor_body_var_crossing_a_block_let_folds_by_evaluation(self):
+        """
+        The body's `var x` stays inside the constructed function, so the block's `let x` is untouched
+        by the fold; the inline route declines because splicing the declaration would collide.
+        """
         source = inspect.cleandoc(
             """
             {
               let x = 9;
-              new Function('var x = 1;')();
+              void 0;
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect("{ let x = 9; new Function('var x = 1;')(); }"))
 
-    def test_function_constructor_body_var_crosses_for_let_not_inlined(self):
+    def test_function_constructor_body_var_crossing_a_for_let_folds_by_evaluation(self):
         source = inspect.cleandoc(
             """
             function f() {
               for (let i = 0; i < 3; i++) {
-                new Function('var i = 99;')();
+                void 0;
               }
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect(
+            "function f() { for (let i = 0; i < 3; i++) { new Function('var i = 99;')(); } }"))
 
     def test_function_constructor_body_function_decl_crosses_catch_param_not_inlined(self):
         source = inspect.cleandoc(
@@ -1271,25 +1301,27 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_function_constructor_in_strict_function_not_inlined(self):
+    def test_function_constructor_octal_body_folds_to_its_value_in_strict_function(self):
+        """
+        The constructed body is sloppy however strict its destination is, so its octal literal spells
+        eight; the inline route declines — splicing `010` into strict code would spell an early
+        error — but the evaluation route answers the value, which no mode changes.
+        """
         source = inspect.cleandoc(
             """
             function f() {
               'use strict';
-              return new Function('return 010')();
+              return 8;
             }
             """
         )
-        self.assertEqual(source, self._reflect(source))
+        self.assertEqual(source, self._reflect(
+            "function f() { 'use strict'; return new Function('return 010')(); }"))
 
-    def test_function_constructor_in_strict_script_not_inlined(self):
-        source = inspect.cleandoc(
-            """
-            'use strict';
-            var x = new Function('return 010')();
-            """
-        )
-        self.assertEqual(source, self._reflect(source))
+    def test_function_constructor_octal_body_folds_to_its_value_in_strict_script(self):
+        source = "'use strict';\nvar x = 8;"
+        self.assertEqual(
+            source, self._reflect("'use strict';\nvar x = new Function('return 010')();"))
 
     def test_function_constructor_pure_body_inlined_in_strict_function(self):
         """
@@ -2331,27 +2363,36 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
         )
 
     def test_a_payload_holding_either_is_left_standing_where_a_module_is_asked_for(self):
-        rows = [
-            'eval("<!-- x\\nconsole.log(1);");',
-            '(0, eval)("<!-- x\\nconsole.log(1);");',
-            'eval("1;\\n--> x\\nconsole.log(2);");',
-            'var f = Function("<!-- x\\nreturn 1");\nconsole.log(f());',
-        ]
+        """
+        The `eval` rows stay standing: inlining would splice comment text into module code, which
+        refuses it. The `Function` row folds — the payload is the constructed body's own text, which
+        the Function constructor reads with the Script goal however the destination is parsed.
+        """
+        rows = {
+            'eval("<!-- x\\nconsole.log(1);");': 'eval("<!-- x\\nconsole.log(1);");',
+            '(0, eval)("<!-- x\\nconsole.log(1);");': '(0, eval)("<!-- x\\nconsole.log(1);");',
+            'eval("1;\\n--> x\\nconsole.log(2);");': 'eval("1;\\n--> x\\nconsole.log(2);");',
+            'var f = Function("<!-- x\\nreturn 1");\nconsole.log(f());': 'console.log(1);',
+        }
         self.assertEqual(
             {source: self._reflect_module(source) for source in rows},
-            {source: source for source in rows},
+            rows,
         )
 
     def test_a_payload_holding_either_is_left_standing_beside_an_export(self):
-        rows = [
-            'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");',
-            'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");',
-            'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");',
-            'export const tag = 1;\nvar f = Function("<!-- x\\nreturn 1");\nconsole.log(f());',
-        ]
+        rows = {
+            'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");':
+                'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");',
+            'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");':
+                'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");',
+            'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");':
+                'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");',
+            'export const tag = 1;\nvar f = Function("<!-- x\\nreturn 1");\nconsole.log(f());':
+                'export const tag = 1;\nconsole.log(1);',
+        }
         self.assertEqual(
             {source: self._reflect(source) for source in rows},
-            {source: source for source in rows},
+            rows,
         )
 
     def test_a_payload_holding_one_where_no_statement_carries_it_is_left_standing(self):
@@ -2504,3 +2545,158 @@ class TestAReplacedFunctionPrototypeConstructorRedirectsNavigation(TestJsDeobfus
             deobfuscated = deobfuscate_source(source)
             with self.subTest(spelling):
                 self.assertEqual(behavior(source), behavior(deobfuscated))
+
+
+#: Every write form a constructed body can use to store a free name, each holding the call the
+#: route would otherwise resolve. An execution that replaced the call would drop the store the real
+#: program performs, so each form is one the route refuses before anything runs.
+_EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE = [
+    "var r = Function('q = 1; return 2')();",
+    "var r = Function('q += 1; return 2')();",
+    "var r = Function('q++; return 2')();",
+    "var r = Function('for (q in o); return 2')();",
+    "var r = Function('[q] = [1]; return 2')();",
+]
+
+#: A constructed body reading a name the real tree binds at root scope, mapped to the normalized
+#: text the route leaves standing. A script-level `let` is a spelling the old calls gate never saw,
+#: and a root-scope `undefined` is a name no fragment model resolves the way the real program does.
+_A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS = {
+    "var g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
+        "var g = 5;\nvar f = Function('a', 'return g + arguments[0]');\nvar r = f(1);",
+    "let g = 5; var f = Function('a', 'return g + arguments[0]'); var r = f(1);":
+        "let g = 5;\nvar f = Function('a', 'return g + arguments[0]');\nvar r = f(1);",
+    "var undefined = 4; var f = Function('a', 'return undefined + arguments[0]'); var r = f(1);":
+        "var undefined = 4;\nvar f = Function('a', 'return undefined + arguments[0]');\nvar r = f(1);",
+}
+
+#: A fragment storing to a global builtin under a spelling neither static gate names — `this`
+#: dispatch, the `globalThis` registry entry, and an alias off it are all refused incidentally by
+#: the execution itself, and these rows pin that reliance.
+_A_GLOBAL_STORE_NO_STATIC_GATE_NAMES = [
+    "var r = Function('this.String = 9; return 1')();",
+    "var r = Function('globalThis.String = 9; return 1')();",
+    "var r = Function('var w = globalThis; w.String = 9; return 1')();",
+]
+
+
+class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
+    """
+    A call to a name a `Function` construction resolves to, where the inline route declines — the
+    body binds parameters or reads its `arguments` — is executed over the call's argument values
+    and replaced by the value it answers. Every decline row is a gate the route refuses through and
+    the call stays standing; every fold row's value is Node's.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_every_write_form_a_constructed_body_stores_a_free_name_with_declines(self):
+        rows = _EVERY_WRITE_FORM_A_CONSTRUCTED_BODY_CAN_STORE
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_root_binding_a_constructed_body_reads_declines(self):
+        rows = _A_ROOT_BINDING_A_CONSTRUCTED_BODY_READS
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            rows,
+        )
+
+    def test_a_strict_prologue_declines(self):
+        source = "var r = Function(\"'use strict'; return 1;\")();"
+        self.assertEqual(source, self._reflect(source))
+
+    def test_non_simple_parameter_text_declines(self):
+        source = 'var r = Function("a = 1", "return a;")();'
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_body_that_does_not_parse_declines(self):
+        source = "var r = Function('return 1; }{')();"
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_non_constant_argument_declines(self):
+        source = 'var r = Function("a", "return a")(sink());'
+        self.assertEqual(source, self._reflect(source))
+
+    def test_an_argument_whose_read_may_throw_declines(self):
+        source = 'var r = Function("a", "return a")(oo.x);'
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_global_store_no_static_gate_names_declines(self):
+        rows = _A_GLOBAL_STORE_NO_STATIC_GATE_NAMES
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_name_an_earlier_site_of_the_same_pass_spliced_in_declines(self):
+        """
+        The write an inlined `eval` carried is one no model the pass pinned records, so a fragment
+        reading the name would answer the value the program replaced — Node prints `99` for this
+        program — and the spliced-name record is what refuses it.
+        """
+        source = (
+            "eval('String = function (x) { return 99; };');"
+            " var f = Function('a', 'return String(arguments[0]);'); console.log(f(97));"
+        )
+        expected = (
+            'String = function(x) {\n  return 99;\n};\n'
+            "var f = Function('a', 'return String(arguments[0]);');\nconsole.log(f(97));"
+        )
+        self.assertEqual(expected, self._reflect(source))
+
+    def test_a_rebound_intrinsic_inside_an_eval_argument_stays_standing(self):
+        """
+        A `String` the program has replaced is not one a fold of the argument text may consult.
+        Node throws a `TypeError` for this program, and the call stays standing so it still does.
+        """
+        source = 'String = 5; var r = eval(String(97));'
+        self.assertEqual('String = 5;\nvar r = eval(String(97));', self._reflect(source))
+
+    def test_a_constant_argument_folds_to_the_value_the_body_answers(self):
+        self.assertEqual(
+            'var r = 42;',
+            self._reflect("var f = Function('a', 'b', 'return (a + b) * 2'); var r = f(19, 2);"))
+
+    def test_an_arguments_element_folds_to_the_value_the_call_passed(self):
+        self.assertEqual(
+            'var r = 2;',
+            self._reflect("var f = Function('a', 'b', 'return arguments[1];'); var r = f(1, 2);"))
+
+    def test_the_arguments_length_folds_to_the_arity_of_the_call(self):
+        self.assertEqual(
+            'var r = 2;',
+            self._reflect("var f = Function('return arguments.length'); var r = f(1, 2);"))
+
+    def test_an_opaque_write_the_text_never_resolves_declines(self):
+        """
+        The decline leg of the composition below: a top-level write under a key only the runtime
+        resolves is a tampering site ordered before the call, so nothing about the call is resolved
+        while it stands.
+        """
+        source = (
+            "var k = 'q'; global[k] = 5;"
+            ' var f = Function(\'a\', \'return arguments[0].split(",")\');'
+            " console.log(f('x,y,z')[1]);"
+        )
+        self.assertEqual(
+            'var k = \'q\';\nglobal[k] = 5;\n'
+            'var f = Function(\'a\', \'return arguments[0].split(",")\');\n'
+            'console.log(f(\'x,y,z\')[1]);',
+            self._deobfuscate(source))
+
+    def test_a_write_an_earlier_fold_attributed_lets_the_call_fold(self):
+        """
+        The distilled shape of the sample: a top-level write whose key an earlier fold resolves,
+        and a construction whose body folds its argument through `arguments`. The write becomes an
+        attributed one no oracle counts as a site, and the route answers the value Node answers.
+        """
+        source = (
+            "global[['q'][0]] = 5;"
+            ' var f = Function(\'a\', \'return arguments[0].split(",")\');'
+            " console.log(f('x,y,z')[1]);"
+        )
+        self.assertEqual("global.q = 5;\nconsole.log('y');", self._deobfuscate(source))

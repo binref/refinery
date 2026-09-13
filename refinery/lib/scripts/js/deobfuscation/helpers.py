@@ -329,6 +329,30 @@ def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
     return True
 
 
+def coerces_uninterceptably_from_written_chain(effects: EffectModel | None, value: Value) -> bool:
+    """
+    `coerces_uninterceptably` for a caller the tampering oracle has cleared at an anchor: the
+    chain is asked `EffectModel.chain_roots_unwritten` — the same half
+    `property_absent_from_written_chain` takes — so an anchored execution converts a value where
+    the reflection term is what the oracle's clearance replaced. A caller that has not asked the
+    oracle takes `coerces_uninterceptably` itself.
+    """
+    if converts_uninterceptably(value):
+        return True
+    if isinstance(value, dict):
+        if any(name in value for name in _TO_PRIMITIVE_METHODS):
+            return False
+    elif not isinstance(value, (list, JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        return False
+    if effects is None or not effects.chain_roots_unwritten(type(value)):
+        return False
+    if isinstance(value, list) and not all(
+        coerces_uninterceptably_from_written_chain(effects, item) for item in value
+    ):
+        return False
+    return True
+
+
 class MemberRead(Enum):
     """
     What reading a key off a value found. `FOUND` carries the value the read answers with. `ABSENT`
@@ -1153,6 +1177,28 @@ def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
             items.append(val)
         return True, items
     return False, None
+
+
+#: The largest list a fold may splice in place of the expression that computed it, so one decoded
+#: string array replaces its decoder while a fold computed over a whole file's worth of data
+#: cannot rebuild the file as a literal.
+MAX_RESULT_ARRAY_LEN = 260
+
+
+def replace_with_value(node: Node, result: object) -> bool:
+    """
+    Replace *node* with a literal denoting *result*, refusing when no such literal exists or when
+    the literal would be larger than the expression it replaces. Every path that folds a call to a
+    value shares this, so the result guards cannot be present at one and missing at another.
+    Announcing the change is the caller's — it owns `mark_changed`.
+    """
+    if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
+        return False
+    replacement = value_to_node(result)
+    if replacement is None:
+        return False
+    _replace_in_parent(node, replacement)
+    return True
 
 
 def value_to_node(value: object) -> Expression | None:
