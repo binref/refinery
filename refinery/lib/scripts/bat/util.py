@@ -74,6 +74,45 @@ def unquote(token: str) -> str:
     return re.sub('"(.*?)("|$)', '\\1', token)
 
 
+def split_arguments(text: str) -> list[str]:
+    """
+    Split a command line at whitespace that is neither inside quotes nor preceded by a
+    caret. Whitespace runs are returned as pieces of their own.
+    """
+    pieces = []
+    piece = []
+    quoted = False
+    k = 0
+    size = len(text)
+    while k < size:
+        c = text[k]
+        if c == '"':
+            quoted = not quoted
+            piece.append(c)
+            k += 1
+            continue
+        if c == '^' and k + 1 < size:
+            piece.append(c)
+            piece.append(text[k + 1])
+            k += 2
+            continue
+        if c.isspace() and not quoted:
+            if piece:
+                pieces.append(''.join(piece))
+                piece = []
+            j = k
+            while j < size and text[j].isspace():
+                j += 1
+            pieces.append(text[k:j])
+            k = j
+            continue
+        piece.append(c)
+        k += 1
+    if piece:
+        pieces.append(''.join(piece))
+    return pieces
+
+
 def enquote(token: str) -> str:
     if re.search('[\\x20\\t\\v&<>^|]', token):
         token = '"""'.join(token.split('"'))

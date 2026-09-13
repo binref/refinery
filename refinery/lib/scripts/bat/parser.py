@@ -379,7 +379,7 @@ class BatchParser:
             elif not eq:
                 raise ValueError
             elif key == 'eol':
-                if len(value) != 1:
+                if len(value) > 1:
                     raise ValueError
                 result.comment = value
             elif key == 'skip':
@@ -405,6 +405,8 @@ class BatchParser:
                     if x < 0:
                         raise ValueError
                     y = batchint(y) if y else x + 1
+                    if y > 31:
+                        raise ValueError
                     for t in range(x, y):
                         tokens.add(t)
                 result.tokens = tuple(sorted(tokens))
@@ -471,7 +473,10 @@ class BatchParser:
         if not (body := self.sequence(None, tokens, in_group)):
             raise UnexpectedToken(offset, tokens.peek())
 
-        options = self.forloop_options(options)
+        try:
+            options = self.forloop_options(options)
+        except ValueError:
+            raise UnexpectedToken(offset, options)
 
         if variant == AstForVariant.FileParsing:
             quote_literal = "'" if options.usebackq else '"'

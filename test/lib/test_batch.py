@@ -1,4 +1,6 @@
+import random
 import re
+import unittest
 
 from inspect import getdoc
 
@@ -1853,3 +1855,624 @@ class TestBatchUtil(TestBase):
         cmds = list(bat.emulate_commands(allow_junk=True))
         for cmd in cmds:
             self.assertNotIn('{token}', cmd)
+
+
+class TestBatchCmdSemantics(TestBase):
+    """
+    A ledger of Windows command interpreter behavior, measured against cmd.exe and findstr
+    on Windows, checked against what the emulator does.
+
+    Each test's docstring states what cmd.exe actually does, so a failure can be read without
+    leaving this file. An entry marked `expectedFailure` is a defect the emulator still has.
+    That marking is a ratchet in both directions: a fix makes the entry an unexpected success,
+    which is reported as a failure until the marking is removed, and a regression makes an
+    unmarked entry fail outright. Neither direction can pass silently.
+    """
+
+    def _run(self, code: str, state: BatchState | None = None):
+        bat = BatchEmulator(F'{code}\n', state)
+        bat.execute()
+        return bat
+
+    def _run_collecting(self, code: str, state: BatchState | None = None):
+        """
+        Runs the code once, returning the emulator and every command it emitted, so
+        that commands and stdout are asserted against the same single execution.
+        """
+        bat = BatchEmulator(F'{code}\n', state)
+        commands = [str(s) for s in bat.trace() if isinstance(s, SynCommand)]
+        return bat, commands
+
+    def _for_file(self, line: str) -> str:
+        state = BatchState()
+        state.create_file('cmds.txt', F'{line}\r\n')
+        bat = BatchEmulator('for /f "delims=x" %%A in (cmds.txt) do %%A\n', state)
+        bat.execute()
+        return bat.std.o.getvalue()
+
+    def test_for_f_value_operators_are_inert(self):
+        """
+        A command operator inside a FOR variable value is never re-detected: the value
+        `echo one&echo two` given to `do echo [%%A]` is printed verbatim.
+        """
+        bat = self._run('for /f "delims=x" %%A in ("echo one&echo two") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[echo one&echo two]\r\n')
+
+    def test_for_f_value_preserves_whitespace_runs(self):
+        """
+        Internal whitespace runs in a FOR variable value are preserved: the value `a  b`
+        given to `do echo [%%A]` prints `[a  b]`, not `[a b]`.
+        """
+        bat = self._run('for /f "delims=x" %%A in ("a  b") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[a  b]\r\n')
+
+    def test_set_quoted_junk_after_closing_quote(self):
+        """
+        In `set "X=Y"&rem junk`, everything after the closing quote is discarded and
+        `X` is set to `Y`; the `&rem` tail never becomes a comment.
+        """
+        bat = self._run('set "X=Y"&rem junk')
+        self.assertEqual(bat.state.envar('X'), 'Y')
+
+    def test_for_f_tokens_range_missing_upper_runs_empty(self):
+        """
+        `for /f "tokens=1-2" %%A in ("one")` runs the body once with %%A=one and %%B
+        empty; only a missing lowest requested token skips the body.
+        """
+        bat = self._run('for /f "tokens=1-2" %%A in ("one") do echo [%%A][%%B]')
+        self.assertEqual(bat.std.o.getvalue(), '[one][]\r\n')
+
+    def test_for_f_empty_delims_captures_line_verbatim(self):
+        """
+        `for /f "delims=" %%A` captures the whole line verbatim, including leading
+        spaces: `("  x  y")` gives `[  x  y]`.
+        """
+        bat = self._run('for /f "delims=" %%A in ("  x  y") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[  x  y]\r\n')
+
+    def test_for_f_tokens_one_with_empty_delims(self):
+        """
+        `tokens=1` with empty `delims=` still captures the whole line; the token count
+        must not guard the delimiters.
+        """
+        bat = self._run('for /f "tokens=1 delims=" %%A in ("  x  y") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[  x  y]\r\n')
+
+    def test_for_f_delims_trailing_space_still_splits(self):
+        """
+        `for /f "delims= "` splits on the space, unlike empty `delims=`: `("  x  y")`
+        gives token `[x]`.
+        """
+        bat = BatchEmulator('for /f "delims= " %%A in ("  x  y") do echo [%%A]\n')
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '[x]\r\n')
+
+    def test_for_f_default_delims_skip_leading_runs(self):
+        """
+        With default delimiters, leading delimiter runs are skipped before
+        tokenization: `("  two  spaces")` gives token `[two]`, not an empty token.
+        """
+        bat = self._run('for /f %%A in ("  two  spaces") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[two]\r\n')
+
+    def test_for_f_default_eol_is_semicolon(self):
+        """
+        The default `eol` character is `;` and the check fires after leading-delimiter
+        skipping: both `;semi` and ` ;spaced` skip the body.
+        """
+        bat = self._run('\n'.join([
+            'for /f %%A in (";semi") do echo [%%A]',
+            'for /f %%A in (" ;spaced") do echo [%%A]',
+        ]))
+        self.assertEqual(bat.std.o.getvalue(), '')
+
+    def test_for_f_empty_delims_still_skips_eol_lines(self):
+        """
+        Empty `delims=` keeps space-first lines but does not disable `eol`: `;semi`
+        is still skipped while ` ;spaced` is captured.
+        """
+        bat = self._run('\n'.join([
+            'for /f "delims=" %%A in (";semi") do echo [%%A]',
+            'for /f "delims=" %%A in (" ;spaced") do echo [%%A]',
+        ]))
+        self.assertEqual(bat.std.o.getvalue(), '[ ;spaced]\r\n')
+
+    def test_for_f_empty_eol_disables_comment_skip(self):
+        """
+        `eol=` with no value is legal and disables the comment check: `(";x")`
+        captures `;x`.
+        """
+        bat = self._run('for /f "eol=" %%A in (";x") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[;x]\r\n')
+
+    def test_for_f_delimiter_only_line_runs_no_body(self):
+        """
+        A line consisting only of delimiters runs no body iteration.
+        """
+        bat = self._run('for /f %%A in (" ") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '')
+
+    def test_for_f_missing_lowest_token_runs_no_body(self):
+        """
+        `for /f "tokens=2" %%A in ("one")` runs no body iteration; the lowest
+        requested token does not exist.
+        """
+        bat = self._run('for /f "tokens=2" %%A in ("one") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '')
+
+    def test_for_f_tokens_asterisk_strips_leading_delimiters(self):
+        """
+        With `tokens=*`, leading delimiters are stripped and the whole remainder is
+        captured: `("  x  y")` gives `[x  y]`.
+        """
+        bat = self._run('for /f "tokens=*" %%A in ("  x  y") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[x  y]\r\n')
+
+    def test_for_f_tokens_asterisk_delimiter_only_line_runs_empty(self):
+        """
+        With `tokens=*`, a delimiter-only line runs one body iteration with an empty
+        value, unlike the no-asterisk case.
+        """
+        bat = self._run('for /f "tokens=*" %%A in (" ") do echo [%%A]')
+        self.assertEqual(bat.std.o.getvalue(), '[]\r\n')
+
+    def test_for_f_supports_up_to_31_tokens(self):
+        """
+        `for /f "tokens=1-31"` is accepted by cmd.exe and runs the body.
+        """
+        bat = self._run('for /f "tokens=1-31" %%A in ("a b") do echo ok')
+        self.assertEqual(bat.std.o.getvalue(), 'ok\r\n')
+
+    def test_for_f_tokens_above_31_rejected(self):
+        """
+        `for /f "tokens=1-32"` is rejected by cmd.exe; the emulator reports it as an
+        error instead of raising.
+        """
+        bat = BatchEmulator('for /f "tokens=1-32" %%A in ("a b") do echo ok\n')
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_for_f_options_with_delayed_variable_rejected(self):
+        """
+        `for /f "tokens=!t!"` cannot be resolved at parse time and is reported as an
+        error instead of raising a ValueError.
+        """
+        bat = BatchEmulator(
+            'for /f "tokens=!t!" %%A in ("one") do echo %%A\n', BatchState(delayexpand=True))
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_cd_d_switch_and_quoted_target(self):
+        R"""
+        `cd /d "c:\windows"` changes to `c:\windows`; the `/d` switch and the quotes
+        are not part of the path.
+        """
+        bat = BatchEmulator(
+            'cd /d "c:\\windows"\necho %~f0\n', BatchState(filename='x.bat'))
+        bat.execute()
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\windows\\x.bat'])
+
+    def test_cd_quoted_target_without_switch(self):
+        R"""
+        `cd "c:\program files"` unquotes the target.
+        """
+        bat = self._run('cd "c:\\program files"\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\program files'])
+
+    def test_cd_attached_switch_form(self):
+        R"""
+        `cd /dc:\windows` is the `/d` switch attached to the target and works.
+        """
+        bat = self._run('cd /dc:\\windows\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\windows'])
+
+    def test_cd_switch_after_target_keeps_cwd(self):
+        R"""
+        `/d` is only valid before the target: `cd c:\windows /d` fails and leaves the
+        working directory unchanged.
+        """
+        bat = self._run('cd c:\\windows /d\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\'])
+
+    def test_cd_dangling_switch_is_error(self):
+        """
+        `cd /d` with no target prints "The filename, directory name, or volume label
+        syntax is incorrect." and sets errorlevel 1.
+        """
+        bat = self._run('cd /d')
+        self.assertEqual(bat.state.ec, 1)
+        self.assertEqual(
+            bat.std.e.getvalue(),
+            'The filename, directory name, or volume label syntax is incorrect.\r\n')
+
+    def test_cd_without_arguments_prints_cwd(self):
+        """
+        `cd` with no argument prints the current directory instead of changing it.
+        """
+        bat = self._run('cd')
+        self.assertEqual(bat.std.o.getvalue(), 'c:\\\r\n')
+
+    def test_cd_other_drive_without_switch_keeps_cwd(self):
+        """
+        Without `/d`, a target on another drive changes nothing.
+        """
+        bat = self._run('cd x:\\\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\'])
+
+    def test_cd_drive_relative_target_is_noop(self):
+        """
+        `cd z:foo` is a drive-relative target on another drive and changes nothing
+        instead of crashing.
+        """
+        bat = self._run('cd z:foo\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\'])
+
+    def test_pushd_unquotes_target(self):
+        R"""
+        `pushd "c:\windows"` unquotes the target.
+        """
+        bat = self._run('pushd "c:\\windows"\necho %CD%')
+        self.assertEqual(
+            [c for c in bat.emulate_commands() if c.startswith('echo')],
+            ['echo c:\\windows'])
+
+    def test_type_reads_quoted_path(self):
+        """
+        `type "a b.txt"` unquotes the path and reads the file.
+        """
+        state = BatchState()
+        state.create_file('a b.txt', 'hello\r\n')
+        bat = BatchEmulator('type "a b.txt"\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'hello\r\n')
+
+    def test_del_removes_quoted_path(self):
+        """
+        `del "a b.txt"` unquotes the path and deletes the file.
+        """
+        state = BatchState()
+        state.create_file('a b.txt', 'x')
+        bat = BatchEmulator('del "a b.txt"\n', state)
+        bat.execute()
+        self.assertEqual(state.ingest_file('a b.txt'), None)
+
+    def test_del_without_path_prints_syntax_error(self):
+        """
+        `del /q` with no path prints "The syntax of the command is incorrect." and
+        sets errorlevel 1 instead of raising.
+        """
+        bat = self._run('del /q')
+        self.assertEqual(bat.state.ec, 1)
+        self.assertEqual(bat.std.e.getvalue(), 'The syntax of the command is incorrect.\r\n')
+
+    def test_start_d_sets_child_cwd(self):
+        R"""
+        `start "" /d "c:\x" sub.bat` passes `c:\x` as the child's working directory;
+        the `/d` value is unquoted and taken from the next non-space fragment.
+        """
+        state = BatchState()
+        state.create_file('sub.bat', '@echo off\r\necho [%CD%]\r\n')
+        bat = BatchEmulator('start "" /d "c:\\x" sub.bat\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '[c:\\x]\r\n')
+
+    def test_start_trailing_switch_without_value_does_not_raise(self):
+        """
+        `start "" /d` with no value after the switch is an error, not a crash.
+        """
+        bat = self._run('start "" /d')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_cmd_trailing_switch_without_value_does_not_raise(self):
+        """
+        `cmd /v` with no value after the switch is an error, not a crash.
+        """
+        bat = self._run('cmd /v')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_call_self_reference_is_bounded(self):
+        """
+        `call %~f0` recursing into itself is reported as an error instead of raising
+        RecursionError.
+        """
+        bat = BatchEmulator('call %~f0\n')
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_goto_set_loop_is_bounded(self):
+        """
+        A `goto` loop that executes a SET between jumps is bounded by the statement
+        budget and reported as an error instead of running forever.
+        """
+        bat = BatchEmulator(':LOOP\r\nset X=1\r\ngoto LOOP\r\n')
+        errors = [s for s in bat.trace() if isinstance(s, Error)]
+        self.assertNotEqual(errors, [])
+
+    def test_lexer_switch_parameter_colon_stays_attached(self):
+        """
+        A colon directly after a switch token belongs to that token: `findstr
+        /c:hello in.txt` lexes `/c:hello` as one token.
+        """
+        lexer = BatchLexer('findstr /c:hello in.txt\n', BatchState())
+        self.assertListEqual(list(lexer.tokens(0)), [
+            'findstr', ' ', '/c:hello', ' ', 'in.txt', '\n'])
+
+    def test_for_f_command_spec_delayed_expansion(self):
+        """
+        The whole FOR line, including the backquoted command, is subject to delayed
+        expansion: `('echo !V!')` with `V=hello` must run the child command `echo
+        hello`, not `echo !V!`.
+        """
+        bat, commands = self._run_collecting('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set V=hello',
+            "for /f %%A in ('echo !V!') do echo [%%A]",
+        ]))
+        self.assertEqual(
+            [c for c in commands if c.startswith('echo')],
+            ['echo hello', 'echo [hello]'])
+        self.assertEqual(bat.std.o.getvalue(), '[hello]\r\n')
+
+    def test_for_f_command_spec_without_setlocal_is_literal(self):
+        """
+        Without `setlocal EnableDelayedExpansion`, `!V!` inside the backquoted
+        command stays literal.
+        """
+        bat = self._run('\n'.join([
+            'set V=hello',
+            "for /f %%A in ('echo !V!') do echo [%%A]",
+        ]))
+        self.assertEqual(bat.std.o.getvalue(), '[!V!]\r\n')
+
+    def test_for_f_command_spec_expands_at_parent_time(self):
+        """
+        The FOR spec is expanded when the line is read, before the child runs: with
+        `X=parent` set, the spec `set X=child& echo !X!` must run the child command
+        `echo parent`, not `echo !X!`.
+        """
+        bat, commands = self._run_collecting('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set X=parent',
+            "for /f %%A in ('set X=child^& echo !X!') do echo [%%A]",
+        ]))
+        self.assertEqual(
+            [c for c in commands if c.startswith('echo')],
+            ['echo parent', 'echo [parent]'])
+        self.assertEqual(bat.std.o.getvalue(), '[parent]\r\n')
+
+    def test_for_f_literal_spec_delayed_expansion(self):
+        """
+        A quoted FOR /F literal is delayed-expanded before tokenization: with
+        `X=a b`, `("!X!")` gives token `a`, not `a b`.
+        """
+        bat = self._run('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set "X=a b"',
+            'for /f %%A in ("!X!") do echo T[%%A]',
+        ]))
+        self.assertEqual(bat.std.o.getvalue(), 'T[a]\r\n')
+
+    def test_for_fileset_spec_delayed_expansion(self):
+        """
+        A file-set item is delayed-expanded: with `X=hi`, `(!X!)` iterates over
+        `hi`.
+        """
+        bat = self._run('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set X=hi',
+            'for %%A in (!X!) do echo F[%%A]',
+        ]))
+        self.assertEqual(bat.std.o.getvalue(), 'F[hi]\r\n')
+
+    def test_outer_for_variable_in_command_spec(self):
+        """
+        A FOR variable of an outer loop is substituted inside an inner `for /f`
+        command spec: `%%E` with value `one` must give the child command `echo inner
+        one`, not `echo inner E`.
+        """
+        bat, commands = self._run_collecting(
+            "for %%E in (one) do for /f %%F in ('echo inner %%E') do echo [%%F]")
+        self.assertEqual(
+            [c for c in commands if c.startswith('echo')],
+            ['echo inner one', 'echo [inner]'])
+        self.assertEqual(bat.std.o.getvalue(), '[inner]\r\n')
+
+    def test_call_file_inherits_delayed_expansion(self):
+        """
+        A CALLed file runs in the same cmd process and inherits delayed expansion:
+        a called file's `!X!` sees the caller's variable.
+        """
+        state = BatchState()
+        state.create_file('sub.bat', '@echo off\r\nset "Y=!X!"\r\n')
+        bat = BatchEmulator(
+            'setlocal EnableDelayedExpansion\r\nset X=abc\r\ncall sub.bat\r\n', state)
+        bat.execute()
+        self.assertEqual(state.environment.get('Y'), 'abc')
+
+    def test_for_f_command_child_preserves_batch_file(self):
+        """
+        The command child of a `for /f` loop does not overwrite the batch file in
+        the virtual file system.
+        """
+        code = "for /f %%A in ('echo payload') do echo [%%A]\n"
+        state = BatchState(filename='main.bat')
+        bat = BatchEmulator(code, state)
+        bat.execute()
+        self.assertEqual(state.ingest_file('main.bat'), code)
+
+    def test_cmd_c_child_creates_no_file(self):
+        """
+        A `cmd /c` child is a command string, not a batch file, and registers no
+        phantom file in the virtual file system.
+        """
+        state = BatchState(filename='main.bat')
+        bat = BatchEmulator('cmd /c echo hi\n', state)
+        bat.execute()
+        self.assertEqual(set(state.file_system), {state.resolve_path('main.bat')})
+
+    def test_percent_f0_without_backing_file_is_empty(self):
+        """
+        With no backing file, `%~f0` expands to the empty string instead of
+        crashing.
+        """
+        lexer = BatchLexer('echo [%~f0]\n', BatchState(filename=None))
+        tokens = [t for t in lexer.tokens(0) if not t.isspace()]
+        self.assertEqual(tokens, ['echo', '[]'])
+
+    def test_do_for_variable_executes_command(self):
+        """
+        A FOR variable holding a whole command line is executed: `do %%A` with the
+        value `echo hello` runs `echo hello`.
+        """
+        self.assertEqual(self._for_file('echo hello'), 'hello\r\n')
+
+    def test_do_delayed_variable_executes_command(self):
+        """
+        A delayed variable holding a whole command line is executed the same way:
+        `do !V!` with `V=echo a b` runs `echo a b`.
+        """
+        state = BatchState()
+        state.create_file('cmds.txt', 'z\r\n')
+        bat = BatchEmulator('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set "V=echo a b"',
+            'for /f "delims=x" %%A in (cmds.txt) do !V!',
+        ]) + '\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a b\r\n')
+
+    def test_do_for_variable_operators_are_inert(self):
+        """
+        A FOR variable given to `do %%A` is split into verb and arguments at
+        whitespace, but operators in the value stay inert: `echo one&echo two` runs
+        as a single `echo` printing `one&echo two`.
+        """
+        self.assertEqual(self._for_file('echo one&echo two'), 'one&echo two\r\n')
+
+    def test_do_for_value_caret_space_is_inert(self):
+        """
+        A caret-escaped space inside a FOR variable value does not split arguments:
+        `echo a^ b` prints `a^ b`.
+        """
+        self.assertEqual(self._for_file('echo a^ b'), 'a^ b\r\n')
+
+    def test_do_set_unquoted_value_keeps_spaces(self):
+        """
+        `do set X=%%A` with value `a b` sets `X` to `a b`: the SET argument is the
+        whole tail and is not split at spaces.
+        """
+        state = BatchState()
+        state.create_file('cmds.txt', 'a b\r\n')
+        bat = BatchEmulator(
+            'for /f "delims=x" %%A in (cmds.txt) do set X=%%A\n', state)
+        bat.execute()
+        self.assertEqual(bat.state.envar('X'), 'a b')
+
+    def test_do_set_junk_after_quote(self):
+        """
+        `do %%A` with the value `set "TRY=ok"&rem marker` sets `TRY` to `ok`.
+        """
+        state = BatchState()
+        state.create_file('cmds.txt', 'set "TRY=ok"&rem marker\r\n')
+        bat = BatchEmulator(
+            'for /f "delims=x" %%A in (cmds.txt) do %%A\n', state)
+        bat.execute()
+        self.assertEqual(bat.state.envar('TRY'), 'ok')
+
+    def _findstr(self, args: str, text: str, files: dict[str, str] | None = None) -> BatchEmulator:
+        state = BatchState()
+        state.create_file('in.txt', text)
+        for name, content in (files or {}).items():
+            state.create_file(name, content)
+        bat = BatchEmulator(F'findstr {args} in.txt\n', state)
+        bat.execute()
+        return bat
+
+    def test_findstr_c_literal_by_default(self):
+        """
+        A `/c:` needle is a literal search string: `/c:"a.c"` matches the line
+        `a.c` but not `abc`.
+        """
+        bat = self._findstr('/c:"a.c"', 'abc\r\na.c\r\n')
+        self.assertEqual(bat.std.o.getvalue(), 'a.c\r\n')
+
+    def test_findstr_r_makes_c_needle_regex(self):
+        """
+        `/R` turns a `/c:` needle into a regular expression.
+        """
+        bat = self._findstr('/R /c:"a.c"', 'abc\r\na.c\r\n')
+        self.assertEqual(bat.std.o.getvalue(), 'abc\r\na.c\r\n')
+
+    def test_findstr_r_after_c_needle_is_regex(self):
+        """
+        `/R` after the `/c:` needle still applies to it.
+        """
+        bat = self._findstr('/c:"a.c" /R', 'abc\r\na.c\r\n')
+        self.assertEqual(bat.std.o.getvalue(), 'abc\r\na.c\r\n')
+
+    def test_findstr_c_and_g_needles_have_separate_modes(self):
+        """
+        `/c:` needles are literal while `/g:` needles are regular expressions in
+        the same invocation.
+        """
+        bat = self._findstr(
+            '/g:g.txt /c:"a.c"', 'abc\r\na.c\r\n', {'g.txt': 'a.c\r\n'})
+        self.assertEqual(bat.std.o.getvalue(), 'abc\r\na.c\r\n')
+
+    def test_findstr_l_makes_g_needles_literal(self):
+        """
+        `/L` makes `/g:` needles literal.
+        """
+        bat = self._findstr(
+            '/L /g:g.txt', 'abc\r\na.c\r\n', {'g.txt': 'a.c\r\n'})
+        self.assertEqual(bat.std.o.getvalue(), 'a.c\r\n')
+
+    def test_findstr_l_and_r_are_mutually_exclusive(self):
+        """
+        `findstr /L /R` is refused with errorlevel 2 and the message "Specify only
+        /L or /R.".
+        """
+        bat = self._findstr('/L /R a.c', 'abc\r\n')
+        self.assertEqual(bat.state.ec, 2)
+        self.assertEqual(bat.std.e.getvalue(), 'Specify only /L or /R.\r\n')
+
+    def test_findstr_g_with_quoted_path(self):
+        """
+        A quoted `/g:` path is unquoted before reading the file.
+        """
+        bat = self._findstr(
+            '/g:"g.txt"', 'abc\r\na.c\r\n', {'g.txt': 'a.c\r\n'})
+        self.assertEqual(bat.std.o.getvalue(), 'abc\r\na.c\r\n')
+
+    def test_batchstate_does_not_reseed_global_rng(self):
+        """
+        Constructing a BatchState must not reseed the process-global random number
+        generator.
+        """
+        before = random.getstate()
+        BatchState()
+        self.assertEqual(random.getstate(), before)
+
+    def test_random_sequences_differ_across_clones(self):
+        """
+        Two states constructed from the same `now`, as every clone is, produce
+        independent `%RANDOM%` sequences.
+        """
+        parent = BatchState()
+        first = BatchState(now=parent.now)
+        a = [first.envar('RANDOM') for _ in range(8)]
+        second = BatchState(now=parent.now)
+        b = [second.envar('RANDOM') for _ in range(8)]
+        self.assertNotEqual(a, b)

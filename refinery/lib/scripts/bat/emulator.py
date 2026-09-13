@@ -18,6 +18,7 @@ from refinery.lib.scripts.bat.help import HelpOutput
 from refinery.lib.scripts.bat.model import (
     AbortExecution,
     ArgVarFlags,
+    AstCommand,
     AstCondition,
     AstError,
     AstFor,
@@ -43,7 +44,14 @@ from refinery.lib.scripts.bat.model import (
 from refinery.lib.scripts.bat.parser import BatchParser
 from refinery.lib.scripts.bat.state import BatchState, ErrorZero
 from refinery.lib.scripts.bat.synth import SynCommand, SynNodeBase, synthesize
-from refinery.lib.scripts.bat.util import batchint, batchrange, findstr_to_regex, uncaret, unquote
+from refinery.lib.scripts.bat.util import (
+    batchint,
+    batchrange,
+    findstr_to_regex,
+    split_arguments,
+    uncaret,
+    unquote,
+)
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
@@ -329,18 +337,20 @@ class BatchEmulator:
         delayexpand: bool | None = None,
         cmdextended: bool | None = None,
         environment: dict | None | ellipsis = ...,
-        filename: str | None = None,
+        filename: str | None | ellipsis = ...,
         cmdline: bool | None = None,
     ):
         state = self.state
         if delayexpand is None:
-            delayexpand = False
+            delayexpand = state.delayexpand
         if cmdextended is None:
             cmdextended = state.cmdextended
         if cmdline is None:
             cmdline = state.cmdline
         if environment is ...:
             environment = dict(state.environment)
+        if filename is ...:
+            filename = state.name
         return BatchState(
             delayexpand,
             cmdextended,
@@ -402,6 +412,43 @@ class BatchEmulator:
         return check(ast) # type:ignore
 
     def expand_ast_node(self, ast: _T) -> _T:
+        def expand_string(token: str) -> str:
+            token = self.expand_forloop_variables(token, variables)
+            if delayexpand:
+                token = self.expand_delayed_variables(token)
+            return token
+
+        def expand_command_fragments(fragments: list[str]) -> list[str]:
+            """
+            A command whose text was altered by variable substitution is re-split at
+            whitespace into verb and arguments; operators in the substituted value
+            stay inert. SET commands are exempt: their argument is the whole tail.
+            Control fragments never carry substitutions and pass through unchanged.
+            """
+            pairs = []
+            for fragment in fragments:
+                if isinstance(fragment, Enum):
+                    pairs.append((fragment, fragment))
+                    continue
+                pairs.append((fragment, expand_string(fragment)))
+            if not any(original != expanded for original, expanded in pairs):
+                return [expanded for _, expanded in pairs]
+            verb = next((expanded for _, expanded in pairs if not expanded.isspace()), '')
+            if verb.upper() == 'SET':
+                return [expanded for _, expanded in pairs]
+            resplit = []
+            for original, expanded in pairs:
+                if original == expanded:
+                    resplit.append(expanded)
+                    continue
+                pieces = split_arguments(expanded)
+                if pieces and not pieces[0].isspace() and pieces[0].upper() == 'SET':
+                    resplit.append(pieces[0])
+                    resplit.append(expanded[len(pieces[0]):])
+                else:
+                    resplit.extend(pieces)
+            return resplit
+
         def expand(token):
             if isinstance(token, list):
                 return [expand(v) for v in token]
@@ -410,10 +457,18 @@ class BatchEmulator:
             if isinstance(token, Enum):
                 return token
             if isinstance(token, str):
-                token = self.expand_forloop_variables(token, variables)
-                if delayexpand:
-                    token = self.expand_delayed_variables(token)
-                return token
+                return expand_string(token)
+            if isinstance(token, AstCommand):
+                new = {}
+                for tf in fields(token):
+                    value = getattr(token, tf.name)
+                    if tf.name == 'fragments':
+                        new[tf.name] = expand_command_fragments(value)
+                    elif tf.name != 'parent':
+                        new[tf.name] = expand(value)
+                    else:
+                        new[tf.name] = value
+                return token.__class__(**new)
             if isinstance(token, AstNode):
                 new = {}
                 for tf in fields(token):
@@ -474,27 +529,30 @@ class BatchEmulator:
                 if len(name) != 1:
                     return 1
                 if name == 'C':
-                    needles.append(unquote(value))
+                    needles.append(('/c', unquote(value)))
                     have_search = True
                 elif name == 'F':
-                    if (p := self.state.ingest_file(value)) is None:
+                    if (p := self.state.ingest_file(unquote(value))) is None:
                         return 1
                     file_args.extend(p.splitlines(False))
                 elif name == 'G':
-                    if (g := self.state.ingest_file(value)) is None:
+                    if (g := self.state.ingest_file(unquote(value))) is None:
                         return 1
-                    needles.extend(g.splitlines(False))
+                    needles.extend(('/g', line) for line in g.splitlines(False))
                     have_search = True
                 elif has_param:
                     flags[name] = value
                 else:
                     flags[name] = True
             elif not have_search:
-                needles.extend(unquote(arg).split())
+                needles.extend(('', needle) for needle in unquote(arg).split())
                 have_search = True
             else:
                 file_args.append(unquote(arg))
 
+        if 'L' in flags and 'R' in flags:
+            std.e.write('Specify only /L or /R.\r\n')
+            return 2
         if not needles:
             return 1
         for v in flags:
@@ -505,10 +563,12 @@ class BatchEmulator:
         if inputs is None:
             return 1
 
-        literal = 'L' in flags
+        literal_switch = 'L' in flags
+        regex_switch = 'R' in flags
         reflags = re.IGNORECASE if 'I' in flags else 0
         patterns = []
-        for needle in needles:
+        for origin, needle in needles:
+            literal = literal_switch or (origin == '/c' and not regex_switch)
             base = re.escape(needle) if literal else findstr_to_regex(needle)
             if 'X' in flags:
                 base = F'^{base}$'
@@ -560,7 +620,7 @@ class BatchEmulator:
 
     @_command('TYPE')
     def execute_type(self, cmd: SynCommand, std: IO, *_):
-        path = cmd.argument_string.strip()
+        path = unquote(cmd.argument_string.strip())
         data = self.state.ingest_file(path)
         if data is None:
             yield ErrorCannotFindFile
@@ -868,16 +928,36 @@ class BatchEmulator:
 
     @_command('CHDIR')
     @_command('CD')
-    def execute_chdir(self, cmd: SynCommand, *_):
+    def execute_chdir(self, cmd: SynCommand, std: IO, *_):
         yield cmd
-        self.state.cwd = cmd.argument_string.strip()
+        tail = cmd.argument_string.strip()
+        drive_switch = False
+        while tail[:2].upper() == '/D':
+            drive_switch = True
+            tail = tail[2:].lstrip()
+        if not tail:
+            if drive_switch:
+                std.e.write('The filename, directory name, or volume label syntax is incorrect.\r\n')
+                return 1
+            std.o.write(F'{self.state.cwd}\r\n')
+            return
+        pieces = split_arguments(tail)
+        if any(piece.startswith('/') for piece in pieces[1:]):
+            std.e.write('The system cannot find the path specified.\r\n')
+            return 1
+        target = unquote(tail)
+        target_drive = ntpath.splitdrive(target)[0]
+        current_drive = ntpath.splitdrive(self.state.cwd)[0]
+        if not drive_switch and target_drive and target_drive.upper() != current_drive.upper():
+            return
+        self.state.cwd = target
 
     @_command('PUSHD')
     def execute_pushd(self, cmd: SynCommand, *_):
         yield cmd
         self.state.dirstack.append(self.state.cwd)
         if (target := cmd.argument_string.strip()):
-            self.state.cwd = target
+            self.state.cwd = unquote(target)
 
     @_command('POPD')
     def execute_popd(self, cmd: SynCommand, *_):
@@ -925,17 +1005,24 @@ class BatchEmulator:
             yield cmd
         flags = {}
         it = iter(cmd.args)
-        while (arg := next(it)).startswith('/') and 1 < len(arg):
+        arg = None
+        while (arg := next(it, None)) is not None:
+            if not (arg.startswith('/') and 1 < len(arg)):
+                break
             flag = arg.upper()
             if flag[:3] == '/A:':
                 flags['A'] = flag[3:]
-                continue
-            flags[flag[1]] = True
+            else:
+                flags[flag[1]] = True
+            arg = None
+        paths = [unquote(p) for p in (arg, *it) if p is not None]
+        if not paths:
+            std.e.write('The syntax of the command is incorrect.\r\n')
+            return 1
         _P = 'P' in flags # Prompts for confirmation before deleting each file.
         _F = 'F' in flags # Force deleting of read-only files.
         _S = 'S' in flags # Delete specified files from all subdirectories.
         _Q = 'Q' in flags # Quiet mode, do not ask if ok to delete on global wildcard
-        paths = [arg, *it]
         state = self.state
         cwd = state.cwd
         for pattern in paths:
@@ -970,26 +1057,36 @@ class BatchEmulator:
         start = None
         cwd = self.state.cwd
         env = ...
+        pending = None
         for arg in it:
-            if title is None:
-                if '"' not in arg:
-                    title = ''
-                else:
-                    title = unquote(arg)
-                    continue
             if arg.isspace():
                 continue
+            if pending is not None:
+                if pending == '/D':
+                    cwd = unquote(arg)
+                pending = None
+                continue
+            if title is None:
+                if '"' in arg:
+                    title = unquote(arg)
+                    continue
+                title = ''
             if not arg.startswith('/'):
                 start = unquote(arg)
                 break
-            if (flag := arg.upper()) in ('/NODE', '/AFFINITY', '/MACHINE'):
-                next(it)
-            elif flag == '/D':
-                cwd = next(it)
+            flag = arg.upper()
+            if flag == '/D':
+                pending = '/D'
+            elif len(flag) > 2 and flag.startswith('/D'):
+                cwd = unquote(arg[2:])
+            elif flag in ('/NODE', '/AFFINITY', '/MACHINE'):
+                pending = flag
             elif flag == '/I':
                 env = None
+        if start is None or pending is not None:
+            return 1
         if start and (batch := self.state.ingest_file(start)):
-            state = self.clone_state(environment=env)
+            state = self.clone_state(environment=env, filename=start, delayexpand=False)
             state.cwd = cwd
             state.command_line = _fuse(it).strip()
             shell = self.spawn(batch, state, std)
@@ -1013,7 +1110,7 @@ class BatchEmulator:
                 else:
                     try:
                         flag_string = next(it)
-                    except KeyError:
+                    except StopIteration:
                         flag_string = ''
                     else:
                         flag_string = flag_string[1:] if flag_string.startswith(':') else ''
@@ -1037,10 +1134,10 @@ class BatchEmulator:
                 codec = 'utf-16le'
             elif name == 'E':
                 if (cmdextended := (yield from _flag())) is None:
-                    return
+                    return 1
             elif name == 'V':
                 if (delayexpand := (yield from _flag())) is None:
-                    return
+                    return 1
         else:
             return 0
 
@@ -1056,7 +1153,12 @@ class BatchEmulator:
         ):
             command = stripped[1] + stripped[2]
 
-        state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended, cmdline=True)
+        state = self.clone_state(
+            delayexpand=False if delayexpand is None else delayexpand,
+            cmdextended=cmdextended,
+            filename=None,
+            cmdline=True,
+        )
         state.codec = codec
         state.echo = not quiet
         shell = self.spawn(command, state, std)
@@ -1355,6 +1457,7 @@ class BatchEmulator:
     def trace_for(self, _for: AstFor, std: IO, in_group: bool):
         state = self.state
         cwd = state.cwd
+        spec = self.expand_ast_node(_for.spec)
         vars = state.new_forloop()
         body = _for.body
         name = _for.variable
@@ -1369,16 +1472,17 @@ class BatchEmulator:
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                emulator = self.spawn(_for.specline, self.clone_state(filename=state.name))
+                emulator = self.spawn(
+                    spec[0], self.clone_state(filename=None, delayexpand=False))
                 emulator.capture = True
                 yield from emulator.trace()
                 lines = emulator.std.o.getvalue().splitlines()
             elif _for.mode == AstForParserMode.Literal:
-                lines = _for.spec
+                lines = spec
             else:
                 def lines_from_files():
                     fs = state.file_system
-                    for name in _for.spec:
+                    for name in spec:
                         for path, content in fs.items():
                             if not winfnmatch(name, path, cwd):
                                 continue
@@ -1386,32 +1490,49 @@ class BatchEmulator:
                 lines = lines_from_files()
             opt = _for.options
             tokens = sorted(opt.tokens)
-            split = re.compile('[{}]+'.format(re.escape(opt.delims)))
             count = tokens[-1] + 1 if tokens else 0
             first_variable = ord(name)
+            comment = opt.comment
+            if comment is None:
+                comment = ';'
             if opt.asterisk:
                 tokens.append(count)
+            split = re.compile(F'[{re.escape(opt.delims)}]+') if opt.delims else None
             for n, line in enumerate(lines):
                 if n < opt.skip:
                     continue
-                if opt.comment and line.startswith(opt.comment):
+                if not line:
                     continue
-                if count:
-                    tokenized = split.split(line, maxsplit=count)
+                stripped = line if split is None else line.lstrip(opt.delims)
+                if comment and stripped.startswith(comment):
+                    continue
+                if split is None:
+                    tokenized = [line]
+                elif not stripped:
+                    if not opt.asterisk:
+                        continue
+                    tokenized = ['']
+                elif opt.asterisk:
+                    if count:
+                        tokenized = split.split(stripped, count)
+                    else:
+                        tokenized = [stripped]
                 else:
-                    tokenized = (line,)
+                    tokenized = split.split(stripped, 0)
+                if not (tokens and tokens[0] < len(tokenized)):
+                    continue
                 for k, tok in enumerate(tokens):
                     name = chr(first_variable + k)
                     if not name.isalpha():
-                        raise EmulatorException('Ran out of variables in FOR-Loop.')
+                        break
                     try:
                         vars[name] = tokenized[tok]
                     except IndexError:
                         vars[name] = ''
                 yield from self.trace_sequence(body, std, in_group)
-        elif isinstance(spec := _for.spec, batchrange) and spec.infinite:
+        elif isinstance(range_spec := _for.spec, batchrange) and range_spec.infinite:
             yield Error(
-                F'Infinite loop detected in FOR /L loop ({spec.start},{spec.step},{spec.stop})')
+                F'Infinite loop detected in FOR /L loop ({range_spec.start},{range_spec.step},{range_spec.stop})')
         else:
             for entry in spec:
                 vars[name] = entry
@@ -1435,6 +1556,7 @@ class BatchEmulator:
             self.block_labels.add(label.label.upper())
 
     def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
+        self.state.count_statement()
         try:
             handler = self._node.handlers[statement.__class__]
         except KeyError:
@@ -1516,6 +1638,12 @@ class BatchEmulator:
                 else:
                     break
             except AbortExecution:
+                self.state.ec = 1
+                break
+            except (InvalidLabel, InputLocked):
+                raise
+            except (EmulatorException, ValueError, RecursionError) as error:
+                yield Error(str(error))
                 self.state.ec = 1
                 break
             else:

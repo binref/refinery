@@ -205,7 +205,8 @@ class BatchLexer:
         if (k := var.offset) is (...):
             return state.command_line
         if (j := k - 1) < 0:
-            argval = state.name
+            if (argval := state.name) is None:
+                return ''
         elif j < len(args := state.args):
             argval = args[j]
         else:
@@ -240,7 +241,7 @@ class BatchLexer:
                 if flags.DriveLetter:
                     out.write(drv)
                 if flags.FilePath:
-                    out.write(ntpath.join(*pp))
+                    out.write(ntpath.join(*pp, ''))
                 if flags.FileName:
                     out.write(name)
                 if flags.FileExtension:
@@ -708,6 +709,9 @@ class BatchLexer:
         if char == COLON:
             if self.state.delayexpand and self.cursor.token.count(0x21) % 2:
                 self.cursor.token.append(char)
+                return True
+            if (token := self.cursor.token) and token[0] == SLASH:
+                token.append(char)
                 return True
             if (yield from self.emit_token()):
                 return False

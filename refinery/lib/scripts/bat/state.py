@@ -4,12 +4,19 @@ import ntpath
 
 from datetime import datetime
 from enum import Enum
-from random import randrange, seed
+from random import Random
 from uuid import uuid4
 
 from refinery.lib.dt import date_from_timestamp, isodate
-from refinery.lib.scripts.bat.model import MissingVariable
+from refinery.lib.scripts.bat.model import EmulatorException, MissingVariable
 from refinery.lib.scripts.win32const import make_win32_environment
+
+
+STATEMENT_BUDGET = 100_000
+"""
+The maximum number of statements a single emulation may execute. Scripts stuck in
+an undetectable loop are cut off at this bound instead of running forever.
+"""
 
 
 class ErrorZero(int, Enum):
@@ -30,7 +37,7 @@ class RetainVariable(str, Enum):
 
 class BatchState:
 
-    name: str
+    name: str | None
     args: list[str]
 
     now: datetime
@@ -54,7 +61,7 @@ class BatchState:
         hostname: str | None = None,
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
-        filename: str | None = '',
+        filename: str | None | ellipsis = ...,
         echo: bool = True,
         codec: str = 'cp1252',
         cmdline: bool = False,
@@ -75,7 +82,8 @@ class BatchState:
         self.cwd = cwd
         self.now = now
         self.start_time = now
-        seed(self.now.timestamp())
+        self._random = Random()
+        self._statement_count = 0
         self.hostname = hostname
         self.username = username
         self.labels = {}
@@ -86,7 +94,11 @@ class BatchState:
         self.file_system = file_system
         self.dirstack = []
         self.linebreaks = []
-        self.name = filename or F'{uuid4()}.bat'
+        if filename is ...:
+            filename = ''
+        if filename == '':
+            filename = F'{uuid4()}.bat'
+        self.name = filename
         self.args = []
         self._cmd = ''
         self.ec = None
@@ -138,7 +150,7 @@ class BatchState:
             time = self.now.strftime('%M:%S,%f')
             return F'{self.now.hour:2d}:{time:.8}'
         elif name == 'RANDOM':
-            return str(randrange(0, 32767))
+            return str(self._random.randrange(0, 32767))
         elif name == 'ERRORLEVEL':
             return str(self.ec)
         elif name == 'CD':
@@ -160,8 +172,15 @@ class BatchState:
 
     def resolve_path(self, path: str) -> str:
         if not ntpath.isabs(path):
-            path = F'{self.cwd}{path}'
+            path = ntpath.join(self.cwd, path)
         return ntpath.normcase(ntpath.normpath(path))
+
+    def count_statement(self):
+        self._statement_count += 1
+        if self._statement_count > STATEMENT_BUDGET:
+            raise EmulatorException(
+                F'The emulation exceeded its budget of {STATEMENT_BUDGET} statements '
+                'and was aborted, likely because it is stuck in a loop.')
 
     def create_file(self, path: str, data: str = ''):
         self.file_system[self.resolve_path(path)] = data
