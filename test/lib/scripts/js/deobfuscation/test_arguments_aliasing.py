@@ -191,32 +191,14 @@ _AN_ALIASING_NOTHING_OBSERVES: dict[str, str] = {
         'console.log(2);',
     'function f(a, b) { a = 2; b = 3; return a + b; } console.log(f(0, 0));':
         'console.log(5);',
-    'function f(a) { a = 2; return arguments.length; } console.log(f(1));': inspect.cleandoc(
-        """
-        function f(a) {
-          return arguments.length;
-        }
-        console.log(f(1));
-        """
-    ),
-    'function f(a, b) { b = 7; return arguments[0]; } console.log(f(1, 0));': inspect.cleandoc(
-        """
-        function f(a, b) {
-          return arguments[0];
-        }
-        console.log(f(1, 0));
-        """
-    ),
+    'function f(a) { a = 2; return arguments.length; } console.log(f(1));':
+        'console.log(1);',
+    'function f(a, b) { b = 7; return arguments[0]; } console.log(f(1, 0));':
+        'console.log(1);',
     "function f(a) { 'use strict'; a = 2; return arguments[0]; } console.log(f(1));":
-        inspect.cleandoc(
-            """
-            function f(a) {
-              'use strict';
-              return arguments[0];
-            }
-            console.log(f(1));
-            """
-        ),
+        'console.log(1);',
+    'function f(a) { var arguments; a = 5; return arguments.length; } console.log(f(1));':
+        'console.log(1);',
     'function f(a = 0) { a = 2; return arguments[0]; } console.log(f(1));': inspect.cleandoc(
         """
         function f(a = 0) {
@@ -225,16 +207,6 @@ _AN_ALIASING_NOTHING_OBSERVES: dict[str, str] = {
         console.log(f(1));
         """
     ),
-    'function f(a) { var arguments; a = 5; return arguments.length; } console.log(f(1));':
-        inspect.cleandoc(
-            """
-            function f(a) {
-              var arguments;
-              return arguments.length;
-            }
-            console.log(f(1));
-            """
-        ),
     'function f(a) { arguments = [7]; a = 5; return arguments[0]; } console.log(f(1));':
         inspect.cleandoc(
             """

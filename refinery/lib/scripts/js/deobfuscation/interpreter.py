@@ -21,7 +21,11 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
-from refinery.lib.scripts.js.analysis.model import SemanticModel, statement_list_holding
+from refinery.lib.scripts.js.analysis.model import (
+    SemanticModel,
+    call_supplies_an_arguments_object,
+    statement_list_holding,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
     JS_NULL,
@@ -130,6 +134,21 @@ class _ReturnSignal(Exception):
 
 class _BreakSignal(Exception):
     pass
+
+
+class JsArguments:
+    """
+    The `arguments` object of the call being interpreted: the argument values that call was made
+    with, held read-only. Deliberately not a `list` subclass — nothing that dispatches on a list
+    may answer for it, no builtin registry entry exists for the type, and the object this models
+    exposes only `length` and the indexed elements. It cannot escape into a folded value: a body
+    whose `arguments` reads are not all element-wise never passes the preflight that admits one,
+    so no bare `arguments` ever reaches the value domain.
+    """
+    __slots__ = ('values',)
+
+    def __init__(self, values: list[Value]):
+        self.values = values
 
 
 class _ContinueSignal(Exception):
@@ -1246,7 +1265,16 @@ class JsInterpreter:
             self._env[name] = arguments[i] if i < len(arguments) else None
         body = func.body
         for name in self._collect_hoisted_var_names(body):
+            if name == 'arguments' and not isinstance(func, JsArrowFunctionExpression):
+                # The call has already bound `arguments` to the argument object before any
+                # statement runs, so an entry holding `undefined` would answer a read with a
+                # value the call never made — including under a `var` that displaces it, where
+                # leaving the name unbound refuses instead.
+                continue
             self._env.setdefault(name, None)
+        arguments_object = self._arguments_object(func, arguments)
+        if arguments_object is not None:
+            self._env['arguments'] = arguments_object
         for name, value in self._closure.items():
             if name not in self._env:
                 self._env[name] = _deep_copy_value(value)
@@ -1293,6 +1321,20 @@ class JsInterpreter:
                     if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
                         names.append(decl.id.name)
         return names
+
+    def _arguments_object(self, func, values: list[Value]) -> JsArguments | None:
+        """
+        The `arguments` object a call to *func* may be given, or `None` where the body may not be
+        handed one. Whether the object a call models from its argument values can stand in for
+        the name is `call_supplies_an_arguments_object`'s question, shared with the fold that
+        asks which names a call supplies. Every failure leaves the name unbound, so the read
+        declines through the `IrreducibleExpression` every unresolved name takes, and a nested
+        function's own `arguments` declines the same way in its own environment.
+        """
+        model = self._model
+        if model is None or not call_supplies_an_arguments_object(model, func):
+            return None
+        return JsArguments(values)
 
     def _exec_statements(self, stmts: list) -> None:
         for stmt in stmts:
@@ -2203,7 +2245,25 @@ class JsInterpreter:
         if node.optional and (obj is None or obj is JS_NULL):
             return None
         key = self._member_key(node)
+        if isinstance(obj, JsArguments):
+            return self._read_arguments_element(node, obj, key)
         return self._get_property(obj, key)
+
+    def _read_arguments_element(
+        self, node: JsMemberExpression, arguments: JsArguments, key: str,
+    ) -> Value:
+        """
+        The element or the element count the arguments object answers for *key*. Every other key
+        refuses rather than guessing, for the same reason a method read off any other value does:
+        the answer lives on the prototype chain, on a `callee` no value domain here holds, or at
+        an index past the end the chain may supply, and none of those is this object's to decide.
+        """
+        if key == 'length':
+            return len(arguments.values)
+        index = canonical_array_index(key)
+        if index is not None and 0 <= index < len(arguments.values):
+            return arguments.values[index]
+        raise IrreducibleExpression(node)
 
     def _eval_template(self, node: JsTemplateLiteral) -> Value:
         """

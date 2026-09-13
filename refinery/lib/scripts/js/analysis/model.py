@@ -1440,6 +1440,78 @@ def _displaces_arguments(
     return False
 
 
+def own_arguments_binding(model: SemanticModel, fn: Node) -> Binding | None:
+    """
+    The binding the name `arguments` resolves to inside *fn*'s body when that is the arguments
+    object the call to *fn* is given, or `None` where it is anything else. An arrow reads the
+    object belonging to a function around it, which this call cannot supply — a lookup from its
+    body would find that one. A name a parameter, a lexical declaration, an initialized `var`, a
+    catch parameter or an assignment displaced denotes something whose elements alias nothing,
+    which `_displaces_arguments` decides. A binding of kind `FUNC_NAME` is admitted alongside
+    `ARGUMENTS` because a function expression whose own name is `arguments` binds that name in
+    an environment the object's own shadows, so the body still reads the object.
+    """
+    if not isinstance(fn, (JsFunctionExpression, JsFunctionDeclaration)):
+        return None
+    scope = model.function_scope(fn)
+    if scope is None:
+        return None
+    own = model.lookup('arguments', scope)
+    if own is None or own.kind not in (BindingKind.ARGUMENTS, BindingKind.FUNC_NAME):
+        return None
+    if _displaces_arguments(own, fn):
+        return None
+    return own
+
+
+def arguments_reads_only_elements(binding: Binding) -> bool:
+    """
+    Whether every reference to *binding* — an `arguments` object — reads it only element-wise:
+    the receiver of a member access that is not a write target, with a computed key or the
+    `length` key. Any other position hands the object to code the text alone does not read —
+    a call argument, a second name, a spread, a coercion, a bare truth test — or writes through
+    it, so a caller modelling the object from the call's argument values alone cannot answer
+    for what the program does there. A reference from a nested arrow is included, because it
+    reads this object and not one of the arrow's own.
+    """
+    for reference in [
+        *binding.reads, *binding.writes, *binding.dynamic_refs, *binding.indefinite_writes,
+    ]:
+        member = _enclosing_member_access(reference)
+        if member is None:
+            return False
+        if is_member_write_target(member):
+            return False
+        if not member.computed and member_property_name(member) != 'length':
+            return False
+    return True
+
+
+def call_supplies_an_arguments_object(model: SemanticModel, fn: Node) -> bool:
+    """
+    Whether a call to *fn* may be handed the arguments object the name `arguments` denotes in its
+    body, modelled from the argument values the call passes: the binding is the object
+    (`own_arguments_binding`), every reference reads it element-wise
+    (`arguments_reads_only_elements`), and — where sloppy mode links the elements to the
+    parameters, so a written parameter is a value read back off the object — no parameter is
+    written anywhere its name resolves to it. This is the admission every consumer shares: the
+    interpreter binds the name exactly under it, and a fold asking which names a call supplies
+    counts `arguments` only under it. A write to a parameter inside a nested function counts,
+    because the binding it writes is this function's parameter and not the nested one's own.
+    """
+    own = own_arguments_binding(model, fn)
+    if own is None:
+        return False
+    if not arguments_reads_only_elements(own):
+        return False
+    if not strict_mode_at(fn) and fn.params:
+        for param in fn.params:
+            binding = model.binding_of(param)
+            if binding is None or binding.writes or binding.indefinite_writes:
+                return False
+    return True
+
+
 def _is_global_alias_access(node: Node) -> bool:
     """
     Whether *node* is a member access on a global-object alias, which is the one kind of access that

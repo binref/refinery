@@ -16,6 +16,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
     SemanticModel,
+    call_supplies_an_arguments_object,
     is_invocation_target,
     pattern_identifiers,
 )
@@ -142,6 +143,8 @@ def _is_value_closed(
                 continue
             if names_runtime_builtin(node, model) or names_global_value(node, model):
                 continue
+            if name == 'arguments' and call_supplies_an_arguments_object(model, func):
+                continue
             return False
     return True
 
@@ -252,6 +255,8 @@ def _unresolved_names(
         else:
             read.add(name)
             if names_runtime_builtin(node, model) or names_global_value(node, model):
+                host_supplied.add(name)
+            elif name == 'arguments' and call_supplies_an_arguments_object(model, func):
                 host_supplied.add(name)
             elif name in GLOBAL_VALUE_NAMES or is_runtime_name(name):
                 claimed.add(name)
