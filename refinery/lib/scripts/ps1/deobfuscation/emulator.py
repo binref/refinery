@@ -26,11 +26,8 @@ from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1SemanticModel,
-    Scope,
-    ScopeKind,
     occurrence_role,
 )
-from refinery.lib.scripts.ps1.analysis.naming import named_references
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
 from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.analysis.values import (
@@ -56,6 +53,7 @@ from refinery.lib.scripts.ps1.ast import (
 from refinery.lib.scripts.ps1.data import (
     COMPARISON_OPS,
     ENCODING_MAP,
+    PS1_KNOWN_VARIABLES,
     is_type,
     named_type,
     resolve_type,
@@ -273,6 +271,13 @@ class _MatchTable:
 #: The lowercased name of the `$Matches` automatic variable in the interpreter's scope.
 _MATCHES_NAME = 'matches'
 
+#: Every name the engine supplies a value for that an isolated body does not carry: the automatic
+#: variables and the known session and preference variables, `$FormatEnumerationLimit` and the
+#: `$Maximum*Count` scalars among them. A read of one before the emulated body writes it is refused
+#: rather than answered `$null`, since `$null` is not what the host holds — measured, 5.1 reads
+#: `$FormatEnumerationLimit` as `4`, so `$FormatEnumerationLimit + 1` is `5` and not `1`.
+_ENGINE_SUPPLIED_VARIABLES = PS1_AUTOMATIC_VARIABLES | frozenset(PS1_KNOWN_VARIABLES)
+
 
 def _matches_table(match: re.Match) -> _MatchTable:
     """
@@ -407,43 +412,6 @@ def _wildcard_to_regex(pattern: str) -> str:
         _append_wildcard_literal(regex, pattern[-1])
     regex.append('$')
     return ''.join(regex)
-
-
-def script_scope_write_names(model: Ps1SemanticModel) -> frozenset[str]:
-    """
-    The variable names a write outside every function body claims — the script scope above a
-    folded call. A body that reads one of these before it writes it observes the enclosing value
-    the fold does not hold, so `_Ps1Interpreter` refuses that read rather than answering it
-    `$null`. A name bound only inside a function is that function's own local and is not here,
-    which is what keeps an accumulator like `$r = $r + …` folding: its first `$r` is genuinely
-    unset and reads as `$null`.
-
-    The names come from the semantic model rather than a variable-occurrence walk, because a write
-    does not have to be spelled as a variable to be one: `Set-Variable q 5` writes `$q`, and a walk
-    that sees no occurrence of it folds a call that reads `q` across the write. The scope the model
-    files a write in is the answer to whether it sits above a folded call, so a
-    `Set-Variable q 5 -Scope Script` inside a function counts here while the same command without
-    the scope in that function does not.
-    """
-    names: set[str] = set()
-    stack: list[Scope] = [model.root_scope]
-    while stack:
-        scope = stack.pop()
-        stack.extend(scope.children)
-        if any(ancestor.kind is ScopeKind.FUNCTION for ancestor in _scope_chain(scope)):
-            continue
-        names.update(binding.name for binding in scope.bindings.values() if binding.writes)
-    return frozenset(names)
-
-
-def _scope_chain(scope: Scope):
-    """
-    *scope* and every scope it is nested in, innermost first.
-    """
-    cursor: Scope | None = scope
-    while cursor is not None:
-        yield cursor
-        cursor = cursor.parent
 
 
 def _strict_mode_flags(cache) -> tuple[bool, bool]:
@@ -1009,20 +977,23 @@ class _Ps1Interpreter:
             return None
         if name == 'psitem':
             name = '_'
-        if name in PS1_AUTOMATIC_VARIABLES and not self._written(name):
-            # An automatic variable holds engine state this body does not carry: the pipeline item
+        if name in _ENGINE_SUPPLIED_VARIABLES and not self._written(name):
+            # An engine-supplied variable holds state this body does not carry: the pipeline item
             # of the caller, `$args` of a call that supplied none, the `$Matches` an earlier match
-            # left. Reading one as `$null` because no scope here wrote it is a wrong answer every
-            # caller of the interpreter shares, so the refusal lives here and not in one driver.
-            # A write the emulated code itself performed — the `matches` a `-match` inside the body
-            # refills, the `_` a driver seeds — is what `_written` clears it on.
+            # left, and the session scalars such as `$FormatEnumerationLimit` the host seeds with a
+            # value no isolated body knows. Reading one as `$null` because no scope here wrote it is
+            # a wrong answer every caller of the interpreter shares, so the refusal lives here and
+            # not in one driver. A write the emulated code itself performed — the `matches` a
+            # `-match` inside the body refills, the `_` a driver seeds — is what `_written` clears
+            # it on.
             raise _Ps1InterpreterError
         if name in self._caller_scope_names and not self._written(name):
             # A name an enclosing scope binds, read before this body writes it, is refused rather
             # than read as `$null`: the caller scope this fold is entered without may hold the value
-            # (see `script_scope_write_names`). `$q = $env:Temp; function f { $q + 1 }` is
-            # `$env:Temp + 1` on the host, not `1`. A name no enclosing scope writes is genuinely
-            # unset, so an accumulator `$r = $r + …` still reads its first `$r` as `$null` and folds.
+            # (see `Ps1SemanticModel.script_scope_write_names`). `$q = $env:Temp; function f { $q + 1
+            # }` is `$env:Temp + 1` on the host, not `1`. A name no enclosing scope writes is
+            # genuinely unset, so an accumulator `$r = $r + …` still reads its first `$r` as `$null`
+            # and folds.
             raise _Ps1InterpreterError
         if self._strict and not self._written(name):
             # Under `Set-StrictMode` a read of a never-assigned name is a statement-terminating
@@ -1911,7 +1882,7 @@ class Ps1FunctionEvaluator(Transformer):
             cache = model_cache(self, node)
             exports = cache.call_graph.exports_a_name
             self._commands = cache.commands
-            self._caller_scope_names = script_scope_write_names(cache.model)
+            self._caller_scope_names = cache.model.script_scope_write_names()
             self._strict_v2, self._strict = _strict_mode_flags(cache)
             self._unreached = cache.used_before_defined
             super().visit(node)
@@ -2348,6 +2319,10 @@ class Ps1SubExpressionEvaluator(Transformer):
             self._entry = False
             self._model = None
             self._write_sites = {}
+            self._doubts_names = False
+            self._runs_data_code = False
+            self._strict_v2 = True
+            self._strict = False
 
     def visit_Ps1SubExpression(self, node: Ps1SubExpression):
         self.generic_visit(node)
@@ -2437,11 +2412,12 @@ class Ps1SubExpressionEvaluator(Transformer):
         """
         certain: set[str] = set()
         for statement in node.body:
-            target = _plain_statement_store_target(statement)
-            if target is not None:
-                if not self._reads_certified(statement.expression.value, written, certain):
+            store = _plain_statement_store_target(statement)
+            if store is not None:
+                name, value = store
+                if not self._reads_certified(value, written, certain):
                     return False
-                certain.add(target)
+                certain.add(name)
                 continue
             if isinstance(statement, Ps1ForLoop):
                 if not self._for_reads_follow(statement, written, certain):
@@ -2463,11 +2439,12 @@ class Ps1SubExpressionEvaluator(Transformer):
         parts: list[Node] = []
         initializer = loop.initializer
         if initializer is not None:
-            target = _plain_store_target(initializer)
-            if target is not None:
-                if not self._reads_certified(initializer.value, written, certain):
+            store = _plain_store_target(initializer)
+            if store is not None:
+                name, value = store
+                if not self._reads_certified(value, written, certain):
                     return False
-                certain.add(target)
+                certain.add(name)
             else:
                 parts.append(initializer)
         parts.extend(
@@ -2535,12 +2512,16 @@ class Ps1SubExpressionEvaluator(Transformer):
 
     def _occurs_outside(self, node: Ps1SubExpression, name: str) -> bool:
         """
-        Whether *name* is referenced anywhere outside *node*' subtree. A name a binding claims is
-        asked through the semantic model, so a same-named local of another scope is not a reader of
-        this write while a reader inside a nested function or a captured scriptblock is — and a
-        binding a qualifier or a dynamic reach can arrive at refuses. A name no binding claims,
-        `matches` among them, is scanned by spelling: a variable occurrence outside, or a command
-        that addresses the name as a string.
+        Whether *name* is referenced anywhere outside *node*'s subtree. The name is asked through the
+        semantic model: a same-named local of another scope is not a reader of this write, while a
+        reader inside a nested function or a captured scriptblock is, and a binding a qualifier or a
+        dynamic reach can arrive at counts.
+
+        Every name this is asked reaches it with a binding, because the caller filters out the engine
+        variables first and `_body_names` writes only two kinds of name — a variable-spelled store,
+        which the model binds, and `matches`, which is an engine variable — so the only binding-less
+        write never arrives here. A name with no binding is nonetheless treated as read outside, the
+        direction that refuses a fold rather than dropping a store some reader observes.
         """
         model = self._model
         if model is None:
@@ -2554,14 +2535,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             ):
                 bindings.add(binding)
         if not bindings:
-            for descendant in self._outside(model, node):
-                if isinstance(descendant, Ps1Variable):
-                    if descendant.name.lower() == name:
-                        return True
-                elif isinstance(descendant, Ps1CommandInvocation):
-                    if any(reference.key == name for reference in named_references(descendant)):
-                        return True
-            return False
+            return True
         for binding in bindings:
             if binding.dynamic_or_qualified:
                 return True
@@ -2569,18 +2543,6 @@ class Ps1SubExpressionEvaluator(Transformer):
                 if not self._inside(occurrence.node, node):
                     return True
         return False
-
-    def _outside(self, model: Ps1SemanticModel, excluded: Node):
-        """
-        Every node of the script the sweep runs on except the ones inside *excluded*'s subtree.
-        """
-        stack: list[Node] = list(model.root.children())
-        while stack:
-            cursor = stack.pop()
-            if cursor is excluded:
-                continue
-            yield cursor
-            stack.extend(cursor.children())
 
     @staticmethod
     def _inside(inner: Node, outer: Node) -> bool:
@@ -2625,10 +2587,12 @@ class Ps1SubExpressionEvaluator(Transformer):
         )
 
 
-def _plain_store_target(expression: Node | None) -> str | None:
+def _plain_store_target(expression: Node | None) -> tuple[str, Node | None] | None:
     """
-    The name a plain `=` onto an unqualified variable stores, or `None` for any other expression
-    shape.
+    The name a plain `=` onto an unqualified variable stores and the value it stores, or `None` for
+    any other expression shape. The value is handed back rather than re-read off the expression so a
+    caller certifies the store without reaching through a node the type checker only knows as a
+    `Statement`.
     """
     if not isinstance(expression, Ps1AssignmentExpression) or expression.operator != '=':
         return None
@@ -2637,14 +2601,14 @@ def _plain_store_target(expression: Node | None) -> str | None:
         return None
     if target.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
         return None
-    return target.name.lower()
+    return target.name.lower(), expression.value
 
 
-def _plain_statement_store_target(statement) -> str | None:
+def _plain_statement_store_target(statement: Node) -> tuple[str, Node | None] | None:
     """
-    The name a top-level statement of a statement list stores with a plain `=` onto an unqualified
-    variable. Such a statement runs exactly once per evaluation of the list, before every later
-    statement, which is what makes it the one certain write.
+    The name and value a top-level statement of a statement list stores with a plain `=` onto an
+    unqualified variable. Such a statement runs exactly once per evaluation of the list, before every
+    later statement, which is what makes it the one certain write.
     """
     if not isinstance(statement, Ps1ExpressionStatement):
         return None

@@ -1449,6 +1449,15 @@ class TestPs1AnEmulatedBodyAnswersWithTheHostsRulesAndNotWithPythons(TestPs1):
                 }
                 Write-Output (f)
             """),
+            # `$variable:q` addresses the Variable provider drive, which is the variable namespace
+            # itself, so it writes the script-scope `$q` the body reads exactly as the bare form does.
+            cleandoc("""
+                $variable:q = 5
+                function f {
+                  $q + 1
+                }
+                Write-Output (f)
+            """),
         ]:
             with self.subTest(source):
                 self.assertEqual(self._deobfuscate(source), source)

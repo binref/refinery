@@ -78,6 +78,11 @@ class TestPs1SubExpressionEvaluator(TestPs1):
     def test_a_read_of_an_automatic_variable_refuses(self):
         self._assertUnchanged('$x = $($args + 1)', Ps1SubExpressionEvaluator)
 
+    def test_a_read_of_a_session_variable_refuses(self):
+        # `$FormatEnumerationLimit` is `4` in every session, so this body is `5`; reading it as the
+        # `$null` an isolated fold sees would fold the sub-expression to `$(1)`.
+        self._assertUnchanged('$x = $($FormatEnumerationLimit + 1)', Ps1SubExpressionEvaluator)
+
     def test_a_call_without_arguments_reading_args_is_refused(self):
         self._assertUnchanged(cleandoc("""
             function f {
@@ -124,6 +129,22 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         self._assertUnchanged(cleandoc("""
             iex '$u = 5'
             $x = $($u + 'x')
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_a_body_write_a_later_iex_could_read_is_not_dropped(self):
+        """
+        A `$(...)` runs in the scope it is written in, so `$w` survives it and code `iex` runs in
+        that scope can read the value the body left. Folding the body away drops the `$w = 'PAYLOAD'`
+        store, so the `iex`'d code reads the `$null` of a fresh scope where 5.1 gives it `'PAYLOAD'`.
+        The reads side already refuses a body read of a never-written name when data-code runs; the
+        symmetric write-leak guard would refuse this, but it would also refuse the scratch writes of
+        the canonical decode-then-`iex` fold, a tradeoff not yet made.
+        """
+        self._assertUnchanged(cleandoc("""
+            $x = $($w = 'PAYLOAD'
+            $w)
+            iex $stager
         """), Ps1SubExpressionEvaluator)
 
     def test_a_self_reading_accumulator_refuses(self):
@@ -249,11 +270,10 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             }
         """), Ps1SubExpressionEvaluator)
 
-    def test_a_matches_refill_with_an_outside_reader_refuses(self):
+    def test_a_match_body_refuses_because_it_refills_the_engine_matches(self):
         self._assertUnchanged(cleandoc("""
             $x = $('abc' -match 'b'
             'v')
-            $y = $Matches[0]
         """), Ps1SubExpressionEvaluator)
 
     def test_a_replace_with_an_outside_matches_reader_folds(self):

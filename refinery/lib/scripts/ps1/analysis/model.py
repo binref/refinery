@@ -862,6 +862,53 @@ class Ps1SemanticModel:
             sites.setdefault(write.key, []).append(write.node)
         return sites
 
+    def scopes(self) -> Iterator[Scope]:
+        """
+        Every scope in the model, the root scope first and each scope before its own descendants.
+        The one walk of the scope tree the model's whole-script queries share.
+        """
+        stack: list[Scope] = [self.root_scope]
+        while stack:
+            scope = stack.pop()
+            stack.extend(scope.children)
+            yield scope
+
+    def script_scope_write_names(self) -> frozenset[str]:
+        """
+        The variable names a write outside every function body claims — the script scope above a
+        folded call. A body that reads one of these before it writes it observes the enclosing value
+        the fold does not hold, so `_Ps1Interpreter` refuses that read rather than answering it
+        `$null`. A name bound only inside a function is that function's own local and is not here,
+        which is what keeps an accumulator like `$r = $r + …` folding: its first `$r` is genuinely
+        unset and reads as `$null`.
+
+        The names come from the bindings the model filed rather than a variable-occurrence walk,
+        because a write does not have to be spelled as a variable to be one: `Set-Variable q 5`
+        writes `$q`, and a walk that sees no occurrence of it folds a call that reads `q` across the
+        write. The scope the model files a write in is the answer to whether it sits above a folded
+        call, so a `Set-Variable q 5 -Scope Script` inside a function counts here while the same
+        command without the scope in that function does not.
+        """
+        names: set[str] = set()
+        for scope in self.scopes():
+            if self._within_function(scope):
+                continue
+            names.update(binding.name for binding in scope.bindings.values() if binding.writes)
+        return frozenset(names)
+
+    @staticmethod
+    def _within_function(scope: Scope) -> bool:
+        """
+        Whether *scope* is a function body or nested inside one — a scope a fold of a call in the
+        script scope cannot treat as the caller's enclosing scope.
+        """
+        cursor: Scope | None = scope
+        while cursor is not None:
+            if cursor.kind is ScopeKind.FUNCTION:
+                return True
+            cursor = cursor.parent
+        return False
+
     @property
     def writes_unreadable_names(self) -> bool:
         """
@@ -870,13 +917,7 @@ class Ps1SemanticModel:
         a question anything can answer, so one anywhere puts every read of a name no binding
         claims in doubt rather than only the scope the write sat in.
         """
-        stack: list[Scope] = [self.root_scope]
-        while stack:
-            scope = stack.pop()
-            stack.extend(scope.children)
-            if scope.writes_unreadable_names:
-                return True
-        return False
+        return any(scope.writes_unreadable_names for scope in self.scopes())
 
     def _populate(self, scope: Scope):
         for node in scope_local_nodes(scope.node):
@@ -968,14 +1009,21 @@ class Ps1SemanticModel:
 
     def _defining_scope(self, var: Ps1Variable, current: Scope) -> Scope | None:
         """
-        The scope a write to *var* binds. A bare, `$local:`, or `$private:` assignment binds in the
-        current scope (write-local); a `$script:`, `$global:`, or `$using:` assignment, and an
-        `$env:` assignment (a process-global environment variable, bound under an `env:`-prefixed
-        key), bind at the script scope. The provider namespaces (`variable:`, `function:`,
-        `alias:`, `drive:`) name a namespace distinct from script variables and bind nothing here.
+        The scope a write to *var* binds. A bare, `$local:`, `$private:`, or `$variable:` assignment
+        binds in the current scope (write-local); a `$script:`, `$global:`, or `$using:` assignment,
+        and an `$env:` assignment (a process-global environment variable, bound under an
+        `env:`-prefixed key), bind at the script scope. The `variable:` drive *is* the variable
+        namespace, so `$variable:q = 5` binds `$q` write-local exactly as the bare form does and a
+        body reading `$q` observes it; the other provider namespaces (`function:`, `alias:`,
+        `drive:`) name a namespace distinct from script variables and bind nothing here.
         """
         modifier = var.scope
-        if modifier in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL, Ps1ScopeModifier.PRIVATE):
+        if modifier in (
+            Ps1ScopeModifier.NONE,
+            Ps1ScopeModifier.LOCAL,
+            Ps1ScopeModifier.PRIVATE,
+            Ps1ScopeModifier.VARIABLE,
+        ):
             return current
         if modifier in (
             Ps1ScopeModifier.SCRIPT,
@@ -1026,10 +1074,7 @@ class Ps1SemanticModel:
                     binding.constraints.add(data.resolve_type(named))
 
     def _every_binding(self) -> Iterator[Binding]:
-        stack = [self.root_scope]
-        while stack:
-            scope = stack.pop()
-            stack.extend(scope.children)
+        for scope in self.scopes():
             yield from scope.bindings.values()
 
     def _share_stores_through_aliases(self):
