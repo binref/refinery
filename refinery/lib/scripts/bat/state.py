@@ -136,9 +136,7 @@ class BatchState:
         self.file_system = file_system
         self.dirstack = []
         self.linebreaks = []
-        if filename is ...:
-            filename = ''
-        if filename == '':
+        if filename is ... or filename == '':
             filename = F'{uuid4()}.bat'
         self.name = filename
         self.args = []

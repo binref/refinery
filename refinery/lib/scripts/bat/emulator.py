@@ -305,7 +305,6 @@ class BatchEmulator:
         cfg: BatchEmulatorConfig | None = None,
         std: IO | None = None,
     ):
-        self.stack = []
         self.parser = BatchParser(data, state)
         self.std = std or IO()
         self.cfg = cfg or BatchEmulatorConfig()
@@ -467,22 +466,14 @@ class BatchEmulator:
                 return token
             if isinstance(token, str):
                 return expand_string(token)
-            if isinstance(token, AstCommand):
-                new = {}
-                for tf in fields(token):
-                    value = getattr(token, tf.name)
-                    if tf.name == 'fragments':
-                        new[tf.name] = expand_command_fragments(value)
-                    elif tf.name != 'parent':
-                        new[tf.name] = expand(value)
-                    else:
-                        new[tf.name] = value
-                return token.__class__(**new)
             if isinstance(token, AstNode):
+                is_command = isinstance(token, AstCommand)
                 new = {}
                 for tf in fields(token):
                     value = getattr(token, tf.name)
-                    if tf.name != 'parent':
+                    if is_command and tf.name == 'fragments':
+                        value = expand_command_fragments(value)
+                    elif tf.name != 'parent':
                         value = expand(value)
                     new[tf.name] = value
                 return token.__class__(**new)
@@ -1034,21 +1025,12 @@ class BatchEmulator:
             std.e.write('The syntax of the command is incorrect.\r\n')
             return 1
         _P = 'P' in flags # Prompts for confirmation before deleting each file.
-        _F = 'F' in flags # Force deleting of read-only files.
-        _S = 'S' in flags # Delete specified files from all subdirectories.
-        _Q = 'Q' in flags # Quiet mode, do not ask if ok to delete on global wildcard
         state = self.state
         cwd = state.cwd
         for pattern in paths:
             for path in list(state.file_system):
                 if not winfnmatch(pattern, path, cwd):
                     continue
-                if _F:
-                    pass
-                if _S:
-                    pass
-                if _Q:
-                    pass
                 if _P and state.exists_file(pattern):
                     std.o.write(F'{pattern}, Delete (Y/N)? ')
                     decision = None
