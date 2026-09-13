@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.deobfuscation.emulator import (
     _NO_OPERATOR_METHOD_ON_BOOLEAN,
     _NO_OPERATOR_METHOD_ON_CHAR,
     _Ps1Interpreter,
+    evaluate_truthy,
 )
 from refinery.lib.scripts.ps1.model import Ps1ScriptBlock
 from refinery.lib.scripts.ps1.parser import Ps1Parser
@@ -439,6 +440,49 @@ class TestPs1EmulatorExtra(TestPs1):
             }
             f 1
         """))
+
+    def test_a_loop_exit_with_no_loop_around_it_is_refused_rather_than_raised(self):
+        # Regression: `break` and `continue` unwound straight past the interpreter and crashed the
+        # whole pipeline, because `emit` caught only `_ReturnSignal`. An exit that left every loop
+        # the emulation ran names a loop the fold does not hold, so the call is refused.
+        for exit_name in ('break', 'continue'):
+            with self.subTest(exit_name):
+                source = cleandoc(F"""
+                    function f {{
+                      1
+                      {exit_name}
+                      2
+                    }}
+                    $x = f
+                """)
+                self.assertEqual(self._apply(source, Ps1FunctionEvaluator), source)
+
+    def test_a_loop_exit_inside_a_nested_subexpression_still_exits_the_loop_it_sits_in(self):
+        # The conversion at the `emit` boundary must not reach into the loops the interpreter runs
+        # itself: a `break` inside a `$()` is measured to exit the enclosing loop on 5.1, and the
+        # loop's own handler still catches it. The body emits 'x' on the first pass, exits on the
+        # second, and finishes with 'y'.
+        source = cleandoc("""
+            function f {
+              for($i = 0; $i -lt 5; $i++) {
+                if($i -eq 1) {
+                  $(break)
+                }
+                'x'
+              }
+              'y'
+            }
+            $x = f
+        """)
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), "$x = 'x', 'y'")
+
+    def test_a_loop_exit_in_an_unfolded_condition_is_refused_rather_than_raised(self):
+        # The `unflatten` pass hands conditions to the interpreter directly, past `emit`'s boundary,
+        # so a loop exit in one reached no conversion at all before the boundary was closed there
+        # too.
+        parsed = Ps1Parser('$(if(1){break})').parse()
+        condition = parsed.body[0].expression
+        self.assertIsNone(evaluate_truthy(condition, {}))
 
     def test_a_redirected_call_is_not_folded_into_its_value(self):
         # Regression: the replacement is an expression and an expression carries no redirections,

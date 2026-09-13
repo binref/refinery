@@ -508,6 +508,11 @@ class _Ps1Interpreter:
                 self._emit_stmt(statement, stream)
         except _ReturnSignal as signal:
             return signal.stream
+        except (_BreakSignal, _ContinueSignal):
+            # A loop exit that reached this boundary left every loop the emulation ran: 5.1 sends
+            # it on to a loop *outside* the emulated body, which is a program state this holds no
+            # value for. The loops inside the body catch these signals before they get here.
+            raise _Ps1InterpreterError
         return stream
 
     def execute(
@@ -2373,5 +2378,5 @@ def evaluate_truthy(
         interp._env = dict(bindings)
         value = interp._eval(condition)
         return _Ps1Interpreter._truthy(value)
-    except (_Ps1InterpreterError, InvokeExpression):
+    except (_Ps1InterpreterError, InvokeExpression, _BreakSignal, _ContinueSignal):
         return None
