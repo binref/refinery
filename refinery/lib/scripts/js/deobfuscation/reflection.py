@@ -1297,7 +1297,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 code, ctor_binds = body
                 parsed = self._resolve_reflected_body(
                     code, site, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope,
-                    binds=ctor_binds or bool(node.arguments),
+                    binds=ctor_binds,
+                    invocation_arguments=node.arguments,
                 )
                 if parsed is not None:
                     self._note_retirement(site, retire)
@@ -1495,6 +1496,28 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return None
         return values
 
+    def _argument_may_be_dropped(self, argument: Node, root: JsScript) -> bool:
+        """
+        Whether replacing a call that passes *argument* with the body it invokes may drop the
+        argument's evaluation. A literal is required — the value the call reads is one no splice of
+        the body reproduces, so anything that reads a name or runs a call keeps the call standing —
+        and the literal must additionally be one whose evaluation is side-effect free and cannot
+        throw, the same question `_retire_consumed_temporaries` asks of the arguments of a
+        construction it drops: a fold never mutes the program's own effects. The second gate holds
+        of every literal the first admits today, and is what keeps the first one sound to widen.
+        """
+        ok, _ = extract_literal_value(argument)
+        if not ok:
+            return False
+        cache = model_cache(self, root)
+        return cache.effects.is_side_effect_free(
+            argument, None,
+            call_established=cache.call_established,
+            discarded=True,
+            reads_may_throw=True,
+            read_established=cache.read_established,
+        )
+
     def _destination_may_be_strict(self, site: Node, root: JsScript) -> bool:
         """
         Whether the destination of an inline could run the spliced text in strict mode. A
@@ -1525,13 +1548,17 @@ class JsReflectionInlining(ScriptLevelTransformer):
         *,
         binds: bool = False,
         destination: CodeContext | None = None,
+        invocation_arguments: list[Node] | None = None,
     ) -> JsScript | None:
         """
         Parse reflectively evaluated *code* and admit it through `_admit_reflected_body`, or decline
-        (`None`). A body that binds parameters or observes its arguments (*binds*) cannot be inlined
-        as text, so it declines before the parse. *destination* is the context the text is read in
-        once spliced, where that is not *site*'s own: a string timer's body lands inside a plain
-        function of its own.
+        (`None`). A body that binds parameters (*binds*) cannot be inlined as text, so it declines
+        before the parse; a body that observes its arguments declines in the admission, which has
+        the parsed body to ask. *invocation_arguments* is the argument list of the call the splice
+        would replace, where the code is a construction's body and the call is the invocation of
+        what it built — `None` where the site is no call that passes any. *destination* is the
+        context the text is read in once spliced, where that is not *site*'s own: a string timer's
+        body lands inside a plain function of its own.
         """
         if binds:
             return None
@@ -1543,7 +1570,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         )
         if parsed is None:
             return None
-        return self._admit_reflected_body(parsed, site, root, scope, at_global_scope)
+        return self._admit_reflected_body(
+            parsed, site, root, scope, at_global_scope,
+            invocation_arguments=invocation_arguments,
+        )
 
     def _admit_reflected_body(
         self,
@@ -1554,6 +1584,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         at_global_scope: bool,
         *,
         site_resolved: frozenset[str] = frozenset(),
+        invocation_arguments: list[Node] | None = None,
     ) -> JsScript | None:
         """
         Decide whether inlining the reflected body *parsed* at *site* preserves meaning, given the
@@ -1568,6 +1599,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         `return` is a SyntaxError in evaluated code, so an eval body with one declines. Declaration
         handling is delegated to `_reflected_declarations_safe`. Anything not provably safe is left
         intact (returns `None`) — declining is always sound.
+
+        *invocation_arguments* is the argument list of the call the splice replaces, where the site
+        is the invocation of a construction: the call evaluates those arguments before the body
+        runs, so a splice that drops them may mute an effect or a throw. Every one of them must be
+        droppable — `_argument_may_be_dropped` — and a body reading its `arguments` declines below,
+        for the call's arguments are exactly what such a body observes.
 
         *site_resolved* is the one exemption the pack route earns: a name its proxy substitution
         introduced resolves at the site by construction, the accessor spelling it being defined
@@ -1590,6 +1627,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if references_receiver_this(parsed) or _references_new_target(parsed):
                 return None
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
+            return None
+        if invocation_arguments and any(
+            argument is not None and not self._argument_may_be_dropped(argument, root)
+            for argument in invocation_arguments
+        ):
             return None
         body_model = build_semantic_model(parsed)
         if resolves_globally and self._destination_may_be_strict(site, root) and diverges_under_strict(

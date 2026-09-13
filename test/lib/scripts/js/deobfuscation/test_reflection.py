@@ -2717,3 +2717,61 @@ class TestAConstructionCallTheEvaluationRouteExecutes(TestJsDeobfuscator):
             " console.log(f('x,y,z')[1]);"
         )
         self.assertEqual("global.q = 5;\nconsole.log('y');", self._deobfuscate(source))
+
+
+class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
+    """
+    A call to a name a `Function` construction resolves to may pass arguments the body never
+    observes — the construction binds no parameters and reads no `arguments` — so the invocation
+    inlines like the argument-less spelling, the call's arguments evaluated before it and droppable
+    where the splice replaces them. Every argument must be a literal: anything that reads a name or
+    runs a call is an evaluation no splice of the body reproduces, so the call stays standing.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_a_literal_argument_inlines(self):
+        self.assertEqual(
+            'console.log(42);',
+            self._reflect("var f = Function('', 'return 42'); console.log(f(3400));"))
+
+    def test_a_literal_argument_at_statement_position_splices_the_body(self):
+        self.assertEqual(
+            'var a = 1;\nvar b = 2;\ncombine(a, b);',
+            self._reflect(
+                "var f = Function('', 'var a = 1; var b = 2; combine(a, b);'); f(3400);"))
+
+    def test_an_identifier_argument_stays_standing(self):
+        source = "var x = 1; var f = Function('', 'return 42'); console.log(f(x));"
+        self.assertEqual(
+            'var x = 1;\nvar f = Function(\'\', \'return 42\');\nconsole.log(f(x));',
+            self._reflect(source))
+
+    def test_a_side_effectful_argument_stays_standing(self):
+        source = "var f = Function('', 'return 42'); console.log(f(sink()));"
+        self.assertEqual(
+            'var f = Function(\'\', \'return 42\');\nconsole.log(f(sink()));',
+            self._reflect(source))
+
+    def test_an_argument_whose_read_may_throw_stays_standing(self):
+        source = "var f = Function('', 'return 42'); console.log(f(oo.x));"
+        self.assertEqual(
+            'var f = Function(\'\', \'return 42\');\nconsole.log(f(oo.x));',
+            self._reflect(source))
+
+    def test_a_body_reading_arguments_through_a_nested_arrow_stays_standing(self):
+        source = "var f = Function('', 'return (() => arguments.length)()'); console.log(f(42));"
+        self.assertEqual(
+            'var f = Function(\'\', \'return (() => arguments.length)()\');\nconsole.log(f(42));',
+            self._reflect(source))
+
+    def test_a_body_reading_arguments_with_a_literal_argument_folds_by_evaluation(self):
+        """
+        The argument a body reads through `arguments` is one the inline route declines, and the
+        evaluation route answers the value it was passed — the D2 territory this row keeps pinned
+        beside the inline route's own.
+        """
+        self.assertEqual(
+            'console.log(42);',
+            self._reflect("var f = Function('', 'return arguments[0]'); console.log(f(42));"))
