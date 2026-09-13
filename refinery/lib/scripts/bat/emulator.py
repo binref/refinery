@@ -1415,10 +1415,16 @@ class BatchEmulator:
         _if = self.expand_ast_node(_if)
         self.block_labels.clear()
 
-        if _if.variant == AstIfVariant.ErrorLevel:
-            condition = batchint(_if.lhs) <= self.state.ec
-        elif _if.variant == AstIfVariant.CmdExtVersion:
-            condition = batchint(_if.lhs) <= self.state.extensions_version
+        if _if.variant in (AstIfVariant.ErrorLevel, AstIfVariant.CmdExtVersion):
+            try:
+                threshold = batchint(_if.lhs)
+            except ValueError:
+                std.e.write(F'{_if.lhs} was unexpected at this time.\r\n')
+                return
+            if _if.variant is AstIfVariant.ErrorLevel:
+                condition = threshold <= self.state.ec
+            else:
+                condition = threshold <= self.state.extensions_version
         elif _if.variant == AstIfVariant.Exist:
             condition = self.state.exists_file(_if.lhs)
         elif _if.variant == AstIfVariant.Defined:
@@ -1645,6 +1651,12 @@ class BatchEmulator:
                 raise
             except EmulatorException as error:
                 yield Error(str(error))
+                self.state.ec = 1
+                break
+            except RecursionError:
+                yield Error(
+                    'The emulation exhausted the available call stack and was aborted, likely '
+                    'due to deeply nested or recursive constructs.')
                 self.state.ec = 1
                 break
             else:

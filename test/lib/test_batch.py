@@ -2254,6 +2254,45 @@ class TestBatchCmdSemantics(TestBase):
         finally:
             handlers['ECHO'] = original
 
+    def test_a_stack_exhaustion_during_emulation_is_reported_not_crashed(self):
+        """
+        Stack exhaustion is a resource limit rather than an emulator bug, so a RecursionError
+        raised while tracing is reported as an error chunk with errorlevel 1, never propagated
+        out of `trace()` to crash the caller.
+        """
+        def boom(self, cmd, std, *_):
+            raise RecursionError('simulated stack exhaustion')
+        handlers = BatchEmulator._command.handlers
+        original = handlers['ECHO']
+        handlers['ECHO'] = boom
+        try:
+            bat = BatchEmulator('echo hi\n')
+            errors = [s for s in bat.trace() if isinstance(s, Error)]
+            self.assertNotEqual(errors, [])
+            self.assertEqual(bat.state.ec, 1)
+        finally:
+            handlers['ECHO'] = original
+
+    def test_if_errorlevel_with_a_nonnumeric_operand_reports_and_continues(self):
+        """
+        cmd.exe rejects a non-numeric IF ERRORLEVEL operand with `<token> was unexpected at this
+        time.` on stderr, takes neither branch, leaves errorlevel unchanged, and runs the next
+        statement; the operand is frequently a variable that expands to junk (`if errorlevel %n%`).
+        """
+        bat = self._run('if errorlevel abc echo INBRANCH\necho AFTER')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+        self.assertEqual(bat.std.e.getvalue(), 'abc was unexpected at this time.\r\n')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_if_cmdextversion_with_a_nonnumeric_operand_reports_and_continues(self):
+        """
+        IF CMDEXTVERSION with a non-numeric operand fails the same way as IF ERRORLEVEL: cmd.exe
+        writes `<token> was unexpected at this time.` and carries on to the next statement.
+        """
+        bat = self._run('if cmdextversion xyz echo INBRANCH\necho AFTER')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+        self.assertEqual(bat.std.e.getvalue(), 'xyz was unexpected at this time.\r\n')
+
     def test_lexer_switch_parameter_colon_stays_attached(self):
         """
         A colon directly after a switch token belongs to that token: `findstr
