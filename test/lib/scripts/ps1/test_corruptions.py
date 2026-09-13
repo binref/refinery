@@ -867,11 +867,13 @@ class TestPs1Corruptions(_Ps1Ledger):
             'the environment read was replaced by a value the deobfuscator cannot know',
         )
 
-    @unittest.expectedFailure
     def test_invoke_command_with_computername_runs_on_another_machine(self):
         """
         `Invoke-Command -Comp $h -ScriptBlock { 1 }` runs its block on the host named by `$h` under
-        5.1. Splicing the block into the script makes it run locally instead.
+        5.1. Splicing the block into the script makes it run locally instead, and the splice once
+        happened here because the remoting refusal read the parameter by its exact spelling and
+        `-Comp` is an abbreviation of it. The abbreviation expansion spells the parameter out first,
+        so the refusal sees it and the block stays in the remote invocation.
         """
         tree = self._deobfuscated_tree('Invoke-Command -Comp $h -ScriptBlock { 1 }')
         self.assertTrue(

