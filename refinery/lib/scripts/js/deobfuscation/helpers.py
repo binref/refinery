@@ -281,13 +281,52 @@ def converts_uninterceptably(value: Value) -> bool:
     """
     Whether converting *value* to a string — or to the key of a property access, which converts it
     the same way — is an internal operation no program can replace. Every primitive is: `String(1)`
-    and `o[1]` answer what the specification says whatever the file did to the prototypes. An array
-    and an object are not, because their conversion runs `Array.prototype.join` and
-    `Object.prototype.toString`, so a file that replaces either decides what `o[[1]]` reads. This is
-    the rule `concat_string` states for the operand of a `+`, asked of a value rather than a node,
-    and a fold that converts a value without asking it computes a key the engine never would.
+    and `o[1]` answer what the specification says whatever the file did to the prototypes. A hole
+    is too: it renders as the empty string, and whether an array's chain supplies an element at the
+    position the hole stands at is a question about the array, which the caller holding the array
+    asks of it. An array and an object are not, because their conversion runs `Array.prototype.join`
+    and `Object.prototype.toString`, so a file that replaces either decides what `o[[1]]` reads.
+    This is the rule `concat_string` states for the operand of a `+`, asked of a value rather than
+    a node, and a fold that converts a value without asking it computes a key the engine never
+    would.
     """
-    return value is None or value is JS_NULL or isinstance(value, (str, int, float, bool))
+    return (
+        value is None or value is JS_NULL or value is JS_HOLE
+        or isinstance(value, (str, int, float, bool))
+    )
+
+
+_TO_PRIMITIVE_METHODS = frozenset({'valueOf', 'toString', 'Symbol.toPrimitive'})
+
+
+def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
+    """
+    Whether converting *value* to a primitive — the string a `+`, a template hole, a `String()`
+    call, or a computed property key needs, or the number an arithmetic operator asks for — is an
+    operation no program can replace. This is `converts_uninterceptably` widened by what an
+    effect model can vouch for, which is the two halves of an object's conversion: it owns none of
+    `valueOf`, `toString` or `Symbol.toPrimitive` — this domain's objects are plain data
+    dictionaries, so a program can have written one only as an own property — and the prototype
+    chain that would supply them is still the one the language describes, which
+    `EffectModel.read_chain_intact` answers. An array converts element-wise, so each element has
+    to answer this question too.
+
+    A caller with no effect model gets `False` for every object: the interpreter used on one
+    expression in isolation cannot see the file the expression came from, and whether anything
+    replaced a conversion is a question about that file.
+    """
+    if converts_uninterceptably(value):
+        return True
+    if isinstance(value, dict):
+        if any(name in value for name in _TO_PRIMITIVE_METHODS):
+            return False
+    elif not isinstance(value, (list, JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        return False
+    if effects is None or not effects.read_chain_intact(type(value)):
+        return False
+    if isinstance(value, list) and not all(coerces_uninterceptably(effects, item) for item in value):
+        return False
+    return True
 
 
 class MemberRead(Enum):

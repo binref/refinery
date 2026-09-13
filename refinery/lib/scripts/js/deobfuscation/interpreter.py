@@ -44,6 +44,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     _to_uint32,
     canonical_array_index,
     code_points,
+    coerces_uninterceptably,
     eval_binary_op,
     js_typeof,
     name_is_unbound,
@@ -1189,6 +1190,15 @@ def _list_to_string(buf: list, args: list[Value]) -> Value:
 
 STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON', 'Buffer'})
 
+_COERCING_GLOBALS = frozenset({'String', 'Number'})
+"""
+The global functions whose value *is* the coercion of their argument: `String(x)` is ToString and
+`Number(x)` is ToNumber as callable spellings. They are the one pair the interpreter guards at its
+dispatch, because their argument is exactly the value a program-installed conversion replaces;
+the registry arms that coerce an argument in the course of a larger operation keep the behavior
+they have, which the fold-admission gate outside the interpreter is what stands behind.
+"""
+
 
 def is_runtime_name(name: str) -> bool:
     """
@@ -1808,7 +1818,17 @@ class JsInterpreter:
         `eval_binary_op` handles the numeric operators alone, which is why the string cases resolve first:
         `+` needs ToPrimitive on both operands and may yield a concatenation, and a relational operator
         compares two strings lexicographically rather than numerically. Everything after that is a number.
+
+        Every operator but strict equality coerces its operands — `+` and the relational operators to
+        primitives, the numeric ones to numbers, `==` to whichever the other side demands, and `in` its
+        left side to a key — so every one of them asks the coercion guard first, the `in` operator of
+        its key alone: an object whose conversion a program installed decides what all of these answer,
+        and strict equality is the one operator that runs nothing.
         """
+        if op not in ('===', '!=='):
+            self._require_uninterceptable(left)
+            if op != 'in':
+                self._require_uninterceptable(right)
         if op == '===':
             return self._strict_equal(left, right)
         if op == '!==':
@@ -1898,7 +1918,10 @@ class JsInterpreter:
         apply = UNARY_OPS.get(op)
         if apply is None:
             raise InterpreterError
-        return apply(self._eval(operand))
+        value = self._eval(operand)
+        if op in ('+', '-', '~'):
+            self._require_uninterceptable(value)
+        return apply(value)
 
     def _eval_update(self, node: JsUpdateExpression) -> Value:
         """
@@ -1914,12 +1937,15 @@ class JsInterpreter:
             name = target.name
             if name not in self._env:
                 raise InterpreterError
+            self._require_uninterceptable(self._env[name])
             current = to_number(self._env[name])
             self._env[name] = current + delta
         elif isinstance(target, JsMemberExpression):
             obj = self._eval(target.object)
             key = self._member_key(target)
-            current = to_number(self._get_property(obj, key))
+            current = self._get_property(obj, key)
+            self._require_uninterceptable(current)
+            current = to_number(current)
             self._set_property(obj, key, current + delta)
         else:
             raise InterpreterError
@@ -2041,6 +2067,10 @@ class JsInterpreter:
             return self._call_function(func, args)
         builtin = BUILTIN_REGISTRY.get((None, name))
         if builtin is not None and self._names_a_runtime_builtin(callee):
+            if name in _COERCING_GLOBALS and not all(
+                coerces_uninterceptably(self._effects, arg) for arg in args
+            ):
+                raise InterpreterError
             return builtin(args)
         raise InterpreterError
 
@@ -2114,6 +2144,16 @@ class JsInterpreter:
         if effects is None:
             return True
         return effects.call_is_foldable(node)
+
+    def _require_uninterceptable(self, value: Value) -> None:
+        """
+        Refuse where converting *value* to the primitive an operator, a key, or a template hole needs
+        could run a conversion the program installed. `coerces_uninterceptably` decides, against the
+        effect model this interpreter holds; without one there is no chain to vouch for an object,
+        so every object conversion refuses rather than assuming a file that replaced none.
+        """
+        if not coerces_uninterceptably(self._effects, value):
+            raise InterpreterError
 
     def _prototype_is_intact(self, value_type: type) -> bool:
         """
@@ -2331,6 +2371,10 @@ class JsInterpreter:
         that denotes nothing makes the whole literal denote nothing: the language refuses such a
         template rather than reading it, so there is no string to hand back and computing one would
         answer for a script no engine will run.
+
+        A hole's value is converted to a string, so it asks the coercion guard first: a program
+        that installed a conversion on the object the hole evaluates to decides what the template
+        spells, and that is a program this interpreter refuses to answer for.
         """
         parts: list[str] = []
         for i, quasi in enumerate(node.quasis):
@@ -2338,7 +2382,9 @@ class JsInterpreter:
                 raise IrreducibleExpression(node)
             parts.append(quasi.value)
             if i < len(node.expressions):
-                parts.append(to_string(self._eval(node.expressions[i])))
+                value = self._eval(node.expressions[i])
+                self._require_uninterceptable(value)
+                parts.append(to_string(value))
         result = ''.join(parts)
         if len(result) > self.max_string_len:
             raise InterpreterError
@@ -2380,6 +2426,7 @@ class JsInterpreter:
     def _member_key(self, node: JsMemberExpression) -> str:
         if node.computed:
             val = self._eval(node.property)
+            self._require_uninterceptable(val)
             return to_string(val)
         if isinstance(node.property, JsIdentifier):
             return node.property.name

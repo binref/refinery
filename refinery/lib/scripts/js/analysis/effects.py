@@ -300,6 +300,7 @@ _PROTOTYPE_OWNERS: dict[str, str] = {
     'bool': 'Boolean',
     'int': 'Number',
     'float': 'Number',
+    'JsFunctionDeclaration': 'Function',
     'JsFunctionExpression': 'Function',
     'JsArrowFunctionExpression': 'Function',
 }
