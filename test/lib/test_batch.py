@@ -2531,6 +2531,20 @@ class TestBatchCmdSemantics(TestBase):
         b = [second.envar('RANDOM') for _ in range(8)]
         self.assertNotEqual(a, b)
 
+    @unittest.expectedFailure
+    def test_random_is_reproducible_under_a_pinned_now(self):
+        """
+        The `now` parameter exists so that an emulation is reproducible; %RANDOM% should honor it,
+        so two states pinned to the same moment draw the same sequence. The RNG is currently seeded
+        from system entropy rather than `now`, so the two sequences differ.
+        """
+        now = '2021-06-01T12:00:00'
+        first_state = BatchState(now=now)
+        first = [first_state.envar('RANDOM') for _ in range(8)]
+        second_state = BatchState(now=now)
+        second = [second_state.envar('RANDOM') for _ in range(8)]
+        self.assertEqual(first, second)
+
     def test_random_reaches_its_documented_maximum(self):
         """
         cmd.exe %RANDOM% spans 0..32767 inclusive; this seed lands the draw on 32767,
