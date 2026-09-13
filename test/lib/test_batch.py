@@ -6,7 +6,7 @@ import unittest
 from inspect import getdoc
 
 from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState, ExecutionContext
-from refinery.lib.scripts.bat.emulator import Error
+from refinery.lib.scripts.bat.emulator import CommandFailure, Error
 from refinery.lib.scripts.bat.synth import SynCommand
 from refinery.lib.scripts.bat.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
 from refinery.lib.scripts.bat.util import batchrange, batchint, u16, unquote, uncaret, enquote
@@ -2657,6 +2657,84 @@ class TestBatchCmdSemantics(TestBase):
         """
         bat = self._run('setlocal enabledelayedexpansion\n!undef!\necho AFTER')
         self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+
+    def test_a_command_failure_returned_by_a_handler_is_written_and_applied(self):
+        """
+        A handler that returns `CommandFailure(message, errorlevel)` has its message written to the
+        error stream and its errorlevel applied by the single command dispatcher, and the following
+        statement still runs. Removing the dispatcher arm that recognizes `CommandFailure` fails this.
+        """
+        def fail(self, cmd, std, *_):
+            yield cmd
+            return CommandFailure('boom', 7)
+        handlers = BatchEmulator._command.handlers
+        original = handlers['CD']
+        handlers['CD'] = fail
+        try:
+            bat = self._run('cd whatever\necho AFTER')
+            self.assertEqual(bat.std.e.getvalue(), 'boom\r\n')
+            self.assertEqual(bat.state.ec, 7)
+            self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+        finally:
+            handlers['CD'] = original
+
+    def test_a_command_failure_message_follows_stderr_redirection(self):
+        R"""
+        `cd /d z:foo 2>e.txt` routes the failure message into the redirected error file and leaves
+        the outer error stream empty, because the dispatcher writes it to the redirect-aware stream.
+        """
+        bat = self._run('cd /d z:foo 2>e.txt')
+        self.assertEqual(
+            bat.state.ingest_file('e.txt'),
+            'The system cannot find the drive specified.\r\n')
+        self.assertEqual(bat.std.e.getvalue(), '')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_a_command_failure_still_flushes_the_stdout_redirect_file(self):
+        R"""
+        `cd /d z:foo >o.txt` fails before writing output, yet the redirected stdout file is still
+        created empty, because the dispatcher flushes redirect files even on a command failure.
+        """
+        bat = self._run('cd /d z:foo >o.txt')
+        self.assertTrue(bat.state.exists_file('o.txt'))
+        self.assertEqual(bat.state.ingest_file('o.txt'), '')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_a_command_failure_sets_errorlevel_before_the_sequence_tail(self):
+        R"""
+        A command failure sets errorlevel before `&&`/`||` are evaluated: `cd /d z:foo && echo A`
+        prints nothing, `cd /d z:foo || echo B` prints B, and the errorlevel is 1.
+        """
+        self.assertEqual(self._run('cd /d z:foo && echo A').std.o.getvalue(), '')
+        self.assertEqual(self._run('cd /d z:foo || echo B').std.o.getvalue(), 'B\r\n')
+        self.assertEqual(self._run('cd /d z:foo').state.ec, 1)
+
+    def test_cd_and_pushd_report_the_identical_drive_message(self):
+        R"""
+        CD and PUSHD to an unresolvable drive both emit exactly "The system cannot find the drive
+        specified."; the message is defined once and shared, so the two cannot drift apart.
+        """
+        message = 'The system cannot find the drive specified.\r\n'
+        self.assertEqual(self._run('cd /d z:foo').std.e.getvalue(), message)
+        self.assertEqual(self._run('pushd z:foo').std.e.getvalue(), message)
+
+    def test_arithmetic_set_divide_by_zero_sets_the_cmd_errorlevel(self):
+        """
+        A SET /A divide-by-zero sets errorlevel 1073750993 alongside its message; the errorlevel is
+        the part that drives `&&`/`||` and was previously unpinned.
+        """
+        bat = self._run('set /a x=1/0')
+        self.assertEqual(bat.std.e.getvalue(), 'Divide by zero error.\r\n')
+        self.assertEqual(bat.state.ec, 1073750993)
+
+    def test_cd_switch_after_target_reports_path_not_found(self):
+        R"""
+        `cd foo /x` places a switch after the target, which cmd.exe rejects with "The system cannot
+        find the path specified." and errorlevel 1.
+        """
+        bat = self._run('cd foo /x')
+        self.assertEqual(bat.std.e.getvalue(), 'The system cannot find the path specified.\r\n')
+        self.assertEqual(bat.state.ec, 1)
 
     @unittest.expectedFailure
     def test_for_f_assigns_tokens_past_twenty_six(self):

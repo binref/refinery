@@ -214,6 +214,25 @@ class Error(str):
 ErrorCannotFindFile = Error('The system cannot find the file specified.')
 
 
+@dataclass(frozen=True)
+class CommandFailure:
+    """
+    The outcome of a built-in command that failed with a diagnostic. A `_command` handler returns this
+    in place of a bare exit code when the failure has a message to print; `execute_command` writes the
+    message to the (redirect-aware) error stream and sets the error level. Return it only after the
+    command's reconstruction chunk has been yielded, so the deobfuscated output keeps that chunk.
+    """
+    message: str
+    errorlevel: int
+
+
+MSG_SYNTAX_INCORRECT = 'The syntax of the command is incorrect.'
+MSG_MISSING_OPERAND = 'Missing operand.'
+MSG_NO_DRIVE = 'The system cannot find the drive specified.'
+MSG_NO_PATH = 'The system cannot find the path specified.'
+MSG_BAD_SWITCH = 'The filename, directory name, or volume label syntax is incorrect.'
+
+
 @dataclass
 class IO:
     i: DevNull | StringIO = field(default_factory=StringIO)
@@ -286,7 +305,8 @@ class BatchEmulator:
                 SynCommand,
                 IO,
                 bool,
-            ], Generator[str, None, int | None] | int | ErrorZero | None]
+            ], Generator[str, None, int | ErrorZero | CommandFailure | None]
+                | int | ErrorZero | CommandFailure | None]
         ]] = {}
 
         def __init__(self, key: str):
@@ -551,8 +571,7 @@ class BatchEmulator:
                 file_args.append(unquote(arg))
 
         if 'L' in flags and 'R' in flags:
-            std.e.write('Specify only /L or /R.\r\n')
-            return 2
+            return CommandFailure('Specify only /L or /R.', 2)
         if not needles:
             return 1
         for v in flags:
@@ -742,13 +761,11 @@ class BatchEmulator:
                 program, _, tail = program[1:].rpartition('"')
                 program = program or tail
             if not program:
-                std.e.write('The syntax of the command is incorrect.\r\n')
-                return ErrorZero.Val
+                return CommandFailure(MSG_SYNTAX_INCORRECT, ErrorZero.Val)
             for assignment in program.split(','):
                 assignment = assignment.strip()
                 if not assignment:
-                    std.e.write('Missing operand.\r\n')
-                    return ErrorZero.Val
+                    return CommandFailure(MSG_MISSING_OPERAND, ErrorZero.Val)
                 parts = re.split(r'([-*+^|/%&]|<<|>>|)=', assignment, maxsplit=1)
                 if len(parts) == 3:
                     name, operator, definition = parts
@@ -762,8 +779,7 @@ class BatchEmulator:
                 try:
                     expression = cautious_parse(definition)
                 except ExpressionParsingFailure:
-                    std.e.write('Missing operand.\r\n')
-                    return 1073750989
+                    return CommandFailure(MSG_MISSING_OPERAND, 1073750989)
                 names = names_in_expression(expression)
                 if names.stored or names.others:
                     raise EmulatorException('Arithmetic SET had unexpected variable access.')
@@ -779,18 +795,13 @@ class BatchEmulator:
                 try:
                     value = _seta_eval(expression.body, namespace)
                 except ZeroDivisionError:
-                    std.e.write('Divide by zero error.\r\n')
-                    return 1073750993
+                    return CommandFailure('Divide by zero error.', 1073750993)
                 except EmulatorException:
-                    std.e.write('Missing operand.\r\n')
-                    return 1073750989
+                    return CommandFailure(MSG_MISSING_OPERAND, 1073750989)
                 if name:
                     self.environment[name] = str(value)
                     namespace[defang(name).upper()] = value
-            if value is None:
-                std.e.write('The syntax of the command is incorrect.')
-                return
-            elif piped or self.capture or self.state.cmdline:
+            if piped or self.capture or self.state.cmdline:
                 std.o.write(F'{value!s}\r\n')
         else:
             quote_mode = False
@@ -937,31 +948,27 @@ class BatchEmulator:
             tail = tail[2:].lstrip()
         if not tail:
             if drive_switch:
-                std.e.write('The filename, directory name, or volume label syntax is incorrect.\r\n')
-                return 1
+                return CommandFailure(MSG_BAD_SWITCH, 1)
             std.o.write(F'{self.state.cwd}\r\n')
             return
         pieces = split_arguments(tail)
         if any(piece.startswith('/') for piece in pieces[1:]):
-            std.e.write('The system cannot find the path specified.\r\n')
-            return 1
+            return CommandFailure(MSG_NO_PATH, 1)
         target = unquote(tail)
         target_drive = ntpath.splitdrive(target)[0]
         current_drive = ntpath.splitdrive(self.state.cwd)[0]
         if not drive_switch and target_drive and target_drive.upper() != current_drive.upper():
             return
         if not self.state.try_chdir(target):
-            std.e.write('The system cannot find the drive specified.\r\n')
-            return 1
+            return CommandFailure(MSG_NO_DRIVE, 1)
 
     @_command('PUSHD')
-    def execute_pushd(self, cmd: SynCommand, std: IO, *_):
+    def execute_pushd(self, cmd: SynCommand, *_):
         yield cmd
         previous = self.state.cwd
         target = cmd.argument_string.strip()
         if target and not self.state.try_chdir(unquote(target)):
-            std.e.write('The system cannot find the drive specified.\r\n')
-            return 1
+            return CommandFailure(MSG_NO_DRIVE, 1)
         self.state.dirstack.append(previous)
 
     @_command('POPD')
@@ -1022,8 +1029,7 @@ class BatchEmulator:
             arg = None
         paths = [unquote(p) for p in (arg, *it) if p is not None]
         if not paths:
-            std.e.write('The syntax of the command is incorrect.\r\n')
-            return 1
+            return CommandFailure(MSG_SYNTAX_INCORRECT, 1)
         _P = 'P' in flags # Prompts for confirmation before deleting each file.
         state = self.state
         cwd = state.cwd
@@ -1363,8 +1369,12 @@ class BatchEmulator:
 
         if (result := handler(self, cmd, std, in_group, piped)) is None:
             pass
-        elif not isinstance(result, (int, ErrorZero)):
+        elif not isinstance(result, (int, ErrorZero, CommandFailure)):
             result = (yield from result)
+
+        if isinstance(result, CommandFailure):
+            std.e.write(F'{result.message}\r\n')
+            result = result.errorlevel
 
         for k, path in paths.items():
             self.state.create_file(path, std[k].getvalue())
