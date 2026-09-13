@@ -217,3 +217,50 @@ class TestAReadTheWriteHasReachedStaysStanding(TestBase):
             before_and_after_in_a_host(_A_READ_THE_WRITE_HAS_REACHED),
             (('', 'TypeError'), ('', 'TypeError')),
         )
+
+
+_A_CONSTRUCTION_INVOKED_UNDER_A_RUNTIME_KEY_WRITE = {
+    'the write follows the invocation': (
+        a_program("""
+            var k, v;
+            var f = Function("return 42;");
+            var r = f();
+            globalThis[k] = v;
+            """),
+        "var k, v;\n"
+        "var r = 42;\n"
+        "globalThis[k] = v;",
+    ),
+    'the write precedes the invocation': (
+        a_program("""
+            var k, v;
+            globalThis[k] = v;
+            var f = Function("return 42;");
+            var r = f();
+            """),
+        "var k, v;\n"
+        "globalThis[k] = v;\n"
+        "var f = Function(\"return 42;\");\n"
+        "var r = f();",
+    ),
+}
+"""
+A script-scope name holding a construction is a property of the global object under the script
+execution model, so a store under a runtime key may rebind it — the question the construction
+resolver used to refuse on the presence of the write alone. The tampering oracle answers it with
+the point supplied: a write guaranteed to follow the invocation does not reach the value the call
+runs, so the construction resolves and its body folds; a write that may precede it keeps the call
+standing exactly as before.
+"""
+
+
+class TestAConstructionUnderARuntimeKeyWrite(TestBase):
+    """
+    The one write-fact census arm the plan routed through the oracle, pinned by its two
+    directions.
+    """
+
+    def test_each_program_folds_to_the_pinned_text(self):
+        for label, (source, expected) in _A_CONSTRUCTION_INVOKED_UNDER_A_RUNTIME_KEY_WRITE.items():
+            with self.subTest(label):
+                self.assertEqual(folded(source), expected)

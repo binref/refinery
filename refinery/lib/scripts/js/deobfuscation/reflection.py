@@ -22,7 +22,6 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
-    FUNCTION_NODES,
     REFLECTIVE_INTRINSICS,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
@@ -38,6 +37,7 @@ from refinery.lib.scripts.js.analysis.model import (
     name_uses_in_scope,
     reference_role,
 )
+from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
@@ -56,7 +56,6 @@ from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_und
 from refinery.lib.scripts.js.model import (
     SCRIPT_CONTEXT,
     CodeContext,
-    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
     JsBlockStatement,
@@ -80,7 +79,6 @@ from refinery.lib.scripts.js.model import (
     code_context_at,
     function_context,
     strip_parens,
-    wraps_return,
 )
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
 from refinery.lib.scripts.js.options import runs_as_module
@@ -91,14 +89,6 @@ from refinery.lib.scripts.js.strict import (
 )
 
 _REFLECTIVE_CALLEE_NAMES = REFLECTIVE_INTRINSICS | TIMER_NAMES | SYNC_EVAL_NAMES
-
-_CONSTRUCTOR_ALIAS_LIMIT = 8
-"""
-How many name-to-name hops `_function_intrinsic_callee` follows in search of the `Function`
-intrinsic. A chain longer than any real spelling of it is a cycle, and the limit answers before
-walking it.
-"""
-
 
 class ReflectedScope(enum.Enum):
     """
@@ -343,50 +333,6 @@ def _leading_arguments_bind_parameters(leading: list[Node]) -> bool:
         return bool(leading)
     text = string_value(leading[0])
     return bool(text and text.strip(TRIMMABLE_WHITESPACE))
-
-
-def _denotes_function_constructor(
-    expr: Expression | None,
-    read_effect: Callable[[Node], bool] | None = None,
-    resolved_member: Callable[[JsMemberExpression], bool] | None = None,
-) -> bool:
-    """
-    Whether *expr* evaluates to the `Function` intrinsic, reached by `.constructor` navigation from a
-    side-effect-free base. `Function` is what the reflective `Function("code")` idiom calls, so a callee
-    that denotes it under another spelling constructs a function from the same code. Two spellings reach
-    it without the model:
-
-        <function literal>.constructor          (a plain function or arrow literal)
-        <literal>.constructor.constructor        (any side-effect-free base)
-
-    A plain function or arrow literal's own `.constructor` is `Function`, since every ordinary function
-    is an instance of `Function`; an `async` or generator literal is refused, its `.constructor` being
-    `AsyncFunction` or `GeneratorFunction`, which build a coroutine or generator body rather than the
-    plain function `Function` builds. Any value's `.constructor.constructor` is `Function`, because the
-    first hop yields that value's constructor — itself a function — whose own `.constructor` is
-    `Function`. Inlining discards the evaluation of the base, so it must be side-effect free; a function
-    literal always is, and for the double hop *read_effect* rejects a bare-identifier base that resolves
-    through a `with` body's dynamic scope (firing a getter or throwing), which the model-free check
-    cannot see.
-
-    The one spelling left is a `.constructor` read whose base is a *name* rather than a literal —
-    `f.constructor`, `f[key]` — where only the model can pin the base to one function value and only
-    the interpreter can read the key. That arm is *resolved_member*, a resolver the caller injects for
-    exactly those questions, keeping this predicate model-free.
-    """
-    if not isinstance(expr, JsMemberExpression):
-        return False
-    if access_key(expr) != 'constructor':
-        return resolved_member is not None and resolved_member(expr)
-    base = strip_parens(expr.object)
-    if base is None:
-        return False
-    if isinstance(base, (JsFunctionExpression, JsArrowFunctionExpression)):
-        return not wraps_return(base)
-    if isinstance(base, JsMemberExpression) and access_key(base) == 'constructor':
-        inner = base.object
-        return inner is not None and side_effect_free(inner, read_effect=read_effect)
-    return resolved_member is not None and resolved_member(expr)
 
 
 def _function_constructor_body(
@@ -837,7 +783,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         root-model build a pass with a retirement candidate pays, and the only one.
 
         Should this transform ever run on a script with no reflective surface, or should that flag stop
-        gating intrinsic trust, this argument does not hold and the pin must be reconsidered.
+        gating intrinsic trust, this argument does not hold and the pin must be reconsidered. The
+        tampering oracle (`ModelCache.builtins_intact_at`) is that reconsideration for the consumers
+        that hold an anchor: its site enumeration is model-backed and fails closed on nodes the pinned
+        models cannot place, which is the two-leg argument
+        `refinery.lib.scripts.js.analysis.tampering` states in full — the pin holds for the questions
+        asked through it, and the consumer that does not ask keeps the program-wide refusal above.
         """
         with model_cache(self, node).pinned():
             self._spliced_names = set()
@@ -1062,64 +1013,23 @@ class JsReflectionInlining(ScriptLevelTransformer):
         every `Function`-construction extraction: a construction spelled with any of those
         spellings builds the function the named intrinsic does, from the same arguments.
 
-        Every spelling is behind one gate first: a program that writes the `constructor` key on a
-        chain rooted at `Function` (`Function.prototype.constructor = f`) has replaced the intrinsic
-        every navigation hands out, so all of them are refused at once. The navigation off a name —
-        `f.constructor`, `f[key]` — asks two more model questions a literal needs no answer to:
-        that the name holds one plain function value (`wraps_return` refuses an `async` or
-        generator, whose constructor builds a different kind of function), established before the
-        read (`binding_established_before`, so the read cannot see a temporal-dead-zone value), and
-        that the key, where the obfuscator computed it, denotes `'constructor'` — the interpreter
-        answers that through `_eval_string`, the same string resolution a code argument gets. A name
-        holding one of those spellings is resolved through `singular_value` and asked again, one hop
-        at a time, so `g = f.constructor; h = g` answers for `h` as well; each hop must be a value
-        the model can pin, which is what keeps a name that may hold something else out.
+        The recognition itself is the one shared vocabulary
+        (`refinery.lib.scripts.js.analysis.tampering.denotes_function_intrinsic`), consumed here
+        with the model's facts and this pass's own string resolution and effect checks: the same
+        recognizer answers the tampering oracle's construction sites. A resolver it cannot decide
+        declines the inline, which is the safe answer for both consumers of it.
         """
-        def resolved_member(member: JsMemberExpression) -> bool:
-            model = model_cache(self, root).model
-            if model.scope_of(member) is None:
-                return False
-            if access_key(member) is None:
-                if member.computed:
-                    if self._eval_string(member.property) != 'constructor':
-                        return False
-                else:
-                    return False
-            base = strip_parens(member.object)
-            if not isinstance(base, JsIdentifier) or base.name in self._spliced_names:
-                return False
-            if model.scope_of(base) is None:
-                return False
-            binding = model.resolve(base)
-            if binding is None:
-                return False
-            value = model.singular_value(binding)
-            if not isinstance(value, FUNCTION_NODES) or wraps_return(value):
-                return False
+        def resolve(callee: Expression | None) -> bool:
             cache = model_cache(self, root)
-            return cache.dominance.binding_established_before(binding, member)
-
-        def resolve(callee: Expression | None, depth: int = 0) -> bool:
-            expr = strip_parens(callee) if callee is not None else None
-            if expr is None or depth > _CONSTRUCTOR_ALIAS_LIMIT:
-                return False
-            if self._free_global(expr) == 'Function':
-                return True
-            if model_cache(self, root).effects.global_key_written('Function', 'constructor'):
-                return False
-            if isinstance(expr, JsMemberExpression):
-                return _denotes_function_constructor(
-                    expr, self._read_effect, resolved_member)
-            if not isinstance(expr, JsIdentifier) or expr.name in self._spliced_names:
-                return False
-            model = model_cache(self, root).model
-            if model.scope_of(expr) is None:
-                return False
-            binding = model.resolve(expr)
-            if binding is None:
-                return False
-            value = model.singular_value(binding)
-            return value is not None and resolve(value, depth + 1)
+            return denotes_function_intrinsic(
+                callee,
+                cache.model,
+                cache.effects,
+                cache.dominance,
+                eval_string=self._eval_string,
+                read_effect=self._read_effect,
+                spliced_names=self._spliced_names,
+            ) is True
 
         return resolve
 
@@ -1367,9 +1277,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         reassigned or dynamically rebindable binding), taken only where that value is established before
         *node* (`DominanceModel.binding_established_before`) so the invocation cannot read it out of its
         temporal dead zone — and not at all for a script-scope name while the program stores a property
-        on the global object under a runtime key (`SemanticModel.has_opaque_global_write`): under the
-        script execution model such a name is a property of that object, the one such a write may
-        rebind, so its spelled value is not what the call runs. A value that is not itself a
+        on the global object under a runtime key (`SemanticModel.has_opaque_global_write`) that the
+        tampering oracle does not clear at *node* (`ModelCache.builtins_intact_at`): under the script
+        execution model such a name is a property of that object, the one such a write may rebind, so
+        its spelled value is not what the call runs — unless every write is guaranteed to follow the
+        invocation. A value that is not itself a
         construction may still denote the intrinsic (`_function_intrinsic_callee`, the alias spelling
         `var g = f.constructor`), and then the invocation *node* is the construction — one that
         runs what the intrinsic builds from its arguments. The body is inlined at *node*, never the
@@ -1390,6 +1302,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             binding is not None
             and binding.scope is cache.model.root_scope
             and cache.model.has_opaque_global_write()
+            and not cache.builtins_intact_at(node)
         ):
             return None
         value = strip_parens(cache.model.singular_value(binding))

@@ -431,9 +431,10 @@ def property_absent_from_written_chain(
     what the gated pass would have done.
 
     It is a separate function rather than a parameter because the choice is the caller's to justify
-    and has to be readable where it is made, and because there are only two callers entitled to it:
-    namespace flattening and the dispatcher unwrapper, the two whose refusal costs the pipeline a
-    pass rather than an expression. Every caller that folds one expression takes
+    and has to be readable where it is made. The callers entitled to it are the two whose refusal
+    costs the pipeline a pass rather than an expression — namespace flattening and the dispatcher
+    unwrapper — and the interpreter's anchored arm, whose justification is the tampering oracle
+    having answered the reflection term at the anchor. Every caller that folds one expression takes
     `property_provably_absent`, which keeps both arms and gains nothing by the weaker question.
     """
     if key in OBJECT_PROTOTYPE_MEMBERS or key in PROTOTYPE_CHAIN_PROPERTIES:
@@ -473,6 +474,23 @@ def property_is_inherited_from_an_intact_chain(
     if not property_is_inherited(value_type, key):
         return False
     return effects is None or effects.read_chain_intact(value_type)
+
+
+def property_is_inherited_from_an_unwritten_chain(
+    effects: EffectModel | None,
+    value_type: type,
+    key: str,
+) -> bool:
+    """
+    `property_is_inherited_from_an_intact_chain` for a caller the tampering oracle has cleared at
+    an anchor: the chain is asked `EffectModel.chain_roots_unwritten` — the same half
+    `property_absent_from_written_chain` takes — so an anchored execution answers the two halves of
+    one read under one chain question. A caller that has not asked the oracle takes the intact-chain
+    question, whose reflection term is what the oracle's clearance replaces.
+    """
+    if not property_is_inherited(value_type, key):
+        return False
+    return effects is None or effects.chain_roots_unwritten(value_type)
 
 
 def property_is_inherited(value_type: type, key: str) -> bool:

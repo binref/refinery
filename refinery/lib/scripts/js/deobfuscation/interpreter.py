@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from typing import Callable, Mapping
 
     from refinery.lib.scripts.js.analysis.effects import EffectModel
+    from refinery.lib.scripts.js.analysis.tampering import TamperingModel
     from refinery.lib.scripts.js.deobfuscation.helpers import Value
 
 from refinery.lib.scripts import Node
@@ -50,7 +51,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     name_is_unbound,
     names_global_value,
     own_property_keys,
+    property_absent_from_written_chain,
     property_is_inherited_from_an_intact_chain,
+    property_is_inherited_from_an_unwritten_chain,
     property_provably_absent,
     read_data_property,
     spell_astral_characters,
@@ -1254,6 +1257,8 @@ class JsInterpreter:
         max_recursion: int = _MAX_RECURSION,
         effects: EffectModel | None = None,
         model: SemanticModel | None = None,
+        anchor: Node | None = None,
+        tampering: TamperingModel | None = None,
         closure: Mapping[str, Value] | None = None,
         closure_env: Mapping[int, Mapping[str, Value]] | None = None,
         established: Callable[[JsFunctionNode], bool] | None = None,
@@ -1265,6 +1270,8 @@ class JsInterpreter:
         self.max_recursion = max_recursion
         self._effects = effects
         self._model = model if model is not None else effects and effects.model
+        self._anchor = anchor
+        self._tampering = tampering
         """
         The scope authority, held separately from *effects*. Whether a name still reaches the host is a
         question about bindings alone, so a caller that has only the semantic model — reflection builds
@@ -1559,7 +1566,7 @@ class JsInterpreter:
             return
         if not isinstance(right, (dict, list)):
             raise InterpreterError
-        if self._effects is not None and not self._effects.read_chain_intact(type(right)):
+        if not self._chain_is_intact(type(right)):
             raise InterpreterError
         keys: list
         if isinstance(right, dict):
@@ -1574,17 +1581,26 @@ class JsInterpreter:
                 break
 
     def _exec_for_of(self, node: JsForOfStatement) -> None:
+        """
+        Walk the values the receiver's iterator yields, which is the iterator a list's or a
+        string's prototype supplies — so the walk asks the same chain question a for-in walk does
+        before it yields anything: a program that patched `Array.prototype[Symbol.iterator]` makes
+        the real loop answer something other than the elements, and an interpretation that walks
+        them regardless is answering for it.
+        """
         right = self._eval(node.right)
         if right is None or right is JS_NULL:
             _js_throw('TypeError', F'{to_string(right)} is not iterable')
+        if not isinstance(right, (list, str)):
+            raise InterpreterError
+        if not self._chain_is_intact(type(right)):
+            raise InterpreterError
         if isinstance(right, list):
             # An array's iterator yields a hole as `undefined` — it asks whether the array has a
             # property at the index and takes the value on either branch — so a hole is not a skip.
             items = [None if item is JS_HOLE else item for item in right]
-        elif isinstance(right, str):
-            items = code_points(right)
         else:
-            raise InterpreterError
+            items = code_points(right)
         var_name = self._get_loop_var(node.left)
         for item in items:
             self._tick()
@@ -1870,7 +1886,11 @@ class JsInterpreter:
         key = to_string(left)
         if read_data_property(right, key)[0] is MemberRead.FOUND:
             return True
-        if property_is_inherited_from_an_intact_chain(self._effects, type(right), key):
+        chain_intact = property_is_inherited_from_an_intact_chain(self._effects, type(right), key)
+        if not chain_intact and self._builtins_intact():
+            chain_intact = property_is_inherited_from_an_unwritten_chain(
+                self._effects, type(right), key)
+        if chain_intact:
             return True
         if self._property_is_absent(right, key):
             return False
@@ -2133,16 +2153,34 @@ class JsInterpreter:
                 return self._call_function(obj, actual_args)
         raise InterpreterError
 
+    def _builtins_intact(self) -> bool:
+        """
+        Whether the tampering oracle vouches that no builtin was replaced before the anchor's
+        execution. An interpreter constructed with no anchor, or with no oracle beside it, answers
+        `False`: the trust questions below then fall through to their no-anchor arms, which refuse
+        wherever a reflective surface could have done the replacing.
+        """
+        return (
+            self._tampering is not None
+            and self._anchor is not None
+            and self._tampering.builtins_intact_at(self._anchor)
+        )
+
     def _callee_is_intact(self, node: JsCallExpression) -> bool:
         """
         Whether the built-in *node* names is still that built-in. Evaluating a call by looking its name up
         in the registry assumes the program has not replaced it, and an obfuscated file may well have.
         Without an effect model there is nothing to consult, and the interpreter is then used on a single
         expression in isolation rather than over a whole program, so the assumption is the caller's.
+
+        Where the oracle has vouched for the anchor, the reflection terms of the name question are
+        answered already, so the attributed writes alone decide — `call_names_an_unwritten_builtin`.
         """
         effects = self._effects
         if effects is None:
             return True
+        if self._builtins_intact():
+            return effects.call_names_an_unwritten_builtin(node)
         return effects.call_is_foldable(node)
 
     def _require_uninterceptable(self, value: Value) -> None:
@@ -2159,12 +2197,30 @@ class JsInterpreter:
         """
         Whether the prototype that supplies *value_type*'s methods is unmodified, so dispatching a method
         on a receiver of that type by name still means what the language says. This is the same question
-        `_callee_is_intact` asks, for a receiver that names no global.
+        `_callee_is_intact` asks, for a receiver that names no global; where the oracle has vouched for
+        the anchor, the attributed writes alone decide.
         """
         effects = self._effects
         if effects is None:
             return True
+        if self._builtins_intact():
+            return effects.prototype_name_unwritten(value_type)
         return effects.trusted_prototype(value_type)
+
+    def _chain_is_intact(self, value_type: type) -> bool:
+        """
+        Whether every prototype a plain property read on a value of *value_type* consults is
+        unmodified — `EffectModel.read_chain_intact`, or its surface-free half where the oracle has
+        vouched for the anchor. The question the for-in and for-of walks and the inherited-read
+        arms ask; without an effect model there is no chain to consult and the caller owns the
+        assumption.
+        """
+        effects = self._effects
+        if effects is None:
+            return True
+        if self._builtins_intact():
+            return effects.chain_roots_unwritten(value_type)
+        return effects.read_chain_intact(value_type)
 
     def _callback_is_contained(self, callback: JsFunctionNode) -> bool:
         """
@@ -2327,6 +2383,8 @@ class JsInterpreter:
             max_recursion=self.max_recursion,
             effects=self._effects,
             model=self._model,
+            anchor=self._anchor,
+            tampering=self._tampering,
             closure=callee_closure,
             closure_env=self._closure_env,
             established=self._established,
@@ -2464,8 +2522,12 @@ class JsInterpreter:
         Whether *key* provably does not exist anywhere on *obj*'s prototype chain, making a read of it
         `undefined`. `property_provably_absent` decides it, so that an emulated execution and a fold
         answer an inherited read the same way by construction; what is left here is naming the type
-        this interpreter's value is of and handing over the effect model when there is one.
+        this interpreter's value is of and handing over the effect model when there is one. Where
+        the oracle has vouched for the anchor, the chain is asked its attributed writes alone
+        (`property_absent_from_written_chain`) rather than refused on a reflective surface.
         """
+        if self._builtins_intact():
+            return property_absent_from_written_chain(self._effects, type(obj), key)
         return property_provably_absent(self._effects, type(obj), key)
 
     def _set_property(self, obj: Value, key: str, value: Value) -> None:

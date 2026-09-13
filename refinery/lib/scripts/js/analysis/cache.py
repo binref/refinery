@@ -10,7 +10,7 @@ slots and their `build_*` wiring.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.analysis.assignment import (
     DefiniteAssignmentModel,
     build_definite_assignment,
@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
+from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tampering
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
 from refinery.lib.scripts.js.options import (
     host_environment,
@@ -64,6 +65,7 @@ class ModelCache(ModelCacheBase):
         '_dominance',
         '_reaching',
         '_assignment',
+        '_tampering',
     )
 
     root: JsScript
@@ -74,6 +76,7 @@ class ModelCache(ModelCacheBase):
     _dominance: DominanceModel | None
     _reaching: ReachingModel | None
     _assignment: DefiniteAssignmentModel | None
+    _tampering: TamperingModel | None
 
     @property
     def model(self) -> SemanticModel:
@@ -116,6 +119,32 @@ class ModelCache(ModelCacheBase):
             module_scope=runs_as_module(self.options, self.root),
             host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
+
+    @property
+    def tampering(self) -> TamperingModel:
+        """
+        The `refinery.lib.scripts.js.analysis.tampering.TamperingModel` for this root, built under
+        the host entrypoints the run's options select — the model every anchored trust question in
+        a run shares, so no call is ever judged under two tampering verdicts at once.
+        """
+        return self._lazy('_tampering', lambda: build_tampering(
+            self.model,
+            self.effects,
+            self.dominance,
+            self.control_flow,
+            entrypoint=lambda name: is_host_entrypoint(self.options, name),
+        ))
+
+    def builtins_intact_at(self, anchor: Node) -> bool:
+        """
+        Whether every built-in is still what the language says at the moment *anchor* is evaluated:
+        no program-wide refusal, every tampering site guaranteed to run after the anchor, and the
+        anchor executing at most once — the conjunction
+        `refinery.lib.scripts.js.analysis.tampering.TamperingModel.builtins_intact_at` states in
+        full. The one composition point every anchored consumer shares; a consumer that does not
+        ask keeps the program-wide refusal the no-anchor arms answer.
+        """
+        return self.tampering.builtins_intact_at(anchor)
 
     def call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
         """

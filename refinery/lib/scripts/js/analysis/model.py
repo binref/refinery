@@ -2553,7 +2553,7 @@ class SemanticModel:
         reference this model records — the points no reflected invocation of it can precede. A
         caller ranks a definition against these to prove it runs before every such invocation, the
         site-level companion of `reachable_by_opaque_reflection`. For a global (script-scope)
-        binding they are the whole-program opaque surfaces (`_opaque_reflection_sites`), each
+        binding they are the whole-program opaque surfaces (`opaque_reflection_sites`), each
         running in the global scope and able to name any global; for a function-local, the direct
         `eval` sites in its owning function (`_direct_eval_sites`) and the spans of that function
         this model never read (`_unread_source_sites`), the only opaque surfaces that stand in the
@@ -2563,7 +2563,7 @@ class SemanticModel:
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
-            return self._opaque_reflection_sites()
+            return self.opaque_reflection_sites()
         return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node)
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
@@ -2815,7 +2815,7 @@ class SemanticModel:
                 return True
         return False
 
-    def _opaque_reflection_sites(self) -> list[Node]:
+    def opaque_reflection_sites(self) -> list[Node]:
         """
         The AST nodes of the whole-program opaque reflective surfaces — a value-read of the
         `eval`/`Function` intrinsic, a reflective global-object member, a string-valued timer, an
@@ -2829,7 +2829,7 @@ class SemanticModel:
         return self._opaque_surface_sites
 
     def _has_opaque_reflection_surface(self) -> bool:
-        return bool(self._opaque_reflection_sites())
+        return bool(self.opaque_reflection_sites())
 
     def _build_def_use(self):
         self._recording_def_use = True

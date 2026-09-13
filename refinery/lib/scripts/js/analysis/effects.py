@@ -1928,9 +1928,32 @@ class EffectModel:
             return None
         if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
             return None
+        return self.intrinsic_name_unwritten(node)
+
+    def intrinsic_name_unwritten(self, node: Node | None) -> str | None:
+        """
+        The per-name arm of `trusted_intrinsic`: the global name *node* denotes when the program
+        never binds it, never assigns to it, and never writes or updates a property anywhere on it.
+        The question a consumer that holds an oracle clearance composes with it — the oracle
+        answered the reflection terms at the anchor, so the name question is what remains. A
+        consumer without one takes `trusted_intrinsic`, which is this plus those terms.
+        """
+        node = strip_parens(node)
+        if not isinstance(node, JsIdentifier):
+            return None
         if node.name in self._globals_written:
             return None
         return node.name
+
+    def prototype_name_unwritten(self, value_type: type) -> bool:
+        """
+        The per-name arm of `trusted_prototype`: whether the intrinsic owning *value_type*'s
+        prototype was never written. The question a consumer that holds an oracle clearance
+        composes with it; a consumer without one takes `trusted_prototype`, which is this plus its
+        reflection term.
+        """
+        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        return owner is not None and owner not in self._globals_written
 
     def trusted_prototype(self, value_type: type) -> bool:
         """
@@ -1949,7 +1972,7 @@ class EffectModel:
             return False
         if self.model.has_reflection_surface():
             return False
-        return owner not in self._globals_written
+        return self.prototype_name_unwritten(value_type)
 
     def global_key_written(self, name: str, key: str) -> bool:
         """
@@ -2085,6 +2108,38 @@ class EffectModel:
         if not self._call_stores_nothing(node):
             return False
         return all(self._argument_is_admissible(arg) for arg in node.arguments)
+
+    def call_names_an_unwritten_builtin(
+        self,
+        node: JsCallExpression,
+        *,
+        receiver_type: type | None = None,
+    ) -> bool:
+        """
+        `call_is_foldable`'s callee-trust question with the reflection terms lifted: whether the
+        built-in *node* spells is still that built-in, judged by attributed writes alone. A named
+        callee is asked `intrinsic_name_unwritten`; a literal receiver's or known receiver type's
+        method is asked `prototype_name_unwritten`; and a chained call is asked this same question
+        of its inner link. The composition a consumer that holds an oracle clearance makes — the
+        oracle answered the reflection terms at the anchor, so the name questions are what remain.
+        A consumer without one takes `call_is_foldable`, whose trust leg is this plus those terms.
+        """
+        callee = strip_parens(node.callee)
+        if isinstance(callee, JsIdentifier):
+            return self.intrinsic_name_unwritten(callee) is not None
+        if not isinstance(callee, JsMemberExpression):
+            return False
+        base = strip_parens(callee.object)
+        if isinstance(base, JsIdentifier):
+            return self.intrinsic_name_unwritten(base) is not None
+        if isinstance(base, JsCallExpression):
+            return self.call_names_an_unwritten_builtin(base)
+        literal_type = _LITERAL_RECEIVER_TYPES.get(type(base))
+        if literal_type is not None:
+            return self.prototype_name_unwritten(literal_type)
+        if receiver_type is None:
+            return False
+        return self.prototype_name_unwritten(receiver_type)
 
     def _call_stores_nothing(self, node: JsCallExpression) -> bool:
         """
