@@ -22,6 +22,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import Binding, Ps1SemanticModel, Scope
+from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
@@ -105,6 +106,10 @@ class Ps1UnusedVariableRemoval(Transformer):
     reaches the assignment through a nested function, a captured scriptblock, or a scope qualifier
     keeps it alive. When the right-hand side of a removable assignment has side effects, the
     assignment wrapper is stripped but the expression is preserved as a standalone statement.
+
+    A script that runs code supplied as data — an `Invoke-Expression`, a dispatched scriptblock, a
+    dot-sourced file — reads names this walk cannot see, so no script-scope store is provably dead
+    and the pass makes no removals. The `-e` switch closes that world and restores full removal.
     """
 
     def visit(self, node: Node):
@@ -122,6 +127,8 @@ class Ps1UnusedVariableRemoval(Transformer):
         written.
         """
         cache = model_cache(self, node)
+        if runs_code_supplied_as_data(cache.world_measurement):
+            return None
         model = cache.model
         world = cache.world_reach
         candidates: dict[Binding, list[Node]] = {}
@@ -678,10 +685,17 @@ class Ps1DeadStoreElimination(Transformer):
     `$i = N` statements followed by a for-loop whose initializer `$i = 0` overwrites them all. Reads
     come from the shared `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel`, so a store read
     only through a nested scriptblock is correctly seen as live rather than skipped.
+
+    A leak that runs code supplied as data can read a store between it and the overwrite this pass
+    treats as a kill, so when the script runs such code the pass eliminates nothing. The `-e` switch
+    closes that world and restores full elimination.
     """
 
     def visit(self, node: Node):
         cache = model_cache(self, node)
+        if runs_code_supplied_as_data(cache.world_measurement):
+            self.generic_visit(node)
+            return None
         model = cache.model
         # Model and world are both re-read per body through the version-keyed cache: removing a
         # store changes what the next body's scope says, and once a removal advances the version a

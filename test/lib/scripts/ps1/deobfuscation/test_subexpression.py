@@ -131,15 +131,12 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             $x = $($u + 'x')
         """), Ps1SubExpressionEvaluator)
 
-    @unittest.expectedFailure
     def test_a_body_write_a_later_iex_could_read_is_not_dropped(self):
         """
         A `$(...)` runs in the scope it is written in, so `$w` survives it and code `iex` runs in
-        that scope can read the value the body left. Folding the body away drops the `$w = 'PAYLOAD'`
-        store, so the `iex`'d code reads the `$null` of a fresh scope where 5.1 gives it `'PAYLOAD'`.
-        The reads side already refuses a body read of a never-written name when data-code runs; the
-        symmetric write-leak guard would refuse this, but it would also refuse the scratch writes of
-        the canonical decode-then-`iex` fold, a tradeoff not yet made.
+        that scope can read the value the body left. Folding the body away would drop the
+        `$w = 'PAYLOAD'` store, so the pass refuses the fold whenever the run takes code from data.
+        Under `-e`, where no such code runs, the body folds and the store is dropped.
         """
         self._assertUnchanged(cleandoc("""
             $x = $($w = 'PAYLOAD'

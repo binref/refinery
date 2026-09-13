@@ -2506,6 +2506,12 @@ class Ps1SubExpressionEvaluator(Transformer):
                 # coercion, `$ErrorActionPreference` at the next failing cmdlet — so a reader of
                 # one observes the body's write without any occurrence in the tree.
                 return True
+            if self._runs_data_code:
+                # A sub-expression shares the scope it is written in, so a body store persists
+                # there once folded away, and code the run takes from data — an `Invoke-Expression`,
+                # a dispatched scriptblock, a dot-sourced file — reads that scope with no occurrence
+                # in the tree. The `-e` switch closes that world and folds these bodies again.
+                return True
             if self._occurs_outside(node, name):
                 return True
         return False

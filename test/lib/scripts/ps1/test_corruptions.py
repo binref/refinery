@@ -1148,7 +1148,6 @@ class TestPs1Corruptions(_Ps1Ledger):
         tree = self._deobfuscated_tree("$x = 'a'; $sb = { Write-Host $x }; & $sb; $x = 'c'")
         self._assertPrints(tree, 'x', 'a', 'c')
 
-    @unittest.expectedFailure
     def test_script_block_invoked_after_the_second_store_reads_the_second(self):
         """
         `$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb` prints `c` under 5.1. A script block is
@@ -1191,7 +1190,6 @@ class TestPs1Corruptions(_Ps1Ledger):
             "$x = 'a'; $ExecutionContext.InvokeCommand.InvokeScript('Write-Host $x'); $x = 'c'")
         self._assertPrints(tree, 'x', 'a', 'c')
 
-    @unittest.expectedFailure
     def test_invoke_expression_string_reads_the_callers_variable(self):
         """
         `$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'` prints `a` under 5.1:
@@ -1237,7 +1235,6 @@ class TestPs1Corruptions(_Ps1Ledger):
         self.assertTrue(
             _stores_value(tree, 'x', 'a'), 'the store that call reads was deleted as dead')
 
-    @unittest.expectedFailure
     def test_invoke_expression_may_read_the_preceding_store(self):
         """
         In `$x = 'a'; iex $c; $x = 'c'` the string may name `$x`, so 5.1 may read the first store

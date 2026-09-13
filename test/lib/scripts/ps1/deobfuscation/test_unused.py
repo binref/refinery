@@ -1872,6 +1872,7 @@ class TestPs1ALeakOnlyEverKeepsMore(TestPs1):
         self.assertEqual(
             self._deobfuscate(F'{self._QUIET_SCRIPT}\nInvoke-Expression $c'),
             cleandoc("""
+                $u = 'noise'
                 Write-Host alpha
                 Write-Host omega
                 Invoke-Expression $c
@@ -1883,6 +1884,7 @@ class TestPs1ALeakOnlyEverKeepsMore(TestPs1):
             cleandoc("""
                 Invoke-Expression $c
                 $Null = [Math]::Sqrt(144)
+                $u = 'noise'
                 Write-Host alpha
                 Write-Host omega
             """))
@@ -1932,6 +1934,80 @@ class TestPs1ALeakTheGraphCannotPlaceKeepsEveryRead(TestPs1):
                 Param($x = (Get-Date))
                 Write-Host done
             """))
+
+
+class TestPs1DataCodeKeepsEveryScriptScopeStore(TestPs1):
+    """
+    Code the run takes from data — an `Invoke-Expression`, a dispatched script block, a dot-sourced
+    file — reads the script scope without naming what it reads, so every script-scope store is one
+    that reader could observe and none is removed. The trigger is the whole-run question of whether
+    such code runs at all, not where: a leak the removal cannot reach a store from still keeps it.
+    The `-e` switch trusts such code to touch nothing the script does not spell, closing the world
+    and restoring removal.
+    """
+
+    def test_a_leak_in_a_called_function_keeps_a_store_no_reader_names(self):
+        source = cleandoc("""
+            function f { iex $c }
+            $w = 'PAYLOAD'
+            f
+        """)
+        self._assertDeobfuscatesTo(source, """
+            function f {
+              Invoke-Expression $c
+            }
+            $w = 'PAYLOAD'
+            f
+        """)
+        self._assertDeobfuscatesTo(source, """
+            function f {
+              Invoke-Expression $c
+            }
+            f
+        """, trust_eval=True)
+
+    def test_a_leak_inside_a_loop_keeps_the_store_beside_it(self):
+        source = "foreach ($i in $items) { iex $c; $w = 'x' }"
+        self._assertDeobfuscatesTo(source, """
+            foreach ($i in $items) {
+              Invoke-Expression $c
+              $w = 'x'
+            }
+        """)
+        self._assertDeobfuscatesTo(source, """
+            foreach ($i in $items) {
+              Invoke-Expression $c
+            }
+        """, trust_eval=True)
+
+    @unittest.expectedFailure
+    def test_a_store_with_only_a_leak_before_it_is_removable(self):
+        """
+        Per-store precision, deferred, would remove `$u`: the only code that could read the script
+        scope runs before the store, so nothing observes it. The coarse rule keeps it, asking only
+        whether the run takes code from data and not where relative to the store.
+        """
+        self._assertDeobfuscatesTo("""
+            iex $c
+            $u = 'noise'
+        """, """
+            Invoke-Expression $c
+        """)
+
+    @unittest.expectedFailure
+    def test_a_store_after_the_last_leak_is_removed_while_the_one_before_is_kept(self):
+        """
+        Per-store precision, deferred, would keep `$a` — a leak runs after it and could read it —
+        and remove `$b`, which no leak follows. The coarse rule keeps both.
+        """
+        self._assertDeobfuscatesTo("""
+            $a = 'keep'
+            iex $c
+            $b = 'drop'
+        """, """
+            $a = 'keep'
+            Invoke-Expression $c
+        """)
 
 
 class TestPs1ANestedBodyReadTakesThePositionOfWhatRunsIt(TestPs1):

@@ -265,12 +265,6 @@ FOLDS: dict[str, str] = {
         "& {\n  Write-Host $script:x\n}\n$x = 'b'",
     "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
         "function f {\n  Write-Host $script:x\n}\nf\n$x = 'b'",
-    "$x = 'a'; $sb = { Write-Host $x }; & $sb; $x = 'c'":
-        "$x = 'a'\n$sb = {\n  Write-Host $x\n}\n& $sb",
-    "$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb":
-        "$x = 'a'\n$sb = {\n  Write-Host $x\n}\n& $sb",
-    "$x = 'a'; $sb = { Write-Host $x }; $sb.Invoke(); $x = 'c'":
-        "$x = 'a'\n$sb = {\n  Write-Host $x\n}\n$sb.Invoke()",
     "$x = 'a'; Invoke-Command -ScriptBlock { Write-Host $x }; $x = 'c'":
         "Write-Host 'a'",
     "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'":
@@ -278,7 +272,7 @@ FOLDS: dict[str, str] = {
     "$x = 'a'; $ExecutionContext.InvokeCommand.InvokeScript('Write-Host $x'); $x = 'c'":
         "Write-Host 'a'",
     "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'":
-        "$c = 'Write-Host $x'\nfunction f {\n  Invoke-Expression $c\n}\nf",
+        "$x = 'a'\n$c = 'Write-Host $x'\nfunction f {\n  Invoke-Expression $c\n}\nf\n$x = 'c'",
     "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'":
         "$x = 'a'\nfunction f {\n  Write-Host ($x)\n}\nf",
     "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":

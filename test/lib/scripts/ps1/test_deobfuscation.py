@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import unittest
 
 from inspect import cleandoc
 
@@ -831,7 +830,6 @@ class TestPs1ABlockAShadowedIteratorReceivesRunsWhereThatIteratorRunsIt(TestPs1)
         self.assertIn('Write-Output $x', result)
         self.assertNotIn("Write-Output 'a'", result)
 
-    @unittest.expectedFailure
     def test_the_write_after_the_pipeline_is_kept_alive_by_the_stored_read(self):
         result = self._deobfuscate(cleandoc(self._SCRIPT))
         self.assertIn("$x = 'b'", result)

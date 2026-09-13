@@ -181,12 +181,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'the caller, where the store put `a`.',
     "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
         'The same, through a function body rather than a script block.',
-    "$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb":
-        'The second store is removed and the read folded to `a`. A script block is not a closure: '
-        'it reads the value current when it is invoked, so the snippet prints `c`.',
-    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'":
-        'The store is removed and the read prints nothing. The string names `$x` and resolves it '
-        'in the scope that runs it, so the snippet prints `a`.',
     "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
         'The store is removed and the read prints nothing. The pattern reads a whole set of '
         'variables without naming any one of them.',
