@@ -637,6 +637,23 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'var e = function() {};\nvar g = d.constructor;\ng = e;\nvar x = g("return 42")();',
             self._reflect(source))
 
+    def test_a_bare_call_through_a_constructor_alias_is_not_an_invocation(self):
+        """
+        A call through a name holding the intrinsic constructor *builds* a function and never runs
+        it, so nothing is invoked and no route resolves it: the value of the construction is a
+        function, not what its body would answer.
+        """
+        source = "function d() {} var g = d.constructor; var f = g('return 42');"
+        self.assertEqual(
+            'function d() {}\nvar g = d.constructor;\nvar f = g(\'return 42\');',
+            self._reflect(source))
+
+    def test_a_bare_constructor_alias_call_at_statement_position_is_not_run(self):
+        source = "function d() {} var g = d.constructor; g('console.log(1)');"
+        self.assertEqual(
+            'function d() {}\nvar g = d.constructor;\ng(\'console.log(1)\');',
+            self._reflect(source))
+
     def test_a_single_empty_parameter_argument_names_no_parameters(self):
         """
         `Function(" ", code)` builds a zero-parameter function — the parameter text is trimmed before

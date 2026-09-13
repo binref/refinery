@@ -1337,10 +1337,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         tampering oracle does not clear at *node* (`ModelCache.builtins_intact_at`): under the script
         execution model such a name is a property of that object, the one such a write may rebind, so
         its spelled value is not what the call runs — unless every write is guaranteed to follow the
-        invocation. A value that is not itself a
-        construction may still denote the intrinsic (`_function_intrinsic_callee`, the alias spelling
-        `var g = f.constructor`), and then the invocation *node* is the construction — one that
-        runs what the intrinsic builds from its arguments. The body is inlined at *node*, never the
+        invocation. A value that is not itself a construction declines, whatever it denotes: a name
+        holding the intrinsic (`var g = f.constructor`) makes a call through it a construction —
+        one that *builds* a function and never runs it — so there is no invocation for this to
+        resolve, and the call stays standing. The body is inlined at *node*, never the
         construction relocated, so a `Function` reference in the initializer keeps its original scope;
         retiring the dead temporary is
         left to `_retire_consumed_temporaries` on the model rebuilt after the pass.
@@ -1363,9 +1363,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         value = strip_parens(cache.model.singular_value(binding))
         if not isinstance(value, (JsCallExpression, JsNewExpression)):
-            if not self._intrinsic_callee(value):
-                return None
-            value = node
+            return None
         if not cache.dominance.binding_established_before(binding, node):
             return None
         return value, binding
