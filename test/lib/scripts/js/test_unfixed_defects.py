@@ -1428,6 +1428,79 @@ class TestAMechanismWrittenThroughASpellingIsStillWritten(TestBase):
         )
 
 
+#: An accessor installed on a locally-declared empty object the file reaches only in member position,
+#: mapped to what Node prints for each. The installing call is a member access itself, and the key it
+#: installs is what the program reads or writes afterwards: a getter whose read the program prints,
+#: a setter whose write runs program code, and a getter installed under a key held in a binding the
+#: read resolves.
+AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT = {
+    'var o = {};\n'
+    'o.__defineGetter__("x", function () { return 9; });\n'
+    'console.log(o.x);\n': '9\n',
+
+    'var p = {};\n'
+    'p.__defineSetter__("y", function (v) { console.log("set", v); });\n'
+    'p.y = 5;\n': 'set 5\n',
+
+    'var q = {};\n'
+    'var k = "z";\n'
+    'q.__defineGetter__(k, function () { return 3; });\n'
+    'console.log(q[k]);\n': '3\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAccessorInstalledOnANamespaceObjectIsStillRead(TestBase):
+    """
+    An empty object literal reached only in member position is flattened into bare variables by
+    `refinery.lib.scripts.js.deobfuscation.namespaces.JsNamespaceFlattening`, whose safety check
+    asks only what positions the receiver appears in. The receiver of an install passes it — `o` in
+    `o.__defineGetter__("x", f)` stands in member position — and `__defineGetter__` is a name every
+    plain object inherits, so the install statement is held back and survives with the object. The
+    key it installs does not survive: `o.x` becomes a bare `x` the install never feeds, a read
+    answers `undefined` where the getter answered, and a setter's write is dead-store-eliminated
+    along with the code it ran. What a correct implementation does is keep every read and write of
+    an installed key through the namespace member, since the member is the only spelling that
+    reaches the accessor.
+
+    Closing it needs the installed key held back on the object — a recognition of the install among
+    the collected properties, not a new question. The `Object.defineProperty(o, "x", {...})` spelling
+    is already safe, and for a different reason: the receiver is handed to the call as a bare
+    identifier, which the check refuses, so the file comes back whole.
+
+    Off the release gate deliberately: no obfuscator emission witnessed installs an accessor on a
+    locally-declared empty namespace object, and the installs the real files carry are on intrinsic
+    prototypes, which the chain gates already hold back.
+    """
+
+    @unittest.expectedFailure
+    def test_the_read_and_write_an_accessor_installed_on_the_namespace_answers(self):
+        """
+        Node prints `9`, `set 5` and `3` for the three programs of
+        `AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT`. Each deobfuscation prints `undefined`,
+        nothing, and `undefined`.
+        """
+        rows = AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_receiver_handed_to_the_install_is_left_standing(self):
+        """
+        Node prints `7` for the program, and the deobfuscation prints the same, coming back with
+        the object and its read in place: the receiver is handed to `Object.defineProperty` as a bare
+        identifier, which the flattener's safety check refuses, so the install and the read it feeds
+        survive together.
+        """
+        source = (
+            'var p = {};\n'
+            'Object.defineProperty(p, "y", { get: function () { return 7; } });\n'
+            'console.log(p.y);\n'
+        )
+        self.assertEqual(before_and_after(source), (prints('7'), prints('7')))
+
+
 class TestTheStringArrayMachineryGoesOnceNothingReadsIt(TestBase):
     """
     `refinery.lib.scripts.js.deobfuscation.stringarray` keeps the array function, the accessor and
