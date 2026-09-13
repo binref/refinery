@@ -155,3 +155,94 @@ class TestReaching(TestBase):
         self.assertTrue(self._query(
             'var x = 1; function m() { y = 2; } var f = function (a = m()) { return a; }; f(); x;'
         ))
+
+    def test_reaches_before_a_located_opaque_global_write(self):
+        """
+        The write stores a property on the global object under a key only the runtime resolves, so it
+        may replace this script-scope binding's name — but only at the statement spelling the store,
+        which runs after the read, so the value still holds there.
+        """
+        self.assertTrue(self._query(
+            "var x = 'ab'; var k = e; console.log(x.length); globalThis[k] = 0;"
+        ))
+
+    def test_does_not_reach_after_a_located_opaque_global_write(self):
+        """
+        The same write ahead of the read may have replaced the name by then, so the read is not
+        reported as reached — the located kill does the work volatility used to do.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; var k = e; globalThis[k] = 0; console.log(x.length);"
+        ))
+
+    def test_does_not_reach_under_a_reflection_surface_beside_the_write(self):
+        """
+        The read stands before both the surface and the write, but the `eval` names globals at
+        runtime from anywhere, so the binding stays volatile: a located site answers only the write's
+        share of the hazard.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; var k = e; console.log(x.length); eval('1'); globalThis[k] = 0;"
+        ))
+
+    def test_does_not_reach_across_a_sibling_store_in_one_statement(self):
+        """
+        The comma evaluates the store before the read that follows it in the same statement, and
+        statement granularity cannot order the two, so the read is not reported as reached — it may
+        observe the written value. Node prints `0` for the twin with the read spelled `x`.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; var k = e; var t = (globalThis[k] = 0, x.length);"
+        ))
+
+    def test_reaches_inside_the_computed_key_of_the_write(self):
+        """
+        The store is the last step of the assignment spelling it (§13.15.5): the key is evaluated
+        first, so a use inside it observes the value the definition established, and the write's own
+        node is not a kill for that use. Node prints `0 undefined` for the script-model twin
+        `globalThis[x.length > 0 ? 'x' : 'zz'] = 0` — the key was computed while `x` still held its
+        value, and the store replaced it afterwards.
+        """
+        self.assertTrue(self._query(
+            "var x = 'ab'; var k = e; globalThis[x.length] = 0;"
+        ))
+
+    def test_reaches_inside_the_value_of_the_write(self):
+        """
+        The same ordering for the assigned value: it is evaluated before the store runs, so a use
+        inside it observes the definition's value. Node prints `true` for the script-model twin
+        `globalThis['x'] = (x === 'ab')`.
+        """
+        self.assertTrue(self._query(
+            "var x = 'ab'; var k = e; globalThis[k] = x.length;"
+        ))
+
+    def test_does_not_reach_inside_the_key_of_a_store_on_a_cycle(self):
+        """
+        The same use inside the same key, but the statement stands in a loop: a later iteration
+        evaluates the key after an earlier iteration's store, so a store on a cycle kills the read
+        and the value is not reported as reached. Node prints `0 number` for the script-model twin
+        run twice — the second iteration's key was computed from the written value.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; for (var i = 0; i < 2; i++) { globalThis[x.length] = 0; }"
+        ))
+
+    def test_does_not_reach_when_the_write_sits_in_another_functions_graph(self):
+        """
+        The write stands inside a function, which runs at its invocation — a point no node of this
+        graph stands for — so the site cannot be ordered here and the binding stays volatile.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; var k = e; function w() { globalThis[k] = 0; } console.log(x.length);"
+        ))
+
+    def test_does_not_reach_when_the_object_is_handed_to_a_call(self):
+        """
+        A call handed the global object may write a property of it under a key no text spells, and
+        the hand-over is a fact that holds without a site: no located kill answers it, so the
+        binding stays volatile even though the read stands before the call.
+        """
+        self.assertFalse(self._query(
+            "var x = 'ab'; console.log(x.length); q(globalThis);"
+        ))

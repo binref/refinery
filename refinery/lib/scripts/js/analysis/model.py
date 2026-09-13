@@ -1814,6 +1814,8 @@ class SemanticModel:
         self._reflection_surface: bool | None = None
         self._opaque_surface_sites: list[Node] | None = None
         self._opaque_global_write: bool | None = None
+        self._opaque_global_write_sites: list[JsMemberExpression] | None = None
+        self._opaque_global_write_sites_known = False
         self._recording_def_use = False
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
@@ -2445,15 +2447,58 @@ class SemanticModel:
         """
         if self._recording_def_use:
             return True
-        cached = self._opaque_global_write
-        if cached is None:
-            cached = any(
-                self._is_opaque_global_write(member)
-                for member in self.root.walk()
-                if isinstance(member, JsMemberExpression)
-            )
-            self._opaque_global_write = cached
-        return cached
+        if self._opaque_global_write is None:
+            self._compute_opaque_global_write_sites()
+        return self._opaque_global_write is True
+
+    def _compute_opaque_global_write_sites(self) -> None:
+        sites = [
+            member for member in self.root.walk()
+            if isinstance(member, JsMemberExpression) and self._is_opaque_global_write(member)
+        ]
+        self._opaque_global_write_sites = sites
+        self._opaque_global_write_sites_known = True
+        if sites and self._opaque_global_write is None:
+            self._opaque_global_write = True
+
+    def opaque_global_write_sites(self) -> list[JsMemberExpression] | None:
+        """
+        The member expressions storing a property on the global object under a key only the runtime
+        resolves — the located form of the fact `has_opaque_global_write` reports, for a consumer
+        that orders the fact's consequences rather than refusing on it. `None` when the fact holds
+        without a site to order: an observed hand-over of the object to a callee that may write it,
+        or an answer taken while the reference-recording walk is still running, where the boolean
+        answers `True` for the same reason. A consumer that turns sites into kills treats `None` as
+        volatility it cannot locate.
+        """
+        if self._recording_def_use:
+            return None
+        if not self._opaque_global_write_sites_known:
+            self._compute_opaque_global_write_sites()
+        sites = self._opaque_global_write_sites
+        assert sites is not None
+        if sites or self._opaque_global_write is not True:
+            return sites
+        return None
+
+    def opaque_global_write_replacement_sites(self, binding: Binding) -> list[JsMemberExpression] | None:
+        """
+        The opaque global writes that could replace the value *binding* holds, or `None` when that
+        question cannot be answered in sites. Only a script-scope name is replaceable — it is a
+        property of the global object under the script execution model the write stores to — so a
+        binding in any other scope answers `None`: its reflection hazards, if any, are not this
+        write's. A script-scope name under a reflection surface answers `None` too, since any surface
+        could write the name from anywhere, and so does the fact when it holds without a site
+        (`opaque_global_write_sites`). `None` therefore means the binding is reflection-reachable for
+        reasons no located site spells, and a consumer that turned sites into kills keeps the value
+        volatile instead.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            if self.has_reflection_surface():
+                return None
+            return self.opaque_global_write_sites()
+        return None
 
     def _is_opaque_global_write(self, member: JsMemberExpression) -> bool:
         if not member.computed or isinstance(member.property, JsStringLiteral):

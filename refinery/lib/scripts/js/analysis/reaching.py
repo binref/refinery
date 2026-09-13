@@ -15,14 +15,17 @@ the use and supplies the reachability primitive
 question is asked as a forward walk from the definition intersected with a backward walk from the
 use; the effect model
 (`refinery.lib.scripts.js.analysis.effects.EffectModel`) says where a binding may change — a
-reassignment recorded on the binding, or a call to a function that may write it. Kills the model
-cannot pin to a site — a mutating function that escapes, a write through a global-object alias or a
-dynamic scope — make the answer conservatively negative, and so does a definition and use that share a
-single statement, which statement granularity cannot order.
+reassignment recorded on the binding, or a call to a function that may write it. A store on the
+global object under a key only the runtime resolves may replace a script-scope binding's name, and
+that kill is located: it holds at the site spelling the store, exempt for a use evaluated inside
+the operands the store is computed from (§13.15.5). Kills the model cannot pin to a site — a
+mutating function that escapes, a write through a global-object alias or a dynamic scope — make the
+answer conservatively negative, and so does a definition and use that share a single statement,
+which statement granularity cannot order.
 """
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
@@ -36,9 +39,22 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
+    JsMemberExpression,
     JsVariableDeclarator,
     strip_parens,
 )
+
+
+class _Kills(NamedTuple):
+    """
+    The sites at which a binding may change value, for one definition tracked from: the kills that
+    hold for every use — reassignments and mutating calls, as control-flow node ids — and the opaque
+    global writes that may replace the binding's name, kept as site-and-node pairs because a use can
+    be exempt from such a store: the store is the last step of the assignment spelling it, so a use
+    inside its operands runs before it and is not killed by it.
+    """
+    nodes: frozenset[int]
+    opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
 
 
 class ReachingModel:
@@ -53,8 +69,9 @@ class ReachingModel:
         self.dominance = dominance
         self.effects = effects
         self.model = effects.model
-        self._kill_cache: dict[tuple[int, int, int], frozenset[int] | None] = {}
+        self._kill_cache: dict[tuple[int, int, int], _Kills | None] = {}
         self._call_cache: dict[int, list[tuple[JsCallExpression, CfgNode]]] = {}
+        self._cycle_cache: dict[int, bool] = {}
         self._between = ReachabilityQuery(dominance, Projection.MAY)
 
     def value_preserved(self, binding: Binding, definition: Node, use: Node) -> bool:
@@ -83,18 +100,24 @@ class ReachingModel:
         kills = self._kill_nodes(binding, graph_d, definition)
         if kills is None:
             return False
-        return not self._between.any_between(graph_d, node_d, node_u, kills)
+        kill_nodes = kills.nodes | {
+            id(node)
+            for site, node in kills.opaque
+            if self._store_kills_the_use(site, node, use)
+        }
+        return not self._between.any_between(graph_d, node_d, node_u, kill_nodes)
 
     def _kill_nodes(
         self, binding: Binding, graph: ControlFlowGraph, definition: Node,
-    ) -> frozenset[int] | None:
+    ) -> _Kills | None:
         """
-        The ids of the control-flow nodes in *graph* at which *binding* may change value — a reassignment
-        located in this graph, or a call whose statically known callee may write *binding* — excluding
-        the write that establishes *definition* itself. `None` when a change cannot be pinned to a site:
-        *binding* is written by a function that escapes, through a global-object alias, or through a name
-        a dynamic scope resolves at runtime, so its value must be treated as volatile everywhere. The
-        answer is fixed for the model's lifetime, so it is memoized per definition.
+        The sites in *graph* at which *binding* may change value — a reassignment located in this
+        graph, or a call whose statically known callee may write *binding* — excluding the write that
+        establishes *definition* itself. `None` when a change cannot be pinned to a site: *binding* is
+        written by a function that escapes, through a global-object alias, or through a name a dynamic
+        scope resolves at runtime, so its value must be treated as volatile everywhere. The answer is
+        fixed for the model's lifetime and holds for every use alike, so it is memoized per definition
+        and the per-use exemption an opaque write can earn is applied by the caller.
         """
         def_write = self._definition_write(definition)
         key = (id(binding), id(graph), id(def_write) if def_write is not None else 0)
@@ -104,7 +127,7 @@ class ReachingModel:
 
     def _compute_kill_nodes(
         self, binding: Binding, graph: ControlFlowGraph, def_write: Node | None,
-    ) -> frozenset[int] | None:
+    ) -> _Kills | None:
         """
         The nodes of *graph* at which *binding*'s definition stops holding, or `None` where they
         cannot be listed and the caller must treat the value as reaching nowhere.
@@ -117,14 +140,26 @@ class ReachingModel:
         name is still one every invocation of the function goes through, so `mutators_escape` reads
         it as pinned down. A callee no name here binds is a different answer and is left alone,
         which is the condition every reader of this was already written under.
+
+        An opaque global write that may replace the binding's name is a kill like these, but a
+        located one: the sites are the kill set wherever every one of them lies in this graph, and
+        `None` — volatility — when any lies elsewhere, since a write in another function's graph
+        runs at that function's invocation, a point no node here stands for.
         """
         if (
             binding.has_indefinite_write
             or binding.has_global_member_write
             or self.effects.mutators_escape(binding)
-            or self.model.reflection_can_reach(binding)
         ):
             return None
+        opaque: list[tuple[JsMemberExpression, CfgNode]] | None = None
+        if self.model.reflection_can_reach(binding):
+            sites = self.model.opaque_global_write_replacement_sites(binding)
+            if sites is None:
+                return None
+            opaque = self._located_opaque_writes(sites, graph)
+            if opaque is None:
+                return None
         kills: set[int] = set()
         for definition in self._value_definitions(binding):
             if definition is def_write:
@@ -147,7 +182,47 @@ class ReachingModel:
             if node is None:
                 return None
             kills.add(id(node))
-        return frozenset(kills)
+        return _Kills(frozenset(kills), tuple(opaque) if opaque is not None else ())
+
+    def _located_opaque_writes(
+        self, sites: list[JsMemberExpression], graph: ControlFlowGraph,
+    ) -> list[tuple[JsMemberExpression, CfgNode]] | None:
+        """
+        Every opaque global-write site of *sites* located into *graph*, or `None` when any of them
+        lies outside it — another function's graph, whose writes run at its invocation, or a point
+        no graph places at all.
+        """
+        located: list[tuple[JsMemberExpression, CfgNode]] = []
+        for site in sites:
+            pair = self.dominance.locate(site)
+            if pair is None or pair[0] is not graph:
+                return None
+            located.append((site, pair[1]))
+        return located
+
+    def _store_kills_the_use(
+        self, site: JsMemberExpression, node: CfgNode, use: Node,
+    ) -> bool:
+        """
+        Whether the opaque write at *site*, evaluated at *node*, may change the binding's value
+        before *use* runs. It may not when *use* is part of what that store is computed from — the
+        member object, the computed key, or the assigned value, which §13.15.5 evaluates before the
+        store, the last step of every assignment form — and the store's node is not on a cycle, where
+        a later iteration's store precedes the next evaluation of the same operands.
+        """
+        if not _precedes_the_store(site, use):
+            return True
+        return self._on_a_cycle(node)
+
+    def _on_a_cycle(self, node: CfgNode) -> bool:
+        cached = self._cycle_cache.get(id(node))
+        if cached is None:
+            cached = any(
+                id(node) in self._between.reachable(successor, forward=True)
+                for successor in node.successors
+            )
+            self._cycle_cache[id(node)] = cached
+        return cached
 
     def _graph_calls(
         self, graph: ControlFlowGraph,
@@ -231,3 +306,46 @@ class ReachingModel:
 
 def build_reaching(dominance: DominanceModel, effects: EffectModel) -> ReachingModel:
     return ReachingModel(dominance, effects)
+
+
+def _precedes_the_store(site: JsMemberExpression, use: Node) -> bool:
+    """
+    Whether *use* is evaluated as part of computing the store *site* spells — it lies inside the
+    member object, the computed key, or the assigned value of the assignment holding it.
+    """
+    regions: list[Node] = [site.object, site.property]
+    assigned = _assigned_value(site)
+    if assigned is not None:
+        regions.append(assigned)
+    cursor: Node | None = use
+    while cursor is not None:
+        if any(cursor is region for region in regions):
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _assigned_value(site: JsMemberExpression) -> Node | None:
+    """
+    The value expression of the assignment storing through *site*, or `None` when the store is
+    spelled by no assignment — a `delete`, an update, or a loop head — whose operands are the member
+    alone. The innermost assignment whose target holds the site is the one; a store written as the
+    value of another assignment (`x = g[k] = v`) is its own.
+    """
+    cursor: Node = site
+    while True:
+        parent = cursor.parent
+        if parent is None:
+            return None
+        if isinstance(parent, JsAssignmentExpression):
+            return None if _is_within(parent.right, cursor) else parent.right
+        cursor = parent
+
+
+def _is_within(ancestor: Node, node: Node) -> bool:
+    cursor: Node | None = node
+    while cursor is not None:
+        if cursor is ancestor:
+            return True
+        cursor = cursor.parent
+    return False

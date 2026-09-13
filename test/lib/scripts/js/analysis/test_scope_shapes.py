@@ -1013,10 +1013,10 @@ class TestTheReceiverAPositionOfAScriptHolds(TestBase):
         self.assertEqual(_still_answered(rows), _as_it_answers_them(rows))
 
 
-#: A classic script whose top level writes a global property under a key no reading of the text
-#: gives, mapped to the exact text the deobfuscation answers with today. The write may put anything
-#: anywhere on the global object, so a model that reads it has to stop removing what the file does
-#: not name - and `z` here is exactly that.
+#: A classic script whose top level writes a global property under a key the file spells as a
+#: constant, mapped to the exact text the deobfuscation answers with today. The read of `k` stands
+#: inside the write's own computed key, which the assignment evaluates before it stores (§13.15.5),
+#: so the key folds, and with it the write stops being one under a runtime key at all.
 A_REMOVAL_A_COMPUTED_WRITE_THROUGH_THIS_STANDS_BESIDE = a_program("""
     var z = 1;
     var k = 'q';
@@ -1036,23 +1036,24 @@ A_TOP_LEVEL_DECLARATION_NOTHING_IN_THE_FILE_NAMES = a_program("""
 
 class TestARemovalTheGlobalObjectFixGivesUp(TestBase):
     """
-    What the top-level `this` fix costs. Reading `this` as the global object means reading a write
-    through it as a write of a global property, and a write under a computed key is a write of a
-    property no reading of the text names, so every removal in the file it stands in stops - the
-    declaration of `z`, which nothing reads, and the fold of `k`, which the write reads. The control
-    beside it is the file with no such write, whose removals go on happening.
+    What the top-level `this` fix costs, and what the located write repays of it. Reading `this` as
+    the global object means reading a write through it as a write of a global property, and a write
+    under a key no reading of the text resolves stops every removal in the file it stands in. The
+    key here is one the file spells: the read of it stands inside the store's own computed key,
+    which the assignment evaluates before it stores, so the key folds — and the write that remains
+    names `q` and nothing else, leaving the removals to happen again: the declaration of `z`, which
+    nothing reads, and the fold of `k`, which the write no longer reads. The control beside it is
+    the file with no such write, whose removals go on happening.
 
     Read from the text and from nothing else: both programs print what they printed either way.
     """
 
-    def test_a_removal_a_computed_write_stands_beside_no_longer_happens(self):
+    def test_the_removals_a_computed_write_stopped_happen_again_once_its_key_folds(self):
         self.assertEqual(
             folded(A_REMOVAL_A_COMPUTED_WRITE_THROUGH_THIS_STANDS_BESIDE),
             inspect.cleandoc(
                 """
-                var z = 1;
-                var k = 'q';
-                this[k] = 2;
+                this.q = 2;
                 console.log(3);
                 """
             ),

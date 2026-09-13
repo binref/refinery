@@ -18,7 +18,7 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import node_executable
-from test.lib.scripts.js.ledger import a_program, before_and_after_in_a_host, folded
+from test.lib.scripts.js.ledger import a_program, before_and_after_in_a_host, folded, prints
 
 _A_WRITE_NO_LONGER_BLOCKS_A_METHOD_CALL = {
     'a string method on a literal receiver': (
@@ -117,3 +117,103 @@ class TestAGlobalWrittenUnderARuntimeKeyStillBinds(TestBase):
             with self.subTest(label):
                 before, after = before_and_after_in_a_host(source)
                 self.assertEqual(after, before)
+
+_A_READ_THE_WRITE_HAS_NOT_REACHED = {
+    'a read before the write': (
+        a_program("""
+            var s = 'abcdef';
+            var k = process.env.KEY || 's';
+            var t = s.charAt(2);
+            globalThis[k] = 0;
+            console.log(t);
+            """),
+        "var k = process.env.KEY || 's';\n"
+        "var t = 'c';\n"
+        "globalThis[k] = 0;\n"
+        "console.log(t);",
+    ),
+    'a read inside the write key': (
+        a_program("""
+            var s = 'abcdef';
+            globalThis[s.charAt(0)] = 0;
+            console.log(1);
+            """),
+        "console.log(1);",
+    ),
+    'a read behind a key that folds': (
+        a_program("""
+            var k = ['s'].join('');
+            var q = 'abcdef';
+            globalThis[k] = 0;
+            var t = q.charAt(2);
+            console.log(t);
+            """),
+        "console.log('c');",
+    ),
+}
+"""
+A read the write may replace, standing where the write has not run yet. The first reads before the
+store; the second reads inside the store's own key, which the assignment evaluates before it stores
+(§13.15.5); the third reads after the store, but behind a key that folds to a literal first — which
+takes the write out of the runtime-key class entirely, so nothing volatile remains for the read to
+be killed by. Each folds to the text pinned beside it.
+
+The first row's `console.log(t)` is the located kill's own half: the key resolves at runtime to any
+name, `t` among them, so the read after the store is not folded and a host whose `KEY` is `'t'` is
+handed a program that still prints the written value. The second and third lose the store outright —
+a literal key nothing reads names no binding the sweep must keep.
+"""
+
+#: The first row's program, whose fold is the one the write's position has to justify.
+_A_READ_BEFORE_THE_WRITE = a_program("""
+    var s = 'abcdef';
+    var k = process.env.KEY || 's';
+    var t = s.charAt(2);
+    globalThis[k] = 0;
+    console.log(t);
+    """)
+
+#: The same program with the store moved ahead of the read, which the write's replacement then
+#: reaches first: a host running it as a script ends it with a `TypeError` on both sides.
+_A_READ_THE_WRITE_HAS_REACHED = a_program("""
+    var s = 'abcdef';
+    var k = process.env.KEY || 's';
+    globalThis[k] = 0;
+    var t = s.charAt(2);
+    console.log(t);
+    """)
+
+
+class TestAReadTheWriteHasNotReachedYetFolds(TestBase):
+    """
+    The located form of the write fact. A store under a runtime key may replace a script-scope
+    name, so it is a kill — but a kill at the statement that spells it, which a read standing before
+    it, or inside the operands that statement evaluates before storing, is not reached by. The recall
+    the volatile-everywhere reading refused: each of these stayed standing whole before the kill was
+    located, the third deadlocked — its key folds only once the read inside it is answered, and the
+    read is answered only once the write stops being volatile everywhere.
+    """
+
+    def test_each_program_folds_to_the_pinned_text(self):
+        for label, (source, expected) in _A_READ_THE_WRITE_HAS_NOT_REACHED.items():
+            with self.subTest(label):
+                self.assertEqual(folded(source), expected)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReadTheWriteHasReachedStaysStanding(TestBase):
+    """
+    The soundness half the located kill owes: a read standing after the store may observe the
+    written value, so it stays standing, and a host running the file as a script — the model in
+    which the store really does replace the name — ends it the same way on both sides.
+    """
+
+    def test_each_program_still_prints_and_throws_what_the_host_does(self):
+        self.assertEqual(
+            before_and_after_in_a_host(_A_READ_BEFORE_THE_WRITE),
+            (prints('c'), prints('c')),
+        )
+        self.assertEqual(
+            before_and_after_in_a_host(_A_READ_THE_WRITE_HAS_REACHED),
+            (('', 'TypeError'), ('', 'TypeError')),
+        )
