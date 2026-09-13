@@ -392,6 +392,30 @@ class TestPs1ReassignedVariableInlining(TestPs1):
         )
         self.assertIn('$x', result)
 
+    def test_a_single_use_name_folds_into_the_member_position(self):
+        self.assertEqual(
+            self._deobfuscate("$m = 'StartsWith'; $x.($m)('::')"),
+            "$x.StartsWith('::')",
+        )
+
+    def test_a_member_that_is_not_an_identifier_keeps_its_quotes(self):
+        self.assertEqual(
+            self._deobfuscate("$m = 'a-b'; $x.($m)('::')"),
+            "$x.'a-b'('::')",
+        )
+
+    def test_a_value_a_sub_expression_fold_produces_folds_into_the_member_position(self):
+        self.assertEqual(
+            self._deobfuscate("$m = $($s = 'StartsWith'; $s); $x.($m)('::')"),
+            "$x.StartsWith('::')",
+        )
+
+    def test_a_name_read_in_and_out_of_the_member_position_folds_into_both(self):
+        self.assertEqual(
+            self._deobfuscate("$m = 'a-b'; $x.($m)('::'); $z = $m + '!'; Write-Output $z"),
+            "$x.'a-b'('::')\nWrite-Output 'a-b!'",
+        )
+
     def test_switch_array_self_ref_not_inlined(self):
         result = self._deobfuscate(
             "$x = 0\nswitch (1, 2, 3) {\n  default { $x = $x + 1 }\n}"
