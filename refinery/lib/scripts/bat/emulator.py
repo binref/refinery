@@ -443,10 +443,18 @@ class BatchEmulator:
                     continue
                 pieces = split_arguments(expanded)
                 if pieces and not pieces[0].isspace() and pieces[0].upper() == 'SET':
+                    tail = expanded[len(pieces[0]):]
+                    stripped = tail.lstrip()
+                    lead = tail[:len(tail) - len(stripped)]
                     resplit.append(pieces[0])
-                    resplit.append(expanded[len(pieces[0]):])
+                    if lead:
+                        resplit.append(lead)
+                    if stripped:
+                        resplit.append(stripped)
                 else:
                     resplit.extend(pieces)
+            while resplit and isinstance(resplit[0], str) and resplit[0].isspace():
+                del resplit[0]
             return resplit
 
         def expand(token):
@@ -950,14 +958,19 @@ class BatchEmulator:
         current_drive = ntpath.splitdrive(self.state.cwd)[0]
         if not drive_switch and target_drive and target_drive.upper() != current_drive.upper():
             return
-        self.state.cwd = target
+        if not self.state.try_chdir(target):
+            std.e.write('The system cannot find the drive specified.\r\n')
+            return 1
 
     @_command('PUSHD')
-    def execute_pushd(self, cmd: SynCommand, *_):
+    def execute_pushd(self, cmd: SynCommand, std: IO, *_):
         yield cmd
-        self.state.dirstack.append(self.state.cwd)
-        if (target := cmd.argument_string.strip()):
-            self.state.cwd = unquote(target)
+        previous = self.state.cwd
+        target = cmd.argument_string.strip()
+        if target and not self.state.try_chdir(unquote(target)):
+            std.e.write('The system cannot find the drive specified.\r\n')
+            return 1
+        self.state.dirstack.append(previous)
 
     @_command('POPD')
     def execute_popd(self, cmd: SynCommand, *_):
@@ -1087,7 +1100,8 @@ class BatchEmulator:
             return 1
         if start and (batch := self.state.ingest_file(start)):
             state = self.clone_state(environment=env, filename=start, delayexpand=False)
-            state.cwd = cwd
+            if not state.try_chdir(cwd):
+                return
             state.command_line = _fuse(it).strip()
             shell = self.spawn(batch, state, std)
             yield from shell.trace()
@@ -1120,7 +1134,7 @@ class BatchEmulator:
                     yield Error(F'Invalid flag in CMD execution: /{name} followed by {flag_string}.')
                     return None
 
-            if arg.isspace() or not arg.startswith('/'):
+            if arg.isspace() or not arg.startswith('/') or len(arg) < 2:
                 continue
             name = arg[1].upper()
             if name in 'CKR':
@@ -1393,7 +1407,10 @@ class BatchEmulator:
                 it = self.trace_group(part, streams, in_group)
             else:
                 ast = self.expand_ast_node(part)
-                cmd = synthesize(ast)
+                try:
+                    cmd = synthesize(ast)
+                except ValueError:
+                    continue
                 it = self.execute_command(cmd, streams, in_group, length > 1)
             yield from it
 

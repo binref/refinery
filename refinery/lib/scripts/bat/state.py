@@ -121,6 +121,17 @@ class BatchState:
             raise ValueError(F'Invalid absolute path: {new}')
         self._cwd = ntpath.normcase(ntpath.normpath(new))
 
+    def try_chdir(self, target: str) -> bool:
+        """
+        Attempt to change the working directory to `target`, mirroring cmd.exe: a target that
+        cannot be resolved to an absolute path leaves the directory unchanged and returns `False`.
+        """
+        try:
+            self.cwd = target
+        except ValueError:
+            return False
+        return True
+
     @property
     def ec(self) -> int | ErrorZero:
         return self.errorlevel
@@ -150,7 +161,7 @@ class BatchState:
             time = self.now.strftime('%M:%S,%f')
             return F'{self.now.hour:2d}:{time:.8}'
         elif name == 'RANDOM':
-            return str(self._random.randrange(0, 32767))
+            return str(self._random.randrange(0, 32768))
         elif name == 'ERRORLEVEL':
             return str(self.ec)
         elif name == 'CD':

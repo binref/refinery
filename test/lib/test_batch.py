@@ -1,3 +1,4 @@
+import ntpath
 import random
 import re
 import unittest
@@ -2476,3 +2477,111 @@ class TestBatchCmdSemantics(TestBase):
         second = BatchState(now=parent.now)
         b = [second.envar('RANDOM') for _ in range(8)]
         self.assertNotEqual(a, b)
+
+    def test_random_reaches_its_documented_maximum(self):
+        """
+        cmd.exe %RANDOM% spans 0..32767 inclusive; this seed lands the draw on 32767,
+        the value the exclusive upper bound of `randrange(0, 32767)` could never return.
+        """
+        state = BatchState()
+        state._random = random.Random(12735)
+        self.assertEqual(state.envar('RANDOM'), '32767')
+
+    def test_set_reconstructed_from_a_for_variable_binds_an_unpadded_name(self):
+        """
+        A `set NAME=payload` line executed through a FOR variable binds NAME with no
+        leading space, so cmd.exe expands a later %NAME% to `payload` and not to nothing.
+        """
+        state = BatchState()
+        state.create_file('c.txt', 'set NAME=payload\r\n')
+        bat = self._run('for /f "delims=x" %%A in (c.txt) do %%A\necho %NAME%', state)
+        self.assertEqual(bat.std.o.getvalue(), 'payload\r\n')
+
+    def test_bare_cmd_switch_does_not_abort_the_script(self):
+        """
+        cmd.exe does not abort the running script when a CMD invocation carries only a
+        bare `/` where a switch is expected; a following `echo AFTER` still prints.
+        """
+        bat = self._run('cmd /\necho AFTER')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_cd_slashd_to_unresolvable_target_reports_and_continues(self):
+        """
+        `cd /d z:foo` names another drive's directory that cannot be resolved; cmd.exe
+        reports the failure and continues, so both following echoes still print.
+        """
+        bat = self._run('cd /d z:foo\necho AFTER1\necho AFTER2')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER1\r\nAFTER2\r\n')
+
+    def test_pushd_to_unresolvable_target_reports_and_continues(self):
+        """
+        `pushd z:foo` names another drive's directory that cannot be resolved; cmd.exe writes
+        "The system cannot find the drive specified." to stderr, sets errorlevel 1, and continues.
+        """
+        bat = self._run('pushd z:foo\necho AFTER')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+        self.assertEqual(bat.std.e.getvalue(), 'The system cannot find the drive specified.\r\n')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_failed_pushd_pushes_nothing_onto_the_directory_stack(self):
+        R"""
+        A failed `pushd` pushes nothing: after a successful `pushd c:\windows\system32`, a failed
+        `pushd z:foo`, and one `popd`, cmd.exe is back at `c:\windows`, the directory that preceded
+        the successful pushd, and not the one it changed to.
+        """
+        state = BatchState(cwd='C:\\Windows')
+        bat = self._run('pushd c:\\windows\\system32\npushd z:foo\npopd', state)
+        self.assertEqual(bat.state.cwd, 'c:\\windows')
+
+    def test_start_with_unresolvable_working_directory_does_not_abort_the_parent(self):
+        """
+        `start "" /d z:foo child.bat` names a working directory that cannot be resolved; cmd.exe
+        cannot launch the child there, but the parent script continues to the next command.
+        """
+        state = BatchState()
+        state.create_file('child.bat', '@echo off\r\necho CHILD\r\n')
+        bat = self._run('start "" /d z:foo child.bat\necho PARENT', state)
+        self.assertEqual(bat.std.o.getvalue(), 'PARENT\r\n')
+
+    def test_command_that_expands_to_empty_is_a_noop(self):
+        """
+        A command line that expands to nothing — here an undefined `!undef!` under
+        delayed expansion — is a no-op in cmd.exe; a following `echo AFTER` still prints.
+        """
+        bat = self._run('setlocal enabledelayedexpansion\n!undef!\necho AFTER')
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+
+    @unittest.expectedFailure
+    def test_for_f_assigns_tokens_past_twenty_six(self):
+        """
+        FOR /F names tokens beyond 26 with the characters that follow Z in ASCII, so token
+        27 is %%[. cmd.exe binds it: `tokens=1-27` over 27 words makes %%[ the 27th word.
+        """
+        state = BatchState()
+        state.create_file('t.txt', (
+            't1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 '
+            't15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27\r\n'))
+        bat = self._run('for /f "tokens=1-27 delims= " %%A in (t.txt) do echo [%%Z][%%[]', state)
+        self.assertEqual(bat.std.o.getvalue(), '[t26][t27]\r\n')
+
+    @unittest.expectedFailure
+    def test_cd_slashd_switch_is_recognized_once(self):
+        """
+        cmd.exe recognizes /D only once: `cd /d /d c:\\windows` reads the second `/d` as
+        part of a bogus path, fails, and leaves the current directory unchanged.
+        """
+        state = BatchState(cwd='C:\\start')
+        original = state.cwd
+        self._run('cd /d /d c:\\windows', state)
+        self.assertEqual(state.cwd, original)
+
+    @unittest.expectedFailure
+    def test_foreign_drive_relative_path_resolves_to_absolute(self):
+        """
+        A drive-qualified relative path names a location on that drive's current directory,
+        so `z:foo` resolved from a C: working directory is an absolute Z: path and never the
+        literal relative `z:foo`.
+        """
+        state = BatchState(cwd='C:\\dir')
+        self.assertTrue(ntpath.isabs(state.resolve_path('z:foo')))
