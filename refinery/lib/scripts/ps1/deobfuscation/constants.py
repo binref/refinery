@@ -45,6 +45,7 @@ from refinery.lib.scripts.ps1.analysis.variable_types import (
     constraint_converts,
     value_under_declared_constraint,
 )
+from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     assignment_target_variables,
@@ -1058,6 +1059,11 @@ class Ps1NullVariableInlining(Transformer):
     reaches. `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.strict_mode_may_be_in_force`
     is the one model of whether the script arms it, shared with the removal veto, and the whole
     pass stands down where it may be in force rather than every substitution deciding it again.
+
+    A read is not worth `$null` either where the script runs code supplied as data — an
+    `Invoke-Expression`, a dot-sourced file, an opaque dispatch — because that code can assign the
+    name in the calling scope out of data this walk cannot read, so the pass stands down there too.
+    The `-e` switch trusts such code to touch nothing the script does not spell and restores it.
     """
 
     @staticmethod
@@ -1085,7 +1091,10 @@ class Ps1NullVariableInlining(Transformer):
         return False
 
     def visit(self, node: Node):
-        if model_cache(self, node).faults.strict_mode_may_be_in_force():
+        cache = model_cache(self, node)
+        if cache.faults.strict_mode_may_be_in_force():
+            return
+        if runs_code_supplied_as_data(cache.world_measurement):
             return
         mutated = _collect_mutated_variables(node)
         for ref in list(node.walk()):

@@ -2500,17 +2500,18 @@ class Ps1SubExpressionEvaluator(Transformer):
         return False
 
     def _leaks_a_written_name(self, node: Ps1SubExpression, written: set[str]) -> bool:
+        if written and self._runs_data_code:
+            # A sub-expression shares the scope it is written in, so a body store persists there
+            # once folded away, and code the run takes from data — an `Invoke-Expression`, a
+            # dispatched scriptblock, a dot-sourced file — reads that scope with no occurrence in the
+            # tree. The verdict is whole-run, so no single written name is worth asking about; the
+            # `-e` switch closes that world and folds these bodies again.
+            return True
         for name in sorted(written):
             if name in PS1_ENGINE_VARIABLES:
                 # The engine reads these between statements — `$OFS` at the next collection
                 # coercion, `$ErrorActionPreference` at the next failing cmdlet — so a reader of
                 # one observes the body's write without any occurrence in the tree.
-                return True
-            if self._runs_data_code:
-                # A sub-expression shares the scope it is written in, so a body store persists
-                # there once folded away, and code the run takes from data — an `Invoke-Expression`,
-                # a dispatched scriptblock, a dot-sourced file — reads that scope with no occurrence
-                # in the tree. The `-e` switch closes that world and folds these bodies again.
                 return True
             if self._occurs_outside(node, name):
                 return True

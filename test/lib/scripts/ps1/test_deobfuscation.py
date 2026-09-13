@@ -811,10 +811,11 @@ class TestPs1ABlockAShadowedIteratorReceivesRunsWhereThatIteratorRunsIt(TestPs1)
     `b` for the script below, because the stored block runs after the second assignment.
 
     The block is no longer placed at the pipeline it is written in, so the read inside it is not
-    folded to `'a'`. What remains wrong is a separate defect: the second assignment `$x = 'b'` is
-    deleted as dead, because the liveness walk does not see the read that runs when
-    `& $script:store` invokes the stored block. That read reaches `$x` through the shadowing
-    function, which no pass connects the invocation to, so the output still prints `a`.
+    folded to `'a'`. The second assignment `$x = 'b'` is kept: `& $script:store` is an opaque
+    dispatch, so the run takes code from data, and the cleanup passes keep every script-scope store a
+    reader they cannot see could observe. The stored block is such a reader — it reaches `$x` through
+    the shadowing function, which no pass connects the invocation to — so keeping the store is what
+    makes the emitted script print `b` the way 5.1 does.
     """
 
     _SCRIPT = """

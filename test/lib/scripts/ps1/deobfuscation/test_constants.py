@@ -968,3 +968,39 @@ class TestPs1AnUnsetReadIsNotNullWhereStrictModeIsArmed(TestPs1):
             """
         ))
         self.assertIn('$zzqundefined', result)
+
+
+class TestPs1AnUnsetReadIsNotNullWhereADataCodeLeakCanAssignIt(TestPs1):
+    """
+    `Invoke-Expression`, a dot-sourced file and an opaque dispatch run code this analysis cannot read
+    in the calling scope, so a name never assigned in the tree may hold a value one of them wrote.
+    Windows PowerShell 5.1 runs `iex '$zzqundefined = 5'` before the `if` and then takes the `dead`
+    branch, so the read is not worth `$null` and resolving the branch on it would drop a body 5.1
+    runs. `Ps1NullVariableInlining` stands down under such a leak, the write-side dual of the
+    read-leak the cleanup passes and the sub-expression fold refuse on, and the sibling of the
+    strict-mode stand-down above. The `-e` switch trusts such code and restores the fold.
+    """
+
+    _SCRIPT = cleandoc(
+        """
+        Invoke-Expression $c
+        if ($zzqundefined) {
+          Write-Host 'dead'
+        } else {
+          Write-Host 'live'
+        }
+        """
+    )
+
+    def test_a_branch_on_an_unset_name_is_not_resolved_where_a_leak_precedes_it(self):
+        self.assertIn('$zzqundefined', self._deobfuscate_iterative(self._SCRIPT))
+
+    def test_the_e_switch_trusts_the_leak_and_resolves_the_branch(self):
+        self.assertEqual(
+            self._deobfuscate_iterative(self._SCRIPT, trust_eval=True),
+            cleandoc(
+                """
+                Invoke-Expression $c
+                Write-Host 'live'
+                """
+            ))
