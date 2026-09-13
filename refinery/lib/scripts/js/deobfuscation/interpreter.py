@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
+    JS_HOLE,
     JS_NULL,
     LOGICAL_ASSIGNMENT_OPS,
     PROTO_KEY,
@@ -578,14 +579,14 @@ def _arr_push(arr: list, args: list[Value]) -> Value:
 @_register((list, 'pop'))
 def _arr_pop(arr: list, args: list[Value]) -> Value:
     if arr:
-        return arr.pop()
+        return _element_read(arr.pop())
     return None
 
 
 @_register((list, 'shift'))
 def _arr_shift(arr: list, args: list[Value]) -> Value:
     if arr:
-        return arr.pop(0)
+        return _element_read(arr.pop(0))
     return None
 
 
@@ -693,11 +694,35 @@ def _arr_index_of(arr: list, args: list[Value]) -> Value:
     return -1
 
 
+def _element_read(value: Value) -> Value:
+    """
+    The value an element-reading array method answers for *value*: a hole reads as `undefined`,
+    the same value the array's own iterator yields for it, and every other element is itself.
+    """
+    return None if value is JS_HOLE else value
+
+
+def _same_value_zero(a: Value, b: Value) -> bool:
+    """
+    Compare two interpreter values with SameValueZero, the equality `includes` uses: strict
+    equality, except that two NaNs are equal — and a hole reads as the `undefined` the
+    iteration that visits it would yield.
+    """
+    a = _element_read(a)
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        if a != a and b != b:
+            return True
+    return js_strict_equal(a, b)
+
+
 @_register((list, 'includes'))
 def _arr_includes(arr: list, args: list[Value]) -> Value:
     if not args:
         return False
-    return any(js_strict_equal(item, args[0]) for item in arr)
+    start = _to_index(args[1]) if len(args) > 1 else 0
+    if start < 0:
+        start = max(0, len(arr) + start)
+    return any(_same_value_zero(item, args[0]) for item in arr[start:])
 
 
 @_register((list, 'flat'))
@@ -707,6 +732,10 @@ def _arr_flat(arr: list, args: list[Value]) -> Value:
     def _flatten(lst: list, d: int) -> list:
         result: list = []
         for item in lst:
+            # Flattening asks whether the array has a property at each index, at every level,
+            # so a hole is skipped there rather than read or carried into the result.
+            if item is JS_HOLE:
+                continue
             if isinstance(item, list) and d > 0:
                 result.extend(_flatten(item, d - 1))
             else:
@@ -721,7 +750,7 @@ def _arr_at(arr: list, args: list[Value]) -> Value:
     if idx < 0:
         idx += len(arr)
     if 0 <= idx < len(arr):
-        return arr[idx]
+        return _element_read(arr[idx])
     return None
 
 
@@ -1058,8 +1087,15 @@ def _global_encode_uri_component(args: list[Value]) -> Value:
 
 @_register(('Object', 'keys'))
 def _object_keys(args: list[Value]) -> Value:
-    if args and isinstance(args[0], dict):
-        return own_property_keys(args[0])
+    if not args:
+        raise InterpreterError
+    obj = args[0]
+    if isinstance(obj, dict):
+        return own_property_keys(obj)
+    if isinstance(obj, list):
+        # An array's own keys are its indices in ascending order, minus the holes: a hole is a
+        # position the array holds no property at, which is what `Object.keys` reports as absent.
+        return [str(i) for i, item in enumerate(obj) if item is not JS_HOLE]
     raise InterpreterError
 
 
@@ -1085,7 +1121,9 @@ def _array_from(args: list[Value]) -> Value:
     if isinstance(src, str):
         return code_points(src)
     if isinstance(src, list):
-        return list(src)
+        # The iteration `Array.from` runs over an array yields a hole as `undefined` rather
+        # than skipping it, so the copy it builds holds an element there.
+        return [_element_read(item) for item in src]
     raise InterpreterError
 
 
@@ -1517,7 +1555,7 @@ class JsInterpreter:
         if isinstance(right, dict):
             keys = own_property_keys(right)
         else:
-            keys = [str(i) for i in range(len(right))]
+            keys = [str(i) for i, item in enumerate(right) if item is not JS_HOLE]
         var_name = self._get_loop_var(node.left)
         for key in keys:
             self._tick()
@@ -1530,7 +1568,9 @@ class JsInterpreter:
         if right is None or right is JS_NULL:
             _js_throw('TypeError', F'{to_string(right)} is not iterable')
         if isinstance(right, list):
-            items = right
+            # An array's iterator yields a hole as `undefined` — it asks whether the array has a
+            # property at the index and takes the value on either branch — so a hole is not a skip.
+            items = [None if item is JS_HOLE else item for item in right]
         elif isinstance(right, str):
             items = code_points(right)
         else:
@@ -1824,10 +1864,10 @@ class JsInterpreter:
         prototype is written, and `indexOf` and the callback methods skip the first while visiting
         the second.
 
-        This value domain has one `None` and it means `undefined`, so a list holding a hole would be
-        a value every one of those questions is answered wrongly from. The domain excludes it rather
-        than growing a second nothing, which is also how the syntax model spells an elision: as no
-        element at all.
+        A hole is representable in this domain — a store growing an array past its end builds one —
+        but a literal holding one has no fold to go to: `value_to_node` refuses a holey list, so
+        building it here would answer no call. The syntax model spells an elision as no element at
+        all, which is the shape this refusal leaves standing.
         """
         if any(element is None for element in expr.elements):
             raise InterpreterError
@@ -2116,14 +2156,22 @@ class JsInterpreter:
             raise InterpreterError
         if not self._callback_is_contained(callback):
             raise InterpreterError
+        # Every higher-order method asks the array whether it has a property at each index
+        # before it calls, so a hole is a position no callback runs at and no filter keeps.
+        # `find` and `findIndex` are the exception: they read the element directly and visit a
+        # hole as the `undefined` the read yields.
         if method == 'every':
             for i, item in enumerate(arr):
+                if item is JS_HOLE:
+                    continue
                 self._tick()
                 if not to_boolean(self._call_function(callback, [item, i, arr])):
                     return False
             return True
         if method == 'some':
             for i, item in enumerate(arr):
+                if item is JS_HOLE:
+                    continue
                 self._tick()
                 if to_boolean(self._call_function(callback, [item, i, arr])):
                     return True
@@ -2131,12 +2179,17 @@ class JsInterpreter:
         if method == 'map':
             mapped: list[Value] = []
             for i, item in enumerate(arr):
+                if item is JS_HOLE:
+                    mapped.append(JS_HOLE)
+                    continue
                 self._tick()
                 mapped.append(self._call_function(callback, [item, i, arr]))
             return mapped
         if method == 'filter':
             filtered: list[Value] = []
             for i, item in enumerate(arr):
+                if item is JS_HOLE:
+                    continue
                 self._tick()
                 if to_boolean(self._call_function(callback, [item, i, arr])):
                     filtered.append(item)
@@ -2144,30 +2197,37 @@ class JsInterpreter:
         if method == 'find':
             for i, item in enumerate(arr):
                 self._tick()
-                if to_boolean(self._call_function(callback, [item, i, arr])):
-                    return item
+                if to_boolean(self._call_function(callback, [_element_read(item), i, arr])):
+                    return _element_read(item)
             return None
         if method == 'findIndex':
             for i, item in enumerate(arr):
                 self._tick()
-                if to_boolean(self._call_function(callback, [item, i, arr])):
+                if to_boolean(self._call_function(callback, [_element_read(item), i, arr])):
                     return i
             return -1
         if method == 'forEach':
             for i, item in enumerate(arr):
+                if item is JS_HOLE:
+                    continue
                 self._tick()
                 self._call_function(callback, [item, i, arr])
             return None
         if method == 'reduce':
-            if len(arr) == 0 and len(args) < 2:
-                raise InterpreterError
             if len(args) >= 2:
                 acc: Value = args[1]
                 start = 0
             else:
-                acc = arr[0]
-                start = 1
+                start = 0
+                while start < len(arr) and arr[start] is JS_HOLE:
+                    start += 1
+                if start == len(arr):
+                    _js_throw('TypeError', 'Reduce of empty array with no initial value')
+                acc = arr[start]
+                start += 1
             for i in range(start, len(arr)):
+                if arr[i] is JS_HOLE:
+                    continue
                 self._tick()
                 acc = self._call_function(callback, [acc, arr[i], i, arr])
             return acc
@@ -2373,10 +2433,11 @@ class JsInterpreter:
         receiver as well, and both refusals are wanted: a widening here that started modelling named array
         properties would need that reasoning restated, not silently dropped.
 
-        Neither of the two it does accept may leave the array longer than the slots it fills.
-        Growing `length`, or storing past the end, opens the holes `_eval_array` refuses to build,
-        and a store is no better a place to build one than a literal is. The separate cap on how far
-        an index may reach answers how much memory a loop may ask for and is untouched by that.
+        Growing the array — storing past its end, or writing a larger `length` — happens in place, filling
+        the positions the store skipped over with holes, because the array another name holds must grow
+        with it: `var v = u; u[87] = 5` leaves `v.length` at 88, so a copy is not a modelling of that
+        store. How far an index or a length may reach is capped, which bounds the memory one store may
+        ask for; a store the cap refuses still refuses here.
         """
         if isinstance(obj, dict):
             if key == PROTO_KEY and key not in obj:
@@ -2390,13 +2451,18 @@ class JsInterpreter:
             if key in SEQUENCE_DATA_PROPERTIES:
                 new_len = _to_array_length(value)
                 if new_len > len(obj):
-                    raise InterpreterError
+                    if new_len > self.max_array_len:
+                        raise InterpreterError
+                    obj.extend([JS_HOLE] * (new_len - len(obj)))
+                    return
                 del obj[new_len:]
                 return
             index = canonical_array_index(key)
             if index is not None:
-                if index > len(obj) or index >= self.max_array_len:
+                if index >= self.max_array_len:
                     raise InterpreterError
+                if index > len(obj):
+                    obj.extend([JS_HOLE] * (index - len(obj)))
                 if index == len(obj):
                     obj.append(value)
                 else:

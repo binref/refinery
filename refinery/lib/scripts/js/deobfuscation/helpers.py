@@ -203,6 +203,35 @@ class _JsNull:
 
 JS_NULL = _JsNull()
 
+
+class _JsHole:
+    """
+    Singleton sentinel for an array hole: a position an array holds no element at, which is not
+    an element holding `undefined`. A program cannot produce one as a value — reading a hole
+    yields `undefined` (`read_data_property` answers `ABSENT` for the slot) — so the sentinel
+    never reaches a folded result. It exists so that a store growing an array past its end can
+    grow the array in place, where a copy could not: `var v = u; u[87] = 5` leaves `v.length`
+    at 88, so the positions the store skipped over have to live in the one array both names
+    hold, as slots no read treats as elements.
+    """
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return 'JS_HOLE'
+
+
+JS_HOLE = _JsHole()
+
+
+def _holes_present(values: list) -> bool:
+    """
+    Whether *values* holds at least one hole. The arms of the value domain that visit a list's
+    elements decide per method whether a hole is skipped (`forEach`, `filter`), read as
+    `undefined` (`find`, for-of, `includes`), or preserved in a result (`map`); this is the one
+    test they would otherwise each spell out for itself.
+    """
+    return any(value is JS_HOLE for value in values)
+
 GLOBAL_VALUE_NAMES: dict[str, Value] = {
     'undefined': None,
     'NaN': float('nan'),
@@ -322,12 +351,12 @@ def read_data_property(obj: Value, key: str) -> tuple[MemberRead, Value]:
     it does answer, it answers alone: `length` and an index within range are own properties of a
     string or array, so no prototype can be consulted for them and none can shadow them.
 
-    A list holds a value at every index it has, which is what makes the second of those answerable
-    without a model. An array literal's elision, a `length` grown past its end and a store to an
-    index beyond it all leave a slot the prototype answers for and the value does not, so a list
-    holding one would make `FOUND` a lie: `[1, , 3][1]` reads `Array.prototype[1]` where
-    `[1, undefined, 3][1]` reads the element. Nothing here can tell those apart, which is why the
-    producer refuses to build such a list at all rather than this reporting on one.
+    A list holds a value at every index it has or a hole there, which is what makes the second of
+    those answerable without a model either way: a hole is an index the array's length reaches and
+    no element was ever stored at, so the read is `ABSENT` for exactly the reason an index past the
+    end is, and the prototype answers for it as it does for that. A literal's elision is the same
+    slot spelled by the source, which is why the producer of a literal still refuses to build one
+    rather than this reporting on a list only a store grew.
 
     *obj* must hold a string the way JavaScript does, as UTF-16 code units — the form the lexer gives
     a literal and the builtin registry gives a produced string. A string of code points read here
@@ -340,6 +369,8 @@ def read_data_property(obj: Value, key: str) -> tuple[MemberRead, Value]:
         index = canonical_array_index(key)
         if index is not None:
             if 0 <= index < len(obj):
+                if obj[index] is JS_HOLE:
+                    return MemberRead.ABSENT, None
                 return MemberRead.FOUND, obj[index]
             return MemberRead.ABSENT, None
     elif isinstance(obj, dict) and key in obj:
@@ -582,11 +613,12 @@ def to_string(value: Value) -> str:
 
 def _array_element_string(value: Value) -> str:
     """
-    Stringify an array element for `Array.prototype.toString` / `join`. JavaScript renders `null` and
-    `undefined` elements as the empty string (e.g. `[1, null, 2].toString()` is `'1,,2'`), unlike a
-    top-level `String(null)` which is `'null'`.
+    Stringify an array element for `Array.prototype.toString` / `join` / the string coercion of
+    the whole array. JavaScript renders `null`, `undefined` and hole elements as the empty string
+    (e.g. `[1, null, 2].toString()` is `'1,,2'`), unlike a top-level `String(null)` which is
+    `'null'`.
     """
-    if value is None or value is JS_NULL:
+    if value is None or value is JS_NULL or value is JS_HOLE:
         return ''
     return to_string(value)
 
@@ -1083,6 +1115,11 @@ def value_to_node(value: object) -> Expression | None:
     only ones no literal denotes. Neither is spelled with the global name that names it. Those names
     are ordinary bindings, and this function does not know the scope it is writing into: a fold that
     happens under `function (NaN) { … }` would otherwise emit text meaning the parameter.
+
+    A list holding a hole has no faithful literal: a hole is spelled by an elision, which a
+    synthesized array literal writes as no element at all, so a hole at any depth — including
+    one inside a nested list, where the residual would flip an `in` the hole answered — refuses
+    the whole value.
     """
     if isinstance(value, str):
         return make_string_literal(value)
@@ -1096,6 +1133,8 @@ def value_to_node(value: object) -> Expression | None:
     if isinstance(value, JsBuffer):
         return None
     if isinstance(value, list):
+        if _holes_present(value):
+            return None
         elements: list[Expression | None] = []
         for item in value:
             el = value_to_node(item)
