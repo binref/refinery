@@ -2769,3 +2769,110 @@ class TestBatchCmdSemantics(TestBase):
         """
         state = BatchState(cwd='C:\\dir')
         self.assertTrue(ntpath.isabs(state.resolve_path('z:foo')))
+
+    def test_bare_set_lists_variables_and_does_not_abort_the_run(self):
+        """
+        A bare `SET` is a display command in cmd.exe, not an error: it lists the environment and the
+        following statement still runs. The emulator previously raised on it and dropped the rest.
+        """
+        bat = self._run('set\necho AFTER')
+        self.assertIn('AFTER\r\n', bat.std.o.getvalue())
+
+    def test_bare_set_lists_a_script_variable_excludes_errorlevel_and_keeps_it(self):
+        """
+        Bare `SET` lists a variable the script defined and hides the pseudo-variable `ERRORLEVEL`
+        that cmd.exe never shows; the display reads the environment and deletes nothing.
+        """
+        bat = self._run('set FOO=bar\nset\necho [%FOO%]')
+        out = bat.std.o.getvalue()
+        self.assertIn('FOO=bar\r\n', out)
+        self.assertFalse(any(line.startswith('ERRORLEVEL=') for line in out.split('\r\n')))
+        self.assertIn('[bar]\r\n', out)
+
+    def test_prefix_set_lists_first_token_matches_sorted(self):
+        """
+        `SET FOO` lists every variable whose name starts with `FOO`, sorted, leaving the error level
+        untouched; `BAZ` does not match and is not listed.
+        """
+        bat = self._run('set FOO=1\nset FOOBAR=2\nset BAZ=3\nset FOO')
+        self.assertEqual(bat.std.o.getvalue(), 'FOO=1\r\nFOOBAR=2\r\n')
+        self.assertEqual(bat.state.ec, 0)
+        self.assertEqual(bat.state.envar('BAZ', ''), '3')
+
+    def test_multi_token_set_matches_first_token_and_does_not_delete(self):
+        """
+        `SET FOO extra` matches on the first token `FOO`, lists the match, and leaves `FOO` defined;
+        it neither deletes the variable nor changes the error level.
+        """
+        bat = self._run('set FOO=1\nset FOO extra\necho [%FOO%]')
+        out = bat.std.o.getvalue()
+        self.assertIn('FOO=1\r\n', out)
+        self.assertIn('[1]\r\n', out)
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_multi_token_no_match_reports_the_full_argument(self):
+        """
+        A `SET` whose first token matches nothing reports the whole argument, spaces included:
+        `SET NOSUCH tail` writes `Environment variable NOSUCH tail not defined` with error level 1.
+        """
+        bat = self._run('set NOSUCH tail\necho AFTER')
+        self.assertEqual(bat.std.e.getvalue(), 'Environment variable NOSUCH tail not defined\r\n')
+        self.assertEqual(bat.state.ec, 1)
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+
+    def test_quoted_set_display_does_not_spuriously_fail(self):
+        """
+        `SET "FOO"` strips the quotes before matching, so a defined `FOO` is listed with error level
+        unchanged; without the strip the literal quote would match nothing and fail with error level 1.
+        """
+        bat = self._run('set FOO=1\nset "FOO"')
+        self.assertEqual(bat.std.o.getvalue(), 'FOO=1\r\n')
+        self.assertEqual(bat.std.e.getvalue(), '')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_no_match_set_reports_and_continues(self):
+        """
+        `SET NOSUCH` with no matching variable writes `Environment variable NOSUCH not defined` to
+        the error stream with error level 1, and the following statement still runs.
+        """
+        bat = self._run('set NOSUCH\necho AFTER')
+        self.assertEqual(bat.std.e.getvalue(), 'Environment variable NOSUCH not defined\r\n')
+        self.assertEqual(bat.state.ec, 1)
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+
+    def test_no_match_set_preserves_the_typed_case(self):
+        """
+        The no-match diagnostic echoes the argument exactly as typed: `SET NoSuch` reports
+        `Environment variable NoSuch not defined`, mixed case preserved.
+        """
+        bat = self._run('set NoSuch')
+        self.assertEqual(bat.std.e.getvalue(), 'Environment variable NoSuch not defined\r\n')
+
+    def test_matching_set_display_does_not_reset_errorlevel(self):
+        """
+        A matching `SET` display returns nothing and leaves the error level alone: after a failed
+        `cd /d z:foo` sets it to 1, `SET FOO` lists the match and the error level stays 1.
+        """
+        bat = self._run('set FOO=1\ncd /d z:foo\nset FOO')
+        self.assertEqual(bat.std.o.getvalue(), 'FOO=1\r\n')
+        self.assertEqual(bat.state.ec, 1)
+
+    def test_nameless_set_slash_p_is_a_syntax_error_not_an_abort(self):
+        """
+        `SET /P` with no variable name is cmd.exe's `The syntax of the command is incorrect.` with
+        error level 1; it must not read standard input, so the following statement still runs.
+        """
+        bat = self._run('set /P\necho AFTER')
+        self.assertEqual(bat.std.e.getvalue(), 'The syntax of the command is incorrect.\r\n')
+        self.assertEqual(bat.state.ec, 1)
+        self.assertEqual(bat.std.o.getvalue(), 'AFTER\r\n')
+
+    def test_set_assignment_and_delete_paths_are_unchanged(self):
+        """
+        The display routing leaves assignment and deletion intact: `SET X=Y` defines `X` as `Y`, and
+        a later `SET X=` removes it.
+        """
+        assigned = self._run('set X=Y')
+        self.assertEqual(assigned.state.envar('X', ''), 'Y')
+        deleted = self._run('set X=Y\nset X=')
+        self.assertEqual(deleted.state.envar('X', '<undef>'), '<undef>')

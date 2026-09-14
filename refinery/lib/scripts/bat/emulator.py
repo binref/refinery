@@ -177,6 +177,17 @@ def _onoff(v: str) -> bool:
     raise ValueError(v)
 
 
+def _dequote_set_operand(text: str) -> str:
+    """
+    Strip one cmd.exe SET-style surrounding quote: everything up to the last quote when the operand
+    opens with one, else the tail after it, mirroring the quote handling on the SET assignment path.
+    """
+    if text.startswith('"'):
+        text, _, tail = text[1:].rpartition('"')
+        text = text or tail
+    return text
+
+
 class DevNull:
     def getvalue(self):
         return ''
@@ -705,46 +716,61 @@ class BatchEmulator:
 
         return int(total == 0)
 
+    def _set_display(self, std: IO, operand: str) -> CommandFailure | None:
+        """
+        The SET display command: with no assignment, `SET` lists the environment variables whose name
+        starts with the first whitespace token of `operand` (every variable when `operand` is empty),
+        leaving the environment and error level untouched. A non-empty operand that matches nothing is
+        cmd.exe's `Environment variable <operand> not defined` diagnostic with error level 1.
+        """
+        operand = _dequote_set_operand(operand)
+        tokens = operand.split(None, 1)
+        prefix = tokens[0].upper() if tokens else ''
+        matches = [
+            (name, value)
+            for name, value in self.state.display_variables()
+            if name.startswith(prefix)
+        ]
+        if operand and not matches:
+            return CommandFailure(F'Environment variable {operand} not defined', 1)
+        for name, value in matches:
+            std.o.write(F'{name}={value}\r\n')
+        return None
+
     @_command('SET')
     def execute_set(self, cmd: SynCommand, std: IO, in_group=False, piped: bool = False):
-        if not (args := cmd.args):
-            raise EmulatorException('Empty SET instruction')
-
         if cmd.verb.upper() != 'SET':
             raise RuntimeError
 
         # Since variables can be used in GOTO, a SET can be used to change the behavior of a GOTO.
         self.block_labels.clear()
 
-        arithmetic = False
+        it = iter(cmd.args)
+        tk = next(it, None)
         prompt = None
 
-        it = iter(args)
-        tk = next(it)
-
-        if tk.upper() == '/P':
+        if tk is not None and tk.upper() == '/P':
+            tk = next(it, None)
+            if tk is None:
+                yield cmd
+                return CommandFailure(MSG_SYNTAX_INCORRECT, 1)
             if std.i.closed:
                 prompt = ''
             elif not (prompt := std.i.readline()).endswith('\n'):
                 raise InputLocked
             else:
                 prompt = prompt.rstrip('\r\n')
-            tk = next(it)
         else:
             cmd.junk = not self.cfg.show_sets
 
         yield cmd
 
-        if tk.upper() == '/A':
-            arithmetic = True
+        if tk is not None and tk.upper() == '/A':
             try:
                 tk = next(it)
             except StopIteration:
                 tk = ''
-
-        args = [tk, *it, *cmd.trailing_spaces]
-
-        if arithmetic:
+            args = [tk, *it, *cmd.trailing_spaces]
             def defang(s: str):
                 def r(m: re.Match[str]):
                     return F'_{prefix}{ord(m[0]):X}_'
@@ -803,42 +829,57 @@ class BatchEmulator:
                     namespace[defang(name).upper()] = value
             if piped or self.capture or self.state.cmdline:
                 std.o.write(F'{value!s}\r\n')
+            return
+
+        if tk is None:
+            return self._set_display(std, '')
+
+        args = [tk, *it, *cmd.trailing_spaces]
+
+        if Ctrl.Equals in args:
+            assigns = True
+        elif cmd.argument_string.startswith('"'):
+            assigns = '=' in _dequote_set_operand(cmd.argument_string)
         else:
-            quote_mode = False
-            try:
-                eq = args.index(Ctrl.Equals)
-            except ValueError:
-                assignment = cmd.argument_string
-                if assignment.startswith('"'):
-                    quote_mode = True
-                    assignment, _, unquoted = assignment[1:].rpartition('"')
-                    assignment = assignment or unquoted
-                else:
-                    assignment = ''.join(args)
-                name, _, content = assignment.partition('=')
+            assigns = '=' in ''.join(args)
+        if prompt is None and not assigns:
+            return self._set_display(std, cmd.argument_string)
+
+        quote_mode = False
+        try:
+            eq = args.index(Ctrl.Equals)
+        except ValueError:
+            assignment = cmd.argument_string
+            if assignment.startswith('"'):
+                quote_mode = True
+                assignment, _, unquoted = assignment[1:].rpartition('"')
+                assignment = assignment or unquoted
             else:
-                with StringIO() as io:
-                    for k in range(eq + 1, len(args)):
-                        io.write(args[k])
-                    content = io.getvalue()
-                    name = cmd.args[eq - 1] if eq else ''
-            if quote_mode:
-                trailing_caret, content = uncaret(content, True)
-                if trailing_caret:
-                    content = content[:-1]
-            name = name.upper()
-            if prompt is not None:
-                if (qc := content.strip()).startswith('"'):
-                    _, _, qc = qc. partition('"') # noqa
-                    qc, _, r = qc.rpartition('"') # noqa
-                    content = qc or r
-                std.o.write(content)
-                content = prompt
-            if name:
-                if content:
-                    self.environment[name] = content
-                else:
-                    self.environment.pop(name, None)
+                assignment = ''.join(args)
+            name, _, content = assignment.partition('=')
+        else:
+            with StringIO() as io:
+                for k in range(eq + 1, len(args)):
+                    io.write(args[k])
+                content = io.getvalue()
+                name = cmd.args[eq - 1] if eq else ''
+        if quote_mode:
+            trailing_caret, content = uncaret(content, True)
+            if trailing_caret:
+                content = content[:-1]
+        name = name.upper()
+        if prompt is not None:
+            if (qc := content.strip()).startswith('"'):
+                _, _, qc = qc. partition('"') # noqa
+                qc, _, r = qc.rpartition('"') # noqa
+                content = qc or r
+            std.o.write(content)
+            content = prompt
+        if name:
+            if content:
+                self.environment[name] = content
+            else:
+                self.environment.pop(name, None)
 
     @_command('CALL')
     def execute_call(self, cmd: SynCommand, std: IO, *_):
