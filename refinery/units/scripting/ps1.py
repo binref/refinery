@@ -17,51 +17,22 @@ class ps1(IterativeDeobfuscator):
     folding, format string evaluation, bracket removal, type cast simplification, string
     operations, case normalization, invoke simplification, uncurly variables), and synthesizes
     clean output. Iterates until stable; running this twice does not change the output.
-
-    **What the output preserves.** Every side effect the script performs, and every value that
-    anything other than the console could read. In PowerShell a statement that merely yields a value
-    has written to the success output stream, so a bare `'literal'` or `42` is output like any
-    other. Such a statement is deleted only where three things are provable at once: that evaluating
-    it cannot raise, that its value reaches the process output and nothing else — traced through
-    every call site, so a bare value inside a function is kept unless every caller merely prints it
-    — and that no redirection moves that output elsewhere. Anything that fails one of them is kept,
-    as is every statement that does something, whatever it writes.
-
-    That leaves a real class of junk standing. `[Math]::Sqrt(36)` and `Get-Random` are removed by
-    neither model, because nothing here can prove a call does not throw.
-
-    **Junk below an `Invoke-Expression`.** An `iex`, a `& $x`, a dot-sourced file or a `Set-Alias`
-    to a computed target runs code this analysis cannot read, and such code can rename a .NET type,
-    re-point a property or define a function over a cmdlet's name. Everything written below one is
-    therefore kept, which on a script that decodes its payload halfway through can be the bulk of
-    the output. The `-e` switch assumes such code changes none of that, and also that it reads none
-    of it: a function nothing in the file calls is then deleted even where the payload is the only
-    thing that could have called it. It is unsound by construction and meant for reading a script
-    rather than running the result.
-
-    **The assumption behind the default.** Stripping console output treats the input as a standalone
-    script. A file cannot say whether it is a module: a `.psm1` exports its functions to callers no
-    walk over this tree can see, and a bare value inside such a function is part of what those
-    callers receive. Use the switch for a module, for a fragment that runs as part of something
-    larger, or whenever the printed output is itself the artifact.
     """
 
     def __init__(
         self,
         timeout=500,
-        keep_output: Param[bool, Arg.Switch('-k', help=(
+        stdout: Param[bool, Arg.Switch('-o', help=(
             'Keep every statement that writes a value to the success output stream, including bare '
-            'literals an obfuscator injected as noise. Use this when the input is a module or a '
-            'fragment of a larger script, where such a value can reach a caller rather than only '
-            'the console.'))] = False,
-        trust_eval: Param[bool, Arg.Switch('-e', help=(
-            'Assume that code the analysis cannot read - an Invoke-Expression, a call through a '
-            'variable, a dot-sourced file, an alias bound to a computed target - neither changes '
-            'nor reads anything the rest of the script does, and remove the junk written below it. '
-            'This is unsound: such code can rename a type or shadow a cmdlet, and a function only '
-            'it calls is deleted. Use it to read a script, not to run the result.'))] = False,
+            'literals an obfuscator may have injected as noise. Use this when the input is a module '
+            'or a fragment of a larger script, where such a value can reach a caller rather than '
+            'only the console.'))] = False,
+        strict: Param[bool, Arg.Switch('-s', help=(
+            'Assume that unknown reflectively executed code (iex, a call through a variable) can '
+            'change or read anything the rest of the script does. This cleans less junk code but '
+            'without the flag, the deobfuscation behavior is formally unsound.'))] = False,
     ):
-        super().__init__(timeout=timeout, keep_output=keep_output, trust_eval=trust_eval)
+        super().__init__(timeout=timeout, stdout=stdout, strict=strict)
 
     def parse(self, data: str) -> Ps1Script:
         return Ps1Parser(data).parse()
@@ -69,8 +40,8 @@ class ps1(IterativeDeobfuscator):
     def transform(self, ast: Ps1Script) -> int:
         return deobfuscate(
             ast,
-            preserve_bare_output=self.args.keep_output,
-            trust_eval=self.args.trust_eval,
+            preserve_bare_output=self.args.stdout,
+            trust_eval=not self.args.strict,
         )
 
     def synthesize(self, ast: Ps1Script) -> str:

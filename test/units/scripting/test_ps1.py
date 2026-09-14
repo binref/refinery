@@ -338,7 +338,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             B"""'').Replace(''s97YMGcyg0WCr'',''o'').Replace(''z2Wr6qQR'', ''e''))').Replace('QNVrd3W2GjJK36', 'e')."""
             B"""Replace('s2Wr6qQR', 'wnloadS'))))"""
         )
-        test = data | self.load('-e') | str
+        test = data | self.load() | str
         lines = test.splitlines()
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[1],
@@ -846,7 +846,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             """
         ).replace('[[C2]]', '181.174.164''.47')
 
-        test = data | self.load('-e') | str
+        test = data | self.load() | str
         self.assertEqual(test, goal)
 
     def test_script_requiring_better_bloat_detection(self):
