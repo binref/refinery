@@ -2269,6 +2269,8 @@ class SemanticModel:
         self,
         binding: Binding | None,
         arguments: dict[Binding | None, Node | None] | None = None,
+        *,
+        ignore_dynamic_rebinds: bool = False,
     ) -> tuple[list[tuple[Node, Node]], bool]:
         """
         The readable value channels of *binding* as `(site, value)` pairs — the node whose execution
@@ -2277,14 +2279,20 @@ class SemanticModel:
         `binding_establishment_sites`, so they can never disagree about which channels a binding
         has. With *arguments* — a call's parameter-to-argument map — a parameter declaration of a
         covered binding is a readable channel carrying the mapped argument, the `values_at_call`
-        reading; without it, a parameter declaration is an unseen channel. The value of a
-        lone-assignment channel is returned with its parentheses stripped, the normalization every
-        consumer of `singular_value` has always received there.
+        reading; without it, a parameter declaration is an unseen channel. With
+        *ignore_dynamic_rebinds* the dynamic-rebind conjunct is left out of the completeness
+        verdict: the channels answer the one value the text spells, and whether a rebind crosses a
+        given read stays the caller's ordering question over `binding_dynamic_rebind_sites`. The
+        value of a lone-assignment channel is returned with its parentheses stripped, the
+        normalization every consumer of `singular_value` has always received there.
         """
         if binding is None or not binding.declarations:
             return [], False
         channels: list[tuple[Node, Node]] = []
-        complete = not self.binding_maybe_reassigned_dynamically(binding)
+        complete = (
+            ignore_dynamic_rebinds
+            or not self.binding_maybe_reassigned_dynamically(binding)
+        )
         for declaration in binding.declarations:
             parent = declaration.parent
             if (
@@ -2640,6 +2648,37 @@ class SemanticModel:
                 return True
         return False
 
+    def binding_dynamic_rebind_sites(self, binding: Binding) -> list[Node] | None:
+        """
+        The AST nodes at which a dynamic scope could rebind *binding*, or `None` for the one such
+        rebind that holds no node to order — the write a call makes on entry (`written_at_entry`),
+        which the text does not spell. The located form of
+        `binding_maybe_reassigned_dynamically`, which is re-derived from this answer, so the two
+        can never disagree about which bindings are volatile: a consumer that gets a list holds a
+        hazard per node, and one that gets `None` holds the nodeless kill. Each leg of the boolean
+        contributes its nodes — a write through an object that aliases the binding
+        (`indefinite_writes`), a `with`-body reference whose role is not a plain read, a direct
+        `eval` in the owning function, and a span of source the model never read — with the two
+        scope lines the boolean draws drawn identically: the eval leg is a function-local's only
+        (a global is not frozen on a global-scope surface), and the unread-source leg reaches a
+        global from anywhere in the file but a local only from its own function. An empty list is
+        a binding no dynamic scope can rebind.
+        """
+        if binding.written_at_entry:
+            return None
+        owner = binding.scope.var_scope
+        sites = list(binding.indefinite_writes)
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            sites.extend(self._unread_source_sites(self.root))
+        else:
+            sites.extend(self._direct_eval_sites(owner.node))
+            sites.extend(self._unread_source_sites(owner.node))
+        sites.extend(
+            ref for ref in self.dynamic_references(binding)
+            if reference_role(ref) is not Role.READ
+        )
+        return sites
+
     def binding_maybe_reassigned_dynamically(self, binding: Binding) -> bool:
         """
         Whether a dynamic scope could rebind *binding* — give the name a new value through a surface
@@ -2655,17 +2694,11 @@ class SemanticModel:
         value stable from `writes` alone must also consult this, since none of these reassignments
         leaves a `writes` entry; a script-scope binding reassigned only through an opaque `eval`
         stays the documented residual, as `local_reachable_by_direct_eval` reports it false there.
+        The boolean form of `binding_dynamic_rebind_sites`: true exactly when that answer is
+        `None` or holds a node.
         """
-        if binding.has_indefinite_write:
-            return True
-        if self.local_reachable_by_direct_eval(binding):
-            return True
-        if self.unread_source_can_reach(binding):
-            return True
-        return any(
-            reference_role(ref) is not Role.READ
-            for ref in self.dynamic_references(binding)
-        )
+        sites = self.binding_dynamic_rebind_sites(binding)
+        return sites is None or bool(sites)
 
     def binding_never_reassigned(self, binding: Binding) -> bool:
         """

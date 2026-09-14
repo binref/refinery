@@ -5,6 +5,7 @@ import inspect
 from test import TestBase
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
+from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -17,12 +18,14 @@ from refinery.lib.scripts.js.analysis.model import (
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
     JsCallExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
     JsReturnStatement,
+    JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -1170,6 +1173,102 @@ class TestSemanticModel(TestBase):
     def test_global_not_reachable_by_direct_eval(self):
         ast, model = self._model('var x; eval(payload);')
         self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+
+class TestWhereADynamicScopeCouldRebindABinding(TestBase):
+    """
+    The located form of the volatility question `binding_maybe_reassigned_dynamically` answers
+    with a boolean: the nodes a dynamic scope could rebind a binding at, so a consumer can order
+    a read against each one, or `None` for the one rebind with no node — the write the call itself
+    makes on entry. Every row asserts the boolean beside the located answer, so the two queries
+    cannot drift apart.
+    """
+
+    @staticmethod
+    def _model(source: str):
+        ast = JsParser(source).parse()
+        return ast, build_semantic_model(ast)
+
+    def _located(self, source: str) -> tuple[Node, Binding, list[Node] | None, bool]:
+        ast, model = self._model(source)
+        decl = next(
+            n for n in ast.walk_in_order()
+            if isinstance(n, JsIdentifier) and n.name == 'x' and model.binding_of(n) is not None
+        )
+        binding = model.binding_of(decl)
+        assert binding is not None
+        return (
+            ast, binding,
+            model.binding_dynamic_rebind_sites(binding),
+            model.binding_maybe_reassigned_dynamically(binding),
+        )
+
+    def test_a_direct_eval_in_the_owning_function_is_located(self):
+        source = "function f(){ var x = 1; eval('x'); }"
+        ast, binding, sites, volatile = self._located(source)
+        call = next(
+            n for n in ast.walk()
+            if isinstance(n, JsCallExpression) and n.callee.name == 'eval'
+        )
+        self.assertTrue(volatile)
+        self.assertEqual(sites, [call])
+
+    def test_a_with_body_write_is_located(self):
+        source = 'function f(o){ var x = 1; with (o) { x = 2; } }'
+        ast, binding, sites, volatile = self._located(source)
+        write = next(
+            n for n in ast.walk()
+            if isinstance(n, JsIdentifier) and n.name == 'x'
+            and isinstance(n.parent, JsAssignmentExpression)
+        )
+        self.assertTrue(volatile)
+        self.assertEqual(sites, [write])
+
+    def test_a_with_body_read_is_no_rebind(self):
+        ast, binding, sites, volatile = self._located('function f(o){ var x = 1; with (o) { x; } }')
+        self.assertFalse(volatile)
+        self.assertEqual(sites, [])
+
+    def test_a_write_through_the_mapped_arguments_object_is_located(self):
+        source = 'function f(x){ var q; arguments[0] = 1; }'
+        ast, binding, sites, volatile = self._located(source)
+        member = next(
+            n for n in ast.walk()
+            if isinstance(n, JsMemberExpression) and n.object.name == 'arguments'
+        )
+        self.assertTrue(volatile)
+        self.assertEqual(sites, [member])
+
+    def test_a_span_of_source_the_model_never_read_is_located(self):
+        ast, binding, sites, volatile = self._located('function f(){ var x; h("abc\n; }')
+        self.assertTrue(volatile)
+        self.assertEqual(len(sites), 1)
+
+    def test_the_entry_write_is_the_nodeless_kill(self):
+        ast, model = self._model('function f(x = 1) { var x; }')
+        declarator = next(
+            n for n in ast.walk()
+            if isinstance(n, JsVariableDeclarator) and n.id.name == 'x'
+        )
+        binding = model.binding_of(declarator.id)
+        assert binding is not None
+        self.assertTrue(model.binding_maybe_reassigned_dynamically(binding))
+        self.assertIsNone(model.binding_dynamic_rebind_sites(binding))
+
+    def test_a_clean_binding_has_no_sites(self):
+        ast, binding, sites, volatile = self._located('var x = 1; console.log(x);')
+        self.assertFalse(volatile)
+        self.assertEqual(sites, [])
+
+    def test_a_global_is_not_frozen_on_a_global_scope_surface(self):
+        ast, binding, sites, volatile = self._located('var x; eval(payload);')
+        self.assertFalse(volatile)
+        self.assertEqual(sites, [])
+
+    def test_a_local_is_not_frozen_on_a_global_scope_surface(self):
+        ast, binding, sites, volatile = self._located('function f(){ var x; } eval(payload);')
+        self.assertFalse(volatile)
+        self.assertEqual(sites, [])
 
 
 class TestFreeNameReachableByDirectEval(TestBase):
