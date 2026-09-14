@@ -2775,3 +2775,80 @@ class TestAnInvocationPassingArgumentsToAConstruction(TestJsDeobfuscator):
         self.assertEqual(
             'console.log(42);',
             self._reflect("var f = Function('', 'return arguments[0]'); console.log(f(42));"))
+
+
+#: The sample's shape, distilled benignly: a decoder alias read once inside an anonymous
+#: immediately-invoked function, a dead construction spelled through that alias, and an async
+#: sibling carrying a direct `eval` whose argument only the runtime resolves. The decoder folds
+#: where ordering proves the alias read safe — with the eval still standing — and whatever the
+#: pipeline does from there, the program the file spells is the one that runs.
+_A_DECODER_UNDER_A_LATER_EVAL: list[str] = [
+    (
+        'var out;\n'
+        'var q = (function () {\n'
+        '  function jCb(l) { return l; }\n'
+        '  var xTe = jCb.constructor;\n'
+        "  var Urn = xTe('', 'return 9;');\n"
+        "  var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);\n"
+        "  (async function () { await eval(_a[4]); console.log('late'); })();\n"
+        '  return _a;\n'
+        '})();\n'
+        'console.log(q);'
+    ),
+    (
+        'var out;\n'
+        'var q = (function () {\n'
+        '  function jCb(l) { return l; }\n'
+        "  var xTe = jCb['constructor'];\n"
+        "  var Urn = xTe('', 'return 9;');\n"
+        "  var _a = function (e, r) { return e.split('*').join(''); }('o*ut*5', 0);\n"
+        "  (async function () { await eval(_a[4]); console.log('late'); })();\n"
+        '  return _a;\n'
+        '})();\n'
+        'console.log(q);'
+    ),
+]
+
+#: The loop shape the positioned repair refuses: a volatile read a cycle re-executes, with the
+#: eval that rebinds it between its iterations. Nothing folds, so the second iteration reads the
+#: value the first one's eval wrote — the behavior a repair that froze the first value would
+#: break.
+_A_VOLATILE_READ_ON_A_CYCLE: list[str] = [
+    (
+        'var out = [];\n'
+        'var q = (function () {\n'
+        '  var x = 1;\n'
+        '  for (var i = 0; i < 2; i++) {\n'
+        '    out.push(x);\n'
+        "    eval('x = 2;');\n"
+        '  }\n'
+        '  return x;\n'
+        '})();\n'
+        "console.log(q, out.join(','));"
+    ),
+]
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheDecoderFoldUnderAnEvalSiblingPreservesBehavior(TestJsDeobfuscator):
+    """
+    The differential net over the positioned alias repair: Node answers each program and the text
+    the deobfuscation produces, and the two must agree. The sample-shape rows show the fold the
+    repair buys — a decoder reached through a volatile alias folding with the eval sibling still
+    standing; the loop row is the net's other half, the shape the repair refuses so that the second
+    iteration still reads what the first one's eval wrote.
+    """
+
+    def test_the_sample_shape_behaves_as_the_original(self):
+        sources = _A_DECODER_UNDER_A_LATER_EVAL
+        self.assertEqual(
+            {source: behavior(source) for source in sources},
+            {source: behavior(deobfuscate_source(source)) for source in sources},
+        )
+
+    def test_a_read_on_a_cycle_behaves_as_the_original(self):
+        sources = _A_VOLATILE_READ_ON_A_CYCLE
+        self.assertEqual(
+            {source: behavior(source) for source in sources},
+            {source: behavior(deobfuscate_source(source)) for source in sources},
+        )
