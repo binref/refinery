@@ -118,6 +118,12 @@ class TestJsDeobfuscator(TestUnitBase):
             """.replace('[[URL]]', 'https'':''//lhockerline''.s''.gy/''1460d20e7505bb18')
         ))
 
+    def test_multi_decoder_stage_sample(self):
+        data = self.download_sample('2ab831e4650b36d399bf1e923ae1a2cb53ce93e5e9d2e5427103b750b0e6cf26')
+        test = data | self.load() | str
+        self.assertIn('33ff3edaf55a8e03dcbc7cb40d498a49', test)
+        self.assertIn('http'':/''/23.27.20''.187', test)
+
 
 class TestJsHostEnvironmentPin(TestUnitBase):
     """
