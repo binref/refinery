@@ -2465,7 +2465,7 @@ class SemanticModel:
         """
         if self._recording_def_use:
             return True
-        if self._opaque_global_write is None:
+        if not self._opaque_global_write_sites_known:
             self._compute_opaque_global_write_sites()
         return self._opaque_global_write is True
 

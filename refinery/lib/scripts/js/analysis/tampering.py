@@ -117,9 +117,10 @@ def _may_read_reentry_key(member: JsMemberExpression, model: SemanticModel) -> b
     index stays clear. A strict function's `arguments` object has no `callee` property at all,
     and a name the function displaced — bound to a value of its own — is not that object.
     """
-    if _static_member_key(member) in _REENTRY_KEYS:
+    static_key = _static_member_key(member)
+    if static_key in _REENTRY_KEYS:
         return True
-    if not member.computed or _static_member_key(member) is not None:
+    if not member.computed or static_key is not None:
         return False
     base = strip_parens(member.object)
     if not isinstance(base, JsIdentifier):

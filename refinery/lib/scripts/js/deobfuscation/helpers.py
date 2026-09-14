@@ -232,6 +232,7 @@ def _holes_present(values: list) -> bool:
     """
     return any(value is JS_HOLE for value in values)
 
+
 GLOBAL_VALUE_NAMES: dict[str, Value] = {
     'undefined': None,
     'NaN': float('nan'),

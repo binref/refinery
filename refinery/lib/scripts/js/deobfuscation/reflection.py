@@ -92,6 +92,7 @@ from refinery.lib.scripts.js.strict import (
 
 _REFLECTIVE_CALLEE_NAMES = REFLECTIVE_INTRINSICS | TIMER_NAMES | SYNC_EVAL_NAMES
 
+
 class ReflectedScope(enum.Enum):
     """
     The execution scope of reflectively evaluated code, which decides how its free names, `this`, and
