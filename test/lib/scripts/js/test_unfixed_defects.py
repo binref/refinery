@@ -1272,6 +1272,84 @@ class TestAReadAWrittenChainDoesNotReachIsStillAnswered(TestBase):
         )
 
 
+#: A built-in that converts an argument — `Number`, `parseInt`, `String` — runs the same prototype
+#: method a bare conversion of that argument would. Each row replaces `Array.prototype.join` with one
+#: that returns `'9'`, so converting `[5]` yields `'9'` and every program here prints `9`. The rows
+#: are the built-ins whose fold hands the array straight to a specification conversion.
+AN_ARRAY_A_BUILTIN_COERCES_THROUGH_A_REPLACED_CHAIN = {
+    'number': Program(
+        "Array.prototype.join = function () { return '9'; };\nconsole.log(Number([5]));",
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'parse_int': Program(
+        "Array.prototype.join = function () { return '9'; };\nconsole.log(parseInt([5]));",
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'string': Program(
+        "Array.prototype.join = function () { return '9'; };\nconsole.log(String([5]));",
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(AN_ARRAY_A_BUILTIN_COERCES_THROUGH_A_REPLACED_CHAIN)
+class TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt(TestBase):
+    """
+    Converting an argument to a primitive runs a prototype method, so a file that replaced
+    `Array.prototype.join` decides what `Number([5])`, `parseInt([5])` and `String([5])` compute —
+    each `9` here, where the replacement returns `'9'`. The fold hands the array to a specification
+    conversion that consults no chain and answers `5` for all three, rewriting a program Node runs
+    as `9` into one that prints `5`.
+
+    The interpreter guards this for `String` and `Number` alone, keyed on the callee name, and the
+    constant fold that rewrites a top-level call reaches no such guard: the two evaluators split the
+    coercion-safety question. The fix is one place both consult — the answer
+    `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably` already gives, asked
+    where an argument is converted rather than at an enumerated callee, so every coercing built-in is
+    covered at once.
+
+    Off the release gate: the shape needs an array handed to a coercing built-in together with a
+    replaced `Array.prototype` conversion method, which real obfuscation has so far had to be
+    constructed to reach. The wrong value it yields is silent, so the entry carries it here.
+    """
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltinTheProgramReplacedIsNotFoldedAsTheIntrinsic(TestBase):
+    """
+    Guards, not defects: the two ways a program can disturb a built-in that the folds already
+    decline, kept beside the coercion entry above because all three ask whether a built-in a call
+    reaches is still the one the language describes.
+    """
+
+    def test_a_bare_global_written_on_the_global_object_is_not_folded_as_the_builtin(self):
+        """
+        `globalThis['parseInt'] = f` replaces `parseInt` under a runtime key, so a later `parseInt`
+        call names whatever the file installed. Node runs the replacement and prints `42`; the
+        deobfuscation leaves the call standing and prints `42` too, rather than folding it to the
+        `7` the intrinsic would give.
+        """
+        source = (
+            "globalThis['parseInt'] = function () { return 42; };\n"
+            "console.log(parseInt('7'));"
+        )
+        self.assertEqual(Reading.SCRIPT.read(source), (prints('42'), prints('42')))
+
+    def test_a_literal_receivers_method_survives_a_rebind_of_the_intrinsic_name(self):
+        """
+        Rebinding the global `Array` to a plain object leaves every existing array's prototype
+        untouched, so `[1, 2, 3].join('-')` still means what the language says. Method dispatch is
+        keyed on the receiver's type rather than resolved through the `Array` name, so the fold is
+        sound: Node prints `1-2-3` before and after.
+        """
+        source = "Array = {};\nconsole.log([1, 2, 3].join('-'));"
+        self.assertEqual(Reading.SCRIPT.read(source), (prints('1-2-3'), prints('1-2-3')))
+
+
 #: Programs that reach `Object.prototype` through a name the file bound the receiver to, rather than
 #: through the literal itself, mapped to what Node prints for each. Reading `__proto__` off a
 #: binding, and handing that binding to a `getPrototypeOf` the file also bound, are the same gadget
