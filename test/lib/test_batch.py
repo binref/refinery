@@ -2919,3 +2919,113 @@ class TestBatchCmdSemantics(TestBase):
         """
         bat = self._run('set ERRORLEVEL=marker\nset ERRORLEVEL')
         self.assertEqual(bat.std.o.getvalue(), 'ERRORLEVEL=marker\r\n')
+
+
+class TestBatchDeobfuscationDisplay(TestBase):
+    """
+    How the emulator renders a script whose behavior depends on variables: the raw
+    statement is kept, and the resolved form is added when substitution changed it.
+    """
+
+    def _run(self, code: str, state: BatchState | None = None):
+        bat = BatchEmulator(F'{code}\n', state)
+        bat.execute()
+        return bat
+
+    def test_if_with_delayed_variables_emits_expanded_pair(self):
+        R"""
+        An IF statement whose condition or body references delayed variables is emitted
+        twice: once as written, then with every reference resolved.
+        """
+        bat = self._run('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set "X=c:\windows"',
+            'if exist !X! set "Z=!X!"',
+        ]))
+        self.assertEqual(list(bat.emulate()), [
+            'setlocal EnableDelayedExpansion',
+            'IF EXIST !X! set "Z=!X!"',
+            R'IF EXIST c:\windows set "Z=c:\windows"',
+        ])
+
+    def test_if_without_substitution_emits_once(self):
+        """
+        An IF statement that variable substitution does not alter is emitted once.
+        """
+        bat = self._run('if 1 == 1 echo A')
+        self.assertEqual(list(bat.emulate()), ['IF 1 == 1 echo A'])
+
+    def test_if_expanded_pair_keeps_body_inline(self):
+        """
+        The expanded IF pair does not un-hide the body commands that the IF synthesis
+        already shows inline.
+        """
+        bat = self._run('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set "X=one"',
+            'if 1 == 1 echo !X!',
+        ]))
+        self.assertEqual(list(bat.emulate()), [
+            'setlocal EnableDelayedExpansion',
+            'IF 1 == 1 echo !X!',
+            'IF 1 == 1 echo one',
+        ])
+
+    def test_extracted_set_appears_in_output(self):
+        """
+        A SET command executed from a FOR variable value is extracted payload: it
+        appears in the deobfuscated output even though ordinary SET commands are
+        hidden as junk.
+        """
+        state = BatchState()
+        state.create_file('payload.txt', 'set "X=payload data"\r\n')
+        bat = BatchEmulator('for /f "delims=" %%A in (payload.txt) do %%A\n', state)
+        self.assertEqual(list(bat.emulate()), [
+            'FOR /F "delims=" %A IN (payload.txt) DO %%A',
+            'set "X=payload data"',
+        ])
+        self.assertEqual(bat.state.envar('X'), 'payload data')
+
+    def test_extracted_delayed_command_appears_in_output(self):
+        """
+        A command executed from a delayed variable is extracted payload the same way
+        a FOR variable value is.
+        """
+        state = BatchState()
+        state.create_file('lines.txt', 'z\r\n')
+        bat = BatchEmulator('\n'.join([
+            'setlocal EnableDelayedExpansion',
+            'set "V=echo payload"',
+            'for /f "delims=x" %%A in (lines.txt) do !V!',
+        ]) + '\n', state)
+        self.assertEqual(list(bat.emulate()), [
+            'setlocal EnableDelayedExpansion',
+            'FOR /F "delims=x" %A IN (lines.txt) DO !V!',
+            'echo payload',
+        ])
+        self.assertEqual(bat.std.o.getvalue(), 'payload\r\n')
+
+    def test_ordinary_set_in_loop_stays_hidden(self):
+        """
+        A SET command whose verb is part of the script text stays hidden as junk even
+        inside a loop whose values are substituted into its argument.
+        """
+        state = BatchState()
+        state.create_file('payload.txt', 'a b\r\n')
+        bat = BatchEmulator('for /f "delims=" %%A in (payload.txt) do set Y=%%A\n', state)
+        self.assertEqual(list(bat.emulate()), [
+            'FOR /F "delims=" %A IN (payload.txt) DO set Y=%A',
+        ])
+        self.assertEqual(bat.state.envar('Y'), 'a b')
+
+    def test_findstr_c_literal_is_pinned(self):
+        """
+        A `/c:` needle is a literal search string and must keep working; this was the
+        crash site of the original findstr PatternError report.
+        """
+        state = BatchState()
+        state.create_file('x.txt', 'abc\r\na.c\r\n')
+        bat = BatchEmulator('findstr /c:"a.c" x.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.c\r\n')
+        self.assertEqual(bat.state.ec, 0)

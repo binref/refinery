@@ -449,12 +449,14 @@ class BatchEmulator:
                 token = self.expand_delayed_variables(token)
             return token
 
-        def expand_command_fragments(fragments: list[str]) -> list[str]:
+        def expand_command_fragments(fragments: list[str]) -> tuple[list[str], bool]:
             """
             A command whose text was altered by variable substitution is re-split at
             whitespace into verb and arguments; operators in the substituted value
             stay inert. SET commands are exempt: their argument is the whole tail.
             Control fragments never carry substitutions and pass through unchanged.
+            The second return value is True when the verb itself was substituted, i.e.
+            the executed command text is data supplied by a variable.
             """
             pairs = []
             for fragment in fragments:
@@ -463,10 +465,14 @@ class BatchEmulator:
                     continue
                 pairs.append((fragment, expand_string(fragment)))
             if not any(original != expanded for original, expanded in pairs):
-                return [expanded for _, expanded in pairs]
-            verb = next((expanded for _, expanded in pairs if not expanded.isspace()), '')
-            if verb.upper() == 'SET':
-                return [expanded for _, expanded in pairs]
+                return [expanded for _, expanded in pairs], False
+            verb = next(
+                ((original, expanded) for original, expanded in pairs if not expanded.isspace()),
+                (None, ''),
+            )
+            substituted = verb[0] is not None and verb[0] != verb[1]
+            if not substituted and verb[1].upper() == 'SET':
+                return [expanded for _, expanded in pairs], False
             resplit = []
             for original, expanded in pairs:
                 if original == expanded:
@@ -486,7 +492,7 @@ class BatchEmulator:
                     resplit.extend(pieces)
             while resplit and isinstance(resplit[0], str) and resplit[0].isspace():
                 del resplit[0]
-            return resplit
+            return resplit, substituted
 
         def expand(token):
             if isinstance(token, list):
@@ -500,13 +506,16 @@ class BatchEmulator:
             if isinstance(token, AstNode):
                 is_command = isinstance(token, AstCommand)
                 new = {}
+                substituted = False
                 for tf in fields(token):
                     value = getattr(token, tf.name)
                     if is_command and tf.name == 'fragments':
-                        value = expand_command_fragments(value)
+                        value, substituted = expand_command_fragments(value)
                     elif tf.name != 'parent':
                         value = expand(value)
                     new[tf.name] = value
+                if substituted:
+                    new['substituted'] = True
                 return token.__class__(**new)
             return token
         delayexpand = self.delayexpand
@@ -762,7 +771,7 @@ class BatchEmulator:
             else:
                 prompt = prompt.rstrip('\r\n')
         else:
-            cmd.junk = not self.cfg.show_sets
+            cmd.junk = not (self.cfg.show_sets or cmd.ast.substituted)
 
         yield cmd
 
@@ -1458,7 +1467,8 @@ class BatchEmulator:
 
     @_node(AstIf)
     def trace_if(self, _if: AstIf, std: IO, in_group: bool):
-        yield synthesize(_if)
+        raw = synthesize(_if)
+        yield raw
         _if = self.expand_ast_node(_if)
         self.block_labels.clear()
 
@@ -1505,6 +1515,13 @@ class BatchEmulator:
             yield from self.trace_sequence(_if.then_do, std, in_group)
         elif (_else := _if.else_do):
             yield from self.trace_sequence(_else, std, in_group)
+
+        try:
+            expanded = synthesize(_if)
+        except ValueError:
+            return
+        if str(expanded) != str(raw):
+            yield expanded
 
     @_node(AstFor)
     def trace_for(self, _for: AstFor, std: IO, in_group: bool):
@@ -1647,8 +1664,13 @@ class BatchEmulator:
                     if not last or not last.is_descendant_of(ast):
                         continue
             if last is not None:
-                if ast.is_descendant_of(last):
-                    # we already synthesized a parent construct, like a FOR loop or IF block
+                if (
+                    ast.is_descendant_of(last)
+                    and not (isinstance(syn, SynCommand) and syn.ast.substituted)
+                ):
+                    # we already synthesized a parent construct, like a FOR loop or IF block.
+                    # A command that substitution formed from data is extracted payload and
+                    # is shown even though its construct was already synthesized.
                     continue
                 if last.is_descendant_of(ast):
                     # we synthesized a command and no longer need to synthesize an AST node that

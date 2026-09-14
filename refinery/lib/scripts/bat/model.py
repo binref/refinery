@@ -227,6 +227,12 @@ class AstLabel(AstStatement):
 class AstCommand(AstStatement):
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
     fragments: list[str] = field(default_factory=list)
+    substituted: bool = False
+    """
+    True when the verb of this command was produced by variable substitution, i.e. the
+    command text is data that the script executes; extracted commands are shown in the
+    deobfuscated output even though their construct was already synthesized.
+    """
 
 
 @dataclass(repr=False, eq=False)
