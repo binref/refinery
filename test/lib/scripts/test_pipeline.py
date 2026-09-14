@@ -216,3 +216,69 @@ class TestPipelineObserverWhenATransformerRaises(unittest.TestCase):
             ('before', 'g', _NeverSettle, node),
             ('after', 'g', _NeverSettle, node, True),
         ])
+
+
+def _ChangeOnceAfter(key: str, trigger: str):
+    class _ChangeOnceAfter(Transformer):
+        def visit__MockNode(self, node: _MockNode):
+            if node.counters.get(trigger, 0) and not node.counters.get(key, 0):
+                node.counters[key] = 1
+                self.mark_changed()
+    return _ChangeOnceAfter
+
+
+class TestInvalidationSetsCoverDependents(unittest.TestCase):
+
+    def _groups(self):
+        return [
+            TransformerGroup('a', _ChangeN(1, 'a')),
+            TransformerGroup('b', _ChangeN(1, 'b')),
+            TransformerGroup('c', _ChangeN(1, 'c')),
+        ]
+
+    def test_a_set_omitting_a_direct_dependent_is_refused(self):
+        with self.assertRaises(ValueError):
+            DeobfuscationPipeline(
+                self._groups(),
+                dependencies={'b': {'a'}},
+                invalidators={'a': set()},
+            )
+
+    def test_a_set_omitting_a_transitive_dependent_is_refused(self):
+        with self.assertRaises(ValueError):
+            DeobfuscationPipeline(
+                self._groups(),
+                dependencies={'b': {'a'}, 'c': {'b'}},
+                invalidators={'a': {'b'}},
+            )
+
+    def test_a_set_listing_every_dependent_is_accepted(self):
+        DeobfuscationPipeline(
+            self._groups(),
+            dependencies={'b': {'a'}, 'c': {'b'}},
+            invalidators={'a': {'b', 'c'}, 'b': {'a', 'c'}, 'c': set()},
+        )
+
+    def test_a_dependent_sees_the_tree_the_group_it_depends_on_went_on_to_change(self):
+        node = _MockNode()
+        ledger = _EventLedger()
+        pipeline = DeobfuscationPipeline(
+            [
+                TransformerGroup('a', _ChangeOnceAfter('a', 'b')),
+                TransformerGroup('b', _ChangeN(1, 'b')),
+            ],
+            dependencies={'b': {'a'}},
+            invalidators={'a': {'b'}},
+        )
+        pipeline.run(node, observer=ledger)
+        self.assertEqual(
+            [(event[1], event[4]) for event in ledger.events if event[0] == 'after'],
+            [
+                ('a', False),
+                ('b', True),
+                ('b', False),
+                ('a', True),
+                ('a', False),
+                ('b', False),
+            ],
+        )

@@ -139,6 +139,11 @@ class DeobfuscationPipeline:
     Groups are run in declaration order, skipping any whose dependencies are not yet stable. When a
     group makes changes, all other groups are invalidated unless a selective invalidation set is
     configured for that group. The pipeline terminates when every group is stable.
+
+    A selective invalidation set is an optimization over invalidating everything, and it has to
+    list every group that transitively depends on the changing group. A set that omits one is
+    refused: that group would stay stable and never see the tree the groups it depends on went on
+    to change.
     """
 
     def __init__(
@@ -157,18 +162,31 @@ class DeobfuscationPipeline:
                 raise ValueError(F'unknown group in dependencies: {name!r}')
             if unknown := deps - all_names:
                 raise ValueError(F'group {name!r} depends on unknown groups: {unknown}')
+        dependents = self._transitive_dependents()
         for name, targets in self._invalidators.items():
             if name not in all_names:
                 raise ValueError(F'unknown group in invalidators: {name!r}')
             if unknown := targets - all_names:
                 raise ValueError(F'group {name!r} invalidates unknown groups: {unknown}')
-        # TODO: refuse an invalidation set that omits a group depending on this one. Absent from
-        # `invalidators` a group invalidates everything, so an entry is an optimization that has to
-        # keep listing every group transitively downstream of it by hand, and dropping one is
-        # silent: that group stays stable and never sees the tree the groups it depends on went on
-        # to change. The `js` pipeline has such a gap today — `cleanup` depends on `fold` and
-        # appears in no invalidation set, so nothing re-opens it once it has run. Adding the check
-        # here means fixing that in the same commit, which is why it waits for the `js` branch.
+            if missing := dependents[name] - targets:
+                raise ValueError(F'group {name!r} does not invalidate {missing}, which depend on it')
+
+    def _transitive_dependents(self) -> dict[str, set[str]]:
+        direct: dict[str, set[str]] = {name: set() for name in self._pipeline}
+        for name, deps in self._dependencies.items():
+            for dep in deps:
+                direct[dep].add(name)
+        dependents: dict[str, set[str]] = {}
+        for name in self._pipeline:
+            reached: set[str] = set()
+            pending = [name]
+            while pending:
+                for dependent in direct[pending.pop()]:
+                    if dependent not in reached:
+                        reached.add(dependent)
+                        pending.append(dependent)
+            dependents[name] = reached
+        return dependents
 
     def run(
         self,

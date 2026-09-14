@@ -102,7 +102,7 @@ _phase1 = DeobfuscationPipeline(
 _phase2 = DeobfuscationPipeline(
     [_normalize, _fold_full, _emulate, _finalize, _cosmetic],
     dependencies={**_DEPENDENCIES, 'cosmetic': {'finalize'}},
-    invalidators=_INVALIDATORS,
+    invalidators={'fold': _INVALIDATORS['fold'] | {'cosmetic'}},
 )
 
 
