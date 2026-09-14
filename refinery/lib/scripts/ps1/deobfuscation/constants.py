@@ -1063,7 +1063,8 @@ class Ps1NullVariableInlining(Transformer):
     A read is not worth `$null` either where the script runs code supplied as data — an
     `Invoke-Expression`, a dot-sourced file, an opaque dispatch — because that code can assign the
     name in the calling scope out of data this walk cannot read, so the pass stands down there too.
-    The `-e` switch trusts such code to touch nothing the script does not spell and restores it.
+    The trusting model — `refinery.lib.scripts.ps1.options.eval_is_trusted` — trusts such code to
+    touch nothing the script does not spell and restores it.
     """
 
     @staticmethod

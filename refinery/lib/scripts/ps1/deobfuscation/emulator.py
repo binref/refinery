@@ -2505,7 +2505,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             # once folded away, and code the run takes from data — an `Invoke-Expression`, a
             # dispatched scriptblock, a dot-sourced file — reads that scope with no occurrence in the
             # tree. The verdict is whole-run, so no single written name is worth asking about; the
-            # `-e` switch closes that world and folds these bodies again.
+            # trusting model — eval_is_trusted — closes that world and folds these bodies again.
             return True
         for name in sorted(written):
             if name in PS1_ENGINE_VARIABLES:

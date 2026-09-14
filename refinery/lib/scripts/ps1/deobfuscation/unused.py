@@ -49,7 +49,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
-from refinery.lib.scripts.ps1.options import bare_output_is_preserved
+from refinery.lib.scripts.ps1.options import bare_output_is_preserved, env_stores_are_preserved
 
 
 def _writes_only_what_cannot_fault(
@@ -107,9 +107,14 @@ class Ps1UnusedVariableRemoval(Transformer):
     keeps it alive. When the right-hand side of a removable assignment has side effects, the
     assignment wrapper is stripped but the expression is preserved as a standalone statement.
 
+    A store to an environment variable is removed only as declared noise — no read inside the file
+    can prove it dead, because every child process reads the environment, so
+    `refinery.lib.scripts.ps1.options.env_stores_are_preserved` is what keeps it.
+
     A script that runs code supplied as data — an `Invoke-Expression`, a dispatched scriptblock, a
     dot-sourced file — reads names this walk cannot see, so no script-scope store is provably dead
-    and the pass makes no removals. The `-e` switch closes that world and restores full removal.
+    and the pass makes no removals. The trusting model —
+    `refinery.lib.scripts.ps1.options.eval_is_trusted` — closes that world and restores full removal.
     """
 
     def visit(self, node: Node):
@@ -201,21 +206,31 @@ class Ps1UnusedVariableRemoval(Transformer):
             for stmt in surviving
         )
 
-    @staticmethod
-    def _removable_mutations(binding: Binding) -> list[Node]:
+    def _removable_mutations(self, binding: Binding) -> list[Node]:
         """
-        The removable mutation nodes that write `binding`: a bare (unqualified) or `$env:`
-        assignment or a `++`/`--` update. A parameter or `foreach` loop variable writes the binding
-        but is not a removable mutation, and a scope-qualified write (`$script:x = ...`) is never
-        removed, so both are excluded.
+        The removable mutation nodes that write `binding`: a bare (unqualified) assignment or a
+        `++`/`--` update. A parameter or `foreach` loop variable writes the binding but is not a
+        removable mutation, and a scope-qualified write (`$script:x = ...`) is never removed, so
+        all are excluded.
+
+        An `$env:` write is removable only under the caller's answer to whether the environment is
+        part of the artifact: nothing inside the tree can prove such a store dead, because every
+        child process reads the environment, so the stripping default is a declaration that the
+        input's unread `$env:` stores are noise. `env_stores_are_preserved` holds that answer, and
+        `refinery.lib.scripts.ps1.analysis.effects._skipped_writes` holds the same refusal for the
+        trap-skip analysis, where no option is asked for it.
         """
+        keep_env = env_stores_are_preserved(self.options)
         mutations: list[Node] = []
         seen: set[int] = set()
         for write in binding.writes:
             var = write.node
             if not isinstance(var, Ps1Variable):
                 continue
-            if var.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.ENV):
+            if var.scope is Ps1ScopeModifier.ENV:
+                if keep_env:
+                    continue
+            elif var.scope is not Ps1ScopeModifier.NONE:
                 continue
             mutation = Ps1UnusedVariableRemoval._mutation_of(var)
             if mutation is not None and id(mutation) not in seen:
@@ -687,8 +702,9 @@ class Ps1DeadStoreElimination(Transformer):
     only through a nested scriptblock is correctly seen as live rather than skipped.
 
     A leak that runs code supplied as data can read a store between it and the overwrite this pass
-    treats as a kill, so when the script runs such code the pass eliminates nothing. The `-e` switch
-    closes that world and restores full elimination.
+    treats as a kill, so when the script runs such code the pass eliminates nothing. The trusting
+    model — `refinery.lib.scripts.ps1.options.eval_is_trusted` — closes that world and restores
+    full elimination.
     """
 
     def visit(self, node: Node):

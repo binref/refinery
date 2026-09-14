@@ -68,9 +68,23 @@ class Ps1DeobfuscationOptions:
     it binds that name to — `New-Alias Get-Date Stop-Process`, `Set-Item function:Get-Date { ... }`.
     The assumption is about code that cannot be read, not about every way a script can reach the
     world.
+
+    *preserve_env_stores* selects what a store to an environment variable that no statement in the
+    file reads is worth. No liveness question inside the tree can settle it, because the environment
+    is a device every child process reads rather than a variable of the script: an `$env:K = 'v'`
+    ahead of a `Start-Process` is how a script hands that child a value.
+
+    - Stripping model (default, `preserve_env_stores=False`): such a store is deleted as declared
+      noise, which is what an obfuscator pads a script with; a real store ahead of a child process
+      is kept only where something in the file reads it back.
+
+    - Preserving model (`preserve_env_stores=True`): no such store is deleted, for an input whose
+      environment writes are the artifact — a dropper passing values to its payload, or a fragment
+      of a larger script whose children read what this file sets.
     """
     preserve_bare_output: bool = False
     trust_eval: bool = False
+    preserve_env_stores: bool = False
 
 
 def bare_output_is_preserved(options: object | None) -> bool:
@@ -90,3 +104,13 @@ def eval_is_trusted(options: object | None) -> bool:
     told.
     """
     return isinstance(options, Ps1DeobfuscationOptions) and options.trust_eval
+
+
+def env_stores_are_preserved(options: object | None) -> bool:
+    """
+    Whether *options* asks for a store to an environment variable that no statement in the file
+    reads to be kept. Any value that is not a `Ps1DeobfuscationOptions` — a transformer run
+    standalone, or one with no options attached — defaults to the stripping model, which is what
+    the pipeline does unless told.
+    """
+    return isinstance(options, Ps1DeobfuscationOptions) and options.preserve_env_stores

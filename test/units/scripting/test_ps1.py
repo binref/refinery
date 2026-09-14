@@ -147,6 +147,42 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('Write-Host', result)
         self.assertIn('hello', result)
 
+    def test_environment_variable_assignment_should_not_be_stripped(self):
+        data = (
+            """$p=$env:FKWMGAJ;if(-not $p){return};$h='';foreach($l in [IO.File]::('Read'+'AllLines')($p)){"""
+            """$i=$l.IndexOf('set '+[char]34+'XJQSYI');if($i-ge0){$c=$l.Substring($i+11);if($c.EndsWith([ch"""
+            """ar]34)){$c=$c.Substring(0,$c.Length-1)};$h+=$c}};$k=[int]$env:JGGT;$n=$h.Length/2;$b=New-Obj"""
+            """ect byte[] $n;for($i=0;$i-lt$n;$i++){$b[$i]=[byte](([Convert]::('To'+'Byte')($h.Substring($i"""
+            """*2,2),16)+256-$k)%256)};$env:MWBREA=[Text.Encoding]::UTF8.GetString($b)"""
+        )
+        test = data | self.load(env=True) | str
+        self.assertEqual(test, inspect.cleandoc(
+            """
+            $p = $env:FKWMGAJ
+            if (-Not $p) {
+              return
+            }
+            $h = ''
+            foreach ($l in [IO.File]::ReadAllLines($p)) {
+              $i = $l.IndexOf('set "XJQSYI')
+              if ($i -GE 0) {
+                $c = $l.Substring($i + 11)
+                if ($c.EndsWith([char]34)) {
+                  $c = $c.Substring(0, $c.Length - 1)
+                }
+                $h += $c
+              }
+            }
+            $k = [int]$env:JGGT
+            $n = $h.Length / 2
+            $b = New-Object byte[] $n
+            for ($i = 0; $i -LT $n; $i++) {
+              $b[$i] = [byte](([Convert]::ToByte($h.Substring($i * 2, 2), 16) + 256 - $k) % 256)
+            }
+            $env:MWBREA = [Text.Encoding]::UTF8.GetString($b)
+            """
+        ))
+
     def test_iex_gzip_payload(self):
         code = b"Write-Host 'world'"
         compressed = gzip.compress(code)

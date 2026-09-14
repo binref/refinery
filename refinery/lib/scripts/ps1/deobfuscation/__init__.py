@@ -110,6 +110,7 @@ def deobfuscate(
     remove_junk: bool = True,
     preserve_bare_output: bool = False,
     trust_eval: bool = False,
+    preserve_env_stores: bool = False,
 ) -> int:
     """
     Apply all available deobfuscators to the input. When `remove_junk` is `True`, a second pass
@@ -122,18 +123,20 @@ def deobfuscate(
     default is generous — real inputs settle in the low tens of passes — so it never bounds a
     legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
 
-    The three switches are independent. `remove_junk` decides whether that second pass runs at all,
+    The four switches are independent. `remove_junk` decides whether that second pass runs at all,
     so turning it off also keeps every dead store and uncalled function;
     `preserve_bare_output` decides one question inside it — whether a statement whose only effect is
     to write a value to the success output stream may be deleted — and leaves the rest of the pass
-    working; `trust_eval` decides nothing about any pass, and instead changes what the analysis
-    every pass reads believes about code it cannot see. See
-    `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions` for what each costs and the
-    assumption it rests on.
+    working; `preserve_env_stores` decides a second one — whether a store to an environment
+    variable that no statement in the file reads may be deleted; `trust_eval` decides nothing about
+    any pass, and instead changes what the analysis every pass reads believes about code it cannot
+    see. See `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions` for what each costs and
+    the assumption it rests on.
     """
     options = Ps1DeobfuscationOptions(
         preserve_bare_output=preserve_bare_output,
         trust_eval=trust_eval,
+        preserve_env_stores=preserve_env_stores,
     )
     # One analysis cache is built over the script and shared across both phases; the `tree_version`
     # counter keeps it consistent even across the two pipeline runs, so a transform in either phase

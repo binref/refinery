@@ -12,7 +12,9 @@ from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1JunkStatementRemoval,
     Ps1UnusedVariableRemoval,
 )
+from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
+from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
 class TestPs1UnusedVariableRemoval(TestPs1):
@@ -52,6 +54,19 @@ class TestPs1UnusedVariableRemoval(TestPs1):
     def test_scoped_variable_preserved(self):
         result = self._deobfuscate("$script:x = 42; Write-Host done")
         self.assertIn('$script:x', result)
+
+    def test_an_unread_environment_store_is_stripped_as_declared_noise(self):
+        self.assertEqual(
+            self._apply("$env:Q = 'v'\nWrite-Host done", Ps1UnusedVariableRemoval),
+            'Write-Host done')
+
+    def test_an_environment_store_is_kept_under_the_preserving_model(self):
+        source = "$env:Q = 'v'\nStart-Process notepad"
+        ast = Ps1Parser(source).parse()
+        transform = Ps1UnusedVariableRemoval()
+        transform.options = Ps1DeobfuscationOptions(preserve_env_stores=True)
+        transform.visit(ast)
+        self.assertEqual(Ps1Synthesizer().convert(ast), source)
 
     def test_parameter_preserved(self):
         result = self._deobfuscate(
@@ -105,7 +120,7 @@ class TestPs1UnusedVariableRemoval(TestPs1):
             if Ps1UnusedVariableRemoval._mutation_of(write.node) is None
         ]
         self.assertEqual(len(references), 1)
-        self.assertEqual(len(Ps1UnusedVariableRemoval._removable_mutations(binding)), 1)
+        self.assertEqual(len(Ps1UnusedVariableRemoval()._removable_mutations(binding)), 1)
 
 
 class TestPs1JunkStatementRemoval(TestPs1):
