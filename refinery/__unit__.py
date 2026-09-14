@@ -361,6 +361,7 @@ UNITS = {
     'xtp'                                        : 'refinery.units.pattern.xtp',
     'xtw'                                        : 'refinery.units.pattern.xtw',
     'bat'                                        : 'refinery.units.scripting.bat',
+    'batenv'                                     : 'refinery.units.scripting.batenv',
     'cmdarg'                                     : 'refinery.units.scripting.cmdarg',
     'defu'                                       : 'refinery.units.scripting.deobfuscate',
     'js'                                         : 'refinery.units.scripting.js',
