@@ -1066,8 +1066,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         The recognition itself is the one shared vocabulary
         (`refinery.lib.scripts.js.analysis.tampering.denotes_function_intrinsic`), consumed here
         with the model's facts and this pass's own string resolution and effect checks: the same
-        recognizer answers the tampering oracle's construction sites. A resolver it cannot decide
-        declines the inline, which is the safe answer for both consumers of it.
+        recognizer answers the tampering oracle's construction sites. The alias hops resolve with
+        the position supplied — the cache's tampering model, its `singular_value_at` — so a
+        volatile alias the run can order answers where the stock question declines. A resolver it
+        cannot decide declines the inline, which is the safe answer for both consumers of it.
         """
         def resolve(callee: Expression | None) -> bool:
             cache = model_cache(self, root)
@@ -1078,6 +1080,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 cache.dominance,
                 eval_string=self._eval_string,
                 read_effect=self._read_effect,
+                positioned_value=cache.tampering.singular_value_at,
                 spliced_names=self._spliced_names,
             ) is True
 

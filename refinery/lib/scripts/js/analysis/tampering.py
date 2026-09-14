@@ -143,6 +143,7 @@ def denotes_function_intrinsic(
     *,
     eval_string: Callable[[Node | None], str | None] | None = None,
     read_effect: Callable[[Node], bool] | None = None,
+    positioned_value: Callable[[Binding, Node], Node | None] | None = None,
     spliced_names: Collection[str] = (),
     depth: int = 0,
 ) -> bool | None:
@@ -166,7 +167,15 @@ def denotes_function_intrinsic(
     *eval_string* resolves a computed key the model cannot read by folding; a caller with no folder
     passes `None` and every unresolvable key answers `None` — undecided. *read_effect* rejects a
     navigation base whose evaluation fires an effect; without it more bases read as side-effect
-    free, which recognizes more constructions and never fewer.
+    free, which recognizes more constructions and never fewer. *positioned_value* resolves the two
+    alias hops with the read's position supplied — the value the name holds at the moment it is
+    read (`TamperingModel.singular_value_at`), so a binding the program-wide volatility question
+    refuses can still answer where ordering proves the read safe. It is asked only where
+    `SemanticModel.singular_value` has no value, so every verdict the stock sequence already gives
+    is kept and the repair recognizes only what stock declines; on that path the member hop's
+    establishment question is answered by the query's own leg — the same
+    `SemanticModel.binding_establishment_sites` rules — and the stock
+    `DominanceModel.binding_established_before` call runs only beside the stock value.
     """
 
     def resolved_member(member: JsMemberExpression) -> bool | None:
@@ -188,6 +197,10 @@ def denotes_function_intrinsic(
         if binding is None:
             return False
         value = model.singular_value(binding)
+        if value is None and positioned_value is not None:
+            value = positioned_value(binding, base)
+            if value is not None:
+                return isinstance(value, FUNCTION_NODES) and not wraps_return(value)
         if not isinstance(value, FUNCTION_NODES) or wraps_return(value):
             return False
         return dominance.binding_established_before(binding, member)
@@ -206,11 +219,14 @@ def denotes_function_intrinsic(
         if effects.global_key_written('Function', 'constructor'):
             return False
         value = model.singular_value(binding)
+        if value is None and positioned_value is not None:
+            value = positioned_value(binding, expr)
         if value is None:
             return False
         return denotes_function_intrinsic(
             value, model, effects, dominance,
             eval_string=eval_string, read_effect=read_effect,
+            positioned_value=positioned_value,
             spliced_names=spliced_names, depth=depth + 1,
         )
     if effects.global_key_written('Function', 'constructor'):
@@ -517,8 +533,9 @@ class TamperingModel:
                 if (
                     through_constructions
                     and denotes_function_intrinsic(
-                        parent.callee, self.model, self.effects, self.dominance)
-                    is True
+                        parent.callee, self.model, self.effects, self.dominance,
+                        positioned_value=self.singular_value_at,
+                    ) is True
                 ):
                     pending.append(parent)
                     continue
@@ -616,7 +633,10 @@ class TamperingModel:
         for node in root.walk():
             if not isinstance(node, (JsCallExpression, JsNewExpression)):
                 continue
-            verdict = denotes_function_intrinsic(node.callee, self.model, self.effects, self.dominance)
+            verdict = denotes_function_intrinsic(
+                node.callee, self.model, self.effects, self.dominance,
+                positioned_value=self.singular_value_at,
+            )
             if verdict is True:
                 flow = self._flow([node], through_constructions=True)
                 sites.extend(flow.invocations)

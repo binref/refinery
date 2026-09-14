@@ -13,23 +13,29 @@ from __future__ import annotations
 
 import time
 
-from test import TestBase
-
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.model import enclosing_function
+from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic
 from refinery.lib.scripts.js.deobfuscation.interpreter import InterpreterError, JsInterpreter
 from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
+    strip_parens,
 )
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
+from test import TestBase
 
 #: Every refuse row's anchor: the first `String.fromCharCode` call, the builtin the tampering
 #: sites in these programs are all spelled against.
 _FROM_CHAR_CODE = 'fromCharCode'
+
+#: The method only the decoder IIFE of the sample-shape rows calls, distinguishing it from the
+#: outer immediately-invoked function that contains it.
+_DECODER_STEP = 'charAt'
 
 
 def _call_with_property(ast: Node, property_name: str) -> JsCallExpression:
@@ -53,6 +59,30 @@ def _call_of_name(ast: Node, callee_name: str) -> JsCallExpression:
         ):
             return node
     raise AssertionError(F'no call to {callee_name}')
+
+
+def _decoder_iife_call(ast: Node, property_name: str) -> JsCallExpression:
+    """
+    The immediately-invoked function call whose own body calls a `.{property_name}` method — the
+    decoder every sample-shape row folds. The call that makes the method is inside the callee
+    itself, not a function nested in it, which is what distinguishes the decoder from the outer
+    immediately-invoked function containing it.
+    """
+    for node in ast.walk():
+        if not (
+            isinstance(node, JsCallExpression)
+            and isinstance(node.callee, JsMemberExpression)
+            and isinstance(node.callee.property, JsIdentifier)
+            and node.callee.property.name == property_name
+        ):
+            continue
+        decoder = enclosing_function(node)
+        if decoder is None:
+            continue
+        for call in ast.walk():
+            if isinstance(call, JsCallExpression) and strip_parens(call.callee) is decoder:
+                return call
+    raise AssertionError(F'no decoder IIFE calling a .{property_name} method')
 
 
 _A_SITE_BEFORE_THE_ANCHOR = {
@@ -430,6 +460,100 @@ class TestSingularValueAt(TestBase):
         self.assertEqual(cache.tampering.singular_value_at(binding, read).value, 1)
 
 
+class TestThePositionedAliasHop(TestBase):
+    """
+    The recognizer's alias hops under the positioned query: a callee reached through a name the
+    program-wide volatility question refuses still denotes the `Function` intrinsic where ordering
+    proves the read safe, and every gate the stock hop passes in front of a value resolution keeps
+    its place. Every program here is the sample's shape — a decoder alias read inside an anonymous
+    immediately-invoked function whose async sibling carries the eval.
+    """
+
+    @staticmethod
+    def _verdict(source: str, *, positioned: bool = False, callee: str = 'xTe', **kwargs) -> bool | None:
+        """
+        The recognizer's verdict for the *callee* call of *source*, with the positioned query
+        injected when *positioned* asks for it.
+        """
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        node = _call_of_name(ast, callee).callee
+        if positioned:
+            kwargs['positioned_value'] = cache.tampering.singular_value_at
+        return denotes_function_intrinsic(
+            node, cache.model, cache.effects, cache.dominance, **kwargs)
+
+    _EVAL_AFTER = (
+        'var q = (function () {\n'
+        '  function jCb(l) { return l; }\n'
+        '  var xTe = jCb.constructor;\n'
+        "  var Urn = xTe('', 'return 1;');\n"
+        '  (async function () { await eval(payload); })();\n'
+        '})();'
+    )
+
+    def test_a_volatile_alias_denotes_the_intrinsic_where_ordering_repairs_it(self):
+        self.assertFalse(self._verdict(self._EVAL_AFTER))
+        self.assertTrue(self._verdict(
+            self._EVAL_AFTER, positioned=True))
+
+    def test_a_computed_constructor_key_repairs_the_same_way(self):
+        source = self._EVAL_AFTER.replace('jCb.constructor', "jCb['constructor']")
+        self.assertFalse(self._verdict(source))
+        self.assertTrue(self._verdict(source, positioned=True))
+
+    def test_an_eval_before_the_alias_read_still_declines(self):
+        source = (
+            'var q = (function () {\n'
+            '  function jCb(l) { return l; }\n'
+            '  (async function () { await eval(payload); })();\n'
+            '  var xTe = jCb.constructor;\n'
+            "  var Urn = xTe('', 'return 1;');\n"
+            '})();'
+        )
+        self.assertFalse(self._verdict(source, positioned=True))
+
+    def test_a_written_constructor_key_refuses_every_navigation(self):
+        source = F'Function.constructor = g;\n{self._EVAL_AFTER}'
+        self.assertFalse(self._verdict(source, positioned=True))
+
+    def test_an_alias_read_before_its_declarator_still_declines(self):
+        source = (
+            'var q = (function () {\n'
+            '  function jCb(l) { return l; }\n'
+            "  var Urn = xTe('', 'return 1;');\n"
+            '  var xTe = jCb.constructor;\n'
+            '  (async function () { await eval(payload); })();\n'
+            '})();'
+        )
+        self.assertFalse(self._verdict(source, positioned=True))
+
+    def test_a_named_function_call_is_not_an_intrinsic_spelling(self):
+        source = self._EVAL_AFTER.replace(
+            "var Urn = xTe('', 'return 1;');", "var Urn = jCb('return 1;');")
+        self.assertFalse(self._verdict(source, positioned=True, callee='jCb'))
+
+    def test_the_spliced_name_gates_stay_in_front_of_the_repair(self):
+        with self.subTest('the identifier the arm resolves'):
+            self.assertFalse(self._verdict(
+                self._EVAL_AFTER, positioned=True, spliced_names=('xTe',)))
+        with self.subTest('the member hop base'):
+            self.assertFalse(self._verdict(
+                self._EVAL_AFTER, positioned=True, spliced_names=('jCb',)))
+
+    def test_a_channel_read_on_a_cycle_refuses_at_the_inner_hop(self):
+        source = (
+            'var q = (function () {\n'
+            '  function jCb(l) { return l; }\n'
+            '  var xTe;\n'
+            '  for (var i = 0; i < 2; i++) { xTe = jCb.constructor; }\n'
+            "  var Urn = xTe('', 'return 1;');\n"
+            '  (async function () { await eval(payload); })();\n'
+            '})();'
+        )
+        self.assertFalse(self._verdict(source, positioned=True))
+
+
 class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
     """
     The trust the interpreter's arms buy with an anchor: the program-wide questions refuse on the
@@ -588,6 +712,53 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
                 lambda ast: _call_of_name(ast, 'f')),
             'A',
         )
+
+    _DECODER_IIFE = (
+        'var q = (function () {\n'
+        '  function jCb(l) { return l; }\n'
+        '  var xTe = jCb.constructor;\n'
+        "  var Urn = xTe('', 'return 1;');\n"
+        '  var _a = function (e, r) {\n'
+        '    var y = [];\n'
+        '    for (var l = 0; l < e.length; l++) { y[l] = e.charAt(l); }\n'
+        '    var u = String.fromCharCode(127);\n'
+        "    return y.join('').split('%').join(u);\n"
+        "  }('0', 1);\n"
+        '  (async function () { await eval(_a[0]); })();\n'
+        '  return _a;\n'
+        '})();'
+    )
+
+    def test_a_decoder_folds_with_a_later_eval_sibling(self):
+        """
+        The sample's shape: the construction the decoder alias reaches is refused only where the
+        eval that makes the alias volatile runs before it, so the decoder folds with the eval still
+        standing and its argument still runtime-dependent.
+        """
+        expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)
+        self.assertTrue(self._unanchored_refuses(self._DECODER_IIFE, expression))
+        self.assertEqual(self._execute(self._DECODER_IIFE, expression, expression), '0')
+
+    def test_a_decoder_stays_standing_when_the_eval_sibling_runs_first(self):
+        source = self._DECODER_IIFE.replace(
+            '  var xTe = jCb.constructor;\n'
+            "  var Urn = xTe('', 'return 1;');\n"
+            '  var _a = function',
+            '  var xTe = jCb.constructor;\n'
+            "  var Urn = xTe('', 'return 1;');\n"
+            '  (async function () { await eval(out); })();\n'
+            '  var _a = function'
+        ).replace('  (async function () { await eval(_a[0]); })();\n', '')
+        expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)
+        self.assertTrue(self._unanchored_refuses(source, expression))
+        with self.assertRaises(InterpreterError):
+            self._execute(source, expression, expression)
+
+    def test_a_decoder_without_the_eval_sibling_folds(self):
+        source = self._DECODER_IIFE.replace(
+            '  (async function () { await eval(_a[0]); })();\n', '')
+        expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)
+        self.assertEqual(self._execute(source, expression, expression), '0')
 
 
 class TestManyAnchorsShareOneEnumeration(TestBase):
