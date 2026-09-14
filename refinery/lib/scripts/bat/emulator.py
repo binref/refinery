@@ -718,10 +718,11 @@ class BatchEmulator:
 
     def _set_display(self, std: IO, operand: str) -> CommandFailure | None:
         """
-        The SET display command: with no assignment, `SET` lists the environment variables whose name
-        starts with the first whitespace token of `operand` (every variable when `operand` is empty),
-        leaving the environment and error level untouched. A non-empty operand that matches nothing is
-        cmd.exe's `Environment variable <operand> not defined` diagnostic with error level 1.
+        The SET display command: with no assignment, `SET` lists the environment variables whose
+        name starts (case-insensitively) with the first whitespace token of `operand`, or every
+        variable when `operand` is empty, leaving the environment and error level untouched. A
+        non-empty operand matching nothing is cmd.exe's `Environment variable <operand> not
+        defined` diagnostic with error level 1.
         """
         operand = _dequote_set_operand(operand)
         tokens = operand.split(None, 1)
@@ -729,7 +730,7 @@ class BatchEmulator:
         matches = [
             (name, value)
             for name, value in self.state.display_variables()
-            if name.startswith(prefix)
+            if name.upper().startswith(prefix)
         ]
         if operand and not matches:
             return CommandFailure(F'Environment variable {operand} not defined', 1)
@@ -782,10 +783,7 @@ class BatchEmulator:
             prefix = F'{uuid.uuid4().time_mid:X}'
             namespace = {}
             value = None
-            program = ''.join(args)
-            if program.startswith('"'):
-                program, _, tail = program[1:].rpartition('"')
-                program = program or tail
+            program = _dequote_set_operand(''.join(args))
             if not program:
                 return CommandFailure(MSG_SYNTAX_INCORRECT, ErrorZero.Val)
             for assignment in program.split(','):
@@ -836,14 +834,15 @@ class BatchEmulator:
 
         args = [tk, *it, *cmd.trailing_spaces]
 
-        if Ctrl.Equals in args:
-            assigns = True
-        elif cmd.argument_string.startswith('"'):
-            assigns = '=' in _dequote_set_operand(cmd.argument_string)
-        else:
-            assigns = '=' in ''.join(args)
-        if prompt is None and not assigns:
-            return self._set_display(std, cmd.argument_string)
+        if prompt is None:
+            if Ctrl.Equals in args:
+                assigns = True
+            elif cmd.argument_string.startswith('"'):
+                assigns = '=' in _dequote_set_operand(cmd.argument_string)
+            else:
+                assigns = '=' in ''.join(args)
+            if not assigns:
+                return self._set_display(std, cmd.argument_string)
 
         quote_mode = False
         try:
@@ -852,8 +851,7 @@ class BatchEmulator:
             assignment = cmd.argument_string
             if assignment.startswith('"'):
                 quote_mode = True
-                assignment, _, unquoted = assignment[1:].rpartition('"')
-                assignment = assignment or unquoted
+                assignment = _dequote_set_operand(assignment)
             else:
                 assignment = ''.join(args)
             name, _, content = assignment.partition('=')
@@ -862,7 +860,7 @@ class BatchEmulator:
                 for k in range(eq + 1, len(args)):
                     io.write(args[k])
                 content = io.getvalue()
-                name = cmd.args[eq - 1] if eq else ''
+                name = args[eq - 1] if eq else ''
         if quote_mode:
             trailing_caret, content = uncaret(content, True)
             if trailing_caret:
@@ -870,9 +868,7 @@ class BatchEmulator:
         name = name.upper()
         if prompt is not None:
             if (qc := content.strip()).startswith('"'):
-                _, _, qc = qc. partition('"') # noqa
-                qc, _, r = qc.rpartition('"') # noqa
-                content = qc or r
+                content = _dequote_set_operand(qc)
             std.o.write(content)
             content = prompt
         if name:

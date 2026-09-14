@@ -269,13 +269,13 @@ class BatchState:
 
     def display_variables(self) -> list[tuple[str, str | RetainVariable]]:
         """
-        The variables a bare or prefix `SET` lists, sorted case-insensitively by name. `ERRORLEVEL` is
-        materialized on every error-level write (so `%ERRORLEVEL%` and `if defined errorlevel` resolve)
-        but is a pseudo-variable that cmd.exe hides from `SET` output, so it is excluded here.
+        The variables a bare or prefix `SET` lists, sorted case-insensitively by name. `ERRORLEVEL`
+        is materialized on every error-level write (so `%ERRORLEVEL%` and `if defined errorlevel`
+        resolve) but is a pseudo-variable that cmd.exe hides from `SET` output, so it is excluded.
         """
         return sorted(
             ((name, value) for name, value in self.environment.items() if name != 'ERRORLEVEL'),
-            key=lambda item: item[0],
+            key=lambda item: item[0].upper(),
         )
 
     @property

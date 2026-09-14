@@ -2822,8 +2822,8 @@ class TestBatchCmdSemantics(TestBase):
 
     def test_quoted_set_display_does_not_spuriously_fail(self):
         """
-        `SET "FOO"` strips the quotes before matching, so a defined `FOO` is listed with error level
-        unchanged; without the strip the literal quote would match nothing and fail with error level 1.
+        `SET "FOO"` strips the quotes before matching, so a defined `FOO` is listed and the error
+        level stays 0; without the strip the literal quote would match nothing and fail with exit 1.
         """
         bat = self._run('set FOO=1\nset "FOO"')
         self.assertEqual(bat.std.o.getvalue(), 'FOO=1\r\n')
@@ -2876,3 +2876,46 @@ class TestBatchCmdSemantics(TestBase):
         self.assertEqual(assigned.state.envar('X', ''), 'Y')
         deleted = self._run('set X=Y\nset X=')
         self.assertEqual(deleted.state.envar('X', '<undef>'), '<undef>')
+
+    def test_set_slash_p_binds_stdin_to_the_named_variable(self):
+        """
+        `SET /P NAME=prompt` reads a line of input into NAME and echoes the prompt. The emulator
+        previously bound the value to a variable literally named `/P`, leaving NAME undefined.
+        """
+        state = BatchState()
+        state.create_file('in.txt', 'HELLO\r\n')
+        bat = self._run('set /p VAR=Enter: <in.txt\necho [%VAR%]', state)
+        self.assertEqual(bat.state.envar('VAR', ''), 'HELLO')
+        self.assertNotIn('/P', bat.state.environment)
+        self.assertIn('[HELLO]\r\n', bat.std.o.getvalue())
+
+    def test_prefix_set_matches_variable_names_case_insensitively(self):
+        """
+        cmd.exe matches the `SET` display prefix without regard to case, so `SET mixed` lists a
+        variable named `MixedCase` and keeps the error level at 0 instead of reporting it undefined.
+        """
+        state = BatchState(environment={'MixedCase': 'v'})
+        bat = self._run('set mixed', state)
+        self.assertEqual(bat.std.o.getvalue(), 'MixedCase=v\r\n')
+        self.assertEqual(bat.std.e.getvalue(), '')
+        self.assertEqual(bat.state.ec, 0)
+
+    def test_bare_set_sorts_variable_names_case_insensitively(self):
+        """
+        cmd.exe orders `SET` output ignoring case, so injected `zeb`, `Apple`, and `ant` list as
+        `ant`, `Apple`, `zeb`, not the case-sensitive `Apple`, `ant`, `zeb`.
+        """
+        state = BatchState(environment={'zeb': '1', 'Apple': '2', 'ant': '3'})
+        listing = self._run('set', state).std.o.getvalue().split('\r\n')
+        injected = [line for line in listing if line in ('ant=3', 'Apple=2', 'zeb=1')]
+        self.assertEqual(injected, ['ant=3', 'Apple=2', 'zeb=1'])
+
+    @unittest.expectedFailure
+    def test_user_assigned_errorlevel_is_listed_by_set(self):
+        """
+        A script-assigned `ERRORLEVEL` shadows the pseudo-variable and is a real variable, so
+        cmd.exe lists it: `set ERRORLEVEL=marker` then `set ERRORLEVEL` prints `ERRORLEVEL=marker`.
+        The emulator stores the pseudo-variable in the same env slot, so it hides the name outright.
+        """
+        bat = self._run('set ERRORLEVEL=marker\nset ERRORLEVEL')
+        self.assertEqual(bat.std.o.getvalue(), 'ERRORLEVEL=marker\r\n')
