@@ -15,13 +15,14 @@ import time
 
 from test import TestBase
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.deobfuscation.interpreter import InterpreterError, JsInterpreter
 from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsIdentifier,
     JsMemberExpression,
+    JsNumericLiteral,
 )
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
@@ -275,6 +276,158 @@ class TestBuiltinsIntactAt(TestBase):
         self.assertTrue(ModelCache(ast).builtins_intact_at(anchor))
         options = DeobfuscationOptions(entrypoints=('g',))
         self.assertFalse(ModelCache(ast, options).builtins_intact_at(anchor))
+
+
+class TestSingularValueAt(TestBase):
+    """
+    The positioned value question: which single value a binding holds at the moment a given read
+    evaluates it. Every program with an `eval` in it makes the binding volatile program-wide; the
+    rows here draw where ordering repairs that — the hazard provably runs after the read, the
+    value established before it, the read at most once — and where each leg refuses. The volatile
+    locals all live inside an anonymous immediately-invoked function, the shape the sample's
+    payload spells: a named script-scope activation is one the oracle's own multiplicity walk
+    refuses under a reflection surface, which is its line and not this query's.
+    """
+
+    @staticmethod
+    def _value_at(source: str):
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        read = next(
+            n for n in ast.walk()
+            if isinstance(n, JsIdentifier) and n.name == 'x' and cache.model.is_reference(n)
+        )
+        return cache.tampering.singular_value_at(cache.model.resolve(read), read)
+
+    def test_an_eval_after_the_read_repairs_the_volatility(self):
+        value = self._value_at(
+            'var out;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  out = x;\n'
+            '  eval(payload);\n'
+            '})();'
+        )
+        self.assertIsInstance(value, JsNumericLiteral)
+        self.assertEqual(value.value, 1)
+
+    def test_an_eval_before_the_read_refuses(self):
+        self.assertIsNone(self._value_at(
+            'var out;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  eval(payload);\n'
+            '  out = x;\n'
+            '})();'
+        ))
+
+    def test_a_never_invoked_sibling_eval_is_no_hazard(self):
+        value = self._value_at(
+            'var out;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  out = x;\n'
+            '  var g = function () { eval(payload); };\n'
+            '})();'
+        )
+        self.assertIsInstance(value, JsNumericLiteral)
+        self.assertEqual(value.value, 1)
+
+    def test_a_read_on_a_cycle_refuses_the_repair(self):
+        self.assertIsNone(self._value_at(
+            'var out = [];\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  for (var i = 0; i < 2; i++) {\n'
+            '    out.push(x);\n'
+            '    eval(payload);\n'
+            '  }\n'
+            '})();'
+        ))
+
+    def test_a_do_while_read_before_a_post_loop_eval_stays_refused(self):
+        self.assertIsNone(self._value_at(
+            'var out = [];\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  var i = 0;\n'
+            '  do { out.push(x); i++; } while (i < 2);\n'
+            '  eval(payload);\n'
+            '})();'
+        ))
+
+    def test_a_two_channel_binding_gets_no_repair(self):
+        self.assertIsNone(self._value_at(
+            'var out;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  x = 2;\n'
+            '  out = x;\n'
+            '  eval(payload);\n'
+            '})();'
+        ))
+
+    def test_a_parameter_gets_no_repair(self):
+        self.assertIsNone(self._value_at(
+            'var out;\n'
+            'var q = (function (x) {\n'
+            '  out = x;\n'
+            '  eval(payload);\n'
+            '})(7);'
+        ))
+
+    def test_a_script_scope_binding_fails_closed(self):
+        source = (
+            'var out;\n'
+            'var x = 1;\n'
+            'out = x;\n'
+            'eval(payload);'
+        )
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        read = next(
+            n for n in ast.walk()
+            if isinstance(n, JsIdentifier) and n.name == 'x' and cache.model.is_reference(n)
+        )
+        binding = cache.model.resolve(read)
+        self.assertEqual(cache.model.singular_value(binding).value, 1)
+        self.assertIsNone(cache.tampering.singular_value_at(binding, read))
+
+    def test_a_read_before_its_declarator_refuses(self):
+        self.assertIsNone(self._value_at(
+            'var out;\n'
+            'var q = (function () {\n'
+            '  out = x;\n'
+            '  var x = 1;\n'
+            '  eval(payload);\n'
+            '})();'
+        ))
+
+    def test_a_splice_during_a_pinned_window_does_not_leak_past_the_pass(self):
+        source = (
+            'var out;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  eval(payload);\n'
+            '  out = x;\n'
+            '})();'
+        )
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        read = next(
+            n for n in ast.walk()
+            if isinstance(n, JsIdentifier) and n.name == 'x' and cache.model.is_reference(n)
+        )
+        binding = cache.model.resolve(read)
+        self.assertIsNone(cache.tampering.singular_value_at(binding, read))
+        with cache.pinned():
+            _remove_from_parent(next(
+                n for n in ast.walk()
+                if isinstance(n, JsCallExpression)
+                and isinstance(n.callee, JsIdentifier) and n.callee.name == 'eval'
+            ).parent)
+            self.assertIsNone(cache.tampering.singular_value_at(binding, read))
+        self.assertEqual(cache.tampering.singular_value_at(binding, read).value, 1)
 
 
 class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):

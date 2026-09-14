@@ -275,12 +275,14 @@ class _Flow(NamedTuple):
 
 class TamperingModel:
     """
-    The anchored tampering oracle for one script, built over a
+    The anchored trust oracle for one script, built over a
     `refinery.lib.scripts.js.analysis.model.SemanticModel`, an
     `refinery.lib.scripts.js.analysis.effects.EffectModel`, a
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, and the control-flow model the
     cycle questions go through. Ask whether the built-ins are intact at one point with
-    `builtins_intact_at`. Build through `build_tampering`.
+    `builtins_intact_at`; ask which single value a binding holds at one point with
+    `singular_value_at` — the positioned value question the same models answer. Build through
+    `build_tampering`.
     """
 
     def __init__(
@@ -303,6 +305,7 @@ class TamperingModel:
         self._reentry_read: bool | None = None
         self._anchor_cache: dict[int, bool] = {}
         self._invocation_cache: dict[int, _Flow] = {}
+        self._positioned_cache: dict[tuple[int, int], Node | None] = {}
 
     def builtins_intact_at(self, anchor: Node) -> bool:
         """
@@ -333,6 +336,57 @@ class TamperingModel:
         if not self._at_most_once(anchor):
             return False
         return all(self.dominance.runs_before(anchor, site) for site in sites)
+
+    def singular_value_at(self, binding: Binding | None, at: Node) -> Node | None:
+        """
+        The single value *binding* provably holds at the moment *at* is evaluated —
+        `SemanticModel.singular_value` with the position supplied, so a binding the program-wide
+        volatility question refuses can still answer where ordering proves the read safe. The value
+        is the one channel the text spells, judged by three legs, each asked of every binding the
+        query answers:
+
+        1. establishment: the channel's establishing write has run before the read, judged by the
+           `SemanticModel.binding_establishment_sites` rules, so a hoisted function declaration
+           needs no ordering;
+        2. hazards: every dynamic rebind the located question
+           (`SemanticModel.binding_dynamic_rebind_sites`) finds first-executes after the read;
+        3. multiplicity: the read executes at most once (`_at_most_once`), since ordering first
+           executions does not bound what a read on a cycle sees on its second one.
+
+        The channels and their completeness are read on the ignore view
+        (`binding_values` with *ignore_dynamic_rebinds*), the one where a rebind is a located
+        hazard rather than a program-wide refusal. A script-scope binding fails closed as leg 2's
+        own case: its eval-surface hazards are the whole-program questions the volatility boolean
+        already refuses to freeze it on. `None` whenever any leg fails, the binding holds no
+        single spelled value, or its only incompleteness is the nodeless entry write. Memoized per
+        (binding, read) for the model's lifetime, exactly as the site enumeration is — the
+        recognizer asks the same hops from the site enumeration and the flow walk.
+        """
+        if binding is None:
+            return None
+        key = (id(binding), id(at))
+        if key not in self._positioned_cache:
+            self._positioned_cache[key] = self._compute_singular_value_at(binding, at)
+        return self._positioned_cache[key]
+
+    def _compute_singular_value_at(self, binding: Binding, at: Node) -> Node | None:
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return None
+        values, complete = self.model.binding_values(
+            binding, ignore_dynamic_rebinds=True)
+        establishment = self.model.binding_establishment_sites(
+            binding, ignore_dynamic_rebinds=True)
+        if not complete or establishment is None or len(values) != 1:
+            return None
+        hazards = self.model.binding_dynamic_rebind_sites(binding)
+        if hazards is None or not self._at_most_once(at):
+            return None
+        if not all(self.dominance.runs_before(site, at) for site in establishment):
+            return None
+        if not all(self.dominance.runs_before(at, hazard) for hazard in hazards):
+            return None
+        return values[0]
 
     def _program_is_clear(self) -> bool:
         """

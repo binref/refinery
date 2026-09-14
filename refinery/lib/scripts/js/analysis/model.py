@@ -2213,7 +2213,9 @@ class SemanticModel:
         )
         return points
 
-    def binding_values(self, binding: Binding | None) -> tuple[list[Node], bool]:
+    def binding_values(
+        self, binding: Binding | None, *, ignore_dynamic_rebinds: bool = False,
+    ) -> tuple[list[Node], bool]:
         """
         Every value expression the text stores under *binding* through a channel that spells its stored
         value, in no promised order, and whether that list is complete — whether no other channel can
@@ -2230,7 +2232,9 @@ class SemanticModel:
         query through `names_the_global_object`, so an answer built on them would depend on how far
         that walk had got. A binding with no declaration — an implicit global, and the binding
         `_ensure_implicit_global_from_alias_write` mints — contributes nothing and is never complete,
-        for that same walk-order reason.
+        for that same walk-order reason. With *ignore_dynamic_rebinds* the dynamic-rebind conjunct is
+        left out of the completeness verdict: the values answer what the text spells, and whether a
+        rebind crosses a given read is the caller's ordering question over `binding_dynamic_rebind_sites`.
 
         The values hold wherever the name is not in their temporal dead zone; a bare declarator
         contributes no value even though the name reads `undefined` there, and a consumer that needs a
@@ -2243,7 +2247,8 @@ class SemanticModel:
         `refinery.lib.scripts.js.analysis.reaching.ReachingModel._value_definitions` the flow-aware one
         that enumerates kill sites rather than values.
         """
-        channels, complete = self._binding_value_channels(binding)
+        channels, complete = self._binding_value_channels(
+            binding, ignore_dynamic_rebinds=ignore_dynamic_rebinds)
         return [value for _, value in channels], complete
 
     def values_at_call(
@@ -2360,7 +2365,9 @@ class SemanticModel:
         """
         return self.binding_establishment_sites(self.invocation_binding(function))
 
-    def binding_establishment_sites(self, binding: Binding | None) -> list[Node] | None:
+    def binding_establishment_sites(
+        self, binding: Binding | None, *, ignore_dynamic_rebinds: bool = False,
+    ) -> list[Node] | None:
         """
         The nodes that must all have executed before *binding*'s `singular_value` is installed, for a
         consumer that gates a use on execution order. An empty list when the value is hoisted into place
@@ -2372,12 +2379,15 @@ class SemanticModel:
         be ordered and the caller declines — decided by the same complete-singleton `binding_values`
         answer `singular_value` requires, so the two queries can never disagree about which bindings
         have an orderable value: one returns the value and the other the node that establishes it.
-        Ordering the returned nodes against the use is the caller's job, since that needs the
+        With *ignore_dynamic_rebinds* that answer is read on the view `binding_values` documents, the
+        one a positioned consumer orders rebind hazards against itself. Ordering the returned nodes
+        against the use is the caller's job, since that needs the
         dominance model this layer must not depend on.
         """
         if binding is None:
             return None
-        channels, complete = self._binding_value_channels(binding)
+        channels, complete = self._binding_value_channels(
+            binding, ignore_dynamic_rebinds=ignore_dynamic_rebinds)
         if not complete or len(channels) != 1:
             return None
         site, _ = channels[0]
