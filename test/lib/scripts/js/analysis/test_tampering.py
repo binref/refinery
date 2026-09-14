@@ -124,6 +124,23 @@ _A_SITE_BEFORE_THE_ANCHOR = {
         '  arguments.callee();\n'
         '})();'
     ),
+    'a computed arguments.callee read': (
+        'var k, v;\n'
+        '(function () {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        "  arguments['callee']();\n"
+        '})();'
+    ),
+    'a runtime-keyed re-entry read off the arguments object': (
+        'var k, v, i;\n'
+        '(function () {\n'
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        "  i = 'callee';\n"
+        '  arguments[i]();\n'
+        '})();'
+    ),
     'a potential .caller read': (
         'var k, v;\n'
         '(function () {\n'
@@ -191,6 +208,24 @@ _A_SITE_THE_ANCHOR_ESCAPED = {
     ),
     'a script-scope named activation with the surface removed': (
         'var k, v;\nfunction g() { String.fromCharCode(65); globalThis[k] = v; }\ng();'
+    ),
+    'a computed dispatch on a list base': (
+        'var k, v, i;\n'
+        'var names = ["callee", "caller"];\n'
+        'function g(name) { globalThis[name] = v; }\n'
+        'String.fromCharCode(65);\n'
+        'i = 0;\n'
+        'g(names[i]);'
+    ),
+    'a runtime-keyed read off a strict arguments object': (
+        'var k, v, i, out;\n'
+        '(function () {\n'
+        "  'use strict';\n"
+        '  String.fromCharCode(65);\n'
+        '  globalThis[k] = v;\n'
+        "  i = 'callee';\n"
+        '  out = arguments[i];\n'
+        '})();'
     ),
 }
 """

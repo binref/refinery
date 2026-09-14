@@ -60,9 +60,11 @@ from refinery.lib.scripts.js.analysis.model import (
     is_member_write_target,
     is_unread_source,
     member_property_name,
+    own_arguments_binding,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsCallExpression,
     JsExpressionStatement,
@@ -80,6 +82,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
+from refinery.lib.scripts.js.strict import strict_mode_at
 
 #: How many name-to-value hops the recognizer follows in search of the `Function` intrinsic. A
 #: chain longer than any real spelling of it is a cycle, and the limit answers undecided
@@ -101,6 +104,35 @@ def _static_member_key(member: JsMemberExpression) -> str | None:
     if member.computed:
         return prop.value if isinstance(prop, JsStringLiteral) and prop.terminated else None
     return prop.name if isinstance(prop, JsIdentifier) else None
+
+
+def _may_read_reentry_key(member: JsMemberExpression, model: SemanticModel) -> bool:
+    """
+    Whether *member* may read one of the re-entry keys — a property whose value is the function
+    the access is made on, so reading it hands out a way to run that function again that no
+    textual invocation count sees. A statically spelled key counts whether the access writes it
+    as a dot or inside brackets. An unknown key counts only where the base is the `arguments`
+    object the enclosing function was given, whose `callee` property is the function itself: on
+    any other base an unknown key designates a property of that object, so a list dispatched by
+    index stays clear. A strict function's `arguments` object has no `callee` property at all,
+    and a name the function displaced — bound to a value of its own — is not that object.
+    """
+    if _static_member_key(member) in _REENTRY_KEYS:
+        return True
+    if not member.computed or _static_member_key(member) is not None:
+        return False
+    base = strip_parens(member.object)
+    if not isinstance(base, JsIdentifier):
+        return False
+    binding = model.resolve(base)
+    if binding is None:
+        return False
+    fn = enclosing_function(member)
+    while isinstance(fn, JsArrowFunctionExpression):
+        fn = enclosing_function(fn)
+    if fn is None or strict_mode_at(fn):
+        return False
+    return binding is own_arguments_binding(model, fn)
 
 
 def denotes_function_intrinsic(
@@ -387,10 +419,7 @@ class TamperingModel:
     def _has_reentry_read(self) -> bool:
         if self._reentry_read is None:
             self._reentry_read = any(
-                isinstance(node, JsMemberExpression)
-                and not node.computed
-                and isinstance(node.property, JsIdentifier)
-                and node.property.name in _REENTRY_KEYS
+                isinstance(node, JsMemberExpression) and _may_read_reentry_key(node, self.model)
                 for node in self.model.root.walk()
             )
         return self._reentry_read
