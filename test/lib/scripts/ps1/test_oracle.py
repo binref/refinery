@@ -3769,6 +3769,13 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
             'OUT\tSystem.String\tx1.0',
             'OUT\tSystem.String\tx1.0',
         ),
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null))":
+        ('OUT\tSystem.Text.UTF8Encoding\tSystem.Text.UTF8Encoding',),
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))":
+        ('OUT\tSystem.Text.UTF8Encoding\tSystem.Text.UTF8Encoding',),
+    "Write-Output ([object]::ReferenceEquals("
+    "[Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))":
+        ('OUT\tSystem.Boolean\tTrue',),
 }
 
 

@@ -1399,6 +1399,10 @@ FOLDS: dict[str, str] = {
         "Write-Output 66\nWrite-Output (1 + 'A')",
     'Write-Output (Get-Date -Y 2020 -Month 1 -Day 1).Year':
         'Write-Output (Get-Date -Year 2020 -Month 1 -Day 1).Year',
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null))":
+        'Write-Output ([Text.Encoding]::UTF8)',
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))":
+        'Write-Output ([Text.Encoding]::UTF8)',
     "Write-Output ([char[]](72, 73) -is [string]); Write-Output ('HI' -is [string])":
         'Write-Output ($False)\nWrite-Output ($True)',
     "Write-Output ([char]114 + [char]53); Write-Output ('r' + '5')":
@@ -1409,6 +1413,8 @@ FOLDS: dict[str, str] = {
         'Write-Output ($True)\nWrite-Output ($True)',
     "Write-Output ([char]65 -is [char]); Write-Output ('A' -is [char])":
         'Write-Output ($True)\nWrite-Output ($False)',
+    "Write-Output ([object]::ReferenceEquals([Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))":
+        'Write-Output ([Object]::ReferenceEquals([Text.Encoding]::UTF8, [Text.Encoding]::UTF8))',
     "Write-Output ([string][char]65); Write-Output ([string]'A')":
         "Write-Output 'A'\nWrite-Output 'A'",
     "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aGk='))":

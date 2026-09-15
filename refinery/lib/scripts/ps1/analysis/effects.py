@@ -305,10 +305,25 @@ _PURE_READS = _canonical_read_set({
     ('math', 'pi'),
     ('microsoft.powershell.commands.genericmeasureinfo', 'count'),
     ('microsoft.powershell.commands.genericobjectmeasureinfo', 'count'),
+    ('text.encoding', 'utf8'),
     ('threading.tasks.task', 'status'),
     ('threading.thread', 'currentthread'),
     ('threading.thread', 'managedthreadid'),
 })
+
+
+def reflection_read_cannot_throw(type_key: Ps1TypeName, member: str) -> bool:
+    """
+    Whether the curated cannot-throw table vouches for reading `member` off the type `type_key` —
+    the entries of `_PURE_READS`, each asserting that reading it runs no observable code and
+    cannot throw. That assertion is the one fact a rewrite spelling a reflection read as the direct
+    member needs: a getter that throws surfaces through `GetValue` wrapped in a
+    `MethodInvocationException` and through the direct read as itself, so the two spellings agree
+    only where nothing throws. The whole-surface grants of `_PURE_READ_TYPES` are deliberately
+    absent here — they answer for a value of a type, whose subtype could carry a member of its own,
+    and not for the one static member a type expression names.
+    """
+    return (type_key.generic_definition, member.lower()) in _PURE_READS
 
 
 def _writing_parameters() -> frozenset[str]:

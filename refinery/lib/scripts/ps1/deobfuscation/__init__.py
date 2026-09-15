@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.deobfuscation.emulator import (
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
 from refinery.lib.scripts.ps1.deobfuscation.iexinline import Ps1IexInlining
+from refinery.lib.scripts.ps1.deobfuscation.reflection import Ps1ReflectionReads
 from refinery.lib.scripts.ps1.deobfuscation.rename import Ps1VariableRenaming
 from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringDecryptor
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
@@ -43,6 +44,7 @@ _folds = (
     Ps1ConstantInlining,
     Ps1ExpandableStringHoist,
     Ps1TypeCasts,
+    Ps1ReflectionReads,
 )
 
 _cleanup = (

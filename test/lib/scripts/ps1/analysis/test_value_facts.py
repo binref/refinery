@@ -4282,7 +4282,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
 
     def test_an_expression_the_source_pins_evaluates_to_exactly_what_it_pins(self):
         compared = [site for site in SITES if read(site.node) is not UNKNOWN]
-        self.assertEqual(len(compared), 2917)
+        self.assertEqual(len(compared), 2927)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4297,7 +4297,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if resolve_expression_type(site.node) is not None
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2957)
+        self.assertEqual(len(compared), 2964)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4312,7 +4312,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if candidate_types(site.node, CLOSED_WORLD)
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2957)
+        self.assertEqual(len(compared), 2964)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4323,7 +4323,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         )
 
     def test_a_string_the_tree_reader_spells_is_the_string_named_here(self):
-        self.assertEqual(len(STRINGS), 1698)
+        self.assertEqual(len(STRINGS), 1704)
         self.assertEqual(
             [row.source for row in STRINGS if row.named != Ps1Constant(STRING, row.text)], [])
 
@@ -4426,7 +4426,7 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
             for child in site.node.children()
             if isinstance(child, Expression) and evaluate(child).may_throw
         ]
-        self.assertEqual(len(compared), 2336)
+        self.assertEqual(len(compared), 2349)
         self.assertEqual(
             [site.source for site, _ in compared if not evaluate(site.node).may_throw], [])
 
@@ -4559,7 +4559,7 @@ class TestPs1EvaluateRefusesATypeLiteral(unittest.TestCase):
 
     def test_every_type_literal_the_corpus_writes_is_refused_here_and_typed_there(self):
         literals = [site for site in SITES if isinstance(site.node, Ps1TypeExpression)]
-        self.assertEqual(len(literals), 33)
+        self.assertEqual(len(literals), 38)
         self.assertEqual([site.source for site in literals if evaluate(site.node) != NOTHING], [])
         self.assertEqual(
             [site.source for site in literals if resolve_expression_type(site.node) is None], [])

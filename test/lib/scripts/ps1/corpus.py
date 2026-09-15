@@ -1343,6 +1343,16 @@ TYPES: tuple[str, ...] = (
     '$t = [string]1.100d; Write-Output (,$t); Write-Output $t',
     "$t = 'x' + (1.0d); Write-Output (,$t); Write-Output $t",
     "$t = 'x' + [decimal]'1.0'; Write-Output (,$t); Write-Output $t",
+
+    #: What a reflection property read is asked to preserve the behaviour of. The first two pin
+    #: the spellings a rewrite of one stands on — the one-argument `GetValue` and the two-argument
+    #: one, which a non-indexed property accepts only if 5.1 accepts it at all — and the third pins
+    #: that the value `GetProperty` hands back and the direct member name are the same instance,
+    #: which is what a rewrite of the read as the member claims.
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null))",
+    "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))",
+    "Write-Output ([object]::ReferenceEquals("
+    "[Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))",
 )
 
 

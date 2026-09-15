@@ -1154,4 +1154,13 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$t = [uint16]'0xFFFF'; Write-Output (,$t); Write-Output $t",
         ),
     ),
+    'Ps1ReflectionReads': Contribution(
+        lost=(
+            "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null))",
+            "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))",
+        ),
+        changed=(
+            "Write-Output ([object]::ReferenceEquals([Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))",
+        ),
+    ),
 }
