@@ -442,24 +442,32 @@ class TestPs1SubExpressionEvaluator(TestPs1):
         """), Ps1SubExpressionEvaluator)
 
     @unittest.expectedFailure
-    def test_a_retained_int16_keeps_its_width(self):
+    def test_a_retained_integer_keeps_its_declared_width(self):
         """
-        `[Convert]::ToInt16` returns an `Int16`, so `$v -is [int16]` is `$True` on 5.1. Retention
-        spells the value as the Int32 its magnitude is (`$v = 255`), flipping the test to `$False`;
-        the store has to carry the width, the way `[Convert]::ToByte` does through `_Byte`.
+        The interpreter carries an integer as a bare Python int, so a value whose 5.1 width is set
+        by its type rather than its magnitude — `[Convert]::ToInt16`/`ToInt64`, an `L`-suffixed
+        literal — is spelled as the Int32 its magnitude fits, flipping a later `-is` from `$True` to
+        `$False`. The store has to carry the width, the way `[Convert]::ToByte` does through `_Byte`;
+        the matrix retires only when the root does, not one producer at a time.
         """
-        self.assertEqual(
-            self._apply(cleandoc("""
-                $x = $($v = [Convert]::ToInt16('FF', 16)
-                'done')
-                $v -is [int16]
-            """), Ps1SubExpressionEvaluator),
-            cleandoc("""
-                $v = [int16]255
-                $x = $('done')
-                $v -is [int16]
-            """),
-        )
+        for producer, spelled, cast in [
+            ("[Convert]::ToInt16('FF', 16)", '[int16]255', '[int16]'),
+            ("[Convert]::ToInt64('FF', 16)", '255L', '[int64]'),
+            ('1L', '1L', '[int64]'),
+        ]:
+            with self.subTest(producer):
+                self.assertEqual(
+                    self._apply(cleandoc(F"""
+                        $x = $($v = {producer}
+                        'done')
+                        $v -is {cast}
+                    """), Ps1SubExpressionEvaluator),
+                    cleandoc(F"""
+                        $v = {spelled}
+                        $x = $('done')
+                        $v -is {cast}
+                    """),
+                )
 
     def test_a_write_read_outside_through_a_function_retains_its_store(self):
         self.assertEqual(
