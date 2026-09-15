@@ -37,6 +37,11 @@ class _Holder(Node):
     items: list[Node] = field(default_factory=list)
 
 
+@dataclass(repr=False, eq=False)
+class _LateHolder(Node):
+    items: list[Node] | None = None
+
+
 def _script(*names: str) -> Script:
     script = Script()
     set_child_list(script, 'body', [_Leaf(name=name) for name in names])
@@ -433,12 +438,12 @@ class TestChildListOwnership(unittest.TestCase):
     without a mutation.
     """
 
-    def test_a_fresh_field_does_not_install_the_callers_list(self):
-        script = Script()
+    def test_a_field_that_holds_no_list_yet_gets_a_copy_of_the_callers_list(self):
+        holder = _LateHolder()
         items = [_Leaf(name='a')]
-        set_child_list(script, 'body', items)
+        set_child_list(holder, 'items', items)
         items.append(_Leaf(name='b'))
-        self.assertEqual(_names(script), ['a'])
+        self.assertEqual([stmt.name for stmt in holder.items], ['a'])
 
     def test_an_existing_field_keeps_the_object_the_tree_held(self):
         script = _script('a')

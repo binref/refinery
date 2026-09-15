@@ -33,12 +33,13 @@ class Kind(enum.IntEnum):
 
 _SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'trailing_comments', 'errors'))
 
-#: Names that may appear in a node's instance `__dict__` although no dataclass field declares them.
-#: `Node.children` memoizes its answer into the entry named here. Whatever else joins it must hold
-#: no list: `_replace_in_parent`, `_remove_from_parent`, `owning_list` and `owning_field` read every
+#: Names that may appear in a node's instance `__dict__` although no dataclass field declares them:
+#: the `Node.children` memo, and the resolution stash `refinery.lib.scripts.js.deobfuscation.stringarray`
+#: keeps on scope nodes. Whatever else joins them must hold no list:
+#: `_replace_in_parent`, `_remove_from_parent`, `owning_list` and `owning_field` read every
 #: list-valued attribute of a parent as a child container, and would mistake a list-valued extra
 #: for one.
-_INSTANCE_EXTRAS = frozenset(('_child_cache',))
+_INSTANCE_EXTRAS = frozenset(('_child_cache', '_stringarray_cache'))
 
 _VARS_SKIP = _SKIP_FIELDS | _INSTANCE_EXTRAS
 

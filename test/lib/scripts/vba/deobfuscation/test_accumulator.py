@@ -29,6 +29,35 @@ class TestVbaStringAccumulator(TestVba):
             End Sub
         """))
 
+    def test_accumulator_chain_inside_elseif_body(self):
+        """
+        A clause body reaches the fold through the same `apply_removals` every body does, which
+        is what makes parent pointers load-bearing there: a removal resolves its statement
+        through the holder that names it.
+        """
+        code = cleandoc("""
+            Sub T()
+              If a = "q" Then
+                a = "1"
+              ElseIf a = "w" Then
+                a = "x"
+                a = a & "y"
+                a = a & "z"
+              End If
+              F a
+            End Sub
+        """)
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              If a = "q" Then
+                a = "1"
+              ElseIf a = "w" Then
+                a = "xyz"
+              End If
+              F a
+            End Sub
+        """))
+
     def test_accumulator_long_chain(self):
         lines = ['Sub T()']
         lines.append('  x = "a"')

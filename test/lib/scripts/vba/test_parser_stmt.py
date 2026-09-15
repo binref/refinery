@@ -272,6 +272,30 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertEqual(len(if_stmt.elseif_clauses), 1)
 
+    def test_every_node_in_a_parsed_tree_names_its_holder(self):
+        """
+        A statement appended to an already-constructed clause — an `ElseIf` body, the trailing
+        statements of a `Select Case` clause — is adopted where it is appended, since everything
+        that walks up parent pointers, removal included, walks out of the tree otherwise.
+        """
+        code = cleandoc("""
+            Sub T()
+            If x = 1 Then
+            y = 1
+            ElseIf x = 2 Then
+            y = 2
+            End If
+            Select Case x
+            Case 1
+            y = 3
+            Case 2
+            y = 4
+            End Select
+            End Sub
+        """)
+        ast = self._parse(code)
+        self.assertEqual([node for node in ast.walk() if node.parent is None], [ast])
+
     def test_single_line_if(self):
         code = cleandoc("""
             Sub T()

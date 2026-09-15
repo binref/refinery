@@ -780,7 +780,9 @@ class VbaParser:
             stmt = self._parse_statement()
             if stmt is not None:
                 if elseif_clauses:
-                    elseif_clauses[-1].body.append(stmt)
+                    clause = elseif_clauses[-1]
+                    clause._adopt(stmt)
+                    clause.body.append(stmt)
                 else:
                     body.append(stmt)
             self._eat_eos()
@@ -978,7 +980,9 @@ class VbaParser:
                 if cases:
                     stmt = self._parse_statement()
                     if stmt is not None:
-                        cases[-1].body.append(stmt)
+                        clause = cases[-1]
+                        clause._adopt(stmt)
+                        clause.body.append(stmt)
                 else:
                     self._advance()
         return VbaSelectCaseStatement(
