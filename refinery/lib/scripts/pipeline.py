@@ -169,7 +169,8 @@ class DeobfuscationPipeline:
             if unknown := targets - all_names:
                 raise ValueError(F'group {name!r} invalidates unknown groups: {unknown}')
             if missing := dependents[name] - targets:
-                raise ValueError(F'group {name!r} does not invalidate {missing}, which depend on it')
+                raise ValueError(
+                    F'group {name!r} does not invalidate {sorted(missing)}, which depend on it')
 
     def _transitive_dependents(self) -> dict[str, set[str]]:
         direct: dict[str, set[str]] = {name: set() for name in self._pipeline}
