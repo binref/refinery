@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
-from refinery.lib.scripts import Block, Node, Transformer
+from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
@@ -1449,7 +1449,7 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         try:
             if method == 'tochararray' and not args:
-                return [_Char(c) for c in s]
+                return _CharArray(_Char(c) for c in s)
             if method == 'padleft' and len(args) >= 1:
                 width = self._to_int(args[0])
                 ch = self._to_str(args[1]) if len(args) > 1 else ' '
@@ -2432,6 +2432,8 @@ class Ps1SubExpressionEvaluator(Transformer):
         if stores is None:
             return None
         if stores:
+            if hoist is None:
+                return None
             container, statement = hoist
             if not substitute_statement(container, statement, [*stores, statement]):
                 return None
@@ -2611,9 +2613,8 @@ class Ps1SubExpressionEvaluator(Transformer):
         """
         if not written:
             return set()
-        for name in sorted(written):
-            if name in PS1_ENGINE_VARIABLES:
-                return None
+        if written & PS1_ENGINE_VARIABLES:
+            return None
         if self._runs_data_code:
             return set(written)
         return {name for name in written if self._occurs_outside(node, name)}
@@ -2661,7 +2662,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             cursor = cursor.parent
         return False
 
-    def _hoist_position(self, node: Ps1SubExpression) -> tuple[Node, Node] | None:
+    def _hoist_position(self, node: Ps1SubExpression) -> tuple[Node, Statement] | None:
         """
         The statement the retained stores go before and the body that holds it, or `None` for a
         position whose window is not empty.
@@ -2691,9 +2692,10 @@ class Ps1SubExpressionEvaluator(Transformer):
                 return None
             statement = parent.parent
         container = statement.parent
-        if container is None or get_body(container) is None:
+        if container is None:
             return None
-        if not any(one is statement for one in get_body(container)):
+        body = get_body(container)
+        if body is None or not any(one is statement for one in body):
             return None
         return container, statement
 
