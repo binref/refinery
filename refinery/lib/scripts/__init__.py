@@ -33,6 +33,15 @@ class Kind(enum.IntEnum):
 
 _SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'trailing_comments', 'errors'))
 
+#: Names that may appear in a node's instance `__dict__` although no dataclass field declares them.
+#: `Node.children` memoizes its answer into the entry named here. Whatever else joins it must hold
+#: no list: `_replace_in_parent`, `_remove_from_parent`, `owning_list` and `owning_field` read every
+#: list-valued attribute of a parent as a child container, and would mistake a list-valued extra
+#: for one.
+_INSTANCE_EXTRAS = frozenset(('_child_cache',))
+
+_VARS_SKIP = _SKIP_FIELDS | _INSTANCE_EXTRAS
+
 _child_fields_cache: dict[type, list[tuple[str, Kind]]] = {}
 
 _value_fields_cache: dict[type, tuple[str, ...]] = {}
@@ -235,6 +244,7 @@ class Node:
     spelling_fields: typing.ClassVar[frozenset[str]] = frozenset()
     unparsed: typing.ClassVar[bool] = False
     canonical_type: typing.ClassVar[str] = 'Node'
+    _child_cache: typing.ClassVar[tuple[int, tuple[Node, ...]] | None] = None
 
     @classmethod
     def __init_subclass__(
@@ -305,14 +315,33 @@ class Node:
         return None
 
     def children(self) -> tuple[Node, ...]:
-        return _compute_children(self)
+        """
+        The nodes this node holds, in declaration order, memoized on the instance against
+        `mutation_epoch` so that a repeated read costs one lookup rather than a pass of reflection
+        over the node's fields. Every mutation chokepoint drops the memo by moving the epoch; a
+        pass that assigns a child field directly opts out, exactly as it opts out of
+        `tree_version`.
+
+        The memo is deliberately not populated at construction: parsers append to the child lists
+        of already-constructed nodes, and nothing bumps the epoch during parse, so a memo built
+        there would outlive those appends. `reattach` keeps a fresh compute for the same reason
+        from the other side — it repairs structure and must not trust a memo a raw write left
+        stale.
+        """
+        epoch = _mutation_epoch
+        cached = self._child_cache
+        if cached is not None and cached[0] == epoch:
+            return cached[1]
+        result = _compute_children(self)
+        self._child_cache = (epoch, result)
+        return result
 
     def walk(self) -> Generator[Node, None, None]:
         stack: list[Node] = [self]
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(_compute_children(node))
+            stack.extend(node.children())
 
     def walk_in_order(self) -> Generator[Node, None, None]:
         """
@@ -324,7 +353,7 @@ class Node:
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(reversed(_compute_children(node)))
+            stack.extend(reversed(node.children()))
 
     def is_descendant_of(self, ancestor: Node) -> bool:
         cursor = self.parent
@@ -414,7 +443,9 @@ class Transformer(Visitor):
     via the `changed` flag.
 
     When a `models` cache is attached by the pipeline, setting `changed` truthy invalidates it, so a
-    transform that mutates the tree never leaves a stale model behind for the next consumer.
+    transform that mutates the tree never leaves a stale model behind for the next consumer. The
+    same set advances the global mutation epoch, which protects the `Node.children` memo exactly
+    as far as the model caches.
     """
 
     self_converging: bool = False
@@ -432,8 +463,10 @@ class Transformer(Visitor):
     @changed.setter
     def changed(self, value: bool):
         self._changed = value
-        if value and self.models is not None:
-            self.models.invalidate()
+        if value:
+            bump_mutation_epoch()
+            if self.models is not None:
+                self.models.invalidate()
 
     def mark_changed(self):
         self.changed = True
@@ -531,7 +564,9 @@ _mutation_epoch = 0
 def mutation_epoch() -> int:
     """
     How many mutations have been made to *any* tree, which is what a cache keyed on a single node
-    rather than on a root watches. Every mutation that advances a `tree_version` advances this too.
+    rather than on a root watches. Every mutation that advances a `tree_version` advances this too,
+    and so does every truthy set of `Transformer.changed`, which announces a raw write to the
+    per-node caches the same way it announces it to the model caches.
 
     The two are not redundant and neither replaces the other; they answer for caches with opposite
     cost profiles. A `tree_version` reader holds a root already and pays nothing to ask, so it can
@@ -541,8 +576,8 @@ def mutation_epoch() -> int:
     query it was meant to make cheap back into a walk. This is the counter such a reader can ask in
     constant time, and it is *coarser on purpose*: a mutation to some unrelated tree drops entries
     that were still good, and what that costs is recomputing one node's answer rather than
-    rebuilding a model. `refinery.lib.scripts.ps1.analysis.values.evaluate` is the reader it exists
-    for.
+    rebuilding a model. `refinery.lib.scripts.ps1.analysis.values.evaluate` and `Node.children` are
+    the readers it exists for.
 
     A pass that assigns a field directly instead of through `set_child`, `set_child_list` or
     `set_value` opts out of this counter exactly as it opts out of `tree_version`, and the entries
@@ -551,9 +586,17 @@ def mutation_epoch() -> int:
     return _mutation_epoch
 
 
-def _bump_tree_version(site: Node) -> None:
+def bump_mutation_epoch() -> None:
+    """
+    Advance the global mutation epoch without crediting the mutation to any one tree: the
+    announcement a transformer makes through `Transformer.changed` has no mutation site to hand.
+    """
     global _mutation_epoch
     _mutation_epoch += 1
+
+
+def _bump_tree_version(site: Node) -> None:
+    bump_mutation_epoch()
     root = tree_root(site)
     _tree_versions[root] = _tree_versions.get(root, 0) + 1
 
@@ -581,7 +624,7 @@ def _replace_in_parent(old: Node, new: Node) -> bool:
         return False
     held = 0
     for attr_name in vars(parent):
-        if attr_name in _SKIP_FIELDS:
+        if attr_name in _VARS_SKIP:
             continue
         value = getattr(parent, attr_name)
         if value is old:
@@ -595,7 +638,7 @@ def _replace_in_parent(old: Node, new: Node) -> bool:
     if held > 1:
         return False
     for attr_name in vars(parent):
-        if attr_name in _SKIP_FIELDS:
+        if attr_name in _VARS_SKIP:
             continue
         value = getattr(parent, attr_name)
         if value is old:
@@ -631,7 +674,7 @@ def _remove_from_parent(node: Node) -> bool:
     if parent is None:
         return False
     for attr_name in vars(parent):
-        if attr_name in _SKIP_FIELDS:
+        if attr_name in _VARS_SKIP:
             continue
         value = getattr(parent, attr_name)
         if isinstance(value, list):
@@ -669,7 +712,7 @@ def owning_list(node: Node) -> tuple[Node, str] | None:
     if parent is None:
         return None
     for name, value in vars(parent).items():
-        if name in _SKIP_FIELDS or not isinstance(value, list):
+        if name in _VARS_SKIP or not isinstance(value, list):
             continue
         if any(item is node for item in value):
             return parent, name
@@ -687,7 +730,7 @@ def owning_field(node: Node) -> tuple[Node, str] | None:
     if parent is None:
         return None
     for name, value in vars(parent).items():
-        if name not in _SKIP_FIELDS and value is node:
+        if name not in _VARS_SKIP and value is node:
             return parent, name
     return None
 
@@ -707,7 +750,9 @@ def set_child_list(parent: Node, attr: str, items: list) -> None:
 
     The existing list object is spliced rather than replaced, so a caller iterating the list it was
     handed — as `refinery.lib.scripts.js.deobfuscation.helpers.BodyProcessingTransformer` hands one
-    to `_process_body` — keeps observing the node's current children.
+    to `_process_body` — keeps observing the node's current children. Where the field holds no list
+    yet, a copy of `items` is installed rather than the caller's own object: a caller retaining
+    that list has no handle on the tree.
     """
     for item in items:
         if isinstance(item, Node):
@@ -720,7 +765,7 @@ def set_child_list(parent: Node, attr: str, items: list) -> None:
     if isinstance(existing, list):
         existing[:] = items
     else:
-        setattr(parent, attr, items)
+        setattr(parent, attr, list(items))
     _bump_tree_version(parent)
 
 
@@ -834,12 +879,15 @@ _N = TypeVar('_N', bound='Node')
 
 def _clone_node(node: _N) -> _N:
     """
-    Deep-clone a node tree downward without following parent pointers.
+    Deep-clone a node tree downward without following parent pointers. The copy carries the
+    original's instance `__dict__`, whose children memo names the original's children rather than
+    the clones, so it is dropped before the cloned child fields are installed.
     """
     clone = copy.copy(node)
     clone.parent = None
     clone.leading_comments = list(node.leading_comments)
     clone.trailing_comments = list(node.trailing_comments)
+    clone._child_cache = None
     for field_name, kind in _classify_fields(type(node)):
         if kind == Kind.ChildNode:
             value = getattr(node, field_name)

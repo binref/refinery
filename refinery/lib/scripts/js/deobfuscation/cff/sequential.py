@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts import Node, Statement, set_child_list
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -273,7 +273,7 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
                     if not remaining:
                         continue
                     if len(remaining) != len(decl_stmt.declarations):
-                        decl_stmt.declarations = remaining
+                        set_child_list(decl_stmt, 'declarations', remaining)
                 recovered.append(decl_stmt)
             for label in order_info.order_sequence:
                 recovered.extend(match.case_map[label])

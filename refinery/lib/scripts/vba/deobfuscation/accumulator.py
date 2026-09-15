@@ -4,7 +4,7 @@ via concatenation and builtin transforms into a single assignment.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Transformer
+from refinery.lib.scripts import Expression, Transformer, set_child
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
     body_lists,
@@ -175,8 +175,7 @@ class VbaStringAccumulatorFolding(Transformer):
                     if net_growth + growth <= budget:
                         net_growth += growth
                         new_literal = make_string_literal(accumulator)
-                        body[chain_end].value = new_literal
-                        new_literal.parent = body[chain_end]
+                        set_child(body[chain_end], 'value', new_literal)
                         for k in range(chain_start, chain_end):
                             removals.append((k, body))
                         changed = True

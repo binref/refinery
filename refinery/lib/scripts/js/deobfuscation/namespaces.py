@@ -5,7 +5,13 @@ from __future__ import annotations
 
 from typing import Iterator, NamedTuple
 
-from refinery.lib.scripts import Expression, Node, _replace_in_parent
+from refinery.lib.scripts import (
+    BodyEdit,
+    Expression,
+    Node,
+    _replace_in_parent,
+    set_child_list,
+)
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
@@ -92,11 +98,11 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             )
             hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
             self._rewrite(scope, name, declarator, flattenable)
-            self._remove_hoisted_statements(body, hoisted)
+            self._remove_hoisted_statements(scope, body, hoisted)
             self._emit_declarations(scope, body, flattenable - set(hoisted))
             self._emit_function_declarations(scope, hoisted)
             if not held_back:
-                self._remove_declarator(body, declarator, decl_stmt)
+                self._remove_declarator(scope, body, declarator, decl_stmt)
             self.changed = True
 
     @staticmethod
@@ -292,13 +298,15 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         return {k: v for k, v in found.items() if counts.get(k) == 1}
 
     @staticmethod
-    def _remove_hoisted_statements(body: list, hoisted: dict[str, _PropertyAssignment]) -> None:
+    def _remove_hoisted_statements(scope: Node, body: list, hoisted: dict[str, _PropertyAssignment]) -> None:
         """
         Delete the `NS.f = function…` statements whose properties are being raised to hoisted
-        `function f(){}` declarations, deepest index first so the earlier indices stay valid.
+        `function f(){}` declarations.
         """
-        for _, entry in sorted(hoisted.items(), key=lambda x: x[1].stmt_index, reverse=True):
-            del body[entry.stmt_index]
+        edit = BodyEdit(scope, 'body')
+        for entry in hoisted.values():
+            edit.splice(body[entry.stmt_index], [])
+        edit.apply()
 
     @staticmethod
     def _detect_function_assignments(
@@ -476,11 +484,16 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
 
     @staticmethod
     def _remove_declarator(
+        scope: Node,
         body: list,
         declarator: JsVariableDeclarator,
         decl_stmt: JsVariableDeclaration,
     ) -> None:
         if len(decl_stmt.declarations) == 1:
-            body.remove(decl_stmt)
+            edit = BodyEdit(scope, 'body')
+            edit.splice(decl_stmt, [])
+            edit.apply()
         else:
-            decl_stmt.declarations.remove(declarator)
+            set_child_list(decl_stmt, 'declarations', [
+                d for d in decl_stmt.declarations if d is not declarator
+            ])

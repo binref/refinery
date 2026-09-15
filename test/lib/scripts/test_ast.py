@@ -14,6 +14,8 @@ from refinery.lib.scripts import (
     Script,
     Statement,
     Transformer,
+    _clone_node,
+    _remove_from_parent,
     _replace_in_parent,
     mutation_epoch,
     set_body,
@@ -166,6 +168,21 @@ class TestMutationEpochContract(unittest.TestCase):
         before = mutation_epoch()
         _Rename().visit(script)
         self.assertEqual(_names(script), ['A', 'B'])
+        self.assertGreater(mutation_epoch(), before)
+
+    def test_a_changed_announcement_advances_the_epoch(self):
+        """
+        A pass that writes a field directly and announces the fact through `changed` owes the
+        per-node caches the same protection the announcement already owes the model caches.
+        """
+        class _Announce(Transformer):
+            def visit__Leaf(self, node: _Leaf):
+                self.mark_changed()
+                return None
+
+        script = _script('a')
+        before = mutation_epoch()
+        _Announce().visit(script)
         self.assertGreater(mutation_epoch(), before)
 
     def test_an_edit_to_one_tree_advances_the_epoch_of_a_reader_of_another(self):
@@ -321,6 +338,112 @@ class TestBodyEdit(unittest.TestCase):
         edit = BodyEdit(script)
         edit.splice(script.body[0], [])
         edit.apply()
+        self.assertIs(script.body, held)
+
+
+class TestChildrenMemo(unittest.TestCase):
+    """
+    `Node.children` is the reader every walker and every model descends through, so it owes each
+    mutation the answer a fresh reflection over the node's fields would give. Each test populates
+    the memo first — a mutation that arrives before any read has nothing to invalidate — and then
+    asks again after the mutation.
+    """
+
+    def _names(self, script: Script) -> list[str]:
+        return [stmt.name for stmt in script.children()]
+
+    def test_a_replaced_body_is_answered_by_children(self):
+        script = _script('a', 'b')
+        self.assertEqual(self._names(script), ['a', 'b'])
+        set_body(script, [_Leaf(name='c')])
+        self.assertEqual(self._names(script), ['c'])
+
+    def test_a_spliced_entry_is_answered_by_children(self):
+        script = _script('a', 'b', 'c')
+        self.assertEqual(self._names(script), ['a', 'b', 'c'])
+        edit = BodyEdit(script)
+        edit.splice(script.body[1], [_Leaf(name='x')])
+        edit.apply()
+        self.assertEqual(self._names(script), ['a', 'x', 'c'])
+
+    def test_a_replaced_child_is_answered_by_children(self):
+        holder = _Holder(child=_Leaf(name='a'))
+        self.assertEqual(holder.children(), (holder.child,))
+        set_child(holder, 'child', _Leaf(name='b'))
+        self.assertEqual(holder.children(), (holder.child,))
+
+    def test_a_replaced_list_item_is_answered_by_children(self):
+        script = _script('a', 'b')
+        self.assertEqual(self._names(script), ['a', 'b'])
+        _replace_in_parent(script.body[0], _Leaf(name='c'))
+        self.assertEqual(self._names(script), ['c', 'b'])
+
+    def test_a_removed_child_is_answered_by_children(self):
+        script = _script('a', 'b')
+        self.assertEqual(self._names(script), ['a', 'b'])
+        _remove_from_parent(script.body[0])
+        self.assertEqual(self._names(script), ['b'])
+
+    def test_a_raw_write_announced_through_changed_is_answered_by_children(self):
+        """
+        The dispatcher shape: a transform that writes a list directly and then announces the fact.
+        `changed` has to cover the memo for exactly as long as it covers the model caches.
+        """
+        class _RawWrite(Transformer):
+            def visit_Script(self, node: Script):
+                node.body.pop()
+                self.mark_changed()
+                return None
+
+        script = _script('a', 'b')
+        self.assertEqual(self._names(script), ['a', 'b'])
+        _RawWrite().visit(script)
+        self.assertEqual(self._names(script), ['a'])
+
+    def test_a_clone_answers_with_the_clones_children(self):
+        script = _script('a')
+        source_child = script.children()[0]
+        clone = _clone_node(script)
+        clone_child = clone.children()[0]
+        self.assertIsNot(clone_child, source_child)
+        self.assertIs(clone_child.parent, clone)
+        set_body(clone, [_Leaf(name='z')])
+        self.assertEqual([stmt.name for stmt in clone.children()], ['z'])
+
+    def test_the_memo_is_not_mistaken_for_a_child_container(self):
+        """
+        The memo lives in the instance `__dict__` beside the node's fields, and the parent scanners
+        read every list-valued attribute of a parent as a child container. A memo a scanner mistook
+        for one would refuse every edit.
+        """
+        script = _script('a', 'b')
+        self.assertEqual(self._names(script), ['a', 'b'])
+        holder = _Holder(child=_Leaf(name='a'))
+        self.assertEqual(holder.children(), (holder.child,))
+        self.assertTrue(_replace_in_parent(holder.child, _Leaf(name='b')))
+        self.assertTrue(_remove_from_parent(script.body[0]))
+        self.assertEqual(self._names(script), ['b'])
+
+
+class TestChildListOwnership(unittest.TestCase):
+    """
+    `set_child_list` splices the tree's own list object where it finds one, and installs a copy
+    where it finds none. Either way, the caller that handed the list in keeps no handle on the
+    tree: an append to the list a caller still holds must not appear among the node's children
+    without a mutation.
+    """
+
+    def test_a_fresh_field_does_not_install_the_callers_list(self):
+        script = Script()
+        items = [_Leaf(name='a')]
+        set_child_list(script, 'body', items)
+        items.append(_Leaf(name='b'))
+        self.assertEqual(_names(script), ['a'])
+
+    def test_an_existing_field_keeps_the_object_the_tree_held(self):
+        script = _script('a')
+        held = script.body
+        set_child_list(script, 'body', [_Leaf(name='b')])
         self.assertIs(script.body, held)
 
 

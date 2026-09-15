@@ -6,7 +6,14 @@ from __future__ import annotations
 from operator import itemgetter
 from typing import Generator
 
-from refinery.lib.scripts import Expression, Kind, Statement, _classify_fields
+from refinery.lib.scripts import (
+    BodyEdit,
+    Expression,
+    Kind,
+    Statement,
+    _classify_fields,
+    owning_list,
+)
 from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, CompareMode, Value
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -256,12 +263,23 @@ def body_lists(module: VbaModule) -> Generator[list[Statement]]:
 
 def apply_removals(removals: list[tuple[int, list[Statement]]]) -> bool:
     """
-    Delete statements at the given (body, index) positions in reverse index order so that earlier
-    deletions do not invalidate later indices. Returns whether any removals occurred.
+    Delete the statements at the given (body, index) positions through `BodyEdit`, so every removal
+    advances the mutation counter. Indices are resolved in reverse order — a deletion must not
+    shift a later one — and each statement is then spliced by identity. Returns whether any
+    removals occurred.
     """
     if not removals:
         return False
     removals.sort(key=itemgetter(0), reverse=True)
+    changed = False
     for pos, body in removals:
-        del body[pos]
-    return True
+        node = body[pos]
+        holder = owning_list(node)
+        if holder is None:
+            continue
+        parent, attr = holder
+        edit = BodyEdit(parent, attr)
+        edit.splice(node, [])
+        if edit.apply():
+            changed = True
+    return changed

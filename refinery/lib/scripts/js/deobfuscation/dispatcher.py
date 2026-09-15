@@ -9,10 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from refinery.lib.scripts import (
+    BodyEdit,
     Node,
     _clone_node,
     _remove_from_parent,
     _replace_in_parent,
+    set_child_list,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import enclosing_operator
@@ -423,7 +425,7 @@ def _build_extracted_function(
             if not remaining:
                 new_body_stmts = new_body_stmts[1:]
             else:
-                first.declarations = remaining
+                set_child_list(first, 'declarations', remaining)
     new_body = JsBlockStatement(body=new_body_stmts)
     decl = JsFunctionDeclaration(
         id=JsIdentifier(name=key),
@@ -496,11 +498,9 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             extracted[key] = decl
         for site in plan:
             _replace_in_parent(site.node, site.replacement())
-        insert_idx = body.index(info.decl)
-        body.remove(info.decl)
-        for i, (key, decl) in enumerate(extracted.items()):
-            decl.parent = scope
-            body.insert(insert_idx + i, decl)
+        edit = BodyEdit(scope, 'body')
+        edit.splice(info.decl, list(extracted.values()))
+        edit.apply()
         self.mark_changed()
         self._remove_boilerplate(scope, body, info)
 

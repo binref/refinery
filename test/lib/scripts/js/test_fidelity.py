@@ -49,6 +49,8 @@ from refinery.lib.scripts import (
     is_well_formed,
     owning_field,
     owning_list,
+    set_child,
+    set_child_list,
 )
 from refinery.lib.scripts.js import model as jsmodel
 from refinery.lib.scripts.js.model import JsBlockStatement, JsParenthesizedExpression
@@ -188,14 +190,14 @@ def _strip_parentheses(root: Node) -> bool:
         inner = node.expression
         if (field := owning_field(node)) is not None:
             holder, name = field
-            setattr(holder, name, inner)
+            set_child(holder, name, inner)
         elif (entry := owning_list(node)) is not None:
             holder, name = entry
-            items = getattr(holder, name)
-            items[:] = [inner if item is node else item for item in items]
+            set_child_list(holder, name, [
+                inner if item is node else item for item in getattr(holder, name)
+            ])
         else:
             continue
-        inner.parent = holder
         changed = True
     return changed
 
@@ -401,7 +403,7 @@ class TestJsFidelity(TestBase):
     def _truncated(self, source: str, index: int, field: str, size: int) -> Node:
         tree = self._parse(source)
         holder = list(tree.walk_in_order())[index]
-        setattr(holder, field, getattr(holder, field)[:size])
+        set_child_list(holder, field, getattr(holder, field)[:size])
         return tree
 
 

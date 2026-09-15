@@ -25,7 +25,7 @@ This transformer performs four phases:
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, _remove_from_parent, owning_list
+from refinery.lib.scripts import Node, _remove_from_parent, owning_list, set_child
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
@@ -470,12 +470,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if _remove_from_parent(stmt):
                     self.mark_changed()
             else:
-                stmt.expression = expr.right
-                expr.right.parent = stmt
+                set_child(stmt, 'expression', expr.right)
                 self.mark_changed()
         for decl in declarators:
             if decl.init is not None and self._is_removable(decl.init):
-                decl.init = None
+                set_child(decl, 'init', None)
                 self.mark_changed()
 
     def _is_flow_dead_store(self, write: JsIdentifier) -> bool:
@@ -787,8 +786,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     else:
                         fully = False
                 else:
-                    stmt.expression = expr.right
-                    expr.right.parent = stmt
+                    set_child(stmt, 'expression', expr.right)
                     preserved.add(stmt)
                     self.mark_changed()
             if fully:
@@ -1029,8 +1027,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     if _remove_from_parent(stmt):
                         self.mark_changed()
                 else:
-                    stmt.expression = expr.right
-                    expr.right.parent = stmt
+                    set_child(stmt, 'expression', expr.right)
                     self.mark_changed()
         return dead
 

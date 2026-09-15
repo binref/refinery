@@ -3,7 +3,7 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Node, Transformer
+from refinery.lib.scripts import Expression, Node, Transformer, set_child, set_child_list, set_value
 from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
@@ -684,7 +684,7 @@ class JsSimplifications(Transformer):
             if is_invocation_target(node) and callee_form_sensitive(filtered[0]):
                 return None
             return filtered[0]
-        node.expressions = filtered
+        set_child_list(node, 'expressions', filtered)
         self.mark_changed()
         return None
 
@@ -755,9 +755,8 @@ class JsSimplifications(Transformer):
                     return elements[idx]
             prop_str = string_value(node.property)
             if prop_str is not None and is_valid_identifier(prop_str):
-                node.computed = False
-                node.property = JsIdentifier(name=prop_str)
-                node._adopt(node.property)
+                set_value(node, 'computed', False)
+                set_child(node, 'property', JsIdentifier(name=prop_str))
                 self.mark_changed()
                 return None
         return None
@@ -771,9 +770,8 @@ class JsSimplifications(Transformer):
                 and is_valid_property_key(key_str)
                 and (node.method or key_str != '__proto__')
             ):
-                node.computed = False
-                node.key = JsIdentifier(name=key_str)
-                node._adopt(node.key)
+                set_value(node, 'computed', False)
+                set_child(node, 'key', JsIdentifier(name=key_str))
                 self.mark_changed()
         return None
 

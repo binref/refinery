@@ -7,7 +7,7 @@ import operator
 
 from typing import Callable
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Transformer, set_child
 from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
@@ -196,8 +196,7 @@ class VbaSimplifications(Transformer):
             ):
                 inner_right_str = string_value(node.left.right)
                 if inner_right_str is not None:
-                    node.left.right = make_string_literal(inner_right_str + rhs)
-                    node.left.right.parent = node.left
+                    set_child(node.left, 'right', make_string_literal(inner_right_str + rhs))
                     return node.left
         if lhs is not None:
             inner = node.right
@@ -214,8 +213,7 @@ class VbaSimplifications(Transformer):
             ):
                 inner_left_str = string_value(inner.left)
                 if inner_left_str is not None:
-                    inner.left = make_string_literal(lhs + inner_left_str)
-                    inner.left.parent = inner
+                    set_child(inner, 'left', make_string_literal(lhs + inner_left_str))
                     return node.right
         return None
 

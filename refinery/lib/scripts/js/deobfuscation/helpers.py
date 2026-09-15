@@ -37,7 +37,6 @@ from refinery.lib.scripts import (
     Statement,
     Transformer,
     _clone_node,
-    _compute_children,
     _remove_from_parent,
     _replace_in_parent,
     set_body,
@@ -2142,7 +2141,7 @@ def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]
         if isinstance(node, FUNCTION_NODES):
             if not (include_root_body and node is root):
                 continue
-        cc = _compute_children(node)
+        cc = node.children()
         stack.extend(reversed(cc))
 
 

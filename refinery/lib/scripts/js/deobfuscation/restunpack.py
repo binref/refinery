@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from refinery.lib.scripts import Node, _replace_in_parent
+from refinery.lib.scripts import BodyEdit, Node, _replace_in_parent, set_child_list
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import SemanticModel, references_own_arguments
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -315,12 +315,14 @@ def _remove_truncation(body: JsBlockStatement, length_access: JsMemberExpression
     the one that was read as the parameter count may be dropped.
     """
     stmts = body.body
-    for i, stmt in enumerate(stmts):
+    for stmt in stmts:
         if not isinstance(stmt, JsExpressionStatement):
             continue
         expr = stmt.expression
         if isinstance(expr, JsAssignmentExpression) and expr.left is length_access:
-            stmts.pop(i)
+            edit = BodyEdit(body, 'body')
+            edit.splice(stmt, [])
+            edit.apply()
             return
 
 
@@ -376,7 +378,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
             return False
         if not accesses:
             _remove_truncation(fn.body, length_access)
-            fn.params.clear()
+            set_child_list(fn, 'params', [])
             return True
         taken = _mentioned_names(fn.body)
         names = _generate_names(param_count, set(accesses.keys()), taken)
@@ -388,9 +390,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
                 replacement = JsIdentifier(name=name)
                 _replace_in_parent(access_node, replacement)
         _remove_truncation(fn.body, length_access)
-        fn.params.clear()
-        for name in names.params:
-            fn.params.append(JsIdentifier(name=name))
+        set_child_list(fn, 'params', [JsIdentifier(name=name) for name in names.params])
         if stack_chain is None:
             self._add_local_declarations(fn.body, names.local_names)
         return True

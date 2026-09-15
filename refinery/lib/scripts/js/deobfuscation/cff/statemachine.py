@@ -13,7 +13,15 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
-from refinery.lib.scripts import Expression, Node, Statement, _clone_node, _replace_in_parent
+from refinery.lib.scripts import (
+    Expression,
+    Node,
+    Statement,
+    _clone_node,
+    _replace_in_parent,
+    set_child,
+    set_child_list,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     access_key,
@@ -2401,16 +2409,20 @@ def _recover_returns(stmts: list[Statement], did_return_var: str | None) -> list
                 continue
         if isinstance(stmt, JsIfStatement):
             if stmt.consequent is not None and isinstance(stmt.consequent, JsBlockStatement):
-                stmt.consequent.body = _recover_returns(stmt.consequent.body, did_return_var)
+                set_child_list(stmt.consequent, 'body', _recover_returns(
+                    stmt.consequent.body, did_return_var
+                ))
             if stmt.alternate is not None and isinstance(stmt.alternate, JsBlockStatement):
-                stmt.alternate.body = _recover_returns(stmt.alternate.body, did_return_var)
+                set_child_list(stmt.alternate, 'body', _recover_returns(
+                    stmt.alternate.body, did_return_var
+                ))
             elif isinstance(stmt.alternate, JsIfStatement):
                 recovered = _recover_returns([stmt.alternate], did_return_var)
                 if recovered:
-                    stmt.alternate = recovered[0]
+                    set_child(stmt, 'alternate', recovered[0])
         elif isinstance(stmt, JsWhileStatement):
             if stmt.body is not None and isinstance(stmt.body, JsBlockStatement):
-                stmt.body.body = _recover_returns(stmt.body.body, did_return_var)
+                set_child_list(stmt.body, 'body', _recover_returns(stmt.body.body, did_return_var))
         result.append(stmt)
     return result
 
@@ -2673,14 +2685,11 @@ def _resolve_shared_wrappers(
             if match.arg_var_name and target and match.arg_var_name != target:
                 recovered = _rebind_free_arg_var(recovered, match.arg_var_name, target)
             recovered = keeping_directives(node.body, recovered)
-            node.body = JsBlockStatement(body=recovered)
-            node.body.parent = node
-            for s in recovered:
-                s.parent = node.body
+            set_child(node, 'body', JsBlockStatement(body=recovered))
             if synthetic.arg_params:
-                node.params = [JsIdentifier(name=n) for n in synthetic.arg_params]
+                set_child_list(node, 'params', [JsIdentifier(name=n) for n in synthetic.arg_params])
             elif target is not None and target != wrapper_info.rest_param_name:
-                node.params = _rebind_wrapper_param(node.params, target)
+                set_child_list(node, 'params', _rebind_wrapper_param(node.params, target))
             resolved_any = True
         if not resolved_any:
             break
