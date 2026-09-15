@@ -504,7 +504,7 @@ class Transformer(Visitor):
             elif kind == Kind.ChildList:
                 items = getattr(node, field_name)
                 new_list = None
-                for idx, item in enumerate(items):
+                for idx, item in enumerate(items or ()):
                     if isinstance(item, Node):
                         replacement = self.visit(item)
                         if replacement is not None:
@@ -520,7 +520,7 @@ class Transformer(Visitor):
             elif kind == Kind.TupleList:
                 items = getattr(node, field_name)
                 new_list = None
-                for idx, item in enumerate(items):
+                for idx, item in enumerate(items or ()):
                     new_tuple = []
                     tuple_changed = False
                     for elem in item:

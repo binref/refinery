@@ -446,6 +446,13 @@ class TestChildListOwnership(unittest.TestCase):
         self.assertEqual([stmt.name for stmt in holder.items], ['a'])
         self.assertEqual([stmt.name for stmt in holder.children()], ['a'])
 
+    def test_a_field_that_holds_a_list_is_not_the_callers_list(self):
+        script = _script('a')
+        items = [_Leaf(name='b')]
+        set_child_list(script, 'body', items)
+        items.append(_Leaf(name='c'))
+        self.assertEqual(_names(script), ['b'])
+
     def test_an_existing_field_keeps_the_object_the_tree_held(self):
         script = _script('a')
         held = script.body
@@ -475,6 +482,20 @@ class TestNullableChildList(unittest.TestCase):
         clone = _clone_node(holder)
         self.assertIsNot(clone.items[0], holder.items[0])
         self.assertIs(clone.items[0].parent, clone)
+
+    def test_a_transformer_passes_over_a_nullable_list_that_is_empty(self):
+        """
+        The rewriter iterates every child list it rewrites, including one that holds nothing yet.
+        """
+        visited = []
+
+        class _Recorder(Transformer):
+            def visit__Leaf(self, node):
+                visited.append(node.name)
+
+        _Recorder().visit(_LateHolder())
+        _Recorder().visit(_LateHolder(items=[_Leaf(name='a')]))
+        self.assertEqual(visited, ['a'])
 
 
 if __name__ == '__main__':
