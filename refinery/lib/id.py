@@ -115,6 +115,11 @@ MimeByExtension = {
 
 
 class Format:
+    """
+    A format specifier. Objects of this class define a poset; A more general version of a format
+    satisifes a "<=" relation to a more specific one. For example, TEXT <= ASCII_TEXT.
+    """
+
     __slots__ = 'category', 'extension', 'mime', 'mnemonic', 'details'
 
     def __hash__(self):
@@ -122,6 +127,11 @@ class Format:
 
     def __str__(self):
         return self.mnemonic
+
+    def __ge__(self, them):
+        if not isinstance(them, Format):
+            return False
+        return them.__le__(self)
 
     def __le__(self, them):
         if not isinstance(them, Format):
