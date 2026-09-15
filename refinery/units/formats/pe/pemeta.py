@@ -157,8 +157,7 @@ def get_rich_info(vid: int) -> VersionInfo:
 
 class pemeta(JSONTableUnit):
     """
-    Extract metadata from PE files. By default, all information except for imports and exports are
-    extracted.
+    Extract metadata from PE files; Optionally includes imports and exports.
     """
     def __init__(
         self,

@@ -45,6 +45,7 @@ _AGENT_DETAIL_LIST = [
     'pack',
     'peek',
     'perc',
+    'pemeta',
     'pestrip',
     'pf',
     'ps1',
