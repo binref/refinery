@@ -61,6 +61,13 @@ class TestPs1ReflectionReads(TestPs1):
         self._assertUnchanged(
             '$x = [Console].GetProperty(\'KeyAvailable\').GetValue($Null)', Ps1ReflectionReads)
 
+    def test_a_property_spelled_in_another_case_is_left_standing(self):
+        # `Type.GetProperty(String)` is case-sensitive, so `GetProperty('utf8')` finds nothing on
+        # 5.1 and `GetValue($Null)` throws, where the case-insensitive member `[T]::utf8` is a
+        # value: rewriting the throw to the value is a different program.
+        self._assertUnchanged(
+            '$x = [Text.Encoding].GetProperty(\'utf8\').GetValue($Null)', Ps1ReflectionReads)
+
     def test_a_field_read_is_left_standing(self):
         # `GetProperty` does not find a field: the read the script spells throws on 5.1, and the
         # direct member it would resolve to is a different program. No `GetField` arm exists until

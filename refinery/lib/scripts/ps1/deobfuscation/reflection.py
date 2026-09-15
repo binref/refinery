@@ -25,13 +25,15 @@ class Ps1ReflectionReads(Transformer):
     """
     Rewrite `[T].GetProperty('P').GetValue($Null)` to `[T]::P`.
 
-    The rewrite is a re-spelling and not an evaluation, so what it has to preserve is only the two
-    ways the spellings can differ. A getter that throws surfaces through `GetValue` wrapped in a
+    The rewrite is a re-spelling and not an evaluation, so what it has to preserve is only the ways
+    the spellings can differ. A getter that throws surfaces through `GetValue` wrapped in a
     `MethodInvocationException` and through the direct read as itself — measured on 5.1 with
     `[Console]::KeyAvailable` on a redirected stdin — which is why the member has to be one the
     curated cannot-throw table vouches for. And `GetProperty` finds properties only, so a field the
     same shape spells is a read 5.1 throws on; there is no `GetField` arm, because no sample has
-    needed one and a rewrite of a read the script never made is a different program.
+    needed one and a rewrite of a read the script never made is a different program. `GetProperty`
+    is also case-sensitive where member access is not, so a spelling whose case is not the member's
+    own finds no property on 5.1 and is left standing rather than rewritten to a value it throws on.
 
     The argument binder is the reason no `GetMethod` arm exists: a `$null` argument an
     `Invoke`d method receives as raw null throws where the direct spelling converts it, and a
@@ -84,6 +86,10 @@ class Ps1ReflectionReads(Transformer):
         spelled = canonical_member(resolved, name)
         if spelled is None:
             return None
+        if name != spelled:
+            # `Type.GetProperty(String)` is case-sensitive, so a spelling in another case finds no
+            # property on 5.1 and `GetValue` throws where the direct member reads a value.
+            return None
         return Ps1MemberAccess(
             access=Ps1AccessKind.STATIC,
             object=lookup.object,
@@ -97,11 +103,7 @@ class Ps1ReflectionReads(Transformer):
         two-argument one carrying no index, which a non-indexed property accepts and answers the
         same value for. Any other target is a read of an instance the receiver does not vouch for.
         """
-        if len(arguments) not in (1, 2):
-            return False
-        if not all(
+        return len(arguments) in (1, 2) and all(
             is_builtin_variable(argument, {'null'})
             for argument in arguments
-        ):
-            return False
-        return True
+        )
