@@ -809,7 +809,6 @@ class TestPs1APipelineProducesACollection(TestPs1):
         """)
         self.assertEqual(self._deobfuscate(source), expected)
 
-    @unittest.expectedFailure
     def test_a_pipeline_over_chars_stays_a_collection_of_chars(self):
         self.assertEqual(
             self._deobfuscate('$x = 65, 66 | ForEach-Object { [char]$_ }'),

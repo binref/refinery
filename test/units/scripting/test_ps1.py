@@ -82,7 +82,7 @@ class TestPs1RealWorldSmall(TestUnitBase):
             b"| ForEach-Object { [Convert]::ToInt16($_.ToString(), 8) -As [Char] }"
         )
         result = data | self.load() | str
-        self.assertEqual(result, "'-', 'j', 'o', 'i', 'N', '(', ' '")
+        self.assertEqual(result, '[char]45, [char]106, [char]111, [char]105, [char]78, [char]40, [char]32')
 
     def test_set_alias_inlining(self):
         data = b"sal myAlias New-Object; myAlias Net.WebClient"

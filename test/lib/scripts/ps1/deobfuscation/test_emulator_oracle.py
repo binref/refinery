@@ -4,14 +4,16 @@ held against what a real Windows PowerShell 5.1 host printed for the same expres
 from here: the measurements are the ones already taken and checked in as
 `test.lib.scripts.ps1.test_oracle.TYPE_TRANSCRIPTS`, and this module reads them as data.
 
-**The interpreter's currency carries almost no .NET type.** A `System.Byte`, an `Int32` and an
-`Int64` are the same Python `int` to it, so the recording says more than the interpreter can answer.
+**The interpreter's currency carries almost no .NET type.** An `Int32` and an `Int64` are the
+same Python `int` to it, so the recording says more than the interpreter can answer.
 `_CURRENCY` is where that is decided: it names, for each measured .NET type, the one value of the
 currency a correct interpreter has to produce, and every type that collapses onto another collapses
-there and nowhere else. The one .NET type the interpreter keeps apart from the value it would
-otherwise share is `System.Char`: it carries one as a `_Char`, a `str` subtype, rather than as the
-one-character `System.String` it prints as, so that an operation a String has and a Char does not —
-a `*` on its left — is refused rather than run. What the currency does *not* collapse is `int`
+there and nowhere else. The two .NET types the interpreter keeps apart from the value it would
+otherwise share are `System.Char` and `System.Byte`: it carries a Char as a `_Char`, a `str`
+subtype, rather than as the one-character `System.String` it prints as, so that an operation a
+String has and a Char does not — a `*` on its left — is refused rather than run; and a Byte as a
+`_Byte`, an `int` subtype, so that a fold spelling the value back out writes the width the body
+produced rather than the Int32 its magnitude is. What the currency does *not* collapse is `int`
 against `float`, `str` and `bool` and `None` against each other: those the currency does spell
 apart, the interpreter does produce each of them, and the value that reaches a folded script is one
 of them rather than the other — so a mismatch between two of those is a wrong answer and is recorded
@@ -43,6 +45,7 @@ from test.lib.scripts.ps1.test_oracle import TYPE_TRANSCRIPTS
 
 from refinery.lib.scripts.ps1.deobfuscation.emulator import (
     InvokeExpression,
+    _Byte,
     _Char,
     _Ps1Interpreter,
     _Ps1InterpreterError,
@@ -74,7 +77,7 @@ def _null(rendered: str) -> None:
 #: than being compared against an approximation of itself. A null value's witness names no type at
 #: all, which is what the empty key is.
 _CURRENCY: dict[str, Callable[[str], _Value]] = {
-    'System.Byte'    : int,
+    'System.Byte'    : _Byte,
     'System.SByte'   : int,
     'System.Int16'   : int,
     'System.UInt16'  : int,
@@ -220,10 +223,8 @@ DIVERGENCES: dict[str, _Divergence] = {
     "'ſ' -match 's'"                     : _Divergence(False, True),
 
     # A conversion answers inside the width of its target or not at all: a hexadecimal string
-    # reaches Int32 as a bit pattern, and a shift keeps the type it shifted rather than widening
-    # past it.
+    # reaches Int32 as a bit pattern.
     "[int]'0xFFFFFFFF'"                  : _Divergence(-1, 4294967295),
-    '[byte]1 -shl -1'                    : _Divergence(0, -2147483648),
 
     # `$null` on the left leaves the type to the right operand, so nothing plus a Boolean is that
     # Boolean rather than the number the interpreter converts it to.

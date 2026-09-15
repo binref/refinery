@@ -1013,6 +1013,27 @@ def fact_of(payload: object) -> Ps1Fact:
     return UNKNOWN
 
 
+def char_fact(text: str) -> Ps1Fact:
+    """
+    The `System.Char` a one-character text spells, for a caller that computed the character and
+    cannot ask `fact_of`: a payload names a String, and the Char differs from it in nothing but
+    the type beside the payload. Any other length names nothing.
+    """
+    return Ps1Constant(_CHAR, text) if len(text) == 1 else UNKNOWN
+
+
+def collection_fact(facts: typing.Iterable[Ps1Fact]) -> Ps1Fact:
+    """
+    The `Object[]` whose elements are these facts, for a caller that built the facts itself
+    because its currency carries kinds the payloads do not name. One element that names no value
+    names no collection: a shorter array than the script builds is a different value.
+    """
+    gathered = tuple(facts)
+    if not all(_is_value(one) for one in gathered):
+        return UNKNOWN
+    return Ps1Constant(_OBJECT_ARRAY, gathered)
+
+
 def _quoted(parts: list) -> Ps1Fact:
     """
     A double-quoted string all of whose parts are text, which is the one shape of it that pins a

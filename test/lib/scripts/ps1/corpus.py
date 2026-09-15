@@ -466,6 +466,19 @@ BEHAVIOURS: tuple[str, ...] = (
     'iex \'$u = "U"\'; Write-Output $($u + \'x\')',
     "Set-Variable q 5; function fq { $q + 1 }; Write-Output (fq)",
 
+    #: What a fold's value spelling is asked to preserve the behaviour of. A `Char` and a `Byte`
+    #: are the two widths the language spells no literal of, so each row reads the type back after
+    #: the fold has spelled the value the body computed; a fold that wrote the wider value the
+    #: payload alone names would answer the read the other way.
+    '$x = $($r = [char]66; $r); Write-Output ($x -is [char])',
+    '$x = $($r = [byte]77; $r); Write-Output ($x -is [byte])',
+
+    #: What retention is asked to preserve the behaviour of. The read is spelled, so the retained
+    #: store is owed in both models; the read inside the payload is not, so the row is the one the
+    #: trusting model's contract costs — the defect it opens is recorded beside the differential.
+    "$x = $($w = 'a'; 'v'); Write-Output $w",
+    "$c = 'Write-Output $w'; $x = $($w = 'a'; 'v'); iex $c",
+
     #: What an abbreviated parameter is asked to preserve the behaviour of. Each binding was
     #: measured on 5.1: the alias and any unambiguous prefix name the parameter the written-out
     #: spelling does, a cmdlet's own parameters winning over the common ones where a prefix matches
@@ -593,6 +606,15 @@ CLAIMS: tuple[str, ...] = (
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x",
     "& { $env:z = 'set' }; Write-Host $env:z",
     "$n = 'script:q'; function g($p = (Set-Variable $n 'v')) { }; g; Write-Host $q",
+
+    #: What a scriptblock created from a string is asked to preserve the behaviour of. A created
+    #: block reads the scope that runs it and cannot assign its locals — where the same text run
+    #: through `Invoke-Expression`, or through a dot, can — so each row makes one of those three
+    #: facts happen and prints what survives of the caller's variable. The tail each row carries is
+    #: what the tool rewrites, which is what puts the row in the differential at all.
+    "$v = 'a'; & ([ScriptBlock]::Create('$v + \"b\"')); Write-Output (1 + 1)",
+    "$v = 'a'; & ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)",
+    "$v = 'a'; . ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)",
 )
 
 

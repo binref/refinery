@@ -300,24 +300,22 @@ class TestPs1ForEachPipeline(TestPs1):
     def test_foreach_pipeline_char_convert(self):
         data = "'72z101z108z108z111'.Split('z') | %{ ([Char]([Convert]::ToInt16(($_.ToString()), 10))) }"
         result = self._deobfuscate(data)
-        self.assertEqual(result, "'H', 'e', 'l', 'l', 'o'")
+        self.assertEqual(result, '[char]72, [char]101, [char]108, [char]108, [char]111')
 
     def test_foreach_pipeline_negative_integers(self):
         data = "((-83,-71,-65,-75,-107,-70,-75,-64,-110,-83,-75,-72,-79,-80) | %{ [char]($_ + 180) }) -join ''"
         result = self._deobfuscate(data)
-        self.assertIn('amsiInitFailed', result)
+        self.assertEqual(result, "'amsiInitFailed'")
 
     def test_foreach_pipeline_mixed_sign_integers(self):
         data = "(-4, 1, -17) | %{ [char]($_ + 104) }"
         result = self._deobfuscate(data)
-        self.assertIn('d', result)
-        self.assertIn('i', result)
-        self.assertIn('W', result)
+        self.assertEqual(result, '[char]100, [char]105, [char]87')
 
     def test_foreach_pipeline_expandable_string_hex_decode(self):
         data = "'46 75 6E' -split ' ' | %{[char][byte]\"0x$_\"}"
         result = self._deobfuscate(data)
-        self.assertEqual(result, "'F', 'u', 'n'")
+        self.assertEqual(result, '[char]70, [char]117, [char]110')
 
     def test_foreach_pipeline_expandable_string_with_subexpr(self):
         data = "@('A','B','C') | %{\"item: $( $_ )\"}"
@@ -342,8 +340,7 @@ class TestPs1ForEachPipeline(TestPs1):
     def test_foreach_pipeline_array_expression(self):
         data = "@(65,66,67) | %{[char]$_}"
         result = self._deobfuscate(data)
-        self.assertIn('A', result)
-        self.assertIn('B', result)
+        self.assertEqual(result, '[char]65, [char]66, [char]67')
 
 
 class TestPs1EmulatorExtra(TestPs1):
@@ -409,8 +406,8 @@ class TestPs1EmulatorExtra(TestPs1):
         self.assertEqual(result, "$o = 'C'")
 
     def test_psitem_is_pipeline_item(self):
-        result = self._apply("(97,98,99) | % { [char]$PSItem }", Ps1ForEachPipeline)
-        self.assertEqual(result, "'a', 'b', 'c'")
+        result = self._apply('(97,98,99) | % { [char]$PSItem }', Ps1ForEachPipeline)
+        self.assertEqual(result, '[char]97, [char]98, [char]99')
 
     def test_foreach_over_string_is_scalar(self):
         # PowerShell iterates a foreach over a string exactly once (the string is a scalar).
@@ -910,7 +907,7 @@ class TestPs1APipelineSourceIsWhatTheCastAroundItMakesOfIt(TestPs1):
     def test_a_cast_the_numbers_written_inside_it_already_answer_is_still_folded(self):
         self.assertEqual(
             self._apply('[Char[]](72, 73) | % { [char]($_ -bxor 0) }', Ps1ForEachPipeline),
-            "'H', 'I'",
+            '[char]72, [char]73',
         )
 
 
@@ -950,17 +947,18 @@ class TestPs1AnArrayCastAnElementDoesNotFitIsAThrowAndNotARename(TestPs1):
 
     def test_a_pipeline_over_a_cast_every_element_fits_is_still_folded(self):
         """
-        These pin a ledgered erasure, not an exact answer: on 5.1 `[byte[]](5, 6)` carries two
-        `System.Byte` and the numerals written back carry `System.Int32`, so what survives the fold
-        is the count and the magnitudes and not the element type. It is kept because the same
-        reading is what resolves `[Char[]](…) | %{ [char]($_ -bxor $k) }`, the shape real loaders
-        are written in, and because the erasure is bounded by the range check the tests above pin.
+        The block's answer is spelled at the types it computes: a `[char]` inside it leaves as the
+        `Char` the body produced. The cast on the *source* is a different reading, which hands the
+        element on as the number written inside it: on 5.1 `[byte[]](5, 6)` carries two
+        `System.Byte` and the numerals written back carry `System.Int32`, so what survives the
+        dropped cast is the count and the magnitudes and not the element type — bounded by the
+        range check the tests above pin.
         """
         self.assertEqual(self._apply('[byte[]](5, 6) | % { $_ }', Ps1ForEachPipeline), '5, 6')
         self.assertEqual(self._apply('[byte[]](255, 1) | % { $_ }', Ps1ForEachPipeline), '255, 1')
         self.assertEqual(
             self._apply('[Char[]](72, 73) | % { [char]($_ -bxor 0) }', Ps1ForEachPipeline),
-            "'H', 'I'",
+            '[char]72, [char]73',
         )
 
 
@@ -1825,14 +1823,14 @@ class TestPs1AFoldedBodyAnswersWhereTheHostAnswersAndNowhereElse(TestPs1):
             with self.subTest(cast):
                 self._assertUnchanged(source, Ps1FunctionEvaluator)
 
-    def test_a_byte_cast_the_value_fits_is_the_number_it_names(self):
+    def test_a_byte_cast_the_value_fits_folds_at_its_own_width(self):
         source = cleandoc("""
             function f {
               [byte]200
             }
             $x = f
         """)
-        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), '$x = 200')
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), '$x = [byte]200')
 
     @unittest.expectedFailure
     def test_a_long_s_matches_no_s_under_the_culture_casing_ignorecase_means(self):

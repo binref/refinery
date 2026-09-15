@@ -148,6 +148,10 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
         'The same over a bareword 5.1 cannot resolve: the CommandNotFound is statement-terminating '
         'and steps over with or without the `trap`, so `after` runs and the removal only lets its '
         'record through.',
+    "$v = 'a'; & ([ScriptBlock]::Create('$v + \"b\"')); Write-Output (1 + 1)":
+        'The created block is inlined as the statements it spells and the one statement it is '
+        'becomes the bare value `$v + "b"`, which the strip removes as console output — the '
+        'documented default the other entries of this table state. `ps1 -k` keeps the value.',
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
@@ -482,6 +486,12 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('INFO\tset',),
     "$n = 'script:q'; function g($p = (Set-Variable $n 'v')) { }; g; Write-Host $q":
         ('INFO\tv',),
+    "$v = 'a'; & ([ScriptBlock]::Create('$v + \"b\"')); Write-Output (1 + 1)":
+        ('OUT\tSystem.String\tab', 'OUT\tSystem.Int32\t2'),
+    "$v = 'a'; & ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)":
+        ('OUT\tSystem.String\ta', 'OUT\tSystem.Int32\t2'),
+    "$v = 'a'; . ([ScriptBlock]::Create('$v = \"b\"')); Write-Output $v; Write-Output (1 + 1)":
+        ('OUT\tSystem.String\tb', 'OUT\tSystem.Int32\t2'),
     "Get-Item nope -e Stop; Write-Host 'after'":
         ('INFO\tafter',),
     "Get-Item nope -errora Stop; Write-Host 'after'":
@@ -3764,19 +3774,13 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
 
 #: Rows of `corpus.TYPES` whose deobfuscation does not behave like the row. Held apart from
 #: `BEHAVIOUR_DEFECTS` rather than merged into it, because that table carries one entry per defect
-#: with a host-free twin for each, and these share a handful of root causes: the Char erasure and
-#: the cast whose target the fold drops.
+#: with a host-free twin for each, and these share a handful of root causes: the cast whose target
+#: the fold drops.
 #:
-#: What is left of the Char erasure here is a wrong type in the interpreter, which computes with no
-#: Char: a `[char]` cast inside a body it folds reaches the tree as the one-character String the
-#: character spells. The value domain no longer shares that gap — a `[char[]]` cast is answered as
-#: the `Char[]` it is, so `-is [string]` over one is `False` and its `.Count` is the element count —
-#: and `[int][char]48` folds to the code point `48` the way 5.1 reads it. The row below is that
-#: wrong type and nothing else.
+#: The Char erasure is gone from this table: the interpreter carries a Char now, so a `[char]` cast
+#: inside a body it folds leaves as the Char it produced rather than the one-character String it
+#: spells, and the row that carried it behaves like its snippet.
 TYPE_DEFECTS: dict[str, str] = {
-    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.Count; Write-Output $t':
-        'The count is right and the elements are not: the interpreter has no Char in the values '
-        'it computes with, so a [char] cast reaches the tree as a one-character String.',
     'function f { $i = 0; $i++; $i++; $i }; $t = f; Write-Output (,$t); Write-Output $t':
         'An increment written as a statement hands nothing to the success stream on 5.1, so the '
         'body produces the one number it ends with. The interpreter contributes the value of every '
@@ -4114,11 +4118,17 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     """
     The output must run and do the same thing as the input. Every other test of that compares our
     output against our own expectation of it; this one measures both on a host.
+
+    The mode measured is the sound one, `ps1 -s`: it is the one whose output this promise is made
+    about, because the trusting model the unit runs by default is documented — see
+    `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` — to assume that code
+    the analysis cannot read touches nothing, and what it drops rather than keep is that model's
+    cost and not a defect of the rewrite.
     """
 
     def test_the_output_behaves_like_the_input(self):
         snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
-        deobfuscated = rewritten_by(self.ldu('ps1'), snippets)
+        deobfuscated = rewritten_by(self.ldu('ps1', strict=True), snippets)
         rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
         changed = sorted(
             snippet
@@ -4147,7 +4157,9 @@ class TestPs1EverySnippetIsStillRewritten(TestBase):
     The differential above runs only the snippets the tool rewrites, so a snippet it stops rewriting
     leaves that comparison rather than failing it — and leaving it reads exactly like the defect
     being fixed. This closes that direction, and needs no host to do it, so it ratchets on a machine
-    where every other test in this file is skipped.
+    where every other test in this file is skipped. It rewrites in the same sound mode the
+    differential measures, so that the population it ratchets is the population the differential
+    runs.
 
     What it does not close is a snippet the tool rewrites *less*. Nearly every snippet here is
     changed by the console strip alone, so the emitted text differs from the source whether or not
@@ -4157,7 +4169,7 @@ class TestPs1EverySnippetIsStillRewritten(TestBase):
     """
 
     def test_every_corpus_snippet_is_rewritten(self):
-        unit = self.ldu('ps1')
+        unit = self.ldu('ps1', strict=True)
         untouched = frozenset(
             snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
             if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet
@@ -4213,7 +4225,7 @@ class TestPs1DeobfuscationPreservesValueTypes(Ps1OracleTest):
     """
 
     def test_the_output_behaves_like_the_row(self):
-        rewrite = rewritten_by(self.ldu('ps1'), corpus.TYPES)
+        rewrite = rewritten_by(self.ldu('ps1', strict=True), corpus.TYPES)
         rows = corpus.TYPES
         changed = sorted(
             row for row, before, after in zip(rows, behaviours(rows), behaviours(rows, rewrite))

@@ -34,16 +34,20 @@ from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     Ps1Constant,
     Ps1Fact,
+    char_fact,
+    collection_fact,
     coerced_text,
     collect_facts,
     fact_of,
     integer_at,
     integer_of,
     make_string_literal,
+    null_expression,
     read,
     render,
 )
 from refinery.lib.scripts.ps1.ast import (
+    get_body,
     get_command_name,
     get_member_name,
     normalize_command_name,
@@ -80,6 +84,7 @@ from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan
 from refinery.lib.scripts.ps1.deobfuscation.substitution import (
     carried_redirections,
     substitute_list,
+    substitute_statement,
     substituted,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
@@ -157,6 +162,8 @@ _NO_OPERATOR_METHOD_ON_CHAR = frozenset({'*', '-shl', '-shr'})
 #: script's own spelling does not already name: a `Char` is measured against `UInt16` because a code
 #: point is what it holds, and the domain's integer widths carry no cell for `Char` itself.
 _CHAR_WIDTH = named_type('System.UInt16')
+
+_BYTE_WIDTH = named_type('System.Byte')
 
 
 def _width_of(spelling: str) -> Ps1TypeName | None:
@@ -252,6 +259,27 @@ class _Char(str):
     """
 
 
+class _Byte(int):
+    """
+    A `System.Byte` the interpreter carries as the integer it names, kept apart from an ordinary
+    number so that a fold spelling the value back out writes the width the body produced rather
+    than the Int32 its magnitude is. Everything a Byte does with another number promotes —
+    measured, `[byte]200 + [byte]200` is the Int32 `400` — and being an `int` subclass this does
+    exactly that for free: every operation the interpreter runs over it returns a plain number.
+    """
+
+
+class _CharArray(list):
+    """
+    A `System.Char[]` the interpreter carries as the list of characters it holds, kept apart from
+    an ordinary collection because the two spell differently: an `Object[]` of Chars is written as
+    the elements and a `Char[]` has no spelling at all (`render` spells none), so a value this
+    wide refuses a fold. Being a `list` subclass it reads as its elements everywhere a collection
+    would — it joins, indexes and counts the same — and only the places that must tell the two
+    apart look for this type.
+    """
+
+
 class _MatchTable:
     """
     The `$Matches` automatic variable, the `System.Hashtable` a successful `-match` leaves behind.
@@ -292,6 +320,45 @@ def _matches_table(match: re.Match) -> _MatchTable:
         if captured is not None:
             entries[index] = captured
     return _MatchTable(entries)
+
+
+def _fact_of_value(value: _Value) -> Ps1Fact:
+    """
+    The fact a computed value denotes, keeping the kinds the interpreter's currency carries: a
+    `_Char` builds the Char fact and a `_Byte` the Byte fact, both rather than the wider value the
+    payload alone names; a `_CharArray` names nothing, because a `Char[]` has no spelling; and a
+    plain collection is built elementwise under the same rule, since every producer of one other
+    than the `char[]` cast — a pipeline, an array literal, an `@()` — builds an `Object[]` on the
+    host, whose elements a cast of a numeral spells exactly. Everything else is `fact_of`'s to
+    answer.
+    """
+    if isinstance(value, _Char):
+        return char_fact(str(value))
+    if isinstance(value, _Byte):
+        return integer_at(_BYTE_WIDTH, int(value))
+    if isinstance(value, _CharArray):
+        return UNKNOWN
+    if isinstance(value, list):
+        return collection_fact(_fact_of_value(one) for one in value)
+    return fact_of(value)
+
+
+def _rendered_value(value: _Value) -> Expression | None:
+    """
+    The expression that spells a computed value, or `None` where nothing does.
+
+    This is the output half of the rule `_value_of` holds at the input: a value leaves the
+    interpreter only where the fact it denotes reads back from the spelling `render` writes, so a
+    spelling that would fold out as a different value refuses rather than installs. `None` is
+    refused here although `render` spells it, for the reason `_value_to_node` states.
+    """
+    if value is None:
+        return None
+    fact = _fact_of_value(value)
+    expression = render(fact)
+    if expression is None:
+        return None
+    return expression if read(expression) == fact else None
 
 
 class _Ps1InterpreterError(Exception):
@@ -1089,9 +1156,9 @@ class _Ps1Interpreter:
         if op == '-bxor':
             return self._int_op(left, right, int.__xor__)
         if op == '-shl':
-            return self._int_op(left, right, ps_shift_left)
+            return self._shifted(left, right, ps_shift_left)
         if op == '-shr':
-            return self._int_op(left, right, ps_shift_right)
+            return self._shifted(left, right, ps_shift_right)
         if op == '-xor':
             return self._truthy(left) != self._truthy(right)
         cmp_fn = COMPARISON_OPS.get(op)
@@ -1243,7 +1310,7 @@ class _Ps1Interpreter:
     def _invoke_convert(self, method: str, args: list[_Value]) -> _Value:
         try:
             if method == 'tobyte' and len(args) == 2:
-                return int(self._to_str(args[0]), self._to_int(args[1])) & 0xFF
+                return _Byte(int(self._to_str(args[0]), self._to_int(args[1])) & 0xFF)
             if method == 'toint16' and len(args) == 2:
                 v = int(self._to_str(args[0]), self._to_int(args[1]))
                 if v >= 0x8000:
@@ -1452,13 +1519,13 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         if tn == 'char[]':
             if isinstance(val, str):
-                return [_Char(c) for c in val]
+                return _CharArray(_Char(c) for c in val)
             raise _Ps1InterpreterError
         if tn == 'byte':
             result = self._to_int(val)
             if not 0 <= result <= 0xFF:
                 raise _Ps1InterpreterError
-            return result
+            return _Byte(result)
         raise _Ps1InterpreterError
 
     def _add(self, left: _Value, right: _Value) -> _Value:
@@ -1501,6 +1568,17 @@ class _Ps1Interpreter:
         except (ZeroDivisionError, ValueError, OverflowError, ArithmeticError):
             raise _Ps1InterpreterError
         raise _Ps1InterpreterError
+
+    @staticmethod
+    def _shifted(left: _Value, right: _Value, op) -> _Value:
+        """
+        A shift, answered at the width the left operand carries: 5.1 converts a Byte to `Int32` to
+        compute the shift and back to a Byte to answer it, wrapping through the conversion —
+        measured, `[byte]1 -shl 4` is the Byte `16` and `[byte]1 -shl -1` is the Byte `0`. Every
+        other left operand answers the plain number it always did.
+        """
+        result = _Ps1Interpreter._int_op(left, right, op)
+        return _Byte(result & 0xFF) if isinstance(left, _Byte) else result
 
     @staticmethod
     def _int_op(left: _Value, right: _Value, op) -> int:
@@ -2132,8 +2210,9 @@ class Ps1FunctionEvaluator(Transformer):
         """
         The expression that spells a computed value, or `None` where nothing does.
 
-        Both halves are the domain's: `fact_of` says which PowerShell value a Python object
-        denotes, and `render` says how that value is written.
+        Both halves are the domain's: `_fact_of_value` says which PowerShell value a Python object
+        denotes, keeping the kinds the interpreter's currency carries, and `render` says how that
+        value is written — with the round trip `_rendered_value` enforces between them.
 
         **Producing nothing is not producing `$null`**, and that is why `None` is refused here
         although `render` spells it. A variable bound to either reads the same, which is what makes
@@ -2142,7 +2221,7 @@ class Ps1FunctionEvaluator(Transformer):
         `$null | %{ }` runs it once. An emission that did not happen has no expression to stand in
         its place.
         """
-        return None if value is None else render(fact_of(value))
+        return _rendered_value(value)
 
     @staticmethod
     def _make_iex_node(code: str) -> Ps1CommandInvocation | None:
@@ -2281,9 +2360,11 @@ class Ps1SubExpressionEvaluator(Transformer):
     this pass declines it.
 
     A sub-expression runs in the scope it is written in, so a fold is a claim about everything
-    around it, and each part of that claim is a refusal here rather than a guess: the names the
-    body reads were written nowhere it can see, the names it writes are read nowhere else, and its
-    state does not carry between evaluations of the one site. The value is the stream the body
+    around it, and each part of that claim is a refusal here rather than a guess: the names the body
+    reads were written nowhere it can see, and its state does not carry between evaluations of the
+    one site. The names it writes are the one claim answered differently — a name a reader could
+    observe is retained, with one store per name holding the final value the emulator computed,
+    hoisted before the statement the sub-expression is written in. The value is the stream the body
     emits, collapsed the way a function result collapses.
     """
 
@@ -2332,12 +2413,28 @@ class Ps1SubExpressionEvaluator(Transformer):
         reads, written = self._body_names(node)
         if not self._may_evaluate(node, reads, written):
             return None
-        value = self._evaluate(node, reads)
-        if value is None:
+        retained = self._names_a_reader_may_observe(node, written)
+        if retained is None:
             return None
+        hoist = None
+        if retained:
+            hoist = self._hoist_position(node)
+            if hoist is None:
+                return None
+        result = self._evaluate(node, reads)
+        if result is None:
+            return None
+        value, env = result
         literal = Ps1FunctionEvaluator._value_to_node(value)
         if literal is None:
             return None
+        stores = self._retained_stores(retained, env)
+        if stores is None:
+            return None
+        if stores:
+            container, statement = hoist
+            if not substitute_statement(container, statement, [*stores, statement]):
+                return None
         if not substitute_list(node, 'body', [Ps1ExpressionStatement(expression=literal)]):
             return None
         self.mark_changed()
@@ -2389,8 +2486,6 @@ class Ps1SubExpressionEvaluator(Transformer):
                 # driver sound should a parser change ever open a path the interpreter does not.
                 return False
         if not self._reads_follow_certain_writes(node, written):
-            return False
-        if written and self._leaks_a_written_name(node, written):
             return False
         if self._doubts_names or self._runs_data_code:
             if reads - written - self._write_sites.keys() - PS1_AUTOMATIC_VARIABLES:
@@ -2499,23 +2594,29 @@ class Ps1SubExpressionEvaluator(Transformer):
             cursor = parent
         return False
 
-    def _leaks_a_written_name(self, node: Ps1SubExpression, written: set[str]) -> bool:
-        if written and self._runs_data_code:
-            # A sub-expression shares the scope it is written in, so a body store persists there
-            # once folded away, and code the run takes from data — an `Invoke-Expression`, a
-            # dispatched scriptblock, a dot-sourced file — reads that scope with no occurrence in the
-            # tree. The verdict is whole-run, so no single written name is worth asking about; the
-            # trusting model — eval_is_trusted — closes that world and folds these bodies again.
-            return True
+    def _names_a_reader_may_observe(self, node: Ps1SubExpression, written: set[str]) -> set[str] | None:
+        """
+        The body-written names a reader could observe, or `None` where the fold must refuse
+        outright.
+
+        An engine variable is the outright refusal, because the engine reads it between statements —
+        `$OFS` at the next collection coercion, `$ErrorActionPreference` at the next failing cmdlet —
+        so a reader of one observes the body's write wherever this pass could put a store. Every
+        other written name is one a reader could observe for either of two reasons, and either one
+        is answered by retention rather than refusal: the script spells a reader outside the body,
+        which `_occurs_outside` answers through the semantic model — in both models, since a spelled
+        reader is not what the trusting model's contract excuses — or the run takes code from data,
+        which reads the scope with no occurrence in the tree at all. A name with neither reader is
+        one no fold needs to answer for and is dropped, as before.
+        """
+        if not written:
+            return set()
         for name in sorted(written):
             if name in PS1_ENGINE_VARIABLES:
-                # The engine reads these between statements — `$OFS` at the next collection
-                # coercion, `$ErrorActionPreference` at the next failing cmdlet — so a reader of
-                # one observes the body's write without any occurrence in the tree.
-                return True
-            if self._occurs_outside(node, name):
-                return True
-        return False
+                return None
+        if self._runs_data_code:
+            return set(written)
+        return {name for name in written if self._occurs_outside(node, name)}
 
     def _occurs_outside(self, node: Ps1SubExpression, name: str) -> bool:
         """
@@ -2560,14 +2661,86 @@ class Ps1SubExpressionEvaluator(Transformer):
             cursor = cursor.parent
         return False
 
-    def _evaluate(self, node: Ps1SubExpression, reads: set[str]) -> _Value | None:
+    def _hoist_position(self, node: Ps1SubExpression) -> tuple[Node, Node] | None:
         """
-        The value the body's success stream collapses to, or `None` where this will not answer.
-        The interpreter is refused every name an enclosing scope may hold and given no functions:
-        a user-function call inside a `$(...)` declines, because the call-site bookkeeping that
-        licenses folding a call is the function evaluator's and does not transfer to a value
-        position. An `Invoke-Expression` the body raises refuses the fold rather than installing
-        the command the function evaluator substitutes, which would drop the rest of the stream.
+        The statement the retained stores go before and the body that holds it, or `None` for a
+        position whose window is not empty.
+
+        A retained store runs earlier than the body's own store did — before the statement the
+        sub-expression is written in rather than inside it — so the statement between the two must
+        read nothing the store writes before it reaches the sub-expression. That holds exactly where
+        the sub-expression is the first thing its statement evaluates: the entire right-hand side
+        of a plain `$name = ...` assignment, or a bare expression statement. A compound assignment
+        reads its target first and an index assignment its container, so both keep the refusal; so
+        does every position deeper inside a statement, which reads what stands before the
+        sub-expression to build the expression around it.
+        """
+        parent = node.parent
+        if isinstance(parent, Ps1ExpressionStatement) and parent.expression is node:
+            statement = parent
+        else:
+            if not (
+                isinstance(parent, Ps1AssignmentExpression)
+                and parent.value is node
+                and parent.operator == '='
+                and isinstance(parent.target, Ps1Variable)
+                and parent.target.scope in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL)
+                and isinstance(parent.parent, Ps1ExpressionStatement)
+                and parent.parent.expression is parent
+            ):
+                return None
+            statement = parent.parent
+        container = statement.parent
+        if container is None or get_body(container) is None:
+            return None
+        if not any(one is statement for one in get_body(container)):
+            return None
+        return container, statement
+
+    def _retained_stores(
+        self, retained: set[str], env: Mapping[str, _Value],
+    ) -> list[Ps1ExpressionStatement] | None:
+        """
+        One store per retained name the body wrote on the taken path, holding the final value the
+        emulator computed, or `None` where a value has no spelling.
+
+        Single-threaded execution means nothing observes the body's intermediate stores, so the
+        value each written name holds after the body is the interpreter's final one; a store that
+        rewrites it where the fold can spell it is exact. The names are visited in their own order,
+        so the fold is deterministic over a set. A name the body wrote `$null` is stored as `$Null` —
+        it was set on 5.1, and `Set-StrictMode` tells a set-to-`$null` name from an unset one —
+        where `render`'s refusal of `None` is about the stream, in which an emitted `$null` and an
+        emission that did not happen differ. A name the body never wrote on the taken path is not
+        stored at all: it is unset on both sides of the fold.
+        """
+        stores: list[Ps1ExpressionStatement] = []
+        for name in sorted(retained):
+            if name not in env:
+                continue
+            value = env[name]
+            spelled = null_expression() if value is None else _rendered_value(value)
+            if spelled is None:
+                return None
+            stores.append(Ps1ExpressionStatement(
+                expression=Ps1AssignmentExpression(
+                    target=Ps1Variable(name=name),
+                    operator='=',
+                    value=spelled,
+                ),
+            ))
+        return stores
+
+    def _evaluate(
+        self, node: Ps1SubExpression, reads: set[str],
+    ) -> tuple[_Value, Mapping[str, _Value]] | None:
+        """
+        The value the body's success stream collapses to and the environment the body left, or
+        `None` where this will not answer. The interpreter is refused every name an enclosing scope
+        may hold and given no functions: a user-function call inside a `$(...)` declines, because
+        the call-site bookkeeping that licenses folding a call is the function evaluator's and does
+        not transfer to a value position. An `Invoke-Expression` the body raises refuses the fold
+        rather than installing the command the function evaluator substitutes, which would drop the
+        rest of the stream.
         """
         interpreter = _Ps1Interpreter(
             max_iterations=self.max_iterations,
@@ -2586,7 +2759,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             # 5.1 keeps a `$null` a statement hands the stream while the interpreter drops it, so
             # a fold would install a shorter stream than the one the host assembles.
             return None
-        return value
+        return value, interpreter._env
 
     def _written_outside(self, node: Ps1SubExpression, name: str) -> bool:
         return any(
