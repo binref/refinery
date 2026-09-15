@@ -358,19 +358,106 @@ class TestPs1SubExpressionEvaluator(TestPs1):
             """),
         )
 
-    def test_a_write_read_outside_retains_its_store_in_the_trusting_model(self):
-        # A spelled reader is not excused by the trusting model, whose contract is about code the
-        # analysis cannot read and not about reads the script spells.
+    def test_a_spelled_reader_survives_the_trusting_model(self):
+        # The trusting model closes the world `iex` opens and drops the unspelled `$a`, but a reader
+        # the script spells is not excused: `Write-Output $r` keeps `$r`'s value where
+        # `test_a_trusted_run_folds_the_idiom_without_retained_stores` drops everything.
+        source = cleandoc(F"""
+            $m = $($a = @{XOR_BYTES!r}
+            $r = ''
+            for ($i = 0; $i -lt $a.Count; $i++) {{
+              $r = $r + [char]($a[$i] -bxor {XOR_KEY})
+            }}
+            $r)
+            Write-Output $r
+            iex $stager
+        """)
+        self.assertEqual(
+            self._deobfuscate(source, trust_eval=True),
+            F"Write-Output {XOR_TEXT!r}\nInvoke-Expression $stager",
+        )
+
+    def test_a_tochararray_write_read_outside_refuses_its_store(self):
+        self._assertUnchanged(cleandoc("""
+            $x = $($w = 'AB'.ToCharArray()
+            'v')
+            Write-Output $w
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_a_capture_variable_aliasing_a_body_array_refuses(self):
+        """
+        The sub-expression returns `$a` by reference, so on 5.1 `$x` and `$a` name one array and
+        the in-place `Reverse` shows through both — `Write-Output $a` prints `3 2 1`. Spelling the
+        collapse as a fresh literal for `$x` breaks the alias, so the fold must refuse until the
+        aliasing is tracked; today it hoists `$a = 1, 2, 3` and folds `$x = $(1, 2, 3)`.
+        """
+        self._assertUnchanged(cleandoc("""
+            $x = $($a = 1, 2, 3
+            $a)
+            [Array]::Reverse($x)
+            Write-Output $a
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_two_retained_names_aliasing_one_array_refuses(self):
+        """
+        `$b = $a` binds one array to both names, so the in-place `Reverse` of `$a` shows through
+        `$b` — 5.1 prints `3 2 1`. Retention spells each name its own literal, so `$b` prints
+        `1 2 3`; the fold must refuse while a retained value can alias another.
+        """
+        self._assertUnchanged(cleandoc("""
+            $x = $($a = 1, 2, 3
+            $b = $a
+            'v')
+            [Array]::Reverse($a)
+            Write-Output $b
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_a_retained_new_object_byte_array_refuses(self):
+        """
+        `New-Object byte[] 2` is a `Byte[]`, which `[Convert]::ToBase64String` has an overload for;
+        retention spells it `$b = 0, 0`, an `Object[]` that overload rejects, so the deobfuscated
+        script throws where the original returns `AA==`. A `Byte[]` has no `Object[]` spelling, so
+        the fold must refuse, the way a `Char[]` does.
+        """
+        self._assertUnchanged(cleandoc("""
+            $len = $($b = New-Object byte[] 2
+            $b.Length)
+            [Convert]::ToBase64String($b)
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_a_retained_decoded_byte_array_refuses(self):
+        """
+        `[Convert]::FromBase64String` returns a `Byte[]`; retention spells it as an `Object[]`
+        literal, which the next `ToBase64String` rejects on 5.1. The fold must refuse until a
+        `Byte[]` carries its element type through the spelling.
+        """
+        self._assertUnchanged(cleandoc("""
+            $len = $($b = [Convert]::FromBase64String('aGk=')
+            $b.Length)
+            [Convert]::ToBase64String($b)
+        """), Ps1SubExpressionEvaluator)
+
+    @unittest.expectedFailure
+    def test_a_retained_int16_keeps_its_width(self):
+        """
+        `[Convert]::ToInt16` returns an `Int16`, so `$v -is [int16]` is `$True` on 5.1. Retention
+        spells the value as the Int32 its magnitude is (`$v = 255`), flipping the test to `$False`;
+        the store has to carry the width, the way `[Convert]::ToByte` does through `_Byte`.
+        """
         self.assertEqual(
             self._apply(cleandoc("""
-                $x = $($w = 'a'
-                $w)
-                Write-Output $w
+                $x = $($v = [Convert]::ToInt16('FF', 16)
+                'done')
+                $v -is [int16]
             """), Ps1SubExpressionEvaluator),
             cleandoc("""
-                $w = 'a'
-                $x = $('a')
-                Write-Output $w
+                $v = [int16]255
+                $x = $('done')
+                $v -is [int16]
             """),
         )
 
