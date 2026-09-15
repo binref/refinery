@@ -781,7 +781,7 @@ class BatchEmulator:
             except StopIteration:
                 tk = ''
             args = [tk, *it, *cmd.trailing_spaces]
-            def defang(s: str):
+            def defang(s: str): # noqa
                 def r(m: re.Match[str]):
                     return F'_{prefix}{ord(m[0]):X}_'
                 return re.sub(r'[^-\s()!~*/%+><&^|_\w]', r, s)

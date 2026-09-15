@@ -2939,7 +2939,7 @@ class TestBatchDeobfuscationDisplay(TestBase):
         """
         bat = self._run('\n'.join([
             'setlocal EnableDelayedExpansion',
-            'set "X=c:\windows"',
+            'set "X=c:\\windows"',
             'if exist !X! set "Z=!X!"',
         ]))
         self.assertEqual(list(bat.emulate()), [
