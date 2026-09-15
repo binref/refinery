@@ -156,6 +156,15 @@ class TestJsParserStatements(TestBase):
         self.assertIsInstance(stmt, JsForOfStatement)
         self.assertTrue(stmt.is_await)
 
+    def test_every_node_in_a_parsed_tree_names_its_holder(self):
+        """
+        A declarator appended to a declaration the loop head already built — the second and later
+        names of `for (var a = 1, b = 2; ...)` — is adopted where it is appended, since everything
+        that walks up parent pointers, removal included, walks out of the tree otherwise.
+        """
+        script = self._parse_all('for (var a = 1, b = 2; a < 5; a++) { x(a, b); }')
+        self.assertEqual([node for node in script.walk() if node.parent is None], [script])
+
     def test_switch(self):
         stmt = self._parse_stmt(
             'switch (x) { case 1: break; case 2: break; default: break; }')

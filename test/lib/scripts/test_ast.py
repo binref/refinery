@@ -444,12 +444,37 @@ class TestChildListOwnership(unittest.TestCase):
         set_child_list(holder, 'items', items)
         items.append(_Leaf(name='b'))
         self.assertEqual([stmt.name for stmt in holder.items], ['a'])
+        self.assertEqual([stmt.name for stmt in holder.children()], ['a'])
 
     def test_an_existing_field_keeps_the_object_the_tree_held(self):
         script = _script('a')
         held = script.body
         set_child_list(script, 'body', [_Leaf(name='b')])
         self.assertIs(script.body, held)
+
+
+class TestNullableChildList(unittest.TestCase):
+    """
+    A child list declared nullable — `list[Node] | None`, the shape of a `finally` body a `try` need
+    not have — is a child list all the same: reflection classifies it, construction adopts into
+    it, and cloning copies it rather than handing both trees the one list.
+    """
+
+    def test_the_nodes_of_a_nullable_list_belong_to_the_tree(self):
+        holder = _LateHolder(items=[_Leaf(name='a')])
+        self.assertEqual([stmt.name for stmt in holder.children()], ['a'])
+        self.assertIs(holder.children()[0].parent, holder)
+
+    def test_a_nullable_list_that_holds_nothing_is_nothing(self):
+        holder = _LateHolder()
+        self.assertEqual(holder.children(), ())
+        self.assertIsNone(_clone_node(holder).items)
+
+    def test_a_clone_of_a_nullable_list_holds_copies(self):
+        holder = _LateHolder(items=[_Leaf(name='a')])
+        clone = _clone_node(holder)
+        self.assertIsNot(clone.items[0], holder.items[0])
+        self.assertIs(clone.items[0].parent, clone)
 
 
 if __name__ == '__main__':

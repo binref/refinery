@@ -1263,7 +1263,9 @@ class JsParser:
                 return result
             while self._eat(JsTokenKind.COMMA):
                 with self._with_no_in(True):
-                    decl.declarations.append(self._parse_variable_declarator())
+                    declarator = self._parse_variable_declarator()
+                decl._adopt(declarator)
+                decl.declarations.append(declarator)
             self._expect(JsTokenKind.SEMICOLON)
             self._require_declarator_initializers(kind, decl.declarations)
             return self._parse_for_rest(decl, offset)

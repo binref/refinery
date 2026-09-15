@@ -8,6 +8,7 @@ import copy
 import dataclasses
 import enum
 import io
+import types
 import typing
 
 from dataclasses import dataclass, field
@@ -54,6 +55,19 @@ def _has_node_type(hint) -> bool:
     return any(_has_node_type(a) for a in typing.get_args(hint))
 
 
+def _without_none(hint):
+    """
+    The hint with a `| None` taken off, or the hint itself when it declares none. A nullable
+    child list — a `finally` body a `try` need not have — is as much a child list as any other,
+    and is classified by what it holds, not by the optionality around it.
+    """
+    if typing.get_origin(hint) in (typing.Union, types.UnionType):
+        args = [a for a in typing.get_args(hint) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return hint
+
+
 def _classify_fields(node_type: type[Node]) -> list[tuple[str, Kind]]:
     try:
         return _child_fields_cache[node_type]
@@ -68,7 +82,7 @@ def _classify_fields(node_type: type[Node]) -> list[tuple[str, Kind]]:
     for f in dataclasses.fields(node_type):
         if f.name in _SKIP_FIELDS:
             continue
-        hint = hints.get(f.name)
+        hint = _without_none(hints.get(f.name))
         if hint is None:
             continue
         origin = typing.get_origin(hint)
@@ -98,14 +112,16 @@ def _compute_children(node: Node) -> tuple[Node, ...]:
             if isinstance(field, Node):
                 result.append(field)
         elif kind == Kind.ChildList:
-            for item in field:
-                if isinstance(item, Node):
-                    result.append(item)
+            if field is not None:
+                for item in field:
+                    if isinstance(item, Node):
+                        result.append(item)
         elif kind == Kind.TupleList:
-            for item in field:
-                for elem in item:
-                    if isinstance(elem, Node):
-                        result.append(elem)
+            if field is not None:
+                for item in field:
+                    for elem in item:
+                        if isinstance(elem, Node):
+                            result.append(elem)
     return tuple(result)
 
 
@@ -114,13 +130,17 @@ def child_list_fields(node: Node) -> list[tuple[str, list]]:
     The child-list fields of `node`, as name and list pairs. A caller that wants to know where a
     tree branches into a variable number of children — how many arguments a call has, how many
     clauses an `if` has — asks here rather than matching on node types, so a node class added later
-    is covered without the caller changing.
+    is covered without the caller changing. A child list that holds nothing yet, because its node
+    was built without one, is left out along with its `None`.
     """
-    return [
-        (name, getattr(node, name))
-        for name, kind in _classify_fields(type(node))
-        if kind in (Kind.ChildList, Kind.TupleList)
-    ]
+    result = []
+    for name, kind in _classify_fields(type(node)):
+        if kind not in (Kind.ChildList, Kind.TupleList):
+            continue
+        field = getattr(node, name)
+        if field is not None:
+            result.append((name, field))
+    return result
 
 
 def _value_fields(node_type: type[Node]) -> tuple[str, ...]:
@@ -898,8 +918,8 @@ def _clone_node(node: _N) -> _N:
                 setattr(clone, field_name, child)
         elif kind == Kind.ChildList:
             items = getattr(node, field_name)
-            cloned = []
-            for item in items:
+            cloned = None if items is None else []
+            for item in items or ():
                 if isinstance(item, Node):
                     child = _clone_node(item)
                     child.parent = clone
@@ -909,8 +929,8 @@ def _clone_node(node: _N) -> _N:
             setattr(clone, field_name, cloned)
         elif kind == Kind.TupleList:
             items = getattr(node, field_name)
-            cloned = []
-            for tup in items:
+            cloned = None if items is None else []
+            for tup in items or ():
                 new_tup = []
                 for elem in tup:
                     if isinstance(elem, Node):

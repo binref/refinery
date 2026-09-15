@@ -169,6 +169,20 @@ class TestPhpParserStmt(TestBase):
         self.assertEqual(len(node.catches[0].types), 2)
         self.assertIsNotNone(node.finally_body)
 
+    def test_every_node_in_a_parsed_tree_names_its_holder(self):
+        """
+        A nullable child list — an `else` body, a `finally` body, the braced body of a `namespace`
+        or a `declare` — is rehomed into the node that owns it, since everything that walks up
+        parent pointers, removal included, walks out of the tree otherwise.
+        """
+        script = PhpParser('''<?php
+            declare(strict_types=1) { $a; }
+            namespace N { $b; }
+            if ($c) {} else { $d; }
+            try {} finally { $e; }
+        ''').parse()
+        self.assertEqual([node for node in script.walk() if node.parent is None], [script])
+
     def test_unset(self):
         node = self._one('unset($a, $b);')
         self.assertIsInstance(node, PhpUnset)
