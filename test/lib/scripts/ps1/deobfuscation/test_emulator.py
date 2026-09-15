@@ -1064,6 +1064,16 @@ class TestPs1WhichSideOfWhichOperatorABooleanMayStandOn(TestPs1):
                         F'$x = {expected}',
                     )
 
+    def test_the_ones_complement_of_a_boolean_folds_to_the_number_it_converts_to(self):
+        # 5.1 converts the Boolean to the Int32 it names before complementing `-bnot`, so `-bnot
+        # $true` is -2 (the complement of 1) and `-bnot $false` is -1 (the complement of 0).
+        for argument, expected in [('$true', '-2'), ('$false', '-1')]:
+            with self.subTest(F'-bnot {argument}'):
+                self.assertEqual(
+                    self._apply(self._call('-bnot $n', argument), Ps1FunctionEvaluator),
+                    F'$x = {expected}',
+                )
+
     def test_a_boolean_right_operand_folds_for_every_one_of_the_ten_operators(self):
         for operator, expected in [
             ('+', '3'),

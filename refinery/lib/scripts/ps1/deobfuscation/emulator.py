@@ -1207,7 +1207,7 @@ class _Ps1Interpreter:
             val = self._eval(node.operand)
             if not isinstance(val, int):
                 raise _Ps1InterpreterError
-            return ~val
+            return ~int(val)
         if op == '-':
             val = self._eval(node.operand)
             if isinstance(val, int):
