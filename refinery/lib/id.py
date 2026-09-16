@@ -116,8 +116,8 @@ MimeByExtension = {
 
 class Format:
     """
-    A format specifier. Objects of this class define a poset; A more general version of a format
-    satisifes a "<=" relation to a more specific one. For example, TEXT <= ASCII_TEXT.
+    A format specifier. Objects of this class define a poset; a more general version of a format
+    satisfies a "<=" relation to a more specific one. For example, TEXT <= ASCII_TEXT.
     """
 
     __slots__ = 'category', 'extension', 'mime', 'mnemonic', 'details'
