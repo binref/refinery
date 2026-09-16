@@ -18,8 +18,11 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
 
+from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 #: The obfuscator.io default-preset string array (rotation IIFE, self-overwriting array function,
@@ -2168,6 +2171,29 @@ class TestAConsumedTemporaryStillNamedKeepsItsDeclaration(TestBase):
         for label, row in A_CONSUMED_TEMPORARY_SOMETHING_STILL_NAMES.items():
             with self.subTest(label):
                 self.assertEqual(row.read(), row.required())
+
+
+class TestAStatementSpliceMovesTheTreeVersion(TestBase):
+    """
+    The statement inliner splices the resolved statements into the container's body in place. The
+    version counter every model cache reads has to move with that splice: a cache whose pin read no
+    change on exit keeps the models built before the splice, and those describe a program in which
+    the spliced statements do not exist.
+    """
+
+    def test_inlining_a_statement_position_eval_advances_the_counter(self):
+        script = JsParser("eval('var v = 1;'); SINK(v);").parse()
+        before = tree_version(script)
+        JsReflectionInlining().visit(script)
+        self.assertEqual('var v = 1;\nSINK(v);', JsSynthesizer().convert(script))
+        self.assertGreater(tree_version(script), before)
+
+    def test_inlining_a_statement_position_execscript_advances_the_counter(self):
+        script = JsParser("execScript('var v = 1;'); SINK(v);").parse()
+        before = tree_version(script)
+        JsReflectionInlining().visit(script)
+        self.assertEqual('var v = 1;\nSINK(v);', JsSynthesizer().convert(script))
+        self.assertGreater(tree_version(script), before)
 
 
 class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):

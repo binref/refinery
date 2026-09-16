@@ -17,6 +17,7 @@ from refinery.lib.scripts import (
     Node,
     _clone_node,
     _replace_in_parent,
+    set_body,
     spells_its_source,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -1108,9 +1109,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if parsed is None:
                     i += 1
                     continue
-                for stmt in parsed:
-                    stmt.parent = container
-                body[i:i + 1] = parsed
+                set_body(container, [*body[:i], *parsed, *body[i + 1:]])
                 self._confirm_retirement(original)
                 self.mark_changed()
                 i += len(parsed)
