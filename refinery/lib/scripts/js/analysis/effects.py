@@ -859,11 +859,7 @@ class _CallEdges:
     def record(self, callee: Node):
         if self.caller is None:
             raise RuntimeError('an edge was recorded outside a scan')
-        bucket = self.callers.get(id(callee))
-        if bucket is None:
-            self.callers[id(callee)] = {self.caller}
-        else:
-            bucket.add(self.caller)
+        self.callers.setdefault(id(callee), set()).add(self.caller)
 
 
 class EffectModel:
@@ -1422,9 +1418,11 @@ class EffectModel:
         recorded on every scan, including one that changes no summary, so the edge exists by the time its
         callee first changes even when the caller was scanned before it.
         """
+        functions: dict[int, Node] = {}
         for func in self._functions:
-            self._summaries[id(func)] = EffectSummary()
-        functions = {id(func): func for func in self._functions}
+            fid = id(func)
+            functions[fid] = func
+            self._summaries[fid] = EffectSummary()
         edges = _CallEdges()
         queue = deque(functions.values())
         queued = set(functions)
