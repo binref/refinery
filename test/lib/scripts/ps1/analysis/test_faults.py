@@ -892,6 +892,123 @@ class TestPs1AStopPreferenceIsWhatMakesTheTrapUnderItWorthKeeping(TestBase):
         self.assertEqual(self._observations(assignments), dict.fromkeys(assignments, False))
 
 
+class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
+    """
+    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'` binds the action into every command that
+    takes one, so a command it runs reports a terminating error — but a failing cast takes no
+    parameter and stays the statement-terminating error 5.1 steps over. Measured on 5.1: with the
+    default set, `Get-Item nope` ends the script and `[int]'a'` does not. This is why the arming is
+    read on the per-command terminating path and not in `_stops_on_every_error`, which escalates a
+    cast as well; a `Stop` written to `$ErrorActionPreference`, by assignment or by a cmdlet, does
+    escalate both, and the four rows hold that difference.
+    """
+
+    def _verdicts(self, arming: str) -> dict[str, bool]:
+        tree, reach = _model(F"""
+            {arming}
+            Get-Item nope
+            [int]'a'
+        """)
+        command = next(
+            node for node in tree.walk_in_order()
+            if isinstance(node, Ps1CommandInvocation)
+            and resolve_command_name(node) == 'get-item'
+        )
+        cast = next(
+            node for node in tree.walk_in_order() if isinstance(node, Ps1CastExpression))
+        return {
+            'command': reach.error_is_terminating(command),
+            'cast': reach.error_is_terminating(cast),
+        }
+
+    def test_a_default_table_stop_terminates_a_command_but_not_a_cast(self):
+        self.assertEqual(
+            self._verdicts("$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'"),
+            {'command': True, 'cast': False},
+        )
+
+    def test_a_command_scoped_default_terminates_a_command_but_not_a_cast(self):
+        self.assertEqual(
+            self._verdicts("$PSDefaultParameterValues.Add('Get-Item:ErrorAction', 'Stop')"),
+            {'command': True, 'cast': False},
+        )
+
+    def test_a_preference_stop_terminates_both_a_command_and_a_cast(self):
+        self.assertEqual(
+            self._verdicts("$ErrorActionPreference = 'Stop'"),
+            {'command': True, 'cast': True},
+        )
+
+    def test_a_cmdlet_write_of_the_preference_terminates_both(self):
+        self.assertEqual(
+            self._verdicts('New-Variable ErrorActionPreference Stop -Force'),
+            {'command': True, 'cast': True},
+        )
+
+    def test_a_default_that_binds_continue_terminates_neither(self):
+        self.assertEqual(
+            self._verdicts("$PSDefaultParameterValues['*:ErrorAction'] = 'Continue'"),
+            {'command': False, 'cast': False},
+        )
+
+    def test_no_arming_terminates_neither(self):
+        self.assertEqual(self._verdicts(''), {'command': False, 'cast': False})
+
+
+class TestPs1ACmdletWriteOfTheStopPreferenceArmsEveryError(TestBase):
+    """
+    A cmdlet that writes `$ErrorActionPreference` by name arms the preference as an assignment does,
+    read through `refinery.lib.scripts.ps1.analysis.naming.named_references`, so a failing cast under
+    it is terminating. Every alias, casing, scope-qualified and provider spelling the name authority
+    reads arms it, which is why the recognition lives there rather than in a hand-kept command list.
+
+    The value written is read precisely — the named `-Value` or the positional the command binds
+    after its name, wherever an explicit `-Name` moves that name off the first slot — so a member
+    other than `Stop` arms nothing, and a write that binds no value at all stores `$null` and arms
+    nothing either.
+    """
+
+    def _cast_is_terminating(self, arming: str) -> bool:
+        tree, reach = _model(F"""
+            {arming}
+            [int]'a'
+        """)
+        cast = next(node for node in tree.walk_in_order() if isinstance(node, Ps1CastExpression))
+        return reach.error_is_terminating(cast)
+
+    def _verdicts(self, armings: list[str]) -> dict[str, bool]:
+        return {arming: self._cast_is_terminating(arming) for arming in armings}
+
+    def test_every_cmdlet_spelling_that_writes_stop_arms_the_preference(self):
+        armings = [
+            'New-Variable ErrorActionPreference Stop -Force',
+            'Set-Variable ErrorActionPreference Stop',
+            'Set-Variable ErrorActionPreference -Value Stop',
+            'Set-Variable -Name ErrorActionPreference Stop',
+            'sv ErrorActionPreference Stop',
+            'Set-Variable global:ErrorActionPreference Stop',
+            'Set-Item Variable:ErrorActionPreference Stop',
+            'New-Variable ErrorActionPreference 1',
+        ]
+        self.assertEqual(self._verdicts(armings), dict.fromkeys(armings, True))
+
+    def test_a_cmdlet_write_of_a_member_other_than_stop_arms_nothing(self):
+        armings = [
+            'New-Variable ErrorActionPreference Continue -Force',
+            'Set-Variable ErrorActionPreference SilentlyContinue',
+            'Set-Variable ErrorActionPreference -Value 2',
+        ]
+        self.assertEqual(self._verdicts(armings), dict.fromkeys(armings, False))
+
+    def test_a_cmdlet_that_binds_no_value_arms_nothing(self):
+        armings = [
+            'Clear-Variable ErrorActionPreference',
+            'New-Variable ErrorActionPreference',
+            'Get-Process -OutVariable ErrorActionPreference',
+        ]
+        self.assertEqual(self._verdicts(armings), dict.fromkeys(armings, False))
+
+
 class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
     """
     Reading a variable that was never set yields `$null` and raises nothing. `Set-StrictMode` makes

@@ -251,16 +251,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'is read as raising nothing, so the `trap` goes in one round, and a later round then '
         'inlines the string and materialises the very `throw` the first round answered False for. '
         'What is left is `throw 1` and nothing else.',
-    "New-Variable ErrorActionPreference Stop -Force; trap { continue }; [int]'a'; Write-Host "
-    "'after'":
-        'The handler is removed. The preference is recognised where it is written as an '
-        'assignment and not where a cmdlet sets it, so the script reads as arming nothing and the '
-        'cast error reads as one 5.1 would step over.',
-    "$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'; trap { continue }; Get-Item nope; "
-    "Write-Host 'after'":
-        'The handler is removed. The table binds `-ErrorAction Stop` into every command that '
-        'takes one, so no action is written at the call site and no preference is assigned; '
-        'neither gate is looking at an index expression.',
     "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' "
     "}; Wrap; Write-Host 'after'":
         'The handler is removed. What reaches it is the *call*, whose subtree carries no `throw`, '

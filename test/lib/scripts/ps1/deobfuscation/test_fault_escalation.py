@@ -10,6 +10,13 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 #: behind. Every claim below is about the shapes in which deleting it does change what runs.
 _RAISE = "$Null = [Int]'abc'"
 
+#: The same failing cast written as its own statement rather than stored, so the raise survives where
+#: `_RAISE` is dropped as a dead store. It is the witness for an arming that escalates *every* error
+#: rather than only what a command reports: under a `Stop` preference this cast ends the script, so a
+#: `trap` over it is load bearing, and under a default-table `Stop` — which reaches commands only —
+#: it is not, which is the difference the two armings are told apart by.
+_BARE_CAST_RAISE = "[int]'a'"
+
 #: The type Windows PowerShell 5.1 gives that error, so a handler filtered on it matches the raise.
 _MATCHING = '[System.Management.Automation.RuntimeException]'
 
@@ -1581,43 +1588,126 @@ class TestPs1ATerminatingErrorInsideAStringThatIsRunIsInvisible(_Ps1FaultEscalat
         """)
 
 
-class TestPs1AStopPreferenceACmdletArmsIsInvisible(_Ps1FaultEscalation):
+class TestPs1AStopPreferenceACmdletArmsMakesEveryErrorTerminating(_Ps1FaultEscalation):
     """
-    `New-Variable ErrorActionPreference Stop -Force` arms the preference exactly as the assignment
-    does — measured: the cast below is stepped over with the handler and ends the script without
-    it. `_writes_stop_to_the_preference` reads an assignment expression, and a cmdlet that writes a
-    variable by name is not one.
+    `New-Variable ErrorActionPreference Stop -Force` writes the preference exactly as the assignment
+    does, so it escalates every error and not only what a command reports: the bare cast below is
+    stepped over with the handler and ends the script without it, so the `trap` is the whole reason
+    the statement after it runs. `_writes_stop_to_the_preference` reads the write through the name
+    authority `refinery.lib.scripts.ps1.analysis.naming.named_references`, which is why the preference
+    is armed here and not only when it is assigned to.
 
-    `Set-Variable ErrorActionPreference Stop` is the same defect and happens to survive, because
-    another pass normalises that spelling into an assignment first. Nothing pins that ordering, so
-    the surviving spelling is an accident rather than a second answer.
+    A raise that is a bare cast rather than a stored one is the witness: it makes the kept `trap`
+    turn on the preference escalating a *cast*, which a default-table `Stop` — reaching commands only
+    — does not do, and it is not dropped as a dead store the way `$Null = ...` is.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_under_a_preference_a_cmdlet_arms_is_kept(self):
         self._assertKept(F"""
             New-Variable ErrorActionPreference Stop -Force
             trap {{ continue }}
-            {_RAISE}
+            {_BARE_CAST_RAISE}
+            {_FOLLOWER}
+        """)
+
+    def test_a_cmdlet_that_writes_a_member_other_than_stop_leaves_the_trap_removable(self):
+        self._assertDeobfuscatesTo(F"""
+            New-Variable ErrorActionPreference Continue -Force
+            trap {{ continue }}
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """, F"""
+            New-Variable ErrorActionPreference Continue -Force
+            {_UNSPECIFIED_RAISE}
             {_FOLLOWER}
         """)
 
 
-class TestPs1AStopBoundThroughDefaultParameterValuesIsInvisible(_Ps1FaultEscalation):
+class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps1FaultEscalation):
     """
     `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'` binds the action into every command that
     takes one, so the command below ends the script although no action is written beside it and no
     preference is assigned — measured: `after` is written with the handler and nothing without it.
+    `_writes_stop_to_the_default_table` reads the index-assignment and the `.Add` mutation, keyed on
+    a `:ErrorAction` suffix so a command-scoped entry arms it as the wildcard does.
 
-    Neither gate sees it. No `-ErrorAction` is written at the call site, and the target of the
-    write is an index expression rather than a variable, which is the shape
-    `refinery.lib.scripts.ps1.ast.assignment_target_variables` reports nothing for.
+    The arming reaches commands only — a failing cast takes no parameter and stays stepped over —
+    so it is read on the per-command terminating path rather than the whole-script preference gate,
+    which `TestPs1TheDefaultTableTerminatesACommandButNotACast` pins at the model.
+    """
+
+    def _assertTheTrapUnderTheDefaultIsKept(self, write: str) -> None:
+        self._assertKept(F"""
+            {write}
+            trap {{ continue }}
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """)
+
+    def test_an_index_assignment_of_stop_binds_the_action(self):
+        self._assertTheTrapUnderTheDefaultIsKept(
+            "$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'")
+
+    def test_a_command_scoped_key_binds_the_action(self):
+        self._assertTheTrapUnderTheDefaultIsKept(
+            "$PSDefaultParameterValues['Get-Item:ErrorAction'] = 'Stop'")
+
+    def test_the_add_mutation_of_stop_binds_the_action(self):
+        self._assertTheTrapUnderTheDefaultIsKept(
+            "$PSDefaultParameterValues.Add('*:ErrorAction', 'Stop')")
+
+    def test_a_default_that_binds_a_member_other_than_stop_leaves_the_trap_removable(self):
+        self._assertDeobfuscatesTo(F"""
+            $PSDefaultParameterValues['*:ErrorAction'] = 'Continue'
+            trap {{ continue }}
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """, F"""
+            $PSDefaultParameterValues['*:ErrorAction'] = 'Continue'
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """)
+
+
+class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
+    """
+    Three shapes arm a `Stop` the removal gate does not read, so a `trap` that is load bearing on the
+    5.1 host is dropped. Each is measured on the host — the guarded raise ends the script without the
+    handler and the follower runs with it — and each needs a value-domain read this increment does
+    not build: the target of the arming is not the name or the index the gate matches.
+
+    The wide completion-side gate `a_stop_may_be_in_force` catches all three — every one names
+    `ErrorActionPreference` or `PSDefaultParameterValues` as a string — so a value the arming would
+    have established is not folded across the raise. What is not caught is the narrower removal of the
+    handler, which is what these pin.
     """
 
     @unittest.expectedFailure
-    def test_a_trap_under_a_default_parameter_value_of_stop_is_kept(self):
+    def test_a_splatted_write_of_the_preference_keeps_the_trap(self):
         self._assertKept(F"""
-            $PSDefaultParameterValues['*:ErrorAction'] = 'Stop'
+            $t = @{{ Name = 'ErrorActionPreference'; Value = 'Stop' }}
+            Set-Variable @t
+            & {{
+              trap {{ continue }}
+              {_BARE_CAST_RAISE}
+              {_FOLLOWER}
+            }}
+        """)
+
+    @unittest.expectedFailure
+    def test_a_whole_table_replacement_that_binds_the_action_keeps_the_trap(self):
+        self._assertKept(F"""
+            $PSDefaultParameterValues = @{{ '*:ErrorAction' = 'Stop' }}
+            trap {{ continue }}
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """)
+
+    @unittest.expectedFailure
+    def test_an_aliased_table_that_binds_the_action_keeps_the_trap(self):
+        self._assertKept(F"""
+            $x = $PSDefaultParameterValues
+            $x['*:ErrorAction'] = 'Stop'
             trap {{ continue }}
             {_UNSPECIFIED_RAISE}
             {_FOLLOWER}

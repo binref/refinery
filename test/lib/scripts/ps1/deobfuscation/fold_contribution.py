@@ -439,8 +439,6 @@ CONTRIBUTION: dict[str, Contribution] = {
     ),
     'Ps1DeadCodeElimination': Contribution(
         lost=(
-            "$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'; trap { continue }; Get-Item nope; Write-Host 'after'",
-            "New-Variable ErrorActionPreference Stop -Force; trap { continue }; [int]'a'; Write-Host 'after'",
             "Write-Host 'a'; return; Write-Host 'b'",
             "function Raise { throw 'e' }; function Wrap { trap { continue }; Raise; Write-Host 'in' }; Wrap; Write-Host 'after'",
             "function f { try { 'tail' } catch {} }; Write-Host (f)",

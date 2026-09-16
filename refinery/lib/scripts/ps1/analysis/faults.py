@@ -42,11 +42,13 @@ from refinery.lib.scripts.ps1.ast import (
     binds_parameter,
     bound_argument_value,
     fault_operand,
+    free_positional_values,
     is_soft_error_source,
     raises_a_caught_terminating_error,
     resolve_command_name,
     string_value,
 )
+from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -56,7 +58,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
+    Ps1IndexExpression,
     Ps1IntegerLiteral,
+    Ps1InvokeMember,
     Ps1RealLiteral,
     Ps1Script,
     Ps1ScriptBlock,
@@ -103,6 +107,23 @@ _STOP_ORDINAL = 1
 #: it makes every one of them terminating — a failing cast included, which is otherwise reported
 #: and stepped over.
 _ERROR_ACTION_PREFERENCE = 'erroractionpreference'
+
+#: The automatic variable that binds a default argument into every command that takes the parameter.
+#: A `Stop` written under a key ending `:ErrorAction` — `*:ErrorAction` for every command, or
+#: `Get-Item:ErrorAction` for one — makes that command's reported error terminating, but a failing
+#: cast is not a command and is left stepped over. That is why an arming written here reaches the
+#: per-command terminating path rather than the whole-script `_stops_on_every_error` gate.
+_DEFAULT_PARAMETER_VALUES = 'psdefaultparametervalues'
+
+#: The suffix a `$PSDefaultParameterValues` key carries when it binds `-ErrorAction`. The scope in
+#: front of the colon is a command name or the wildcard, and neither is read: any key that binds the
+#: action for any command is enough to make that command's error terminating.
+_ERROR_ACTION_KEY_SUFFIX = ':erroraction'
+
+#: The members that mutate a hashtable in place, so that a `Stop` written through one of them arms
+#: the default table as an index-assignment does. Spelled as `resolve` sees a member — lowercased —
+#: and read as a set so `.Add` and its accessor alias `.set_Item` are one question.
+_HASHTABLE_MUTATORS = frozenset({'add', 'set_item'})
 
 
 class Ps1FaultRouting(NamedTuple):
@@ -224,21 +245,132 @@ def _stops_on_error(command: Ps1CommandInvocation) -> bool:
 
 def _writes_stop_to_the_preference(node: Node) -> bool:
     """
-    Whether *node* assigns `$ErrorActionPreference` a value that may be `Stop`.
+    Whether *node* writes `$ErrorActionPreference` a value that may be `Stop`, which makes every
+    error a command reports terminating — the failing cast included, which is otherwise stepped over.
 
-    The target is read through `refinery.lib.scripts.ps1.ast.assignment_target_variables`, so that
-    a type-constrained, parenthesized or multi-assignment target is the same write as a bare one,
-    and keyed through `refinery.lib.scripts.ps1.ast.binding_key`, so that the unrelated
-    process-global `$env:ErrorActionPreference` is not read as this variable.
+    Two shapes write the variable and both are read. An assignment names it through
+    `refinery.lib.scripts.ps1.ast.assignment_target_variables`, so that a type-constrained,
+    parenthesized or multi-assignment target is the same write as a bare one, and is keyed through
+    `refinery.lib.scripts.ps1.ast.binding_key`, so that the unrelated process-global
+    `$env:ErrorActionPreference` is not read as this variable. A cmdlet writes it by name —
+    `New-Variable`/`Set-Variable ErrorActionPreference Stop`, or the provider form
+    `Set-Item Variable:ErrorActionPreference Stop` — which `_cmdlet_writes_stop_to_the_preference`
+    reads through the same name authority the model builds bindings from.
     """
-    if not isinstance(node, Ps1AssignmentExpression):
-        return False
+    if isinstance(node, Ps1AssignmentExpression):
+        return any(
+            binding_key(variable) == _ERROR_ACTION_PREFERENCE
+            for variable in assignment_target_variables(node.target)
+        ) and _selects_stop(node.value)
+    if isinstance(node, Ps1CommandInvocation):
+        return _cmdlet_writes_stop_to_the_preference(node)
+    return False
+
+
+def _cmdlet_writes_stop_to_the_preference(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Whether *cmd* writes `Stop` to `$ErrorActionPreference` by naming the variable as a string —
+    `Set-Variable ErrorActionPreference Stop`, `New-Variable ErrorActionPreference Stop -Force`, or
+    `Set-Item Variable:ErrorActionPreference Stop`.
+
+    Whether the command writes the variable at all is
+    `refinery.lib.scripts.ps1.analysis.naming.named_references`' answer, the one authority for what a
+    command does to a name it addresses as a string; it reports the write for every alias, casing and
+    scope-qualified spelling of these commands. What it does not report is the *value* written, which
+    is read here so the negative controls are decidable: `_written_variable_value` reads the named
+    `-Value`, else the positional value the command binds after the name — the `-Name` written
+    explicitly moves the value to the first free positional, exactly as it moves the name off it.
+
+    A write that binds no value at all stores `$null` and arms nothing: `Clear-Variable` and a
+    `-OutVariable` that happens to name the preference both reach here as writes with no value node,
+    and are read as not arming. A value that is present but not statically readable is read as `Stop`,
+    the `_selects_stop(None)` over-approximation that keeps a handler rather than dropping one.
+    """
     if not any(
-        binding_key(variable) == _ERROR_ACTION_PREFERENCE
-        for variable in assignment_target_variables(node.target)
+        reference.role is Ps1NameRole.WRITES
+        and reference.key == _ERROR_ACTION_PREFERENCE
+        for reference in named_references(cmd)
     ):
         return False
-    return _selects_stop(node.value)
+    value = _written_variable_value(cmd)
+    return value is not None and _selects_stop(value)
+
+
+def _written_variable_value(cmd: Ps1CommandInvocation) -> Node | None:
+    """
+    The value a variable- or item-writing command stores, or `None` when it binds no value.
+
+    Read as the named `-Value` where one is written, else the positional value the command binds
+    after its subject: the name or path takes the first free positional unless an explicit `-Name` or
+    `-Path` moves it off, so the value is the free positional at index one when the subject is
+    positional and at index zero when it is not — the same reading
+    `refinery.lib.scripts.ps1.analysis.naming` makes for the name, one place along.
+    """
+    value = bound_argument_value(cmd, 'value')
+    if value is not None:
+        return value
+    command = resolve_command_name(cmd)
+    if command is None:
+        return None
+    subject_is_positional = (
+        bound_argument_value(cmd, 'name') is None
+        and bound_argument_value(cmd, 'path') is None
+    )
+    index = 1 if subject_is_positional else 0
+    positional = free_positional_values(cmd, command)
+    return positional[index] if len(positional) > index else None
+
+
+def _names_the_default_table(node: Node | None) -> bool:
+    """
+    Whether *node* is the `$PSDefaultParameterValues` variable itself, keyed the way every other
+    occurrence of it is so an aliased copy under another name is not read as it — that copy is the
+    completeness hole tracked as an xfail, not a write this sees.
+    """
+    return isinstance(node, Ps1Variable) and binding_key(node) == _DEFAULT_PARAMETER_VALUES
+
+
+def _key_binds_the_error_action(key: Node | None) -> bool:
+    """
+    Whether *key* is a `$PSDefaultParameterValues` key that binds `-ErrorAction` — one ending
+    `:ErrorAction`, whatever command scope stands before the colon. A key this cannot read as a
+    literal is read as binding it, the direction that keeps a handler.
+    """
+    text = argument_text(key)
+    return text is None or text.strip().lower().endswith(_ERROR_ACTION_KEY_SUFFIX)
+
+
+def _writes_stop_to_the_default_table(node: Node) -> bool:
+    """
+    Whether *node* writes `Stop` under an `-ErrorAction` key of `$PSDefaultParameterValues`, which
+    makes every command that binds the key report a terminating error.
+
+    Two spellings write the table statically and both are read: the index-assignment
+    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'`, and the in-place mutation
+    `$PSDefaultParameterValues.Add('*:ErrorAction', 'Stop')` or its `.set_Item` accessor. The key is
+    read as binding the action when it ends `:ErrorAction`, and the value through the same
+    `_selects_stop` a preference write reads, so `Continue` written here arms nothing. A whole-table
+    replacement `$PSDefaultParameterValues = @{ ... }`, a splat, and an aliased copy are the
+    completeness holes tracked as xfails: their target is not this index or this member.
+    """
+    if isinstance(node, Ps1AssignmentExpression):
+        target = node.target
+        return (
+            isinstance(target, Ps1IndexExpression)
+            and _names_the_default_table(target.object)
+            and _key_binds_the_error_action(target.index)
+            and _selects_stop(node.value)
+        )
+    if isinstance(node, Ps1InvokeMember):
+        member = node.member.lower() if isinstance(node.member, str) else ''
+        return (
+            _names_the_default_table(node.object)
+            and member in _HASHTABLE_MUTATORS
+            and len(node.arguments) >= 2
+            and _key_binds_the_error_action(node.arguments[0])
+            and _selects_stop(node.arguments[1])
+        )
+    return False
 
 
 #: The commands that arm strict mode, in the spelling `resolve_command_name` answers with. Two
@@ -318,7 +450,7 @@ def _arms_strict_mode_v2(node: Node) -> bool:
 #: whether either is *touched* at all, however it is spelled.
 _STOP_BEARING_NAMES = frozenset({
     _ERROR_ACTION_PREFERENCE,
-    'psdefaultparametervalues',
+    _DEFAULT_PARAMETER_VALUES,
 })
 
 
@@ -328,11 +460,14 @@ def a_stop_may_be_in_force(root: Node) -> bool:
     strict counterpart of the whole-script question `Ps1FaultReach` asks itself, and a different
     question from it.
 
-    That one reads an assignment of `Stop` to `$ErrorActionPreference`, and reads it *laxly* on
-    purpose: it decides whether a handler may be removed, where a missed arming keeps a handler that
-    could have gone and costs recall on junk. Two spellings it is known to miss are ledgered as
-    behaviour defects — `New-Variable ErrorActionPreference Stop -Force`, and a `-ErrorAction` entry
-    written into `$PSDefaultParameterValues`.
+    That one reads a `Stop` written to `$ErrorActionPreference` — by assignment or by a cmdlet that
+    names the variable — and a `Stop` written under an `-ErrorAction` key of
+    `$PSDefaultParameterValues` by index-assignment or `.Add`, and reads them *laxly* on purpose: it
+    decides whether a handler may be removed, where a missed arming keeps a handler that could have
+    gone and costs recall on junk. The spellings it still misses arm the table through a shape whose
+    target is not that index — a whole-table replacement `$PSDefaultParameterValues = @{ ... }`, a
+    splatted `Set-Variable`, and an aliased copy of the table under another name — each tracked as an
+    expected failure.
 
     A caller asking whether a *statement completed* cannot inherit those. Reading a script as arming
     nothing where it does says a command that in fact raised ran to its end, and a value it was going
@@ -360,7 +495,7 @@ def a_stop_may_be_in_force(root: Node) -> bool:
     return False
 
 
-def ends_the_script(element: Node) -> bool:
+def ends_the_script(element: Node, stop_default: bool = False) -> bool:
     """
     Whether an error raised at *element* stops the script, rather than being reported and stepped
     over, where no handler takes it.
@@ -370,6 +505,13 @@ def ends_the_script(element: Node) -> bool:
     the next statement runs: a failing cast, a division by zero, a member access on `$null`, an
     exception out of a .NET method, an unresolved command name. A **terminating** error ends the
     script, and only `throw` and a command told to stop raise one. Both halves are measured.
+
+    *stop_default* is whether the script binds `Stop` into every command through
+    `$PSDefaultParameterValues`, which makes any command a subtree runs report a terminating error
+    the way `-ErrorAction Stop` on the command does — and only a command, since the default table
+    binds a parameter and a failing cast takes none. A subtree that runs no command is unchanged by
+    it, so a cast stays the stepped-over error it is; the caller reads the whole-script fact off
+    `Ps1FaultReach._a_stop_default_is_in_force` and every subtree is judged against it.
 
     `exit` is neither, and is deliberately absent: it ends the script by an exception no `trap`
     catches, so a handler over one disposes of nothing and reading `exit` as a raise would keep a
@@ -394,7 +536,7 @@ def ends_the_script(element: Node) -> bool:
             return True
         if isinstance(node, Ps1TrapStatement) and _rethrows(node):
             return True
-        if isinstance(node, Ps1CommandInvocation) and _stops_on_error(node):
+        if isinstance(node, Ps1CommandInvocation) and (stop_default or _stops_on_error(node)):
             return True
     return False
 
@@ -537,6 +679,7 @@ class Ps1FaultReach:
         self._handled: set[int] | None = None
         self._ending: dict[int, bool] = {}
         self._stopping: bool | None = None
+        self._stop_default: bool | None = None
         self._strict: bool | None = None
         self._strict_v2: bool | None = None
 
@@ -835,9 +978,10 @@ class Ps1FaultReach:
         """
         Whether a fault raised at *node* is terminating rather than reported and stepped over — the
         script writes `Stop` to `$ErrorActionPreference`, or the raise is one of the terminating
-        shapes `ends_the_script` names (a command with `-ErrorAction Stop` among them). It is what
-        makes a command's error one a `try` catches, and it is `_terminates` under a name a caller
-        outside the module may read.
+        shapes `ends_the_script` names: a command with `-ErrorAction Stop`, and any command at all
+        where `$PSDefaultParameterValues` binds `Stop` into it. It is what makes a command's error
+        one a `try` catches, and it is `_terminates` under a name a caller outside the module may
+        read.
         """
         return self._terminates(node)
 
@@ -1045,20 +1189,25 @@ class Ps1FaultReach:
         """
         `ends_the_script` for *element*, remembered for the life of this model. Every handler judged
         against the same block is offered the same statements, so the subtree behind each one is
-        read once however many removals ask about it.
+        read once however many removals ask about it. A `Stop` bound through
+        `$PSDefaultParameterValues` is a whole-script fact folded in here rather than at each call
+        site, so the same subtree is not re-scanned for it per element.
         """
         remembered = self._ending.get(id(element))
         if remembered is None:
-            remembered = self._ending[id(element)] = ends_the_script(element)
+            remembered = self._ending[id(element)] = ends_the_script(
+                element, self._a_stop_default_is_in_force())
         return remembered
 
     def _terminates(self, element: Node) -> bool:
         """
         Whether an error raised at *element* ends the run rather than being reported and stepped
         over: the script writes `Stop` to `$ErrorActionPreference` anywhere, or the raise is one of
-        the terminating shapes `_ends_the_script` names. The one predicate the position question and
-        the transpose both read, so a raise the trap-removal side reads as script-ending is read the
-        same way on the path that weighs deleting the raise itself.
+        the terminating shapes `_ends_the_script` names — a `throw`, a rethrowing `trap`, a command
+        told to stop, or any command at all where `$PSDefaultParameterValues` binds `Stop` into it.
+        The one predicate the position question and the transpose both read, so a raise the
+        trap-removal side reads as script-ending is read the same way on the path that weighs
+        deleting the raise itself.
         """
         return self._stops_on_every_error() or self._ends_the_script(element)
 
@@ -1078,7 +1227,14 @@ class Ps1FaultReach:
     def _stops_on_every_error(self) -> bool:
         """
         Whether this script writes `Stop` to `$ErrorActionPreference` anywhere at all, which makes
-        every error a command reports a terminating one.
+        every error terminating — a failing cast, a division by zero and a member access on `$null`
+        among them, not only what a command reports. The write is read through
+        `_writes_stop_to_the_preference`, which counts an assignment and a cmdlet that writes the
+        variable by name alike.
+
+        This is the wider of the two whole-script arming gates. `$PSDefaultParameterValues` binds an
+        action into commands and reaches no cast, so it is read on the per-command path
+        `_a_stop_default_is_in_force` feeds rather than here.
 
         Position is deliberately not asked. The preference is a variable of the session rather than
         of a block, so a write in one body governs a raise in another and a write inside a branch
@@ -1097,6 +1253,26 @@ class Ps1FaultReach:
                 _writes_stop_to_the_preference(node) for node in root.walk()
             )
         return self._stopping
+
+    def _a_stop_default_is_in_force(self) -> bool:
+        """
+        Whether this script binds `Stop` into every command through `$PSDefaultParameterValues`,
+        which makes any command's reported error terminating while leaving a failing cast the
+        stepped-over error it is. This is why it is read on the per-command terminating path
+        `_ends_the_script` follows rather than in `_stops_on_every_error`: that gate escalates every
+        error, casts included, and the default table does not reach a cast.
+
+        Position is not asked, for the reason `_stops_on_every_error` gives: the table is a variable
+        of the session, so a write in one body governs a command in another, and a script that arms
+        it at all is read as arming it throughout. The tree is read rather than the graphs, so a
+        write standing at a point no graph models is not missed.
+        """
+        if self._stop_default is None:
+            root = self._script
+            self._stop_default = root is not None and any(
+                _writes_stop_to_the_default_table(node) for node in root.walk()
+            )
+        return self._stop_default
 
     def strict_mode_may_be_in_force(self) -> bool:
         """

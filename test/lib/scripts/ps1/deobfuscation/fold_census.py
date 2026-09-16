@@ -27,8 +27,6 @@ FOLDS: dict[str, str] = {
         "$OFS = '-'\nWrite-Output 'a-b'",
     '$OFS = \'-\'; Write-Output "$(1, 2)"':
         "$OFS = '-'\nWrite-Output '1-2'",
-    "$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'; trap { continue }; Get-Item nope; Write-Host 'after'":
-        "$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'\nGet-Item nope\nWrite-Host 'after'",
     '$a = $null; $b = 5; $t = $a * $b; Write-Output (,$t)':
         'Write-Output (,$Null)',
     '$a = $null; $t = $a * 5; Write-Output (,$t)':
@@ -1315,8 +1313,6 @@ FOLDS: dict[str, str] = {
         "Get-Item nope -Exclude Stop\nWrite-Host 'after'",
     "Get-Item nope -errora Stop; Write-Host 'after'":
         "Get-Item nope -ErrorAction Stop\nWrite-Host 'after'",
-    "New-Variable ErrorActionPreference Stop -Force; trap { continue }; [int]'a'; Write-Host 'after'":
-        "New-Variable ErrorActionPreference Stop -Force\n[int]'a'\nWrite-Host 'after'",
     "Set-Alias -N zzq -V Write-Output; zzq 'one-letter'":
         "Write-Output 'one-letter'",
     "Set-Alias -Na zzq -Val Write-Output; zzq 'abbreviated'":
