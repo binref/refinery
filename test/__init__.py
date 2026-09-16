@@ -24,14 +24,19 @@ class NameUnknownException(Exception):
         super().__init__('could not resolve: {}'.format(name))
 
 
-#: The `--no-pin` differential (see `test/conftest.py`) removes the pin mechanism, so a test of that
-#: mechanism — a build count the pin flattens, or the holding behavior itself — holds only outside
-#: the differential. Every result-equality assertion stays in force there, which is the differential's
-#: whole point.
-a_property_of_the_pin_itself = unittest.skipIf(
-    bool(os.environ.get('REFINERY_TEST_NO_PIN')),
-    'the no-pin differential removed the mechanism this test measures',
-)
+def a_property_of_the_pin_itself(test):
+    """
+    The `--no-pin` differential (see `test/conftest.py`) removes the pin mechanism, so a test of
+    that mechanism — a build count the pin flattens, or the holding behavior itself — holds only
+    outside the differential. Every result-equality assertion stays in force there, which is the
+    differential's whole point. The option is read when the test is decorated, not when this
+    package is imported: the package is imported to load the conftest, before the option has been
+    processed, and a condition evaluated then never sees it.
+    """
+    return unittest.skipIf(
+        bool(os.environ.get('REFINERY_TEST_NO_PIN')),
+        'the no-pin differential removed the mechanism this test measures',
+    )(test)
 
 
 class TestBase(unittest.TestCase):
