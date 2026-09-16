@@ -110,26 +110,31 @@ _LEAK_CMDLETS = frozenset({
 #: variable the code writes lands in this script's own tables. See `runs_code_in_the_calling_scope`.
 _CALLER_SCOPE_LEAKS = frozenset({'invoke-expression'})
 
-#: Commands that mutate the .NET type system, so reflection can no longer be trusted to describe a
-#: type's members. Curated and documented rather than derived — the module docstring says why a
-#: mutation allow-list would be vacuous. Names are compared after alias resolution.
-_MUTATION_CMDLETS = frozenset({
-    'add-member',
-    'add-type',
-    'import-module',
-    'new-module',
-    'update-typedata',
-})
-
-#: The subset of the mutators that also loads commands into the session, so a bareword after one may
-#: name a command this tree never spells. `Import-Module` imports a module's exported commands and
-#: `New-Module` runs a scriptblock whose functions become callable; the rest of `_MUTATION_CMDLETS`
-#: touch only the type system and leave the command table as they found it. See
-#: `_opens_command_namespace`.
+#: The mutators that also load commands into the session, so a bareword after one may name a command
+#: this tree never spells: `Import-Module` imports a module's commands and `New-Module` runs a body
+#: whose functions become callable. Held apart from the pure type-system mutators and folded back
+#: into `_MUTATION_CMDLETS` as one half of its union, so it cannot drift out of that deny-list:
+#: a loader missing from it resolves to `WorldRole.NONE`, `_opens_command_namespace` then never sees
+#: it, and the command axis reads closed beside a live import — the dangerous direction.
 _MODULE_LOADER_CMDLETS = frozenset({
     'import-module',
     'new-module',
 })
+
+#: The mutators that touch only the .NET type system and leave the command table as they found it: a
+#: `class`/`Add-Type` puts a type into the session, `Update-TypeData`/`Add-Member` re-point a type's
+#: members, and none binds a command name — the complement of `_MODULE_LOADER_CMDLETS`.
+_PURE_TYPE_MUTATION_CMDLETS = frozenset({
+    'add-member',
+    'add-type',
+    'update-typedata',
+})
+
+#: Commands that mutate the .NET type system, so reflection can no longer be trusted to describe a
+#: type's members. Curated and documented rather than derived — the module docstring says why a
+#: mutation allow-list would be vacuous — and assembled as the union of its two curated halves so a
+#: module loader is a mutator by construction. Names are compared after alias resolution.
+_MUTATION_CMDLETS = _MODULE_LOADER_CMDLETS | _PURE_TYPE_MUTATION_CMDLETS
 
 #: Commands that redefine command identity, after which a later bareword can no longer be trusted to
 #: name what the metadata says — including a mutator hidden behind the new name. A static
@@ -466,17 +471,18 @@ class Ps1TypeWorld:
         command_table_closed: bool | None = None,
     ):
         """
-        A verdict left unstated for `closed_but_for_alias_bindings` or `command_table_closed` takes
-        the value of `type_system_closed`, which is the answer for a world that has no opener at all
-        and the conservative one for a world stated by a single closed/open verdict — a hand-built
-        world that does not distinguish the axes.
+        A `command_table_closed` left unstated takes the value of `type_system_closed`, the answer
+        for a world with no opener at all and the conservative one for a world stated by a single
+        closed/open verdict — a hand-built world that does not distinguish the axes. A
+        `closed_but_for_alias_bindings` left unstated takes the whole-run verdict once both axes are
+        settled, so it never reads closed beside a command axis opened for some other reason.
         """
         self._type_system_closed = type_system_closed
-        self._closed_but_for_alias_bindings = (
-            type_system_closed
-            if closed_but_for_alias_bindings is None else closed_but_for_alias_bindings)
         self._command_table_closed = (
             type_system_closed if command_table_closed is None else command_table_closed)
+        self._closed_but_for_alias_bindings = (
+            (self._type_system_closed and self._command_table_closed)
+            if closed_but_for_alias_bindings is None else closed_but_for_alias_bindings)
         self._shadowed = shadowed
 
     @property

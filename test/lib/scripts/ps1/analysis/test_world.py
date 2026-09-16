@@ -7,6 +7,8 @@ from inspect import cleandoc
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     WorldRole,
+    _opens_command_namespace,
+    _opens_type_system,
     assigns_an_alias_name,
     build_closed_world,
     command_role,
@@ -596,6 +598,19 @@ class TestPs1WorldAxes(Ps1TypeWorldTest):
                 world = Ps1TypeWorld(closed, frozenset())
                 self.assertEqual(world.type_system_closed, closed)
                 self.assertEqual(world.command_table_closed, closed)
+
+    def test_every_opener_role_opens_at_least_one_axis(self):
+        """
+        The invariant that lets `closed_for_the_whole_run` be the conjunction of the two axes rather
+        than a stored flag: no opener role is invisible to both. A role neither predicate opened
+        would leave the conjunction reading closed beside a live opener, silently reopening the
+        member-trust gate — so a future `WorldRole` that escapes both axes must fail here.
+        """
+        for role in WorldRole:
+            if role is WorldRole.NONE:
+                continue
+            with self.subTest(role):
+                self.assertTrue(_opens_type_system(role) or _opens_command_namespace(None, role))
 
 
 class TestPs1CommandRole(TestBase):

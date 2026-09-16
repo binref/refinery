@@ -250,6 +250,44 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('Hello World', result)
 
+    def test_a_pure_type_mutation_does_not_block_inert_junk_removal(self):
+        data = inspect.cleandoc(
+            r"""
+            Add-Type -TypeDefinition 'public class Zzt {}'
+            function Zzjunk { $Null = 915 }
+            Zzjunk
+            Write-Output 'real'
+            """
+        ).encode('utf-8')
+        goal = inspect.cleandoc(
+            r"""
+            Add-Type -TypeDefinition 'public class Zzt {}'
+            Write-Output 'real'
+            """
+        )
+        self.assertEqual(data | self.load() | str, goal)
+
+    def test_a_pure_type_mutation_keeps_a_member_read_helper(self):
+        data = inspect.cleandoc(
+            r"""
+            Add-Type -TypeDefinition 'public class Zzt {}'
+            function Zzm { $s.Length }
+            Zzm
+            Write-Output 'real'
+            """
+        ).encode('utf-8')
+        goal = inspect.cleandoc(
+            r"""
+            Add-Type -TypeDefinition 'public class Zzt {}'
+            function Zzm {
+              $s.Length
+            }
+            Zzm
+            Write-Output 'real'
+            """
+        )
+        self.assertEqual(data | self.load() | str, goal)
+
 
 class TestPs1RealWorldLarge(TestUnitBase):
 
