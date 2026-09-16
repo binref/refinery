@@ -1446,6 +1446,17 @@ class TestWhatAnAccessOnAMappedArgumentsObjectReaches(TestBase):
             with self.subTest(source=source):
                 self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
 
+    def test_a_read_through_a_displaced_object_names_no_parameter(self):
+        """
+        The displacement test consults `binding.writes` and `binding.declarations` while the def-use
+        walk is still filling them, so it has to run after that walk: answering it over a partial
+        write set would credit parameters with reads their displaced object never reached. The read
+        half is the side a walk ordered the other way gets wrong first.
+        """
+        source = 'function f(a, b) { arguments = [7]; return arguments[0]; }'
+        self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
+        self.assertEqual(_alias_sites(source, 'b'), ([], [], []))
+
     def test_a_strict_body_has_an_object_that_aliases_nothing(self):
         source = "function f(a, b) { 'use strict'; arguments[1] = 9; }"
         self.assertEqual(_alias_sites(source, 'a'), ([], [], []))
@@ -1822,4 +1833,66 @@ class TestANameSpelledInAKeyPositionReadsNoBinding(TestBase):
         self.assertEqual(
             _how_each_occurrence_is_read("export * as ns from 'm';\nns;", 'ns'),
             [(False, False), (True, True)],
+        )
+
+
+class TestWhichBindingsAnExportMarks(TestBase):
+    """
+    `Binding.exported` is the one fact an `export` contributes, and nothing in construction reads it
+    back, so marking rides the def-use walk instead of costing a walk of its own. These tests pin
+    which bindings each export form marks and which it must not: a list with a `from` clause names
+    bindings of the module the clause spells, nothing local, and an expression under
+    `export default` declares no binding at all.
+    """
+
+    @staticmethod
+    def _exported_names(source: str) -> set[str]:
+        """
+        The names of every binding in *source* the model marks exported. An exported binding always
+        has a declaration in the tree, so walking the identifiers finds them all.
+        """
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        names = set()
+        for node in ast.walk_in_order():
+            if isinstance(node, JsIdentifier):
+                binding = model.binding_of(node)
+                if binding is not None and binding.exported:
+                    names.add(node.name)
+        return names
+
+    def test_a_sourceless_export_list_marks_each_named_binding(self):
+        self.assertEqual(self._exported_names('var a, b, c; export { a, b as q };'), {'a', 'b'})
+
+    def test_an_exported_declaration_marks_what_destructuring_declares(self):
+        self.assertEqual(self._exported_names('export var { p, q: r } = o;'), {'p', 'r'})
+
+    def test_an_exported_function_and_class_declaration_mark_their_own_names(self):
+        self.assertEqual(
+            self._exported_names('export function f() {} export class k {}'),
+            {'f', 'k'},
+        )
+
+    def test_export_default_marks_a_named_declaration_and_no_expression_binding(self):
+        self.assertEqual(self._exported_names('export default function f() {}'), {'f'})
+        self.assertEqual(self._exported_names('export default 1;'), set())
+
+    def test_an_export_list_with_a_from_clause_marks_no_local_binding(self):
+        self.assertEqual(self._exported_names("var a; export { a } from './m.js';"), set())
+
+    def test_a_sourceless_export_list_still_records_one_read_of_the_named_binding(self):
+        """
+        The marking rides the walk that records reads and writes, so the one occurrence the list
+        spells must still be recorded exactly once — the walk reaches it through two slots.
+        """
+        source = 'var a = 1; export { a }; use(a);'
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        binding = model.binding_of(next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name == 'a' and model.binding_of(node) is not None
+        ))
+        self.assertEqual(
+            [JsSynthesizer().convert(read) for read in binding.reads],
+            ['a', 'a'],
         )

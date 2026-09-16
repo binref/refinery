@@ -27,6 +27,19 @@ class TestConstantInlining(TestJsDeobfuscator):
     def test_literal_boolean_inlined(self):
         self.assertEqual('console.log(true);', self._inline('var x = true; console.log(x);'))
 
+    def test_delete_initializer_is_not_relocated(self):
+        """
+        Deleting a binding is observable, so an initializer spelled as a `delete` is not pure and its
+        single use does not take it: the move would put the delete past the intervening call, moving
+        the moment the binding disappears. The pure arithmetic control beside it still moves.
+        """
+        self.assertEqual(
+            'var x = 5;\nvar t = delete x;\ng();\nf(t);',
+            self._inline('var x = 5; var t = delete x; g(); f(t);'))
+        self.assertEqual(
+            'f((1 + 1) * 2);',
+            self._inline('var q = 1; var t = (q + 1) * 2; f(t);'))
+
     def test_reassigned_variable_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

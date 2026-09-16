@@ -6,6 +6,7 @@ from test import TestBase
 
 from refinery.lib.scripts.js.analysis.effects import (
     GLOBAL_OBJECT,
+    EffectModel,
     EffectSummary,
     build_effects,
     container_literal_access_is_plain,
@@ -28,6 +29,8 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+
+from test.lib.scripts.js.analysis.jsgen import generate
 
 _GLOBALS_THE_SPECIFICATION_MANDATES = (
     'AggregateError',
@@ -1405,6 +1408,79 @@ class TestEffectModel(TestBase):
 
     def test_parenthesized_method_call_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; (a.sort)(); SINK(a[0]);'))
+
+    @staticmethod
+    def _summaries_by_round_robin(effects: EffectModel) -> dict[int, EffectSummary]:
+        """
+        The fixpoint `EffectModel._compute` settled before the worklist: every function is re-scanned
+        every round until a round changes no summary. A sink-free `_scan` absorbs callee summaries
+        through `summary_of`, so the reference owns `effects._summaries` and rebuilds it from bottom;
+        both schedulers drive the identical transfer function and differ in scan order alone.
+        """
+        effects._summaries = {id(func): EffectSummary() for func in effects._functions}
+        changed = True
+        while changed:
+            changed = False
+            for func in effects._functions:
+                summary = effects._scan(func)
+                if summary != effects._summaries[id(func)]:
+                    effects._summaries[id(func)] = summary
+                    changed = True
+        return dict(effects._summaries)
+
+    def _assert_worklist_settles_where_round_robin_settles(self, source: str):
+        ast, effects = self._effects(source)
+        self.assertEqual(dict(effects._summaries), self._summaries_by_round_robin(effects))
+
+    def test_worklist_settles_where_round_robin_settles(self):
+        """
+        The least fixpoint of the summary join is unique, so the worklist scheduling of
+        `EffectModel._compute` — a function is re-scanned only when a callee it calls changed summary
+        under it — must settle on the summaries the round-robin scheduler settles on. The corpus is
+        the seeded programs the differential fuzzer runs, plus every call-graph shape the two
+        schedulers can order differently.
+        """
+        for seed in range(64):
+            with self.subTest(seed=seed):
+                self._assert_worklist_settles_where_round_robin_settles(generate(seed))
+        shapes = (
+            'function f(n){ return n <= 1 ? 1 : f(n - 1); }',
+            'function a(){ b(); } function b(){ leaked = 1; a(); } function r(){ return leaked; }',
+            'function c(){ leaked = 1; } function b(){ c(); } function a(){ b(); }'
+            ' function r(){ return leaked; }',
+            'function a(){ b(); } function b(){ leaked = 1; } function r(){ return leaked; }',
+        )
+        for index, source in enumerate(shapes):
+            with self.subTest(shape=index):
+                self._assert_worklist_settles_where_round_robin_settles(source)
+
+    def test_call_chain_propagates_the_innermost_summary_to_the_outermost_function(self):
+        """
+        The innermost function writes a global the outermost never names, so the fact reaches the
+        outermost summary only through the two call edges between them, and one compute has to carry
+        it across both.
+        """
+        source = (
+            'function c(){ leaked = 1; }'
+            ' function b(){ c(); }'
+            ' function a(){ b(); }'
+            ' function r(){ return leaked; }'
+        )
+        summary = self._summary(source, 'a')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_pure)
+
+    def test_forward_referenced_callee_change_reaches_its_caller(self):
+        """
+        The caller is scanned before the callee it names and absorbs the callee's empty first
+        summary, so its own first scan changes nothing; the callee's later change must still reach
+        the caller through the edge that first scan recorded. This is the one behavior a worklist
+        can lose that a fixed round count cannot express.
+        """
+        source = 'function a(){ b(); } function b(){ leaked = 1; } function r(){ return leaked; }'
+        summary = self._summary(source, 'a')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_pure)
 
 
 class TestTrustedIntrinsic(TestBase):

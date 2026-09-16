@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
-import unittest
-
 from contextlib import contextmanager
 
-from test import TestBase
+from test import TestBase, a_property_of_the_pin_itself
+
+from test.lib.scripts.js.analysis.differential import deobfuscate_source
+from test.lib.scripts.js.analysis.jsgen import generate
 
 import refinery.lib.scripts.js.analysis.cache as cache_module
 from refinery.lib.scripts import Transformer, _remove_from_parent
@@ -26,15 +26,6 @@ def _no_pin(self):
     A pin that holds nothing, standing in for the unpinned cache in a comparison.
     """
     yield self
-
-
-#: The `--no-pin` differential removes the pin mechanism, so a test of that mechanism — a build
-#: count the pin flattens, or the holding behavior itself — holds only outside the differential.
-#: Every result-equality assertion stays in force there, which is the differential's whole point.
-_a_property_of_the_pin_itself = unittest.skipIf(
-    bool(os.environ.get('REFINERY_TEST_NO_PIN')),
-    'the no-pin differential removed the mechanism this test measures',
-)
 
 
 def _transform_root_builds(transform: type[Transformer], source: str) -> tuple[int, str]:
@@ -123,7 +114,7 @@ class TestModelCache(TestBase):
         )
 
 
-@_a_property_of_the_pin_itself
+@a_property_of_the_pin_itself
 class TestPinnedModels(TestBase):
     """
     A pinned cache holds its models across tree mutations for the length of a block, which is what stops a
@@ -223,6 +214,41 @@ class TestPinnedModels(TestBase):
             self.assertEqual(
                 held, (cache.model, cache.effects, cache.control_flow, cache.dominance))
 
+    def test_a_model_first_built_after_an_edit_is_refused_on_exit(self):
+        """
+        A slot first read after the tree has moved under a pin is layered over held base models from
+        an earlier tree — the state no unpinned run builds, since there a version change drops every
+        slot together. The exit refuses it, and the cache the refusal leaves behind serves a model of
+        the current tree, not the layered one.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                held = cache.model
+                _remove_from_parent(self._first_declaration(script))
+                cache.reaching
+        self.assertIsNot(cache.model, held)
+
+    def test_the_refusal_comes_from_the_outermost_exit(self):
+        """
+        The fill version is shared by nested pins, and an inner exit releases nothing, so it must not
+        judge the fill either. The block inside the inner pin completes; the outermost exit is where
+        the refusal belongs.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        completed_the_inner_block = False
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                held = cache.model
+                _remove_from_parent(self._first_declaration(script))
+                with cache.pinned():
+                    cache.reaching
+                completed_the_inner_block = True
+        self.assertTrue(completed_the_inner_block)
+        self.assertIsNot(cache.model, held)
+
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
     """
@@ -281,13 +307,13 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
             cache_module.build_effects = real_effects
         return counts['model'], counts['effects'], JsSynthesizer().convert(script)
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_gated_folds_do_not_multiply_model_builds(self):
         few = self._builds(self._gated(10))[:2]
         many = self._builds(self._gated(80))[:2]
         self.assertEqual(few, many)
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_gated_folds_build_each_model_once(self):
         self.assertEqual((1, 1), self._builds(self._gated(40))[:2])
 
@@ -352,15 +378,15 @@ class TestReflectiveInliningDoesNotRebuildPerSite(TestBase):
     def _root_builds(self, source: str) -> tuple[int, str]:
         return _transform_root_builds(JsReflectionInlining, source)
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_root_model_is_built_once_regardless_of_site_count(self):
         self.assertEqual(self._root_builds(self._sites(2))[0], self._root_builds(self._sites(16))[0])
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_root_model_is_built_exactly_once(self):
         self.assertEqual(1, self._root_builds(self._sites(8))[0])
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_retirement_pays_one_rebuild_regardless_of_temporary_count(self):
         self.assertEqual(2, self._root_builds(self._temporaries(2))[0])
         self.assertEqual(2, self._root_builds(self._temporaries(16))[0])
@@ -415,7 +441,7 @@ class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
     def _root_builds(self, source: str) -> tuple[int, str]:
         return _transform_root_builds(JsCallWrapperInliner, source)
 
-    @_a_property_of_the_pin_itself
+    @a_property_of_the_pin_itself
     def test_root_model_is_built_once_regardless_of_site_count(self):
         self.assertEqual(1, self._root_builds(self._sites(2))[0])
         self.assertEqual(1, self._root_builds(self._sites(16))[0])
@@ -434,3 +460,34 @@ class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
 
 
 
+
+
+class TestPinnedAndUnpinnedRunsAgree(TestBase):
+    """
+    A pin can only defer work to a later invocation: a rewrite a held model declines reappears when
+    the group loop re-runs the pass on the rebuilt model. Every sample must therefore reach the same
+    final output with the pins held as without them — a sample that does not has a pass acting on a
+    stale answer in the permissive direction, which is the one direction the pin contract refuses.
+    """
+
+    _SHAPES = (
+        'var q = 1; var t = (q + 1) * 2; f(t);',
+        'var x = 5; var t = delete x; g(); f(t);',
+        'const a = [1, 2, 3]; console.log(a[1]);',
+        'var q = 1; function g(){ return q + 1; } console.log(g());',
+        'var x = 5; x = 6; console.log(x);',
+    )
+
+    def _unpinned(self, source: str) -> str:
+        original = ModelCache.pinned
+        ModelCache.pinned = _no_pin
+        try:
+            return deobfuscate_source(source)
+        finally:
+            ModelCache.pinned = original
+
+    def test_the_corpus_reaches_the_same_final_output(self):
+        sources = [generate(seed) for seed in range(16)] + list(self._SHAPES)
+        for index, source in enumerate(sources):
+            with self.subTest(sample=index):
+                self.assertEqual(deobfuscate_source(source), self._unpinned(source))

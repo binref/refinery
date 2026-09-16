@@ -2881,29 +2881,26 @@ class SemanticModel:
         self._recording_def_use = False
         self._record_arguments_alias_references()
         self._record_global_object_alias_references()
-        self._record_exports()
 
-    def _record_exports(self):
+    def _mark_export_declaration(self, declaration: JsExportNamedDeclaration | JsExportDefaultDeclaration):
         """
-        Flag every binding an `export` ties to the outside as `Binding.exported`. A declaration
-        written under an export (`export var a`, `export function`/`class`, and `export default` of a
-        named function or class) exports the binding it declares; a sourceless list (`export { a }`,
+        Flag the bindings one `export` ties to the outside as `Binding.exported`. A declaration written
+        under an export (`export var a`, `export function`/`class`, and `export default` of a named
+        function or class) exports the binding it declares; a sourceless list (`export { a }`,
         `export { a as q }`) exports the binding each specifier's local half names. A list carrying a
         `from` clause and a re-export name a binding of the module the clause spells, nothing local,
         and are passed over here.
         """
-        for node in self.root.walk():
-            if isinstance(node, JsExportNamedDeclaration):
-                if node.declaration is not None:
-                    self._mark_declaration_exported(node.declaration)
-                elif node.source is None:
-                    for specifier in node.specifiers:
-                        if isinstance(specifier, JsErrorNode):
-                            continue
-                        if isinstance(specifier.local, JsIdentifier):
-                            self._mark_binding_exported(self.resolve(specifier.local))
-            elif isinstance(node, JsExportDefaultDeclaration):
-                self._mark_declaration_exported(node.declaration)
+        if isinstance(declaration, JsExportDefaultDeclaration):
+            self._mark_declaration_exported(declaration.declaration)
+        elif declaration.declaration is not None:
+            self._mark_declaration_exported(declaration.declaration)
+        elif declaration.source is None:
+            for specifier in declaration.specifiers:
+                if isinstance(specifier, JsErrorNode):
+                    continue
+                if isinstance(specifier.local, JsIdentifier):
+                    self._mark_binding_exported(self.resolve(specifier.local))
 
     def _mark_declaration_exported(self, declaration: Node | None):
         """
@@ -2930,10 +2927,14 @@ class SemanticModel:
         """
         One record per reference node: the walk reaches a node once per slot holding it, and the
         one identifier of `{ a }` or of `export { a };` fills two, so without the dedup a read's
-        multiplicity would follow its spelling rather than the program.
+        multiplicity would follow its spelling rather than the program. The export-marking rider
+        shares the walk: it consults only scope-builder state, so riding along changes nothing the
+        remaining construction walks observe.
         """
         seen: set[int] = set()
         for node in self.root.walk():
+            if isinstance(node, (JsExportNamedDeclaration, JsExportDefaultDeclaration)):
+                self._mark_export_declaration(node)
             if isinstance(node, JsMemberExpression):
                 self._record_global_alias_member_reference(node)
                 continue

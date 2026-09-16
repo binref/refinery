@@ -51,6 +51,9 @@ class ModelCacheBase:
     # A class attribute rather than an assignment in `__init__`, because `__init__` calls
     # `invalidate`, which reads this: an instance attribute would not exist yet at that point.
     _pins = 0
+    _pin_entry: int | None = None
+    _fill_version: int | None = None
+    _fill_slot: str | None = None
 
     root: Node
     options: object | None
@@ -88,8 +91,16 @@ class ModelCacheBase:
         could reveal a fact its held model predates would act on the stale, more permissive answer.
         A pass whose rewrites only ever make facts *more* restrictive is safe, because it then
         declines where it could have proceeded.
+
+        The pin also records the tree version it was entered at, and the outermost exit raises when
+        a slot was filled after the tree had moved past that version. Such a fill layered a model
+        over models held from an earlier tree, the one state no unpinned run builds (there, a
+        version change drops every slot together). A pass that trips this is reading a model at a
+        point its own edits ran ahead of, and fixing that pass — not the guard — is the response.
         """
         self._ensure_fresh()
+        if not self._pins:
+            self._pin_entry = self._version
         self._pins += 1
         try:
             yield self
@@ -97,7 +108,18 @@ class ModelCacheBase:
             self._pins -= 1
             if not self._pins:
                 self._version = tree_version(self.root)
+                entry, filled = self._pin_entry, self._fill_version
+                slot = self._fill_slot
+                self._pin_entry = None
+                self._fill_version = None
+                self._fill_slot = None
                 self.invalidate()
+                if entry is not None and filled is not None and filled > entry:
+                    raise RuntimeError(
+                        F'the model in slot {slot!r} was built at a tree version past the one the'
+                        ' pin was entered at, layering it over models the pin held from an earlier'
+                        ' tree'
+                    )
 
     def _ensure_fresh(self) -> None:
         version = tree_version(self.root)
@@ -110,12 +132,16 @@ class ModelCacheBase:
         The value memoized in *slot*, built through *build* on first access after construction or
         an invalidation. Every model property routes through here so freshness is checked and the
         slot is filled by the one accessor primitive rather than a hand-copied check-build-store
-        per model.
+        per model. A fill performed while a pin holds the cache notes the tree version it happened
+        at, for the check `pinned` performs on the outermost exit.
         """
         self._ensure_fresh()
         value = getattr(self, slot)
         if value is None:
             value = build()
+            if self._pins:
+                self._fill_version = self._version
+                self._fill_slot = slot
             setattr(self, slot, value)
         return value
 

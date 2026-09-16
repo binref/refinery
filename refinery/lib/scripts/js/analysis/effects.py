@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import enum
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, NamedTuple, Sequence
 
@@ -844,6 +845,27 @@ class _FreshKind(enum.Enum):
         return self is not _FreshKind.NOT_FRESH
 
 
+class _CallEdges:
+    """
+    The reverse call-edge index the worklist in `EffectModel._compute` schedules from: for every
+    function, the set of functions that call it. One instance per compute; `caller` names the
+    function whose scan is in progress, and `record` is the edge sink handed to `_scan`.
+    """
+
+    def __init__(self):
+        self.callers: dict[int, set[int]] = {}
+        self.caller: int | None = None
+
+    def record(self, callee: Node):
+        if self.caller is None:
+            raise RuntimeError('an edge was recorded outside a scan')
+        bucket = self.callers.get(id(callee))
+        if bucket is None:
+            self.callers[id(callee)] = {self.caller}
+        else:
+            bucket.add(self.caller)
+
+
 class EffectModel:
     """
     Per-function effect summaries for one script, built over a
@@ -1394,18 +1416,36 @@ class EffectModel:
         return functions
 
     def _compute(self):
+        """
+        The least fixpoint of the function summaries, by worklist: every function is scanned once, and a
+        scan that changes a summary re-queues only the functions that call the changed one. An edge is
+        recorded on every scan, including one that changes no summary, so the edge exists by the time its
+        callee first changes even when the caller was scanned before it.
+        """
         for func in self._functions:
             self._summaries[id(func)] = EffectSummary()
-        changed = True
-        while changed:
-            changed = False
-            for func in self._functions:
-                summary = self._scan(func)
-                if summary != self._summaries[id(func)]:
-                    self._summaries[id(func)] = summary
-                    changed = True
+        functions = {id(func): func for func in self._functions}
+        edges = _CallEdges()
+        queue = deque(functions.values())
+        queued = set(functions)
+        while queue:
+            func = queue.popleft()
+            queued.discard(id(func))
+            edges.caller = id(func)
+            summary = self._scan(func, edges.record)
+            if summary == self._summaries[id(func)]:
+                continue
+            self._summaries[id(func)] = summary
+            for caller in edges.callers.get(id(func), ()):
+                if caller not in queued:
+                    queued.add(caller)
+                    queue.append(functions[caller])
 
-    def _scan(self, func: Node) -> EffectSummary:
+    def _scan(
+        self,
+        func: Node,
+        record_call: Callable[[Node], None] | None = None,
+    ) -> EffectSummary:
         summary = EffectSummary()
         if isinstance(func, FUNCTION_NODES) and wraps_return(func):
             summary.wraps_return = True
@@ -1433,7 +1473,7 @@ class EffectModel:
                 elif base is not None and not self._getter_free_read(node):
                     summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
-                self._account_call(summary, node)
+                self._account_call(summary, node, record_call)
             elif isinstance(node, JsImportExpression):
                 summary.calls_unknown = True
         if isinstance(func, FUNCTION_NODES) and not is_generator_function(func):
@@ -1784,11 +1824,18 @@ class EffectModel:
                 return None
         return enclosing
 
-    def _account_call(self, summary: EffectSummary, call: JsCallExpression | JsNewExpression):
+    def _account_call(
+        self,
+        summary: EffectSummary,
+        call: JsCallExpression | JsNewExpression,
+        record_call: Callable[[Node], None] | None = None,
+    ):
         callee = self._resolve_callee(call)
         if callee is _PURE:
             return
         if isinstance(callee, Node):
+            if record_call is not None:
+                record_call(callee)
             summary.absorb(self.summary_of(callee))
         else:
             summary.calls_unknown = True

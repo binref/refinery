@@ -27,7 +27,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.parser import JsParser
-from test import TestBase
+from test import TestBase, a_property_of_the_pin_itself
 
 #: Every refuse row's anchor: the first `String.fromCharCode` call, the builtin the tampering
 #: sites in these programs are all spelled against.
@@ -433,6 +433,7 @@ class TestSingularValueAt(TestBase):
             '})();'
         ))
 
+    @a_property_of_the_pin_itself
     def test_a_splice_during_a_pinned_window_does_not_leak_past_the_pass(self):
         source = (
             'var out;\n'

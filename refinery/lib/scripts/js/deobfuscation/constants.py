@@ -52,6 +52,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsStringLiteral,
     JsTaggedTemplateExpression,
+    JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -104,6 +105,9 @@ def _is_primitive_and_pure(node: Node) -> bool:
     The deliberate complement of `EffectModel._fresh_kind`, over primitives rather than containers, and not
     to be merged with it: this admits exactly the values that have no identity to duplicate, where that one
     admits containers whose identity is known to be new. Their answers are disjoint by construction.
+
+    A `delete` is observable — it removes a binding or property — so its unary form is rejected while
+    the operator's other uses, none of which touch what they name, stay admitted.
     """
     for n in node.walk():
         if isinstance(n, (
@@ -121,6 +125,8 @@ def _is_primitive_and_pure(node: Node) -> bool:
             JsArrowFunctionExpression,
             JsClassExpression,
         )):
+            return False
+        if isinstance(n, JsUnaryExpression) and n.operator == 'delete':
             return False
     return True
 

@@ -24,6 +24,16 @@ class NameUnknownException(Exception):
         super().__init__('could not resolve: {}'.format(name))
 
 
+#: The `--no-pin` differential (see `test/conftest.py`) removes the pin mechanism, so a test of that
+#: mechanism — a build count the pin flattens, or the holding behavior itself — holds only outside
+#: the differential. Every result-equality assertion stays in force there, which is the differential's
+#: whole point.
+a_property_of_the_pin_itself = unittest.skipIf(
+    bool(os.environ.get('REFINERY_TEST_NO_PIN')),
+    'the no-pin differential removed the mechanism this test measures',
+)
+
+
 class TestBase(unittest.TestCase):
     _STORE = SampleStore()
 
