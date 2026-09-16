@@ -859,7 +859,11 @@ class _CallEdges:
     def record(self, callee: Node):
         if self.caller is None:
             raise RuntimeError('an edge was recorded outside a scan')
-        self.callers.setdefault(id(callee), set()).add(self.caller)
+        callers = self.callers.get(id(callee))
+        if callers is None:
+            self.callers[id(callee)] = {self.caller}
+        else:
+            callers.add(self.caller)
 
 
 class EffectModel:
