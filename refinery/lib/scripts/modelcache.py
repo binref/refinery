@@ -48,13 +48,20 @@ class ModelCacheBase:
 
     _SLOTS: tuple[str, ...] = ()
 
-    # The subset of `_SLOTS` whose build reads the live tree (`root`) rather than only already-built
-    # base models. `None` from a cache that has not classified its slots, which the guard reads as
-    # the whole slot set — the conservative default that refuses any late fill. A cache that declares
-    # it narrows the guard to these slots and lets `warm` build exactly them at a pin's entry:
-    # a model derived only from held bases is safe to build late, since it reads those bases and
-    # yields the entry-version answer, so only a root-reading model built late is an inconsistency.
+    # The slots whose build reads the live tree (`root`), not only already-built base models — the
+    # guard's refusal set. A model derived from held bases is safe to build late: it reads those
+    # bases and yields the entry-version answer. One of these, built late, layers a tree-reading
+    # model over held bases, so only these are refused. `None` from a cache that has not classified
+    # its slots reads as the whole slot set — the conservative default refusing any late fill. It is
+    # the complete backstop: every build-time tree reader, whether or not a pinned pass reads it.
+    # `warm` builds only the `_WARM_SLOTS` subset the pinned passes actually read.
     _ROOT_SLOTS: tuple[str, ...] | None = None
+
+    # The subset of `_ROOT_SLOTS` that `warm` builds at a pin's entry: the tree-reading models a
+    # pinned pass reads, held from entry so no read of one falls past an edit. A tree reader outside
+    # this subset is not pre-built — a pinned pass that reads one late trips the guard rather than
+    # silently layering it over the moved tree. `None` falls back to the full `_ROOT_SLOTS`.
+    _WARM_SLOTS: tuple[str, ...] | None = None
 
     # A class attribute rather than an assignment in `__init__`, because `__init__` calls
     # `invalidate`, which reads this: an instance attribute would not exist yet at that point.
@@ -142,21 +149,27 @@ class ModelCacheBase:
     def _root_slots(self) -> tuple[str, ...]:
         return self._SLOTS if self._ROOT_SLOTS is None else self._ROOT_SLOTS
 
+    def _warm_slots(self) -> tuple[str, ...]:
+        return self._root_slots() if self._WARM_SLOTS is None else self._WARM_SLOTS
+
     def warm(self) -> None:
         """
-        Build the root-reading models at the current tree version. A pinned block that both edits the
-        tree and reads models calls this at its entry, so no such model is first built after an edit
-        has moved the tree — the one state the pin's exit refuses. A model derived only from these
-        needs no warming: built late, it reads the held bases and yields the entry answer. The set
-        is the cache's `_ROOT_SLOTS`, declared once beside the model definitions, so a call site
-        cannot drift from the models it must hold the way a hand-copied pre-build list did.
+        Build the tree-reading models a pinned block reads, at the current tree version. A block
+        that both edits the tree and reads models calls this at its entry, so no such model is first
+        built after an edit has moved the tree — the one state the pin's exit refuses. A model
+        derived only from held bases needs no warming: built late, it reads those bases and yields
+        the entry answer. The set is the cache's `_WARM_SLOTS`, declared once beside the model
+        definitions, so a call site cannot drift from the models it must hold the way a hand-copied
+        pre-build list did. A tree reader the pinned passes do not read is left out of it and out of
+        this build; the guard still refuses it if some pass reads it late, so leaving it out of the
+        warm set cannot go silently wrong.
 
         This holds only for models that read the tree at build. A model that reads the tree lazily
         at query time — its walk happening on first use, not on construction — is not made
         consistent by warming its slot, and a pass that queries such a model across its edits owns
         that consistency itself.
         """
-        for slot in self._root_slots():
+        for slot in self._warm_slots():
             getattr(self, slot[1:])
 
     def _lazy(self, slot: str, build: Callable[[], _T]) -> _T:

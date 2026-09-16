@@ -349,6 +349,23 @@ class TestPinnedModels(TestBase):
             _remove_from_parent(block.body[0])
             self.assertTrue(cache.effects.summary_of(f).writes_global)
 
+    def test_a_tree_reader_the_warm_set_omits_is_still_refused_when_read_late(self):
+        """
+        `liveness` walks the tree at build like `effects`, so it is in the guard's refusal set; but
+        no pinned pass reads it, so it is left out of the warm build. The guard is the backstop: a
+        pass that does read it late after an edit trips the refusal rather than layering a liveness
+        verdict over the moved tree, so leaving it unwarmed cannot go silently wrong.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        self.assertNotIn('_liveness', cache._warm_slots())
+        self.assertIn('_liveness', cache._root_slots())
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                cache.warm()
+                _remove_from_parent(self._first_declaration(script))
+                cache.liveness
+
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
     """

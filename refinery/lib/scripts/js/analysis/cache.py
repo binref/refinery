@@ -68,12 +68,24 @@ class ModelCache(ModelCacheBase):
         '_tampering',
     )
 
-    # The slots whose build walks the live tree, so building one after an in-pin edit reads the
-    # moved tree and it must instead be warmed at entry: `model`/`control_flow` from `root`, and
-    # `effects`/`assignment`, which re-walk `model.root` at build. `dominance` and `reaching` build
-    # purely from held base models. Query-time tree reads — `tampering`'s site enumeration,
-    # `reaching`'s call walk — no warming can force; a pass reading them across its edits owns that.
+    # The slots whose build walks the live tree — the guard refuses any of these built late over a
+    # moved tree: `model`/`control_flow` from `root`, `effects`/`assignment` which re-walk
+    # `model.root` at build, and `liveness` which walks each graph's element subtrees at build.
+    # `dominance` and `reaching` build purely from held base models. Query-time tree reads —
+    # `tampering`'s site enumeration, `reaching`'s call walk — no warming can force; a pass reading
+    # them across its edits owns that.
     _ROOT_SLOTS = (
+        '_model',
+        '_control_flow',
+        '_effects',
+        '_assignment',
+        '_liveness',
+    )
+
+    # The tree readers a pinned pass actually reads, warmed at entry. `liveness` is a tree reader
+    # but no pinned pass reads it (`unused` runs unpinned), so it stays in the guard set above yet
+    # out of the warm build — warming it would solve liveness in pinned blocks that never ask.
+    _WARM_SLOTS = (
         '_model',
         '_control_flow',
         '_effects',
