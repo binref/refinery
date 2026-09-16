@@ -147,9 +147,14 @@ class ModelCacheBase:
         Build the root-reading models at the current tree version. A pinned block that both edits the
         tree and reads models calls this at its entry, so no such model is first built after an edit
         has moved the tree — the one state the pin's exit refuses. A model derived only from these
-        needs no warming: built late, it reads the held bases and yields the entry answer. The set is
-        the cache's `_ROOT_SLOTS`, declared once beside the model definitions, so a call site cannot
-        drift from the models it must hold the way a hand-copied pre-build list did.
+        needs no warming: built late, it reads the held bases and yields the entry answer. The set
+        is the cache's `_ROOT_SLOTS`, declared once beside the model definitions, so a call site
+        cannot drift from the models it must hold the way a hand-copied pre-build list did.
+
+        This holds only for models that read the tree at build. A model that reads the tree lazily
+        at query time — its walk happening on first use, not on construction — is not made
+        consistent by warming its slot, and a pass that queries such a model across its edits owns
+        that consistency itself.
         """
         for slot in self._root_slots():
             getattr(self, slot[1:])

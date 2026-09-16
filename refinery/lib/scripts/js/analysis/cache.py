@@ -68,12 +68,16 @@ class ModelCache(ModelCacheBase):
         '_tampering',
     )
 
-    # The two models built from `root`; every other slot is a pure function of already-built base
-    # models (`effects` from `model`, `dominance`/`assignment` from `model` and `control_flow`, and
-    # so on), so building one late over held bases yields the entry-version answer.
+    # The slots whose build walks the live tree, so building one after an in-pin edit reads the
+    # moved tree and it must instead be warmed at entry: `model`/`control_flow` from `root`, and
+    # `effects`/`assignment`, which re-walk `model.root` at build. `dominance` and `reaching` build
+    # purely from held base models. Query-time tree reads — `tampering`'s site enumeration,
+    # `reaching`'s call walk — no warming can force; a pass reading them across its edits owns that.
     _ROOT_SLOTS = (
         '_model',
         '_control_flow',
+        '_effects',
+        '_assignment',
     )
 
     root: JsScript

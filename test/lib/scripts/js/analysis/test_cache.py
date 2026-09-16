@@ -15,7 +15,11 @@ from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
-from refinery.lib.scripts.js.model import JsIdentifier, JsVariableDeclaration
+from refinery.lib.scripts.js.model import (
+    JsFunctionDeclaration,
+    JsIdentifier,
+    JsVariableDeclaration,
+)
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -230,11 +234,11 @@ class TestPinnedModels(TestBase):
                 cache.control_flow
         self.assertIsNot(cache.model, held)
 
-    def test_a_derived_model_first_built_after_an_edit_is_not_refused(self):
+    def test_a_pure_derived_model_first_built_after_an_edit_is_not_refused(self):
         """
-        A model derived only from held base models reads those bases, not the tree, so building it
-        after the tree has moved under a pin yields the entry-version answer and is no inconsistency.
-        The exit does not refuse it.
+        A model that builds purely from held base models — `dominance`, from the held `model` and
+        `control_flow` — reads those bases, not the tree, so building it after the tree has moved
+        under a pin yields the entry-version answer and is no inconsistency, and is not refused.
         """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
@@ -242,7 +246,22 @@ class TestPinnedModels(TestBase):
             cache.model
             cache.control_flow
             _remove_from_parent(self._first_declaration(script))
-            cache.reaching
+            cache.dominance
+
+    def test_a_late_read_that_forces_a_root_reading_build_is_refused(self):
+        """
+        Reading a model whose build pulls in a root-reading base after an edit builds that base late
+        over the moved tree, and the exit refuses rather than let the derived answer layer over it.
+        Here `reaching` pulls `effects`, which re-walks the tree at build.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                cache.model
+                cache.control_flow
+                _remove_from_parent(self._first_declaration(script))
+                cache.reaching
 
     def test_the_refusal_comes_from_the_outermost_exit(self):
         """
@@ -281,33 +300,54 @@ class TestPinnedModels(TestBase):
 
     def test_warm_builds_the_root_reading_models_and_no_others(self):
         """
-        Warming builds exactly the slots the cache classifies as root-reading, leaving every derived
-        slot unbuilt — those are safe to build lazily later, over the held roots.
+        Warming builds exactly the slots the cache classifies as root-reading — those whose build
+        walks the live tree — leaving every purely-derived slot unbuilt, to build lazily over the
+        held roots.
         """
         cache = ModelCache(self._script('var a = 1; function f(){ var x = 1; return x; } f();'))
         with cache.pinned():
             cache.warm()
             self.assertIsNotNone(cache._model)
             self.assertIsNotNone(cache._control_flow)
-            self.assertIsNone(cache._effects)
-            self.assertIsNone(cache._liveness)
+            self.assertIsNotNone(cache._effects)
+            self.assertIsNotNone(cache._assignment)
             self.assertIsNone(cache._dominance)
             self.assertIsNone(cache._reaching)
-            self.assertIsNone(cache._assignment)
+            self.assertIsNone(cache._liveness)
             self.assertIsNone(cache._tampering)
 
     def test_warming_at_entry_lets_a_later_derived_read_after_an_edit_stand(self):
         """
         The call-site contract: a block that warms the root-reading models at entry may first read a
-        derived model only after an in-block edit and the exit does not refuse it, because that model
-        builds over the held roots.
+        purely-derived model only after an in-block edit and the exit does not refuse it, because
+        that model builds over the held roots.
         """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
         with cache.pinned():
             cache.warm()
             _remove_from_parent(self._first_declaration(script))
-            cache.assignment
+            cache.dominance
+
+    def test_effects_first_built_after_an_edit_over_warmed_roots_yields_the_entry_answer(self):
+        """
+        `effects` re-walks the live tree at build, so it is a root-reading slot: warmed at entry, a
+        read of it after an in-pin edit serves the entry model. Were it left out of the warm set,
+        the read would build over the moved tree and report a global write the edit removed as
+        absent — the more-permissive direction the pin forbids.
+        """
+        script = self._script(
+            'function r(){return leaked;} function f(){leaked=1;} f();r();')
+        f = next(
+            n for n in script.walk()
+            if isinstance(n, JsFunctionDeclaration) and n.id is not None and n.id.name == 'f')
+        block = f.body
+        assert block is not None
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.warm()
+            _remove_from_parent(block.body[0])
+            self.assertTrue(cache.effects.summary_of(f).writes_global)
 
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
