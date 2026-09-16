@@ -43,6 +43,7 @@ from refinery.lib.scripts.ps1.ast import (
     bound_argument_value,
     fault_operand,
     free_positional_values,
+    get_member_name,
     is_soft_error_source,
     raises_a_caught_terminating_error,
     resolve_command_name,
@@ -61,6 +62,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1MemberAccess,
     Ps1RealLiteral,
     Ps1Script,
     Ps1ScriptBlock,
@@ -109,20 +111,15 @@ _STOP_ORDINAL = 1
 _ERROR_ACTION_PREFERENCE = 'erroractionpreference'
 
 #: The automatic variable that binds a default argument into every command that takes the parameter.
-#: A `Stop` written under a key ending `:ErrorAction` — `*:ErrorAction` for every command, or
+#: A `Stop` written under a key that names `-ErrorAction` — `*:ErrorAction` for every command, or
 #: `Get-Item:ErrorAction` for one — makes that command's reported error terminating, but a failing
 #: cast is not a command and is left stepped over. That is why an arming written here reaches the
 #: per-command terminating path rather than the whole-script `_stops_on_every_error` gate.
 _DEFAULT_PARAMETER_VALUES = 'psdefaultparametervalues'
 
-#: The suffix a `$PSDefaultParameterValues` key carries when it binds `-ErrorAction`. The scope in
-#: front of the colon is a command name or the wildcard, and neither is read: any key that binds the
-#: action for any command is enough to make that command's error terminating.
-_ERROR_ACTION_KEY_SUFFIX = ':erroraction'
-
 #: The members that mutate a hashtable in place, so that a `Stop` written through one of them arms
-#: the default table as an index-assignment does. Spelled as `resolve` sees a member — lowercased —
-#: and read as a set so `.Add` and its accessor alias `.set_Item` are one question.
+#: the default table as an index-assignment does. Spelled as `resolve` sees a member — lowercased
+#: — and read as a set so `.Add` and its accessor alias `.set_Item` are one question.
 _HASHTABLE_MUTATORS = frozenset({'add', 'set_item'})
 
 
@@ -246,7 +243,7 @@ def _stops_on_error(command: Ps1CommandInvocation) -> bool:
 def _writes_stop_to_the_preference(node: Node) -> bool:
     """
     Whether *node* writes `$ErrorActionPreference` a value that may be `Stop`, which makes every
-    error a command reports terminating — the failing cast included, which is otherwise stepped over.
+    error terminating — the failing cast included, which is otherwise reported and stepped over.
 
     Two shapes write the variable and both are read. An assignment names it through
     `refinery.lib.scripts.ps1.ast.assignment_target_variables`, so that a type-constrained,
@@ -274,17 +271,17 @@ def _cmdlet_writes_stop_to_the_preference(cmd: Ps1CommandInvocation) -> bool:
     `Set-Item Variable:ErrorActionPreference Stop`.
 
     Whether the command writes the variable at all is
-    `refinery.lib.scripts.ps1.analysis.naming.named_references`' answer, the one authority for what a
-    command does to a name it addresses as a string; it reports the write for every alias, casing and
-    scope-qualified spelling of these commands. What it does not report is the *value* written, which
-    is read here so the negative controls are decidable: `_written_variable_value` reads the named
-    `-Value`, else the positional value the command binds after the name — the `-Name` written
+    `refinery.lib.scripts.ps1.analysis.naming.named_references`' answer, the one authority for what
+    a command does to a name it addresses as a string; it reports the write for every alias, casing
+    and scope-qualified spelling of these commands. What it does not report is the *value* written,
+    which is read here so the negative controls are decidable: `_written_variable_value` reads the
+    named `-Value`, else the positional value the command binds after the name — the `-Name` written
     explicitly moves the value to the first free positional, exactly as it moves the name off it.
 
     A write that binds no value at all stores `$null` and arms nothing: `Clear-Variable` and a
     `-OutVariable` that happens to name the preference both reach here as writes with no value node,
-    and are read as not arming. A value that is present but not statically readable is read as `Stop`,
-    the `_selects_stop(None)` over-approximation that keeps a handler rather than dropping one.
+    and are read as not arming. A value present but not statically readable is read as `Stop`, the
+    `_selects_stop(None)` over-approximation that keeps a handler rather than dropping one.
     """
     if not any(
         reference.role is Ps1NameRole.WRITES
@@ -301,8 +298,8 @@ def _written_variable_value(cmd: Ps1CommandInvocation) -> Node | None:
     The value a variable- or item-writing command stores, or `None` when it binds no value.
 
     Read as the named `-Value` where one is written, else the positional value the command binds
-    after its subject: the name or path takes the first free positional unless an explicit `-Name` or
-    `-Path` moves it off, so the value is the free positional at index one when the subject is
+    after its subject: the name or path takes the first free positional unless an explicit `-Name`
+    or `-Path` moves it off, so the value is the free positional at index one when the subject is
     positional and at index zero when it is not — the same reading
     `refinery.lib.scripts.ps1.analysis.naming` makes for the name, one place along.
     """
@@ -330,14 +327,19 @@ def _names_the_default_table(node: Node | None) -> bool:
     return isinstance(node, Ps1Variable) and binding_key(node) == _DEFAULT_PARAMETER_VALUES
 
 
-def _key_binds_the_error_action(key: Node | None) -> bool:
+def _names_the_error_action(key: str | None) -> bool:
     """
-    Whether *key* is a `$PSDefaultParameterValues` key that binds `-ErrorAction` — one ending
-    `:ErrorAction`, whatever command scope stands before the colon. A key this cannot read as a
-    literal is read as binding it, the direction that keeps a handler.
+    Whether a `$PSDefaultParameterValues` key *key* binds `-ErrorAction`: its parameter half — what
+    stands after the `command:` scope — being the action's own name or its `ea` alias. 5.1 matches
+    that half against the parameter's name and aliases exactly rather than by prefix, so `ea` and
+    `erroraction` bind it where an abbreviation like `errora` does not — the `_ERROR_ACTION` set
+    the call-site reader already answers from. A key this cannot read as a literal is read as
+    binding it, the direction that keeps a handler.
     """
-    text = argument_text(key)
-    return text is None or text.strip().lower().endswith(_ERROR_ACTION_KEY_SUFFIX)
+    if key is None:
+        return True
+    _scope, separator, parameter = key.strip().lower().rpartition(':')
+    return bool(separator) and parameter in _ERROR_ACTION
 
 
 def _writes_stop_to_the_default_table(node: Node) -> bool:
@@ -345,29 +347,38 @@ def _writes_stop_to_the_default_table(node: Node) -> bool:
     Whether *node* writes `Stop` under an `-ErrorAction` key of `$PSDefaultParameterValues`, which
     makes every command that binds the key report a terminating error.
 
-    Two spellings write the table statically and both are read: the index-assignment
-    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'`, and the in-place mutation
-    `$PSDefaultParameterValues.Add('*:ErrorAction', 'Stop')` or its `.set_Item` accessor. The key is
-    read as binding the action when it ends `:ErrorAction`, and the value through the same
-    `_selects_stop` a preference write reads, so `Continue` written here arms nothing. A whole-table
-    replacement `$PSDefaultParameterValues = @{ ... }`, a splat, and an aliased copy are the
-    completeness holes tracked as xfails: their target is not this index or this member.
+    Three spellings write the table statically and all are read: the index-assignment
+    `$PSDefaultParameterValues['*:ErrorAction'] = 'Stop'`, the member-assignment
+    `$PSDefaultParameterValues.'*:ErrorAction' = 'Stop'` that sets the same key through the
+    hashtable adapter, and the in-place mutation `$PSDefaultParameterValues.Add('*:ErrorAction',
+    'Stop')` or its `.set_Item` accessor. The key is read through `_names_the_error_action`, and the
+    value through the same `_selects_stop` a preference write reads, so `Continue` written here arms
+    nothing. A whole-table replacement `$PSDefaultParameterValues = @{ ... }`, a splat, and an
+    aliased copy are the completeness holes tracked as xfails: their target is not this index or the
+    member.
     """
     if isinstance(node, Ps1AssignmentExpression):
         target = node.target
-        return (
-            isinstance(target, Ps1IndexExpression)
-            and _names_the_default_table(target.object)
-            and _key_binds_the_error_action(target.index)
-            and _selects_stop(node.value)
-        )
+        if isinstance(target, Ps1IndexExpression):
+            return (
+                _names_the_default_table(target.object)
+                and _names_the_error_action(argument_text(target.index))
+                and _selects_stop(node.value)
+            )
+        if isinstance(target, Ps1MemberAccess):
+            return (
+                _names_the_default_table(target.object)
+                and _names_the_error_action(get_member_name(target.member))
+                and _selects_stop(node.value)
+            )
+        return False
     if isinstance(node, Ps1InvokeMember):
         member = node.member.lower() if isinstance(node.member, str) else ''
         return (
             _names_the_default_table(node.object)
             and member in _HASHTABLE_MUTATORS
             and len(node.arguments) >= 2
-            and _key_binds_the_error_action(node.arguments[0])
+            and _names_the_error_action(argument_text(node.arguments[0]))
             and _selects_stop(node.arguments[1])
         )
     return False
@@ -466,8 +477,8 @@ def a_stop_may_be_in_force(root: Node) -> bool:
     decides whether a handler may be removed, where a missed arming keeps a handler that could have
     gone and costs recall on junk. The spellings it still misses arm the table through a shape whose
     target is not that index — a whole-table replacement `$PSDefaultParameterValues = @{ ... }`, a
-    splatted `Set-Variable`, and an aliased copy of the table under another name — each tracked as an
-    expected failure.
+    splatted `Set-Variable`, and an aliased copy of the table under another name — each tracked as
+    an expected failure.
 
     A caller asking whether a *statement completed* cannot inherit those. Reading a script as arming
     nothing where it does says a command that in fact raised ran to its end, and a value it was going

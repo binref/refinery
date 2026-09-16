@@ -900,7 +900,7 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
     default set, `Get-Item nope` ends the script and `[int]'a'` does not. This is why the arming is
     read on the per-command terminating path and not in `_stops_on_every_error`, which escalates a
     cast as well; a `Stop` written to `$ErrorActionPreference`, by assignment or by a cmdlet, does
-    escalate both, and the four rows hold that difference.
+    escalate both, and the rows below hold that difference.
     """
 
     def _verdicts(self, arming: str) -> dict[str, bool]:
@@ -915,7 +915,7 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
             and resolve_command_name(node) == 'get-item'
         )
         cast = next(
-            node for node in tree.walk_in_order() if isinstance(node, Ps1CastExpression))
+            node for node in tree.body[-1].walk() if isinstance(node, Ps1CastExpression))
         return {
             'command': reach.error_is_terminating(command),
             'cast': reach.error_is_terminating(cast),
@@ -930,6 +930,18 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
     def test_a_command_scoped_default_terminates_a_command_but_not_a_cast(self):
         self.assertEqual(
             self._verdicts("$PSDefaultParameterValues.Add('Get-Item:ErrorAction', 'Stop')"),
+            {'command': True, 'cast': False},
+        )
+
+    def test_a_key_scoped_to_another_command_still_arms_this_one(self):
+        """
+        The command scope before the key is not read: any `:ErrorAction` entry arms every command,
+        so a key scoped to `Set-Location` makes `Get-Item` terminating too. 5.1 binds the default
+        per command, so this over-approximates — it keeps a handler the host would let go, the safe
+        direction — and the pin is what a precise-scoping change would have to update.
+        """
+        self.assertEqual(
+            self._verdicts("$PSDefaultParameterValues['Set-Location:ErrorAction'] = 'Stop'"),
             {'command': True, 'cast': False},
         )
 
@@ -958,9 +970,9 @@ class TestPs1TheDefaultTableTerminatesACommandButNotACast(TestBase):
 class TestPs1ACmdletWriteOfTheStopPreferenceArmsEveryError(TestBase):
     """
     A cmdlet that writes `$ErrorActionPreference` by name arms the preference as an assignment does,
-    read through `refinery.lib.scripts.ps1.analysis.naming.named_references`, so a failing cast under
-    it is terminating. Every alias, casing, scope-qualified and provider spelling the name authority
-    reads arms it, which is why the recognition lives there rather than in a hand-kept command list.
+    read through `refinery.lib.scripts.ps1.analysis.naming.named_references`, so a failing cast
+    under it is terminating. Every alias, casing, scope-qualified and provider spelling the
+    authority reads arms it, so the recognition lives there rather than in a hand-kept command list.
 
     The value written is read precisely — the named `-Value` or the positional the command binds
     after its name, wherever an explicit `-Name` moves that name off the first slot — so a member
@@ -973,7 +985,7 @@ class TestPs1ACmdletWriteOfTheStopPreferenceArmsEveryError(TestBase):
             {arming}
             [int]'a'
         """)
-        cast = next(node for node in tree.walk_in_order() if isinstance(node, Ps1CastExpression))
+        cast = next(node for node in tree.body[-1].walk() if isinstance(node, Ps1CastExpression))
         return reach.error_is_terminating(cast)
 
     def _verdicts(self, armings: list[str]) -> dict[str, bool]:

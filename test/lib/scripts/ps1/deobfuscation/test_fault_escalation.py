@@ -10,11 +10,11 @@ from test.lib.scripts.ps1.deobfuscation import TestPs1
 #: behind. Every claim below is about the shapes in which deleting it does change what runs.
 _RAISE = "$Null = [Int]'abc'"
 
-#: The same failing cast written as its own statement rather than stored, so the raise survives where
-#: `_RAISE` is dropped as a dead store. It is the witness for an arming that escalates *every* error
-#: rather than only what a command reports: under a `Stop` preference this cast ends the script, so a
-#: `trap` over it is load bearing, and under a default-table `Stop` — which reaches commands only —
-#: it is not, which is the difference the two armings are told apart by.
+#: The same failing cast written as its own statement rather than stored, so the raise survives
+#: where `_RAISE` is dropped as a dead store. It is the witness for an arming that escalates *every*
+#: error rather than only what a command reports: under a `Stop` preference this cast ends the
+#: script, so a `trap` over it is load bearing, and under a default-table `Stop` — which reaches
+#: commands only — it is not, which is the difference the two armings are told apart by.
 _BARE_CAST_RAISE = "[int]'a'"
 
 #: The type Windows PowerShell 5.1 gives that error, so a handler filtered on it matches the raise.
@@ -1594,12 +1594,12 @@ class TestPs1AStopPreferenceACmdletArmsMakesEveryErrorTerminating(_Ps1FaultEscal
     does, so it escalates every error and not only what a command reports: the bare cast below is
     stepped over with the handler and ends the script without it, so the `trap` is the whole reason
     the statement after it runs. `_writes_stop_to_the_preference` reads the write through the name
-    authority `refinery.lib.scripts.ps1.analysis.naming.named_references`, which is why the preference
-    is armed here and not only when it is assigned to.
+    authority `refinery.lib.scripts.ps1.analysis.naming.named_references`, which is why the
+    preference is armed here and not only when it is assigned to.
 
     A raise that is a bare cast rather than a stored one is the witness: it makes the kept `trap`
-    turn on the preference escalating a *cast*, which a default-table `Stop` — reaching commands only
-    — does not do, and it is not dropped as a dead store the way `$Null = ...` is.
+    turn on the preference escalating a *cast*, which a default-table `Stop` — reaching commands
+    only — does not do, and it is not dropped as a dead store the way `$Null = ...` is.
     """
 
     def test_a_trap_under_a_preference_a_cmdlet_arms_is_kept(self):
@@ -1656,6 +1656,14 @@ class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps
         self._assertTheTrapUnderTheDefaultIsKept(
             "$PSDefaultParameterValues.Add('*:ErrorAction', 'Stop')")
 
+    def test_an_alias_key_binds_the_action(self):
+        self._assertTheTrapUnderTheDefaultIsKept(
+            "$PSDefaultParameterValues['*:ea'] = 'Stop'")
+
+    def test_a_member_assignment_of_stop_binds_the_action(self):
+        self._assertTheTrapUnderTheDefaultIsKept(
+            "$PSDefaultParameterValues.'*:ErrorAction' = 'Stop'")
+
     def test_a_default_that_binds_a_member_other_than_stop_leaves_the_trap_removable(self):
         self._assertDeobfuscatesTo(F"""
             $PSDefaultParameterValues['*:ErrorAction'] = 'Continue'
@@ -1671,15 +1679,16 @@ class TestPs1AStopBoundThroughDefaultParameterValuesMakesCommandsTerminating(_Ps
 
 class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
     """
-    Three shapes arm a `Stop` the removal gate does not read, so a `trap` that is load bearing on the
-    5.1 host is dropped. Each is measured on the host — the guarded raise ends the script without the
-    handler and the follower runs with it — and each needs a value-domain read this increment does
-    not build: the target of the arming is not the name or the index the gate matches.
+    Five shapes arm a `Stop` the removal gate does not read, so a `trap` that is load bearing on
+    the 5.1 host is dropped. Each is measured on the host — the guarded raise ends the script
+    without the handler and the follower runs with it — and each reaches the gate through a
+    spelling it does not resolve: a splat table, a `-LiteralPath` the name authority reads no
+    subject from, a whole-table literal, an aliased copy, or a computed member name.
 
-    The wide completion-side gate `a_stop_may_be_in_force` catches all three — every one names
+    The wide completion-side gate `a_stop_may_be_in_force` catches all five — every one names
     `ErrorActionPreference` or `PSDefaultParameterValues` as a string — so a value the arming would
-    have established is not folded across the raise. What is not caught is the narrower removal of the
-    handler, which is what these pin.
+    have established is not folded across the raise. What is not caught is the narrower removal of
+    the handler, which is what these pin.
     """
 
     @unittest.expectedFailure
@@ -1692,6 +1701,15 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
               {_BARE_CAST_RAISE}
               {_FOLLOWER}
             }}
+        """)
+
+    @unittest.expectedFailure
+    def test_a_literal_path_write_of_the_preference_keeps_the_trap(self):
+        self._assertKept(F"""
+            Set-Item -LiteralPath Variable:ErrorActionPreference Stop
+            trap {{ continue }}
+            {_BARE_CAST_RAISE}
+            {_FOLLOWER}
         """)
 
     @unittest.expectedFailure
@@ -1708,6 +1726,16 @@ class TestPs1AStopArmingTheRemovalGateStillMisses(_Ps1FaultEscalation):
         self._assertKept(F"""
             $x = $PSDefaultParameterValues
             $x['*:ErrorAction'] = 'Stop'
+            trap {{ continue }}
+            {_UNSPECIFIED_RAISE}
+            {_FOLLOWER}
+        """)
+
+    @unittest.expectedFailure
+    def test_a_computed_member_mutation_of_the_default_table_keeps_the_trap(self):
+        self._assertKept(F"""
+            $n = 'Add'
+            $PSDefaultParameterValues.$n('*:ErrorAction', 'Stop')
             trap {{ continue }}
             {_UNSPECIFIED_RAISE}
             {_FOLLOWER}
