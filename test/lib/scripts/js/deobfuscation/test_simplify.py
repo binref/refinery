@@ -3,12 +3,16 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.units.scripting.js import js
 
 _ASTRAL = chr(0x1F600)
@@ -1872,3 +1876,19 @@ class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
             _folded_value(F"{_SPANNING}.padEnd(6, '-')"),
             F"'a{_ASTRAL}b--'",
         )
+
+
+class TestARespellingMovesTheTreeVersion(TestBase):
+    """
+    A string literal respelled to its shortest form changes the program the tree spells — the
+    spelling is what decides whether a line is a directive — and the version counter every model
+    cache reads has to move with it: a cache whose pin read no change on exit keeps the models built
+    over the earlier spelling.
+    """
+
+    def test_respelling_an_escaped_string_literal_advances_the_counter(self):
+        script = JsParser("SINK('\\x61');").parse()
+        before = tree_version(script)
+        JsSimplifications().visit(script)
+        self.assertEqual("SINK('a');", JsSynthesizer().convert(script))
+        self.assertGreater(tree_version(script), before)

@@ -1040,7 +1040,7 @@ class JsSimplifications(Transformer):
             return None
         if spelling_states(rebuilt[1:-1]) != spelling_states(node.body):
             return None
-        node.raw = rebuilt
+        set_value(node, 'raw', rebuilt)
         self.mark_changed()
         return None
 
