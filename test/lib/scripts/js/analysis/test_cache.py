@@ -249,6 +249,22 @@ class TestPinnedModels(TestBase):
         self.assertTrue(completed_the_inner_block)
         self.assertIsNot(cache.model, held)
 
+    def test_a_block_that_raises_its_own_error_is_not_masked_by_the_refusal(self):
+        """
+        The refusal fires on the outermost exit, which is also where a block's own exception is
+        passing through. Raising the refusal there unconditionally would replace that exception with
+        the guard's, hiding the real failure; a block that both raises and leaves a late fill behind
+        must surface its own error.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with self.assertRaises(ValueError):
+            with cache.pinned():
+                cache.model
+                _remove_from_parent(self._first_declaration(script))
+                cache.reaching
+                raise ValueError('the block\'s own failure')
+
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
     """

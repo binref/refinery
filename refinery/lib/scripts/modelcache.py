@@ -102,8 +102,12 @@ class ModelCacheBase:
         if not self._pins:
             self._pin_entry = self._version
         self._pins += 1
+        block_raised = False
         try:
             yield self
+        except BaseException:
+            block_raised = True
+            raise
         finally:
             self._pins -= 1
             if not self._pins:
@@ -114,7 +118,12 @@ class ModelCacheBase:
                 self._fill_version = None
                 self._fill_slot = None
                 self.invalidate()
-                if entry is not None and filled is not None and filled > entry:
+                if (
+                    not block_raised
+                    and entry is not None
+                    and filled is not None
+                    and filled > entry
+                ):
                     raise RuntimeError(
                         F'the model in slot {slot!r} was built at a tree version past the one the'
                         ' pin was entered at, layering it over models the pin held from an earlier'
