@@ -847,6 +847,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             # layered over base models the pin holds from an earlier tree — the state no unpinned
             # run builds and the pin's exit refuses.
             cache.model
+            cache.assignment
             cache.effects
             cache.dominance
             cache.tampering

@@ -52,6 +52,18 @@ class TestReflectionInlining(TestJsDeobfuscator):
         return self._run_transformer(
             source, JsReflectionInlining, DeobfuscationOptions(module=True))
 
+    def test_a_constant_fold_before_a_sibling_construction_check_does_not_trip_the_pin(self):
+        """
+        Folding the first construction advances the tree under the held pin, and checking the second
+        construction's argument then reads the establishment model for the first time — past the
+        entry version. The window must have that model held from entry, or the pin's fill guard
+        aborts the whole run on this valid input.
+        """
+        self.assertEqual(
+            "var y = new Function('a', 'return a')(z);\nvar x = 1;",
+            self._reflect("var y = new Function('a','return a')(z); var x = new Function('return 1')();"),
+        )
+
     def test_eval_string_literal(self):
         self.assertEqual('var x = 1;', self._reflect("eval('var x = 1;');"))
 
