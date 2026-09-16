@@ -121,6 +121,16 @@ _MUTATION_CMDLETS = frozenset({
     'update-typedata',
 })
 
+#: The subset of the mutators that also loads commands into the session, so a bareword after one may
+#: name a command this tree never spells. `Import-Module` imports a module's exported commands and
+#: `New-Module` runs a scriptblock whose functions become callable; the rest of `_MUTATION_CMDLETS`
+#: touch only the type system and leave the command table as they found it. See
+#: `_opens_command_namespace`.
+_MODULE_LOADER_CMDLETS = frozenset({
+    'import-module',
+    'new-module',
+})
+
 #: Commands that redefine command identity, after which a later bareword can no longer be trusted to
 #: name what the metadata says — including a mutator hidden behind the new name. A static
 #: single-definition alias is inlined away before this runs, so a *surviving* one is an alias the
@@ -202,6 +212,43 @@ def command_role(name: str) -> WorldRole:
     if key in _ALIAS_CMDLETS:
         return WorldRole.IDENTITY
     return WorldRole.NONE
+
+
+def _opens_type_system(role: WorldRole) -> bool:
+    """
+    Whether an opener `_opens_world` gave `role` leaves the .NET type system in a state reflection
+    no longer describes — the axis a present-member purity grant reads.
+
+    `WorldRole.MUTATION` is the plain-sight change to it, and `LEAK` and `UNKNOWN` open it by
+    running code that can perform one. `WorldRole.IDENTITY` does not: rebinding a command name
+    through `Set-Alias` or the `function:`/`alias:` namespace touches no type and no member. The
+    command that identity binds may itself mutate the type system when it later runs, but that is a
+    fact about the *call* to the rebound name — the command axis — not about the binding itself.
+    """
+    return role in (WorldRole.LEAK, WorldRole.MUTATION, WorldRole.UNKNOWN)
+
+
+def _opens_command_namespace(node, role: WorldRole) -> bool:
+    """
+    Whether the opener `node`, which `_opens_world` gave `role`, leaves a bareword able to name a
+    command this tree never spells — the axis `refinery.lib.scripts.ps1.analysis.callgraph` reads.
+
+    A `WorldRole.MUTATION` opens the type system but binds no command name — a `class` or `Add-Type`
+    puts a *type* into the session, `Update-TypeData` and `Add-Member` re-point a type's *members* —
+    so none of them says a later call runs something other than what the metadata names. The two
+    module loaders are the exception the type-system deny-list folds in for its own reasons: an
+    `Import-Module` imports commands and a `New-Module` runs a body whose functions become callable,
+    so each does open the command namespace. `LEAK`, `IDENTITY` and `UNKNOWN` open it by running
+    unreadable code, rebinding a name, or dispatching opaquely.
+
+    Every opener opens at least one of the two axes, so `_opens_type_system` and this one together
+    reproduce `closed_for_the_whole_run` as their conjunction — no opener is invisible to both.
+    """
+    if role in (WorldRole.LEAK, WorldRole.IDENTITY, WorldRole.UNKNOWN):
+        return True
+    if role is WorldRole.MUTATION and isinstance(node, Ps1CommandInvocation):
+        return (resolve_command_name(node) or '') in _MODULE_LOADER_CMDLETS
+    return False
 
 
 class Ps1ShadowSite(NamedTuple):
@@ -345,12 +392,13 @@ def _is_written_out(value) -> bool:
 
 def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMeasurement:
     """
-    Walk the whole tree once, computing the command-table verdict and every position together:
-    whether any node opens the world (a single opener anywhere is global and retroactive, so it
-    closes off the verdict), the set of command names the script redefines and the site of each
-    redefinition, and every opener node in walk order. The walk cannot short-circuit on the first
-    opener because the shadow set needs every redefinition, wherever it sits, and the floods need
-    every position.
+    Walk the whole tree once, computing the world verdict and every position together: whether any
+    node opens the type system (`_opens_type_system`) and whether any opens the command table
+    (`_opens_command_namespace`) — the two independent axes the world carries apart — the set of
+    command names the script redefines and the site of each redefinition, and every opener node in
+    walk order. A single opener anywhere is global and retroactive, so it closes off the axis it
+    opens. The walk cannot short-circuit on the first opener because the shadow set needs every
+    redefinition, wherever it sits, and the floods need every position.
 
     An opener is yielded as the node itself, not its role. The class or enum definition among them
     opens the world at no position — the engine compiles it before the first statement runs — and is
@@ -362,7 +410,8 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     redefinition this walk *did* read, so nothing about it rests on what unreadable code does.
     """
     trusting = eval_is_trusted(options)
-    closed = True
+    type_system_closed = True
+    command_table_closed = True
     closed_but_for_alias_bindings = True
     shadowed: set[str] = set()
     openers: list[Node] = []
@@ -375,42 +424,59 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
         if role is WorldRole.NONE or (trusting and _runs_unreadable_code(node, role)):
             continue
         openers.append(node)
-        closed = False
+        if _opens_type_system(role):
+            type_system_closed = False
+        if _opens_command_namespace(node, role):
+            command_table_closed = False
         if not _opens_world_only_by_binding_an_alias(node):
             closed_but_for_alias_bindings = False
-    world = Ps1TypeWorld(closed, frozenset(shadowed), closed_but_for_alias_bindings)
+    world = Ps1TypeWorld(
+        type_system_closed,
+        frozenset(shadowed),
+        closed_but_for_alias_bindings,
+        command_table_closed,
+    )
     return Ps1WorldMeasurement(
         world, tuple(openers), tuple(shadow_sites), root, tree_version(root))
 
 
 class Ps1TypeWorld:
     """
-    The verdict of `build_closed_world`: whether the running script leaves the type system and
-    command table intact. It carries both command-table facts the purity gate needs — the
-    whole-run verdict (`closed_for_the_whole_run`) and the set of command names the script redefines
-    (`command_shadowed`) — so the two cannot drift apart, and the one question asked of the pair
-    (`may_trust_command_name`). Held in a
+    The verdict of `build_closed_world`: whether the running script leaves the .NET type system and
+    the command table intact. These are two independent axes with two independent openers — a
+    `class` mutates the type system without binding a command name, a `Set-Alias` the reverse — so
+    the world carries them apart, `type_system_closed` and `command_table_closed`, and the combined
+    whole-run verdict `closed_for_the_whole_run` is their conjunction rather than a third stored
+    flag that could drift from them. Callers read the axis they need: the call graph reads the
+    command axis, the present-member purity gate reads the combined verdict. Alongside them sit the
+    set of command names the script redefines (`command_shadowed`) and the one question asked of the
+    verdict-and-set pair (`may_trust_command_name`). Held in a
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot and passed to the effect layer.
 
-    A world nothing was measured over is spelled `Ps1TypeWorld(False, frozenset())` — open, trusting
-    no name — rather than by an absent object, so that "we did not look" and "we looked and it is
-    open" cannot become two verdicts a caller distinguishes.
+    A world nothing was measured over is spelled `Ps1TypeWorld(False, frozenset())` — open on both
+    axes, trusting no name — rather than by an absent object, so that "we did not look" and "we
+    looked and it is open" cannot become two verdicts a caller distinguishes.
     """
 
     def __init__(
         self,
-        closed: bool,
+        type_system_closed: bool,
         shadowed: frozenset[str],
         closed_but_for_alias_bindings: bool | None = None,
+        command_table_closed: bool | None = None,
     ):
         """
-        A verdict left unstated for `closed_but_for_alias_bindings` takes the value of `closed`,
-        which is the answer for a world that has no opener at all and the conservative one for a
-        world that has an opener this was not told the kind of.
+        A verdict left unstated for `closed_but_for_alias_bindings` or `command_table_closed` takes
+        the value of `type_system_closed`, which is the answer for a world that has no opener at all
+        and the conservative one for a world stated by a single closed/open verdict — a hand-built
+        world that does not distinguish the axes.
         """
-        self._closed = closed
+        self._type_system_closed = type_system_closed
         self._closed_but_for_alias_bindings = (
-            closed if closed_but_for_alias_bindings is None else closed_but_for_alias_bindings)
+            type_system_closed
+            if closed_but_for_alias_bindings is None else closed_but_for_alias_bindings)
+        self._command_table_closed = (
+            type_system_closed if command_table_closed is None else command_table_closed)
         self._shadowed = shadowed
 
     @property
@@ -434,11 +500,24 @@ class Ps1TypeWorld:
         return self._closed_but_for_alias_bindings
 
     @property
+    def type_system_closed(self) -> bool:
+        """
+        Whether nothing the script runs leaves the .NET type system in a state reflection no longer
+        describes: the type-system half of the world. A pure command-table opener — a `Set-Alias`,
+        an `Import-Alias`, a `function:`/`alias:` binding — leaves this closed while opening
+        `command_table_closed`, the mirror of a `class` opening this one alone. See
+        `_opens_type_system`.
+        """
+        return self._type_system_closed
+
+    @property
     def closed_for_the_whole_run(self) -> bool:
         """
-        Whether the type world is closed *anywhere* the script runs: no node opens it, so a
-        present-member grant holds at every position. This is the whole-script verdict, position
-        free by construction — a question about the run entire, not about one read within it.
+        Whether the world is closed on *both* axes *anywhere* the script runs: no node opens the
+        type system and none opens the command table, so a present-member grant holds everywhere.
+        This is the whole-script verdict, position free by construction — a question about the run
+        entire, not about one read within it. It is the conjunction of the two axes, not a stored
+        flag: a world open on either axis is not closed for the whole run.
 
         The flow-sensitive successor to this — whether the world is closed at one particular read,
         which depends on where that read sits relative to the leaks that reach it — is not a fact
@@ -448,7 +527,23 @@ class Ps1TypeWorld:
         A verdict of closed here means that model grants at every position; only when this is open
         does the position start to matter.
         """
-        return self._closed
+        return self._type_system_closed and self._command_table_closed
+
+    @property
+    def command_table_closed(self) -> bool:
+        """
+        Whether nothing the script runs can leave a bareword naming a command this tree never
+        spells: the command-table half of the world, read by
+        `refinery.lib.scripts.ps1.analysis.callgraph` where `closed_for_the_whole_run` is the wider
+        type-system-and-command verdict the member-trust gate reads.
+
+        A pure type-system mutation — a `class`, `Add-Type`, `Update-TypeData`, `Add-Member`, a
+        type-accelerator remap, a PSObject member mutation — opens `closed_for_the_whole_run` but
+        not this: it changes what a *type* name denotes, never what a *command* name runs. So
+        `closed_for_the_whole_run` implies this, and the converse fails for exactly those mutations.
+        See `_opens_command_namespace` for what does open it.
+        """
+        return self._command_table_closed
 
     def command_shadowed(self, name: str) -> bool:
         """
@@ -489,8 +584,14 @@ class Ps1TypeWorld:
         answer is wider than the set: a reader who takes this for "is it redefined?" and narrows it
         back to that would reopen a hole that deletes code, and no `_grant` sits in the path to
         catch it.
+
+        The verdict read is the combined `closed_for_the_whole_run`, which a pure type-system
+        mutation opens. That is safe over-refusal, not a requirement: a `class` or `Add-Type` cannot
+        change what a *command* name runs, so this could read `command_table_closed` and trust the
+        name over such a mutation. Tightening it that way is a separate increment, since it would
+        move member-grant behaviour on every script that mutates a type beside a trusted command.
         """
-        return self._closed and not self.command_shadowed(name)
+        return self.closed_for_the_whole_run and not self.command_shadowed(name)
 
     @property
     def shadowed_names(self) -> frozenset[str]:

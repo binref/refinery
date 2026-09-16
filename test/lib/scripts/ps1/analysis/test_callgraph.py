@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import unittest
-
 from test import TestBase
 
 from refinery.lib.scripts.ps1.analysis.callgraph import build_call_graph
@@ -144,33 +142,37 @@ class TestPs1CallGraphReadabilityAnswersOverAMeasuredWorld(TestBase):
             with self.subTest(opener):
                 self.assertFalse(self._readability_beside(opener))
 
-    @unittest.expectedFailure
     def test_a_class_definition_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside('class C { }'))
 
-    @unittest.expectedFailure
     def test_an_enum_definition_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside('enum E { A }'))
 
-    @unittest.expectedFailure
     def test_add_type_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside("Add-Type -TypeDefinition 'public class Z {}'"))
 
-    @unittest.expectedFailure
     def test_update_type_data_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside(
             'Update-TypeData -Force -TypeName System.String -MemberName Q -Value 1'))
 
-    @unittest.expectedFailure
     def test_a_type_accelerator_mutation_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside(
             "[System.Management.Automation.PSObject+TypeAccelerators]::Add('z', [int])"))
 
-    @unittest.expectedFailure
     def test_a_psobject_member_mutation_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside('$o.PSObject.Members.Add($m)'))
 
-    @unittest.expectedFailure
     def test_add_member_leaves_the_graph_readable(self):
         self.assertTrue(self._readability_beside(
             'Add-Member -InputObject $o -Name Q -Value 1 -MemberType NoteProperty'))
+
+    def test_a_type_mutation_leaves_an_uncalled_helper_reached_by_nobody(self):
+        graph = self._graph(
+            "function Zqhelper { 'P' }\nAdd-Type -TypeDefinition 'public class Z {}'")
+        self.assertTrue(graph.is_readable)
+        self.assertNotIn('zqhelper', graph.reachable_names())
+
+    def test_a_command_table_opener_keeps_that_same_helper_reachable(self):
+        graph = self._graph("function Zqhelper { 'P' }\nImport-Module .\\m.psm1")
+        self.assertFalse(graph.is_readable)
+        self.assertIn('zqhelper', graph.reachable_names())

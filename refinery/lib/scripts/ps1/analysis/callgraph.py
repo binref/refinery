@@ -158,8 +158,11 @@ class Ps1CallGraph:
         Five independent things say it is not, and every one of them has to be asked, because none
         implies another:
 
-        - the type world is open, so a dot-sourced file, an imported module or an `iex` holds
-          definitions and call sites the walk never read;
+        - the command table is open (`Ps1TypeWorld.command_table_closed` is false), so a dot-sourced
+          file, an imported module, an `iex` or an aliasing cmdlet defines or imports a command the
+          walk never read. A pure type-system mutation — a `class`, `Add-Type` — is *not* one of
+          these: it opens the wider `closed_for_the_whole_run` but not the command table, since it
+          binds no command name, so the graph stays readable beside it;
         - an invocation dispatches opaquely (`& $f`), so a name is reached without being written;
         - an assignment binds the `function:` or `alias:` namespace, which defines a command under a
           spelling the definition scan does not read — and leaves the world closed while doing it,
@@ -364,7 +367,7 @@ def build_call_graph(
     call_sites: dict[str, list[Ps1CallSite]] = {}
     qualified: list[str] = []
     retried: dict[str, list[str]] = {}
-    readable = world.closed_for_the_whole_run
+    readable = world.command_table_closed
     exports = False
     for node in root.walk_in_order():
         if isinstance(node, Ps1FunctionDefinition):

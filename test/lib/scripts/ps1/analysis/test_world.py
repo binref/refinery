@@ -537,6 +537,67 @@ class TestPs1AliasNamespaceAssignments(TestBase):
                 self.assertFalse(self._assigns(source))
 
 
+class TestPs1WorldAxes(Ps1TypeWorldTest):
+    """
+    The world carries two independent axes: whether the .NET type system is intact
+    (`type_system_closed`) and whether the command table is (`command_table_closed`). A pure
+    type-system mutation opens the first alone, a pure command rebinding opens the second alone, and
+    a module loader or an opaque leak opens both. `closed_for_the_whole_run` is their conjunction,
+    not a third stored flag. This pins the model directly, not through the call graph it seeds.
+    """
+
+    @staticmethod
+    def _axes(source: str) -> tuple[bool, bool, bool]:
+        world = build_closed_world(Ps1Parser(source).parse())
+        return (
+            world.type_system_closed,
+            world.command_table_closed,
+            world.closed_for_the_whole_run,
+        )
+
+    def test_each_opener_opens_exactly_the_axes_it_should(self):
+        for source, type_closed, command_closed in (
+            ("Write-Host 'A'", True, True),
+            ('class C { }', False, True),
+            ('enum E { A }', False, True),
+            ("Add-Type -TypeDefinition 'public class Z {}'", False, True),
+            ('Update-TypeData -Force -TypeName System.String -MemberName Q -Value 1', False, True),
+            ("[System.Management.Automation.PSObject+TypeAccelerators]::Add('z', [int])", False, True),
+            ('$o.PSObject.Members.Add($m)', False, True),
+            ('Add-Member -InputObject $o -Name Q -Value 1 -MemberType NoteProperty', False, True),
+            ('Import-Module .\\m.psm1', False, False),
+            ('ipmo .\\m.psm1', False, False),
+            ('New-Module { }', False, False),
+            ('nmo { }', False, False),
+            ('Set-Alias zzq Write-Output', True, False),
+            ('New-Alias zzq Write-Output', True, False),
+            ('${function:zzq} = $b', True, False),
+            ('Invoke-Expression $code', False, False),
+            (". '.\\stage2.ps1'", False, False),
+            ('& $dispatch', False, False),
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._axes(source),
+                    (type_closed, command_closed, type_closed and command_closed),
+                )
+
+    def test_the_whole_run_verdict_is_the_conjunction_not_a_stored_flag(self):
+        self.assertTrue(Ps1TypeWorld(True, frozenset()).closed_for_the_whole_run)
+        self.assertFalse(Ps1TypeWorld(False, frozenset()).closed_for_the_whole_run)
+        self.assertTrue(
+            Ps1TypeWorld(True, frozenset(), command_table_closed=True).closed_for_the_whole_run)
+        self.assertFalse(
+            Ps1TypeWorld(True, frozenset(), command_table_closed=False).closed_for_the_whole_run)
+
+    def test_a_command_axis_left_unstated_takes_the_value_of_the_type_axis(self):
+        for closed in (True, False):
+            with self.subTest(closed=closed):
+                world = Ps1TypeWorld(closed, frozenset())
+                self.assertEqual(world.type_system_closed, closed)
+                self.assertEqual(world.command_table_closed, closed)
+
+
 class TestPs1CommandRole(TestBase):
     """
     `command_role` is the one reading of the three deny-lists, keyed on a name rather than on a
