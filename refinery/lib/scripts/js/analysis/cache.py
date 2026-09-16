@@ -68,6 +68,14 @@ class ModelCache(ModelCacheBase):
         '_tampering',
     )
 
+    # The two models built from `root`; every other slot is a pure function of already-built base
+    # models (`effects` from `model`, `dominance`/`assignment` from `model` and `control_flow`, and
+    # so on), so building one late over held bases yields the entry-version answer.
+    _ROOT_SLOTS = (
+        '_model',
+        '_control_flow',
+    )
+
     root: JsScript
     _model: SemanticModel | None
     _control_flow: ControlFlowModel | None

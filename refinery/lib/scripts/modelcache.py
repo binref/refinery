@@ -48,11 +48,18 @@ class ModelCacheBase:
 
     _SLOTS: tuple[str, ...] = ()
 
+    # The subset of `_SLOTS` whose build reads the live tree (`root`) rather than only already-built
+    # base models. `None` from a cache that has not classified its slots, which the guard reads as
+    # the whole slot set — the conservative default that refuses any late fill. A cache that declares
+    # it narrows the guard to these slots and lets `warm` build exactly them at a pin's entry:
+    # a model derived only from held bases is safe to build late, since it reads those bases and
+    # yields the entry-version answer, so only a root-reading model built late is an inconsistency.
+    _ROOT_SLOTS: tuple[str, ...] | None = None
+
     # A class attribute rather than an assignment in `__init__`, because `__init__` calls
     # `invalidate`, which reads this: an instance attribute would not exist yet at that point.
     _pins = 0
     _pin_entry: int | None = None
-    _fill_version: int | None = None
     _fill_slot: str | None = None
 
     root: Node
@@ -93,10 +100,13 @@ class ModelCacheBase:
         declines where it could have proceeded.
 
         The pin also records the tree version it was entered at, and the outermost exit raises when
-        a slot was filled after the tree had moved past that version. Such a fill layered a model
-        over models held from an earlier tree, the one state no unpinned run builds (there, a
-        version change drops every slot together). A pass that trips this is reading a model at a
-        point its own edits ran ahead of, and fixing that pass — not the guard — is the response.
+        a root-reading model was first built after the tree had moved past that version. Such a model
+        reads the live tree, so building it there layers it over base models the pin holds from the
+        earlier tree — the one state no unpinned run builds (there, a version change drops every slot
+        together). A model derived only from held bases is not such a case: built late, it reads those
+        bases and yields the entry answer. A pass that trips this reads a root-reading model at a
+        point its own edits ran ahead of, and fixing that pass — or `warm`-ing it at entry — is the
+        response.
         """
         self._ensure_fresh()
         if not self._pins:
@@ -112,22 +122,15 @@ class ModelCacheBase:
             self._pins -= 1
             if not self._pins:
                 self._version = tree_version(self.root)
-                entry, filled = self._pin_entry, self._fill_version
-                slot = self._fill_slot
+                offender = self._fill_slot
                 self._pin_entry = None
-                self._fill_version = None
                 self._fill_slot = None
                 self.invalidate()
-                if (
-                    not block_raised
-                    and entry is not None
-                    and filled is not None
-                    and filled > entry
-                ):
+                if not block_raised and offender is not None:
                     raise RuntimeError(
-                        F'the model in slot {slot!r} was built at a tree version past the one the'
-                        ' pin was entered at, layering it over models the pin held from an earlier'
-                        ' tree'
+                        F'the root-reading model in slot {offender!r} was built at a tree version'
+                        ' past the one the pin was entered at, layering it over models the pin held'
+                        ' from an earlier tree'
                     )
 
     def _ensure_fresh(self) -> None:
@@ -136,20 +139,41 @@ class ModelCacheBase:
             self._version = version
             self.invalidate()
 
+    def _root_slots(self) -> tuple[str, ...]:
+        return self._SLOTS if self._ROOT_SLOTS is None else self._ROOT_SLOTS
+
+    def warm(self) -> None:
+        """
+        Build the root-reading models at the current tree version. A pinned block that both edits the
+        tree and reads models calls this at its entry, so no such model is first built after an edit
+        has moved the tree — the one state the pin's exit refuses. A model derived only from these
+        needs no warming: built late, it reads the held bases and yields the entry answer. The set is
+        the cache's `_ROOT_SLOTS`, declared once beside the model definitions, so a call site cannot
+        drift from the models it must hold the way a hand-copied pre-build list did.
+        """
+        for slot in self._root_slots():
+            getattr(self, slot[1:])
+
     def _lazy(self, slot: str, build: Callable[[], _T]) -> _T:
         """
         The value memoized in *slot*, built through *build* on first access after construction or
         an invalidation. Every model property routes through here so freshness is checked and the
         slot is filled by the one accessor primitive rather than a hand-copied check-build-store
-        per model. A fill performed while a pin holds the cache notes the tree version it happened
-        at, for the check `pinned` performs on the outermost exit.
+        per model. The first root-reading slot built while a pin holds the cache and the tree has
+        already moved past the pin's entry is noted, for the refusal `pinned` performs on the
+        outermost exit.
         """
         self._ensure_fresh()
         value = getattr(self, slot)
         if value is None:
             value = build()
-            if self._pins:
-                self._fill_version = self._version
+            if (
+                self._pins
+                and self._fill_slot is None
+                and self._pin_entry is not None
+                and self._version > self._pin_entry
+                and slot in self._root_slots()
+            ):
                 self._fill_slot = slot
             setattr(self, slot, value)
         return value

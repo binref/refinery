@@ -121,14 +121,10 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
         if not wrappers:
             return
         with model_cache(self, node).pinned() as cache:
-            # The loop reads the establishment answer lazily, which falls after the first
-            # replacement's edit; each model is built here instead, at the entry version, so none is
-            # layered over base models the pin holds from an earlier tree — the state no unpinned
-            # run builds and the pin's exit refuses.
-            cache.model
-            cache.assignment
-            cache.effects
-            cache.dominance
+            # The loop reads the establishment answer lazily, which can fall after the first
+            # replacement's edit. Warming the root-reading models at entry keeps every such late
+            # build a pure function of held bases, so none reads a tree the pin's edits moved.
+            cache.warm()
             inlined = self._inline_the_calls_the_wrappers_reach(node, wrappers, cache)
         if not inlined:
             return

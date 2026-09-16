@@ -842,15 +842,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         cache = model_cache(self, node)
         with cache.pinned():
-            # The resolvers below fetch the models lazily, per resolved site, which falls after the
-            # first splice's edit; each is built here instead, at the entry version, so no model is
-            # layered over base models the pin holds from an earlier tree — the state no unpinned
-            # run builds and the pin's exit refuses.
-            cache.model
-            cache.assignment
-            cache.effects
-            cache.dominance
-            cache.tampering
+            # The resolvers below fetch the models lazily, per resolved site, which can fall after
+            # the first splice's edit. Warming the root-reading models at entry keeps every such late
+            # build a pure function of held bases, so no model reads a tree the pin's edits moved.
+            cache.warm()
             self._spliced_names = set()
             self._read_effect = self._dynamic_read_effect(node)
             self._alias_name = self._alias_member_name(node)

@@ -214,12 +214,12 @@ class TestPinnedModels(TestBase):
             self.assertEqual(
                 held, (cache.model, cache.effects, cache.control_flow, cache.dominance))
 
-    def test_a_model_first_built_after_an_edit_is_refused_on_exit(self):
+    def test_a_root_reading_model_first_built_after_an_edit_is_refused_on_exit(self):
         """
-        A slot first read after the tree has moved under a pin is layered over held base models from
-        an earlier tree — the state no unpinned run builds, since there a version change drops every
-        slot together. The exit refuses it, and the cache the refusal leaves behind serves a model of
-        the current tree, not the layered one.
+        A root-reading model first built after the tree has moved under a pin reads the moved tree and
+        is layered over held base models from an earlier tree — the state no unpinned run builds, since
+        there a version change drops every slot together. The exit refuses it, and the cache the
+        refusal leaves behind serves a model of the current tree, not the layered one.
         """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
@@ -227,12 +227,26 @@ class TestPinnedModels(TestBase):
             with cache.pinned():
                 held = cache.model
                 _remove_from_parent(self._first_declaration(script))
-                cache.reaching
+                cache.control_flow
         self.assertIsNot(cache.model, held)
+
+    def test_a_derived_model_first_built_after_an_edit_is_not_refused(self):
+        """
+        A model derived only from held base models reads those bases, not the tree, so building it
+        after the tree has moved under a pin yields the entry-version answer and is no inconsistency.
+        The exit does not refuse it.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.model
+            cache.control_flow
+            _remove_from_parent(self._first_declaration(script))
+            cache.reaching
 
     def test_the_refusal_comes_from_the_outermost_exit(self):
         """
-        The fill version is shared by nested pins, and an inner exit releases nothing, so it must not
+        The recorded fill is shared by nested pins, and an inner exit releases nothing, so it must not
         judge the fill either. The block inside the inner pin completes; the outermost exit is where
         the refusal belongs.
         """
@@ -244,7 +258,7 @@ class TestPinnedModels(TestBase):
                 held = cache.model
                 _remove_from_parent(self._first_declaration(script))
                 with cache.pinned():
-                    cache.reaching
+                    cache.control_flow
                 completed_the_inner_block = True
         self.assertTrue(completed_the_inner_block)
         self.assertIsNot(cache.model, held)
@@ -253,8 +267,8 @@ class TestPinnedModels(TestBase):
         """
         The refusal fires on the outermost exit, which is also where a block's own exception is
         passing through. Raising the refusal there unconditionally would replace that exception with
-        the guard's, hiding the real failure; a block that both raises and leaves a late fill behind
-        must surface its own error.
+        the guard's, hiding the real failure; a block that both raises and leaves a late root-reading
+        fill behind must surface its own error.
         """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)
@@ -262,8 +276,38 @@ class TestPinnedModels(TestBase):
             with cache.pinned():
                 cache.model
                 _remove_from_parent(self._first_declaration(script))
-                cache.reaching
+                cache.control_flow
                 raise ValueError('the block\'s own failure')
+
+    def test_warm_builds_the_root_reading_models_and_no_others(self):
+        """
+        Warming builds exactly the slots the cache classifies as root-reading, leaving every derived
+        slot unbuilt — those are safe to build lazily later, over the held roots.
+        """
+        cache = ModelCache(self._script('var a = 1; function f(){ var x = 1; return x; } f();'))
+        with cache.pinned():
+            cache.warm()
+            self.assertIsNotNone(cache._model)
+            self.assertIsNotNone(cache._control_flow)
+            self.assertIsNone(cache._effects)
+            self.assertIsNone(cache._liveness)
+            self.assertIsNone(cache._dominance)
+            self.assertIsNone(cache._reaching)
+            self.assertIsNone(cache._assignment)
+            self.assertIsNone(cache._tampering)
+
+    def test_warming_at_entry_lets_a_later_derived_read_after_an_edit_stand(self):
+        """
+        The call-site contract: a block that warms the root-reading models at entry may first read a
+        derived model only after an in-block edit and the exit does not refuse it, because that model
+        builds over the held roots.
+        """
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.warm()
+            _remove_from_parent(self._first_declaration(script))
+            cache.assignment
 
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):

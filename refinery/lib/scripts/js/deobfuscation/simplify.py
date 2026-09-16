@@ -213,19 +213,16 @@ class JsSimplifications(Transformer):
         a computed key to a literal therefore moves that answer from withdrawn to withdrawn — never from
         granted to withdrawn — which is the direction a held model may be stale in.
 
-        The pin also has to hold every model the window reads from its entry on. Each would
-        otherwise be built at the first gate that consults it, which can fall after an earlier
-        fold's edit, and a model built there is layered over held base models from an earlier tree —
-        the one state no unpinned run builds, which the pin's exit refuses. The five are therefore
-        built at entry, before the first fold runs.
+        The pin also has to keep every model the window reads consistent with its entry. A model that
+        reads the live tree would otherwise be built at the first gate that consults it, which can
+        fall after an earlier fold's edit, layering it over held base models from an earlier tree —
+        the one state no unpinned run builds, which the pin's exit refuses. Warming the root-reading
+        models at entry forecloses that; a model derived only from them stays a pure function of the
+        held bases wherever it is first built.
         """
         self._cache = model_cache(self, node)
         with self._cache.pinned():
-            self.model
-            self.assignment
-            self.effects
-            self.dominance
-            self.reaching
+            self._cache.warm()
             self.generic_visit(node)
         return None
 
