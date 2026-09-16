@@ -68,6 +68,7 @@ class ModelCacheBase:
     _pins = 0
     _pin_entry: int | None = None
     _fill_slot: str | None = None
+    _invalidation_requested = False
 
     root: Node
     options: object | None
@@ -83,7 +84,14 @@ class ModelCacheBase:
         self.invalidate()
 
     def invalidate(self) -> None:
+        """
+        Drop every model. Under a pin the drop is deferred to the outermost exit rather than
+        refused: the request is the one change channel a raw write has — announced through
+        `refinery.lib.scripts.Transformer.changed`, never through the tree version — and an exit
+        that read the unmoved version alone would keep the models past a tree the block did change.
+        """
         if self._pins:
+            self._invalidation_requested = True
             return
         for slot in self._SLOTS:
             setattr(self, slot, None)
@@ -93,7 +101,12 @@ class ModelCacheBase:
         """
         Hold the models for the duration of the block: each is still built on first use, and
         afterwards the memoized instance is served even as the tree changes underneath it. On exit
-        the pin is released and the models are dropped, so no stale model outlives the block.
+        the pin is released, and the models are dropped when the block changed the tree — its
+        version moved past the entry value, or an invalidation was requested while the pin held —
+        so no stale model outlives the block. A block that changed nothing keeps them: a model is a
+        function of the tree and the run's options alone, so rebuilding it over the same tree would
+        produce the same model, and a pass that consults the models but finds no site to rewrite
+        would otherwise cost the next pass a full rebuild for nothing.
 
         This exists because a transform that both rewrites the tree and consults a model on every
         rewrite otherwise rebuilds the model per rewrite — the cost is the product of the two, and
@@ -128,11 +141,15 @@ class ModelCacheBase:
         finally:
             self._pins -= 1
             if not self._pins:
-                self._version = tree_version(self.root)
+                version = tree_version(self.root)
+                changed = self._invalidation_requested or version != self._pin_entry
                 offender = self._fill_slot
+                self._version = version
                 self._pin_entry = None
                 self._fill_slot = None
-                self.invalidate()
+                self._invalidation_requested = False
+                if changed:
+                    self.invalidate()
                 if not block_raised and offender is not None:
                     raise RuntimeError(
                         F'the root-reading model in slot {offender!r} was built at a tree version'

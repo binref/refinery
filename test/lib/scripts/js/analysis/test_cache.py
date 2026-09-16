@@ -8,10 +8,11 @@ from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.analysis.jsgen import generate
 
 import refinery.lib.scripts.js.analysis.cache as cache_module
-from refinery.lib.scripts import Transformer, _remove_from_parent
+from refinery.lib.scripts import Node, Transformer, _remove_from_parent, canonical, tree_version
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
@@ -22,6 +23,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.pipeline import PipelineObserver
 
 
 @contextmanager
@@ -144,9 +146,9 @@ class TestPinnedModels(TestBase):
 
     def test_pinned_model_survives_an_explicit_invalidation(self):
         """
-        `Transformer.changed` invalidates through this method rather than the version counter, and
-        `generic_visit` replaces children without advancing that counter at all — so a pin that guarded
-        only the version would miss every such rewrite.
+        `Transformer.changed` invalidates through this method rather than the version counter — the
+        one channel a raw write has — so a pin that guarded only the version would miss every such
+        announcement.
         """
         script = self._script('var a = 1; var b = 2;')
         cache = ModelCache(script)
@@ -162,6 +164,49 @@ class TestPinnedModels(TestBase):
             first = cache.model
             _remove_from_parent(self._first_declaration(script))
         self.assertIsNot(cache.model, first)
+
+    def test_a_pin_over_an_unchanged_tree_keeps_its_models_past_the_block(self):
+        """
+        A model is a function of the tree alone, so a block that leaves the tree as it found it
+        leaves nothing for a rebuild to change; dropping the models there charges the next pass a
+        full rebuild over a tree the cache has already analysed.
+        """
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        held = None
+        with cache.pinned():
+            held = cache.model
+        self.assertIs(cache.model, held)
+
+    def test_an_invalidation_requested_under_a_pin_drops_the_models_on_exit(self):
+        """
+        The announcement is the only change channel a raw write has and it never moves the version
+        counter, so an exit that read the counter alone would keep the models past the write.
+        """
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        held = None
+        with cache.pinned():
+            held = cache.model
+            cache.invalidate()
+        self.assertIsNot(cache.model, held)
+
+    def test_an_invalidation_requested_under_an_inner_pin_drops_the_models_at_the_outermost_exit(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        held = None
+        with cache.pinned():
+            held = cache.model
+            with cache.pinned():
+                cache.invalidate()
+            self.assertIs(cache.model, held)
+        self.assertIsNot(cache.model, held)
+
+    def test_a_pin_that_raises_over_an_unchanged_tree_keeps_its_models(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        held = None
+        with self.assertRaises(ValueError):
+            with cache.pinned():
+                held = cache.model
+                raise ValueError
+        self.assertIs(cache.model, held)
 
     def test_model_is_rebuilt_after_a_pin_that_raises(self):
         """
@@ -579,6 +624,27 @@ class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
 
 
 
+#: Programs that run every pinned pass through its rewriting arm — a reflective site at statement
+#: and at expression position, a string timer, a consumed `Function` temporary, a gated fold, a
+#: string respelling and a call wrapper — beside a few plain shapes and the generated corpus, which
+#: exercise the rest of the pipeline.
+_CORPUS = tuple(generate(seed) for seed in range(16)) + (
+    'var q = 1; var t = (q + 1) * 2; f(t);',
+    'var x = 5; var t = delete x; g(); f(t);',
+    'const a = [1, 2, 3]; console.log(a[1]);',
+    'var q = 1; function g(){ return q + 1; } console.log(g());',
+    'var x = 5; x = 6; console.log(x);',
+    "SINK('\\x61');",
+    "eval('var v = 1;'); SINK(v);",
+    "var r = eval('1 + 2'); SINK(r);",
+    "execScript('var v = 1;'); SINK(v);",
+    "setTimeout('SINK(1);', 10);",
+    "var m = Function('return 41'); SINK(m());",
+    'var g = String.fromCharCode(65); SINK(g);',
+    'function w(a, b) { return target(a, b); } var r = w(1, 2); SINK(r);',
+)
+
+
 class TestPinnedAndUnpinnedRunsAgree(TestBase):
     """
     A pin can only defer work to a later invocation: a rewrite a held model declines reappears when
@@ -586,14 +652,6 @@ class TestPinnedAndUnpinnedRunsAgree(TestBase):
     final output with the pins held as without them — a sample that does not has a pass acting on a
     stale answer in the permissive direction, which is the one direction the pin contract refuses.
     """
-
-    _SHAPES = (
-        'var q = 1; var t = (q + 1) * 2; f(t);',
-        'var x = 5; var t = delete x; g(); f(t);',
-        'const a = [1, 2, 3]; console.log(a[1]);',
-        'var q = 1; function g(){ return q + 1; } console.log(g());',
-        'var x = 5; x = 6; console.log(x);',
-    )
 
     def _unpinned(self, source: str) -> str:
         original = ModelCache.pinned
@@ -604,7 +662,74 @@ class TestPinnedAndUnpinnedRunsAgree(TestBase):
             ModelCache.pinned = original
 
     def test_the_corpus_reaches_the_same_final_output(self):
-        sources = [generate(seed) for seed in range(16)] + list(self._SHAPES)
-        for index, source in enumerate(sources):
+        for index, source in enumerate(_CORPUS):
             with self.subTest(sample=index):
                 self.assertEqual(deobfuscate_source(source), self._unpinned(source))
+
+
+class TestAnAnnouncedChangeMovesTheTree(TestBase):
+    """
+    A pass that reports a change edited the tree through a sited edit, which moved the version
+    counter with it. A pinned block's exit reads that counter to decide whether the block changed
+    the tree at all, so a pass that edited a list in place and only announced it would have the
+    models it holds kept past its own edit — the reflective inliner's statement splice was such a
+    write. Every announcement the corpus makes is checked against the counter.
+    """
+
+    class _Recorder(PipelineObserver):
+
+        def __init__(self):
+            self.entry = 0
+            self.unsited: list[str] = []
+
+        def before(self, group: str, transformer: type[Transformer], ast: Node) -> None:
+            self.entry = tree_version(ast)
+
+        def after(
+            self, group: str, transformer: type[Transformer], ast: Node, changed: bool,
+        ) -> None:
+            if changed and tree_version(ast) == self.entry:
+                self.unsited.append(transformer.__name__)
+
+    def test_every_change_the_corpus_announces_moved_the_counter(self):
+        for index, source in enumerate(_CORPUS):
+            with self.subTest(sample=index):
+                recorder = self._Recorder()
+                deobfuscate(JsParser(source).parse(), observer=recorder)
+                self.assertEqual([], recorder.unsited)
+
+
+@a_property_of_the_pin_itself
+class TestAKeptModelDescribesTheProgramItOutlivedThePinOn(TestBase):
+    """
+    A pin's exit keeps the models when neither change channel reported an edit. `canonical` reads
+    the program the tree spells and answers the same question independently of both channels: a
+    model kept past a block whose program changed is stale whatever the counters said, and the
+    program is the models' only input beside the run's fixed options.
+    """
+
+    def _models_kept_past_a_changed_program(self, source: str) -> int:
+        kept_stale = 0
+        original = ModelCache.pinned
+
+        @contextmanager
+        def audited(self: ModelCache):
+            nonlocal kept_stale
+            outermost = not self._pins
+            program = canonical(self.root) if outermost else None
+            with original(self) as pinned:
+                yield pinned
+            if outermost and self._model is not None and canonical(self.root) != program:
+                kept_stale += 1
+
+        ModelCache.pinned = audited
+        try:
+            deobfuscate_source(source)
+        finally:
+            ModelCache.pinned = original
+        return kept_stale
+
+    def test_no_model_in_the_corpus_is_kept_past_a_program_change(self):
+        for index, source in enumerate(_CORPUS):
+            with self.subTest(sample=index):
+                self.assertEqual(0, self._models_kept_past_a_changed_program(source))
