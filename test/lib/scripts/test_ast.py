@@ -52,6 +52,10 @@ def _names(script: Script) -> list[str]:
     return [stmt.name for stmt in script.body]
 
 
+def _walked(nodes) -> list[str]:
+    return [node.name for node in nodes if isinstance(node, _Leaf)]
+
+
 class TestTreeVersionContract(unittest.TestCase):
     """
     Every structural edit has to advance the counter of the tree it edits, because
@@ -118,6 +122,51 @@ class TestTreeVersionContract(unittest.TestCase):
         before = tree_version(other)
         set_child_list(script, 'body', [_Leaf(name='c')])
         self.assertEqual(tree_version(other), before)
+
+
+class TestWalkReadsTheChildrenOfTheMoment(unittest.TestCase):
+    """
+    A traversal reads a node's children when it reaches that node, as the tree stands at that
+    moment: an edit made before the node is reached — before the walk began, or by the consumer
+    between two yields — is what the walk descends into, never a children memo the edit outdated.
+    """
+
+    def test_a_walk_reverses_siblings_and_an_in_order_walk_keeps_them(self):
+        script = _script('a', 'b', 'c')
+        self.assertEqual(_walked(script.walk()), ['c', 'b', 'a'])
+        self.assertEqual(_walked(script.walk_in_order()), ['a', 'b', 'c'])
+
+    def test_a_walk_after_an_edit_descends_into_the_children_the_edit_installed(self):
+        script = _script('a', 'b')
+        list(script.walk())
+        set_child_list(script, 'body', [_Leaf(name='c')])
+        self.assertEqual(_walked(script.walk()), ['c'])
+
+    def test_a_walk_started_before_an_edit_descends_into_the_children_the_edit_installed(self):
+        script = _script('a', 'b')
+        script.children()
+        walk = script.walk()
+        self.assertIs(next(walk), script)
+        set_child_list(script, 'body', [_Leaf(name='c'), _Leaf(name='d')])
+        self.assertEqual(_walked(walk), ['d', 'c'])
+
+    def test_an_in_order_walk_started_before_an_edit_descends_into_the_children_the_edit_installed(self):
+        script = _script('a', 'b')
+        script.children()
+        walk = script.walk_in_order()
+        self.assertIs(next(walk), script)
+        set_child_list(script, 'body', [_Leaf(name='c'), _Leaf(name='d')])
+        self.assertEqual(_walked(walk), ['c', 'd'])
+
+    def test_a_walk_descends_into_a_nested_edit_made_before_the_holder_is_reached(self):
+        holder = _Holder(child=_Leaf(name='a'))
+        script = Script()
+        set_child_list(script, 'body', [holder])
+        list(script.walk())
+        walk = script.walk()
+        self.assertIs(next(walk), script)
+        set_child(holder, 'child', _Leaf(name='b'))
+        self.assertEqual(_walked(walk), ['b'])
 
 
 class TestMutationEpochContract(unittest.TestCase):

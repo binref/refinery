@@ -348,6 +348,10 @@ class Node:
         there would outlive those appends. `reattach` keeps a fresh compute for the same reason
         from the other side — it repairs structure and must not trust a memo a raw write left
         stale.
+
+        `walk` and `walk_in_order` read the memo in place under the same epoch check rather than
+        through this method: a traversal over a held tree hits the memo at nearly every node, and
+        the method call per node was the larger part of what such a traversal paid.
         """
         epoch = _mutation_epoch
         cached = self._child_cache
@@ -362,7 +366,11 @@ class Node:
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(node.children())
+            cached = node._child_cache
+            if cached is not None and cached[0] == _mutation_epoch:
+                stack.extend(cached[1])
+            else:
+                stack.extend(node.children())
 
     def walk_in_order(self) -> Generator[Node, None, None]:
         """
@@ -374,7 +382,11 @@ class Node:
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(reversed(node.children()))
+            cached = node._child_cache
+            if cached is not None and cached[0] == _mutation_epoch:
+                stack.extend(reversed(cached[1]))
+            else:
+                stack.extend(reversed(node.children()))
 
     def is_descendant_of(self, ancestor: Node) -> bool:
         cursor = self.parent
