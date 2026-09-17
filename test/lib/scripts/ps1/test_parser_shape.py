@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-import unittest
 
 from collections import Counter
 from typing import NamedTuple
@@ -561,17 +560,14 @@ class TestPs1ParseShape(TestBase):
 
 class TestPs1AnExpressionStatementKeepsItsRedirection(TestBase):
     """
-    A redirection behind the *first* pipeline element is dropped when that element is an expression.
-    5.1 reports no error and gives one pipeline whose expression carries the write; we give three
-    statements, of which one is an error node and one invents a call to a program named after the
-    file. Behind a pipe the same source is read correctly, so what is missing is only the carrier for
-    an element that has no pipe — a statement that would have to become a pipeline of one to hold it.
-
-    Ledgered rather than fixed: the carrier is its own change, and a `Ps1Pipeline` wrapping every
-    redirected statement is a shape every pass that reads pipelines would have to be told about.
+    A redirection behind the first stage of a pipeline, where that stage is an expression and not a
+    command, has nowhere to hang but the pipeline element the grammar makes for the stage. A command
+    keeps its own redirections; an expression does not, so `$x > out.txt` becomes a pipeline of the
+    one element that carries the write, the same carrier a redirected stage behind a pipe gets. An
+    assignment takes no redirection of its own — its value is a statement that may — so the write in
+    `$x = 5 > out.txt` lands on the value and not on the store.
     """
 
-    @unittest.expectedFailure
     def test_a_redirection_behind_an_expression_statement_is_kept(self):
         self.assertEqual(
             outline(Ps1Parser('$x > out.txt').parse()),
@@ -603,6 +599,43 @@ class TestPs1AnExpressionStatementKeepsItsRedirection(TestBase):
                         Ps1Variable $x
                         Ps1FileRedirection OUTPUT
                           Ps1StringLiteral 'out.txt'
+                """
+            ),
+        )
+
+    def test_a_redirected_expression_that_opens_a_pipe_keeps_the_write(self):
+        self.assertEqual(
+            outline(Ps1Parser('$x > out.txt | Get-Process').parse()),
+            inspect.cleandoc(
+                r"""
+                Ps1Script
+                  Ps1ExpressionStatement
+                    Ps1Pipeline
+                      Ps1PipelineElement
+                        Ps1Variable $x
+                        Ps1FileRedirection OUTPUT
+                          Ps1StringLiteral 'out.txt'
+                      Ps1PipelineElement
+                        Ps1CommandInvocation
+                          Ps1StringLiteral 'Get-Process'
+                """
+            ),
+        )
+
+    def test_a_redirection_after_an_assignment_lands_on_the_assigned_value(self):
+        self.assertEqual(
+            outline(Ps1Parser('$x = 5 > out.txt').parse()),
+            inspect.cleandoc(
+                r"""
+                Ps1Script
+                  Ps1ExpressionStatement
+                    Ps1AssignmentExpression
+                      Ps1Variable $x
+                      Ps1Pipeline
+                        Ps1PipelineElement
+                          Ps1IntegerLiteral 5
+                          Ps1FileRedirection OUTPUT
+                            Ps1StringLiteral 'out.txt'
                 """
             ),
         )

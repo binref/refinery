@@ -392,9 +392,10 @@ class Ps1Pipeline(Expression, Statement):
 
     def canonical_form(self):
         """
-        A pipeline of one stage is that stage: nothing is piped anywhere. The parser never builds
-        one — it returns the bare expression — so a single-element pipeline is always something a
-        transform assembled, and it spells exactly what its element spells.
+        A pipeline of one stage is that stage: nothing is piped anywhere, so it spells exactly what
+        its element spells. The parser builds one only to carry a redirection an expression has no
+        other slot for — `$x > out.txt` — and that element declines this same identification while
+        the redirection is on it, so the write is never spelled away with the wrapper.
         """
         if len(self.elements) != 1:
             return None

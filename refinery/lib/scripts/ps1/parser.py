@@ -750,17 +750,30 @@ class Ps1Parser:
         return statement
 
     def _parse_pipeline_tail(self, expr: Expression) -> Expression:
-        if not self._at(Ps1TokenKind.PIPE):
+        """
+        Read the redirections of the first stage and any stages a `|` adds after it. A command has
+        already taken its own redirections in `_parse_command`; an expression has not, and a bare
+        `$x > out.txt` has nowhere to hang the write but the pipeline element the grammar makes for
+        it — so a first stage that redirects becomes a single-element pipeline, the same carrier a
+        redirected stage behind a pipe already gets.
+        """
+        redirections = self._parse_redirections()
+        if not redirections and not self._at(Ps1TokenKind.PIPE):
             return expr
-        elements = [Ps1PipelineElement(offset=expr.offset, expression=expr)]
+        first = Ps1PipelineElement(
+            offset=expr.offset,
+            expression=expr,
+            redirections=redirections,
+        )
+        elements = [first]
         while self._eat(Ps1TokenKind.PIPE):
             self._skip_newlines()
             element = self._parse_pipeline_element()
             if element is not None:
                 elements.append(element)
-        if len(elements) > 1:
-            return Ps1Pipeline(offset=elements[0].offset, elements=elements)
-        return expr
+        if len(elements) == 1 and not redirections:
+            return expr
+        return Ps1Pipeline(offset=first.offset, elements=elements)
 
     def _parse_pipeline_element(self) -> Ps1PipelineElement | None:
         """

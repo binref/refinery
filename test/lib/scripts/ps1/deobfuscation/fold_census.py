@@ -1263,8 +1263,6 @@ FOLDS: dict[str, str] = {
         '$x = 3, 4, 5',
     "$x = @('a', 'b'); $x[1]":
         "'b'",
-    '$x > out.txt':
-        '>\nout.txt',
     "$z = 1.000d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t":
         "Write-Output (,'x1.000')\nWrite-Output 'x1.000'",
     "$z = 1.00d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t":

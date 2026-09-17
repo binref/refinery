@@ -86,9 +86,6 @@ DEFECTS: dict[str, str] = {
         'The same shape as an assigned value: 5.1 reads `a` as a command name and reports '
         'MissingArgument. We read a call to `a` and drop the comma with it, so the assignment '
         'prints back as `$x = a b`, which is a second defect in the same source.',
-    '$x > out.txt':
-        '5.1 accepts a redirection of an expression. We produce an error node; the narrower bug '
-        'is already ledgered at test_parser_shape.py:578.',
     '1 | 2':
         '5.1 reports ExpressionsMustBeFirstInPipeline: an expression may stand only as the first '
         'element of a pipeline, and after a pipe it wants a command. We accept it, so the tool can '
