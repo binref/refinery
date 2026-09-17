@@ -206,6 +206,9 @@ _A_SITE_BEFORE_THE_ANCHOR = {
     'a destructured eval invoked': (
         'const {eval} = globalThis;\neval("String = 9");\nString.fromCharCode(65);'
     ),
+    'a destructured eval under a runtime key invoked': (
+        'var k;\nconst {[k]: e} = globalThis;\ne("String = 9");\nString.fromCharCode(65);'
+    ),
 }
 """
 The enumeration's every arm as a defeat: a computed-key store through a base that may be the

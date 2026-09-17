@@ -56,6 +56,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     ScopeKind,
     SemanticModel,
+    _property_key_is_dynamic,
     _property_key_name,
     enclosing_function,
     is_member_write_target,
@@ -77,6 +78,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
+    JsRestElement,
     JsStringLiteral,
     JsVariableDeclarator,
     JsWithStatement,
@@ -700,6 +702,8 @@ class TamperingModel:
         elif isinstance(site, JsIdentifier):
             through_constructions = site.name != 'eval'
         elif isinstance(site, (JsVariableDeclarator, JsAssignmentExpression)):
+            if self._destructuring_reads_a_reflective_intrinsic_imprecisely(site):
+                return [site]
             flows: list[_Flow] = []
             for name, follows_construction in self._destructured_reflective_names(site):
                 binding = self._destructured_binding(site, name)
@@ -741,6 +745,30 @@ class TamperingModel:
             if name in REFLECTIVE_INTRINSICS:
                 names.append((name, name != 'eval'))
         return names
+
+    def _destructuring_reads_a_reflective_intrinsic_imprecisely(
+        self, site: JsVariableDeclarator | JsAssignmentExpression,
+    ) -> bool:
+        """
+        Whether the object pattern at *site*, off a source that may be the global object, reads a
+        reflective intrinsic under a spelling this model cannot bind to a forward flow — a computed
+        key the runtime resolves (`{[k]: e}`) or a rest element (`{...r}`) that captures whatever the
+        object holds, `eval`/`Function` among it. Such a read reaches no invocation the walk can
+        find, so the surface it forms must fall back to the whole node as its tampering site;
+        otherwise `builtins_intact_at` would clear on an empty site list. A named key with a
+        non-identifier value already falls back through `_destructured_binding`.
+        """
+        if isinstance(site, JsVariableDeclarator):
+            pattern, source = site.id, site.init
+        else:
+            pattern, source = site.left, site.right
+        if not isinstance(pattern, JsObjectPattern) or not self._may_be_global_object(source):
+            return False
+        return any(
+            isinstance(prop, JsRestElement)
+            or (isinstance(prop, JsProperty) and _property_key_is_dynamic(prop))
+            for prop in pattern.properties
+        )
 
     def _destructured_binding(
         self, site: JsVariableDeclarator | JsAssignmentExpression, name: str,
