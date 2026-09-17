@@ -22,8 +22,24 @@ This transformer performs four phases:
    true local, tightening a global the obfuscator hoisted back to where it is used. The liveness model
    proves the move observes no value carried across calls or from load; the later sweeps then act on
    the tightened scope.
+
+5. **Redundant global member store removal** — a store to a member of the global object whose value
+   an earlier store in the same unbroken run of such stores already left there, judged per run of
+   consecutive store statements rather than per adjacent pair, so an obfuscator interleaving two
+   stores with their duplicates loses each duplicate. A descriptor installed anywhere on the global
+   object, or any reflective surface, keeps every store: an installed accessor fires on each one.
+
+6. **Discarded completion value removal** — a `return` of an inert constant, in a function whose
+   every invocation throws its completion value away and that carries no name a host could call it
+   by, ends the body with a value nothing observes; the statement goes and control falls off the
+   end the same way.
+
+7. **Empty statement removal** — an empty statement standing in a statement list executes nothing
+   and goes; one standing as the whole body of a branch stays, being that branch's body itself.
 """
 from __future__ import annotations
+
+from typing import Iterator
 
 from refinery.lib.scripts import Node, _remove_from_parent, owning_list, set_child
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
@@ -39,6 +55,7 @@ from refinery.lib.scripts.js.analysis.model import (
     ScopeKind,
     SemanticModel,
     annex_b_suppressor_names,
+    enclosing_function,
     is_simple_assignment_target,
     is_the_this_of_a_script,
     may_be_global_object_base,
@@ -52,6 +69,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     insert_after_prologue,
     is_binding_site,
     remove_declarator,
+    value_is_discarded,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
@@ -60,9 +78,11 @@ from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsBinaryExpression,
     JsBlockStatement,
+    JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
     JsDoWhileStatement,
+    JsEmptyStatement,
     JsExpressionStatement,
     JsForStatement,
     JsFunctionDeclaration,
@@ -70,11 +90,15 @@ from refinery.lib.scripts.js.model import (
     JsIfStatement,
     JsMemberExpression,
     JsNewExpression,
+    JsNullLiteral,
+    JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
+    JsReturnStatement,
     JsScript,
+    JsStringLiteral,
     JsThisExpression,
     JsUnaryExpression,
     JsVariableDeclaration,
@@ -362,6 +386,22 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
     return False
 
 
+def _stores_the_same_value(first: Node, second: Node) -> bool:
+    """
+    Whether the store values *first* and *second* denote the same value every time the run
+    executes: the same bare name — one body's statements read one binding by that name — or a
+    literal spelling the same constant. A number compares by the text of its value as well as the
+    value itself, so a `-0` the second store would replace a `0` with stays a different store.
+    """
+    if isinstance(first, JsIdentifier) and isinstance(second, JsIdentifier):
+        return first.name == second.name
+    if type(first) is not type(second):
+        return False
+    if isinstance(first, JsNumericLiteral):
+        return first.value == second.value and repr(first.value) == repr(second.value)
+    return isinstance(first, JsNullLiteral) or first.value == second.value
+
+
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
     """
     Remove function declarations that are never referenced from live code, and remove assignments
@@ -399,6 +439,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self._reaching = cache.reaching
             self._has_reflection = self._model.has_reflection_surface()
             self._remove_dead_stores(node)
+            self._remove_redundant_global_stores(node)
+            self._remove_discarded_completions(node)
+            self._remove_empty_statements(node)
             self._localize_pseudo_globals(node)
             self.generic_visit(node)
             self._process_body(node, node.body)
@@ -487,6 +530,151 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         binding = self.model.binding_of(write) or self.model.resolve(write)
         return binding is not None and binding.is_read
+
+    def _remove_redundant_global_stores(self, root: JsScript):
+        """
+        Drop a store to a member of the global object whose value an earlier store in the same
+        unbroken run of such stores already left there. The run — every consecutive store-class
+        statement in one body — is the unit rather than the adjacent pair, because the interleaved
+        residue this sweep exists for (`global.r = f; global.m = g; global.r = f; global.m = g;`)
+        repeats neither store beside its own duplicate. Any other statement breaks the run: one of
+        them could read the member back, write it under a computed key, or install the accessor the
+        next store would fire, so a duplicate across a break is a store of something the program may
+        have observed changing.
+
+        The stored value is a bare name or a literal, so the later read of it can neither fire a
+        getter nor throw where the earlier one did not — the run has no room for anything to
+        happen between the two. A store is kept whole wherever a descriptor is installed on the
+        global object at all (`installs_a_descriptor_on_the_global_object` — a counting setter
+        must keep firing on every store) and wherever any reflective surface remains, which could
+        install one at runtime.
+        """
+        if self.model.has_reflection_surface():
+            return
+        if self.effects.installs_a_descriptor_on_the_global_object():
+            return
+        removals: list[JsExpressionStatement] = []
+        for body in self._statement_lists(root):
+            stored: dict[str, Node] = {}
+            for stmt in body:
+                store = self._global_member_store(stmt)
+                if store is None:
+                    stored = {}
+                    continue
+                name, value = store
+                if stored.get(name) is not None and _stores_the_same_value(stored[name], value):
+                    removals.append(stmt)
+                else:
+                    stored[name] = value
+        for stmt in removals:
+            _remove_from_parent(stmt)
+            self.mark_changed()
+
+    @staticmethod
+    def _statement_lists(root: JsScript) -> Iterator[list[Statement]]:
+        """
+        Every statement list the script runs in order: the script body and each block's, the one
+        unit a run of consecutive stores is read over.
+        """
+        for node in root.walk():
+            if isinstance(node, (JsScript, JsBlockStatement)):
+                yield node.body
+
+    def _global_member_store(self, stmt: Statement) -> tuple[str, Node] | None:
+        """
+        The global property *stmt* stores and the value it stores, when it is a store-class
+        statement: an expression statement `global.key = value` whose base is spelled with a
+        same-realm global name nothing binds where it stands, whose key the text states, and whose
+        value is a bare name or a literal. `None` for any other statement, which breaks a store run.
+        """
+        if not isinstance(stmt, JsExpressionStatement):
+            return None
+        expr = stmt.expression
+        if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+            return None
+        target = strip_parens(expr.left)
+        value = strip_parens(expr.right)
+        if not isinstance(target, JsMemberExpression):
+            return None
+        if not isinstance(value, (
+            JsIdentifier,
+            JsStringLiteral,
+            JsNumericLiteral,
+            JsBooleanLiteral,
+            JsNullLiteral,
+        )):
+            return None
+        base = strip_parens(target.object)
+        if not isinstance(base, JsIdentifier) or base.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES:
+            return None
+        if access_key(target) is None:
+            return None
+        name = self.model.global_alias_member_name(target)
+        if name is None:
+            return None
+        return name, value
+
+    def _remove_discarded_completions(self, root: JsScript):
+        """
+        Drop the `return` of an inert constant in a function whose every invocation throws its
+        completion value away, when that return ends the body — control falls off the end either
+        way. The invocation question is the tampering model's
+        (`TamperingModel.every_invocation_discards_the_value` over the forward value-flow
+        enumeration): a function whose value escapes anywhere, or that the text never invokes,
+        keeps its return.
+
+        Two gates keep this to residue. The value is a constant the program spelled, so nothing
+        any later pass could fold from the invocation is lost — a fold splices a callee's value
+        only where it can prove the callee pure, a proof that can arrive after this sweep runs, and
+        a constant return discarded everywhere is a wrapper's vestigial answer, not information.
+        And the function carries no name a host could call it by: a top-level function is a
+        property of the global object, so the file is not the whole program and a caller outside it
+        may read a completion value every invocation in the text discards.
+        """
+        assert self._cache is not None
+        removals: list[JsReturnStatement] = []
+        for node in root.walk():
+            if not isinstance(node, JsReturnStatement) or node.argument is None:
+                continue
+            if not isinstance(strip_parens(node.argument), (
+                JsStringLiteral,
+                JsNumericLiteral,
+                JsBooleanLiteral,
+                JsNullLiteral,
+            )):
+                continue
+            function = enclosing_function(node)
+            if function is None:
+                continue
+            body = getattr(function, 'body', None)
+            if not isinstance(body, JsBlockStatement) or not body.body or body.body[-1] is not node:
+                continue
+            binding = self.model.invocation_binding(function)
+            if binding is not None:
+                owner = binding.scope.var_scope
+                if binding.exported or owner is None or owner.kind is ScopeKind.SCRIPT:
+                    continue
+            if not self._cache.tampering.every_invocation_discards_the_value(
+                function, value_is_discarded,
+            ):
+                continue
+            removals.append(node)
+        for stmt in removals:
+            _remove_from_parent(stmt)
+            self.mark_changed()
+
+    def _remove_empty_statements(self, root: JsScript):
+        """
+        Drop an empty statement standing in a statement list: it executes nothing, so removing it
+        changes no run. One standing as the whole body of a branch or a loop is not a member of a
+        list and stays, since unwrapping it would rewrite the construct around it.
+        """
+        removals: list[JsEmptyStatement] = []
+        for body in self._statement_lists(root):
+            removals.extend(stmt for stmt in body if isinstance(stmt, JsEmptyStatement))
+        for stmt in removals:
+            _remove_from_parent(stmt)
+            self.mark_changed()
 
     def _localize_pseudo_globals(self, root: JsScript):
         """

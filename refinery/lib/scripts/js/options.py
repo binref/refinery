@@ -42,10 +42,35 @@ class DeobfuscationOptions:
     asserts only the globals every host shares, so a read of a host-conditional name such as `window` or
     `global` is treated as possibly throwing and no pass drops it; naming the host recovers the folds
     that read enables. See `refinery.lib.scripts.js.analysis.environment.HostEnvironment`.
+
+    *trust_eval* selects what code this analysis cannot read is assumed to do to everything else the
+    script does — the question a direct `eval` whose argument cannot be resolved, an unread
+    `Function` construction, and a string timer with an unread argument each raise.
+
+    - Suspecting model (default, `trust_eval=False`): such a surface may read or write anything the
+      scope it runs in can reach, and every fold resting on the contrary is refused. This is the
+      only sound answer, because the code being run can do anything the runtime allows.
+
+    - Trusting model (`trust_eval=True`): such a surface is assumed inert, so the junk written around
+      it is removed as if it were not there. **This is unsound, deliberately.** In the packed script
+      this was measured on, the payload the direct `eval` runs can rebind the string array its
+      reader folded from, so an inlined read prints the value the text spelled where the script
+      yields the rewritten one; it can index the array and call the retired construction, which the
+      output no longer defines; and it can install a getter on a prototype chain, so a removal that
+      rested on the chain being intact silently drops code the output no longer runs. The switch is
+      for triage, where reading the script matters more than being able to run the output.
+
+    What the trusting model does *not* excuse is a change the script performs in plain sight. A
+    `with` body that writes a name, a span of source this model never read, a store on the global
+    object under a key only the runtime resolves, an `import()`, and an indirect `eval` — a value
+    read of the intrinsic that is not the callee of a direct call — still open the world under both
+    models, and so does every write the text spells. The assumption is about code that cannot be
+    read, not about every way a script can reach the world.
     """
     module: bool = False
     entrypoints: tuple[str, ...] = ()
     environment: HostEnvironment = HostEnvironment.universal
+    trust_eval: bool = False
 
     def names_entrypoint(self, name: str) -> bool:
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
@@ -70,6 +95,16 @@ def host_environment(options: object | None) -> HostEnvironment:
     if isinstance(options, DeobfuscationOptions):
         return options.environment
     return HostEnvironment.universal
+
+
+def eval_is_trusted(options: object | None) -> bool:
+    """
+    Whether *options* asks for code this analysis cannot read to be assumed inert. Any value that is
+    not a `DeobfuscationOptions` — a model built standalone, or one with no options attached —
+    defaults to the suspecting model, which is the only sound one and what the pipeline does unless
+    told.
+    """
+    return isinstance(options, DeobfuscationOptions) and options.trust_eval
 
 
 def runs_as_module(options: object | None, root: JsScript) -> bool:

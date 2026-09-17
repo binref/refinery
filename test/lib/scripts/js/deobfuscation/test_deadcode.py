@@ -125,3 +125,128 @@ class TestRegressionBugs(TestJsDeobfuscator):
             ),
             result,
         )
+
+
+class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
+    """
+    A guard testing a local the model can resolve to a single allocation answers from that
+    allocation — every object is truthy, an empty array included — but only where the read is
+    ordered after the value's establishment: a never-reassigned `var` still reads `undefined`
+    before its initializer runs, and the branch the undefined read would take is not the branch
+    the allocation takes.
+    """
+
+    @staticmethod
+    def _deadcode(source: str, *, trust_eval: bool = False) -> str:
+        from refinery.lib.scripts.js.options import DeobfuscationOptions
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsDeadCodeElimination()
+            transform.options = DeobfuscationOptions(trust_eval=trust_eval)
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        from refinery.lib.scripts.js.synth import JsSynthesizer
+        return JsSynthesizer().convert(ast)
+
+    def test_a_guard_on_an_established_array_folds(self):
+        self.assertEqual(
+            "function f() {\n  var a = ['x'];\n  SINK('kept');\n}",
+            self._deadcode(
+                'function f() { var a = [\'x\']; if (!a) { return; } SINK(\'kept\'); }'),
+        )
+
+    def test_an_empty_array_is_truthy(self):
+        self.assertEqual(
+            'function f() {\n  var a = [];\n  y();\n}',
+            self._deadcode('function f() { var a = []; if (!a) { x(); } else { y(); } }'),
+        )
+
+    def test_a_read_before_the_initializer_runs_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              if (!a) {
+                return;
+              }
+              var a = ['x'];
+              SINK('kept');
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+
+    def test_a_reassigned_binding_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = ['x'];
+              a = [];
+              if (!a) {
+                return;
+              }
+              SINK('kept');
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+
+    def test_a_cross_function_guard_on_an_established_array_folds(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = ['x'];
+                SINK(function() {
+                  SINK('kept');
+                });
+                """
+            ),
+            self._deadcode(
+                inspect.cleandoc(
+                    """
+                    var a = ['x'];
+                    SINK(function() {
+                      if (!a) {
+                        return;
+                      }
+                      SINK('kept');
+                    });
+                    """
+                )
+            ),
+        )
+
+    def test_a_cross_function_guard_under_an_eval_folds_only_with_trust(self):
+        """
+        The value the guard tests can be rebound by the payload the `eval` runs, so the suspecting
+        model keeps the branch and the trusting model folds it.
+        """
+        script = inspect.cleandoc(
+            """
+            function f() {
+              var a = ['x'];
+              SINK(function() {
+                if (!a) {
+                  return;
+                }
+                SINK('kept');
+              });
+              eval(input);
+            }
+            """
+        )
+        self.assertEqual(script, self._deadcode(script))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var a = ['x'];
+                  SINK(function() {
+                    SINK('kept');
+                  });
+                  eval(input);
+                }
+                """
+            ),
+            self._deadcode(script, trust_eval=True),
+        )

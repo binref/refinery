@@ -671,7 +671,8 @@ class JsSimplifications(Transformer):
         self.generic_visit(node)
         if node.test is None:
             return None
-        truthy = is_truthy(node.test, self.model)
+        assert self._cache is not None
+        truthy = is_truthy(node.test, self._cache)
         if truthy is None:
             return None
         return self._discarding(node, node.test, node.consequent if truthy else node.alternate)
@@ -1056,7 +1057,8 @@ class JsSimplifications(Transformer):
             if nullish is None:
                 return None
             return self._discarding(node, node.left, node.right) if nullish else node.left
-        truthy = is_truthy(node.left, self.model)
+        assert self._cache is not None
+        truthy = is_truthy(node.left, self._cache)
         if truthy is None:
             return None
         if op == '&&':

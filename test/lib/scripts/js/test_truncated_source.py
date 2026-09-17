@@ -486,7 +486,7 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
     """
 
     def _deobfuscated(self, source: str) -> str:
-        return source.encode('utf8') | js() | str
+        return source.encode('utf8') | js(strict=True) | str
 
     def test_a_fold_that_reaches_a_literal_the_cut_left_open_leaves_the_file_cut(self):
         expected = {

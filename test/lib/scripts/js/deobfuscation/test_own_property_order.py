@@ -195,7 +195,7 @@ def _walk(body: str) -> str:
 
 
 def _walked(body: str) -> str:
-    return _walk(body).encode('utf8') | js() | str
+    return _walk(body).encode('utf8') | js(strict=True) | str
 
 
 def _keys_of(literal: str) -> str:

@@ -33,6 +33,7 @@ from refinery.lib.scripts import _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    _value_is_discarded,
     binding_has_references,
     remove_declarator,
 )
@@ -236,25 +237,6 @@ def _invocation_of(reference) -> JsCallExpression | None:
     if isinstance(call, JsCallExpression) and strip_parens(call.callee) is reference:
         return call
     return None
-
-
-def _value_is_discarded(node) -> bool:
-    """
-    Whether the context governing `node` throws its value away, so removing `node` changes no value
-    the program goes on to read: an expression statement, or a sequence operand other than the last,
-    whose value the sequence yields. Parentheses are looked through the way `_remove_expr` looks
-    through them to reach that context. A node whose value is consumed — a declarator initializer, a
-    call argument, a `return` — is not discardable, and removing it would strand its consumer.
-    """
-    cur = node
-    p = cur.parent
-    while isinstance(p, JsParenthesizedExpression):
-        cur, p = p, p.parent
-    if isinstance(p, JsExpressionStatement):
-        return True
-    if isinstance(p, JsSequenceExpression):
-        return bool(p.expressions) and p.expressions[-1] is not cur
-    return False
 
 
 def _discardable_guard_invocations(model, binding, declarator) -> list[JsCallExpression] | None:

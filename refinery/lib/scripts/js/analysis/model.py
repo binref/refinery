@@ -218,6 +218,7 @@ class ContainerRole(enum.Enum):
     MEMBER_WRITE = 'member_write'  # noqa  write through it: `obj.k = v`, `obj[i]++`, `delete obj[i]`
     MEMBER_CALL  = 'member_call'   # noqa  method invoked on it: `obj.m(...)`, which may mutate it
     REBIND       = 'rebind'        # noqa  plain reassignment of the name: `obj = ...`
+    VERDICT_READ = 'verdict_read'  # noqa  consumed whole for a verdict: `!obj`, `if (obj)`, `obj === x`
     ESCAPE       = 'escape'        # noqa  any other use, through which the container could be aliased
 
 
@@ -694,12 +695,17 @@ def container_reference_role(node: ReferenceNode) -> ContainerRole:
     target of a `for-in`/`for-of` head or a destructuring pattern — which makes it a `MEMBER_WRITE` (a
     write through `a.b.c = v` mutates the object `a` holds), or is invoked as a method (`a.m(...)`, also
     as a template tag `` a.m`...` ``), which makes it a `MEMBER_CALL` since the call may mutate the
-    receiver. A plain `node = ...` reassignment is a `REBIND`; anything else — passed as an argument,
-    aliased to another binding, returned, used as an operand or a computed key — is an `ESCAPE`, through
-    which an alias could mutate the container. Parentheses are looked through throughout, so a grouped
-    write or call (`(a.b) = v`, `(a.sort)()`) is classified by the operator that applies, not as a bare
-    read. This is the per-reference primitive the EffectModel composes over a binding's whole reference
-    set (with alias-following and callee summaries) to decide container immutability.
+    receiver. A plain `node = ...` reassignment is a `REBIND`; a position that consumes the value whole
+    for a verdict (`_read_forwards_no_alias`: the operand of `!`, `typeof` or `void`, either side of a
+    strict equality, the test of an `if`, a loop, or a conditional) is a `VERDICT_READ`, which mutates
+    nothing and forwards no alias — an empty array is truthy and a strict equality converts nothing;
+    anything else — passed as an argument, aliased to another binding, returned, used as an operand or
+    a computed key, a loose-equality operand whose `ToPrimitive` runs a method the prototype chain
+    chooses — is an `ESCAPE`, through which an alias could mutate the container. Parentheses are
+    looked through throughout, so a grouped write or call (`(a.b) = v`, `(a.sort)()`) is classified by
+    the operator that applies, not as a bare read. This is the per-reference primitive the EffectModel
+    composes over a binding's whole reference set (with alias-following and callee summaries) to
+    decide container immutability.
     """
     parent = enclosing_operator(node)
     if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
@@ -715,6 +721,8 @@ def container_reference_role(node: ReferenceNode) -> ContainerRole:
         return ContainerRole.MEMBER_WRITE if is_member_write_target(member) else ContainerRole.MEMBER_READ
     if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.left) is node and parent.operator == '=':
         return ContainerRole.REBIND
+    if _read_forwards_no_alias(node):
+        return ContainerRole.VERDICT_READ
     return ContainerRole.ESCAPE
 
 
@@ -1363,6 +1371,16 @@ def member_property_name(member: JsMemberExpression) -> str | None:
     return prop.name if isinstance(prop, JsIdentifier) else None
 
 
+def _property_key_name(prop: JsProperty) -> str | None:
+    """
+    The name the object-pattern property *prop* reads, when it is statically known: a string-literal
+    key or a plain identifier key. A computed key names nothing the text spells.
+    """
+    key = prop.key
+    return key.value if isinstance(key, JsStringLiteral) else (
+        key.name if isinstance(key, JsIdentifier) else None)
+
+
 def _last_positions(params: list[Binding | None]) -> list[Binding | None]:
     """
     *params* with every position a repeated parameter name occupies but the final one blanked out. A
@@ -1806,9 +1824,15 @@ class SemanticModel:
     `would_capture`, and `has_reflection_surface`.
     """
 
-    def __init__(self, root: JsScript, environment: HostEnvironment = HostEnvironment.universal):
+    def __init__(
+        self,
+        root: JsScript,
+        environment: HostEnvironment = HostEnvironment.universal,
+        trust_eval: bool = False,
+    ):
         self.root = root
         self.environment = environment
+        self.trust_eval = trust_eval
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
@@ -2710,6 +2734,29 @@ class SemanticModel:
         sites = self.binding_dynamic_rebind_sites(binding)
         return sites is None or bool(sites)
 
+    def binding_reflection_kill_sites(self, binding: Binding) -> list[Node] | None:
+        """
+        The AST nodes at which a reflective surface could change the value *binding* holds — the
+        located kills a flow query orders a read against — or `None` when the question has no
+        located answer.
+
+        A script-scope binding is replaceable only by an opaque global write, and the existing
+        `opaque_global_write_replacement_sites` answer is the whole of it: `None` under any
+        whole-program reflective surface, which could write the name from anywhere, and the member
+        sites otherwise. A function-local can change value only through a surface standing in its
+        own scope: a direct `eval` in its owning function or a span of that function this model
+        never read (`reflection_surface_sites`), or a reference a `with` body resolves at runtime
+        (`dynamic_references`). Every `with`-governed reference counts, read or not — reading the
+        bare name consults the `with` object first, and a getter there runs code that can rebind
+        the local — so only a located answer keeps that hazard orderable rather than refusing on
+        it. Each site is a node a consumer that has ordered a definition against a use can also
+        order the kill against; `None` is the volatility it cannot.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return self.opaque_global_write_replacement_sites(binding)
+        return self.reflection_surface_sites(binding) + self.dynamic_references(binding)
+
     def binding_never_reassigned(self, binding: Binding) -> bool:
         """
         Whether *binding* holds one value for its whole lifetime: it is never written after its
@@ -2748,7 +2795,15 @@ class SemanticModel:
         included, since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is
         not scanned — a `with` body's accesses are attributed precisely as dynamic references — so only
         direct eval needs a per-function answer. Computed once per function and memoized.
+
+        The trusting model (`trust_eval`) answers no sites: a direct `eval` whose argument cannot be
+        resolved is the one surface that model assumes inert, so every consumer that freezes a local
+        on it — the rebind hazards, the reflection surfaces, the install question a free name asks —
+        loses the eval leg alone, and the other legs a `with` body or an unread span carries keep
+        refusing.
         """
+        if self.trust_eval:
+            return []
         cached = self._function_direct_eval_sites.get(id(function))
         if cached is None:
             cached = [node for node in function.walk() if is_direct_eval_call(node)]
@@ -2803,6 +2858,10 @@ class SemanticModel:
         The unread span is tested before the shapes are, because a construct the file ended inside
         is one of those shapes: an unterminated call is a call, and what matters about it is the
         source that never followed it rather than what it would compute.
+
+        The trusting model (`trust_eval`) declines to count the surfaces of the kinds it assumes
+        inert — the question `_surface_is_trusted` answers per node — so the whole-program surface
+        and the site list lose exactly those and keep the rest.
         """
         if self._reflection_surface is not None:
             return
@@ -2816,19 +2875,76 @@ class SemanticModel:
             elif isinstance(node, JsImportExpression):
                 sites.append(node)
             elif isinstance(node, JsIdentifier):
-                if self._reads_reflective_intrinsic(node):
+                if self._reads_reflective_intrinsic(node) and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, JsMemberExpression):
-                if _is_reflective_member(node):
+                if _is_reflective_member(node) and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, JsCallExpression):
-                if _is_string_timer(node):
+                if _is_string_timer(node) and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
-                if self._destructures_a_reflective_intrinsic(node):
+                if (
+                    self._destructures_a_reflective_intrinsic(node)
+                    and not self._surface_is_trusted(node)
+                ):
                     sites.append(node)
         self._opaque_surface_sites = sites
         self._reflection_surface = saw_with or bool(sites)
+
+    def _surface_is_trusted(self, node: Node) -> bool:
+        """
+        Whether the reflective surface at *node* is of a kind the trusting model assumes inert, so
+        the surface walk declines to count it. The covered kinds are the ones that run code
+        supplied as data this model cannot read: the callee read that spells a direct `eval` call,
+        the `Function` intrinsic obtained as a value — a bare read of the name, a member key
+        naming it, a `constructor` key whose yield flows onward, or a destructuring of it out of
+        the global object — and a string timer whose first argument is not a function literal.
+
+        What is never trusted is a spelling of `eval` other than a direct call's callee — a value
+        read of the bare name, an `eval` member key, a destructuring — because that is indirect
+        eval, which runs in the global scope; and a computed read of an unknown global consults no
+        code this model cannot read. A span of source this model never read, a `with` body, and an
+        `import()` reach this walk through their own branches and stay kept under both models.
+        """
+        if not self.trust_eval:
+            return False
+        if isinstance(node, JsCallExpression):
+            return True
+        if isinstance(node, JsIdentifier):
+            if node.name == 'Function':
+                return True
+            return node.name == 'eval' and self._is_the_callee_of_a_direct_eval_call(node)
+        if isinstance(node, JsMemberExpression):
+            name = member_property_name(node)
+            return name == 'Function' or name == 'constructor'
+        if isinstance(node, (JsVariableDeclarator, JsAssignmentExpression)):
+            pattern = node.id if isinstance(node, JsVariableDeclarator) else node.left
+            if not isinstance(pattern, JsObjectPattern):
+                return False
+            return all(
+                _property_key_name(prop) != 'eval'
+                for prop in pattern.properties
+                if isinstance(prop, JsProperty) and not prop.computed
+            )
+        return False
+
+    @staticmethod
+    def _is_the_callee_of_a_direct_eval_call(node: JsIdentifier) -> bool:
+        """
+        Whether the read of `eval` at *node* is the callee that spells a direct `eval` call — the
+        one position of the name the trusting model counts as the covered kind. Every other read of
+        the name hands the intrinsic out for an indirect call, which no model trusts.
+        """
+        cursor: Node | None = node
+        while isinstance(cursor.parent, JsParenthesizedExpression):
+            cursor = cursor.parent
+        call = cursor.parent
+        return (
+            isinstance(call, JsCallExpression)
+            and call.callee is cursor
+            and is_direct_eval_call(call)
+        )
 
     def _destructures_a_reflective_intrinsic(
         self, node: JsVariableDeclarator | JsAssignmentExpression,
@@ -2851,10 +2967,7 @@ class SemanticModel:
         for prop in pattern.properties:
             if not isinstance(prop, JsProperty) or prop.computed:
                 continue
-            key = prop.key
-            name = key.value if isinstance(key, JsStringLiteral) else (
-                key.name if isinstance(key, JsIdentifier) else None)
-            if name in REFLECTIVE_INTRINSICS:
+            if _property_key_name(prop) in REFLECTIVE_INTRINSICS:
                 return True
         return False
 
@@ -3579,13 +3692,12 @@ class SemanticModel:
         key that is not statically known, reaches the prototype surface, or names an accessor
         installer may perform or reveal an install (`_DISPLACING_CHAIN_KEYS`). Any escape hands
         the object to code that may install on it under another name — an alias, a call argument,
-        which is how a `defineProperty` or an `Object.assign` receives its target, a return —
-        except a position that consumes the value as a bare verdict and forwards nothing
-        (`_read_forwards_no_alias`). A plain rebind of the name is a write of the binding rather
-        than of the object, weighed by `values_at_call` and recorded as a write, so it never
-        appears among the reads walked here. Which key an install stores is never asked: a
-        computed write names no fixed key, and refusing every install keeps the answer independent
-        of the folds that would reveal one.
+        which is how a `defineProperty` or an `Object.assign` receives its target, a return. A
+        `VERDICT_READ` forwards nothing, so it is neither. A plain rebind of the name is a write
+        of the binding rather than of the object, weighed by `values_at_call` and recorded as a
+        write, so it never appears among the reads walked here. Which key an install stores is
+        never asked: a computed write names no fixed key, and refusing every install keeps the
+        answer independent of the folds that would reveal one.
         """
         for reference in binding.reads:
             role = container_reference_role(reference)
@@ -3594,8 +3706,6 @@ class SemanticModel:
             if role is ContainerRole.REBIND:
                 continue
             if role is ContainerRole.ESCAPE:
-                if _read_forwards_no_alias(reference):
-                    continue
                 return True
             access = _enclosing_member_access(reference)
             while access is not None:
@@ -3950,11 +4060,15 @@ class _ScopeBuilder:
 
 
 def build_semantic_model(
-    root: JsScript, environment: HostEnvironment = HostEnvironment.universal
+    root: JsScript,
+    environment: HostEnvironment = HostEnvironment.universal,
+    trust_eval: bool = False,
 ) -> SemanticModel:
     """
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
     The default `universal` environment asserts only `GUARANTEED_GLOBALS`, so the model answers
     `read_may_throw` exactly as an unpinned run; a pinned host recovers the reads that host guarantees.
+    *trust_eval* selects the trusting model, which assumes code supplied as data is inert; see
+    `refinery.lib.scripts.js.options.DeobfuscationOptions`.
     """
-    return SemanticModel(root, environment)
+    return SemanticModel(root, environment, trust_eval)

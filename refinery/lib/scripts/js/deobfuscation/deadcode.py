@@ -164,7 +164,8 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
         model = self.model
         if model is None:
             return None
-        truthy = is_truthy(stmt.test, model)
+        assert self._root is not None
+        truthy = is_truthy(stmt.test, model_cache(self, self._root))
         if truthy is None:
             return None
         taken = stmt.consequent if truthy else stmt.alternate

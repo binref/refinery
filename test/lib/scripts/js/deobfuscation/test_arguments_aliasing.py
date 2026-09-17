@@ -57,7 +57,7 @@ from refinery.units.scripting.js import js
 
 
 def _deobfuscated(source: str, *, module: bool = False) -> str:
-    return source.encode('utf8') | js(module=module) | str
+    return source.encode('utf8') | js(module=module, strict=True) | str
 
 
 def _printed(rows: dict[str, str]) -> dict[str, tuple[str, str | None]]:

@@ -79,7 +79,7 @@ def _deobfuscate(source: str) -> str:
     """
     The script the `js` unit emits for *source*, iterated to a fixed point as the unit does.
     """
-    return source.encode('utf8') | js() | str
+    return source.encode('utf8') | js(strict=True) | str
 
 
 def _rewritten_snippets() -> list[str]:

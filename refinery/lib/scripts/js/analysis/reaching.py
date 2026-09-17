@@ -18,10 +18,12 @@ use; the effect model
 reassignment recorded on the binding, or a call to a function that may write it. A store on the
 global object under a key only the runtime resolves may replace a script-scope binding's name, and
 that kill is located: it holds at the site spelling the store, exempt for a use evaluated inside
-the operands the store is computed from (§13.15.5). Kills the model cannot pin to a site — a
-mutating function that escapes, a write through a global-object alias or a dynamic scope — make the
-answer conservatively negative, and so does a definition and use that share a single statement,
-which statement granularity cannot order.
+the operands the store is computed from (§13.15.5). A direct `eval`, an unread source span, or a
+`with`-governed reference in a local's own function can change the value the same located way, at
+the node of the site spelling it. Kills the model cannot pin to a site — a mutating function that
+escapes, a write through a global-object alias or a dynamic scope, a surface standing outside the
+use's own graph — make the answer conservatively negative, and so does a definition and use that
+share a single statement, which statement granularity cannot order.
 """
 from __future__ import annotations
 
@@ -48,10 +50,11 @@ from refinery.lib.scripts.js.model import (
 class _Kills(NamedTuple):
     """
     The sites at which a binding may change value, for one definition tracked from: the kills that
-    hold for every use — reassignments and mutating calls, as control-flow node ids — and the opaque
-    global writes that may replace the binding's name, kept as site-and-node pairs because a use can
-    be exempt from such a store: the store is the last step of the assignment spelling it, so a use
-    inside its operands runs before it and is not killed by it.
+    hold for every use — reassignments, mutating calls, and the located reflective hazards of a
+    local's own scope — as control-flow node ids, and the opaque global writes that may replace
+    the binding's name, kept as site-and-node pairs because a use can be exempt from such a store:
+    the store is the last step of the assignment spelling it, so a use inside its operands runs
+    before it and is not killed by it.
     """
     nodes: frozenset[int]
     opaque: tuple[tuple[JsMemberExpression, CfgNode], ...]
@@ -141,10 +144,13 @@ class ReachingModel:
         it as pinned down. A callee no name here binds is a different answer and is left alone,
         which is the condition every reader of this was already written under.
 
-        An opaque global write that may replace the binding's name is a kill like these, but a
-        located one: the sites are the kill set wherever every one of them lies in this graph, and
-        `None` — volatility — when any lies elsewhere, since a write in another function's graph
-        runs at that function's invocation, a point no node here stands for.
+        A reflective surface that could change the value is a kill like these, and a located one:
+        the model enumerates its sites (`SemanticModel.binding_reflection_kill_sites`) — an opaque
+        global write, a direct `eval` or unread span in a local's own function, a reference a
+        `with` body resolves at runtime — and every one that lies in this graph is a kill at its
+        own node, while any that lies elsewhere, or that no graph places at all, makes the value
+        volatile: a surface running in another function's graph runs at that function's invocation,
+        a point no node here stands for.
         """
         if (
             binding.has_indefinite_write
@@ -152,22 +158,20 @@ class ReachingModel:
             or self.effects.mutators_escape(binding)
         ):
             return None
-        opaque: list[tuple[JsMemberExpression, CfgNode]] | None = None
-        if self.model.reflection_can_reach(binding):
-            sites = self.model.opaque_global_write_replacement_sites(binding)
-            if sites is None:
-                return None
-            opaque = self._located_opaque_writes(sites, graph)
-            if opaque is None:
-                return None
-        kills: set[int] = set()
+        hazards = self.model.binding_reflection_kill_sites(binding)
+        if hazards is None:
+            return None
+        located = self._located_hazards(hazards, graph)
+        if located is None:
+            return None
+        kills, opaque = located
         for definition in self._value_definitions(binding):
             if definition is def_write:
                 continue
-            located = self.dominance.locate(definition)
-            if located is None:
+            located_def = self.dominance.locate(definition)
+            if located_def is None:
                 return None
-            def_graph, def_node = located
+            def_graph, def_node = located_def
             if def_graph is graph:
                 kills.add(id(def_node))
         for call, node in self._graph_calls(graph):
@@ -182,23 +186,29 @@ class ReachingModel:
             if node is None:
                 return None
             kills.add(id(node))
-        return _Kills(frozenset(kills), tuple(opaque) if opaque is not None else ())
+        return _Kills(frozenset(kills), tuple(opaque))
 
-    def _located_opaque_writes(
-        self, sites: list[JsMemberExpression], graph: ControlFlowGraph,
-    ) -> list[tuple[JsMemberExpression, CfgNode]] | None:
+    def _located_hazards(
+        self, sites: list[Node], graph: ControlFlowGraph,
+    ) -> tuple[set[int], list[tuple[JsMemberExpression, CfgNode]]] | None:
         """
-        Every opaque global-write site of *sites* located into *graph*, or `None` when any of them
-        lies outside it — another function's graph, whose writes run at its invocation, or a point
-        no graph places at all.
+        Every reflective hazard site of *sites* located into *graph* — the plain ones as
+        control-flow node ids, and the opaque global writes among them as the site-and-node pairs
+        whose per-use exemption the caller applies — or `None` when any of them lies outside it:
+        another function's graph, whose hazards run at its invocation, or a point no graph places
+        at all.
         """
-        located: list[tuple[JsMemberExpression, CfgNode]] = []
+        kills: set[int] = set()
+        opaque: list[tuple[JsMemberExpression, CfgNode]] = []
         for site in sites:
             pair = self.dominance.locate(site)
             if pair is None or pair[0] is not graph:
                 return None
-            located.append((site, pair[1]))
-        return located
+            if isinstance(site, JsMemberExpression):
+                opaque.append((site, pair[1]))
+            else:
+                kills.add(id(pair[1]))
+        return kills, opaque
 
     def _store_kills_the_use(
         self, site: JsMemberExpression, node: CfgNode, use: Node,

@@ -533,6 +533,105 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_local_constant_read_before_a_direct_eval_in_the_same_function_is_inlined(self):
+        """
+        The `eval` can rebind the local, but only at the statement spelling the call, so the read
+        before it is inlined and the read after it is not. The declaration stays: the later read
+        still names it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x = 'a';
+                  SINK('a');
+                  eval(input);
+                  SINK(x);
+                }
+                """
+            ),
+            self._inline(inspect.cleandoc(
+                """
+                function f() {
+                  var x = 'a';
+                  SINK(x);
+                  eval(input);
+                  SINK(x);
+                }
+                """
+            )),
+        )
+
+    def test_local_array_index_read_before_a_direct_eval_is_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var p = ['a', 'b'];
+                  SINK('a');
+                  eval(input);
+                  SINK(p[1]);
+                }
+                """
+            ),
+            self._inline(inspect.cleandoc(
+                """
+                function f() {
+                  var p = ['a', 'b'];
+                  SINK(p[0]);
+                  eval(input);
+                  SINK(p[1]);
+                }
+                """
+            )),
+        )
+
+    def test_local_declaration_survives_a_direct_eval_that_could_name_it(self):
+        """
+        The read folds — it stands before the `eval` — but the payload could read `x` by name,
+        so the declaration stays: removing it would turn the value the eval reads into a
+        `ReferenceError`.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x = 'a';
+                  SINK('a');
+                  eval(input);
+                }
+                """
+            ),
+            self._inline(inspect.cleandoc(
+                """
+                function f() {
+                  var x = 'a';
+                  SINK(x);
+                  eval(input);
+                }
+                """
+            )),
+        )
+
+    def test_local_reassignable_by_direct_eval_not_inlined_into_an_unordered_callback(self):
+        """
+        The callback is invoked whenever the host fires it, a point no ordering pins down, so the
+        `eval` ahead of it could have rebound `x` by the time the read runs — the cross-function
+        inliner refuses the candidate a dynamic scope could rewrite, whatever reader shape holds it.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = 'a';
+              setTimeout(function() {
+                SINK(x);
+              });
+              eval(input);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_local_reassigned_by_function_called_through_with_not_inlined(self):
         """
         The `with` body invokes `evil` by name; if `o` lacks a property `evil` the call runs the local
@@ -974,6 +1073,150 @@ class TestConstantInlining(TestJsDeobfuscator):
             ),
             self._inline("var p = ['a']; function f() { return p[0]; } f();"),
         )
+
+    def test_var_inlined_into_an_iife_reader_after_definition(self):
+        """
+        The reader is an anonymous function invoked immediately — the shape every packed payload
+        uses. Its single reference point is the function expression itself, which the initializer
+        precedes, so the read folds and the declaration, with nothing left reading it, goes too.
+        """
+        self.assertEqual(
+            "(function() {\n  SINK('abc');\n})();",
+            self._inline("var k = 'abc'; (function () { SINK(k); })();"),
+        )
+
+    def test_var_inlined_into_a_stored_function_reader_after_definition(self):
+        """
+        The reader is stored in a binding and invoked through it; the read of the name is the one
+        point the invocation cannot precede, and the initializer precedes it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function() {
+                  SINK('abc');
+                };
+                f();
+                """
+            ),
+            self._inline("var k = 'abc'; var f = function () { SINK(k); }; f();"),
+        )
+
+    def test_var_array_inlined_into_an_iife_reader_after_definition(self):
+        """
+        The computed-member arm admits the same reader shapes the plain-identifier arm does: the
+        index read folds inside an immediately invoked function.
+        """
+        self.assertEqual(
+            "(function() {\n  SINK('a');\n})();",
+            self._inline("var p = ['a']; (function () { SINK(p[0]); })();"),
+        )
+
+    def test_var_not_inlined_into_an_iife_reader_that_runs_too_early(self):
+        """
+        The expression statement that invokes the reader stands before the initializer's statement,
+        so a read inside it may observe the stale value and is left standing.
+        """
+        source = inspect.cleandoc(
+            """
+            (function() {
+              SINK(k);
+            })();
+            var k = 'abc';
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_guard_read_does_not_block_index_inlining(self):
+        """
+        `!a` consumes the value the binding holds as a verdict and forwards nothing, so it is no
+        escape from the container and the index read beside it folds. An empty array is truthy, so
+        the guard itself folds nowhere here — it is not this pass's question.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = ['x'];
+                if (!a) {
+                  return;
+                }
+                f('x');
+                """
+            ),
+            self._inline("var a = ['x']; if (!a) { return; } f(a[0]);"),
+        )
+
+    def test_a_truthiness_test_does_not_block_index_inlining(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = ['x'];
+                if (a) {
+                  f('x');
+                }
+                """
+            ),
+            self._inline("var a = ['x']; if (a) { f(a[0]); }"),
+        )
+
+    def test_a_void_operand_does_not_block_index_inlining(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = ['x'];
+                void a;
+                f('x');
+                """
+            ),
+            self._inline("var a = ['x']; void a; f(a[0]);"),
+        )
+
+    def test_a_loose_equality_operand_still_blocks_index_inlining(self):
+        """
+        A loose equality runs `ToPrimitive` on the object, a method the prototype chain chooses, so
+        it forwards and stays an escape: the index read is left standing.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            if (a == 1) {
+              return;
+            }
+            f(a[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_an_argument_escape_still_blocks_index_inlining(self):
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            g(a);
+            f(a[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_a_with_governed_truthiness_read_still_blocks_index_inlining(self):
+        """
+        The guard's read stands inside a `with` body, where the bare name consults the `with`
+        object first and a getter there runs code that can mutate the container, so the verdict
+        position does not clear it and the index read is left standing.
+        """
+        source = inspect.cleandoc(
+            """
+            function g() {
+              var a = ['x'];
+              with (o) {
+                if (!a) {
+                  return;
+                }
+              }
+              f(a[0]);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
 
     def test_const_array_inlined_across_functions(self):
         self.assertEqual(

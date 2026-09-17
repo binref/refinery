@@ -246,3 +246,52 @@ class TestReaching(TestBase):
         self.assertFalse(self._query(
             "var x = 'ab'; console.log(x.length); q(globalThis);"
         ))
+
+    def test_reaches_a_read_before_a_direct_eval_in_the_owning_function(self):
+        """
+        The `eval` in the same function can rebind the local, but only at the statement spelling the
+        call, which runs after the read, so the value still holds there — the located kill doing
+        the work volatility used to do for every read alike.
+        """
+        self.assertTrue(self._query(
+            '(function () { var x = 1; f(x); eval(input); })();'
+        ))
+
+    def test_does_not_reach_a_read_after_a_direct_eval_in_the_owning_function(self):
+        self.assertFalse(self._query(
+            '(function () { var x = 1; eval(input); f(x); })();'
+        ))
+
+    def test_does_not_reach_a_read_sharing_the_evals_statement(self):
+        """
+        The read is an operand of the same statement as the `eval` call, which statement granularity
+        cannot order, so the value is not reported as reaching it.
+        """
+        self.assertFalse(self._query(
+            '(function () { var x = 1; f(eval(input), x); })();'
+        ))
+
+    def test_does_not_reach_when_the_direct_eval_sits_in_a_nested_closure(self):
+        """
+        The `eval` stands inside a nested function, which runs at its invocation — a point no node
+        of this graph stands for — so the site cannot be ordered here and the binding stays
+        volatile.
+        """
+        self.assertFalse(self._query(
+            '(function () { var x = 1; f(x); (function () { eval(input); })(); })();'
+        ))
+
+    def test_reaches_a_read_before_a_with_body_reference(self):
+        """
+        The reference inside the `with` body consults the `with` object first, and a getter there
+        could rebind the local, but only at the statement spelling the reference, which runs after
+        the read — so the value still holds at the earlier read.
+        """
+        self.assertTrue(self._query(
+            '(function () { var x = 1; f(x); with (o) { x; } })();'
+        ))
+
+    def test_does_not_reach_a_read_after_a_with_body_reference(self):
+        self.assertFalse(self._query(
+            '(function () { var x = 1; with (o) { x; } f(x); })();'
+        ))

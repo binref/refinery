@@ -169,8 +169,8 @@ _WRITE_POSITIONS: dict[str, str] = {
     'strict delete'       : "'use strict';\nconsole.log(delete TARGET);",
     'array pattern'       : 'console.log([TARGET] = [9]);',
     'object pattern'      : 'console.log({ p: TARGET } = { p: 9 });',
-    'for-of head'         : 'for (TARGET of [9]) {\n  ;\n}\nconsole.log(1);',
-    'for-in head'         : 'for (TARGET in { a: 1 }) {\n  ;\n}\nconsole.log(1);',
+    'for-of head'         : 'for (TARGET of [9]) {}\nconsole.log(1);',
+    'for-in head'         : 'for (TARGET in { a: 1 }) {}\nconsole.log(1);',
 }
 
 #: What Node makes of each write position with the access written out, and what it makes of the same
@@ -204,7 +204,7 @@ _TARGET = '[1, 2, 3].length'
 
 
 def _deobfuscated(source: str) -> str:
-    return source.encode('utf8') | js() | str
+    return source.encode('utf8') | js(strict=True) | str
 
 
 def _fold(expression: str) -> str:

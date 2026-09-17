@@ -675,7 +675,7 @@ def _a_body_with_the_directive_at(index: int) -> str:
 
 
 def _deobfuscated(source: str) -> str:
-    return source.encode('utf8') | js() | str
+    return source.encode('utf8') | js(strict=True) | str
 
 
 def _before_and_after(source: str) -> tuple[tuple[str, str | None], tuple[str, str | None]]:

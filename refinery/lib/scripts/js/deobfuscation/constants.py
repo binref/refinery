@@ -265,26 +265,43 @@ def _calls_a_function_of_this_file_by_an_unstated_name(scope: Node, effects: Eff
     )
 
 
-def _collect_call_sites(
-    scope: Node,
-    effects: EffectModel,
-) -> tuple[dict[int, list[Node]], list[Node]]:
+def _collect_called_functions(scope: Node, effects: EffectModel) -> list[Node]:
     """
-    Map each statically resolvable callee within *scope* to the call expressions that target it,
-    and list those callees once each in first-seen order. A call whose target
-    `EffectModel.static_callee` cannot pin down (a method, a reassigned or redeclared binding, an
-    unresolved name) contributes nothing.
+    The statically resolvable callees within *scope*, each listed once in first-seen order. A call
+    whose target `EffectModel.static_callee` cannot pin down (a method, a reassigned or redeclared
+    binding, an unresolved name) contributes nothing.
     """
-    call_sites: dict[int, list[Node]] = {}
     called_funcs: list[Node] = []
+    seen: set[int] = set()
     for node in walk_scope(scope, include_root_body=True):
         if isinstance(node, JsCallExpression):
             target = effects.static_callee(node)
-            if target is not None:
-                if id(target) not in call_sites:
-                    called_funcs.append(target)
-                call_sites.setdefault(id(target), []).append(node)
-    return call_sites, called_funcs
+            if target is not None and id(target) not in seen:
+                seen.add(id(target))
+                called_funcs.append(target)
+    return called_funcs
+
+
+def _reader_qualifies(
+    value: Node, reader: Node, binding: Binding,
+    effects: EffectModel, dominance: DominanceModel,
+) -> bool:
+    """
+    Whether a candidate that is not `const`-qualified — a `var` carrying its own initializer,
+    whose value a call could rewrite — may be inlined into the reader function *reader* holding
+    *value*, the question both arms of the cross-function substitution ask, stated once so the
+    computed-member and plain-identifier arms cannot disagree. The reader must not write the
+    binding, and the value must run before every one of its invocations, of which it must have at
+    least one (`runs_before_every_invocation`): a reader nothing invokes answers the ordering
+    vacuously and is refused, while an anonymous IIFE or arrow is always orderable, its single
+    reference point being the function expression itself — the closure cannot be invoked before it
+    is created. A `const`-qualified candidate, or an intrinsic alias, needs neither: its value
+    cannot be replaced short of a dynamic rebind, which the candidate collection has already
+    refused.
+    """
+    if effects.function_can_mutate(reader, binding):
+        return False
+    return dominance.runs_before_every_invocation(value, reader)
 
 
 class JsConstantInlining(ScopeProcessingTransformer):
@@ -337,15 +354,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
         Also returns the set of fully rejected (mutated) names — those reassigned, updated,
         destructured, or written by an escaping function, whose value cannot be pinned to a single
-        definition. A candidate a dynamic scope could rewrite with no static write site is rejected
-        the same way, through `binding_maybe_reassigned_dynamically`: a `with`-body write the model
-        attributes to it, or a direct `eval` in its owning function that could rebind it through a
-        string; a write through a global-object alias is rejected alongside. A candidate the analyst
-        declared a host reaches by name is rejected outright — the host reads it once the file has
-        run, and may have rewritten it before any read the substitution would fold, so neither its
-        declarator nor any read of it may be replaced. The points past which a surviving candidate's
-        value no longer holds are not enumerated here; the reaching query derives them from the
-        effect model at each use.
+        definition. A candidate a dynamic scope could rewrite with no static write site is no longer
+        rejected outright: the reaching query orders every located rebind hazard
+        (`SemanticModel.binding_reflection_kill_sites`) against each read, so the reads that stand
+        before the hazard fold and the ones after it stay. The one rebind that keeps its rejection
+        is the nodeless one — the write a call makes on entry, which the text does not spell and
+        no ordering can place (`binding_dynamic_rebind_sites` answering `None`) — and a candidate
+        the analyst declared a host reaches by name is rejected the same way: the host reads it once
+        the file has run, and may have rewritten it before any read the substitution would fold, so
+        neither its declarator nor any read of it may be replaced. A write through a global-object
+        alias is rejected alongside. The points past which a surviving candidate's value no longer
+        holds are not enumerated here; the reaching query derives them from the effect model at
+        each use.
         """
         candidates: dict[str, list[_CandidateEntry]] = {}
         rejected: set[str] = set()
@@ -448,7 +468,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         for cand_name, binding in list(candidate_bindings.items()):
             if (
                 binding.has_global_member_write
-                or model.binding_maybe_reassigned_dynamically(binding)
+                or model.binding_dynamic_rebind_sites(binding) is None
                 or a_host_reaches_the_binding(model, binding, self.options)
             ):
                 _reject(cand_name)
@@ -529,7 +549,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and id(obj) not in decl_ids
                     and obj.name in constant_names
                     and obj.name not in bloat_blocked
-                    and self._index_array_immutable(obj, effects)
+                    and self._index_array_immutable(obj, effects, direct_eval_ordered=True)
                 ):
                     entry = candidates[obj.name][0]
                     binding = self._candidate_binding(entry, model)
@@ -566,17 +586,24 @@ class JsConstantInlining(ScopeProcessingTransformer):
         return inlined
 
     @staticmethod
-    def _index_array_immutable(obj: JsIdentifier, effects: EffectModel) -> bool:
+    def _index_array_immutable(
+        obj: JsIdentifier, effects: EffectModel, direct_eval_ordered: bool = False,
+    ) -> bool:
         """
         Whether the array binding referenced by *obj* is an immutable, non-escaping container, so that
         `obj[idx]` may be inlined to its literal element. Resolved through the binding (not the textual
         name), so shadowing is respected; the model memoizes the judgment for the model's lifetime. A
         name that does not resolve to a local binding (a free or global array) is treated as unsafe.
+        *direct_eval_ordered* carries the caller's promise that it has ordered the direct-`eval`
+        sites against the read it is folding — the `value_preserved` check the same arm
+        makes — so a local array in a function holding a direct `eval` stays inlinable where the
+        read is ordered before every eval site.
         """
         binding = effects.model.resolve(obj)
         if binding is None:
             return False
-        return effects.binding_is_immutable_container(binding)
+        return effects.binding_is_immutable_container(
+            binding, direct_eval_ordered=direct_eval_ordered)
 
     def _record_inline(self, substituted: bool, name: str, inlined: dict[str, int]) -> None:
         """
@@ -630,13 +657,23 @@ class JsConstantInlining(ScopeProcessingTransformer):
         invocation of that function (`DominanceModel.runs_before_function`) — otherwise a call could
         read the value early: a stale read for the `var` form, a temporal-dead-zone throw for the
         `const` form. A `var`/`let` candidate that carries its own initializer is additionally
-        restricted to a named function declaration actually called in the current scope that the effect
-        model proves does not mutate the binding. The interprocedural runs-before check subsumes the
+        restricted by `_reader_qualifies` to a reader that neither writes the binding nor runs an
+        invocation the value does not precede — a named function invoked in scope, an anonymous IIFE,
+        an arrow, or a function stored in a binding, each of whose invocation points is enumerable
+        and ordered; an uncalled named function is refused, since its ordering answer is the vacuous
+        one an empty set of reference points gives. The interprocedural runs-before check subsumes the
         earlier escape and statement-position heuristics: a function cannot be invoked before a reference
         to it has been evaluated, so it orders the value against every point the function is referenced —
         recursing up the call graph for a reference that lies inside another function — and inlines only
         when the value dominates all of them, refusing whenever a reference cannot be ordered (its
         binding is reassigned or redeclared, or it lies on a call cycle).
+
+        A candidate a dynamic scope could rewrite is refused here
+        (`binding_maybe_reassigned_dynamically`): this consumer's ordering runs the value before an
+        *invocation*, and an invocation cannot be ordered against the site that rewrites the value
+        — a name read once can be stored and invoked arbitrarily later, past the hazard — so the
+        reads that fold on the located hazards are the same-function ones, which the reaching
+        query answers at the use itself.
         """
         model = effects.model
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
@@ -668,12 +705,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
         assert outer is not None
         owner = enclosing_function(scope)
 
-        call_sites, called_funcs = _collect_call_sites(scope, effects)
+        called_funcs = _collect_called_functions(scope, effects)
         a_callee_is_unstated = _calls_a_function_of_this_file_by_an_unstated_name(scope, effects)
 
         for name in [
             candidate for candidate, binding in cross_bindings.items()
-            if (a_callee_is_unstated and effects.some_function_can_mutate(binding))
+            if model.binding_maybe_reassigned_dynamically(binding)
+            or (a_callee_is_unstated and effects.some_function_can_mutate(binding))
             or any(effects.function_can_mutate(func, binding) for func in called_funcs)
         ]:
             del cross_candidates[name]
@@ -696,10 +734,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         continue
                     if model.resolve(obj) is not cross_bindings[name]:
                         continue
-                    if name not in const_names and (
-                        not isinstance(enclosing, JsFunctionDeclaration)
-                        or id(enclosing) not in call_sites
-                        or effects.function_can_mutate(enclosing, cross_bindings[name])
+                    if name not in const_names and not _reader_qualifies(
+                        cross_candidates[name][0].value, enclosing,
+                        cross_bindings[name], effects, dominance,
                     ):
                         continue
                     if not dominance.runs_before_function(cross_candidates[name][0].value, enclosing):
@@ -735,10 +772,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if model.resolve(node) is not cross_bindings[name]:
                 continue
-            if name not in const_names and (
-                not isinstance(enclosing, JsFunctionDeclaration)
-                or id(enclosing) not in call_sites
-                or effects.function_can_mutate(enclosing, cross_bindings[name])
+            if name not in const_names and not _reader_qualifies(
+                entry.value, enclosing, cross_bindings[name], effects, dominance,
             ):
                 continue
             if not dominance.runs_before_function(entry.value, enclosing):
@@ -771,8 +806,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         global reassigned in scope), which the binding-keyed reaching query cannot see. A candidate whose
         initializer reads a bare name through a `with` body's dynamic scope needs no separate gate here:
         such an initializer is inside the `with` body, so the candidate's own binding is written in a
-        dynamic scope and `_collect_candidates` already rejects it through
-        `binding_maybe_reassigned_dynamically`.
+        dynamic scope and the reaching query orders that hazard against the relocated read.
         """
         decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
@@ -858,7 +892,14 @@ class JsConstantInlining(ScopeProcessingTransformer):
         qualified candidates, check the full subtree since cross-function inlining may have
         replaced references inside nested functions. An exported binding keeps its declarator even
         with every local read inlined, because an importer still reads it across the module
-        boundary; removing it would leave an `export` naming a binding the module no longer declares.
+        boundary; removing it would leave an `export` naming a binding the module no longer
+        declares. A binding that code the model cannot read could name keeps its declarator for the
+        same reason: every read this file spells may have folded, and the surface — a direct
+        `eval`, a span of source the model never read, a `with` body — reads the binding through
+        no reference the inlining counted, so removing the declaration would turn its value into
+        a `ReferenceError`. An opaque global write is not such a surface: it stores a property
+        and runs nothing, and the reads it could replace were ordered against it before they
+        folded, so the property it may write is the same residual the fold already concedes.
         """
         assert self._root is not None
         model = model_cache(self, self._root).model
@@ -878,7 +919,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 if entry.declarator is None:
                     continue
                 binding = self._candidate_binding(entry, model)
-                if binding is not None and binding.exported:
+                if binding is not None and (
+                    binding.exported
+                    or model.reachable_by_opaque_reflection(binding)
+                    or bool(binding.dynamic_refs)
+                ):
                     continue
                 remove_declarator(entry.declarator)
                 self.mark_changed()

@@ -78,6 +78,20 @@ class DominanceModel(DominatorModel):
         definition_owner = self._activation_of(definition)
         return self._runs_before_function(definition, definition_owner, function, set(), {})
 
+    def runs_before_every_invocation(self, definition: Node, function: Node) -> bool:
+        """
+        Whether *definition* is guaranteed to run before every invocation of *function*, and
+        *function* holds at least one point an invocation cannot precede — `runs_before_function`
+        with the vacuity refused. A reader nothing invokes enumerates no reference points at all,
+        so the ordering question answers an empty set and passes vacuously; a value established
+        against no invocation is established for no read, so such a reader does not qualify. An
+        anonymous function expression is never vacuous: its own creation is the one point no
+        invocation can precede, so the closure cannot run before the expression that builds it.
+        """
+        if not self._reference_points(function):
+            return False
+        return self.runs_before_function(definition, function)
+
     def runs_before(self, definition: Node, reference: Node) -> bool:
         """
         Whether *definition* is guaranteed to have executed before *reference* is evaluated — the

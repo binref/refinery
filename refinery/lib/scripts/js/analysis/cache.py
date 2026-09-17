@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reach
 from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tampering
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
 from refinery.lib.scripts.js.options import (
+    eval_is_trusted,
     host_environment,
     is_host_entrypoint,
     runs_as_module,
@@ -107,6 +108,7 @@ class ModelCache(ModelCacheBase):
         return self._lazy('_model', lambda: build_semantic_model(
             self.root,
             host_environment(self.options),
+            eval_is_trusted(self.options),
         ))
 
     @property

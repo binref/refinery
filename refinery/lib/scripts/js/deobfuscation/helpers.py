@@ -44,15 +44,17 @@ from refinery.lib.scripts import (
     set_value,
     tree_root,
 )
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
+    ScopeKind,
     Binding,
     Role,
     SemanticModel,
     build_semantic_model,
+    enclosing_function,
     is_invocation_target,
     is_use_position,
     reference_role,
@@ -71,6 +73,7 @@ from refinery.lib.scripts.js.model import (
     JsClassExpression,
     JsConditionalExpression,
     JsExportSpecifier,
+    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsFunctionDeclaration,
@@ -1465,7 +1468,7 @@ def allocated_object_type(node: Node | None) -> str | None:
     return None
 
 
-def is_truthy(node: Node, model: SemanticModel) -> bool | None:
+def is_truthy(node: Node, cache: ModelCache) -> bool | None:
     """
     The JavaScript truthiness of *node*, or `None` when nothing decides it. The AST-node counterpart
     of the value-domain `to_boolean`, which it answers by asking wherever a value is known: the two
@@ -1475,11 +1478,70 @@ def is_truthy(node: Node, model: SemanticModel) -> bool | None:
     truthy. This does not gate that on the allocation being effect-free, because deciding truthiness
     does not by itself discard the operand; the caller that goes on to drop it is the one that has to
     keep its effects.
+
+    A local binding is the remaining case: resolved through the model to its single allocation, it
+    answers truthy — an empty array included, since emptiness never decides truthiness — but only
+    where every establishment site of the value runs before the read, because a never-reassigned
+    `var` still reads `undefined` before its initializer runs and `!undefined` takes the other
+    branch. The ordering is the interprocedural runs-before, which recurses through the reference
+    points of the function a cross-function read sits in, so the guard a network callback carries is
+    ordered through the callback's own creation. Value stability rides along: the single value is
+    complete only where no dynamic rebind the text does not spell can replace it, which the
+    suspecting model refuses and the trusting model assumes away. Negation is transparent to the
+    question: `!a` answers the opposite of `a`, however many `!` spell it.
     """
-    known, value = denoted_value(node, model)
+    operand, negated = _strip_negation(node)
+    model = cache.model
+    known, value = denoted_value(operand, model)
     if known:
-        return to_boolean(value)
-    return True if allocated_object_type(node) is not None else None
+        answer = to_boolean(value)
+    elif allocated_object_type(operand) is not None:
+        answer = True
+    elif isinstance(operand, JsIdentifier):
+        binding = model.resolve(operand)
+        if binding is None or binding.dynamic_refs:
+            return None
+        if _established_allocation_of(binding, operand, cache) is None:
+            return None
+        answer = True
+    else:
+        return None
+    return not answer if negated else answer
+
+
+def _strip_negation(node: Node) -> tuple[Node, bool]:
+    """
+    The operand *node* negates, once every `!` spelling a negation is removed, and whether an odd
+    or even number of them was stripped — the operand of an odd count answers the opposite of the
+    whole expression.
+    """
+    negated = False
+    while isinstance(node, JsUnaryExpression) and node.operator == '!':
+        negated = not negated
+        node = node.operand
+    return node, negated
+
+
+def _established_allocation_of(binding: Binding, node: Node, cache: ModelCache) -> Node | None:
+    """
+    The allocation *binding* provably holds at the read *node*, when every establishment site of its
+    single value runs before that read; `None` when the binding holds no single value, the read may
+    precede the value, or the value is no allocation. The value and its establishment sites come
+    from the same complete-singleton answer, which no dynamic rebind the text does not spell
+    satisfies under the suspecting model; the ordering is the interprocedural runs-before, which
+    recurses through the reference points of the function the read sits in, so a guard carried by a
+    callback is ordered through the callback's creation.
+    """
+    model = cache.model
+    value = model.singular_value(binding)
+    sites = model.binding_establishment_sites(binding)
+    if value is None or sites is None:
+        return None
+    if not all(cache.dominance.runs_before(site, node) for site in sites):
+        return None
+    if allocated_object_type(value) is None:
+        return None
+    return value
 
 
 def is_nullish(node: Node, model: SemanticModel) -> bool | None:
@@ -1493,6 +1555,28 @@ def is_nullish(node: Node, model: SemanticModel) -> bool | None:
     if not known:
         return None
     return value is None or value is JS_NULL
+
+
+def value_is_discarded(node: Node) -> bool:
+    """
+    Whether the context governing `node` throws its value away, so removing `node` changes no value
+    the program goes on to read: an expression statement, or a sequence operand other than the last,
+    whose value the sequence yields. Parentheses are looked through. A node whose value is consumed
+    — a declarator initializer, a call argument, a `return` — is not discardable, and removing it
+    would strand its consumer.
+    """
+    cur = node
+    parent = cur.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        cur, parent = parent, parent.parent
+    if isinstance(parent, JsExpressionStatement):
+        return True
+    if isinstance(parent, JsSequenceExpression):
+        return bool(parent.expressions) and parent.expressions[-1] is not cur
+    return False
+
+
+_value_is_discarded = value_is_discarded
 
 
 def insert_after_prologue(host: Node, statements: list[Statement]) -> None:

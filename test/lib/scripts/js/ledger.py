@@ -136,7 +136,13 @@ def printed(source: str) -> str:
 
 
 def folded(source: str, *, module: bool = False) -> str:
-    return source.encode('utf8') | js(module=module) | str
+    """
+    The text `refinery.js` writes for *source* under the strict model, which is the one whose output
+    is semantically equivalent to its input — the claim every entry reading this makes. The unit's
+    own default is the trusting model, which folds more and guarantees nothing; a test of that model
+    asks for it by name.
+    """
+    return source.encode('utf8') | js(module=module, strict=True) | str
 
 
 def evaluated_in_a_body(receiver: str, read: str, installs: str = '') -> str:
@@ -228,9 +234,9 @@ def before_and_after_in_a_host(
     `before_and_after` reads both under the module execution model, in which a top-level declaration
     is scoped to the file and reaches no global object. A question about what a name reaches through
     `this`, through `globalThis`, or from outside the file is one that model cannot be asked at all,
-    and this is the reading that answers it. The deobfuscation here is the one `refinery.js` writes
-    by default, the script model, so that the text read is the text an analyst deobfuscating a
-    classic script is handed.
+    and this is the reading that answers it. The deobfuscation here is the strict one
+    `refinery.js` writes under `-s`, the only model whose output is equivalent to its input; the
+    unit's own default is the trusting model, which folds more and guarantees nothing.
     """
     return (host_behavior(source), host_behavior(folded(source)))
 

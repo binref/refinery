@@ -298,8 +298,9 @@ class TamperingModel:
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, and the control-flow model the
     cycle questions go through. Ask whether the built-ins are intact at one point with
     `builtins_intact_at`; ask which single value a binding holds at one point with
-    `singular_value_at` — the positioned value question the same models answer. Build through
-    `build_tampering`.
+    `singular_value_at` — the positioned value question the same models answer; ask whether every
+    invocation of a function discards its completion value with
+    `every_invocation_discards_the_value`. Build through `build_tampering`.
     """
 
     def __init__(
@@ -456,22 +457,54 @@ class TamperingModel:
         """
         Whether the one invocation *point* of *function* runs its callee at most once: the point's
         own node is off a cycle, and the activation is not one the host or reflective code may
-        invoke freely — a host entrypoint pattern, a script-scope name under any opaque surface
-        (executable text in the global scope can re-invoke it by name), or a function-local name
-        reflection can reach in its own scope.
+        invoke freely.
         """
-        binding = self.model.invocation_binding(function)
-        if binding is not None:
-            if self._entrypoint is not None and self._entrypoint(binding.name):
-                return False
-            owner = binding.scope.var_scope
-            if owner is None or owner.kind is ScopeKind.SCRIPT:
-                if self.model.has_reflection_surface():
-                    return False
-            elif self.model.reflection_can_reach(binding):
-                return False
+        if not self._invocation_enumeration_is_complete(function):
+            return False
         located = self.dominance.locate(point)
         return located is not None and not self._cycles.on_a_cycle(located[0], located[1])
+
+    def _invocation_enumeration_is_complete(self, function: Node) -> bool:
+        """
+        Whether nothing can run *function* through a channel the invocation enumeration never saw:
+        a host entrypoint pattern, a script-scope name under any opaque surface (executable text in
+        the global scope can re-invoke it by name), or a function-local name reflection can reach in
+        its own scope. A function whose enumeration is complete is one whose listed invocations are
+        every way its body runs.
+        """
+        binding = self.model.invocation_binding(function)
+        if binding is None:
+            return True
+        if self._entrypoint is not None and self._entrypoint(binding.name):
+            return False
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return not self.model.has_reflection_surface()
+        return not self.model.reflection_can_reach(binding)
+
+    def every_invocation_discards_the_value(
+        self, function: Node, value_discarded: Callable[[Node], bool],
+    ) -> bool:
+        """
+        Whether every invocation of *function* throws its completion value away, judged by the
+        forward value-flow enumeration `_invocations_of` reads: a position the value reaches without
+        being invoked — an argument, a store, a return — could hand it to a reader, so one such
+        escape refuses the answer, as does a function the text never invokes at all (an entrypoint
+        or dead code, neither of which this model can pin). *value_discarded* classifies each
+        invocation position, the caller's own reading of the positions it knows; no invocation, or
+        one whose value a caller of this method would keep, answers `False`.
+
+        The enumeration must also be complete — nothing may run *function* outside the invocations
+        it listed, since a host or reflective caller could read what every listed one discards.
+        Multiplicity is deliberately absent: a value discarded at every invocation is discarded at
+        each of them however often they run.
+        """
+        flow = self._invocations_of(function)
+        if flow.escapes or not flow.invocations:
+            return False
+        if not self._invocation_enumeration_is_complete(function):
+            return False
+        return all(value_discarded(point) for point in flow.invocations)
 
     def _invocations_of(self, function: Node) -> _Flow:
         """

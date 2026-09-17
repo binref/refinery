@@ -39,12 +39,17 @@ class js(IterativeDeobfuscator):
                 'present and the reads that rely on them are resolved. The default is {default}, which '
                 'assumes only the globals every host shares, so a host-conditional read such as window '
                 'or global is kept. Options are: {choices}.'))] = HostEnvironment.universal,
+        strict: Param[bool, Arg.Switch('-s', help=(
+            'Assume that unknown reflectively executed code (a direct eval, a Function construction, '
+            'a string timer) can change or read anything the rest of the script does. This cleans '
+            'less junk code but without the flag, the deobfuscation behavior is formally unsound.'))] = False,
     ):
         super().__init__(
             timeout=timeout,
             module=module,
             entrypoints=entrypoints,
             environment=Arg.AsOption(environment, HostEnvironment),
+            strict=strict,
         )
 
     def parse(self, data: str) -> JsScript:
@@ -56,6 +61,7 @@ class js(IterativeDeobfuscator):
             module=self.args.module,
             entrypoints=tuple(self.args.entrypoints),
             environment=self.args.environment,
+            trust_eval=not self.args.strict,
         )
 
     def synthesize(self, ast: JsScript) -> str:

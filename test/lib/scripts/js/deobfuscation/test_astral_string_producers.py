@@ -88,7 +88,7 @@ def _fold(expression: str) -> str:
     The expression `refinery.js` folds *expression* to. It is placed in a `console.log` argument,
     which survives as a side effect, so nothing but the fold decides what comes back.
     """
-    printed = F'console.log({expression});'.encode('utf8') | js() | str
+    printed = F'console.log({expression});'.encode('utf8') | js(strict=True) | str
     return printed.removeprefix('console.log(').removesuffix(');')
 
 

@@ -5,6 +5,7 @@ import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import printed
 
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
@@ -2332,4 +2333,229 @@ class TestNodePrintsTheSameAcrossEveryDiscardingContext(TestJsDeobfuscator):
         self.assertEqual(
             {source: behavior(self._deobfuscate(source)) for source in rows},
             {source: behavior(source) for source in rows},
+        )
+
+
+class TestATypedLocalMemberReadIsRemovableUnderTrust(TestJsDeobfuscator):
+    """
+    A dead store whose initializer reads a member off a local the model knows holds a function is
+    removable where the read runs no user code: the key is none of the accessors that throw off a
+    strict-mode function, no reference of the binding or an alias writes an own property on the
+    object, the value is established before the read, and the prototype chain is vouched for — a
+    voucher only the trusting model gives, since the `.constructor` read is itself a reflective
+    surface under the suspecting one and the chain refuses there.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str, *, trust_eval: bool = False) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.options = DeobfuscationOptions(trust_eval=trust_eval)
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_a_dead_constructor_read_off_a_function_is_removed_under_trust(self):
+        """
+        The store's initializer reads a member off a function the model can vouch for, so the whole
+        declarator goes; the function's own removal is dead code's question, not this pass's.
+        """
+        self.assertEqual(
+            'function f() {\n  return 1;\n}',
+            self._remove_unused(
+                'function f() { return 1; } var x = f.constructor;', trust_eval=True),
+        )
+
+    def test_a_dead_constructor_read_off_a_function_is_kept_without_trust(self):
+        self.assertEqual(
+            'function f() {\n  return 1;\n}\nvar x = f.constructor;',
+            self._remove_unused('function f() { return 1; } var x = f.constructor;'),
+        )
+
+    def test_a_read_before_the_value_is_established_is_kept_under_trust(self):
+        """
+        The `var` is hoisted, so before its initializer runs the base reads `undefined` and the
+        member read throws — the store is not droppable.
+        """
+        self.assertEqual(
+            'var x = f.constructor;\nvar f = function() {\n  return 1;\n};',
+            self._remove_unused(
+                'var x = f.constructor; var f = function () { return 1; };', trust_eval=True),
+        )
+
+    def test_an_own_property_written_through_an_alias_is_kept_under_trust(self):
+        """
+        The alias holds the same function, and the write puts an own property where the read would
+        find it — a getter could have been installed instead, so the read is not droppable.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            var g = f;
+            g.constructor = 5;
+            var x = f.constructor;
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, trust_eval=True))
+
+    def test_a_poisoned_key_off_a_function_is_kept_under_trust(self):
+        """
+        `caller` and `arguments` are accessors that throw off a strict-mode function, so reading
+        one is not provably throw-free.
+        """
+        self.assertEqual(
+            'function f() {\n  return 1;\n}\nvar x = f.caller;',
+            self._remove_unused('function f() { return 1; } var x = f.caller;', trust_eval=True),
+        )
+
+    def test_a_read_under_a_surviving_surface_is_kept_under_trust(self):
+        """
+        An indirect `eval` the trusting model keeps is a surface the prototype chain still refuses
+        on, so the read is not vouched for.
+        """
+        source = inspect.cleandoc(
+            """
+            var e = eval;
+            e(input);
+            function f() {
+              return 1;
+            }
+            var x = f.constructor;
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, trust_eval=True))
+
+
+class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
+    """
+    A statement-level store to a member of the global object that an earlier store of the same
+    unbroken store region already made — the same member, an identical right side — stores what
+    the member already holds. The region may interleave keys, so the duplicate need not stand
+    beside its original. A store is kept where the program could have made it observable: a
+    descriptor install on the global object (a counting setter must keep firing), a reflective
+    surface that could have installed one, or a statement between the two that is not itself a
+    store of this class.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_the_interleaved_duplicate_stores_dedupe(self):
+        self.assertEqual(
+            'global.r = require;\nglobal.m = module;',
+            self._remove_unused(
+                'global.r = require; global.m = module; global.r = require; global.m = module;'),
+        )
+
+    def test_a_counting_setter_keeps_every_store_firing(self):
+        source = inspect.cleandoc(
+            """
+            Object.defineProperty(globalThis, 'r', { set: function () {
+              SINK();
+            } });
+            global.r = require;
+            global.r = require;
+            """
+        )
+        self.assertEqual(printed(source), self._remove_unused(source))
+
+    def test_a_reflective_surface_keeps_the_stores(self):
+        source = (
+            'global.r = require;\nglobal.r = require;\neval(input);'
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_statement_between_the_stores_keeps_them(self):
+        source = 'global.r = require;\nSINK();\nglobal.r = require;'
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_different_value_stored_between_keeps_the_last(self):
+        source = 'global.r = require;\nglobal.r = module;\nglobal.r = require;'
+        self.assertEqual(source, self._remove_unused(source))
+
+
+class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
+    """
+    The `return` of an inert constant in a function whose every invocation throws its completion
+    value away stores a value nothing observes, and where it ends the body the whole statement
+    goes, control falling off the end the same way. A completion value someone reads stays, and
+    so does the return of a function carrying a name a host could call it by — a top-level
+    function is a property of the global object, whose completion value belongs to code outside
+    the file.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_a_discarded_iife_completion_value_goes(self):
+        self.assertEqual(
+            '(function() {\n  SINK();\n})();\nSINK();',
+            self._remove_unused('(function() { SINK(); return 5042; })(); SINK();'),
+        )
+
+    def test_a_completion_value_someone_reads_stays(self):
+        source = 'var x = (function() {\n  return 5042;\n})();\nSINK(x);'
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_top_level_function_keeps_its_completion_value(self):
+        source = 'function f() {\n  return 5042;\n}\nf();'
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_return_of_a_value_read_stays(self):
+        source = '(function() {\n  var r = x;\n  return r;\n})();'
+        self.assertEqual(source, self._remove_unused(source))
+
+
+class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
+    """
+    An empty statement standing in a statement list executes nothing, so removing it changes no
+    run. One standing as the whole body of a branch is not a member of a list and stays, since
+    unwrapping it would rewrite the construct around it.
+    """
+
+    @staticmethod
+    def _remove_unused(source: str) -> str:
+        ast = JsParser(source).parse()
+        for _ in range(10):
+            transform = JsUnusedCodeRemoval()
+            transform.visit(ast)
+            if not transform.changed:
+                break
+        return JsSynthesizer().convert(ast)
+
+    def test_an_empty_statement_in_a_body_goes(self):
+        self.assertEqual('a();\nb();', self._remove_unused('a();\n;\nb();'))
+
+    def test_an_empty_statement_in_a_nested_block_goes(self):
+        self.assertEqual(
+            'if (x) {\n  a();\n}',
+            self._remove_unused('if (x) {\n  a();\n  ;\n}'),
+        )
+
+    def test_an_empty_statement_as_a_branch_body_stays(self):
+        source = 'if (x) {\n  ;\n}\na();'
+        self.assertEqual(source, self._remove_unused('if (x);\na();'))
+
+    def test_an_empty_statement_braced_into_a_block_goes(self):
+        self.assertEqual(
+            'if (x) {}\na();',
+            self._remove_unused('if (x) {\n  ;\n}\na();'),
         )

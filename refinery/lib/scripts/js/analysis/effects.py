@@ -327,6 +327,14 @@ every chain, so a getter installed there is reached by a plain read on an array 
 alike — which is why reading a property is a strictly stronger requirement than calling a method.
 """
 
+_FUNCTION_POISONED_KEYS = frozenset({'caller', 'arguments', '__proto__'})
+"""
+The keys a function value cannot answer with a plain data slot: `caller` and `arguments` are
+accessors that throw off a strict-mode function, and `__proto__` is the accessor every prototype
+chain carries. Reading one off a function is never provably throw-free or getter-free, whatever
+the chain vouches for.
+"""
+
 _KEYED_WRITE_ROOTS = (
     _PURE_INTRINSIC_ROOTS
     | _INHERITED_CHAIN_ROOTS
@@ -878,6 +886,7 @@ class EffectModel:
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
         self._globals_written, self._global_keys_written = _global_writes_by_name(model)
+        self._install_on_global: bool | None = None
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
@@ -1162,6 +1171,7 @@ class EffectModel:
 
     def binding_is_immutable_container(
         self, binding: Binding, *, member_calls_mutate: bool = True, exclude: Node | None = None,
+        direct_eval_ordered: bool = False,
     ) -> bool:
         """
         Whether *binding* holds a container — an object or array — whose element and property values are
@@ -1188,30 +1198,41 @@ class EffectModel:
         unresolved external call already receives.
 
         The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
-        alias chains, callee parameters, and nested functions, so a capturing closure that mutates the
-        container is caught. The answer is fixed for the model's lifetime — a binding's reference set does
-        not change — so it is memoized per `(binding, member_calls_mutate)`. A caller may pass *exclude*
-        to disregard references within that subtree — asking whether the container is stable across the
-        rest of the program, ignoring a read site about to be relocated into it; such a query is not
-        memoized, since the answer depends on the excluded region.
+        alias chains, callee parameters, and nested functions, so a capturing closure that mutates
+        the container is caught. The answer is fixed for the model's lifetime — a binding's
+        reference set does not change — so it is memoized per
+        `(binding, member_calls_mutate, direct_eval_ordered)`. A caller may pass *exclude* to
+        disregard references within that subtree — asking whether the container is stable across
+        the rest of the program, ignoring a read site about to be relocated into it; such a query is
+        not memoized, since the answer depends on the excluded region.
+
+        *direct_eval_ordered* is the caller's promise that it has ordered every direct-`eval` site
+        of the container's owning function against the read it is folding — the definition-to-read
+        span `ReachingModel.value_preserved` proves, whose kills hold those sites — so the eval
+        leg does not refuse here. A caller that cannot order its reads against the sites keeps the
+        default and the refusal; the promise covers the binding asked about and not the aliases
+        its escapes are judged through, which keep the strict answer.
         """
         if exclude is not None:
-            return self._immutable_container(binding, set(), member_calls_mutate, exclude)
-        key = (id(binding), member_calls_mutate)
+            return self._immutable_container(
+                binding, set(), member_calls_mutate, exclude, direct_eval_ordered)
+        key = (id(binding), member_calls_mutate, direct_eval_ordered)
         cached = self._immutable_cache.get(key)
         if cached is None:
-            cached = self._immutable_container(binding, set(), member_calls_mutate)
+            cached = self._immutable_container(
+                binding, set(), member_calls_mutate, None, direct_eval_ordered)
             self._immutable_cache[key] = cached
         return cached
 
     def _immutable_container(
-        self, binding: Binding, visiting: set[int], member_calls_mutate: bool, exclude: Node | None = None,
+        self, binding: Binding, visiting: set[int], member_calls_mutate: bool,
+        exclude: Node | None = None, direct_eval_ordered: bool = False,
     ) -> bool:
         key = id(binding)
         if key in visiting:
             return True
         visiting = visiting | {key}
-        if self._dynamic_scope_mutates(binding, member_calls_mutate, exclude):
+        if self._dynamic_scope_mutates(binding, member_calls_mutate, exclude, direct_eval_ordered):
             return False
         for ref in self.model.references(binding, exclude=exclude):
             role = container_reference_role(ref)
@@ -1228,18 +1249,21 @@ class EffectModel:
 
     def _dynamic_scope_mutates(
         self, binding: Binding, member_calls_mutate: bool, exclude: Node | None,
+        direct_eval_ordered: bool = False,
     ) -> bool:
         """
-        Whether a dynamic scope may change the container *binding* holds. A direct `eval` in a local
-        container's own function can rewrite it opaquely — a global is left to the caller's reflection
-        reasoning, since freezing every global on any surface over-blocks. A `with` body's accesses are
-        attributed by name: a member write, a reassignment, or an escape mutates it or may alias it out,
-        and a method call may mutate it unless the caller vouches that its methods cannot; only a plain
-        member read leaves it intact, so a `with` that never names the container is no threat. A dynamic
-        escape or reassignment cannot be alias-followed or ordered the way a resolved one can, so either
-        is treated as mutating.
+        Whether a dynamic scope may change the container *binding* holds. A direct `eval` in a
+        local container's own function can rewrite it opaquely — a global is left to the caller's
+        reflection reasoning, since freezing every global on any surface over-blocks — unless the
+        caller has ordered the eval sites against its read (*direct_eval_ordered*), which carries
+        the promise the public query documents. A `with` body's accesses are attributed by name: a
+        member write, a reassignment, or an escape mutates it or may alias it out, and a method
+        call may mutate it unless the caller vouches that its methods cannot; only a plain member
+        read leaves it intact, so a `with` that never names the container is no threat. A dynamic
+        escape or reassignment cannot be alias-followed or ordered the way a resolved one can, so
+        either is treated as mutating.
         """
-        if self.model.local_reachable_by_direct_eval(binding):
+        if not direct_eval_ordered and self.model.local_reachable_by_direct_eval(binding):
             return True
         for ref in self.model.dynamic_references(binding, exclude=exclude):
             role = container_reference_role(ref)
@@ -1787,9 +1811,11 @@ class EffectModel:
     def _container_non_escaping(self, binding: Binding) -> bool:
         """
         Whether every reference to *binding* keeps its container contained: each is a member read or
-        write (`obj.k`, `obj[i] = v`), never an escape, rebinding, or method call through which the
-        container could be aliased out, mutated by other code, or replaced. The tightest form of the
-        escape check, since a mutation only stays unobservable while no other code can reach the object.
+        write (`obj.k`, `obj[i] = v`), a verdict read (`!obj`, `if (obj)`) that consumes the value
+        whole and forwards nothing, or — failing those — an escape, rebinding, or method call
+        through which the container could be aliased out, mutated by other code, or replaced. The
+        tightest form of the escape check, since a mutation only stays unobservable while no other
+        code can reach the object.
 
         Orthogonal to freshness, and deliberately not merged with `_binding_fresh_kind`: this asks where a
         container *goes*, that asks where it *came from*. Both are needed and neither implies the other — a
@@ -1798,7 +1824,7 @@ class EffectModel:
         """
         for ref in self.model.references(binding):
             if container_reference_role(ref) not in (
-                ContainerRole.MEMBER_READ, ContainerRole.MEMBER_WRITE,
+                ContainerRole.MEMBER_READ, ContainerRole.MEMBER_WRITE, ContainerRole.VERDICT_READ,
             ):
                 return False
         return True
@@ -2044,6 +2070,41 @@ class EffectModel:
             return True
         keys = self._global_keys_written.get(name, frozenset())
         return keys is None or key in keys
+
+    def installs_a_descriptor_on_the_global_object(self) -> bool:
+        """
+        Whether the program installs a property descriptor on the global object — the receiver form
+        (`globalThis.__defineGetter__`) or the argument form (`Object.defineProperty(globalThis, …)`,
+        `Reflect.defineProperties(globalThis, …)`) of any install method, whatever descriptor it
+        hands it. A store through the object after an install is no longer the plain write the
+        spelling suggests: an accessor installed under that key fires on it, so a caller planning
+        to drop a redundant one must refuse while any install names the object at all. Computed once
+        per model lifetime; the calls are tree facts, fixed the same way every other scan here is.
+        """
+        if self._install_on_global is None:
+            self._install_on_global = any(
+                self._install_targets_the_global_object(node)
+                for node in self.model.root.walk()
+                if isinstance(node, JsCallExpression)
+            )
+        return self._install_on_global
+
+    def _install_targets_the_global_object(self, call: JsCallExpression) -> bool:
+        """
+        Whether the descriptor install *call* names the global object as the object it installs on,
+        under the reading every install question here shares: `may_be_the_global_object` on the
+        receiver of the `__defineGetter__`/`__defineSetter__` form or the first argument of the
+        `defineProperty`/`defineProperties` form.
+        """
+        callee = strip_parens(call.callee)
+        if not isinstance(callee, JsMemberExpression):
+            return False
+        method = accessor_install_method(callee)
+        if method is None:
+            return False
+        if method.startswith('__define'):
+            return self.model.may_be_the_global_object(callee.object)
+        return bool(call.arguments) and self.model.may_be_the_global_object(call.arguments[0])
 
     def _roots_unwritten(self, owner: str, roots: frozenset[str]) -> bool:
         """
@@ -2335,12 +2396,14 @@ class EffectModel:
         established: Callable[[Binding, JsMemberExpression], bool] | None = None,
     ) -> bool:
         """
-        Whether reading *member* runs no user getter, so it carries no observable effect: a getter-free
-        read off a pristine value (a fresh literal or a pristine intrinsic root) or a trusted global
-        data-property read off a syntactic global-object alias — always, since neither is nullish — or off
-        a local single-assigned to the global object, which holds it only from its establishing definition
-        onward. The local case qualifies only when *established* confirms that definition reaches the read,
-        an ordering this effect model cannot decide on its own (see
+        Whether reading *member* runs no user getter, so it carries no observable effect: a
+        getter-free read off a pristine value (a fresh literal or a pristine intrinsic root) or a
+        trusted global data-property read off a syntactic global-object alias — always, since
+        neither is nullish — or off a local single-assigned to the global object, which holds it
+        only from its establishing definition onward, or off a local the model knows holds a
+        function, of a key outside the accessor-poisoned set. The local cases qualify only when
+        *established* confirms the single definition reaches the read, an ordering this effect
+        model cannot decide on its own (see
         `refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`).
         """
         if self._getter_free_read(member):
@@ -2348,7 +2411,47 @@ class EffectModel:
         if established is None:
             return False
         binding = self._trusted_global_alias_read(member)
-        return binding is not None and established(binding, member)
+        if binding is not None and established(binding, member):
+            return True
+        return self._typed_local_function_read(member, established)
+
+    def _typed_local_function_read(
+        self,
+        member: JsMemberExpression,
+        established: Callable[[Binding, JsMemberExpression], bool],
+    ) -> bool:
+        """
+        Whether *member* is a non-computed read off a local the model knows holds a function, reading
+        a key a function cannot answer with a trap: `caller` and `arguments` are accessors that
+        throw off a strict-mode function, and `__proto__` is an accessor every prototype chain
+        carries, so none of the three is provably throw-free or getter-free. Every other name on a
+        function resolves through the prototype chain `read_chain_intact` vouches for — which only
+        holds where no reflective surface stands, the term the trusting model clears — and an own
+        property of the key can only be there through a write, so the container the binding holds
+        must be immutable (`binding_is_immutable_container`, the alias-aware own-write check: a
+        write through any alias of the binding refuses it). The value must be in place at the read
+        (`established`), since a hoisted `var` reads `undefined` before its initializer runs and
+        `undefined.constructor` throws.
+        """
+        if member.computed:
+            return False
+        prop = member.property
+        if not isinstance(prop, JsIdentifier) or prop.name in _FUNCTION_POISONED_KEYS:
+            return False
+        base = member.object
+        if not isinstance(base, JsIdentifier):
+            return False
+        binding = self.model.resolve(base)
+        if binding is None or self.model.reflection_can_reach(binding):
+            return False
+        value = self.model.singular_value(binding)
+        if not isinstance(value, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+            return False
+        if not self.read_chain_intact(type(value)):
+            return False
+        if not self.binding_is_immutable_container(binding):
+            return False
+        return established(binding, member)
 
     def _trusted_global_alias_read(self, member: JsMemberExpression) -> Binding | None:
         """

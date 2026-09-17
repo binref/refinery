@@ -100,6 +100,7 @@ def deobfuscate(
     module: bool = False,
     entrypoints: tuple[str, ...] = (),
     environment: HostEnvironment = HostEnvironment.universal,
+    trust_eval: bool = False,
     observer: PipelineObserver | None = None,
 ) -> int:
     """
@@ -111,7 +112,10 @@ def deobfuscate(
     legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely. *module*
     selects the execution model the input is assumed to run under, *entrypoints* names top-level
     functions a host calls by name, and *environment* pins the host whose global names are assumed
-    present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *observer* is called around
+    present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval* selects the
+    trusting model, which assumes code supplied as data is inert and is deliberately unsound; the
+    default is the suspecting model, so a caller that reads this function's output as equivalent to
+    its input keeps that claim. *observer* is called around
     every transformer, which is how a property of the tree is attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
     """
@@ -119,6 +123,7 @@ def deobfuscate(
         module=module,
         entrypoints=tuple(entrypoints),
         environment=environment,
+        trust_eval=trust_eval,
     )
     return _pipeline.run(
         ast,
