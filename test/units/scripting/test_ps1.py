@@ -961,4 +961,47 @@ class TestPs1RealWorldLarge(TestUnitBase):
 
     def test_null_assignment_sample_with_a_trusted_eval(self):
         data = self.download_sample('34f5eab91e26c1c2073740ed76af289fdd0df985385d3d198f5be7165d79745f')
-        self.assertEqual(data | self.load(trust_eval=True) | str, _NULL_ASSIGNMENT_GOAL)
+        self.assertEqual(data | self.load() | str, _NULL_ASSIGNMENT_GOAL)
+
+    def test_xor_encryption_sample(self):
+        data = self.download_sample('3eee1bed425cadc4742c917ba31b4c9f638d7608e15f4a3dd09b90ba02e922d3')
+        test = data | self.load() | str
+        self.assertIn(inspect.cleandoc(
+            """
+            if ($dEKNX) {
+              try {
+                $bYLHT = [System.Convert]::FromBase64String($dEKNX)
+              } catch {
+                exit 12
+              }
+            """
+        ), test)
+        self.assertIn(inspect.cleandoc(
+            """
+            try {
+              while (($nXQIU = $rFGHY.ReadLine()) -NE $Null) {
+                if ($nXQIU -and $nXQIU.StartsWith('::ORVBKVJE')) {
+                  [void]$aDEZW.Append($nXQIU.Substring(10) + ';')
+                } elseif ($nXQIU -and $nXQIU.StartsWith('set "RLSSXQET')) {
+                  $tVKLG = $nXQIU.Substring(13)
+                  if ($tVKLG.EndsWith([char]34)) {
+                    $tVKLG = $tVKLG.Substring(0, $tVKLG.Length - 1)
+                  }
+                  [void]$xTIES.Append($tVKLG)
+                  $oZQMM = $True
+                } elseif ($nXQIU -and $nXQIU.StartsWith('set "VWHSUL')) {
+                  $tVKLG = $nXQIU.Substring(11)
+                  if ($tVKLG.EndsWith([char]34)) {
+                    $tVKLG = $tVKLG.Substring(0, $tVKLG.Length - 1)
+                  }
+                  [void]$dEKNX.Append($tVKLG)
+                  $qWDZM = $True
+                } elseif ($oZQMM -and $qWDZM) {
+                  break
+                }
+              }
+            } finally {
+              $rFGHY.Close()
+            }
+            """
+        ), test)
