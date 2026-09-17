@@ -1,7 +1,7 @@
 """
 Remove unreachable function declarations and unused variable assignments.
 
-This transformer performs four phases:
+This transformer performs seven phases:
 
 1. **Dead function removal** — transitive reachability analysis: starting from non-function
    statements, it collects all function names referenced directly or transitively. Function
@@ -391,7 +391,9 @@ def _stores_the_same_value(first: Node, second: Node) -> bool:
     Whether the store values *first* and *second* denote the same value every time the run
     executes: the same bare name — one body's statements read one binding by that name — or a
     literal spelling the same constant. A number compares by the text of its value as well as the
-    value itself, so a `-0` the second store would replace a `0` with stays a different store.
+    value itself, so a `-0` the second store would replace a `0` with stays a different store. A
+    string literal the lenient parser could not decode carries no value; two such are never taken
+    for equal, since their differing spellings may still stand for different bytes.
     """
     if isinstance(first, JsIdentifier) and isinstance(second, JsIdentifier):
         return first.name == second.name
@@ -399,7 +401,10 @@ def _stores_the_same_value(first: Node, second: Node) -> bool:
         return False
     if isinstance(first, JsNumericLiteral):
         return first.value == second.value and repr(first.value) == repr(second.value)
-    return isinstance(first, JsNullLiteral) or first.value == second.value
+    if isinstance(first, JsNullLiteral):
+        return True
+    left = first.value
+    return left is not None and left == second.value
 
 
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
@@ -542,16 +547,19 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         next store would fire, so a duplicate across a break is a store of something the program may
         have observed changing.
 
-        The stored value is a bare name or a literal, so the later read of it can neither fire a
-        getter nor throw where the earlier one did not — the run has no room for anything to
-        happen between the two. A store is kept whole wherever a descriptor is installed on the
-        global object at all (`installs_a_descriptor_on_the_global_object` — a counting setter
-        must keep firing on every store) and wherever any reflective surface remains, which could
-        install one at runtime.
+        The whole sweep runs only where the global object is pristine
+        (`EffectModel.global_pristine`): no reflective surface stands, no property is stored under a
+        runtime key, and no accessor is installed anywhere — on the object or on a prototype it
+        inherits, since a setter reached through the chain fires on every plain-looking store alike.
+        Under that precondition a stored value that is a bare name or a literal can be re-read
+        without firing a getter or throwing. A bare name that reads a global, though, reads a
+        property of the object — the same property a store to the member of that same name writes —
+        so a store to member `k` earlier in the run may rewrite what a later value spelled `k`
+        denotes. The run therefore retires any remembered value spelled with the store's own key,
+        keeping the later store of a name that now means something else; a value spelled like a true
+        local is retired too, at the cost only of a dedup no realistic run offers.
         """
-        if self.model.has_reflection_surface():
-            return
-        if self.effects.installs_a_descriptor_on_the_global_object():
+        if not self.effects.global_pristine:
             return
         removals: list[JsExpressionStatement] = []
         for body in self._statement_lists(root):
@@ -562,6 +570,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     stored = {}
                     continue
                 name, value = store
+                for rewritten in [
+                    key for key, held in stored.items()
+                    if isinstance(held, JsIdentifier) and held.name == name
+                ]:
+                    del stored[rewritten]
                 if stored.get(name) is not None and _stores_the_same_value(stored[name], value):
                     removals.append(stmt)
                 else:

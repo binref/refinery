@@ -1485,10 +1485,13 @@ def is_truthy(node: Node, cache: ModelCache) -> bool | None:
     `var` still reads `undefined` before its initializer runs and `!undefined` takes the other
     branch. The ordering is the interprocedural runs-before, which recurses through the reference
     points of the function a cross-function read sits in, so the guard a network callback carries is
-    ordered through the callback's own creation. Value stability rides along: the single value is
-    complete only where no dynamic rebind the text does not spell can replace it, which the
-    suspecting model refuses and the trusting model assumes away. Negation is transparent to the
-    question: `!a` answers the opposite of `a`, however many `!` spell it.
+    ordered through the callback's own creation. Value stability rides along: a binding any
+    reflective surface could reach — a script-scope name under a whole-program surface or an opaque
+    global write, a local a direct `eval`, `with` body, or unread span in its own function could
+    rebind — is refused (`reflection_can_reach`), since none of those replacements leaves a rebind
+    site the ordering could place; the suspecting model refuses the eval leg and the trusting model
+    assumes it away. Negation is transparent to the question: `!a` answers the opposite of `a`,
+    however many `!` spell it.
     """
     operand, negated = _strip_negation(node)
     model = cache.model
@@ -1499,7 +1502,7 @@ def is_truthy(node: Node, cache: ModelCache) -> bool | None:
         answer = True
     elif isinstance(operand, JsIdentifier):
         binding = model.resolve(operand)
-        if binding is None or binding.dynamic_refs:
+        if binding is None or model.reflection_can_reach(binding):
             return None
         if _established_allocation_of(binding, operand, cache) is None:
             return None
@@ -1537,9 +1540,9 @@ def _established_allocation_of(binding: Binding, node: Node, cache: ModelCache) 
     sites = model.binding_establishment_sites(binding)
     if value is None or sites is None:
         return None
-    if not all(cache.dominance.runs_before(site, node) for site in sites):
-        return None
     if allocated_object_type(value) is None:
+        return None
+    if not all(cache.dominance.runs_before(site, node) for site in sites):
         return None
     return value
 
@@ -1574,9 +1577,6 @@ def value_is_discarded(node: Node) -> bool:
     if isinstance(parent, JsSequenceExpression):
         return bool(parent.expressions) and parent.expressions[-1] is not cur
     return False
-
-
-_value_is_discarded = value_is_discarded
 
 
 def insert_after_prologue(host: Node, statements: list[Statement]) -> None:

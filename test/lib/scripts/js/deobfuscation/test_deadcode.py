@@ -250,3 +250,63 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
             ),
             self._deadcode(script, trust_eval=True),
         )
+
+    def test_a_script_scope_guard_under_an_opaque_global_write_is_kept(self):
+        """
+        The top-level `var a` is a property of the global object, and `globalThis[k] = 0` may store
+        under the key `a`, so the guard cannot fold under either model — an opaque global write is
+        never trust-excused.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            globalThis[k] = 0;
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(source, self._deadcode(source, trust_eval=True))
+
+    def test_a_script_scope_guard_under_an_indirect_eval_is_kept(self):
+        """
+        `window.eval` is indirect eval, a reflective surface kept under both models; it runs in the
+        global scope and can rebind the global `a`, so the guard cannot fold.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            window.eval(payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(source, self._deadcode(source, trust_eval=True))
+
+    def test_a_computed_eval_key_destructuring_can_rebind_a_global_guard(self):
+        """
+        `{['eval']: e}` binds the `eval` intrinsic out of the global object as surely as `{eval: e}`
+        does, so `e(payload)` is indirect eval running in the global scope that can rebind the
+        global `a`; the guard cannot fold under either model.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            const { ['eval']: e } = globalThis;
+            e(payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(source, self._deadcode(source, trust_eval=True))

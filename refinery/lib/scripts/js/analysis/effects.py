@@ -327,14 +327,6 @@ every chain, so a getter installed there is reached by a plain read on an array 
 alike — which is why reading a property is a strictly stronger requirement than calling a method.
 """
 
-_FUNCTION_POISONED_KEYS = frozenset({'caller', 'arguments', '__proto__'})
-"""
-The keys a function value cannot answer with a plain data slot: `caller` and `arguments` are
-accessors that throw off a strict-mode function, and `__proto__` is the accessor every prototype
-chain carries. Reading one off a function is never provably throw-free or getter-free, whatever
-the chain vouches for.
-"""
-
 _KEYED_WRITE_ROOTS = (
     _PURE_INTRINSIC_ROOTS
     | _INHERITED_CHAIN_ROOTS
@@ -886,7 +878,6 @@ class EffectModel:
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
         self._globals_written, self._global_keys_written = _global_writes_by_name(model)
-        self._install_on_global: bool | None = None
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
@@ -2071,41 +2062,6 @@ class EffectModel:
         keys = self._global_keys_written.get(name, frozenset())
         return keys is None or key in keys
 
-    def installs_a_descriptor_on_the_global_object(self) -> bool:
-        """
-        Whether the program installs a property descriptor on the global object — the receiver form
-        (`globalThis.__defineGetter__`) or the argument form (`Object.defineProperty(globalThis, …)`,
-        `Reflect.defineProperties(globalThis, …)`) of any install method, whatever descriptor it
-        hands it. A store through the object after an install is no longer the plain write the
-        spelling suggests: an accessor installed under that key fires on it, so a caller planning
-        to drop a redundant one must refuse while any install names the object at all. Computed once
-        per model lifetime; the calls are tree facts, fixed the same way every other scan here is.
-        """
-        if self._install_on_global is None:
-            self._install_on_global = any(
-                self._install_targets_the_global_object(node)
-                for node in self.model.root.walk()
-                if isinstance(node, JsCallExpression)
-            )
-        return self._install_on_global
-
-    def _install_targets_the_global_object(self, call: JsCallExpression) -> bool:
-        """
-        Whether the descriptor install *call* names the global object as the object it installs on,
-        under the reading every install question here shares: `may_be_the_global_object` on the
-        receiver of the `__defineGetter__`/`__defineSetter__` form or the first argument of the
-        `defineProperty`/`defineProperties` form.
-        """
-        callee = strip_parens(call.callee)
-        if not isinstance(callee, JsMemberExpression):
-            return False
-        method = accessor_install_method(callee)
-        if method is None:
-            return False
-        if method.startswith('__define'):
-            return self.model.may_be_the_global_object(callee.object)
-        return bool(call.arguments) and self.model.may_be_the_global_object(call.arguments[0])
-
     def _roots_unwritten(self, owner: str, roots: frozenset[str]) -> bool:
         """
         Whether the program writes neither *owner* nor any prototype in *roots*. A property read
@@ -2436,7 +2392,7 @@ class EffectModel:
         if member.computed:
             return False
         prop = member.property
-        if not isinstance(prop, JsIdentifier) or prop.name in _FUNCTION_POISONED_KEYS:
+        if not isinstance(prop, JsIdentifier) or _is_poison_pill_property(member):
             return False
         base = member.object
         if not isinstance(base, JsIdentifier):

@@ -734,12 +734,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         continue
                     if model.resolve(obj) is not cross_bindings[name]:
                         continue
-                    if name not in const_names and not _reader_qualifies(
+                    if name in const_names:
+                        if not dominance.runs_before_function(
+                            cross_candidates[name][0].value, enclosing,
+                        ):
+                            continue
+                    elif not _reader_qualifies(
                         cross_candidates[name][0].value, enclosing,
                         cross_bindings[name], effects, dominance,
                     ):
-                        continue
-                    if not dominance.runs_before_function(cross_candidates[name][0].value, enclosing):
                         continue
                     if model.is_shadowed(name, obj, outer):
                         continue
@@ -772,11 +775,12 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if model.resolve(node) is not cross_bindings[name]:
                 continue
-            if name not in const_names and not _reader_qualifies(
+            if name in const_names:
+                if not dominance.runs_before_function(entry.value, enclosing):
+                    continue
+            elif not _reader_qualifies(
                 entry.value, enclosing, cross_bindings[name], effects, dominance,
             ):
-                continue
-            if not dominance.runs_before_function(entry.value, enclosing):
                 continue
             if model.is_shadowed(name, node, outer):
                 continue

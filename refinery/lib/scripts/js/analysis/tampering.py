@@ -56,6 +56,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     ScopeKind,
     SemanticModel,
+    _property_key_name,
     enclosing_function,
     is_member_write_target,
     is_unread_source,
@@ -734,13 +735,9 @@ class TamperingModel:
             return []
         names: list[tuple[str, bool]] = []
         for prop in pattern.properties:
-            if not isinstance(prop, JsProperty) or prop.computed:
+            if not isinstance(prop, JsProperty):
                 continue
-            key = prop.key
-            name = (
-                key.value if isinstance(key, JsStringLiteral) else (
-                    key.name if isinstance(key, JsIdentifier) else None)
-            )
+            name = _property_key_name(prop)
             if name in REFLECTIVE_INTRINSICS:
                 names.append((name, name != 'eval'))
         return names

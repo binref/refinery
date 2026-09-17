@@ -139,6 +139,18 @@ class TestJsTrustedEvalDoesNotExcuseAnIndirectEval(TestJsDeobfuscator):
                     F'{_printed(opener)}\n{_JUNK}',
                 )
 
+    def test_a_computed_eval_destructuring_key_is_not_trusted(self):
+        """
+        `{['eval']: e}` hands out the `eval` intrinsic through a string-literal key as surely as
+        `{eval: e}` does, so the surface is kept even beside a trusted `Function` extraction and the
+        read below the indirect call stands rather than folding to `_JUNK_FOLDED`.
+        """
+        script = F"const {{Function, ['eval']: e}} = globalThis;\ne(input);\n{_JUNK}"
+        self.assertEqual(
+            _deobfuscated(script, trust_eval=True),
+            F"const {{ Function, eval: e }} = globalThis;\ne(input);\n{_JUNK}",
+        )
+
 
 class TestJsTrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestJsDeobfuscator):
     """

@@ -1374,11 +1374,16 @@ def member_property_name(member: JsMemberExpression) -> str | None:
 def _property_key_name(prop: JsProperty) -> str | None:
     """
     The name the object-pattern property *prop* reads, when it is statically known: a string-literal
-    key or a plain identifier key. A computed key names nothing the text spells.
+    key (`{['eval']: e}` names `eval` as surely as `{eval: e}` does), or a plain non-computed
+    identifier key. A computed identifier key (`{[k]: e}`) names the value the variable holds, not
+    the text it spells, and a computed non-literal names nothing static, so both answer `None`.
     """
     key = prop.key
-    return key.value if isinstance(key, JsStringLiteral) else (
-        key.name if isinstance(key, JsIdentifier) else None)
+    if isinstance(key, JsStringLiteral):
+        return key.value
+    if isinstance(key, JsIdentifier) and not prop.computed:
+        return key.name
+    return None
 
 
 def _last_positions(params: list[Binding | None]) -> list[Binding | None]:
@@ -2925,7 +2930,7 @@ class SemanticModel:
             return all(
                 _property_key_name(prop) != 'eval'
                 for prop in pattern.properties
-                if isinstance(prop, JsProperty) and not prop.computed
+                if isinstance(prop, JsProperty)
             )
         return False
 
@@ -2965,7 +2970,7 @@ class SemanticModel:
         if not isinstance(pattern, JsObjectPattern) or not self.may_be_the_global_object(source):
             return False
         for prop in pattern.properties:
-            if not isinstance(prop, JsProperty) or prop.computed:
+            if not isinstance(prop, JsProperty):
                 continue
             if _property_key_name(prop) in REFLECTIVE_INTRINSICS:
                 return True

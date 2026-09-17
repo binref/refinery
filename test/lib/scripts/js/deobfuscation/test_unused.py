@@ -2484,6 +2484,38 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         source = 'global.r = require;\nglobal.r = module;\nglobal.r = require;'
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_a_free_global_value_rewritten_between_the_stores_keeps_the_last(self):
+        """
+        `x` is a free read of `globalThis.x`, and the interleaved `global.x = spoof` rewrites that
+        property, so the third store no longer writes what the first did and must stand.
+        """
+        source = 'global.r = x;\nglobal.x = spoof;\nglobal.r = x;'
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_an_inherited_prototype_setter_keeps_the_stores(self):
+        """
+        The setter is installed on a prototype the global object inherits, so a plain-looking
+        `global.r = require` fires it on every store; both stores must stay.
+        """
+        source = inspect.cleandoc(
+            """
+            Object.defineProperty(Object.prototype, 'r', { set: function () {
+              SINK();
+            } });
+            global.r = require;
+            global.r = require;
+            """
+        )
+        self.assertEqual(printed(source), self._remove_unused(source))
+
+    def test_two_undecodable_string_literals_are_not_deduped(self):
+        """
+        Neither escape decodes to a value the lenient parser can compare, so the two differing
+        spellings may still stand for different bytes; the second store is no duplicate and stays.
+        """
+        source = 'global.r = "\\xZZ";\nglobal.r = "\\xYY";'
+        self.assertEqual(source, self._remove_unused(source))
+
 
 class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
     """

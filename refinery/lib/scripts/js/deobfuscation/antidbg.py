@@ -33,9 +33,9 @@ from refinery.lib.scripts import _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    _value_is_discarded,
     binding_has_references,
     remove_declarator,
+    value_is_discarded,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -257,7 +257,7 @@ def _discardable_guard_invocations(model, binding, declarator) -> list[JsCallExp
         if reference.is_descendant_of(declarator):
             continue
         call = _invocation_of(reference)
-        if call is None or not _value_is_discarded(call):
+        if call is None or not value_is_discarded(call):
             return None
         calls.append(call)
     return calls if calls else None
@@ -366,7 +366,7 @@ class JsRemoveSelfDefending(ScriptLevelTransformer):
 
         for guard_call in immediate_guards:
             unit = _removal_unit(guard_call)
-            if _value_is_discarded(unit):
+            if value_is_discarded(unit):
                 _remove_expr(unit)
 
         for declarator, calls in stored_guards:
