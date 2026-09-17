@@ -303,6 +303,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,2)\nWrite-Output 2',
     "$t = 'AB'.Zqnope; Write-Output (,$t)":
         'Write-Output (,$Null)',
+    "$t = 'ABC'.ToCharArray(); Write-Output (,$t); Write-Output $t.Count":
+        "Write-Output (,[char[]]'ABC')\nWrite-Output 3",
     "$t = 'ABC'[0]; Write-Output (,$t); Write-Output $t":
         'Write-Output (,[char]65)\nWrite-Output ([char]65)',
     "$t = 'B' -gt 'a'; Write-Output (,$t); Write-Output $t":

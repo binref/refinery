@@ -183,12 +183,20 @@ class TestPs1ConstantsThatAreLeftUncomputed(TestPs1):
     def test_the_count_of_a_string_cast_to_a_char_array_is_its_character_count(self):
         self.assertEqual(self._deobfuscate("$x = ([char[]]'ABC').Count"), '$x = 3')
 
-    # `read` pins the value of a `[char[]]` cast over a literal, so its `.Count` folds; a
-    # `.ToCharArray()` call is a member invocation the value domain does not evaluate, so its count
-    # is left standing until method evaluation is built.
-    @unittest.expectedFailure
     def test_the_count_of_to_char_array_is_the_character_count(self):
         self.assertEqual(self._deobfuscate("$x = 'ABC'.ToCharArray().Count"), '$x = 3')
+
+    def test_the_length_of_to_char_array_is_the_character_count(self):
+        self.assertEqual(self._deobfuscate("$x = 'ABC'.ToCharArray().Length"), '$x = 3')
+
+    def test_to_char_array_folds_to_the_char_array_cast_of_its_receiver(self):
+        self.assertEqual(self._deobfuscate("$x = 'ABC'.ToCharArray()"), "$x = [char[]]'ABC'")
+
+    def test_a_sub_range_to_char_array_is_not_the_whole_string_char_array(self):
+        self.assertEqual(
+            self._deobfuscate("$x = 'ABC'.ToCharArray(0, 2).Count"),
+            "$x = 'ABC'.ToCharArray(0, 2).Count",
+        )
 
 
 class TestPs1ConstantsThatAreComputedWrong(TestPs1):

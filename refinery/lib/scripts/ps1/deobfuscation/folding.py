@@ -73,6 +73,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1BinaryExpression,
+    Ps1CastExpression,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1HashLiteral,
@@ -864,11 +865,21 @@ class Ps1ConstantFolding(Transformer):
         The gate is the collected member surface and not the shape of the value: `System.Char` has a
         `ToUpper` whose every overload is static, so `([char]65).ToUpper()` reports `MethodNotFound`
         on 5.1 while `[char]::ToUpper('a')` answers.
+
+        `ToCharArray()` is the one method not routed through `apply_string_method`: its value is a
+        `Char[]`, which that kernel's `list[str]` result would spell as String elements, flipping a
+        later `-is [char]`. It folds instead to the `[char[]]` cast of its receiver, the equal value
+        the source could have written, so `read` reads the character array back and the `.Count` and
+        `.Length` on it fold the way the same cast written by hand already does.
         """
         receiver = read(node.object)
         owner = type_of(receiver)
         if owner is None:
             return None
+        if lower == 'tochararray' and not node.arguments and owner == _STRING:
+            text = text_of(receiver)
+            if text is not None:
+                return Ps1CastExpression(type_name='char[]', operand=make_string_literal(text))
         arguments = _method_arguments(owner, lower, node.arguments)
         if arguments is None:
             return None
