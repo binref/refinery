@@ -1426,7 +1426,7 @@ FOLDS: dict[str, str] = {
     "[string]::Join('', ('a', 'b'))":
         "'ab'",
     'do { 1 } while ($a)':
-        '',
+        '1',
     'echo a < b':
         'Write-Output a < b',
     'for ($i = 0; $i -lt 2; $i++) { 1 }':
@@ -1502,7 +1502,7 @@ FOLDS: dict[str, str] = {
     'if ($a) { 1 }':
         '',
     'if ($a) { 1 } elseif ($b) { 2 } else { 3 }':
-        '',
+        '3',
     "if ($true) { 'yes' } else { 'no' }":
         "'yes'",
     "if ($true) { trap { continue }; Write-Host 'in'; throw 'e' }; Write-Host 'after'":

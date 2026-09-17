@@ -627,21 +627,28 @@ class TestPs1BareOutputIsStrippedByDefault(TestPs1):
 
 class TestPs1TheLastBareOutputSurvivesADeadSiblingAnotherPassRemoves(TestPs1):
     """
-    `refinery.lib.scripts.ps1.analysis.effects.pruning_erases_body` keeps the script root from being
-    stripped to nothing, so a lone bare literal is kept even under the stripping model. A dead `if`
-    above one defeats that guard the way a `trap` once did: junk removal strips the literal while the
-    dead `if` still stands as a surviving sibling, and dead-code elimination then removes the `if`,
-    leaving the empty script the guard exists to forbid. The literal-false control below is identical
-    on 5.1 — both print `z` — but removes the `if` first, so the two disagree only by the order the
-    passes run in. Closing this is a pass-ordering change the guard's trap analog does not yet cover.
+    Bare-output stripping is only sound on a fully dead-code-eliminated tree. Inlining a provably-null
+    variable turns `if ($c) {…}` into the constant-dead `if ($Null) {…}`, and dead-code elimination
+    now runs again after that inlining and before the strip, so the dead sibling is folded away before
+    junk removal reads the body — it never stands as a live sibling that carries the script's real
+    output off with it. The literal-false control is the same reduction reached one pass earlier.
+
+    The live-`else` case is the one that pins folding-before-stripping against merely protecting the
+    literal: `if ($Null) {1} else {2}` reduces to the bare `2`, so `2` and `'z'` are two bare outputs
+    5.1 prints in order, and both are kept — where a rule that only shielded `'z'` would drop the `2`.
     """
 
-    @unittest.expectedFailure
     def test_a_dead_if_above_a_bare_literal_does_not_carry_the_literal_away(self):
         self.assertEqual(self._deobfuscate("if ($c) { 1 }; 'z'"), "'z'")
 
     def test_a_literal_false_if_above_a_bare_literal_keeps_the_literal(self):
         self.assertEqual(self._deobfuscate("if (0) { 1 }; 'z'"), "'z'")
+
+    def test_a_dead_if_with_a_live_else_keeps_the_branch_output_and_the_literal(self):
+        self.assertEqual(self._deobfuscate("if ($c) { 1 } else { 2 }; 'z'"), "2\n'z'")
+
+    def test_an_empty_loop_above_a_bare_literal_does_not_carry_the_literal_away(self):
+        self.assertEqual(self._deobfuscate("while ($c) { }; 'z'"), "'z'")
 
 
 class TestPs1AReadThatConsumesWhatItReadsIsNotBareOutput(TestPs1):

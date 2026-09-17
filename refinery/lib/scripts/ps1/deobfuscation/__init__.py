@@ -47,8 +47,14 @@ _folds = (
     Ps1ReflectionReads,
 )
 
+# `Ps1DeadCodeElimination` runs a second time here, after `Ps1NullVariableInlining`: inlining a
+# provably-null variable turns `if ($c) {…}` into the constant-dead `if ($Null) {…}`, and that dead
+# branch has to be folded away before `Ps1JunkStatementRemoval` decides what is bare-output noise —
+# otherwise the dead `if` stands as a live sibling and the strip carries the script's real output away
+# with it. Bare-output stripping is only sound on a fully dead-code-eliminated tree.
 _cleanup = (
     Ps1NullVariableInlining,
+    Ps1DeadCodeElimination,
     Ps1UnusedVariableRemoval,
     Ps1DeadStoreElimination,
     Ps1JunkStatementRemoval,
