@@ -11,7 +11,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     make_string_literal,
     resolve_expression_type,
 )
-from refinery.lib.scripts.ps1.analysis.variable_types import type_at
+from refinery.lib.scripts.ps1.analysis.variable_types import non_null_type_at, type_at
 from refinery.lib.scripts.ps1.ast import get_command_name, get_member_name, unwrap_parens
 from refinery.lib.scripts.ps1.data import (
     CANONICAL_TYPE_NAMES,
@@ -179,6 +179,7 @@ class VariableTypeAwareTransformer(Transformer):
         super().__init__()
         self._flow: Ps1VariableFlow | None = None
         self._typed: dict[int, tuple[Ps1Variable, Ps1TypeName | None]] = {}
+        self._origins: dict[int, tuple[Ps1Variable, Ps1TypeName | None]] = {}
         self._entry = False
 
     def visit(self, node: Node):
@@ -192,6 +193,7 @@ class VariableTypeAwareTransformer(Transformer):
             self._entry = False
             self._flow = None
             self._typed.clear()
+            self._origins.clear()
 
     def _type_of_variable(self, var: Ps1Variable) -> Ps1TypeName | None:
         if self._flow is None:
@@ -199,6 +201,14 @@ class VariableTypeAwareTransformer(Transformer):
         found = self._typed.get(id(var))
         if found is None or found[0] is not var:
             found = self._typed[id(var)] = (var, type_at(var, self._flow))
+        return found[1]
+
+    def _origin_of_variable(self, var: Ps1Variable) -> Ps1TypeName | None:
+        if self._flow is None:
+            return None
+        found = self._origins.get(id(var))
+        if found is None or found[0] is not var:
+            found = self._origins[id(var)] = (var, non_null_type_at(var, self._flow))
         return found[1]
 
 

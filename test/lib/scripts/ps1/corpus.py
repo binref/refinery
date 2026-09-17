@@ -1353,6 +1353,16 @@ TYPES: tuple[str, ...] = (
     "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))",
     "Write-Output ([object]::ReferenceEquals("
     "[Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))",
+
+    #: What a reflection method call is asked to preserve the behaviour of: the fold of a
+    #: literal argument, the fold through the member call an argument's origin is judged by, and
+    #: the vouch itself.
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
+    "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t",
+    "$t = [Text.StringBuilder]::new('ab').ToString(); Write-Output (,$t); Write-Output $t",
 )
 
 

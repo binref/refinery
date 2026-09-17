@@ -818,6 +818,14 @@ def type_members(name: str | Ps1TypeName) -> dict[str, dict] | None:
     return None if record is None else record['members']
 
 
+def collected_type_names() -> tuple[str, ...]:
+    """
+    The reflection `FullName` spellings the .NET type capture holds, sorted, and none of the WMI
+    class names it does not.
+    """
+    return tuple(sorted(_TYPE_TABLE))
+
+
 def member_order(name: str | Ps1TypeName) -> list[str] | None:
     """
     The order `Get-Member` displays a type's members in, as observed on a real instance, or `None`
@@ -851,6 +859,49 @@ def type_is_sealed(name: str | Ps1TypeName) -> bool:
         return True
     record = _type_record(resolved.definition)
     return record is not None and bool(record.get('sealed'))
+
+
+def type_is_value_type(name: str | Ps1TypeName) -> bool:
+    """
+    Whether the named type is a value type — a struct or an enum, so a value of it is never
+    `$null` — or `False` where it is not collected, so a caller that grants on the value it holds
+    fails closed. Read from the collected `kind` the way `type_is_sealed` reads `sealed`. An
+    array is `False` whatever its element is, and it is answered before the member surface is
+    consulted, which would read the element type's record and call the array a struct.
+    """
+    resolved = resolve_type(name)
+    if resolved is None or resolved.ranks:
+        return False
+    record = _type_record(resolved.definition)
+    return record is not None and record.get('kind') in ('struct', 'enum')
+
+
+#: Read as an exact spelling against the collected interface set rather than through
+#: `resolve_type`, because the capture renders `System.Collections.Generic` interfaces in several
+#: spellings while it renders this one the same way everywhere.
+_ENUMERABLE_INTERFACE = 'System.Collections.IEnumerable'
+
+
+def is_enumerable(name: str | Ps1TypeName) -> bool | None:
+    """
+    Whether the pipeline enumerates a value of the type — whether `@($x)` collects one element per
+    item the value yields rather than one element holding it — or `None` where the type is not
+    collected. `System.String` is the one measured exception: it implements the interface and is
+    enumerated by nothing, so it is answered on the measurement rather than the interface set. A
+    value type is not exempt by being one: `System.ArraySegment`1` is a struct an `@()` flattens.
+    An array is always enumerated, whatever its element is.
+    """
+    resolved = resolve_type(name)
+    if resolved is None:
+        return None
+    if resolved.ranks:
+        return True
+    if resolved.definition == 'System.String':
+        return False
+    record = _type_record(resolved.definition)
+    if record is None:
+        return None
+    return _ENUMERABLE_INTERFACE in (record.get('interfaces') or ())
 
 
 class MemberLookup(enum.Enum):
@@ -1131,6 +1182,88 @@ def _overloads(name: str | Ps1TypeName, member: str, *, static: bool) -> list[di
             if bool(overload.get('static')) is static
         ]
     return []
+
+
+def _required_reflection_method_keys(
+    entries: set[tuple[str, str]],
+) -> frozenset[tuple[Ps1TypeName, str]]:
+    """
+    A frozenset of `(canonical type key, lowercased member)` pairs, the form a method-keyed
+    curated table looks up, each entry floored against the collected metadata: the type must
+    resolve, and the member must be a reflection method of it. An entry naming anything else is a
+    table speaking about a method the data cannot see, which fails the load rather than silently
+    granting or denying a fold around it.
+    """
+    result: set[tuple[Ps1TypeName, str]] = set()
+    for type_name, member in entries:
+        type_key = required_type_key(type_name)
+        record = member_record(type_key, member)
+        if (
+            isinstance(record, MemberLookup)
+            or record.get('kind') != 'method'
+            or record.get('source') != 'reflection'
+        ):
+            raise ValueError(
+                F'a curated method table names {type_name}.{member}, which the collected metadata '
+                F'does not carry as a reflection method; the data and the table are out of step.'
+            )
+        result.add((type_key, member.lower()))
+    return frozenset(result)
+
+
+def _required_non_null_returns(
+    entries: set[tuple[str, str]],
+) -> frozenset[tuple[Ps1TypeName, str]]:
+    """
+    The non-null vouch table, floored on top of `_required_reflection_method_keys`: the type must
+    be sealed — a subtype could override the member to return `$null` — and the member's
+    instance overloads must agree on one return type, which is the type a vouch answers with. An
+    entry that fails a floor fails the load.
+    """
+    keys = _required_reflection_method_keys(entries)
+    for type_key, member in keys:
+        if not type_is_sealed(type_key):
+            raise ValueError(
+                F'the non-null return table names {type_key!r}, which the collected metadata does '
+                F'not mark sealed; a subtype could override {member} to return $null, so the data '
+                F'and the table are out of step.'
+            )
+        returns = {
+            resolve_type(overload['returns'])
+            for overload in instance_overloads(type_key, member)
+            if overload.get('returns')
+        }
+        if None in returns or len(returns) != 1:
+            raise ValueError(
+                F'the non-null return table names {type_key!r}.{member}, whose instance overloads '
+                F'do not agree on one return type; the value the vouch answers with would be a '
+                F'guess, so the data and the table are out of step.'
+            )
+    return keys
+
+
+#: The instance methods whose call on a value of the type always returns a non-null value of the
+#: one return type its overloads agree on, measured on 5.1 — `StringBuilder.ToString` first: an
+#: emptied `StringBuilder` still answers a String. This is what lets an origin judgment follow a
+#: member call rather than stopping at a name it cannot type; see
+#: `refinery.lib.scripts.ps1.analysis.values.non_null_type`.
+NON_NULL_RETURNS: frozenset[tuple[Ps1TypeName, str]] = _required_non_null_returns({
+    ('text.stringbuilder', 'tostring'),
+})
+
+#: The generic methods on the collected static surface whose signatures are fully concrete, so
+#: no spelling-based guard can see their genericity: `Invoke` on the definition throws
+#: `InvalidOperationException` where the direct spelling throws a bare `MethodException` —
+#: measured on 5.1, over the three `Marshal` methods a live scan of the collected surface
+#: found. The ps1 oracle re-runs the scan, so a regeneration that adds one fails the pin. The
+#: capture records genericity at the source — `run-pwsh.ps1` writes an
+#: `IsGenericMethodDefinition` flag — and when the shipped tables carry it, this table is
+#: retired in favour of the guard reading it.
+CONCRETE_GENERIC_METHODS: frozenset[tuple[Ps1TypeName, str]] = _required_reflection_method_keys({
+    ('runtime.interopservices.marshal', 'destroystructure'),
+    ('runtime.interopservices.marshal', 'offsetof'),
+    ('runtime.interopservices.marshal', 'sizeof'),
+})
 
 
 _COMMAND_LOOKUP: dict[str, dict] = {

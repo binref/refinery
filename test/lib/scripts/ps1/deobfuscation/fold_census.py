@@ -113,6 +113,11 @@ FOLDS: dict[str, str] = {
         "Write-Output (,'255')\nWrite-Output '255'",
     '$sb = { param($a) [Array]::Reverse($a) }; $x = 1, 2, 3; & $sb $x; Write-Output $x':
         '$sb = {\n  Param($a)\n  [Array]::Reverse($a)\n}\n& $sb (1, 2, 3)\nWrite-Output (1, 2, 3)',
+    "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t":
+        "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='\n$x = $sb.ToString()\n"
+        "$t = [Convert]::FromBase64String($x)\nWrite-Output (,$t)\nWrite-Output $t",
     "$script:s = 'x'; Write-Output $s":
         "Write-Output 'x'",
     '$t = $false + 1; Write-Output (,$t); Write-Output $t':
@@ -869,6 +874,9 @@ FOLDS: dict[str, str] = {
         'Write-Output (,@(@(1, 2)))\nWrite-Output 2',
     '$t = @(@(1, 2), 3); Write-Output (,$t); Write-Output $t.Count':
         'Write-Output (,(@(1, 2), 3))\nWrite-Output 2',
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t":
+        'Write-Output (,(0x68, 0x69))\nWrite-Output (0x68, 0x69)',
     "$t = [Convert]::ToByte('FF', 16); Write-Output (,$t); Write-Output $t":
         'Write-Output (,[byte]255)\nWrite-Output ([byte]255)',
     '$t = [Convert]::ToChar(65); Write-Output (,$t); Write-Output $t':

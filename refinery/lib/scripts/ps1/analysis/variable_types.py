@@ -1,10 +1,11 @@
 """
-The .NET type a variable carries where it is read.
+The .NET type a variable carries where it is read, and the non-null origin of the value it holds.
 
 A variable has no type of its own — the value it holds does — so the question is which write a read
 observes and what type that write establishes. The first half is
 `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.reaching_definition` and the second is
-`refinery.lib.scripts.ps1.analysis.values.resolve_expression_type`; what is left here is the join.
+`refinery.lib.scripts.ps1.analysis.values.resolve_expression_type`; what is left here is the join,
+and `non_null_type_at` is the same join asked of the *value* a write stores rather than its type.
 
 The type must follow the reaching definition, not the name: a per-name scan crosses every scope
 boundary the language has. A write inside a function body would type a read at the top level, so
@@ -21,6 +22,7 @@ from refinery.lib.scripts.ps1.analysis.dataflow import Ps1FlowUnknown, Ps1Variab
 from refinery.lib.scripts.ps1.analysis.model import Binding, is_mutated_in_place
 from refinery.lib.scripts.ps1.analysis.values import (
     convert,
+    non_null_type,
     read,
     render,
     resolve_expression_type,
@@ -88,19 +90,31 @@ def type_at(var: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | None:
     return _type_at(var, flow, frozenset())
 
 
-def _type_at(
-    var: Ps1Variable,
-    flow: Ps1VariableFlow,
-    chased: frozenset[int],
-) -> Ps1TypeName | None:
+def _observed_write(var: Ps1Variable, flow: Ps1VariableFlow) -> tuple[Binding, Node] | None:
+    """
+    The binding a read of *var* belongs to and the one write it observes, or `None` where no
+    binding is in view or its writes may install any type: the prologue `type_at` and the
+    non-null origin join below share.
+    """
     binding = flow.semantic.binding_of(var)
     if binding is None or not binding.writes:
         return None
     if flow.unknowns(binding) & _INSTALLS_ANY_TYPE:
         return None
-    observed = flow.reaching_definition(var)
-    if observed is not None:
-        return _installed_by(observed, flow, chased)
+    return binding, flow.reaching_definition(var)
+
+
+def _type_at(
+    var: Ps1Variable,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    observed = _observed_write(var, flow)
+    if observed is None:
+        return None
+    binding, write = observed
+    if write is not None:
+        return _installed_by(write, flow, chased)
     if flow.unknowns(binding) & Ps1FlowUnknown.WRITES_IN_SEVERAL_BODIES:
         return None
     if flow.foreign_write_before(var) or not flow.written_before(var):
@@ -111,6 +125,139 @@ def _type_at(
         if not _stores_through(write.node)
     }
     return named.pop() if len(named) == 1 else None
+
+
+def non_null_type_at(var: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | None:
+    """
+    The non-null type the value *var* reads carries where it stands, or `None` where no origin
+    establishes one. This is `type_at`'s question narrowed to the reaching write — whether a
+    value is `$null` is a property of the write that installed it — and widened past it: the
+    value stored is *judged* by
+    `refinery.lib.scripts.ps1.analysis.values.non_null_type` rather than only typed, so a chain
+    of assignments is followed where `type_at` stops. The chase set bounds that recursion, so a
+    cycle like `$a = $b; $b = $a` answers `None` instead of recursing. A `foreach` binding and a
+    compound assignment are refused where `type_at` answers their *type*: a non-null value is
+    not something a slot's type can vouch for.
+    """
+    return _non_null_type_at(var, flow, frozenset())
+
+
+def _non_null_type_at(
+    var: Ps1Variable,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    observed = _observed_write(var, flow)
+    if observed is None or observed[1] is None:
+        return None
+    return _origin_installed_by(observed[1], flow, chased)
+
+
+def _origin_installed_by(
+    write: Node,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    """
+    The non-null type the write a read observes installs, with the same chase `_installed_by`
+    carries for a store through the name and a write that is its own reaching definition.
+    """
+    if id(write) in chased:
+        return None
+    chased = chased | {id(write)}
+    if not _stores_through(write):
+        return _origin_established_by(write, flow, chased)
+    return _non_null_type_at(write, flow, chased)
+
+
+def _origin_established_by(
+    write: Node,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    """
+    The non-null type *write* puts under the name, judged from the value it stores. Only a plain
+    `=` assignment carries a value this can name; `_established_by` also reads a `foreach`
+    binding, whose element is a value no single write installed.
+    """
+    if not isinstance(write, Ps1Variable):
+        return None
+    assignment = assignment_of(write)
+    if assignment is None:
+        return None
+    return _origin_assigned_type(write, assignment, flow, chased)
+
+
+def _origin_assigned_type(
+    write: Ps1Variable,
+    assignment: Ps1AssignmentExpression,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    """
+    The non-null type *assignment* puts into *write*, judged from the value it stores. The walk
+    from the occurrence up to the assignment is `_assigned_type`'s walk and is read the same way:
+    a cast passed on the way is a constraint the store converts through, so the value judged is
+    the literal `value_under_declared_constraint` answers; an array literal passed on the way is
+    a multi-assignment, whose slot's value is the element standing opposite it. A constraint the
+    binding installed *earlier* converts the value on the way in, so `constraint_converts` refuses
+    those the same way `_stored_type` does.
+    """
+    if assignment.operator != '=':
+        return None
+    cursor: Node = write
+    parent = cursor.parent
+    slot: int | None = None
+    constrained = False
+    while parent is not None and parent is not assignment:
+        if isinstance(parent, Ps1CastExpression) and not constrained:
+            constrained = True
+        elif isinstance(parent, Ps1ArrayLiteral):
+            if slot is not None:
+                return None
+            slot = next(
+                (at for at, element in enumerate(parent.elements) if element is cursor), None)
+            if slot is None:
+                return None
+        cursor = parent
+        parent = cursor.parent
+    value = assignment.value
+    if not isinstance(value, Expression):
+        return None
+    if constrained:
+        stored = value_under_declared_constraint(write, value)
+        return None if stored is None else _judged(stored, flow, chased)
+    if slot is None:
+        if constraint_converts(flow.semantic.binding_of(write), value):
+            return None
+        return _judged(value, flow, chased)
+    written = unwrap_parens(value)
+    if not isinstance(written, Ps1ArrayLiteral):
+        return None
+    targets = _multi_assignment_targets(assignment.target)
+    if targets is None or len(targets) != len(written.elements):
+        return None
+    element = written.elements[slot]
+    if not isinstance(element, Expression):
+        return None
+    return _judged(element, flow, chased)
+
+
+def _judged(
+    value: Expression,
+    flow: Ps1VariableFlow,
+    chased: frozenset[int],
+) -> Ps1TypeName | None:
+    """
+    The judgment on a stored value, wired with the two callbacks a variable needs there:
+    `type_at` for typing the receiver a vouched call names, this join for the value itself, and
+    the chase carried through so a cycle stays bounded.
+    """
+    return non_null_type(
+        value,
+        lambda var: type_at(var, flow),
+        lambda var: _non_null_type_at(var, flow, chased),
+    )
 
 
 def _stores_through(write: Node) -> TypeGuard[Ps1Variable]:

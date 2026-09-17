@@ -377,5 +377,70 @@ class TestPs1AbbreviatedParameter(unittest.TestCase):
         self.assertEqual(data.abbreviated_parameter('Set-Alias', 'v'), 'Value')
 
 
+class TestPs1MemberOriginQueries(unittest.TestCase):
+    """
+    The two type questions the reflection fold's argument guard turns on: whether the pipeline
+    enumerates a value of the type, and whether a value of it can be `$null`. Both are properties
+    of the host, answered from the collected interface set and `kind` field.
+    """
+
+    def test_a_string_is_not_enumerable_although_it_implements_the_interface(self):
+        # Measured on 5.1: `@('ab')` is one element. String implements the interface and is
+        # enumerated by nothing, so the query answers on the measurement rather than the set.
+        self.assertIs(data.is_enumerable('System.String'), False)
+
+    def test_a_value_type_implementing_the_interface_is_enumerable(self):
+        # Measured on 5.1: an ArraySegment of two ints flattens to two elements in `@(...)`.
+        self.assertIs(data.is_enumerable('System.ArraySegment`1'), True)
+
+    def test_an_array_is_enumerable_whatever_its_element_is(self):
+        self.assertIs(data.is_enumerable('System.Char[]'), True)
+
+    def test_a_scalar_value_type_is_not_enumerable(self):
+        self.assertIs(data.is_enumerable('System.Int32'), False)
+
+    def test_a_collection_class_is_enumerable(self):
+        self.assertIs(data.is_enumerable('System.Collections.Generic.List[string]'), True)
+
+    def test_an_uncollected_type_answers_nothing_about_enumeration(self):
+        self.assertIsNone(data.is_enumerable('Zzqnope'))
+
+    def test_a_struct_is_a_value_type(self):
+        self.assertTrue(data.type_is_value_type('System.Int32'))
+
+    def test_an_enum_is_a_value_type(self):
+        self.assertTrue(data.type_is_value_type('System.DayOfWeek'))
+
+    def test_a_class_is_not_a_value_type(self):
+        self.assertFalse(data.type_is_value_type('System.String'))
+
+    def test_an_array_is_not_a_value_type_whatever_its_element_is(self):
+        # `char[]` is a reference to an array of a struct, so the answer is read from the array
+        # before the element's record.
+        self.assertFalse(data.type_is_value_type('System.Char[]'))
+
+    def test_an_uncollected_type_is_not_a_value_type(self):
+        self.assertFalse(data.type_is_value_type('Zzqnope'))
+
+    def test_the_non_null_table_floors_a_member_that_is_not_a_method(self):
+        # `StringBuilder.Length` is a property, and a vouch keyed on it has no overloads to read.
+        with self.assertRaises(ValueError):
+            data._required_non_null_returns({('text.stringbuilder', 'length')})
+
+    def test_the_non_null_table_floors_an_unsealed_receiver(self):
+        # A subtype of `Exception` could override the member to return `$null`.
+        with self.assertRaises(ValueError):
+            data._required_non_null_returns({('system.exception', 'gettype')})
+
+    def test_the_non_null_table_floors_overloads_that_do_not_agree(self):
+        # `Marshal.PtrToStructure` is static, so its instance side names no return at all.
+        with self.assertRaises(ValueError):
+            data._required_non_null_returns({('runtime.interopservices.marshal', 'ptrtostructure')})
+
+    def test_the_generic_method_table_floors_a_member_that_is_not_a_method(self):
+        with self.assertRaises(ValueError):
+            data._required_reflection_method_keys({('text.stringbuilder', 'length')})
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -266,6 +266,7 @@ function Add-MethodMember {
     }
     $overload = [ordered]@{
         static     = [bool]$Method.IsStatic
+        generic    = [bool]$Method.IsGenericMethodDefinition
         returns    = Get-TypeText $Method.ReturnType
         parameters = @($parameters)
     }

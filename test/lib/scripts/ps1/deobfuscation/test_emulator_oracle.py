@@ -117,7 +117,7 @@ COVERAGE: dict[str, _Coverage] = {
     'System.Int32'   : _Coverage(112, 77),
     'System.Int64'   : _Coverage(27, 20),
     'System.SByte'   : _Coverage(2, 0),
-    'System.String'  : _Coverage(65, 24),
+    'System.String'  : _Coverage(66, 24),
     'System.UInt16'  : _Coverage(2, 0),
     'System.UInt32'  : _Coverage(4, 0),
     'System.UInt64'  : _Coverage(2, 0),
@@ -134,7 +134,7 @@ TYPES_OUTSIDE_THE_CURRENCY: dict[str, int] = {
 #: How many measured rows write a collection rather than one value. Such a row's two witnesses
 #: disagree by design — writing a collection unrolls it, so the container's type stands on the first
 #: line and its elements' on the rest — and the population is the rows whose witnesses agree.
-COLLECTION_ROWS: int = 6
+COLLECTION_ROWS: int = 7
 
 #: How many measured rows 5.1 produced no value for, by stepping over the erroring statement or by
 #: stopping the run. The population `ANSWERED_THROWS` is drawn from.

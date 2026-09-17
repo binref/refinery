@@ -1,44 +1,92 @@
 """
-A reflection property read spelled as the direct member it resolves to.
+Reflection property reads and method calls rewritten as the direct members they resolve to.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Transformer
+from refinery.lib.scripts import Expression
 from refinery.lib.scripts.ps1.analysis.effects import reflection_read_cannot_throw
-from refinery.lib.scripts.ps1.ast import get_member_name, is_builtin_variable, string_value
+from refinery.lib.scripts.ps1.analysis.values import non_null_type
+from refinery.lib.scripts.ps1.ast import (
+    get_member_name,
+    is_builtin_variable,
+    string_value,
+    unwrap_parens,
+)
 from refinery.lib.scripts.ps1.data import (
+    CONCRETE_GENERIC_METHODS,
     MemberLookup,
     canonical_member,
+    instance_overloads,
+    is_assignable_to,
+    is_enumerable,
     member_record,
+    named_type,
     resolve_type,
+    static_overloads,
+    type_is_value_type,
 )
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substituted
+from refinery.lib.scripts.ps1.deobfuscation.typenames import VariableTypeAwareTransformer
+from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
+    Ps1ArrayExpression,
+    Ps1ArrayLiteral,
+    Ps1CastExpression,
+    Ps1ExpressionStatement,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1Pipeline,
+    Ps1SubExpression,
     Ps1TypeExpression,
 )
 
+#: A void return is the one the two spellings differ on by a pipeline item: a void method called
+#: directly emits nothing where `Invoke` emits one `$null`, measured on 5.1 over `Array.Reverse`.
+_VOID = named_type('System.Void')
 
-class Ps1ReflectionReads(Transformer):
+#: What the `[type[]]` cast of the type-array spelling names.
+_TYPE_ARRAY = named_type('System.Type[]')
+
+
+def _spells_a_concrete_type(spelling: str | None) -> Ps1TypeName | None:
     """
-    Rewrite `[T].GetProperty('P').GetValue($Null)` to `[T]::P`.
+    The type a collected overload spelling names, or `None` where the spelling names nothing, a
+    by-reference, or an open generic. A method generic in its parameters or its return is one a
+    folded call cannot spell — the direct binder closes the generic where `Invoke` on the
+    definition throws — and a closed generic is fine, because its arguments are spelled.
+    """
+    if not spelling:
+        return None
+    resolved = resolve_type(spelling)
+    if resolved is None or resolved.byref or (resolved.arity and not resolved.arguments):
+        return None
+    return resolved
 
-    The rewrite is a re-spelling and not an evaluation, so what it has to preserve is only the ways
-    the spellings can differ. A getter that throws surfaces through `GetValue` wrapped in a
-    `MethodInvocationException` and through the direct read as itself — measured on 5.1 with
-    `[Console]::KeyAvailable` on a redirected stdin — which is why the member has to be one the
-    curated cannot-throw table vouches for. And `GetProperty` finds properties only, so a field the
-    same shape spells is a read 5.1 throws on; there is no `GetField` arm, because no sample has
-    needed one and a rewrite of a read the script never made is a different program. `GetProperty`
-    is also case-sensitive where member access is not, so a spelling whose case is not the member's
-    own finds no property on 5.1 and is left standing rather than rewritten to a value it throws on.
 
-    The argument binder is the reason no `GetMethod` arm exists: a `$null` argument an
-    `Invoke`d method receives as raw null throws where the direct spelling converts it, and a
-    wrong type throws with a different exception — measured — so a reflection method call is left
-    standing and this pass owns the one question a re-spelling can answer exactly.
+class Ps1ReflectionMembers(VariableTypeAwareTransformer):
+    """
+    Rewrite a reflection property read or method call as the direct member it resolves to:
+    `[T].GetProperty('P').GetValue($Null)` as `[T]::P`, and
+    `[T].GetMethod('M', [type[]]@(...)).Invoke($Null, @($a))` as `[T]::M($a)`.
+
+    The rewrite is a re-spelling, so what it has to preserve is only the ways the spellings can
+    differ. A getter that throws surfaces through `GetValue` wrapped in a
+    `MethodInvocationException` and through the direct read as itself — measured on 5.1 — so a
+    folded property has to be one the curated cannot-throw table vouches for; a method's own
+    throw surfaces identically in both spellings, so the method arm needs no such table. Both
+    `GetProperty` and `GetMethod` are case-sensitive where member access is not, so a spelling
+    in another case is left standing.
+
+    On the method arm the .NET binder sits between the spellings: `Invoke` hands the arguments
+    to the overload `GetMethod` selected, while the direct call lets the binder select again.
+    Each argument is therefore judged (`non_null_type`) for a non-null type the binder is
+    definitely given as it stands, and the selected overload has to be the only one of that
+    arity those types accept. A generic or a void return is refused — `Invoke` and the direct
+    spelling differ on both — as are the spellings this does not answer: `InvokeMember`,
+    `Activator::CreateInstance`, the three-argument `Invoke`, `MakeGenericMethod`, a static
+    target other than `$Null`, and an argument array that is not the `@(...)` spelling of plain
+    expressions.
     """
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
@@ -46,6 +94,15 @@ class Ps1ReflectionReads(Transformer):
         return substituted(node, self._direct_member(node))
 
     def _direct_member(self, node: Ps1InvokeMember) -> Expression | None:
+        """
+        The direct member the reflection call spells, or `None` where this will not answer.
+        """
+        read = self._direct_read(node)
+        if read is not None:
+            return read
+        return self._direct_call(node)
+
+    def _direct_read(self, node: Ps1InvokeMember) -> Expression | None:
         """
         The direct member read the `GetValue` call spells, or `None` where this will not answer.
         """
@@ -87,8 +144,6 @@ class Ps1ReflectionReads(Transformer):
         if spelled is None:
             return None
         if name != spelled:
-            # `Type.GetProperty(String)` is case-sensitive, so a spelling in another case finds no
-            # property on 5.1 and `GetValue` throws where the direct member reads a value.
             return None
         return Ps1MemberAccess(
             access=Ps1AccessKind.STATIC,
@@ -96,12 +151,195 @@ class Ps1ReflectionReads(Transformer):
             member=spelled,
         )
 
+    def _direct_call(self, node: Ps1InvokeMember) -> Expression | None:
+        """
+        The direct static method call the `Invoke` on a `GetMethod` result spells, or `None` where
+        this will not answer.
+        """
+        member = get_member_name(node.member)
+        if member is None or member.lower() != 'invoke':
+            return None
+        if node.access != Ps1AccessKind.INSTANCE:
+            return None
+        if len(node.arguments) != 2:
+            return None
+        if not is_builtin_variable(node.arguments[0], {'null'}):
+            return None
+        arguments = self._invocation_arguments(node.arguments[1])
+        if arguments is None:
+            return None
+        lookup = node.object
+        if not isinstance(lookup, Ps1InvokeMember):
+            return None
+        if lookup.access != Ps1AccessKind.INSTANCE:
+            return None
+        getter = get_member_name(lookup.member)
+        if getter is None or getter.lower() != 'getmethod':
+            return None
+        if lookup.object is None or not isinstance(lookup.object, Ps1TypeExpression):
+            return None
+        if len(lookup.arguments) != 2:
+            return None
+        name = string_value(lookup.arguments[0])
+        if name is None:
+            return None
+        type_array = self._type_array(lookup.arguments[1])
+        if type_array is None or len(type_array) != len(arguments):
+            return None
+        resolved = resolve_type(lookup.object.name)
+        if resolved is None:
+            return None
+        record = member_record(resolved, name)
+        if isinstance(record, MemberLookup):
+            return None
+        if record.get('kind') != 'method' or record.get('source') != 'reflection':
+            return None
+        if (resolved.generic_definition, name.lower()) in CONCRETE_GENERIC_METHODS:
+            return None
+        spelled = canonical_member(resolved, name)
+        if spelled is None:
+            return None
+        if name != spelled:
+            return None
+        overloads = [
+            *static_overloads(resolved, name),
+            *instance_overloads(resolved, name),
+        ]
+        matching = [
+            overload for overload in overloads
+            if self._matches_type_array(overload, type_array)
+        ]
+        if len(matching) != 1 or matching[0].get('static') is not True:
+            return None
+        selected = matching[0]
+        if _spells_a_concrete_type(selected.get('returns')) in (None, _VOID):
+            return None
+        if any(
+            _spells_a_concrete_type(parameter.get('type')) is None
+            for parameter in selected.get('parameters') or ()
+        ):
+            return None
+        judged = []
+        for argument, parameter in zip(arguments, selected.get('parameters') or ()):
+            origin = non_null_type(argument, self._type_of_variable, self._origin_of_variable)
+            if origin is None or not self._argument_binds_identically(origin, parameter):
+                return None
+            judged.append(origin)
+        applicable = [
+            overload for overload in overloads
+            if len(overload.get('parameters') or ()) == len(arguments)
+            and all(
+                is_assignable_to(origin, parameter['type']) is True
+                for origin, parameter in zip(judged, overload['parameters'])
+            )
+        ]
+        if len(applicable) != 1 or applicable[0] is not selected:
+            return None
+        return Ps1InvokeMember(
+            access=Ps1AccessKind.STATIC,
+            object=lookup.object,
+            member=name,
+            arguments=arguments,
+        )
+
+    @staticmethod
+    def _invocation_arguments(argument: Expression) -> list[Expression] | None:
+        """
+        The argument expressions the array subexpression hands `Invoke`, or `None` where the
+        second `Invoke` argument is not the `@(...)` spelling of plain expression statements. A
+        comma list without the wrapper, a scalar and a variable are declined spellings, and a
+        statement naming a value whose element count the wrapper decides is one the count guard
+        cannot see through.
+        """
+        spelled = unwrap_parens(argument)
+        if not isinstance(spelled, Ps1ArrayExpression):
+            return None
+        arguments: list[Expression] = []
+        for statement in spelled.body:
+            if not isinstance(statement, Ps1ExpressionStatement) or statement.expression is None:
+                return None
+            expression = unwrap_parens(statement.expression)
+            if isinstance(expression, (Ps1ArrayLiteral, Ps1SubExpression, Ps1Pipeline)):
+                return None
+            if not isinstance(expression, Expression):
+                return None
+            arguments.append(expression)
+        return arguments
+
+    @staticmethod
+    def _type_array(argument: Expression) -> list[Ps1TypeName] | None:
+        """
+        The types the type-array argument names, or `None` where it is not the `[type[]]@(...)`
+        spelling of type literals. A statement of the body may hold one type literal or a comma
+        list of them, which `@(...)` unrolls into one element each — a literal count is exact
+        where the argument arm's is not, which is why this accepts the array-literal statement
+        `_invocation_arguments` refuses.
+        """
+        cast = unwrap_parens(argument)
+        if not isinstance(cast, Ps1CastExpression):
+            return None
+        if resolve_type(cast.type_name) != _TYPE_ARRAY:
+            return None
+        spelled = None if cast.operand is None else unwrap_parens(cast.operand)
+        if not isinstance(spelled, Ps1ArrayExpression):
+            return None
+        types: list[Ps1TypeName] = []
+        for statement in spelled.body:
+            if not isinstance(statement, Ps1ExpressionStatement) or statement.expression is None:
+                return None
+            expression = unwrap_parens(statement.expression)
+            if isinstance(expression, Ps1ArrayLiteral):
+                literals = expression.elements
+            else:
+                literals = [expression]
+            for literal in literals:
+                literal = unwrap_parens(literal)
+                if not isinstance(literal, Ps1TypeExpression):
+                    return None
+                resolved = resolve_type(literal.name)
+                if resolved is None:
+                    return None
+                types.append(resolved)
+        return types
+
+    @staticmethod
+    def _matches_type_array(overload: dict, type_array: list[Ps1TypeName]) -> bool:
+        """
+        Whether the overload is the one `Type.GetMethod(String, Type[])` selects for *type_array*:
+        the same number of parameters, none by reference, each of the type the array names in its
+        position. .NET matches the parameter types exactly, and a byref parameter never matches,
+        because the array a script spells names `System.String` where the method wants
+        `System.String&`.
+        """
+        parameters = overload.get('parameters') or ()
+        if len(parameters) != len(type_array):
+            return False
+        for parameter, spelled in zip(parameters, type_array):
+            if parameter.get('byref') or resolve_type(parameter.get('type')) != spelled:
+                return False
+        return True
+
+    @staticmethod
+    def _argument_binds_identically(judged: Ps1TypeName, parameter: dict) -> bool:
+        """
+        Whether an argument of the judged non-null type reaches the method the same way in both
+        spellings. A type it is definitely assignable to the parameter cannot be converted in one
+        spelling and not the other, and an argument of a kind `@(...)` does not enumerate — a
+        String, or a value type implementing no enumerable interface — reaches `Invoke` as
+        exactly one argument where a collection flattens into several.
+        """
+        if is_assignable_to(judged, parameter['type']) is not True:
+            return False
+        if judged.definition == 'System.String':
+            return True
+        return type_is_value_type(judged) and is_enumerable(judged) is not True
+
     @staticmethod
     def _reads_a_static_target(arguments) -> bool:
         """
         Whether the `GetValue` arguments are the `$null` target alone — one spelling of it, or the
         two-argument one carrying no index, which a non-indexed property accepts and answers the
-        same value for. Any other target is a read of an instance the receiver does not vouch for.
+        same value for.
         """
         return len(arguments) in (1, 2) and all(
             is_builtin_variable(argument, {'null'})

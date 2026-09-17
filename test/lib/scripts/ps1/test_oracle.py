@@ -41,6 +41,7 @@ from test.lib.scripts.ps1.oracle import (
     windows_powershell,
 )
 
+from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.model import Ps1ErrorNode
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
@@ -3763,6 +3764,26 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
     "Write-Output ([object]::ReferenceEquals("
     "[Text.Encoding].GetProperty('UTF8').GetValue($Null), [Text.Encoding]::UTF8))":
         ('OUT\tSystem.Boolean\tTrue',),
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Byte[]\t104 105',
+            'OUT\tSystem.Byte\t104',
+            'OUT\tSystem.Byte\t105',
+        ),
+    "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.Byte[]\t104 105',
+            'OUT\tSystem.Byte\t104',
+            'OUT\tSystem.Byte\t105',
+        ),
+    "$t = [Text.StringBuilder]::new('ab').ToString(); Write-Output (,$t); Write-Output $t":
+        (
+            'OUT\tSystem.String\tab',
+            'OUT\tSystem.String\tab',
+        ),
 }
 
 
@@ -3794,6 +3815,12 @@ TYPE_DEFECTS: dict[str, str] = {
         '@( ) collects the single Object[] the body wrote. The interpreter unrolls it a second '
         'time, once where the statement contributes its value and again where the stream is '
         'appended to, and the array arrives as its two elements.',
+    "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+    ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t":
+        'The method answers a Byte[], and the constant the fold writes for it spells its elements '
+        'as the Int32 literals a numeral is, so the values and everything they print agree and the '
+        'recorded type of each item does not. The same spelling the fold produces is what the '
+        'direct call folds to, so the divergence is the renderer\'s and not the fold\'s.',
 }
 
 #: Which words 5.1 read as a command name, for each script whose corruption entry turns on where a
@@ -4346,6 +4373,57 @@ class TestPs1CommandTableCheckIsASubsetNotAnEquality(TestBase):
         measured[invented] = _NO_SUCH_ALIAS
         claimed = claimed_bindings(TABLE_TRANSCRIPTS)
         self.assertEqual([name for name in claimed if measured[name] != claimed[name]], [invented])
+
+
+#: Scans the collected static surface for generic methods whose signatures are fully concrete —
+#: parameters no generic parameter or by-reference appears in, and a return the same. The
+#: payload is the batch of collected type names, so the walk covers exactly what the capture did.
+_GENERIC_SCAN_SCRIPT = R'''
+$ErrorActionPreference = 'Stop'
+$blob = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@PAYLOAD@'))
+$names = ConvertFrom-Json $blob
+foreach ($name in $names) {
+    $type = [Type]::GetType($name)
+    if ($null -eq $type) { continue }
+    foreach ($method in $type.GetMethods([System.Reflection.BindingFlags]'Static, Public')) {
+        if (-not $method.IsGenericMethodDefinition) { continue }
+        $concrete = $true
+        foreach ($parameter in $method.GetParameters()) {
+            if ($parameter.ParameterType.ContainsGenericParameters) { $concrete = $false; break }
+            if ($parameter.ParameterType.IsByRef) { $concrete = $false; break }
+        }
+        if ($method.ReturnType.ContainsGenericParameters) { $concrete = $false }
+        if ($concrete) { Write-Output "$($type.FullName)::$($method.Name)" }
+    }
+}
+'''
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1CuratedMethodTablesRestOnMeasuredBeliefs(Ps1OracleTest):
+    """
+    The curated member tables the reflection fold reads, asked of the host rather than trusted.
+    The generic deny-table names the generic methods whose signatures are fully concrete —
+    exactly the set no spelling-based guard can see — so the live scan and the table are
+    compared as sets and a difference fails in either direction. The non-null vouch is pinned
+    the other way, by the corpus rows above: `corpus.TYPES` calls the vouched member and the
+    transcript records the return type and the value.
+    """
+
+    def test_the_generic_methods_with_concrete_signatures_are_the_ones_the_table_names(self):
+        found = set()
+        for batch in oracle._batches(data.collected_type_names()):
+            encoded = json.dumps(list(batch), separators=oracle._JSON_SEPARATORS)
+            payload = base64.b64encode(encoded.encode('utf-8')).decode('ascii')
+            scanned = oracle.run(_GENERIC_SCAN_SCRIPT.replace('@PAYLOAD@', payload))
+            for line in scanned.output.splitlines():
+                type_name, _, member = line.partition('::')
+                found.add((type_name, member.lower()))
+        named = {
+            (type_key.definition, member)
+            for type_key, member in data.CONCRETE_GENERIC_METHODS
+        }
+        self.assertEqual(found, named)
 
 
 class TestPs1NoCorpusTableListsTheSameScriptTwice(TestBase):

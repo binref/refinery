@@ -63,6 +63,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.data import (
+    NON_NULL_RETURNS,
     OBJ_COMMANDS,
     TYPE_ARG_COMMANDS,
     VARIABLE_TYPES,
@@ -70,6 +71,7 @@ from refinery.lib.scripts.ps1.data import (
     binary_outcome,
     command_output_types,
     conversion_outcome,
+    instance_overloads,
     is_assignable_to,
     named_type,
     operand_witnesses,
@@ -327,6 +329,63 @@ def resolve_expression_type(
             return None
         return resolve_member_type(obj_type, member_name)
     return None
+
+
+def non_null_type(
+    expr: Expression,
+    type_of_variable: Ps1VariableTyping | None,
+    join: Ps1VariableTyping | None,
+) -> Ps1TypeName | None:
+    """
+    The type this expression's value carries where the value is established not to be `$null`, or
+    `None` where that is not established. Three origins establish one: a literal, read through
+    `read` — which answers `$null` for the `$null` literal and refuses here; an instance call of
+    a member the curated `non_null` table vouches for, answering the return type its overloads
+    agree on; and a variable, which is the *join*'s to answer,
+    `refinery.lib.scripts.ps1.analysis.variable_types.non_null_type_at` being the one
+    implementation. Everything else refuses, which is a fold declined and never a guess.
+    """
+    unwrapped = unwrap_parens(expr)
+    if not isinstance(unwrapped, Expression):
+        return None
+    fact = read(unwrapped)
+    if isinstance(fact, (Ps1Typed, Ps1Constant)):
+        return fact.type
+    if isinstance(unwrapped, Ps1Variable):
+        return None if join is None else join(unwrapped)
+    if isinstance(unwrapped, Ps1InvokeMember):
+        return _vouched_return(unwrapped, type_of_variable)
+    return None
+
+
+def _vouched_return(
+    call: Ps1InvokeMember,
+    type_of_variable: Ps1VariableTyping | None,
+) -> Ps1TypeName | None:
+    """
+    The return a curated non-null vouch answers an instance call with, or `None` where the call is
+    not one it covers. The receiver is typed rather than origin-traced, because a receiver that is
+    `$null` at runtime makes the call throw before the caller's question is reached, and the
+    sealedness floor on every vouch is what keeps the answer from naming a subtype member.
+    """
+    if call.object is None or call.access is not Ps1AccessKind.INSTANCE:
+        return None
+    member = get_member_name(call.member)
+    if member is None:
+        return None
+    receiver = resolve_expression_type(call.object, type_of_variable)
+    if receiver is None:
+        return None
+    if (receiver.generic_definition, member.lower()) not in NON_NULL_RETURNS:
+        return None
+    returns = {
+        resolve_type(overload['returns'])
+        for overload in instance_overloads(receiver, member)
+        if overload.get('returns')
+    }
+    if None in returns or len(returns) != 1:
+        return None
+    return next(iter(returns))
 
 
 #: Commands whose declared `[OutputType]` is a trustworthy *superset* of what they emit at runtime,
