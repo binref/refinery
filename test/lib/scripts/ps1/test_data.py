@@ -296,6 +296,57 @@ class TestPs1MetadataViews(unittest.TestCase):
         self.assertEqual(
             data.VARIABLE_TYPES['pscmdlet'], 'system.management.automation.psscriptcmdlet')
 
+    def test_the_engine_enum_the_capture_lacks_has_the_surface_the_capture_gives_an_enum(self):
+        """
+        `ActionPreference` is supplied beside the capture, and `ConfirmImpact` — its sibling in the
+        engine, which the capture does report — is the control: reflection gives every enum the
+        instance surface of `System.Enum`, its `value__` and one static field per member, so the
+        two records agree everywhere but in the members they name.
+        """
+        engine = data.type_members('System.Management.Automation.ActionPreference')
+        captured = data.type_members('System.Management.Automation.ConfirmImpact')
+        assert engine is not None and captured is not None
+
+        def own_fields(members: dict[str, dict]) -> dict[str, dict]:
+            return {
+                name: record for name, record in members.items()
+                if record['kind'] == 'field' and record['static']
+            }
+
+        def shared_surface(members: dict[str, dict]) -> dict[str, dict]:
+            return {
+                name: record for name, record in members.items() if name not in own_fields(members)
+            }
+
+        self.assertEqual(shared_surface(engine), shared_surface(captured))
+        self.assertEqual(
+            set(own_fields(engine)),
+            {'SilentlyContinue', 'Stop', 'Continue', 'Inquire', 'Ignore', 'Suspend'},
+        )
+        for record in own_fields(engine).values():
+            self.assertEqual(record['type'], 'System.Management.Automation.ActionPreference')
+        self.assertTrue(data.type_is_sealed('System.Management.Automation.ActionPreference'))
+        self.assertTrue(data.is_assignable_to(
+            'System.Management.Automation.ActionPreference', 'System.Enum'))
+
+    def test_the_captured_type_table_is_not_where_the_engine_enum_is_supplied(self):
+        self.assertNotIn('System.Management.Automation.ActionPreference', data._TYPES['types'])
+
+    def test_an_enum_member_is_read_by_name_and_by_ordinal(self):
+        enum = 'System.Management.Automation.ActionPreference'
+        self.assertTrue(data.is_enum(enum))
+        self.assertTrue(data.is_enum('Management.Automation.ConfirmImpact'))
+        self.assertFalse(data.is_enum('int'))
+        self.assertFalse(data.is_enum('System.Enum'))
+        self.assertEqual(data.enum_ordinal(enum, 'silentlycontinue'), 0)
+        self.assertEqual(data.enum_ordinal(enum, 'Stop'), 1)
+        self.assertIsNone(data.enum_ordinal(enum, 'Break'))
+        self.assertEqual(data.enum_name(enum, 2), 'Continue')
+        self.assertIsNone(data.enum_name(enum, 6))
+        self.assertEqual(data.enum_ordinal('System.Management.Automation.ConfirmImpact', 'High'), 3)
+        self.assertIsNone(data.enum_ordinal('int', 'Stop'))
+        self.assertIsNone(data.enum_name('int', 1))
+
     def test_common_parameters_carry_the_out_variable_aliases(self):
         # The common parameters are excluded from CMDLET_PARAMETERS; this is the one view that keeps
         # them, and the out-variable purity check reads their aliases from here rather than

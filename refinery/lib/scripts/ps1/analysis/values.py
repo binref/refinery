@@ -71,6 +71,8 @@ from refinery.lib.scripts.ps1.data import (
     binary_outcome,
     command_output_types,
     conversion_outcome,
+    enum_name,
+    enum_ordinal,
     instance_overloads,
     is_assignable_to,
     named_type,
@@ -263,6 +265,18 @@ _OBJECT_ARRAY = _type('System.Object[]')
 #: distinction the Char-erasure phase exists to keep — a `Char[]` has no literal, so `render` writes
 #: none and a fold that observes one reads its type rather than spelling its value.
 _CHAR_ARRAY = _type('System.Char[]')
+
+#: The enums whose values the domain computes, which are the two the engine's preference variables
+#: hold. An enum value is a `Ps1Constant` of its type whose payload is the ordinal, and the rules
+#: `_to_enum` and `_from_enum` apply are the ones 5.1 applies to an enum that carries no `[Flags]`
+#: and has no negative member: an ordinal is accepted only where a member holds it, and the width
+#: is Int32. A `[Flags]` enum accepts any combination of its members and an enum with a negative
+#: member accepts every ordinal, and the capture does not record whether an enum carries `[Flags]`,
+#: so no other enum is computed and a cast to one is left to the grid, which has no cell for it.
+_FOLDABLE_ENUMS = frozenset({
+    _type('System.Management.Automation.ActionPreference'),
+    _type('System.Management.Automation.ConfirmImpact'),
+})
 
 
 def resolve_expression_type(
@@ -898,8 +912,10 @@ def coerced_text(fact: Ps1Fact) -> str | None:
 
 
 #: The types outside the integer widths whose text carries no culture at all. The widths are not
-#: listed with them because `_INTEGER_RANGE` is already the one place they are named.
-_CULTURE_FREE = frozenset({_BOOLEAN, _CHAR, _STRING})
+#: listed with them because `_INTEGER_RANGE` is already the one place they are named. An enum
+#: writes its member name, which no culture spells differently, and a loader's `iex` is routinely
+#: `$VerbosePreference.ToString()[1, 3] + 'x'`, so the enums the domain computes are here too.
+_CULTURE_FREE = frozenset({_BOOLEAN, _CHAR, _STRING}) | _FOLDABLE_ENUMS
 
 
 def invariant_text(fact: Ps1Fact) -> str | None:
@@ -1766,6 +1782,48 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
 
 
+def _to_enum(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
+    """
+    What `[target] fact` produces for one of the `_FOLDABLE_ENUMS`, carried as a `Ps1Constant` of
+    the enum whose payload is the ordinal. A String is matched against the member names, and one
+    that names no member is left alone rather than called a throw: 5.1 also reads a String of digits
+    as an ordinal and a unique prefix as the member it abbreviates, and neither is computed here. A
+    number is its own ordinal only where a member holds it — `[ActionPreference]6` and
+    `[ActionPreference]300` throw, because 5.1 checks that the ordinal is defined before it
+    converts — so an undefined one is a certain throw and not a value.
+    """
+    if isinstance(fact, Ps1Constant) and fact.type == _STRING and isinstance(fact.payload, str):
+        ordinal = enum_ordinal(target, fact.payload)
+        return NOTHING if ordinal is None else Ps1Outcome(NEVER, Ps1Constant(target, ordinal))
+    number = integer_of(fact)
+    if number is None:
+        return NOTHING
+    if enum_name(target, number) is None:
+        return Ps1Outcome(ALWAYS, UNKNOWN)
+    return Ps1Outcome(NEVER, Ps1Constant(target, number))
+
+
+def _from_enum(fact: Ps1Constant, target: Ps1TypeName) -> Ps1Outcome:
+    """
+    What `[target] <enum>` produces: 5.1 reads an enum as its ordinal for a Boolean or a number and
+    as its member name for a String, so `[bool]` is the ordinal against zero, an integer width is
+    the ordinal converted as an Int32 is, and a String is the name. `_to_enum` mints no ordinal
+    that names no member, so the name is always there to read; a payload that is not an ordinal is
+    a malformed fact and answers nothing.
+    """
+    ordinal = fact.payload
+    if not isinstance(ordinal, int) or isinstance(ordinal, bool):
+        return NOTHING
+    if target == _BOOLEAN:
+        return Ps1Outcome(NEVER, Ps1Constant(_BOOLEAN, ordinal != 0))
+    if target == _STRING:
+        name = enum_name(fact.type, ordinal)
+        return NOTHING if name is None else Ps1Outcome(NEVER, Ps1Constant(_STRING, name))
+    if target in _INTEGER_RANGE:
+        return convert(Ps1Constant(_INT32, ordinal), target)
+    return NOTHING
+
+
 def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     """
     What `[target] fact` produces, read from the measured conversion grid exactly as `apply` reads
@@ -1789,9 +1847,19 @@ def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     settled by what is written — always a `Char[]` — so the only thing the source decides is whether
     an element throws, which is `convert` to a Char asked of each. That is why it is the one target
     here whose row is composed rather than measured.
+
+    An enum in `_FOLDABLE_ENUMS`, as the target or as the operand, is answered by `_to_enum` and
+    `_from_enum` rather than the grid, which was captured over the scalar types and holds no cell
+    for an enum. Those two are the deliberate exception to reading a cell: the rules they apply
+    are 5.1's own for an enum without `[Flags]`, and the gate is what keeps them to the enums the
+    rules were checked for.
     """
     if target == _CHAR_ARRAY:
         return _to_char_array(fact)
+    if target in _FOLDABLE_ENUMS:
+        return _to_enum(fact, target)
+    if isinstance(fact, Ps1Constant) and fact.type in _FOLDABLE_ENUMS:
+        return _from_enum(fact, target)
     source = _grid_type(fact)
     cell = None if source is None else conversion_outcome(target, source)
     if cell is None:
@@ -3485,11 +3553,12 @@ _CAST_SPELLING = {
     _UINT64: 'uint64',
 }
 
-#: The types a cast *spells* rather than converts to, which is the six widths above and the `Char`
-#: `_rendered_character` writes the same way. One set keys both directions — `render` writes a cast
-#: for exactly these and `read` reads one back for exactly these — so neither can grow without the
-#: other and `read(render(fact)) == fact` cannot quietly stop holding.
-_SPELLED_BY_A_CAST = frozenset(_CAST_SPELLING) | {_CHAR}
+#: The types a cast *spells* rather than converts to, which is the six widths above, the `Char`
+#: `_rendered_character` writes the same way and the enums `_rendered_enum` writes as the cast of
+#: a member name. One set keys both directions — `render` writes a cast for exactly these and
+#: `read` reads one back for exactly these — so neither can grow without the other and
+#: `read(render(fact)) == fact` cannot quietly stop holding.
+_SPELLED_BY_A_CAST = frozenset(_CAST_SPELLING) | {_CHAR} | _FOLDABLE_ENUMS
 
 
 def render(fact: Ps1Fact) -> Expression | None:
@@ -3523,6 +3592,8 @@ def render(fact: Ps1Fact) -> Expression | None:
         return make_string_literal(payload) if isinstance(payload, str) else None
     if fact.type == _CHAR:
         return _rendered_character(payload)
+    if fact.type in _FOLDABLE_ENUMS:
+        return _rendered_enum(fact.type, payload)
     if fact.type == _OBJECT_ARRAY:
         return _rendered_array(payload) if isinstance(payload, tuple) else None
     if fact.type == _DOUBLE:
@@ -3593,6 +3664,20 @@ def _rendered_character(payload) -> Expression | None:
     if not isinstance(payload, str) or len(payload) != 1:
         return None
     return Ps1CastExpression(type_name='char', operand=Ps1IntegerLiteral(raw=str(ord(payload))))
+
+
+def _rendered_enum(enum: Ps1TypeName, payload) -> Expression | None:
+    """
+    An enum member, written as the cast of its name to its type spelled in full, which is what
+    `_cast_spelling` reads back through `_to_enum`. `_to_enum` mints no ordinal that names no
+    member, so the `None` for one is the answer `render` gives every payload that carries no value.
+    """
+    if isinstance(payload, bool) or not isinstance(payload, int):
+        return None
+    name = enum_name(enum, payload)
+    if name is None:
+        return None
+    return Ps1CastExpression(type_name=str(enum), operand=make_string_literal(name))
 
 
 def _rendered_array(elements: tuple[Ps1Fact, ...]) -> Expression | None:

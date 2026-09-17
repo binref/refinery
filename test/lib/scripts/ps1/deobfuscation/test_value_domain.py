@@ -1030,3 +1030,95 @@ class TestPs1CountingACollectionSpelledSeveralWays(TestPs1):
 
     def test_a_char_array_one_level_inside_the_array_operator_stays_a_single_element(self):
         self.assertEqual(self._deobfuscate('$x = @([char[]](72, 73, 74), 99).Count'), '$x = 2')
+
+
+class TestPs1APreferenceVariableIsAnEnumWhoseValueIsItsOrdinal(TestPs1):
+    """
+    The seven preference variables hold members of the engine enums `ActionPreference` and
+    `ConfirmImpact`. An enum member's text is its name and its value is its ordinal, and 5.1 reads
+    the ordinal for a Boolean and for a number and the name for a String: `$VerbosePreference` holds
+    `SilentlyContinue`, ordinal 0, and is false though its name is not empty, where
+    `$ErrorActionPreference` holds `Continue`, ordinal 2, and `$ConfirmPreference` holds `High`,
+    ordinal 3.
+    """
+
+    def test_a_silently_continue_preference_is_false(self):
+        self.assertEqual(self._deobfuscate('$x = [bool]$VerbosePreference'), '$x = $False')
+
+    def test_a_continue_preference_is_true(self):
+        self.assertEqual(self._deobfuscate('$x = [bool]$ErrorActionPreference'), '$x = $True')
+
+    def test_a_number_reads_the_ordinal(self):
+        for source, expected in [
+            ('$x = [int]$VerbosePreference', '$x = 0'),
+            ('$x = [int]$ErrorActionPreference', '$x = 2'),
+            ('$x = [int]$ConfirmPreference', '$x = 3'),
+            ('$x = [byte]$ConfirmPreference', '$x = [byte]3'),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate(source), expected)
+
+    def test_a_string_reads_the_member_name(self):
+        for source, expected in [
+            ('$x = [string]$VerbosePreference', "$x = 'SilentlyContinue'"),
+            ('$x = $VerbosePreference.ToString()', "$x = 'SilentlyContinue'"),
+            ('$x = "$VerbosePreference"', "$x = 'SilentlyContinue'"),
+            ("$x = 'a' + $VerbosePreference", "$x = 'aSilentlyContinue'"),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate(source), expected)
+
+    def test_the_invoke_expression_a_loader_spells_out_of_a_preference_name_is_recovered(self):
+        self.assertEqual(
+            self._deobfuscate("$x = $VerbosePreference.ToString()[1, 3] + 'x' -join ''"),
+            "$x = 'iex'",
+        )
+
+    def test_a_member_name_is_spelled_the_way_the_enum_spells_it(self):
+        self.assertEqual(
+            self._deobfuscate("$x = [string][System.Management.Automation.ActionPreference]'stop'"),
+            "$x = 'Stop'",
+        )
+
+    def test_an_ordinal_is_the_member_that_holds_it(self):
+        self.assertEqual(
+            self._deobfuscate('$x = [string][System.Management.Automation.ActionPreference]1'),
+            "$x = 'Stop'",
+        )
+
+    def test_an_ordinal_no_member_holds_is_a_throw_that_decides_no_guard(self):
+        for cast in [
+            '[System.Management.Automation.ActionPreference]6',
+            '[System.Management.Automation.ActionPreference]300',
+            '[System.Management.Automation.ActionPreference]-1',
+            '[System.Management.Automation.ConfirmImpact]9',
+        ]:
+            with self.subTest(cast):
+                self._assertKept(F"if ({cast}) {{ Write-Host 'A' }} else {{ Write-Host 'B' }}")
+
+    def test_a_name_no_member_holds_is_left_standing(self):
+        source = "$x = [bool][System.Management.Automation.ActionPreference]'Nope'"
+        self.assertEqual(self._deobfuscate(source), source)
+
+    def test_a_preference_compared_to_a_name_is_left_standing(self):
+        self.assertEqual(
+            self._deobfuscate("$x = $VerbosePreference -eq 'SilentlyContinue'"),
+            "$x = [System.Management.Automation.ActionPreference]'SilentlyContinue' -Eq 'SilentlyContinue'",
+        )
+
+
+class TestPs1AnEnumOutsideTheEngineIsNotComputed(TestPs1):
+    """
+    `ConsoleColor` is a captured enum whose `Black` is the ordinal 0, so 5.1 takes the `else`
+    branch below. The domain computes the two engine enums only, because 5.1's rule for which
+    ordinals an enum accepts differs for a `[Flags]` enum and for one with a negative member and
+    the capture does not say which an enum is. The guard is left standing, which is the cost of
+    that gate and not a decision.
+    """
+
+    def test_a_guard_on_a_captured_enum_is_left_standing(self):
+        self._assertKept("if ([ConsoleColor]'Black') { Write-Host 'A' } else { Write-Host 'B' }")
+
+    def test_a_cast_to_a_captured_enum_is_left_standing(self):
+        source = '$x = [int][DayOfWeek]9'
+        self.assertEqual(self._deobfuscate(source), source)

@@ -53,7 +53,13 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.data import PS1_KNOWN_VARIABLES, SHAPE_MEMBERS
+from refinery.lib.scripts.ps1.data import (
+    PS1_KNOWN_VARIABLES,
+    SHAPE_MEMBERS,
+    VARIABLE_TYPES,
+    is_enum,
+    resolve_type,
+)
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute, substitute_field
 from refinery.lib.scripts.ps1.model import (
@@ -127,6 +133,23 @@ PS1_ENV_CONSTANTS = {
     and '{u}' not in value
     and '{h}' not in value
 }
+
+
+def _ambient_default_expression(key: str, value: str) -> Expression:
+    """
+    The expression that spells an engine default: the text `_PS1_DEFAULT_VARIABLES` records, under
+    the cast of its type where `refinery.lib.scripts.ps1.data.VARIABLE_TYPES` says the variable
+    holds an enum. The preference variables hold `ActionPreference` and `ConfirmImpact` members,
+    whose text is a name and whose value is an ordinal — `SilentlyContinue` is the falsy 0 — and
+    the bare name would be read as the truthy String it spells.
+    """
+    literal = make_string_literal(value)
+    declared = VARIABLE_TYPES.get(key)
+    holder = None if declared is None else resolve_type(declared)
+    if holder is None or not is_enum(holder):
+        return literal
+    return Ps1CastExpression(type_name=str(holder), operand=literal)
+
 
 PS1_AUTOMATIC_VARIABLES = frozenset({
     '?',
@@ -701,7 +724,7 @@ class _ConstantTable:
                 touched.add(binding_key(node))
         for key, value in _PS1_DEFAULT_VARIABLES.items():
             if key not in touched:
-                self._add_ambient(key, make_string_literal(value))
+                self._add_ambient(key, _ambient_default_expression(key, value))
         for name, value in PS1_ENV_CONSTANTS.items():
             key = F'env:{name}'
             if key not in touched:

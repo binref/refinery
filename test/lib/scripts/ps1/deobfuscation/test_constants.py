@@ -4,7 +4,9 @@ from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib.scripts.ps1.data import VARIABLE_TYPES, enum_ordinal, is_enum
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantInlining
+from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_DEFAULT_VARIABLES
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -649,7 +651,7 @@ class TestPs1ConstantInliningAcrossControlFlow(TestPs1):
             Ps1ConstantInlining)
         self.assertEqual(
             self._apply('Write-Host $ErrorActionPreference', Ps1ConstantInlining),
-            "Write-Host 'Continue'")
+            "Write-Host ([System.Management.Automation.ActionPreference]'Continue')")
 
     def test_a_branch_that_writes_nothing_still_leaves_the_value_standing(self):
         """
@@ -666,11 +668,52 @@ class TestPs1ConstantInliningAcrossControlFlow(TestPs1):
             "while ($c) {\n  Write-Host 'a'\n}")
 
 
+class TestPs1AnEngineDefaultIsAMemberOfTheTypeTheVariableHolds(TestPs1):
+    """
+    The capture types every preference variable as an enum, and the default table spells each
+    default as a member's name. The two tables are kept apart, so the name the one records has to
+    be a member of the enum the other records, or the inlined cast would throw where 5.1 reads the
+    default.
+    """
+
+    def test_every_enum_typed_default_names_a_member_of_its_enum(self):
+        enum_typed = {
+            key: value for key, value in _PS1_DEFAULT_VARIABLES.items()
+            if is_enum(VARIABLE_TYPES.get(key, ''))
+        }
+        self.assertEqual(
+            set(enum_typed),
+            {
+                'confirmpreference',
+                'debugpreference',
+                'erroractionpreference',
+                'informationpreference',
+                'progresspreference',
+                'verbosepreference',
+                'warningpreference',
+            },
+        )
+        for key, value in enum_typed.items():
+            with self.subTest(key):
+                self.assertIsNotNone(enum_ordinal(VARIABLE_TYPES[key], value))
+
+    def test_the_confirm_preference_default_is_the_confirm_impact_high(self):
+        self.assertEqual(
+            self._apply('Write-Host $ConfirmPreference', Ps1ConstantInlining),
+            "Write-Host ([System.Management.Automation.ConfirmImpact]'High')")
+
+
 class TestPs1ConstantInliningExtra(TestPs1):
 
-    def test_preference_variable_indexing(self):
-        result = self._deobfuscate("Write-Output ($VerbosePreference[0] + $VerbosePreference[1])")
-        self.assertNotIn('VerbosePreference', result)
+    def test_preference_variable_indexing_is_left_standing(self):
+        """
+        `$VerbosePreference` holds an enum member and not the name it prints, so an index into it
+        is not an index into that name. The String model answered `'Si'`, the first two characters
+        of a name 5.1 never indexes; nothing computes an index over the member, and the read is
+        left standing rather than substituted.
+        """
+        source = 'Write-Output ($VerbosePreference[0] + $VerbosePreference[1])'
+        self.assertEqual(self._deobfuscate(source), source)
 
     def test_preference_variable_not_substituted_when_assigned(self):
         result = self._deobfuscate("$VerbosePreference = 'Custom'\nWrite-Output $VerbosePreference[1]")

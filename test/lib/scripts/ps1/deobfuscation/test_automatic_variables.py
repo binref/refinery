@@ -182,26 +182,25 @@ class TestPs1APreferenceVariableIsAnEnumAndNotTheNameItPrints(_Ps1AutomaticVaria
     `$VerbosePreference`, `$DebugPreference` and `$InformationPreference` each hold the
     `ActionPreference` member `SilentlyContinue`, whose numeric value is zero. 5.1 reads that as
     false, so a guard on one of these takes the `else` branch — even though the name prints as a
-    non-empty string.
-
-    The deobfuscator substitutes the printed spelling and tests that string for truth, which it
-    always is. It decides these guards the opposite way and deletes the branch 5.1 runs.
+    non-empty string. `$ErrorActionPreference` holds `Continue`, whose value is two, and a guard on
+    it takes the `then` branch for that value and not because its name is non-empty.
     """
 
-    @unittest.expectedFailure
     def test_the_verbose_preference_takes_the_else_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($VerbosePreference) {{ {_OTHER} }} else {{ {_PAYLOAD} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
     def test_the_debug_preference_takes_the_else_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($DebugPreference) {{ {_OTHER} }} else {{ {_PAYLOAD} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
     def test_the_information_preference_takes_the_else_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($InformationPreference) {{ {_OTHER} }} else {{ {_PAYLOAD} }}', _PAYLOAD)
+
+    def test_the_error_action_preference_takes_the_then_branch(self):
+        self._assertDecidesTo(
+            F'if ($ErrorActionPreference) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _PAYLOAD)
 
 
 class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariables):

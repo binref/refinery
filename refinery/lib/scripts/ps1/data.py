@@ -69,7 +69,76 @@ _ACCELERATORS: dict[str, str] = {
     **_PARSER_TYPE_KEYWORDS,
     **{_alias.lower(): _full for _alias, _full in _TYPES['accelerators'].items()},
 }
-_TYPE_TABLE: dict[str, dict] = _TYPES['types']
+
+
+def _engine_enum(name: str, members: dict[str, int]) -> dict:
+    """
+    A record for an enum the engine defines, shaped as the capture shapes one so that the one
+    resolver answers for it: reflection gives every enum the instance surface of `System.Enum`, an
+    Int32 `value__` and one static field per member, which is the record the capture holds for
+    `ConfirmImpact` and what is composed here for a sibling it does not hold.
+    """
+    inherited = {
+        member: record
+        for member, record in _TYPES['types']['System.Enum']['members'].items()
+        if record['kind'] == 'method'
+        and not any(overload['static'] for overload in record['overloads'])
+    }
+    fields = {
+        member: {
+            'kind': 'field',
+            'source': 'reflection',
+            'type': name,
+            'static': True,
+            'readable': True,
+            'writable': False,
+        }
+        for member in members
+    }
+    ordinal = {
+        'kind': 'field',
+        'source': 'reflection',
+        'type': 'System.Int32',
+        'static': False,
+        'readable': True,
+        'writable': True,
+    }
+    return {
+        'kind': 'enum',
+        'base': 'System.Enum',
+        'sealed': True,
+        'abstract': False,
+        'interfaces': ['System.IComparable', 'System.IConvertible', 'System.IFormattable'],
+        'enum_values': {member: str(value) for member, value in members.items()},
+        'seeded': False,
+        'member_order': None,
+        'constructors': [],
+        'members': {**inherited, **fields, 'value__': ordinal},
+    }
+
+
+#: Types the engine defines that the capture does not report, kept beside the collected table for
+#: the reason `_PARSER_TYPE_KEYWORDS` is: a record written by hand must not borrow the provenance of
+#: the collected ones. `ActionPreference` is the type of six of the seven `$…Preference` variables
+#: — the capture does report `ConfirmImpact`, the seventh's — and its members are those of Windows
+#: PowerShell 5.1, where a later engine adds `Break`; a recapture on a 5.1 host retires this entry,
+#: and one on a later host must not be allowed to.
+_ENGINE_TYPES: dict[str, dict] = {
+    'System.Management.Automation.ActionPreference': _engine_enum(
+        'System.Management.Automation.ActionPreference',
+        {
+            'SilentlyContinue': 0,
+            'Stop': 1,
+            'Continue': 2,
+            'Inquire': 3,
+            'Ignore': 4,
+            'Suspend': 5,
+        },
+    ),
+}
+
+#: The .NET types the resolver answers for: the collected table and, beside it, the engine's own.
+_TYPE_TABLE: dict[str, dict] = {**_TYPES['types'], **_ENGINE_TYPES}
 
 #: Commands the capture reports that the host does not have. `Format-Hex` leaked in from a shadowing
 #: PowerShell 7.0 `Microsoft.PowerShell.Utility` module; a 5.1 host cannot run it.
@@ -1107,6 +1176,57 @@ def member_names(name: str | Ps1TypeName) -> list[str] | None:
     """
     members = view_members(name)
     return None if members is None else sorted(members)
+
+
+def _enum_values(name: str | Ps1TypeName) -> dict[str, int] | None:
+    """
+    A type's enum members as a name-to-ordinal map, or `None` when the type does not resolve or is
+    not an enum. The capture records the ordinal as a string, read here as the number that selects
+    the member, so a value domain can read `[bool]`/`[int]` off it and its name off the reverse.
+    """
+    key = _member_surface(name)
+    record = None if key is None else _type_record(key)
+    if record is None or record.get('kind') != 'enum':
+        return None
+    values = record.get('enum_values') or {}
+    return {member: int(ordinal) for member, ordinal in values.items()}
+
+
+def is_enum(name: str | Ps1TypeName) -> bool:
+    """
+    Whether the type resolves and is an enum.
+    """
+    return _enum_values(name) is not None
+
+
+def enum_ordinal(name: str | Ps1TypeName, member: str) -> int | None:
+    """
+    The integer an enum member denotes, matched case-insensitively as 5.1 resolves it, or `None`
+    when the type is not an enum or names no such member.
+    """
+    values = _enum_values(name)
+    if values is None:
+        return None
+    lower = member.lower()
+    for stored, ordinal in values.items():
+        if stored.lower() == lower:
+            return ordinal
+    return None
+
+
+def enum_name(name: str | Ps1TypeName, ordinal: int) -> str | None:
+    """
+    The member an enum ordinal spells, or `None` when the type is not an enum or no member holds
+    that ordinal. A value carrying an ordinal no member names has no spelling, exactly as 5.1 writes
+    the number itself for it.
+    """
+    values = _enum_values(name)
+    if values is None:
+        return None
+    for member, stored in values.items():
+        if stored == ordinal:
+            return member
+    return None
 
 
 def canonical_member(name: str | Ps1TypeName, member: str) -> str | None:
