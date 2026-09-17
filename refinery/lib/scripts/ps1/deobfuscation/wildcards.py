@@ -35,6 +35,7 @@ from refinery.lib.scripts.ps1.data import (
     GET_MEMBER_ALIASES,
     KNOWN_CMDLETS,
     PS1_KNOWN_VARIABLES,
+    is_enum,
     member_names,
 )
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substituted
@@ -186,10 +187,16 @@ def _candidates_from_type(
     expr: Expression | None,
     type_of_variable: Ps1VariableTyping | None = None,
 ) -> list[str] | None:
+    """
+    The names `Get-Member` lists for a value of the expression's type, or `None` where the type
+    does not resolve or is an enum: `member_names` lists an enum's values, which is what may
+    follow `::` on the type, where `Get-Member` on a value of it lists the instance surface of
+    `System.Enum`, and a name matched against the wrong list is a member 5.1 never writes.
+    """
     if expr is None:
         return None
     type_name = resolve_expression_type(expr, type_of_variable)
-    if type_name is None:
+    if type_name is None or is_enum(type_name):
         return None
     return member_names(type_name)
 

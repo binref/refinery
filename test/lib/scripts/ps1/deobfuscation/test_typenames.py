@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
@@ -21,6 +23,39 @@ class TestPs1TypeSystemSimplifications(TestPs1):
     def test_get_member_index_out_of_range_preserved(self):
         result = self._deobfuscate('($ExecutionContext | Get-Member)[999].Name')
         self.assertIn('[999].Name', result)
+
+    def test_get_member_over_an_enum_value_is_left_standing(self):
+        """
+        `Get-Member` on a value of an enum lists the instance surface of `System.Enum`, not the
+        enum's values, so the index is not resolved against the values.
+        """
+        source = "Write-Host ([System.ConsoleColor]'Red' | Get-Member)[0].Name"
+        self.assertEqual(self._deobfuscate(source), source)
+
+    def test_get_member_over_a_preference_variable_is_left_standing(self):
+        self.assertEqual(
+            self._deobfuscate('Write-Host ($VerbosePreference | Get-Member)[0].Name'),
+            "Write-Host ([System.Management.Automation.ActionPreference]'SilentlyContinue'"
+            ' | Get-Member)[0].Name',
+        )
+
+    def test_get_member_filtered_by_a_wildcard_over_a_preference_variable_is_left_standing(self):
+        self.assertEqual(
+            self._deobfuscate(
+                "Write-Host (($VerbosePreference | Get-Member | Where-Object { $_.Name -like 'Su*' }).Name)"),
+            cleandoc("""
+                Write-Host (([System.Management.Automation.ActionPreference]'SilentlyContinue' | Get-Member | Where-Object {
+                  $_.Name -Like 'Su*'
+                }).Name)
+            """),
+        )
+
+    @unittest.expectedFailure
+    def test_get_member_over_a_preference_variable_lists_the_enum_instance_members(self):
+        self.assertEqual(
+            self._deobfuscate('Write-Host ($VerbosePreference | Get-Member)[0].Name'),
+            "Write-Host 'CompareTo'",
+        )
 
     def test_name_on_string_literal_stripped(self):
         result = self._deobfuscate("$x.('GetCmdlets'.Name)('*w-*ct')")

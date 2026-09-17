@@ -14,12 +14,14 @@ The remaining `*` tables (`KNOWN_CMDLETS`, `CANONICAL_TYPE_NAMES`, ...) are abou
 """
 from __future__ import annotations
 
+import copy
 import enum
 import functools
 import lzma
 import operator
 import re
 import typing
+from collections import defaultdict
 
 from refinery.lib.json import loads
 from refinery.lib.resources import datapath
@@ -76,10 +78,12 @@ def _engine_enum(name: str, members: dict[str, int]) -> dict:
     A record for an enum the engine defines, shaped as the capture shapes one so that the one
     resolver answers for it: reflection gives every enum the instance surface of `System.Enum`, an
     Int32 `value__` and one static field per member, which is the record the capture holds for
-    `ConfirmImpact` and what is composed here for a sibling it does not hold.
+    `ConfirmImpact` and what is composed here for a sibling it does not hold. The inherited records
+    are copied, as the capture gives every enum records of its own, so that nothing reached through
+    this record can write into `System.Enum`'s.
     """
     inherited = {
-        member: record
+        member: copy.deepcopy(record)
         for member, record in _TYPES['types']['System.Enum']['members'].items()
         if record['kind'] == 'method'
         and not any(overload['static'] for overload in record['overloads'])
@@ -117,28 +121,75 @@ def _engine_enum(name: str, members: dict[str, int]) -> dict:
     }
 
 
-#: Types the engine defines that the capture does not report, kept beside the collected table for
-#: the reason `_PARSER_TYPE_KEYWORDS` is: a record written by hand must not borrow the provenance of
-#: the collected ones. `ActionPreference` is the type of six of the seven `$…Preference` variables
-#: — the capture does report `ConfirmImpact`, the seventh's — and its members are those of Windows
-#: PowerShell 5.1, where a later engine adds `Break`; a recapture on a 5.1 host retires this entry,
-#: and one on a later host must not be allowed to.
+#: The members of the enums the engine defines that the capture does not report, kept beside the
+#: collected table for the reason `_PARSER_TYPE_KEYWORDS` is: a record written by hand must not
+#: borrow the provenance of the collected ones. `ActionPreference` is the type of six of the seven
+#: `$…Preference` variables — the capture does report `ConfirmImpact`, the seventh's — and its
+#: members are those of Windows PowerShell 5.1, measured on one, where a later engine adds `Break`.
+#: The record composed from an entry here wins over a captured one, so a recapture on a later host
+#: cannot move an answer; what says an entry may go is
+#: `test_the_captured_type_table_is_not_where_the_engine_enum_is_supplied`, which fails the moment
+#: a capture reports the type.
+_ENGINE_ENUMS: dict[str, dict[str, int]] = {
+    'System.Management.Automation.ActionPreference': {
+        'SilentlyContinue': 0,
+        'Stop': 1,
+        'Continue': 2,
+        'Inquire': 3,
+        'Ignore': 4,
+        'Suspend': 5,
+    },
+}
+
 _ENGINE_TYPES: dict[str, dict] = {
-    'System.Management.Automation.ActionPreference': _engine_enum(
-        'System.Management.Automation.ActionPreference',
-        {
-            'SilentlyContinue': 0,
-            'Stop': 1,
-            'Continue': 2,
-            'Inquire': 3,
-            'Ignore': 4,
-            'Suspend': 5,
-        },
-    ),
+    _name: _engine_enum(_name, _members) for _name, _members in _ENGINE_ENUMS.items()
 }
 
 #: The .NET types the resolver answers for: the collected table and, beside it, the engine's own.
 _TYPE_TABLE: dict[str, dict] = {**_TYPES['types'], **_ENGINE_TYPES}
+
+
+class _EnumTable(typing.NamedTuple):
+    """
+    What is read off an enum record: each member's ordinal under the lowercased name 5.1 matches
+    it by, the member each ordinal spells where exactly one holds it, and the integer type the
+    ordinals are stored in.
+    """
+    ordinals: dict[str, int]
+    names: dict[int, str]
+    storage: str | None
+
+
+def _enum_table(record: dict) -> _EnumTable:
+    """
+    The `_EnumTable` of one enum record. The capture records an ordinal as a string, read here as
+    the number that selects the member, so a malformed one stops the module from loading rather than
+    the first question asked of it. A name is keyed lowercased and the first spelling of a name
+    wins, which is the case-insensitive first match PowerShell resolves a member by; an ordinal that
+    several members hold spells none of them, because .NET does not say which name it writes for
+    one and a spelling this cannot settle is refused rather than picked.
+    """
+    values = {
+        member: int(ordinal) for member, ordinal in (record.get('enum_values') or {}).items()
+    }
+    ordinals: dict[str, int] = {}
+    holders: defaultdict[int, list[str]] = defaultdict(list)
+    for member, ordinal in values.items():
+        ordinals.setdefault(member.lower(), ordinal)
+        holders[ordinal].append(member)
+    names = {ordinal: members[0] for ordinal, members in holders.items() if len(members) == 1}
+    field = record['members'].get('value__')
+    storage = None if field is None else field.get('type')
+    return _EnumTable(ordinals, names, storage)
+
+
+#: Every enum the resolver answers for, read once beside the type table it is built from, so that
+#: a question about a member is a dictionary read wherever a value is converted or spelled.
+_ENUM_TABLES: dict[str, _EnumTable] = {
+    _key: _enum_table(_record)
+    for _key, _record in _TYPE_TABLE.items()
+    if _record.get('kind') == 'enum'
+}
 
 #: Commands the capture reports that the host does not have. `Format-Hex` leaked in from a shadowing
 #: PowerShell 7.0 `Microsoft.PowerShell.Utility` module; a 5.1 host cannot run it.
@@ -1178,25 +1229,19 @@ def member_names(name: str | Ps1TypeName) -> list[str] | None:
     return None if members is None else sorted(members)
 
 
-def _enum_values(name: str | Ps1TypeName) -> dict[str, int] | None:
+def _enum_of(name: str | Ps1TypeName) -> _EnumTable | None:
     """
-    A type's enum members as a name-to-ordinal map, or `None` when the type does not resolve or is
-    not an enum. The capture records the ordinal as a string, read here as the number that selects
-    the member, so a value domain can read `[bool]`/`[int]` off it and its name off the reverse.
+    The `_EnumTable` of a type, or `None` when the type does not resolve or is not an enum.
     """
     key = _member_surface(name)
-    record = None if key is None else _type_record(key)
-    if record is None or record.get('kind') != 'enum':
-        return None
-    values = record.get('enum_values') or {}
-    return {member: int(ordinal) for member, ordinal in values.items()}
+    return None if key is None else _ENUM_TABLES.get(key)
 
 
 def is_enum(name: str | Ps1TypeName) -> bool:
     """
     Whether the type resolves and is an enum.
     """
-    return _enum_values(name) is not None
+    return _enum_of(name) is not None
 
 
 def enum_ordinal(name: str | Ps1TypeName, member: str) -> int | None:
@@ -1204,29 +1249,32 @@ def enum_ordinal(name: str | Ps1TypeName, member: str) -> int | None:
     The integer an enum member denotes, matched case-insensitively as 5.1 resolves it, or `None`
     when the type is not an enum or names no such member.
     """
-    values = _enum_values(name)
-    if values is None:
-        return None
-    lower = member.lower()
-    for stored, ordinal in values.items():
-        if stored.lower() == lower:
-            return ordinal
-    return None
+    table = _enum_of(name)
+    return None if table is None else table.ordinals.get(member.lower())
 
 
 def enum_name(name: str | Ps1TypeName, ordinal: int) -> str | None:
     """
-    The member an enum ordinal spells, or `None` when the type is not an enum or no member holds
-    that ordinal. A value carrying an ordinal no member names has no spelling, exactly as 5.1 writes
-    the number itself for it.
+    The member an enum ordinal spells, or `None` when the type is not an enum, no member holds that
+    ordinal, or more than one does. A value carrying an ordinal no member names has no spelling,
+    exactly as 5.1 writes the number itself for it. A Python `bool` is refused rather than read as
+    the integer it compares equal to: `True == 1` would spell the member holding 1 for a Boolean
+    5.1 does not convert to an enum at all.
     """
-    values = _enum_values(name)
-    if values is None:
+    table = _enum_of(name)
+    if table is None or isinstance(ordinal, bool):
         return None
-    for member, stored in values.items():
-        if stored == ordinal:
-            return member
-    return None
+    return table.names.get(ordinal)
+
+
+def enum_storage(name: str | Ps1TypeName) -> str | None:
+    """
+    The integer type an enum stores its ordinals in, which reflection reports as the type of its
+    `value__` field, or `None` when the type is not an enum or its record carries no such field. It
+    is the width an integer is truncated to on its way into the enum and read at on its way out.
+    """
+    table = _enum_of(name)
+    return None if table is None else table.storage
 
 
 def canonical_member(name: str | Ps1TypeName, member: str) -> str | None:

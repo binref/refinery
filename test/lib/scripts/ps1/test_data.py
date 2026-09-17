@@ -314,9 +314,8 @@ class TestPs1MetadataViews(unittest.TestCase):
             }
 
         def shared_surface(members: dict[str, dict]) -> dict[str, dict]:
-            return {
-                name: record for name, record in members.items() if name not in own_fields(members)
-            }
+            own = own_fields(members)
+            return {name: record for name, record in members.items() if name not in own}
 
         self.assertEqual(shared_surface(engine), shared_surface(captured))
         self.assertEqual(
@@ -343,9 +342,23 @@ class TestPs1MetadataViews(unittest.TestCase):
         self.assertIsNone(data.enum_ordinal(enum, 'Break'))
         self.assertEqual(data.enum_name(enum, 2), 'Continue')
         self.assertIsNone(data.enum_name(enum, 6))
+        self.assertIsNone(data.enum_name(enum, True))
         self.assertEqual(data.enum_ordinal('System.Management.Automation.ConfirmImpact', 'High'), 3)
         self.assertIsNone(data.enum_ordinal('int', 'Stop'))
         self.assertIsNone(data.enum_name('int', 1))
+
+    def test_an_ordinal_two_members_hold_spells_neither_of_them(self):
+        policy = 'Microsoft.PowerShell.ExecutionPolicy'
+        self.assertEqual(data.enum_ordinal(policy, 'Default'), 3)
+        self.assertEqual(data.enum_ordinal(policy, 'Restricted'), 3)
+        self.assertIsNone(data.enum_name(policy, 3))
+        self.assertEqual(data.enum_name(policy, 0), 'Unrestricted')
+
+    def test_an_enum_stores_its_ordinals_at_the_width_of_its_value_field(self):
+        self.assertEqual(
+            data.enum_storage('System.Management.Automation.ActionPreference'), 'System.Int32')
+        self.assertEqual(data.enum_storage('System.Security.SecurityRuleSet'), 'System.Byte')
+        self.assertIsNone(data.enum_storage('int'))
 
     def test_common_parameters_carry_the_out_variable_aliases(self):
         # The common parameters are excluded from CMDLET_PARAMETERS; this is the one view that keeps

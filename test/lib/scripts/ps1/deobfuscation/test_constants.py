@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import unittest
+
 from inspect import cleandoc
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib.scripts.ps1.analysis.values import render
 from refinery.lib.scripts.ps1.data import VARIABLE_TYPES, enum_ordinal, is_enum
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantInlining
-from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_DEFAULT_VARIABLES
+from refinery.lib.scripts.ps1.deobfuscation.constants import (
+    _PS1_DEFAULT_FACTS,
+    _PS1_DEFAULT_VARIABLES,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -702,18 +708,41 @@ class TestPs1AnEngineDefaultIsAMemberOfTheTypeTheVariableHolds(TestPs1):
             self._apply('Write-Host $ConfirmPreference', Ps1ConstantInlining),
             "Write-Host ([System.Management.Automation.ConfirmImpact]'High')")
 
+    def test_every_engine_default_has_a_value_the_domain_spells(self):
+        for key, fact in _PS1_DEFAULT_FACTS.items():
+            with self.subTest(key):
+                self.assertIsNotNone(render(fact))
+
+    def test_an_engine_default_is_inlined_however_often_the_script_reads_it(self):
+        self.assertEqual(
+            self._apply('\n'.join(['Write-Host $VerbosePreference'] * 8), Ps1ConstantInlining),
+            '\n'.join(
+                ["Write-Host ([System.Management.Automation.ActionPreference]'SilentlyContinue')"] * 8
+            ),
+        )
+
 
 class TestPs1ConstantInliningExtra(TestPs1):
 
     def test_preference_variable_indexing_is_left_standing(self):
         """
         `$VerbosePreference` holds an enum member and not the name it prints, so an index into it
-        is not an index into that name. The String model answered `'Si'`, the first two characters
-        of a name 5.1 never indexes; nothing computes an index over the member, and the read is
+        is not an index into that name. Nothing computes an index over the member, and the read is
         left standing rather than substituted.
         """
         source = 'Write-Output ($VerbosePreference[0] + $VerbosePreference[1])'
         self.assertEqual(self._deobfuscate(source), source)
+
+    @unittest.expectedFailure
+    def test_preference_variable_indexing_reads_the_member_and_the_null_beside_it(self):
+        """
+        5.1 indexes a scalar as a collection of one, so `[0]` is the member itself and `[1]` is
+        `$null`, and a `+` whose right operand is `$null` is its left operand.
+        """
+        self.assertEqual(
+            self._deobfuscate('Write-Output ($VerbosePreference[0] + $VerbosePreference[1])'),
+            "Write-Output ([System.Management.Automation.ActionPreference]'SilentlyContinue')",
+        )
 
     def test_preference_variable_not_substituted_when_assigned(self):
         result = self._deobfuscate("$VerbosePreference = 'Custom'\nWrite-Output $VerbosePreference[1]")

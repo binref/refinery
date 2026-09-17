@@ -18,6 +18,7 @@ from refinery.lib.scripts.ps1.data import (
     GET_MEMBER_ALIASES,
     TYPE_ACCELERATORS,
     canonical_member,
+    is_enum,
 )
 from refinery.lib.scripts.ps1.data import resolve_member_type as data_member_type
 from refinery.lib.scripts.ps1.data import (
@@ -112,7 +113,14 @@ def get_member_order(type_name: str | Ps1TypeName) -> list[str] | None:
     """
     Return the members of a .NET type in PowerShell Get-Member display order: Methods sorted
     alphabetically, then properties sorted alphabetically.
+
+    An enum is refused. `refinery.lib.scripts.ps1.data.view_members` lists an enum's values, which
+    is what may follow `::` on the type, where `Get-Member` on a value of the enum lists the
+    instance surface of `System.Enum` — measured, `($VerbosePreference | Get-Member)[0].Name` is
+    `CompareTo` — and the two lists share no name.
     """
+    if is_enum(type_name):
+        return None
     members = view_members(type_name)
     if members is None:
         return None

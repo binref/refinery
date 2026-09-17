@@ -141,6 +141,21 @@ class TestPs1APreferenceThatResumesLeavesTheRaiseRemovable(_Ps1FaultEscalation):
             {_ANCHOR}
         """)
 
+    def test_a_raising_cast_under_a_preference_copied_from_another_preference_is_removed(self):
+        """
+        `$VerbosePreference` holds `SilentlyContinue` and is inlined as the cast of that member's
+        name, which the fault model reads as the member it is rather than as a value it cannot read
+        and so must take for `Stop`.
+        """
+        self._assertDeobfuscatesTo(F"""
+            $ErrorActionPreference = $VerbosePreference
+            {_RAISE}
+            {_ANCHOR}
+        """, F"""
+            $ErrorActionPreference = [System.Management.Automation.ActionPreference]'SilentlyContinue'
+            {_ANCHOR}
+        """)
+
 
 class TestPs1ATrapWhoseTypeFilterMissesTheErrorEndsTheScript(_Ps1FaultEscalation):
     """

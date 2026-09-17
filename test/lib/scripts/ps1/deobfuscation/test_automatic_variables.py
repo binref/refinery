@@ -202,6 +202,70 @@ class TestPs1APreferenceVariableIsAnEnumAndNotTheNameItPrints(_Ps1AutomaticVaria
         self._assertDecidesTo(
             F'if ($ErrorActionPreference) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _PAYLOAD)
 
+    def test_eight_guards_on_the_verbose_preference_each_take_the_else_branch(self):
+        """
+        An engine default is inlined at every read. Its spelling is bounded by the tables the
+        inlining pass keeps, so the expansion budget that withholds a large constant the script
+        defines does not withhold it, and the eighth guard is decided like the first.
+        """
+        guard = F'if ($VerbosePreference) {{ {_OTHER} }} else {{ {_PAYLOAD} }}'
+        self._assertDecidesTo('\n'.join([guard] * 8), '\n'.join([_PAYLOAD] * 8))
+
+
+class TestPs1AGuardComparingAPreferenceToAMemberNameIsDecided(_Ps1AutomaticVariables):
+    """
+    5.1 compares a preference variable to a String by converting the String to the member it
+    names, so `$VerbosePreference -eq 'SilentlyContinue'` is `$true` and a `switch` over
+    `$ErrorActionPreference` takes its `'Continue'` clause. The domain computes no comparison over
+    an enum — the binary grid has no row for one — so each of these guards, decided before the
+    preference variables became enum members, is left standing with both branches; each is the
+    fold to recover.
+    """
+
+    @unittest.expectedFailure
+    def test_a_preference_equal_to_its_member_name_takes_the_then_branch(self):
+        self._assertDecidesTo(
+            F"if ($VerbosePreference -eq 'SilentlyContinue') {{ {_PAYLOAD} }} else {{ {_OTHER} }}",
+            _PAYLOAD,
+        )
+
+    @unittest.expectedFailure
+    def test_a_preference_unequal_to_another_member_name_takes_the_then_branch(self):
+        self._assertDecidesTo(
+            F"if ($ErrorActionPreference -ne 'Stop') {{ {_PAYLOAD} }} else {{ {_OTHER} }}",
+            _PAYLOAD,
+        )
+
+    @unittest.expectedFailure
+    def test_a_switch_over_a_preference_takes_the_clause_naming_its_member(self):
+        self._assertDecidesTo(
+            F"switch ($ErrorActionPreference) {{ 'Continue' {{ {_PAYLOAD} }} default {{ {_OTHER} }} }}",
+            _PAYLOAD,
+        )
+
+
+class TestPs1ADeadStoreOfAnEngineDefaultAfterTheWorldOpens(_Ps1AutomaticVariables):
+    """
+    `Add-Type` opens the command world, after which the effect model calls no cast pure: a type
+    the script adds may carry a converter. A preference variable's value arrives as the cast of
+    its member name, so a dead store of one after `Add-Type` is kept as a discard where the same
+    store of a String-valued default is deleted. 5.1 runs neither, and the member's store is the
+    deletion to recover.
+    """
+
+    def test_a_dead_store_of_a_string_default_is_deleted(self):
+        self._assertDecidesTo(
+            F'Add-Type -TypeDefinition $code\n$u = $PSEdition\n{_TAIL}',
+            F'Add-Type -TypeDefinition $code\n{_TAIL}',
+        )
+
+    @unittest.expectedFailure
+    def test_a_dead_store_of_a_preference_is_deleted(self):
+        self._assertDecidesTo(
+            F'Add-Type -TypeDefinition $code\n$u = $VerbosePreference\n{_TAIL}',
+            F'Add-Type -TypeDefinition $code\n{_TAIL}',
+        )
+
 
 class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariables):
     """

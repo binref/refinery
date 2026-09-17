@@ -32,11 +32,14 @@ from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_referenc
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
+    Ps1Fact,
+    convert,
     folded_binary,
     folded_increment,
     integer_of,
     make_string_literal,
     read,
+    render,
     survives_being_written,
     type_of,
     unwrap_to_array_literal,
@@ -135,20 +138,31 @@ PS1_ENV_CONSTANTS = {
 }
 
 
-def _ambient_default_expression(key: str, value: str) -> Expression:
+def _ambient_default_fact(key: str, value: str) -> Ps1Fact:
     """
-    The expression that spells an engine default: the text `_PS1_DEFAULT_VARIABLES` records, under
-    the cast of its type where `refinery.lib.scripts.ps1.data.VARIABLE_TYPES` says the variable
-    holds an enum. The preference variables hold `ActionPreference` and `ConfirmImpact` members,
-    whose text is a name and whose value is an ordinal — `SilentlyContinue` is the falsy 0 — and
-    the bare name would be read as the truthy String it spells.
+    The value an engine default names: the text `_PS1_DEFAULT_VARIABLES` records, converted to the
+    enum `refinery.lib.scripts.ps1.data.VARIABLE_TYPES` says the variable holds where it holds one.
+    The preference variables hold `ActionPreference` and `ConfirmImpact` members, whose text is a
+    name and whose value is an ordinal — `SilentlyContinue` is the falsy 0 — and the bare text
+    would be read as the truthy String it spells. A default the value domain cannot convert — a
+    text that names no member, an enum it does not compute — is `UNKNOWN`, which `render` spells
+    as nothing, so the variable is left unread rather than inlined as a value it does not hold.
     """
-    literal = make_string_literal(value)
+    fact = read(make_string_literal(value))
     declared = VARIABLE_TYPES.get(key)
     holder = None if declared is None else resolve_type(declared)
     if holder is None or not is_enum(holder):
-        return literal
-    return Ps1CastExpression(type_name=str(holder), operand=literal)
+        return fact
+    outcome = convert(fact, holder)
+    return UNKNOWN if outcome.may_throw else outcome.value
+
+
+#: The value each engine default names, read once: which type a variable holds and what its text
+#: converts to are facts about the tables and not about any script, where the expression spelling
+#: one is minted per script by `render`, because a node is adopted by the tree it is installed in.
+_PS1_DEFAULT_FACTS: dict[str, Ps1Fact] = {
+    key: _ambient_default_fact(key, value) for key, value in _PS1_DEFAULT_VARIABLES.items()
+}
 
 
 PS1_AUTOMATIC_VARIABLES = frozenset({
@@ -722,9 +736,12 @@ class _ConstantTable:
         for node in root.walk():
             if isinstance(node, Ps1Variable) and is_write_occurrence(node):
                 touched.add(binding_key(node))
-        for key, value in _PS1_DEFAULT_VARIABLES.items():
-            if key not in touched:
-                self._add_ambient(key, _ambient_default_expression(key, value))
+        for key, fact in _PS1_DEFAULT_FACTS.items():
+            if key in touched:
+                continue
+            spelled = render(fact)
+            if spelled is not None:
+                self._add_ambient(key, spelled)
         for name, value in PS1_ENV_CONSTANTS.items():
             key = F'env:{name}'
             if key not in touched:
@@ -863,14 +880,22 @@ class Ps1ConstantInlining(Transformer):
         crediting the retired definition is what keeps a constant read once — a base64 blob that
         feeds a single `[Convert]::FromBase64String` — from being withheld on a small script, where
         inlining it is size-neutral and is what exposes the fold that collapses it.
+
+        An engine default is not charged at all. The budget exists for a value the script defines,
+        which can be as large as the script cares to make it; a default's spelling is bounded by
+        the tables this module keeps, and what a small script full of preference reads paid for it
+        was every fold on those reads — seven guards on `$VerbosePreference` were seven too many.
         """
         synth = Ps1Synthesizer()
         script_size = len(synth.convert(root))
         max_budget = max(_MIN_EXPANSION_BUDGET, int(script_size * self.max_expansion_ratio))
 
+        budgeted = {
+            key: values for key, values in table.values.items() if key not in table.ambient
+        }
         value_lengths: dict[str, int] = {}
         array_literals: dict[str, Ps1ArrayLiteral | None] = {}
-        for key, values in table.values.items():
+        for key, values in budgeted.items():
             value_lengths[key] = max(len(synth.convert(value)) for value in values)
             array_literals[key] = _get_array_literal(values[0])
         elem_lengths: dict[tuple[str, int], int] = {}
@@ -882,7 +907,7 @@ class Ps1ConstantInlining(Transformer):
                 if not isinstance(var, Ps1Variable):
                     continue
                 key = _candidate_key(var)
-                if key is None or key not in table.values or node.index is None:
+                if key is None or key not in budgeted or node.index is None:
                     continue
                 idx = integer_of(read(node.index))
                 if idx is not None:
@@ -896,11 +921,11 @@ class Ps1ConstantInlining(Transformer):
                     if cache_key not in elem_lengths:
                         elem_lengths[cache_key] = len(synth.convert(array.elements[idx]))
                     expansion[key] += max(0, elem_lengths[cache_key] - ref_len)
-                elif isinstance(table.values[key][0], (Ps1StringLiteral, Ps1HereString)):
+                elif isinstance(budgeted[key][0], (Ps1StringLiteral, Ps1HereString)):
                     expansion[key] += max(0, value_lengths[key] - (1 + len(var.name)))
             elif isinstance(node, Ps1Variable):
                 key = _candidate_key(node)
-                if key is None or key not in table.values or is_write_occurrence(node):
+                if key is None or key not in budgeted or is_write_occurrence(node):
                     continue
                 shape = _shape_member_of(node)
                 array = array_literals[key] if shape is not None else None
@@ -911,7 +936,7 @@ class Ps1ConstantInlining(Transformer):
                 expansion[key] += max(0, value_lengths[key] - (1 + len(node.name)))
 
         return {
-            key for key in table.values
+            key for key in budgeted
             if expansion[key] - value_lengths[key] > max_budget
         }
 

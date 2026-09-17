@@ -73,6 +73,7 @@ from refinery.lib.scripts.ps1.data import (
     conversion_outcome,
     enum_name,
     enum_ordinal,
+    enum_storage,
     instance_overloads,
     is_assignable_to,
     named_type,
@@ -269,10 +270,11 @@ _CHAR_ARRAY = _type('System.Char[]')
 #: The enums whose values the domain computes, which are the two the engine's preference variables
 #: hold. An enum value is a `Ps1Constant` of its type whose payload is the ordinal, and the rules
 #: `_to_enum` and `_from_enum` apply are the ones 5.1 applies to an enum that carries no `[Flags]`
-#: and has no negative member: an ordinal is accepted only where a member holds it, and the width
-#: is Int32. A `[Flags]` enum accepts any combination of its members and an enum with a negative
-#: member accepts every ordinal, and the capture does not record whether an enum carries `[Flags]`,
-#: so no other enum is computed and a cast to one is left to the grid, which has no cell for it.
+#: and has no negative member: an integer is stored at the width the record's `value__` names and
+#: the ordinal that leaves is accepted only where a member holds it. A `[Flags]` enum accepts any
+#: combination of its members and an enum with a negative member accepts every ordinal, and the
+#: capture does not record whether an enum carries `[Flags]`, so no other enum is computed and a
+#: cast to one is left to the grid, which has no cell for it.
 _FOLDABLE_ENUMS = frozenset({
     _type('System.Management.Automation.ActionPreference'),
     _type('System.Management.Automation.ConfirmImpact'),
@@ -838,6 +840,21 @@ def integer_of(fact: Ps1Fact) -> int | None:
     rounding rule lives.
     """
     if not isinstance(fact, Ps1Constant) or fact.type not in _INTEGER_RANGE:
+        return None
+    payload = fact.payload
+    return None if isinstance(payload, bool) or not isinstance(payload, int) else payload
+
+
+def ordinal_of(fact: Ps1Fact) -> int | None:
+    """
+    The ordinal an enum value carries, or `None` for a fact that is not one. It is `integer_of` for
+    the enums the domain computes, and a separate question for the reason that one refuses a
+    Boolean: an ordinal is the number a member is stored as and not an integer of the domain's own
+    widths, so a caller that wants the member's number asks here and one that wants an integer does
+    not receive one by accident. A payload that is not an ordinal is a malformed fact and names
+    nothing.
+    """
+    if not isinstance(fact, Ps1Constant) or fact.type not in _FOLDABLE_ENUMS:
         return None
     payload = fact.payload
     return None if isinstance(payload, bool) or not isinstance(payload, int) else payload
@@ -1782,46 +1799,68 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
 
 
+def _enum_storage(enum: Ps1TypeName) -> Ps1TypeName | None:
+    """
+    The integer width an enum stores its ordinals in, read off its record's `value__` field, or
+    `None` where the record names none of the domain's widths. It is what an integer is truncated
+    to on its way into the enum and what an ordinal is read as on its way out.
+    """
+    storage = enum_storage(enum)
+    width = None if storage is None else resolve_type(storage)
+    return width if width in _INTEGER_RANGE else None
+
+
 def _to_enum(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     """
     What `[target] fact` produces for one of the `_FOLDABLE_ENUMS`, carried as a `Ps1Constant` of
-    the enum whose payload is the ordinal. A String is matched against the member names, and one
-    that names no member is left alone rather than called a throw: 5.1 also reads a String of digits
-    as an ordinal and a unique prefix as the member it abbreviates, and neither is computed here. A
-    number is its own ordinal only where a member holds it — `[ActionPreference]6` and
-    `[ActionPreference]300` throw, because 5.1 checks that the ordinal is defined before it
-    converts — so an undefined one is a certain throw and not a value.
+    the enum whose payload is the ordinal.
+
+    A String is matched against the member names, case-insensitively, and one that names no member
+    is left alone rather than called a throw: 5.1 reads more spellings than that — a String of
+    digits as an ordinal, a unique prefix as the member it abbreviates, surrounding whitespace
+    trimmed away, and a comma-separated list as the members it combines, `'Stop,Continue'` being
+    `Inquire` — and none of them is computed here, so a String that matches no name is one this
+    cannot tell apart from one 5.1 accepts.
+
+    An integer is stored at the enum's width first and checked against the members only then,
+    because that is the order 5.1 does it in: `Enum.ToObject` boxes the low bits of the number and
+    the defined-check reads the boxed value. Measured, `[ActionPreference]4294967297L` is `Stop`
+    and `[ActionPreference]-4294967294` is `Continue`, where `6`, `300`, `-1` and `4294967295` —
+    whose low word is the -1 no member holds — all throw. An ordinal no member holds after that
+    truncation is a certain throw and not a value.
     """
-    if isinstance(fact, Ps1Constant) and fact.type == _STRING and isinstance(fact.payload, str):
-        ordinal = enum_ordinal(target, fact.payload)
+    text = text_of(fact)
+    if text is not None:
+        ordinal = enum_ordinal(target, text)
         return NOTHING if ordinal is None else Ps1Outcome(NEVER, Ps1Constant(target, ordinal))
     number = integer_of(fact)
-    if number is None:
+    storage = _enum_storage(target)
+    if number is None or storage is None:
         return NOTHING
-    if enum_name(target, number) is None:
+    ordinal = _truncated_at_width(_INTEGER_RANGE[storage], number)
+    if enum_name(target, ordinal) is None:
         return Ps1Outcome(ALWAYS, UNKNOWN)
-    return Ps1Outcome(NEVER, Ps1Constant(target, number))
+    return Ps1Outcome(NEVER, Ps1Constant(target, ordinal))
 
 
 def _from_enum(fact: Ps1Constant, target: Ps1TypeName) -> Ps1Outcome:
     """
-    What `[target] <enum>` produces: 5.1 reads an enum as its ordinal for a Boolean or a number and
-    as its member name for a String, so `[bool]` is the ordinal against zero, an integer width is
-    the ordinal converted as an Int32 is, and a String is the name. `_to_enum` mints no ordinal
-    that names no member, so the name is always there to read; a payload that is not an ordinal is
-    a malformed fact and answers nothing.
+    What `[target] <enum>` produces: 5.1 reads an enum as its member name for a String and as the
+    integer it is stored as for everything else, so a String is the name and every other target is
+    `convert` asked of the ordinal at the enum's width — measured to agree for each: `[bool]` of
+    `SilentlyContinue` is `$False`, `[byte]` of `High` is 3, `[char]` of `Continue` is the
+    character 2 and `[double]` of `Stop` is 1. `_to_enum` mints no ordinal that names no member,
+    so the name is always there to read; a fact whose payload is not an ordinal is malformed and
+    answers nothing.
     """
-    ordinal = fact.payload
-    if not isinstance(ordinal, int) or isinstance(ordinal, bool):
+    ordinal = ordinal_of(fact)
+    storage = _enum_storage(fact.type)
+    if ordinal is None or storage is None:
         return NOTHING
-    if target == _BOOLEAN:
-        return Ps1Outcome(NEVER, Ps1Constant(_BOOLEAN, ordinal != 0))
     if target == _STRING:
         name = enum_name(fact.type, ordinal)
         return NOTHING if name is None else Ps1Outcome(NEVER, Ps1Constant(_STRING, name))
-    if target in _INTEGER_RANGE:
-        return convert(Ps1Constant(_INT32, ordinal), target)
-    return NOTHING
+    return convert(Ps1Constant(storage, ordinal), target)
 
 
 def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
@@ -2167,8 +2206,9 @@ def _element_is_true(fact: Ps1Fact) -> bool | None:
     is true to it — and one that answers a collection by whether it holds anything rather than by
     asking this question again.
 
-    Everything else is the ordinary conversion, which is why this asks `_cast` for it rather than
-    spelling a second copy of it out.
+    Everything else is the ordinary conversion, which is why this asks `convert` for it rather than
+    spelling a second copy of it out — measured, `(,$VerbosePreference)` is `$False` exactly as the
+    member it holds is.
 
     An element that is not a value is refused rather than guessed at. A collection's payload does
     not guarantee its elements are values — `@() + (0 -shl $true)` holds a type and no value — and
@@ -2183,8 +2223,10 @@ def _element_is_true(fact: Ps1Fact) -> bool | None:
         return len(nested) >= 1
     if fact.type == _CHAR:
         return True
-    truth = _cast(_BOOLEAN, fact)
-    return truth if isinstance(truth, bool) else None
+    truth = convert(fact, _BOOLEAN)
+    if truth.may_throw or not isinstance(truth.value, Ps1Constant):
+        return None
+    return truth.value.payload if isinstance(truth.value.payload, bool) else None
 
 
 def _cast(target: Ps1TypeName, fact: Ps1Fact) -> _Number | None:
@@ -2318,6 +2360,17 @@ def _pattern_at_width(bounds: tuple[int, int], magnitude: int) -> int:
     if magnitude >= span:
         raise _Throws
     return magnitude if magnitude <= high else magnitude - span
+
+
+def _truncated_at_width(bounds: tuple[int, int], number: int) -> int:
+    """
+    The value the low bits of `number` denote in a register of the width `bounds` describes, with
+    the sign that width has: the truncation a store into a narrower field performs, where
+    `_pattern_at_width` is the reading that refuses a pattern too wide for the register.
+    """
+    low, high = bounds
+    span = high + 1 if low == 0 else (high + 1) * 2
+    return _pattern_at_width(bounds, number % span)
 
 
 #: The shape of a String that 5.1's invariant numeric coercion can read a number out of, made a
@@ -3593,7 +3646,7 @@ def render(fact: Ps1Fact) -> Expression | None:
     if fact.type == _CHAR:
         return _rendered_character(payload)
     if fact.type in _FOLDABLE_ENUMS:
-        return _rendered_enum(fact.type, payload)
+        return _rendered_enum(fact)
     if fact.type == _OBJECT_ARRAY:
         return _rendered_array(payload) if isinstance(payload, tuple) else None
     if fact.type == _DOUBLE:
@@ -3666,18 +3719,17 @@ def _rendered_character(payload) -> Expression | None:
     return Ps1CastExpression(type_name='char', operand=Ps1IntegerLiteral(raw=str(ord(payload))))
 
 
-def _rendered_enum(enum: Ps1TypeName, payload) -> Expression | None:
+def _rendered_enum(fact: Ps1Constant) -> Expression | None:
     """
     An enum member, written as the cast of its name to its type spelled in full, which is what
     `_cast_spelling` reads back through `_to_enum`. `_to_enum` mints no ordinal that names no
     member, so the `None` for one is the answer `render` gives every payload that carries no value.
     """
-    if isinstance(payload, bool) or not isinstance(payload, int):
-        return None
-    name = enum_name(enum, payload)
+    ordinal = ordinal_of(fact)
+    name = None if ordinal is None else enum_name(fact.type, ordinal)
     if name is None:
         return None
-    return Ps1CastExpression(type_name=str(enum), operand=make_string_literal(name))
+    return Ps1CastExpression(type_name=str(fact.type), operand=make_string_literal(name))
 
 
 def _rendered_array(elements: tuple[Ps1Fact, ...]) -> Expression | None:

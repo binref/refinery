@@ -1054,6 +1054,18 @@ class TestPs1APreferenceVariableIsAnEnumWhoseValueIsItsOrdinal(TestPs1):
             ('$x = [int]$ErrorActionPreference', '$x = 2'),
             ('$x = [int]$ConfirmPreference', '$x = 3'),
             ('$x = [byte]$ConfirmPreference', '$x = [byte]3'),
+            ('$x = [double]$ErrorActionPreference', '$x = 2.0'),
+            ('$x = [decimal]$ConfirmPreference', '$x = 3d'),
+            ('$x = [char]$ErrorActionPreference', '$x = [char]2'),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate(source), expected)
+
+    def test_a_collection_of_one_preference_is_as_true_as_the_member_it_holds(self):
+        for source, expected in [
+            ("if (,$VerbosePreference) { Write-Host 'A' } else { Write-Host 'B' }", "Write-Host 'B'"),
+            ("if (@($ErrorActionPreference)) { Write-Host 'A' } else { Write-Host 'B' }", "Write-Host 'A'"),
+            ('$x = [bool]@($VerbosePreference)', '$x = $False'),
         ]:
             with self.subTest(source):
                 self.assertEqual(self._deobfuscate(source), expected)
@@ -1091,10 +1103,24 @@ class TestPs1APreferenceVariableIsAnEnumWhoseValueIsItsOrdinal(TestPs1):
             '[System.Management.Automation.ActionPreference]6',
             '[System.Management.Automation.ActionPreference]300',
             '[System.Management.Automation.ActionPreference]-1',
+            '[System.Management.Automation.ActionPreference]-2147483648',
             '[System.Management.Automation.ConfirmImpact]9',
         ]:
             with self.subTest(cast):
                 self._assertKept(F"if ({cast}) {{ Write-Host 'A' }} else {{ Write-Host 'B' }}")
+
+    def test_an_ordinal_no_member_holds_is_a_certain_throw_that_lifts_the_catch(self):
+        for cast in [
+            '[System.Management.Automation.ActionPreference]6',
+            '[System.Management.Automation.ActionPreference]4294967295',
+            '[System.Management.Automation.ConfirmImpact]9',
+        ]:
+            with self.subTest(cast):
+                self.assertEqual(
+                    self._deobfuscate(
+                        F"try {{ $null = {cast}; Write-Host 'after' }} catch {{ Write-Host 'caught' }}"),
+                    "Write-Host 'caught'",
+                )
 
     def test_a_name_no_member_holds_is_left_standing(self):
         source = "$x = [bool][System.Management.Automation.ActionPreference]'Nope'"
@@ -1105,6 +1131,97 @@ class TestPs1APreferenceVariableIsAnEnumWhoseValueIsItsOrdinal(TestPs1):
             self._deobfuscate("$x = $VerbosePreference -eq 'SilentlyContinue'"),
             "$x = [System.Management.Automation.ActionPreference]'SilentlyContinue' -Eq 'SilentlyContinue'",
         )
+
+
+class TestPs1AnOrdinalIsStoredAtTheEnumWidthBeforeItIsLookedUp(TestPs1):
+    """
+    5.1 boxes an integer into an enum at the width the enum stores its ordinals in and checks that
+    boxed value against the members, so an integer too wide for an Int32 converts by its low word:
+    `[ActionPreference]4294967297L` is `Stop` and `-4294967294` is `Continue`, where `4294967295`
+    throws because its low word is the -1 no member holds. The certain throw the domain claims for
+    an undefined ordinal must be claimed for the boxed value and never for the integer written,
+    because that claim is what lifts a `catch` body over a `try` body and deletes the rest of it.
+    """
+
+    def test_an_ordinal_wider_than_the_enum_stores_is_read_at_the_stored_width(self):
+        for source, expected in [
+            ('$x = [string][System.Management.Automation.ActionPreference]4294967297L', "$x = 'Stop'"),
+            ('$x = [string][System.Management.Automation.ActionPreference]0x100000002', "$x = 'Continue'"),
+            ('$x = [string][System.Management.Automation.ActionPreference](-4294967294)', "$x = 'Continue'"),
+            ('$x = [string][System.Management.Automation.ActionPreference][uint64]4294967299', "$x = 'Inquire'"),
+            ('$x = [string][System.Management.Automation.ConfirmImpact]4294967299', "$x = 'High'"),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate(source), expected)
+
+    def test_a_wide_ordinal_that_names_a_member_keeps_the_statements_after_it(self):
+        self._assertDeobfuscatesTo(
+            """
+            try { $null = [System.Management.Automation.ActionPreference]4294967297L; Write-Host 'after' } catch { Write-Host 'caught' }
+            """,
+            """
+            try { Write-Host 'after' } catch { Write-Host 'caught' }
+            """,
+        )
+
+    def test_an_as_over_an_ordinal_no_member_holds_is_not_a_certain_throw(self):
+        self.assertEqual(
+            self._deobfuscate(
+                "try { $x = 6 -as [System.Management.Automation.ActionPreference]; Write-Host 'after' }"
+                " catch { Write-Host 'caught' }"
+            ),
+            inspect.cleandoc("""
+                try {
+                  $x = 6 -As [System.Management.Automation.ActionPreference]
+                  Write-Host 'after'
+                } catch {
+                  Write-Host 'caught'
+                }
+            """),
+        )
+
+
+class TestPs1AFoldOverAPreferenceThatTheEnumModelDoesNotComputeYet(TestPs1):
+    """
+    Each answer below is what 5.1 computes, and each was folded before the preference variables
+    became enum members, when their String spelling happened to give the same answer. The binary
+    grid has no row for an enum, `_to_enum` computes only an exact member name and `integer_of`
+    hands no slot the ordinal a member is stored as, so these are left standing now; they are the
+    folds to recover.
+    """
+
+    @unittest.expectedFailure
+    def test_a_preference_indexes_a_collection_by_its_ordinal(self):
+        self.assertEqual(
+            self._deobfuscate('$x = @(10, 20, 30)[$ErrorActionPreference]'), '$x = 30')
+
+    @unittest.expectedFailure
+    def test_a_preference_repeats_a_string_by_its_ordinal(self):
+        self.assertEqual(self._deobfuscate("$x = 'ab' * $ErrorActionPreference"), "$x = 'abab'")
+
+    @unittest.expectedFailure
+    def test_a_preference_compared_to_its_member_name_is_true(self):
+        self.assertEqual(
+            self._deobfuscate("$x = $VerbosePreference -eq 'SilentlyContinue'"), '$x = $True')
+
+    @unittest.expectedFailure
+    def test_two_preferences_holding_the_same_member_compare_equal(self):
+        self.assertEqual(
+            self._deobfuscate('$x = $ErrorActionPreference -eq $WarningPreference'), '$x = $True')
+
+    @unittest.expectedFailure
+    def test_a_preference_formatted_writes_its_member_name(self):
+        self.assertEqual(
+            self._deobfuscate('$x = $VerbosePreference -f 1'), "$x = 'SilentlyContinue'")
+
+    @unittest.expectedFailure
+    def test_a_digit_string_and_a_unique_prefix_name_the_member_5_1_reads(self):
+        for source in [
+            "$x = [string][System.Management.Automation.ActionPreference]'1'",
+            "$x = [string][System.Management.Automation.ActionPreference]'St'",
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate(source), "$x = 'Stop'")
 
 
 class TestPs1AnEnumOutsideTheEngineIsNotComputed(TestPs1):

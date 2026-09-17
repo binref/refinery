@@ -50,6 +50,7 @@ from refinery.lib.scripts.ps1.ast import (
     string_value,
 )
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
+from refinery.lib.scripts.ps1.analysis.values import ordinal_of, read
 from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -194,9 +195,16 @@ def _selects_stop(value: Node | None) -> bool:
     `refinery.lib.scripts.ps1.ast.argument_text` deliberately answers a numeral's spelling, which
     is the right reading where a bare word names something and the wrong one here. A name is
     matched by prefix, for the same reason a parameter name is.
+
+    A value the domain reads as an enum member — the spelling an inlined preference variable
+    arrives in — selects `Stop` by its ordinal whatever enum it is a member of, because 5.1
+    converts one enum to another by ordinal: `-ErrorAction ([ConfirmImpact]::Low)` is `Stop`.
     """
     if isinstance(value, (Ps1IntegerLiteral, Ps1RealLiteral)):
         return value.value == _STOP_ORDINAL
+    ordinal = ordinal_of(read(value))
+    if ordinal is not None:
+        return ordinal == _STOP_ORDINAL
     text = argument_text(value)
     if text is None:
         return True
