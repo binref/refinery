@@ -148,7 +148,20 @@ class TestJsTrustedEvalDoesNotExcuseAnIndirectEval(TestJsDeobfuscator):
         script = F"const {{Function, ['eval']: e}} = globalThis;\ne(input);\n{_JUNK}"
         self.assertEqual(
             _deobfuscated(script, trust_eval=True),
-            F"const {{ Function, eval: e }} = globalThis;\ne(input);\n{_JUNK}",
+            F'const {{ Function, eval: e }} = globalThis;\ne(input);\n{_JUNK}',
+        )
+
+    def test_a_computed_variable_destructuring_key_is_not_trusted(self):
+        """
+        `{[k]: e}` reads a global under a key only the runtime resolves, which may be `eval`, so it is
+        the destructuring counterpart of the member read `globalThis[k]` and the surface is kept even
+        beside a trusted `Function` extraction; the read below the indirect call stands rather than
+        folding to `_JUNK_FOLDED`.
+        """
+        script = F'const {{Function, [k]: e}} = globalThis;\ne(input);\n{_JUNK}'
+        self.assertEqual(
+            _deobfuscated(script, trust_eval=True),
+            F'const {{ Function, [k]: e }} = globalThis;\ne(input);\n{_JUNK}',
         )
 
 

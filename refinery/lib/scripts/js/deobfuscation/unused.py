@@ -570,11 +570,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     stored = {}
                     continue
                 name, value = store
-                for rewritten in [
-                    key for key, held in stored.items()
-                    if isinstance(held, JsIdentifier) and held.name == name
-                ]:
-                    del stored[rewritten]
+                stored = {
+                    key: held for key, held in stored.items()
+                    if not (isinstance(held, JsIdentifier) and held.name == name)
+                }
                 if stored.get(name) is not None and _stores_the_same_value(stored[name], value):
                     removals.append(stmt)
                 else:

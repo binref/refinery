@@ -2391,3 +2391,55 @@ class TestAClassHeritageTheFileRefusesEndsWhereTheStatementDoes(TestBase):
             (unread_spans(tree), len(tree.body)),
             (['class C extends { m(){} }'], 2),
         )
+
+
+class TestARestElementOffTheGlobalObjectIsNotAReflectionSurface(TestBase):
+    """
+    `const {...r} = globalThis` captures every own enumerable property of the global object into `r`,
+    `eval` and `Function` among them, so `r[k](payload)` may be an indirect `eval` that runs in the
+    global scope and rebinds any global. The reflection-surface test reads the object pattern's
+    `JsProperty` entries and a rest element is not one, so the destructuring is cleared: the guard on
+    the global `a` folds and its live branch is dropped. The computed member read `globalThis[k]` and
+    the computed destructuring key `{[k]: e}` are both surfaces; the rest capture is the same
+    value-read of the intrinsics under one more spelling and must be a surface too. The shape is
+    elaborate, so its reach over real input is slim.
+    """
+
+    @unittest.expectedFailure
+    def test_a_rest_capture_of_the_global_object_keeps_a_dependent_guard(self):
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            const { ...r } = globalThis;
+            r[k](payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, deobfuscate_source(source))
+
+
+class TestAGlobalPrototypeSetterInstalledThroughProtoIsNotSeen(TestBase):
+    """
+    Assigning an object literal to `globalThis.__proto__` installs an accessor on the object the
+    global object inherits from, so every `globalThis.token = a` fires the setter. The
+    redundant-store sweep runs wherever the global object is pristine, and that test catches a setter
+    installed through `Object.defineProperty` or `Object.setPrototypeOf` but not one installed by
+    assigning to `__proto__`: the run reads as pristine, so the second identical store is dropped and
+    the setter fires once instead of twice. Assigning a live accessor to `__proto__` is an exotic
+    shape, so its reach over real input is slim.
+    """
+
+    @unittest.expectedFailure
+    def test_both_stores_survive_an_inherited_setter_installed_through_proto(self):
+        source = (
+            'globalThis.__proto__ = { set token(v) {\n'
+            '  record(v);\n'
+            '} };\n'
+            'globalThis.token = a;\n'
+            'globalThis.token = a;'
+        )
+        self.assertEqual(source, deobfuscate_source(source))

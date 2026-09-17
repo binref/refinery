@@ -310,3 +310,25 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._deadcode(source))
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
+
+    def test_a_computed_variable_key_destructuring_can_rebind_a_global_guard(self):
+        """
+        `{[k]: e} = globalThis` is the destructuring counterpart of the member read `globalThis[k]`:
+        the runtime resolves the key, which may be `eval`, so `e(payload)` may be indirect eval
+        rebinding the global `a`. The guard cannot fold under either model, matching how the member
+        read is kept.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = ['x'];
+            const { [k]: e } = globalThis;
+            e(payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(source, self._deadcode(source, trust_eval=True))

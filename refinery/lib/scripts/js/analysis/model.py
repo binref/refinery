@@ -1386,6 +1386,17 @@ def _property_key_name(prop: JsProperty) -> str | None:
     return None
 
 
+def _property_key_is_dynamic(prop: JsProperty) -> bool:
+    """
+    Whether the object-pattern property *prop* reads a key only the runtime resolves — a computed
+    key that is not a string literal (`{[k]: e}`, `{['ev' + 'al']: e}`). Off the global object such a
+    read designates an unknown global, the destructuring counterpart of the computed member access
+    `_is_reflective_member` treats as a surface: the key could resolve to `eval` or `Function`, so a
+    caller proving a destructuring names no reflective intrinsic cannot clear it.
+    """
+    return prop.computed and not isinstance(prop.key, JsStringLiteral)
+
+
 def _last_positions(params: list[Binding | None]) -> list[Binding | None]:
     """
     *params* with every position a repeated parameter name occupies but the final one blanked out. A
@@ -2907,9 +2918,10 @@ class SemanticModel:
         the global object — and a string timer whose first argument is not a function literal.
 
         What is never trusted is a spelling of `eval` other than a direct call's callee — a value
-        read of the bare name, an `eval` member key, a destructuring — because that is indirect
-        eval, which runs in the global scope; and a computed read of an unknown global consults no
-        code this model cannot read. A span of source this model never read, a `with` body, and an
+        read of the bare name, an `eval` member key, a destructuring, or a destructuring key only
+        the runtime resolves (`{[k]: e}`), which may extract `eval` — because that is indirect eval,
+        which runs in the global scope; and a computed read of an unknown global consults no code
+        this model cannot read. A span of source this model never read, a `with` body, and an
         `import()` reach this walk through their own branches and stay kept under both models.
         """
         if not self.trust_eval:
@@ -2928,7 +2940,7 @@ class SemanticModel:
             if not isinstance(pattern, JsObjectPattern):
                 return False
             return all(
-                _property_key_name(prop) != 'eval'
+                _property_key_name(prop) != 'eval' and not _property_key_is_dynamic(prop)
                 for prop in pattern.properties
                 if isinstance(prop, JsProperty)
             )
@@ -2957,11 +2969,13 @@ class SemanticModel:
         """
         Whether *node* binds one of the reflective intrinsics out of the global object: an object
         pattern whose source may be the object (`may_be_the_global_object`) and that names `eval` or
-        `Function` among its keys. `const {eval} = globalThis` is the same value-read of the
-        intrinsic that the bare name spells — the pattern reads the property off the object and
-        binds its value — so it is a reflection surface just as the bare spelling is. A pattern
-        destructuring anything else, or the same names out of any other object, binds a value the
-        program chose and is no surface.
+        `Function` among its keys, or reads one under a key only the runtime resolves. `const {eval}
+        = globalThis` is the same value-read of the intrinsic that the bare name spells — the pattern
+        reads the property off the object and binds its value — so it is a reflection surface just as
+        the bare spelling is, and `const {[k]: e} = globalThis` is the destructuring counterpart of
+        the computed member read `globalThis[k]` (`_is_reflective_member`): its key may resolve to
+        `eval` at runtime, so it is a surface too. A pattern destructuring anything else, or the same
+        names out of any other object, binds a value the program chose and is no surface.
         """
         if isinstance(node, JsVariableDeclarator):
             pattern, source = node.id, node.init
@@ -2972,7 +2986,7 @@ class SemanticModel:
         for prop in pattern.properties:
             if not isinstance(prop, JsProperty):
                 continue
-            if _property_key_name(prop) in REFLECTIVE_INTRINSICS:
+            if _property_key_name(prop) in REFLECTIVE_INTRINSICS or _property_key_is_dynamic(prop):
                 return True
         return False
 
