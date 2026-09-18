@@ -52,12 +52,10 @@ from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel, side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
-    REFLECTIVE_INTRINSICS,
     Binding,
     ScopeKind,
     SemanticModel,
-    _property_key_is_dynamic,
-    _property_key_name,
+    _pattern_reflective_exposure,
     enclosing_function,
     is_member_write_target,
     is_unread_source,
@@ -78,7 +76,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
-    JsRestElement,
     JsStringLiteral,
     JsVariableDeclarator,
     JsWithStatement,
@@ -800,14 +797,8 @@ class TamperingModel:
             return []
         if not self._may_be_global_object(source):
             return []
-        names: list[tuple[str, bool]] = []
-        for prop in pattern.properties:
-            if not isinstance(prop, JsProperty):
-                continue
-            name = _property_key_name(prop)
-            if name in REFLECTIVE_INTRINSICS:
-                names.append((name, name != 'eval'))
-        return names
+        exposure = _pattern_reflective_exposure(pattern)
+        return [(name, name != 'eval') for name in exposure.named]
 
     def _destructuring_reads_a_reflective_intrinsic_imprecisely(
         self, site: JsVariableDeclarator | JsAssignmentExpression,
@@ -827,11 +818,8 @@ class TamperingModel:
             pattern, source = site.left, site.right
         if not isinstance(pattern, JsObjectPattern) or not self._may_be_global_object(source):
             return False
-        return any(
-            isinstance(prop, JsRestElement)
-            or (isinstance(prop, JsProperty) and _property_key_is_dynamic(prop))
-            for prop in pattern.properties
-        )
+        exposure = _pattern_reflective_exposure(pattern)
+        return exposure.dynamic_key or exposure.rest
 
     def _destructured_binding(
         self, site: JsVariableDeclarator | JsAssignmentExpression, name: str,

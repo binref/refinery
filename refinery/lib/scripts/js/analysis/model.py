@@ -31,7 +31,7 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
-from typing import Callable, Collection, Iterator
+from typing import Callable, Collection, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -1395,6 +1395,43 @@ def _property_key_is_dynamic(prop: JsProperty) -> bool:
     caller proving a destructuring names no reflective intrinsic cannot clear it.
     """
     return prop.computed and not isinstance(prop.key, JsStringLiteral)
+
+
+class _PatternExposure(NamedTuple):
+    """
+    What reflective intrinsics an object destructuring pattern could bind, decided from the pattern
+    alone: the precise names it reads under a statically known key (`eval`/`Function`, whether a
+    plain key `{eval}`, a renamed key `{eval: e}`, or a string-literal computed key `{['eval']: e}`),
+    whether any key is one only the runtime resolves (`{[k]: e}`), and whether a rest element
+    (`{...r}`) captures whatever else the source holds. The caller supplies the separate check that
+    the source may be the global object; only then do these say a reflective intrinsic is exposed.
+    """
+    named: tuple[str, ...]
+    dynamic_key: bool
+    rest: bool
+
+
+def _pattern_reflective_exposure(pattern: JsObjectPattern) -> _PatternExposure:
+    """
+    Classify an object pattern's reflective exposure. A property is read three ways: a precise
+    reflective-intrinsic key contributes its name, a runtime-resolved computed key sets `dynamic_key`,
+    and a rest element sets `rest`. A truncated-source error node among the properties is neither a
+    property nor a rest element and is skipped, not treated as a rest that captures everything.
+    """
+    named: list[str] = []
+    dynamic_key = False
+    rest = False
+    for prop in pattern.properties:
+        if isinstance(prop, JsRestElement):
+            rest = True
+        elif isinstance(prop, JsProperty):
+            if _property_key_is_dynamic(prop):
+                dynamic_key = True
+            else:
+                name = _property_key_name(prop)
+                if name is not None and name in REFLECTIVE_INTRINSICS:
+                    named.append(name)
+    return _PatternExposure(tuple(named), dynamic_key, rest)
 
 
 def _last_positions(params: list[Binding | None]) -> list[Binding | None]:
@@ -2965,11 +3002,8 @@ class SemanticModel:
             pattern = node.id if isinstance(node, JsVariableDeclarator) else node.left
             if not isinstance(pattern, JsObjectPattern):
                 return False
-            return all(
-                _property_key_name(prop) != 'eval' and not _property_key_is_dynamic(prop)
-                for prop in pattern.properties
-                if isinstance(prop, JsProperty)
-            )
+            exposure = _pattern_reflective_exposure(pattern)
+            return 'eval' not in exposure.named and not exposure.dynamic_key
         return False
 
     @staticmethod
@@ -3009,12 +3043,8 @@ class SemanticModel:
             pattern, source = node.left, node.right
         if not isinstance(pattern, JsObjectPattern) or not self.may_be_the_global_object(source):
             return False
-        for prop in pattern.properties:
-            if not isinstance(prop, JsProperty):
-                continue
-            if _property_key_name(prop) in REFLECTIVE_INTRINSICS or _property_key_is_dynamic(prop):
-                return True
-        return False
+        exposure = _pattern_reflective_exposure(pattern)
+        return bool(exposure.named) or exposure.dynamic_key
 
     def opaque_reflection_sites(self) -> list[Node]:
         """
