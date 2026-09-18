@@ -1195,7 +1195,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         writes, so in a host without `window` the statement raises a `ReferenceError` that removing it
         would drop (`SemanticModel.read_may_throw`). Only `globalThis` and a bound alias resolve for
         certain, so only a write through one of those is a dead store to sweep.
+
+        The whole sweep runs only where the global object is pristine (`EffectModel.global_pristine`):
+        a store to a plain-looking property fires an inherited setter where one was installed — through
+        `Object.defineProperty` or a prototype swapped onto the global object through `__proto__` — so
+        the write is observable and cannot be dropped though its property is never read.
         """
+        if not self.effects.global_pristine:
+            return set()
         write_stmts: dict[str, list[JsExpressionStatement]] = {}
         for node in walk_scope(parent):
             if not isinstance(node, JsExpressionStatement):

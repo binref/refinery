@@ -2602,6 +2602,23 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         )
         self.assertEqual(printed(source), self._remove_unused(source))
 
+    def test_a_setter_installed_through_the_global_proto_keeps_the_stores(self):
+        """
+        Assigning an object with a setter to the global object's `__proto__` installs it on the
+        prototype the global object inherits, so a plain-looking `global.r = require` fires it on
+        every store; both stores must stay though the property is never read.
+        """
+        source = inspect.cleandoc(
+            """
+            globalThis.__proto__ = { set r(v) {
+              SINK();
+            } };
+            global.r = require;
+            global.r = require;
+            """
+        )
+        self.assertEqual(printed(source), self._remove_unused(source))
+
     def test_two_undecodable_string_literals_are_not_deduped(self):
         """
         Neither escape decodes to a value the lenient parser can compare, so the two differing

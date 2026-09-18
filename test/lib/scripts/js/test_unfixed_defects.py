@@ -2356,26 +2356,3 @@ class TestARestElementOffTheGlobalObjectIsNotAReflectionSurface(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
-
-
-class TestAGlobalPrototypeSetterInstalledThroughProtoIsNotSeen(TestBase):
-    """
-    Assigning an object literal to `globalThis.__proto__` installs an accessor on the object the
-    global object inherits from, so every `globalThis.token = a` fires the setter. The
-    redundant-store sweep runs wherever the global object is pristine, and that test catches a setter
-    installed through `Object.defineProperty` or `Object.setPrototypeOf` but not one installed by
-    assigning to `__proto__`: the run reads as pristine, so the second identical store is dropped and
-    the setter fires once instead of twice. Assigning a live accessor to `__proto__` is an exotic
-    shape, so its reach over real input is slim.
-    """
-
-    @unittest.expectedFailure
-    def test_both_stores_survive_an_inherited_setter_installed_through_proto(self):
-        source = (
-            'globalThis.__proto__ = { set token(v) {\n'
-            '  record(v);\n'
-            '} };\n'
-            'globalThis.token = a;\n'
-            'globalThis.token = a;'
-        )
-        self.assertEqual(source, deobfuscate_source(source))
