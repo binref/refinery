@@ -280,8 +280,19 @@ UNANSWERED: tuple[str, ...] = (
     '-(2147483647)',
 )
 
+#: Measured spellings the host holds only by a rounding, which `read` refuses rather than invent
+#: an answer for. The corpus holds a row for each: the host prints a value, and no reading of the
+#: digits spells it — a five over twenty-nine places ending in one is held at twenty-eight places
+#: ending in zero, and a numeral of twenty-nine nines is the `System.Decimal` `10`.
+ROUNDED: tuple[str, ...] = (
+    '0.50000000000000000000000000001d',
+    '9.9999999999999999999999999999d',
+)
+
 DECIDED: tuple[str, ...] = tuple(
-    expression for expression in MEASURED if expression not in UNANSWERED
+    expression
+    for expression in MEASURED
+    if expression not in UNANSWERED and expression not in ROUNDED
 )
 
 
@@ -643,6 +654,7 @@ PINNED_OPERATIONS: tuple[str, ...] = (
     '1.0d + 2.0d',
     '1.0d - 0d',
     '1.0d / 1d',
+    '1d / 0.1d',
     '1.100d + 0d',
     '1.10d + 0d',
     '1.500d + 1.500d',
@@ -979,9 +991,11 @@ EXACT_DECIMAL_OPERATIONS: tuple[str, ...] = (
 
 #: The measured Decimal divisions, which are asked about separately from the other operations
 #: because a quotient is the one that need not be exact: `1d / 3d` is rounded onto the places the
-#: type has, where `79228162514264337593543950335d / 1d` is answered whole.
+#: type has, where `79228162514264337593543950335d / 1d` is answered whole and `1d / 0.1d` is a
+#: whole Python spells with an exponent.
 DECIMAL_DIVISIONS: tuple[str, ...] = (
     '1d / 3d',
+    '1d / 0.1d',
     '79228162514264337593543950335d / 1d',
 )
 
@@ -1136,22 +1150,25 @@ ABBREVIATED_NEGATIONS: tuple[str, ...] = ('- [uint64]18446744073709551615',)
 
 def _negated(expression: str) -> Ps1Outcome:
     """
-    What `apply_unary` makes of a measured negation: the operator the row spells, over the fact
-    `read` makes of the operand it stands before.
+    What `apply_unary` makes of a measured negation: the operator the row spells, over the operand
+    as the operator path reads it — `read_operand`, because a whole-number `Decimal` numeral
+    standing where an operator reaches it loses the places it was written with, and the host's
+    `- 1.0d` is `-1` for that reason and not by the subtraction.
     """
     applied = _negation(expression)
     assert applied is not None, expression
-    return apply_unary(applied.operator, read(applied.operand))
+    return apply_unary(applied.operator, read_operand(applied.operand))
 
 
 def _negated_as_subtraction(expression: str) -> Ps1Outcome:
     """
     What the same negation comes to when it is asked as the subtraction 5.1 compiles it into: `-`
-    over an Int32 zero and the fact `read` makes of the operand the minus stands before.
+    over an Int32 zero and the operand the minus stands before, read the same way the binary path
+    reads both of its sides.
     """
     applied = _negation(expression)
     assert applied is not None, expression
-    return apply('-', Ps1Constant(INT32, 0), read(applied.operand))
+    return apply('-', Ps1Constant(INT32, 0), read_operand(applied.operand))
 
 
 def _measured_negation(expression: str) -> tuple[str, str]:
@@ -1742,10 +1759,13 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
 
     def test_every_numeral_the_corpus_measures_is_selected(self):
         self.assertEqual(
-            len(_NUMERAL_ROWS), 44, 'a measured numeral was added or withdrawn')
-        self.assertEqual(sorted(REFUSED), ['0xFFFFFFFFFFFFFFFFF', '1_0'])
+            len(_NUMERAL_ROWS), 49, 'a measured numeral was added or withdrawn')
+        self.assertEqual(
+            sorted(REFUSED), ['0xFFFFFFFFFFFFFFFFF', '1_0', '79228162514264337593543950336d'])
         self.assertEqual(
             sorted(set(UNANSWERED) - set(MEASURED)), [], 'a spelling named here is not measured')
+        self.assertEqual(
+            sorted(set(ROUNDED) - set(MEASURED)), [], 'a spelling named here is not measured')
 
     def test_every_measured_numeral_reads_as_the_fact_the_host_printed(self):
         for expression in DECIDED:
@@ -1766,6 +1786,19 @@ class TestPs1MeasuredNumerals(unittest.TestCase):
         for expression in UNANSWERED:
             with self.subTest(expression):
                 self.assertEqual(_read(expression), UNKNOWN)
+
+    def test_the_rounded_measured_numerals_are_the_only_unread_ones(self):
+        """
+        The host answers a value for every one of `ROUNDED`, and the domain refuses each rather than
+        invent it. The set is pinned in both directions: a numeral the host rounds joining it, and a
+        refusal reaching beyond it, are both defects of this boundary.
+        """
+        self.assertEqual(
+            sorted(
+                expression for expression in MEASURED if _read(expression) is UNKNOWN
+            ),
+            sorted(ROUNDED + UNANSWERED),
+        )
 
     def test_a_negated_parenthesized_literal_keeps_the_width_of_the_literal_it_negates(self):
         """
@@ -2855,7 +2888,7 @@ class TestPs1MeasuredOperators(unittest.TestCase):
 
     def test_every_measured_operation_is_selected(self):
         self.assertEqual(
-            len(OPERATION_ROWS), 293, 'a measured operation was added or withdrawn')
+            len(OPERATION_ROWS), 294, 'a measured operation was added or withdrawn')
         self.assertEqual(sorted(set(PINNED_OPERATIONS) - set(OPERATION_ROWS)), [])
         self.assertEqual(sorted(set(ABBREVIATED_OPERATIONS) - set(OPERATION_ROWS)), [])
         self.assertEqual(sorted(set(FILTERED_COMPARISONS) - set(OPERATION_ROWS)), [])
@@ -3822,15 +3855,47 @@ class TestPs1TheScaleOfADecimalIsPartOfTheValue(unittest.TestCase):
             '1.100d' : '1.100',
         })
 
-    @unittest.expectedFailure
     def test_each_of_those_scales_is_a_fact_of_its_own(self):
         """
-        Ledgered rather than fixed: a fact carries its Decimal as a `decimal.Decimal`, and two of
-        those compare equal and hash alike where they differ only in scale, so the five values
-        collapse into the two numbers they are written from.
+        The identity the texts above measure: a host writes as many texts as there are scales, and
+        two facts that the host spells differently are different values, so the set here holds one
+        fact per spelling.
         """
         distinct = {_read(spelling) for spelling in SCALED_DECIMALS}
         self.assertEqual(sorted(_spelled(fact) for fact in distinct), sorted(SCALED_DECIMALS))
+
+
+class TestPs1AFactIsSpelledAsTheTypeHoldsIt(unittest.TestCase):
+    """
+    A `System.Decimal` stores a coefficient and a scale, and the fact the domain holds for one is
+    the form the type holds. It has no form for a positive exponent, so a quotient whose exact form
+    Python spells `1E+1` is the `10` the host prints for it — the row `corpus` measures — and it
+    meets its 96 bits and 28 places by dropping trailing fractional zeros, so a product whose raw
+    scale passes the places is held at them rather than refused. What it holds only by a rounding
+    is refused, which `ROUNDED` holds and `REFUSED` rejects.
+
+    Every expectation here is a row the corpus measures; the numerals themselves are pinned by
+    `TestPs1MeasuredNumerals`, which reads them against the same rows.
+    """
+
+    def test_a_quotient_spelled_with_an_exponent_is_the_coefficient_the_type_holds(self):
+        self.assertEqual(
+            _applied('1d / 0.1d'),
+            Ps1Outcome(NEVER, Ps1Constant(DECIMAL, decimal.Decimal('10'))),
+        )
+
+    def test_a_product_whose_raw_scale_passes_the_places_the_type_has_is_held_at_them(self):
+        """
+        The corpus measures this product over two variables holding a one at twenty-eight places
+        and prints its twenty-eight places. Python's exact product carries fifty-six, and the
+        type holds it by dropping the zeros past the twenty-eight it has — the rule a numeral is
+        read by — so the fact is the scale the host prints rather than a refusal or a smaller one.
+        """
+        held = decimal.Decimal('1.0000000000000000000000000000')
+        self.assertEqual(
+            apply('*', Ps1Constant(DECIMAL, held), Ps1Constant(DECIMAL, held)),
+            Ps1Outcome(NEVER, Ps1Constant(DECIMAL, held)),
+        )
 
 
 class TestPs1TheTextAValueWrites(unittest.TestCase):
@@ -4180,7 +4245,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
             for expression in OPERATION_ROWS
             if _applied(expression).value is not UNKNOWN
         }
-        self.assertEqual(len(composed), 196)
+        self.assertEqual(len(composed), 197)
         self.assertEqual(
             composed, {expression: _applied(expression) for expression in composed})
 
@@ -4282,7 +4347,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
 
     def test_an_expression_the_source_pins_evaluates_to_exactly_what_it_pins(self):
         compared = [site for site in SITES if read(site.node) is not UNKNOWN]
-        self.assertEqual(len(compared), 2943)
+        self.assertEqual(len(compared), 2961)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4297,7 +4362,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if resolve_expression_type(site.node) is not None
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2978)
+        self.assertEqual(len(compared), 2996)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4312,7 +4377,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
             if candidate_types(site.node, CLOSED_WORLD)
             and type_of(evaluate(site.node).value) is not None
         ]
-        self.assertEqual(len(compared), 2978)
+        self.assertEqual(len(compared), 2996)
         self.assertEqual(
             [
                 site.source for site in compared
@@ -4323,7 +4388,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         )
 
     def test_a_string_the_tree_reader_spells_is_the_string_named_here(self):
-        self.assertEqual(len(STRINGS), 1717)
+        self.assertEqual(len(STRINGS), 1731)
         self.assertEqual(
             [row.source for row in STRINGS if row.named != Ps1Constant(STRING, row.text)], [])
 
@@ -4379,7 +4444,7 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
 
     def test_only_a_cast_names_anything_where_its_step_cannot_be_consulted(self):
         unconsulted = [step for step in STEPS if not step.consultable]
-        self.assertEqual(len(unconsulted), 36)
+        self.assertEqual(len(unconsulted), 38)
         self.assertEqual(
             [step.source for step in unconsulted if _names_a_value(step.answered.value)], [])
         self.assertEqual(
@@ -4426,7 +4491,7 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
             for child in site.node.children()
             if isinstance(child, Expression) and evaluate(child).may_throw
         ]
-        self.assertEqual(len(compared), 2377)
+        self.assertEqual(len(compared), 2406)
         self.assertEqual(
             [site.source for site, _ in compared if not evaluate(site.node).may_throw], [])
 

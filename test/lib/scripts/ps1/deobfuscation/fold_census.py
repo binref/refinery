@@ -572,6 +572,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,$False)\nWrite-Output $False',
     '$t = 0.0d -or $false; Write-Output (,$t); Write-Output $t':
         'Write-Output (,$False)\nWrite-Output $False',
+    '$t = 0.50000000000000000000000000000d; Write-Output (,$t); Write-Output $t':
+        'Write-Output (,0.50000000000000000000000000000d)\nWrite-Output 0.50000000000000000000000000000d',
     '$t = 007; Write-Output (,$t); Write-Output $t':
         'Write-Output (,007)\nWrite-Output 007',
     '$t = 0L -or $false; Write-Output (,$t); Write-Output $t':
@@ -742,6 +744,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,1L)\nWrite-Output 1L',
     '$t = 1L; Write-Output (,$t); Write-Output $t':
         'Write-Output (,1L)\nWrite-Output 1L',
+    '$t = 1d / 0.1d; Write-Output (,$t); Write-Output $t':
+        'Write-Output (,10d)\nWrite-Output 10d',
     '$t = 1d / 3d; Write-Output (,$t); Write-Output $t':
         'Write-Output (,0.3333333333333333333333333333d)\nWrite-Output 0.3333333333333333333333333333d',
     '$t = 1dkb; Write-Output (,$t); Write-Output $t':
@@ -794,6 +798,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,7922816251426433759354395033.5d)\nWrite-Output 7922816251426433759354395033.5d',
     '$t = 79228162514264337593543950334d + 1d; Write-Output (,$t); Write-Output $t':
         'Write-Output (,79228162514264337593543950335d)\nWrite-Output 79228162514264337593543950335d',
+    '$t = 79228162514264337593543950335.00d; Write-Output (,$t); Write-Output $t':
+        'Write-Output (,79228162514264337593543950335.00d)\nWrite-Output 79228162514264337593543950335.00d',
     '$t = 79228162514264337593543950335d * 1d; Write-Output (,$t); Write-Output $t':
         'Write-Output (,79228162514264337593543950335d)\nWrite-Output 79228162514264337593543950335d',
     '$t = 79228162514264337593543950335d + 0d; Write-Output (,$t); Write-Output $t':

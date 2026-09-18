@@ -109,6 +109,12 @@ DEFECTS: dict[str, str] = {
         'so there is no value for it to denote. We read it as an arbitrary-width Python integer '
         'and accept it, which is the same open-endedness that reads `0xFFFFFFFF` as 4294967295 '
         'where 5.1 reads -1.',
+    '$t = 79228162514264337593543950336d; Write-Output (,$t); Write-Output $t':
+        'The same open-endedness, reached by a `d`-suffixed numeral: the type\'s maximum plus one '
+        'is past everything a `System.Decimal` stores, so 5.1 reports BadNumericConstant and '
+        'there is no value for the numeral to denote. We accept the token, and the value domain '
+        'refuses to read it, so no fold answers for a number the host does not have — but the '
+        'parser does not refuse the source as 5.1 does.',
 }
 
 
@@ -1079,6 +1085,39 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         (
             'OUT\tSystem.Decimal\t10000000000000000000000000000',
             'OUT\tSystem.Decimal\t10000000000000000000000000000',
+        ),
+    '$t = 0.50000000000000000000000000000d; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t0.5000000000000000000000000000',
+            'OUT\tSystem.Decimal\t0.5000000000000000000000000000',
+        ),
+    '$t = 0.50000000000000000000000000001d; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t0.5000000000000000000000000000',
+            'OUT\tSystem.Decimal\t0.5000000000000000000000000000',
+        ),
+    '$t = 79228162514264337593543950335.00d; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t79228162514264337593543950335',
+            'OUT\tSystem.Decimal\t79228162514264337593543950335',
+        ),
+    '$t = 79228162514264337593543950336d; Write-Output (,$t); Write-Output $t': (
+        'THROW\tParseException',
+    ),
+    '$t = 9.9999999999999999999999999999d; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t10.000000000000000000000000000',
+            'OUT\tSystem.Decimal\t10.000000000000000000000000000',
+        ),
+    '$t = 1d / 0.1d; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t10',
+            'OUT\tSystem.Decimal\t10',
+        ),
+    '$a = 1.0000000000000000000000000000d; $t = $a * $a; Write-Output (,$t); Write-Output $t':
+        (
+            'OUT\tSystem.Decimal\t1.0000000000000000000000000000',
+            'OUT\tSystem.Decimal\t1.0000000000000000000000000000',
         ),
     "$t = 12 + '0xabc'; Write-Output (,$t); Write-Output $t":
         (

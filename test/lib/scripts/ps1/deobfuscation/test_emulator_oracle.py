@@ -127,7 +127,7 @@ COVERAGE: dict[str, _Coverage] = {
 #: population. `Decimal` is not a `float` — 5.1 computes it exactly and to a different precision —
 #: and `Single` is not one either, so a row carrying one has nothing here to be right about.
 TYPES_OUTSIDE_THE_CURRENCY: dict[str, int] = {
-    'System.Decimal' : 51,
+    'System.Decimal' : 56,
     'System.Single'  : 1,
 }
 
@@ -138,7 +138,7 @@ COLLECTION_ROWS: int = 7
 
 #: How many measured rows 5.1 produced no value for, by stepping over the erroring statement or by
 #: stopping the run. The population `ANSWERED_THROWS` is drawn from.
-THROWING_ROWS: int = 47
+THROWING_ROWS: int = 48
 
 #: Where the interpreter computes a value 5.1 did not. Each entry is a constant the deobfuscator
 #: folds wrongly into the script it emits.

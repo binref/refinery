@@ -670,7 +670,7 @@ class Ps1Typed(Ps1Fact):
         return F'Typed({self.type})'
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, eq=False)
 class Ps1Constant(Ps1Fact):
     """
     The value is exactly `payload`, and its type is `type`. The payload's Python type is an
@@ -682,6 +682,13 @@ class Ps1Constant(Ps1Fact):
     An array's payload is a tuple of facts rather than of payloads, so that an `Object[]` whose
     elements are Chars is a different value from one whose elements are Strings — the fact a
     pipeline builds and the erasure that made `foreach` iterate once over a joined string.
+
+    Two facts are one value only where the host cannot tell them apart, and one number at two
+    scales it can: a `System.Decimal` carries the places it was written with, so a host writes
+    `1.0d` as `1.0` and `1.00d` as `1.00`, and a caller that puts facts in a set or keys a
+    dictionary by them has to see as many values as the host writes texts. Python's
+    `decimal.Decimal` compares the number alone, which is why identity for that payload is stated
+    here rather than inherited.
     """
 
     type: Ps1TypeName
@@ -689,6 +696,21 @@ class Ps1Constant(Ps1Fact):
 
     def __repr__(self) -> str:
         return F'Constant({self.type}, {self.payload!r})'
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Ps1Constant):
+            return NotImplemented
+        if self.type != other.type:
+            return False
+        here, there = self.payload, other.payload
+        if isinstance(here, decimal.Decimal) and isinstance(there, decimal.Decimal):
+            return here.as_tuple() == there.as_tuple()
+        return here == there
+
+    def __hash__(self) -> int:
+        payload = self.payload
+        keyed = payload.as_tuple() if isinstance(payload, decimal.Decimal) else payload
+        return hash((self.type, keyed))
 
 
 class Ps1Throws(enum.Enum):
@@ -1365,6 +1387,11 @@ def _decimal_numeral(text: str, sign: int, multiplier: int) -> Ps1Fact:
     *context* operation in Python and rounds to the ambient 28 digits where the type holds 29: the
     literal `7922816251426433759354395033.5d` was read as `7922816251426433759354395034`, a number
     the source does not spell, and every reader of the constant inherited it.
+
+    A `Decimal` the type holds only by dropping zeros is read as the one it holds, and one it
+    holds only by a rounding is refused rather than read: measured, a numeral of twenty-nine
+    nines with a `d` suffix, summed with zero, is the `System.Decimal` `10` on the host — a value
+    no reading of the digits produces — and the type's maximum plus one is a parse error there.
     """
     suffix = text[-1:].lower()
     if suffix in ('l', 'd'):
@@ -1376,7 +1403,7 @@ def _decimal_numeral(text: str, sign: int, multiplier: int) -> Ps1Fact:
         if suffix == 'l':
             return _long(sign * magnitude)
         if suffix == 'd':
-            return Ps1Constant(_DECIMAL, decimal.Decimal(sign * magnitude))
+            return _decimal_at(decimal.Decimal(sign * magnitude))
         return _widest_needed(sign * magnitude)
     if not _REAL_DIGITS.match(text):
         return UNKNOWN
@@ -1384,10 +1411,23 @@ def _decimal_numeral(text: str, sign: int, multiplier: int) -> Ps1Fact:
         return UNKNOWN
     if suffix == 'd':
         spelled = decimal.Decimal(text)
-        return Ps1Constant(_DECIMAL, spelled.copy_negate() if sign < 0 else spelled)
+        if sign < 0:
+            spelled = spelled.copy_negate()
+        return _decimal_at(_expanded(spelled))
     if suffix == 'l':
         return _long(sign * round(decimal.Decimal(text)))
     return _double(sign * float(text) * multiplier)
+
+
+def _decimal_at(value: decimal.Decimal) -> Ps1Fact:
+    """
+    The `Decimal` a `d`-suffixed numeral denotes, or `UNKNOWN` for one the type holds only by a
+    rounding. What a host holds there is measured and it is `_held`'s: the value stands as spelled
+    while it fits, drops trailing fractional zeros where it does not, and only a value with no zero
+    left to drop is rounded — the rounding is `read`'s refusal, not its answer.
+    """
+    held = _held(value)
+    return UNKNOWN if held is None else Ps1Constant(_DECIMAL, held)
 
 
 def _widest_needed(value: int) -> Ps1Fact:
@@ -3051,37 +3091,67 @@ def _decimal_result(value: _Number) -> _Number | None:
     it is. Python carries such a value without complaint; .NET does not have it, so neither does the
     domain, and calling it a throw is what the host does rather than a refusal.
 
-    A `Decimal` the type cannot hold *exactly* is refused instead. .NET rounds such a result to the
-    96 bits and 28 places it has, by a rule no measurement here covers, so computing it at a
-    precision that carries the exact answer and then reporting whatever Python's own rounding made
-    of it would be a value of our invention. See `_holds_exactly`.
+    A `Decimal` the type cannot hold *exactly* is refused instead. .NET rounds such a result onto
+    the 96 bits and 28 places it has, and the rounding — distinct from the zero-dropping `_held`
+    measures — is by a rule no measurement here covers, so computing it at a precision that carries
+    the exact answer and then reporting whatever Python's own rounding made of it would be a value
+    of our invention. See `_held`.
     """
     if isinstance(value, decimal.Decimal):
         if not value.is_finite():
             return None
-        if not _DECIMAL_MIN <= value <= _DECIMAL_MAX:
+        expanded = _expanded(value)
+        if not _DECIMAL_MIN <= expanded <= _DECIMAL_MAX:
             raise _Throws
-        if not _holds_exactly(value):
+        held = _held(expanded)
+        if held is None:
             return None
+        return _finite(held)
     return _finite(value)
 
 
-def _holds_exactly(value: decimal.Decimal) -> bool:
+def _expanded(value: decimal.Decimal) -> decimal.Decimal:
     """
-    Whether a `System.Decimal` is the number this `Decimal` is, rather than a rounding of it. The
-    type is a coefficient of at most 96 bits scaled by a power of ten between zero and twenty-eight,
-    and both halves of that are asked here: a result computed at `_DECIMAL_ARITHMETIC`'s precision
-    can carry more places than the type has, and one inside the range the caller already tested can
-    still spell more digits than the coefficient holds — `9.9999999999999999999999999999` is smaller
-    than a `Decimal`'s largest value and is not a `Decimal`.
+    The `Decimal` a `System.Decimal` holds, which is never one with a positive exponent: the type
+    stores a coefficient and a scale, so Python's spelling `1E+28` is there the coefficient of a
+    one with twenty-eight zeros after it, and a host prints `1E+28d` as that coefficient —
+    measured. Expanding the exponent into the digits is what keeps every payload the domain builds
+    one value however the source or an operation spelled it, because Python compares and hashes
+    two spellings of one number at one scale as different values.
     """
     spelling = value.as_tuple()
-    if not isinstance(spelling.exponent, int) or spelling.exponent < -28:
-        return False
+    exponent = spelling.exponent
+    if not isinstance(exponent, int) or exponent <= 0:
+        return value
+    return decimal.Decimal((spelling.sign, spelling.digits + (0,) * exponent, 0))
+
+
+def _held(value: decimal.Decimal) -> decimal.Decimal | None:
+    """
+    The `Decimal` a `System.Decimal` holds for `value`, or `None` where holding it asks a rounding
+    this module does not model. The type stores a coefficient of at most 96 bits at a scale of at
+    most 28 places, and it meets both bounds the same measured way: a value it already fits stands
+    as spelled, and one it does not is relieved of trailing fractional zeros — each a digit and a
+    place together — until it fits. A five over twenty-nine places is held at twenty-eight, the
+    type's maximum written with two places is held as the maximum, and a one at twenty-eight
+    places squared is held at twenty-eight places, which is what the host prints for each. Only a
+    value with no zero left to drop is rounded — a five over twenty-nine places ending in one,
+    and a numeral of twenty-nine nines — and the `10` the host makes of the second is a rounding
+    no reading of the digits spells, which is what `None` refuses to invent.
+    """
+    sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        return None
     coefficient = 0
-    for digit in spelling.digits:
+    for digit in digits:
         coefficient = coefficient * 10 + digit
-    return coefficient <= _DECIMAL_MAX
+    while exponent < -28 or coefficient > _DECIMAL_MAX:
+        if exponent >= 0 or digits[-1] != 0:
+            return None
+        coefficient //= 10
+        digits = digits[:-1]
+        exponent += 1
+    return decimal.Decimal((sign, digits, exponent))
 
 
 #: The smallest step a `System.Decimal` takes, which is what a quotient the type cannot hold exactly
@@ -3109,8 +3179,9 @@ def _decimal_quotient(a: decimal.Decimal, b: decimal.Decimal) -> decimal.Decimal
         exact = a / b
         if not _DECIMAL_MIN <= exact <= _DECIMAL_MAX:
             raise _Throws
-        if _holds_exactly(exact):
-            return exact
+        held = _held(exact)
+        if held is not None:
+            return held
         down = exact.quantize(_DECIMAL_STEP, rounding=decimal.ROUND_HALF_DOWN)
         up = exact.quantize(_DECIMAL_STEP, rounding=decimal.ROUND_HALF_UP)
     return down if down == up else None
