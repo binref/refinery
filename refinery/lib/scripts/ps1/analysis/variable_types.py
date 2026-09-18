@@ -203,28 +203,14 @@ def _origin_assigned_type(
     binding installed *earlier* converts the value on the way in, so `constraint_converts` refuses
     those the same way `_stored_type` does.
     """
-    if assignment.operator != '=':
+    position = _target_position(write, assignment)
+    if position is None:
         return None
-    cursor: Node = write
-    parent = cursor.parent
-    slot: int | None = None
-    constrained = False
-    while parent is not None and parent is not assignment:
-        if isinstance(parent, Ps1CastExpression) and not constrained:
-            constrained = True
-        elif isinstance(parent, Ps1ArrayLiteral):
-            if slot is not None:
-                return None
-            slot = next(
-                (at for at, element in enumerate(parent.elements) if element is cursor), None)
-            if slot is None:
-                return None
-        cursor = parent
-        parent = cursor.parent
+    constraint, slot = position
     value = assignment.value
     if not isinstance(value, Expression):
         return None
-    if constrained:
+    if constraint is not None:
         stored = value_under_declared_constraint(write, value)
         return None if stored is None else _judged(stored, flow, chased)
     if slot is None:
@@ -239,6 +225,8 @@ def _origin_assigned_type(
         return None
     element = written.elements[slot]
     if not isinstance(element, Expression):
+        return None
+    if constraint_converts(flow.semantic.binding_of(write), element):
         return None
     return _judged(element, flow, chased)
 
@@ -323,6 +311,45 @@ def _established_by(write: Node, flow: Ps1VariableFlow) -> Ps1TypeName | None:
     return None
 
 
+def _target_position(
+    write: Ps1Variable,
+    assignment: Ps1AssignmentExpression,
+) -> tuple[str | None, int | None] | None:
+    """
+    The cast and the array slot standing between *write* and the plain assignment it belongs to —
+    the `[string]` and the slot index of `[string]$a, $b = 5, 6` — or `None` where the target is
+    not a plain `=` one or the position cannot name its slot: a target reached through two array
+    literals, or one an array on the way does not hold. Every question about the target of a write
+    reads this one walk, so a new node kind between the two is answered once for all of them: the
+    cast is the constraint the store converts through, and the slot names the element standing
+    opposite it. The first cast on the way is the one kept, which is the constraint the binding
+    declares.
+    """
+    if assignment.operator != '=':
+        return None
+    cursor: Node = write
+    parent = cursor.parent
+    constraint: str | None = None
+    slot: int | None = None
+    while parent is not None and parent is not assignment:
+        if isinstance(parent, Ps1CastExpression) and constraint is None:
+            constraint = parent.type_name
+        elif isinstance(parent, Ps1ArrayLiteral):
+            if slot is not None:
+                return None
+            slot = next(
+                (
+                    at for at, element in enumerate(parent.elements) if element is cursor
+                ),
+                None,
+            )
+            if slot is None:
+                return None
+        cursor = parent
+        parent = cursor.parent
+    return constraint, slot
+
+
 def _assigned_type(
     write: Ps1Variable,
     assignment: Ps1AssignmentExpression,
@@ -338,24 +365,10 @@ def _assigned_type(
     the two sides have the same number of elements: `$a, $b = 1, 2, 3` gives `$b` the *rest* as an
     array, and `$a, $b = 1` gives it `$null`.
     """
-    if assignment.operator != '=':
+    position = _target_position(write, assignment)
+    if position is None:
         return None
-    cursor: Node = write
-    parent = cursor.parent
-    constraint: str | None = None
-    slot: int | None = None
-    while parent is not None and parent is not assignment:
-        if isinstance(parent, Ps1CastExpression) and constraint is None:
-            constraint = parent.type_name
-        elif isinstance(parent, Ps1ArrayLiteral):
-            if slot is not None:
-                return None
-            slot = next(
-                (at for at, element in enumerate(parent.elements) if element is cursor), None)
-            if slot is None:
-                return None
-        cursor = parent
-        parent = cursor.parent
+    constraint, slot = position
     if constraint is not None:
         return resolve_type(constraint)
     value = assignment.value
@@ -423,16 +436,12 @@ def _declared_constraint_type(write: Node) -> Ps1TypeName | None:
     if not isinstance(write, Ps1Variable):
         return None
     assignment = assignment_of(write)
-    if assignment is None or assignment.operator != '=':
+    if assignment is None:
         return None
-    cursor: Node = write
-    parent = cursor.parent
-    while parent is not None and parent is not assignment:
-        if isinstance(parent, Ps1CastExpression):
-            return resolve_type(parent.type_name)
-        cursor = parent
-        parent = cursor.parent
-    return None
+    position = _target_position(write, assignment)
+    if position is None or position[0] is None:
+        return None
+    return resolve_type(position[0])
 
 
 def value_under_declared_constraint(write: Node, value: Expression) -> Expression | None:

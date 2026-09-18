@@ -506,5 +506,110 @@ class TestPs1MemberOriginQueries(unittest.TestCase):
             data._required_reflection_method_keys({('text.stringbuilder', 'length')})
 
 
+class TestPs1InheritedStaticShadowing(unittest.TestCase):
+    """
+    The reflection fold's overload selection draws its candidate set only from the statics a
+    type declares, while the direct call's binder also selects among the statics its base types
+    declare. A base overload strictly more specific than a declared one is the one shape the
+    fold's uniqueness guard cannot see — the binder would re-select it where the type array
+    selected the declared overload — so the collected surface is pinned to hold none.
+    """
+
+    @staticmethod
+    def _statics(name, member):
+        record = data.member_record(name, member)
+        if not isinstance(record, dict):
+            return []
+        return [overload for overload in record.get('overloads') or () if overload.get('static')]
+
+    @staticmethod
+    def _parameters(overload):
+        """
+        The resolved non-byref parameter types, or `None` where a parameter spelling does not
+        resolve: a pair one of whose sides cannot be judged is not one the census can compare.
+        """
+        resolved = []
+        for parameter in overload.get('parameters') or ():
+            if parameter.get('byref'):
+                return None
+            found = data.resolve_type(parameter['type'])
+            if found is None:
+                return None
+            resolved.append(found)
+        return resolved
+
+    @classmethod
+    def _base_chain(cls, resolved):
+        chain = []
+        seen = {resolved.definition}
+        while True:
+            record = data._type_record(resolved.definition)
+            parent = None if record is None else record.get('base')
+            if not parent:
+                return chain
+            resolved = data.resolve_type(parent)
+            if resolved is None or resolved.definition in seen:
+                return chain
+            seen.add(resolved.definition)
+            chain.append(resolved)
+
+    def test_no_base_static_is_strictly_more_specific_than_a_declared_one(self):
+        violations = []
+        compared = 0
+        for name in data.collected_type_names():
+            try:
+                resolved = data.resolve_type(name)
+            except ValueError:
+                # a nested-generic spelling the name parser misreads; the fold cannot spell a
+                # lookup on it either, so the census skips it.
+                continue
+            if resolved is None or resolved.ranks:
+                continue
+            chain = self._base_chain(resolved)
+            members = data.type_members(resolved)
+            if not members or not chain:
+                continue
+            for member, record in members.items():
+                if record.get('kind') != 'method':
+                    continue
+                declared = [
+                    self._parameters(overload)
+                    for overload in self._statics(resolved, member)
+                ]
+                for ancestor in chain:
+                    for their_parameters in (
+                        self._parameters(overload)
+                        for overload in self._statics(ancestor, member)
+                    ):
+                        if their_parameters is None:
+                            continue
+                        for my_parameters in declared:
+                            if (
+                                my_parameters is None
+                                or len(my_parameters) != len(their_parameters)
+                            ):
+                                continue
+                            compared += 1
+                            narrower = (
+                                all(
+                                    data.is_assignable_to(theirs, mine) is True
+                                    for theirs, mine in zip(their_parameters, my_parameters)
+                                )
+                                and any(
+                                    data.is_assignable_to(mine, theirs) is not True
+                                    for theirs, mine in zip(their_parameters, my_parameters)
+                                )
+                            )
+                            if narrower:
+                                violations.append(
+                                    F'{resolved.definition}::{member} against '
+                                    F'{ancestor.definition}::{member}'
+                                )
+        # the count is only bounded below, so a regeneration may grow it; a walk that found
+        # nothing to compare answers nothing and fails here.
+        self.assertGreater(compared, 0)
+        self.assertEqual(violations, [])
+
+
 if __name__ == '__main__':
     unittest.main()

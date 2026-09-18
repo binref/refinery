@@ -74,7 +74,6 @@ from refinery.lib.scripts.ps1.data import (
     enum_name,
     enum_ordinal,
     enum_storage,
-    instance_overloads,
     is_assignable_to,
     named_type,
     operand_witnesses,
@@ -365,6 +364,8 @@ def non_null_type(
     if not isinstance(unwrapped, Expression):
         return None
     fact = read(unwrapped)
+    if fact is NULL:
+        return None
     if isinstance(fact, (Ps1Typed, Ps1Constant)):
         return fact.type
     if isinstance(unwrapped, Ps1Variable):
@@ -372,6 +373,11 @@ def non_null_type(
     if isinstance(unwrapped, Ps1InvokeMember):
         return _vouched_return(unwrapped, type_of_variable)
     return None
+
+
+#: The member names the non-null vouch table names, derived from it so the cheap half of a vouch —
+#: whether any vouch covers the member at all — answers before a receiver is typed.
+_VOUCHED_MEMBERS = frozenset(member for _, member in NON_NULL_RETURNS)
 
 
 def _vouched_return(
@@ -382,26 +388,19 @@ def _vouched_return(
     The return a curated non-null vouch answers an instance call with, or `None` where the call is
     not one it covers. The receiver is typed rather than origin-traced, because a receiver that is
     `$null` at runtime makes the call throw before the caller's question is reached, and the
-    sealedness floor on every vouch is what keeps the answer from naming a subtype member.
+    sealedness floor on every vouch is what keeps the answer from naming a subtype member. The
+    member name is asked of the table before the receiver is typed, so a call of a member no vouch
+    names does not pay the typing.
     """
     if call.object is None or call.access is not Ps1AccessKind.INSTANCE:
         return None
     member = get_member_name(call.member)
-    if member is None:
+    if member is None or member.lower() not in _VOUCHED_MEMBERS:
         return None
     receiver = resolve_expression_type(call.object, type_of_variable)
     if receiver is None:
         return None
-    if (receiver.generic_definition, member.lower()) not in NON_NULL_RETURNS:
-        return None
-    returns = {
-        resolve_type(overload['returns'])
-        for overload in instance_overloads(receiver, member)
-        if overload.get('returns')
-    }
-    if None in returns or len(returns) != 1:
-        return None
-    return next(iter(returns))
+    return NON_NULL_RETURNS.get((receiver.generic_definition, member.lower()))
 
 
 #: Commands whose declared `[OutputType]` is a trustworthy *superset* of what they emit at runtime,

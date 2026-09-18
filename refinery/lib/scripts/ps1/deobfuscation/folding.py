@@ -987,6 +987,8 @@ class Ps1ConstantFolding(Transformer):
                     decoded = base64.b64decode(b64_str)
                 except Exception:
                     return None
+                if not decoded:
+                    return Ps1ArrayExpression(body=[])
                 elements: list[Expression] = [
                     Ps1IntegerLiteral(raw=F'0x{b:02X}') for b in decoded
                 ]

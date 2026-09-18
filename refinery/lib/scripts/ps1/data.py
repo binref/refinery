@@ -1356,15 +1356,14 @@ def _required_reflection_method_keys(
     entries: set[tuple[str, str]],
 ) -> frozenset[tuple[Ps1TypeName, str]]:
     """
-    A frozenset of `(canonical type key, lowercased member)` pairs, the form a method-keyed
-    curated table looks up, each entry floored against the collected metadata: the type must
-    resolve, and the member must be a reflection method of it. An entry naming anything else is a
-    table speaking about a method the data cannot see, which fails the load rather than silently
+    A frozenset of `(canonical type key, lowercased member)` pairs — the form
+    `required_member_keys` builds — floored against the collected metadata: the member must be a
+    reflection method of the type the key names. An entry naming anything else is a table
+    speaking about a method the data cannot see, which fails the load rather than silently
     granting or denying a fold around it.
     """
-    result: set[tuple[Ps1TypeName, str]] = set()
-    for type_name, member in entries:
-        type_key = required_type_key(type_name)
+    keys = required_member_keys(entries)
+    for type_key, member in keys:
         record = member_record(type_key, member)
         if (
             isinstance(record, MemberLookup)
@@ -1372,24 +1371,24 @@ def _required_reflection_method_keys(
             or record.get('source') != 'reflection'
         ):
             raise ValueError(
-                F'a curated method table names {type_name}.{member}, which the collected metadata '
+                F'a curated method table names {type_key}.{member}, which the collected metadata '
                 F'does not carry as a reflection method; the data and the table are out of step.'
             )
-        result.add((type_key, member.lower()))
-    return frozenset(result)
+    return keys
 
 
 def _required_non_null_returns(
     entries: set[tuple[str, str]],
-) -> frozenset[tuple[Ps1TypeName, str]]:
+) -> dict[tuple[Ps1TypeName, str], Ps1TypeName]:
     """
-    The non-null vouch table, floored on top of `_required_reflection_method_keys`: the type must
-    be sealed — a subtype could override the member to return `$null` — and the member's
-    instance overloads must agree on one return type, which is the type a vouch answers with. An
-    entry that fails a floor fails the load.
+    The non-null vouch table, floored on top of `_required_reflection_method_keys`: the type
+    must be sealed — a subtype could override the member to return `$null` — and the member's
+    instance overloads must agree on one return type, which is the return the table records for
+    the vouch, so that answering one is a lookup on the table rather than a re-derivation of the
+    agreement. An entry that fails a floor fails the load.
     """
-    keys = _required_reflection_method_keys(entries)
-    for type_key, member in keys:
+    table: dict[tuple[Ps1TypeName, str], Ps1TypeName] = {}
+    for type_key, member in _required_reflection_method_keys(entries):
         if not type_is_sealed(type_key):
             raise ValueError(
                 F'the non-null return table names {type_key!r}, which the collected metadata does '
@@ -1407,15 +1406,17 @@ def _required_non_null_returns(
                 F'do not agree on one return type; the value the vouch answers with would be a '
                 F'guess, so the data and the table are out of step.'
             )
-    return keys
+        table[(type_key, member)] = next(iter(returns))
+    return table
 
 
 #: The instance methods whose call on a value of the type always returns a non-null value of the
 #: one return type its overloads agree on, measured on 5.1 — `StringBuilder.ToString` first: an
-#: emptied `StringBuilder` still answers a String. This is what lets an origin judgment follow a
-#: member call rather than stopping at a name it cannot type; see
+#: emptied `StringBuilder` still answers a String. The table records the agreed return beside the
+#: key, so a vouch is one lookup. This is what lets an origin judgment follow a member call rather
+#: than stopping at a name it cannot type; see
 #: `refinery.lib.scripts.ps1.analysis.values.non_null_type`.
-NON_NULL_RETURNS: frozenset[tuple[Ps1TypeName, str]] = _required_non_null_returns({
+NON_NULL_RETURNS: dict[tuple[Ps1TypeName, str], Ps1TypeName] = _required_non_null_returns({
     ('text.stringbuilder', 'tostring'),
 })
 

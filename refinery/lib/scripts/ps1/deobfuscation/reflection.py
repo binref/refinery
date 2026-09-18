@@ -3,7 +3,7 @@ Reflection property reads and method calls rewritten as the direct members they 
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression
+from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.ps1.analysis.effects import reflection_read_cannot_throw
 from refinery.lib.scripts.ps1.analysis.values import non_null_type
 from refinery.lib.scripts.ps1.ast import (
@@ -41,12 +41,18 @@ from refinery.lib.scripts.ps1.model import (
     Ps1TypeExpression,
 )
 
-#: A void return is the one the two spellings differ on by a pipeline item: a void method called
-#: directly emits nothing where `Invoke` emits one `$null`, measured on 5.1 over `Array.Reverse`.
+#: A void return is refused rather than argued: `Invoke` on a void method answers a `$null` the
+#: direct call writes nothing for, and what the two spellings leave the script holding is not
+#: settled for every context a script can put one in.
 _VOID = named_type('System.Void')
 
 #: What the `[type[]]` cast of the type-array spelling names.
 _TYPE_ARRAY = named_type('System.Type[]')
+
+#: The one reference type the argument guard passes as a scalar: a `String` is not enumerated by
+#: `@()`, where a `String[]` — the same `definition` with a rank — is. The comparison is to the
+#: whole type for exactly that reason.
+_STRING = named_type('System.String')
 
 
 def _spells_a_concrete_type(spelling: str | None) -> Ps1TypeName | None:
@@ -82,11 +88,12 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
     to the overload `GetMethod` selected, while the direct call lets the binder select again.
     Each argument is therefore judged (`non_null_type`) for a non-null type the binder is
     definitely given as it stands, and the selected overload has to be the only one of that
-    arity those types accept. A generic or a void return is refused — `Invoke` and the direct
-    spelling differ on both — as are the spellings this does not answer: `InvokeMember`,
-    `Activator::CreateInstance`, the three-argument `Invoke`, `MakeGenericMethod`, a static
-    target other than `$Null`, and an argument array that is not the `@(...)` spelling of plain
-    expressions.
+    arity those types accept. A generic or a void return is refused — a generic one because the
+    direct binder closes it where `Invoke` on the definition throws, a void one because what the
+    spellings leave the script holding is not settled — as are the spellings this does not
+    answer: `InvokeMember`, `Activator::CreateInstance`, the three-argument `Invoke`,
+    `MakeGenericMethod`, a static target other than `$Null`, and an argument array that is not
+    the `@(...)` spelling of plain expressions.
     """
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
@@ -102,6 +109,35 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
             return read
         return self._direct_call(node)
 
+    @staticmethod
+    def _reflection_lookup(
+        lookup: Node | None,
+        getter: str,
+        arity: int,
+    ) -> tuple[Ps1TypeExpression, str, list[Expression]] | None:
+        """
+        The receiver, member name, and arguments a reflection getter's lookup spells, or `None`
+        where the lookup is not an instance call of *getter* on a type literal naming the member as
+        the first of *arity* arguments: the shape the `GetProperty` read and the `GetMethod` call
+        below share.
+        """
+        if not isinstance(lookup, Ps1InvokeMember):
+            return None
+        if lookup.access != Ps1AccessKind.INSTANCE:
+            return None
+        named = get_member_name(lookup.member)
+        if named is None or named.lower() != getter:
+            return None
+        receiver = lookup.object
+        if not isinstance(receiver, Ps1TypeExpression):
+            return None
+        if len(lookup.arguments) != arity:
+            return None
+        name = string_value(lookup.arguments[0])
+        if name is None:
+            return None
+        return receiver, name, lookup.arguments
+
     def _direct_read(self, node: Ps1InvokeMember) -> Expression | None:
         """
         The direct member read the `GetValue` call spells, or `None` where this will not answer.
@@ -113,22 +149,11 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
             return None
         if not self._reads_a_static_target(node.arguments):
             return None
-        lookup = node.object
-        if not isinstance(lookup, Ps1InvokeMember):
+        found = self._reflection_lookup(node.object, 'getproperty', 1)
+        if found is None:
             return None
-        if lookup.access != Ps1AccessKind.INSTANCE:
-            return None
-        getter = get_member_name(lookup.member)
-        if getter is None or getter.lower() != 'getproperty':
-            return None
-        if lookup.object is None or not isinstance(lookup.object, Ps1TypeExpression):
-            return None
-        if len(lookup.arguments) != 1:
-            return None
-        name = string_value(lookup.arguments[0])
-        if name is None:
-            return None
-        resolved = resolve_type(lookup.object.name)
+        receiver, name, _ = found
+        resolved = resolve_type(receiver.name)
         if resolved is None:
             return None
         record = member_record(resolved, name)
@@ -147,7 +172,7 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
             return None
         return Ps1MemberAccess(
             access=Ps1AccessKind.STATIC,
-            object=lookup.object,
+            object=receiver,
             member=spelled,
         )
 
@@ -168,25 +193,14 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
         arguments = self._invocation_arguments(node.arguments[1])
         if arguments is None:
             return None
-        lookup = node.object
-        if not isinstance(lookup, Ps1InvokeMember):
+        found = self._reflection_lookup(node.object, 'getmethod', 2)
+        if found is None:
             return None
-        if lookup.access != Ps1AccessKind.INSTANCE:
-            return None
-        getter = get_member_name(lookup.member)
-        if getter is None or getter.lower() != 'getmethod':
-            return None
-        if lookup.object is None or not isinstance(lookup.object, Ps1TypeExpression):
-            return None
-        if len(lookup.arguments) != 2:
-            return None
-        name = string_value(lookup.arguments[0])
-        if name is None:
-            return None
-        type_array = self._type_array(lookup.arguments[1])
+        receiver, name, lookup_arguments = found
+        type_array = self._type_array(lookup_arguments[1])
         if type_array is None or len(type_array) != len(arguments):
             return None
-        resolved = resolve_type(lookup.object.name)
+        resolved = resolve_type(receiver.name)
         if resolved is None:
             return None
         record = member_record(resolved, name)
@@ -237,7 +251,7 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
             return None
         return Ps1InvokeMember(
             access=Ps1AccessKind.STATIC,
-            object=lookup.object,
+            object=receiver,
             member=name,
             arguments=arguments,
         )
@@ -325,14 +339,13 @@ class Ps1ReflectionMembers(VariableTypeAwareTransformer):
         Whether an argument of the judged non-null type reaches the method the same way in both
         spellings. A type it is definitely assignable to the parameter cannot be converted in one
         spelling and not the other, and an argument of a kind `@(...)` does not enumerate — a
-        String, or a value type implementing no enumerable interface — reaches `Invoke` as
-        exactly one argument where a collection flattens into several.
+        String or a value type, read from `is_enumerable`, the one authority for which types the
+        pipeline enumerates — reaches `Invoke` as exactly one argument where a collection
+        flattens into several.
         """
         if is_assignable_to(judged, parameter['type']) is not True:
             return False
-        if judged.definition == 'System.String':
-            return True
-        return type_is_value_type(judged) and is_enumerable(judged) is not True
+        return (judged == _STRING or type_is_value_type(judged)) and is_enumerable(judged) is not True
 
     @staticmethod
     def _reads_a_static_target(arguments) -> bool:

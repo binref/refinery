@@ -393,7 +393,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$t = @(@()) -and $true; Write-Output (,$t); Write-Output $t',
             '$t = @(@(1, 2)); Write-Output (,$t); Write-Output $t.Count',
             '$t = @(@(1, 2), 3); Write-Output (,$t); Write-Output $t.Count',
-            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
+            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+            ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
             '$t = [Convert]::ToInt32($null); Write-Output (,$t); Write-Output $t',
             '$t = [byte]0 -or $false; Write-Output (,$t); Write-Output $t',
             "$t = [char[]]'ABC'; Write-Output (,$t); Write-Output $t.Count",
@@ -902,7 +903,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$t = @(1, 2, 3).Length; Write-Output (,$t); Write-Output $t',
             '$t = @(1, 2, 3).Rank; Write-Output (,$t); Write-Output $t',
             '$t = @(@()) -and $true; Write-Output (,$t); Write-Output $t',
-            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
+            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+            ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
             "$t = [Convert]::ToByte('FF', 16); Write-Output (,$t); Write-Output $t",
             '$t = [Convert]::ToChar(65); Write-Output (,$t); Write-Output $t',
             '$t = [Convert]::ToInt32($null); Write-Output (,$t); Write-Output $t',
@@ -1158,8 +1160,11 @@ CONTRIBUTION: dict[str, Contribution] = {
     ),
     'Ps1ReflectionMembers': Contribution(
         lost=(
-            "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); $t = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t",
-            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string])).Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
+            "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
+            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+            ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t",
+            "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+            ".Invoke($Null, @('aGk=')); Write-Output (,$t); Write-Output $t",
             "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null))",
             "Write-Output ([Text.Encoding].GetProperty('UTF8').GetValue($Null, $Null))",
         ),

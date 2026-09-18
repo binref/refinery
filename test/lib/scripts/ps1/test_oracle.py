@@ -16,9 +16,11 @@ what 5.1 does and what we do so that a failure can be read without leaving this 
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import functools
 import inspect
 import json
+import pathlib
 import sys
 import unittest
 
@@ -4375,16 +4377,34 @@ class TestPs1CommandTableCheckIsASubsetNotAnEquality(TestBase):
         self.assertEqual([name for name in claimed if measured[name] != claimed[name]], [invented])
 
 
+#: The assemblies the capture loaded before it resolved a single type, read from the capture's own
+#: seed file so the scan's session and the collected surface stay in step by construction rather
+#: than by a hand-copied list.
+_SEED_ASSEMBLIES = json.loads(
+    pathlib.Path(__file__).resolve().parents[4].joinpath('refinery', 'pwsh-seeds.json').read_text(encoding='utf-8')
+)['assemblies']
+
 #: Scans the collected static surface for generic methods whose signatures are fully concrete —
-#: parameters no generic parameter or by-reference appears in, and a return the same. The
-#: payload is the batch of collected type names, so the walk covers exactly what the capture did.
+#: parameters no generic parameter or by-reference appears in, and a return the same. The payload
+#: is the batch of collected type names, and each name is resolved the way the capture resolved its
+#: own: the assemblies the capture seeded are loaded first, and a name bare `GetType` cannot find
+#: is probed for in the loaded assemblies. A name that still resolves to nothing is reported, not
+#: skipped — a scan that silently skipped part of the collected surface would be a pin over only
+#: part of what the fold reads.
 _GENERIC_SCAN_SCRIPT = R'''
 $ErrorActionPreference = 'Stop'
+@SEEDS@
 $blob = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@PAYLOAD@'))
 $names = ConvertFrom-Json $blob
 foreach ($name in $names) {
     $type = [Type]::GetType($name)
-    if ($null -eq $type) { continue }
+    if ($null -eq $type) {
+        foreach ($assembly in [AppDomain]::CurrentDomain.GetAssemblies()) {
+            $type = $assembly.GetType($name, $false)
+            if ($null -ne $type) { break }
+        }
+    }
+    if ($null -eq $type) { Write-Output "UNRESOLVED $name"; continue }
     foreach ($method in $type.GetMethods([System.Reflection.BindingFlags]'Static, Public')) {
         if (-not $method.IsGenericMethodDefinition) { continue }
         $concrete = $true
@@ -4396,7 +4416,10 @@ foreach ($name in $names) {
         if ($concrete) { Write-Output "$($type.FullName)::$($method.Name)" }
     }
 }
-'''
+'''.replace(
+    '@SEEDS@',
+    ' '.join(F"try {{ Add-Type -AssemblyName '{name}' }} catch {{ }}" for name in _SEED_ASSEMBLIES),
+)
 
 
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
@@ -4411,18 +4434,28 @@ class TestPs1CuratedMethodTablesRestOnMeasuredBeliefs(Ps1OracleTest):
     """
 
     def test_the_generic_methods_with_concrete_signatures_are_the_ones_the_table_names(self):
-        found = set()
-        for batch in oracle._batches(data.collected_type_names()):
+        def scan(batch):
             encoded = json.dumps(list(batch), separators=oracle._JSON_SEPARATORS)
             payload = base64.b64encode(encoded.encode('utf-8')).decode('ascii')
-            scanned = oracle.run(_GENERIC_SCAN_SCRIPT.replace('@PAYLOAD@', payload))
-            for line in scanned.output.splitlines():
+            return oracle.run(_GENERIC_SCAN_SCRIPT.replace('@PAYLOAD@', payload)).output
+
+        found = set()
+        unresolved = set()
+        batches = list(oracle._batches(data.collected_type_names()))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=oracle._HOSTS_AT_ONCE) as pool:
+            outputs = list(pool.map(scan, batches))
+        for output in outputs:
+            for line in output.splitlines():
+                if line.startswith('UNRESOLVED '):
+                    unresolved.add(line.partition(' ')[2])
+                    continue
                 type_name, _, member = line.partition('::')
                 found.add((type_name, member.lower()))
         named = {
             (type_key.definition, member)
             for type_key, member in data.CONCRETE_GENERIC_METHODS
         }
+        self.assertEqual(unresolved, set())
         self.assertEqual(found, named)
 
 

@@ -52,7 +52,7 @@ class TestPs1ReflectionMembers(TestPs1):
             self._deobfuscate(
                 "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
                 ".Invoke($Null, @('aGk='))"),
-            "$x = @(0x68, 0x69)",
+            '$x = @(0x68, 0x69)',
         )
 
     def test_a_zero_argument_call_folds_to_the_direct_method(self):
@@ -61,7 +61,7 @@ class TestPs1ReflectionMembers(TestPs1):
                 "$x = [Guid].GetMethod('NewGuid', [type[]]@()).Invoke($Null, @())",
                 Ps1ReflectionMembers,
             ),
-            "$x = [Guid]::NewGuid()",
+            '$x = [Guid]::NewGuid()',
         )
 
     def test_a_value_type_argument_folds_to_the_direct_method(self):
@@ -81,7 +81,7 @@ class TestPs1ReflectionMembers(TestPs1):
                 ".Invoke($Null, @(5; 7))",
                 Ps1ReflectionMembers,
             ),
-            "$x = [Math]::Max(5, 7)",
+            '$x = [Math]::Max(5, 7)',
         )
 
     def test_an_argument_from_a_vouched_member_call_folds(self):
@@ -190,11 +190,13 @@ class TestPs1ReflectionMembers(TestPs1):
             ".Invoke($Null, @('x'))", Ps1ReflectionMembers)
 
     def test_a_void_method_is_left_standing(self):
-        # Measured on 5.1: a void method called directly emits no pipeline item where `Invoke`
-        # emits one `$null`, so the two spellings differ by an output.
+        # Measured on 5.1: `Invoke` on a void method answers a value (`$null`) the direct call
+        # writes nothing for, and what the two spellings leave the script holding is not settled
+        # for every context a script can put one in — the zero-argument spelling is one only this
+        # guard refuses, so the pin is on the guard itself.
         self._assertUnchanged(
-            "$x = [IO.File].GetMethod('AppendAllText', [type[]]@([string], [string]))"
-            ".Invoke($Null, @('a', 'b'))", Ps1ReflectionMembers)
+            "$x = [Console].GetMethod('Clear', [type[]]@()).Invoke($Null, @())",
+            Ps1ReflectionMembers)
 
     def test_a_generic_method_is_left_standing(self):
         # Measured on 5.1: `Invoke` on a generic method definition throws
@@ -219,6 +221,38 @@ class TestPs1ReflectionMembers(TestPs1):
         self._assertUnchanged(
             "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
             ".Invoke($Null, @($Null))", Ps1ReflectionMembers)
+
+    def test_a_discarded_write_to_null_does_not_vouch_the_null_argument(self):
+        # Measured on 5.1: PowerShell discards a write to `$null` (`$null = 'aGk='` leaves `$null`
+        # reading null), so the argument the array hands `Invoke` is raw null and the call throws
+        # where the direct spelling would convert it — the difference the null-literal refusal
+        # above pins, and the write is not a binding the judgment follows.
+        self._assertUnchanged(
+            "$null = 'aGk='\n"
+            "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+            ".Invoke($Null, @($Null))", Ps1ReflectionMembers)
+
+    def test_a_constrained_multi_assignment_slot_is_left_standing(self):
+        # Measured on 5.1: the constraint `[string]$q` installed by the earlier write converts the
+        # slot's element on the way in, so `$q, $r = 5, 6` leaves `$q` holding the String `5` —
+        # the raw String throws inside the `Invoke` the fold writes where the direct spelling
+        # converts it, which is the difference the single-target refusal pins.
+        self._assertUnchanged(
+            "[string]$q = 'x'\n"
+            "$q, $r = 5, 6\n"
+            "$x = [BitConverter].GetMethod('GetBytes', [type[]]@([int32]))"
+            ".Invoke($Null, @($q))", Ps1ReflectionMembers)
+
+    def test_an_empty_decoding_folds_to_the_empty_array(self):
+        # The empty `Byte[]` the call answers is a value with no literal, so the fold spells it as
+        # `@()` — the empty form the renderer answers for one — rather than an array literal
+        # with no elements, which has no spelling at all.
+        self.assertEqual(
+            self._deobfuscate(
+                "$x = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
+                ".Invoke($Null, @(''))"),
+            '$x = @()',
+        )
 
     def test_a_type_array_matching_an_instance_overload_is_left_standing(self):
         # Measured on 5.1: `Type.GetMethod(String, Type[])` finds instance methods as well as
