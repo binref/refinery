@@ -872,6 +872,54 @@ class TestPs1EmulatorRedirections(TestPs1):
         """)
         self.assertEqual(self._apply(source, Ps1FunctionEvaluator), source)
 
+    def test_a_body_whose_expression_opens_a_file_is_not_folded_into_its_value(self):
+        # Regression: a redirection behind an expression is carried by the pipeline element, the
+        # carrier a command does not use, and the element's evaluation read every redirection as
+        # a value taken away — so this body folded into `'V'` and the file it writes was never
+        # created. The command's own guard never saw the element's redirection.
+        source = cleandoc("""
+            function G {
+              Param([int]$n)
+              $v = ($n + 1) > C:\\o.txt
+              'V'
+            }
+            $x = G 5
+        """)
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), source)
+
+    def test_a_discard_behind_an_expression_leaves_nothing_the_interpreter_can_decode(self):
+        # Regression: the discard takes the value away, the slot holds `$null`, and the decoding
+        # read `int(None)` — a `TypeError` the refuse list did not name, which took the whole
+        # deobfuscation down instead of declining the fold. Measured, the host converts `$null`
+        # to `0` in a `byte[]` slot; the interpreter holds no array element types, so it refuses
+        # rather than answer with a value it cannot spell.
+        source = cleandoc("""
+            function F {
+              $a = New-Object byte[] 2
+              $a[0] = 65
+              $a[1] = 66
+              $a[1] = ($a[1] -bxor 1) > $Null
+              [String][System.Text.Encoding]::ASCII.GetString($a)
+            }
+            $x = F
+        """)
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), source)
+
+    def test_a_merge_on_the_value_an_assignment_takes_leaves_the_value_in_it(self):
+        # Regression: every redirection on the element was read as output taken away, so the merge
+        # bound the assignment to `$null`. Measured, `$x = (5) 2>&1` leaves `5` in `$x`: a merge
+        # from another stream adds records and takes none away.
+        self.assertEqual(
+            self._apply(cleandoc("""
+                function G {
+                  $v = (5 + 1) 2>&1
+                  "v=$v"
+                }
+                $x = G
+            """), Ps1FunctionEvaluator),
+            "$x = 'v=6'",
+        )
+
 
 class TestPs1APipelineSourceIsWhatTheCastAroundItMakesOfIt(TestPs1):
     """

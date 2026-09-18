@@ -669,15 +669,23 @@ class _Ps1Interpreter:
         raise _Ps1InterpreterError
 
     def _exec_pipeline(self, node: Ps1Pipeline) -> _Value:
+        """
+        The value a one-stage pipeline hands the body around it. An element is where the parser
+        writes a redirection that follows an expression — a command keeps its own — so the two
+        questions `_eval_command` asks a redirected command are asked of the element here, with
+        the answers it gives there: a redirection that opens a file ends the emulation rather
+        than answer for a file the source writes, and a discard takes the value away where a
+        merge leaves it standing.
+        """
         if len(node.elements) != 1:
             raise _Ps1InterpreterError
         elem = node.elements[0]
         if not isinstance(elem, Ps1PipelineElement):
             raise _Ps1InterpreterError
+        if opens_a_redirection_target(elem):
+            raise _Ps1InterpreterError
         result = self._eval(elem.expression)
-        if elem.redirections:
-            return None
-        return result
+        return None if takes_output_away(elem) else result
 
     def _exec_for(self, node: Ps1ForLoop, stream: list):
         if node.initializer:
@@ -1360,7 +1368,7 @@ class _Ps1Interpreter:
         try:
             raw = bytearray(int(b) for b in value)
             return raw.decode(encoding)
-        except (ValueError, OverflowError, UnicodeDecodeError, LookupError):
+        except (ValueError, OverflowError, TypeError, UnicodeDecodeError, LookupError):
             raise _Ps1InterpreterError
 
     def _invoke_string_static(self, method: str, args: list[_Value]) -> _Value:
