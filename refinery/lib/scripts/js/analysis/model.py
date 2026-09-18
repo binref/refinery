@@ -2925,6 +2925,21 @@ class SemanticModel:
             return False
         return self.lookup(node.name, self._node_scope.get(id(node))) is None
 
+    def _computed_read_aliases_a_global(self, member: JsMemberExpression) -> bool:
+        """
+        Whether *member* reads an unknown global under a runtime key through a name the file gives
+        the global object — `g[k]` where `var g = globalThis`. `_is_reflective_member` recognizes the
+        same read on a base spelled as the global object (`globalThis[k]`); an alias holds the object
+        under another name, so a read of it under a key only the runtime resolves names any global
+        just as the spelled base does, and is the same surface. A plain write (`g[k] = x`) stores a
+        property and reads nothing, and is left to `has_opaque_global_write` as on the spelled base.
+        """
+        if not member.computed or isinstance(member.property, JsStringLiteral):
+            return False
+        if is_simple_assignment_target(member):
+            return False
+        return self.names_the_global_object(strip_parens(member.object))
+
     def _ensure_reflection_detected(self) -> None:
         """
         Populate the reflection-surface memos in a single AST walk. A `with` statement contributes
@@ -2957,7 +2972,8 @@ class SemanticModel:
                 if self._reads_reflective_intrinsic(node) and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, JsMemberExpression):
-                if _is_reflective_member(node) and not self._surface_is_trusted(node):
+                surface = _is_reflective_member(node) or self._computed_read_aliases_a_global(node)
+                if surface and not self._surface_is_trusted(node):
                     sites.append(node)
             elif isinstance(node, JsCallExpression):
                 if _is_string_timer(node) and not self._surface_is_trusted(node):

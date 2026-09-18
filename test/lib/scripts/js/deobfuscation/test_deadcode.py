@@ -332,3 +332,25 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._deadcode(source))
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
+
+    def test_an_alias_read_under_a_dynamic_key_can_rebind_a_global_guard(self):
+        """
+        `var g = globalThis; g[k]` reads an unknown global through an alias just as `globalThis[k]`
+        reads it on the spelled global object: the runtime key may resolve to `eval`, so
+        `g[k](payload)` may be indirect eval rebinding the global `a`. The guard cannot fold under
+        either model, matching how the read on the spelled global object is kept.
+        """
+        source = inspect.cleandoc(
+            """
+            var g = globalThis;
+            var a = ['x'];
+            g[k](payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, self._deadcode(source))
+        self.assertEqual(source, self._deadcode(source, trust_eval=True))

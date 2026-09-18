@@ -2379,33 +2379,3 @@ class TestAGlobalPrototypeSetterInstalledThroughProtoIsNotSeen(TestBase):
             'globalThis.token = a;'
         )
         self.assertEqual(source, deobfuscate_source(source))
-
-
-class TestAnAliasedGlobalReadUnderADynamicKeyIsNotAReflectionSurface(TestBase):
-    """
-    `globalThis[k]` is a reflection surface — the runtime key may resolve to `eval` — but the same
-    read through an alias, `var g = globalThis; g[k]`, is not: the reflective-member test recognizes a
-    computed read only on a base spelled as the global object, not on a local that holds it. So a
-    guard on the global `a` folds and its live branch is dropped, though `g[k](payload)` may be an
-    indirect `eval` that rebinds `a`. The second read of `g` holds the alias in place so the pin
-    isolates the surface gap from the inliner, which would otherwise rewrite a single-use `g` back to
-    `globalThis` and mask it. Reading a global under a runtime key through an alias is an uncommon
-    shape.
-    """
-
-    @unittest.expectedFailure
-    def test_an_alias_read_under_a_dynamic_key_keeps_a_dependent_guard(self):
-        source = inspect.cleandoc(
-            """
-            var g = globalThis;
-            g.use;
-            var a = ['x'];
-            g[k](payload);
-            if (!a) {
-              X();
-            } else {
-              Y();
-            }
-            """
-        )
-        self.assertEqual(source, deobfuscate_source(source))
