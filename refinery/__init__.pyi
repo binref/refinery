@@ -362,7 +362,8 @@ from refinery.units.pattern.urlguards import urlguards as urlguards
 from refinery.units.pattern.xtp import xtp as xtp
 from refinery.units.pattern.xtw import xtw as xtw
 from refinery.units.scripting.bat import bat as bat
-from refinery.units.scripting.batenv import batenv as batenv
+from refinery.units.scripting.bat import batev as batev
+from refinery.units.scripting.bat import batfs as batfs
 from refinery.units.scripting.cmdarg import cmdarg as cmdarg
 from refinery.units.scripting.deobfuscate import defu as defu
 from refinery.units.scripting.js import js as js
