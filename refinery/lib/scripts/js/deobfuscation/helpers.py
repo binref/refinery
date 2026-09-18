@@ -49,12 +49,10 @@ from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
-    ScopeKind,
     Binding,
     Role,
     SemanticModel,
     build_semantic_model,
-    enclosing_function,
     is_invocation_target,
     is_use_position,
     reference_role,
