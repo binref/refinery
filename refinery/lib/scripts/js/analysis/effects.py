@@ -3421,8 +3421,8 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
 def _writes_the_global_prototype(model: SemanticModel, member: JsMemberExpression) -> bool:
     """
     Whether *member* assigns to `__proto__` on a base that may be the global object
-    (`globalThis.__proto__ = p`), replacing the global object's prototype with one that may carry an
-    inherited setter. `accessor_install_method` catches a setter installed through
+    (`globalThis.__proto__ = p`), replacing the global object's prototype with one that may carry
+    an inherited setter. `accessor_install_method` catches a setter installed through
     `Object.defineProperty`; a prototype swapped in through the `__proto__` setter reaches the same
     result by a member write that names no method, so the pristine question must refuse it too. A
     runtime key names no property statically and reaches `has_opaque_global_write` instead.
@@ -3438,9 +3438,9 @@ def _global_pristine(model: SemanticModel) -> bool:
     """
     Whether a property read on the global object is free of user getters: the program exposes no
     reflective surface through which an accessor could be installed at runtime, and installs none
-    statically through `Object.defineProperty`, `defineProperties`, the legacy `__define[GS]etter__`,
-    or a prototype swap onto the global object through `__proto__`. Only under this precondition may a
-    read of a trusted global data property be treated as effect-free.
+    statically through `Object.defineProperty`, `defineProperties`, the legacy
+    `__define[GS]etter__`, or a prototype swap onto the global object through `__proto__`. Only
+    under this precondition may a read of a trusted global data property be treated as effect-free.
 
     A computed key counts as an install, since `Object['define' + 'Property']` reaches the same method as
     the dotted form; reading the property name alone would let a fold of the key withdraw this trust after

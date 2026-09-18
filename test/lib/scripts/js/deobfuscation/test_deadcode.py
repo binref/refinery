@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
@@ -354,3 +355,25 @@ class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._deadcode(source))
         self.assertEqual(source, self._deadcode(source, trust_eval=True))
+
+    def test_an_alias_read_under_a_dynamic_key_keeps_the_guard_through_the_pipeline(self):
+        """
+        Through the whole pipeline a multi-use alias of the global object read under a runtime key
+        keeps the guard. The second read of `g` holds the alias in place so the inliner does not
+        rewrite it back to `globalThis`, and `g[k](payload)` still reads as an indirect eval that may
+        rebind the global `a`.
+        """
+        source = inspect.cleandoc(
+            """
+            var g = globalThis;
+            g.use;
+            var a = ['x'];
+            g[k](payload);
+            if (!a) {
+              X();
+            } else {
+              Y();
+            }
+            """
+        )
+        self.assertEqual(source, deobfuscate_source(source))

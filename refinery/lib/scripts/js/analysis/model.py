@@ -1399,12 +1399,13 @@ def _property_key_is_dynamic(prop: JsProperty) -> bool:
 
 class _PatternExposure(NamedTuple):
     """
-    What reflective intrinsics an object destructuring pattern could bind, decided from the pattern
-    alone: the precise names it reads under a statically known key (`eval`/`Function`, whether a
-    plain key `{eval}`, a renamed key `{eval: e}`, or a string-literal computed key `{['eval']: e}`),
-    whether any key is one only the runtime resolves (`{[k]: e}`), and whether a rest element
-    (`{...r}`) captures whatever else the source holds. The caller supplies the separate check that
-    the source may be the global object; only then do these say a reflective intrinsic is exposed.
+    What reflective intrinsics an object destructuring pattern could bind, decided from the
+    pattern alone: the precise names it reads under a statically known key (`eval`/`Function`,
+    whether a plain key `{eval}`, a renamed key `{eval: e}`, or a string-literal computed key
+    `{['eval']: e}`), whether any key is one only the runtime resolves (`{[k]: e}`), and whether a
+    rest element (`{...r}`) captures whatever else the source holds. The caller supplies the
+    separate check that the source may be the global object; only then do these say a reflective
+    intrinsic is exposed.
     """
     named: tuple[str, ...]
     dynamic_key: bool
@@ -1414,9 +1415,10 @@ class _PatternExposure(NamedTuple):
 def _pattern_reflective_exposure(pattern: JsObjectPattern) -> _PatternExposure:
     """
     Classify an object pattern's reflective exposure. A property is read three ways: a precise
-    reflective-intrinsic key contributes its name, a runtime-resolved computed key sets `dynamic_key`,
-    and a rest element sets `rest`. A truncated-source error node among the properties is neither a
-    property nor a rest element and is skipped, not treated as a rest that captures everything.
+    reflective-intrinsic key contributes its name, a runtime-resolved computed key sets
+    `dynamic_key`, and a rest element sets `rest`. A truncated-source error node among the
+    properties is neither a property nor a rest element and is skipped, not treated as a rest that
+    captures everything.
     """
     named: list[str] = []
     dynamic_key = False
@@ -2928,11 +2930,12 @@ class SemanticModel:
     def _computed_read_aliases_a_global(self, member: JsMemberExpression) -> bool:
         """
         Whether *member* reads an unknown global under a runtime key through a name the file gives
-        the global object — `g[k]` where `var g = globalThis`. `_is_reflective_member` recognizes the
-        same read on a base spelled as the global object (`globalThis[k]`); an alias holds the object
-        under another name, so a read of it under a key only the runtime resolves names any global
-        just as the spelled base does, and is the same surface. A plain write (`g[k] = x`) stores a
-        property and reads nothing, and is left to `has_opaque_global_write` as on the spelled base.
+        the global object — `g[k]` where `var g = globalThis`. `_is_reflective_member` recognizes
+        the same read on a base spelled as the global object (`globalThis[k]`); an alias holds the
+        object under another name, so a read of it under a key only the runtime resolves names any
+        global just as the spelled base does, and is the same surface. A plain write (`g[k] = x`)
+        stores a property and reads nothing, and is left to `has_opaque_global_write` as on the
+        spelled base.
         """
         if not member.computed or isinstance(member.property, JsStringLiteral):
             return False

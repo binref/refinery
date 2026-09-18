@@ -2356,3 +2356,29 @@ class TestARestElementOffTheGlobalObjectIsNotAReflectionSurface(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
+
+
+class TestASetterSwappedOntoObjectPrototypeIsNotSeen(TestBase):
+    """
+    Swapping a prototype onto `Object.prototype` installs an accessor on an object the global object
+    inherits from, so a plain `globalThis.token = a` fires the setter the same way one swapped onto
+    the global object's own `__proto__` does. The global-object question the pristine test asks refuses
+    a `__proto__` write, and a `setPrototypeOf` hand-over, only where the base is the global object
+    itself; a swap onto `Object.prototype` reaches the global object one link up the chain and is not
+    seen, so the run reads as pristine and the second identical store is dropped, firing the setter
+    once instead of twice. A swap onto a prototype the global object inherits is an exotic shape, so
+    its reach over real input is slim.
+    """
+
+    @unittest.expectedFailure
+    def test_a_store_survives_a_setter_swapped_onto_object_prototype(self):
+        source = inspect.cleandoc(
+            """
+            Object.prototype.__proto__ = { __proto__: null, set token(v) {
+              record(v);
+            } };
+            globalThis.token = a;
+            globalThis.token = a;
+            """
+        )
+        self.assertEqual(source, deobfuscate_source(source))
