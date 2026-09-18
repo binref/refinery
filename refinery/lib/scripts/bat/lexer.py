@@ -256,7 +256,6 @@ class BatchLexer:
         self.quote = False
         self.caret = False
         self.white = False
-        self.first_after_gap = True
         self.group = 0
         self.cursor = BatchLexerCursor(offset)
         self.modes.append(Mode.Text)
@@ -386,7 +385,6 @@ class BatchLexer:
             else:
                 yield Word(token)
         del buffer[:]
-        self.first_after_gap = False
         return switched
 
     def tokens(self, offset: int) -> Generator[Token]:
@@ -403,8 +401,7 @@ class BatchLexer:
             if (yield from h(self, m, c)):
                 consume_char()
 
-        if not self.first_after_gap:
-            yield from self.emit_token()
+        yield from self.emit_token()
 
     def check_line_break(self, mode: Mode, char: int):
         if char != LINEBREAK:
@@ -692,7 +689,6 @@ class BatchLexer:
         if char in SEPARATORS:
             return True
         self.mode_finish()
-        self.first_after_gap = True
         return False
 
     @_register(Mode.Text)
@@ -707,6 +703,9 @@ class BatchLexer:
         if char == SLASH and not self.pending_redirect:
             yield from self.emit_token()
         if char == COLON:
+            if self.pending_redirect:
+                self.cursor.token.append(char)
+                return True
             if self.state.delayexpand and self.cursor.token.count(0x21) % 2:
                 self.cursor.token.append(char)
                 return True

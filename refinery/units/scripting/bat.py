@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+import ntpath
 import uuid
 
 from refinery.lib.meta import MV
@@ -129,23 +130,47 @@ class batev(BatchEmulatorUnit):
 class batfs(BatchEmulatorUnit):
     """
     Extract file system artifacts that would be created by a batch script based on emulation.
+
+    A chunk is emitted for the content of a file when the script destroys it, either by deletion
+    or by overwriting it, and for the final content of every file the script has left behind.
+    The emulated script itself is never an artifact.
     """
     def process(self, data):
-        def _events():
-            yield from emulator.emulate()
-            yield None # trigger final sweep
-        import ntpath
         emulator = self._emulator(data)
-        previous_content: dict[str, str] = dict(emulator.state.file_system)
-        was_changed: dict[str, bool] = {}
-        for event in _events():
-            for path, new in emulator.state.file_system.items():
-                if new == (old := previous_content.get(path, '')):
-                    continue
-                previous_content[path] = new
-                was_changed[path] = True
-                if not old:
-                    continue
-                if len(new) < len(old) or event is None and was_changed.get(path):
-                    relpath = ntpath.relpath(path, emulator.state.cwd)
-                    yield self.labelled(old.encode(self.codec), **{MV.PATH: relpath})
+        state = emulator.state
+        script = state.resolve_path(state.name)
+        ingested = None
+        previous: dict[str, str] = dict(state.file_system)
+        touched: set[str] = set()
+
+        def artifacts(path: str, content: str):
+            if not content or path == script and content == ingested:
+                return
+            relpath = ntpath.relpath(path, state.cwd)
+            yield self.labelled(content.encode(self.codec), **{MV.PATH: relpath})
+
+        def changes():
+            nonlocal ingested
+            for path in list(previous):
+                if path not in state.file_system:
+                    yield from artifacts(path, previous.pop(path))
+            for path, new in state.file_system.items():
+                if (old := previous.get(path)) is None:
+                    if path == script:
+                        ingested = new
+                    else:
+                        touched.add(path)
+                    previous[path] = new
+                elif new != old:
+                    touched.add(path)
+                    previous[path] = new
+                    if not new.startswith(old):
+                        yield from artifacts(path, old)
+
+        for _ in emulator.emulate():
+            yield from changes()
+        yield from changes()
+
+        for path in touched:
+            if (final := state.file_system.get(path)) is not None:
+                yield from artifacts(path, final)

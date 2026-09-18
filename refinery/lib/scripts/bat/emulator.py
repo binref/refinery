@@ -138,7 +138,8 @@ def _seta_eval(node: ast.AST, namespace: dict[str, int]) -> int:
 def winfnmatch(pattern: str, path: str, cwd: str):
     """
     A function similar to the fnmatch module, but using only Windows wildcards. In Batch, the
-    bracket wildcard does not exist.
+    bracket wildcard does not exist. A relative `pattern` is anchored at `cwd`, an absolute
+    `pattern` is matched from the root of its drive.
     """
     parts = re.split('([*?])', pattern)
     regex = StringIO()
@@ -152,9 +153,12 @@ def winfnmatch(pattern: str, path: str, cwd: str):
             regex.write(r'[^\\]')
         verbatim = next(it)
     regex.write(re.escape(verbatim))
-    cwd = re.escape(cwd.rstrip('\\'))
-    pattern = rF'(?si:{cwd}\\{regex.getvalue()})$'
-    return bool(re.match(pattern, path))
+    cwd = cwd.rstrip('\\')
+    if ntpath.isabs(pattern):
+        anchor = ''
+    else:
+        anchor = re.escape(F'{cwd}\\')
+    return bool(re.match(rF'(?si:{anchor}{regex.getvalue()})$', path))
 
 
 def _fuse(*iters):

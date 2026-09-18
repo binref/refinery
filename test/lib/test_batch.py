@@ -43,6 +43,7 @@ class TestBatchLexer(TestBase):
             'foo',
             RedirectIO(Redirect.OutCreate, 1, '=='),
             ' ',
+            'bar',
         ])
 
     def test_whitespace_collapse_02(self):
@@ -2158,6 +2159,22 @@ class TestBatchCmdSemantics(TestBase):
         self.assertEqual(bat.state.ec, 1)
         self.assertEqual(bat.std.e.getvalue(), 'The syntax of the command is incorrect.\r\n')
 
+    def test_del_with_absolute_path_removes_file(self):
+        state = BatchState()
+        state.create_file(r'c:\out\log.txt', 'x\r\n')
+        bat = self._run(r'del c:\out\log.txt', state)
+        self.assertIsNone(bat.state.ingest_file(r'c:\out\log.txt'))
+
+    def test_redirect_target_is_not_cut_at_the_drive_letter(self):
+        bat = self._run(r'echo hi>>c:\out\log.txt')
+        self.assertEqual(bat.state.ingest_file(r'c:\out\log.txt'), 'hi\r\n')
+
+    def test_redirect_target_from_variable_keeps_drive_letter(self):
+        state = BatchState()
+        state.environment['OUT'] = r'C:\out'
+        bat = self._run(r'echo hi>>%OUT%\log.txt', state)
+        self.assertEqual(bat.state.ingest_file(r'c:\out\log.txt'), 'hi\r\n')
+
     def test_start_d_sets_child_cwd(self):
         R"""
         `start "" /d "c:\x" sub.bat` passes `c:\x` as the child's working directory;
@@ -2301,6 +2318,11 @@ class TestBatchCmdSemantics(TestBase):
         lexer = BatchLexer('findstr /c:hello in.txt\n', BatchState())
         self.assertListEqual(list(lexer.tokens(0)), [
             'findstr', ' ', '/c:hello', ' ', 'in.txt', '\n'])
+
+    def test_lexer_redirect_target_colon_stays_attached(self):
+        lexer = BatchLexer(r'echo hi>>c:\out\log.txt' + '\n', BatchState())
+        self.assertListEqual(list(lexer.tokens(0)), [
+            'echo', ' ', 'hi', RedirectIO(Redirect.OutAppend, 1, r'c:\out\log.txt'), '\n'])
 
     def test_for_f_command_spec_delayed_expansion(self):
         """

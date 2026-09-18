@@ -227,3 +227,47 @@ class TestBAT(TestUnitBase):
             '''
         test = batch | self.load() | str
         self.assertIn(R'echo FOO', test)
+
+    def test_batfs_recovers_a_deleted_file(self):
+        @multiline
+        class batch:
+            R'''
+            set OUT=C:\out
+            echo one>>%OUT%\x
+            echo two>>%OUT%\x
+            del %OUT%\x
+            '''
+        test = {F'{chunk["path"]}': bytes(chunk) for chunk in batch | self.ldu('batfs')}
+        self.assertDictEqual(test, {'out\\x': b'one\r\ntwo\r\n'})
+
+    def test_batfs_extracts_a_leftover_file(self):
+        @multiline
+        class batch:
+            R'''
+            echo hi>out\log.txt
+            echo there>>out\log.txt
+            '''
+        test = {F'{chunk["path"]}': bytes(chunk) for chunk in batch | self.ldu('batfs')}
+        self.assertDictEqual(test, {'out\\log.txt': b'hi\r\nthere\r\n'})
+
+    def test_batfs_recovers_overwritten_content(self):
+        @multiline
+        class batch:
+            R'''
+            echo old>out\log.txt
+            echo new>out\log.txt
+            '''
+        test = [(F'{chunk["path"]}', bytes(chunk)) for chunk in batch | self.ldu('batfs')]
+        self.assertListEqual(test, [
+            ('out\\log.txt', b'old\r\n'),
+            ('out\\log.txt', b'new\r\n'),
+        ])
+
+    def test_batfs_does_not_emit_the_script_itself(self):
+        @multiline
+        class batch:
+            R'''
+            @echo off
+            echo nothing to see
+            '''
+        self.assertListEqual(list(batch | self.ldu('batfs')), [])
