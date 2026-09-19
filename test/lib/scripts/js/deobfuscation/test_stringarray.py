@@ -43,6 +43,26 @@ class TestStringArray(TestJsDeobfuscator):
         result = self._deobfuscate(self._default_preset())
         self.assertEqual("console.log('test string');", result)
 
+    def test_string_array_without_rotation(self):
+        """
+        The obfuscator leaves the array unrotated, so there is no rotation IIFE to simulate and the
+        array literal already holds the strings in the order the accessor reads them.
+        """
+        source = (
+            r"function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0x0;var _0x2fc00e=_0x2fc0();var _0x"
+            r"1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0x1b07(0x1);function _0x2fc0(){var _0x581e"
+            r"61=['log','test\x20string'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0x"
+            r"1b07(0x0)](msg);"
+        )
+        result = self._deobfuscate(source)
+        self.assertEqual("console.log('test string');", result)
+
+    def test_string_array_without_rotation_and_an_offset(self):
+        source = _FOLDED_CHECKSUM_SOURCE.partition('}(_0x2fc0,0x827c2));')[2]
+        self.assertTrue(source)
+        result = self._deobfuscate(source)
+        self.assertEqual("console.log('test string');", result)
+
     def test_string_array_preset_beside_non_finite_object_property_values(self):
         """
         Each property value denotes `Infinity` or `NaN`, and neither names a position in a string
@@ -263,17 +283,7 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_constant_folded_checksum(self):
-        source = (
-            r"(function(_0x13a108,_0x20b5f6){var _0x36965a=_0x13a108();while(!![]){try{if(0x827c2===_0x20b5f6)brea"
-            r"k;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift'"
-            r"]());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2fc"
-            r"00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var _0xe6abe5=_0x1b07;var msg=_0x"
-            r"e6abe5(0xac);function _0x2fc0(){var _0x581e61=['12767458FlCTYp','2BveYOA','96VHQLDe','160CSMRCB','48"
-            r"6kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR','2435007zbg"
-            r"ngY','test\x20string'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa"
-            r"8)](msg);"
-        )
-        result = self._deobfuscate(source)
+        result = self._deobfuscate(_FOLDED_CHECKSUM_SOURCE)
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_multi_accessor(self):
@@ -416,4 +426,17 @@ class TestStringArray(TestJsDeobfuscator):
 A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER = TestStringArray._default_preset() + (
     'function unused() {'
     ' return _0xe6abe5(1e400 + 0) + _0xe6abe5(1e400 * 0) + _0xe6abe5(1e308 * 10); }'
+)
+
+#: The default preset with the rotation loop left holding nothing but a constant-folded checksum,
+#: so the array literal already spells the strings in the order the accessor reads them.
+_FOLDED_CHECKSUM_SOURCE = (
+    r"(function(_0x13a108,_0x20b5f6){var _0x36965a=_0x13a108();while(!![]){try{if(0x827c2===_0x20b5f6)brea"
+    r"k;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift'"
+    r"]());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2fc"
+    r"00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var _0xe6abe5=_0x1b07;var msg=_0x"
+    r"e6abe5(0xac);function _0x2fc0(){var _0x581e61=['12767458FlCTYp','2BveYOA','96VHQLDe','160CSMRCB','48"
+    r"6kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR','2435007zbg"
+    r"ngY','test\x20string'];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa"
+    r"8)](msg);"
 )

@@ -22,6 +22,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.model import SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BINARY_OPS,
     ScopeProcessingTransformer,
@@ -352,6 +353,37 @@ def _find_rotation_iife(
 
 class _EvalError(Exception):
     pass
+
+
+def _array_order_is_literal(
+    model: SemanticModel,
+    array: ArrayFunction,
+    accessors: Sequence[AccessorFunction],
+) -> bool:
+    """
+    Whether the strings are in the order the array literal spells them. The model names every way
+    the program reaches the array function — a reference, a write through an alias, a `with`-body
+    name, an export, a global handed to a call — and the literal order is the order the accessors
+    read only when each of those ways belongs to the array function itself or to an accessor. A
+    rotation has to reach the array function before it can reorder the array, so a reference
+    anywhere else is a hand this resolver cannot see the moves of.
+    """
+    binding = model.binding_of(array.node.id)
+    if binding is None:
+        return False
+    if binding.exported or binding.reachable_through_a_handed_object:
+        return False
+    inside = {
+        id(node)
+        for root in (array.node, *(accessor.node for accessor in accessors))
+        for node in root.walk()
+    }
+    references = [
+        *model.references(binding),
+        *model.dynamic_references(binding),
+        *binding.indefinite_writes,
+    ]
+    return all(id(reference) in inside for reference in references)
 
 
 def _as_position(value: float) -> int:
@@ -1168,6 +1200,59 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
         self._root = node
         return super().visit_JsScript(node)
 
+    def _strings_in_read_order(
+        self,
+        scope: Node,
+        array: ArrayFunction,
+        accessors: Sequence[AccessorFunction],
+        encoding_map: dict[str, Encoding],
+        rotation: RotationIIFE | None,
+    ) -> list[str] | None:
+        """
+        The string table in the order the accessors read it, or `None` when that order cannot be
+        established. A rotation reorders the table until a checksum matches, so a found one is
+        simulated and its result cached on the scope — a later pass may simplify the checksum
+        expression into something this resolver can no longer read. Where no rotation is found,
+        the literal already spells the order the accessors read, unless the model can name a hand
+        that reaches the array besides them.
+        """
+        primary = accessors[0]
+        if rotation is None:
+            assert self._root is not None
+            if not _array_order_is_literal(model_cache(self, self._root).model, array, accessors):
+                return None
+            return array.strings
+        cache: _CachedResolution | None = getattr(scope, _CACHE_ATTR, None)
+        if (
+            cache is not None
+            and cache.base_offset == primary.base_offset
+            and cache.encoding_map == encoding_map
+        ):
+            return cache.resolved
+        checksum = _extract_checksum_expression(
+            rotation.body, set(encoding_map), rotation.target_param,
+        )
+        if checksum is None:
+            return None
+        checksum_encoding_map = {
+            name: encoding_map.get(checksum.alias_map.get(name, name), Encoding.NONE)
+            for name in checksum.local_accessors
+        }
+        resolved = _simulate_rotation(
+            array.strings,
+            primary.base_offset,
+            checksum.node,
+            checksum.local_accessors,
+            rotation.target,
+            checksum_encoding_map,
+            checksum.wrappers,
+            checksum.prop_maps,
+        )
+        if resolved is None:
+            return None
+        setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, primary.base_offset, encoding_map))
+        return resolved
+
     def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
         array = _find_array_function(body)
         if array is None:
@@ -1181,38 +1266,9 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
             encoding_map[acc.name] = _detect_encoding(acc.node)
         accessor_names = set(encoding_map)
         rotation = _find_rotation_iife(body, array.name)
-        if rotation is None:
+        resolved = self._strings_in_read_order(scope, array, accessors, encoding_map, rotation)
+        if resolved is None:
             return
-        cache: _CachedResolution | None = getattr(scope, _CACHE_ATTR, None)
-        if (
-            cache is not None
-            and cache.base_offset == primary.base_offset
-            and cache.encoding_map == encoding_map
-        ):
-            resolved = cache.resolved
-        else:
-            checksum = _extract_checksum_expression(
-                rotation.body, accessor_names, rotation.target_param,
-            )
-            if checksum is None:
-                return
-            checksum_encoding_map = {
-                name: encoding_map.get(checksum.alias_map.get(name, name), Encoding.NONE)
-                for name in checksum.local_accessors
-            }
-            resolved = _simulate_rotation(
-                array.strings,
-                primary.base_offset,
-                checksum.node,
-                checksum.local_accessors,
-                rotation.target,
-                checksum_encoding_map,
-                checksum.wrappers,
-                checksum.prop_maps,
-            )
-            if resolved is None:
-                return
-            setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, primary.base_offset, encoding_map))
         aliases: set[str] = set()
         for acc in accessors:
             aliases.add(acc.name)
