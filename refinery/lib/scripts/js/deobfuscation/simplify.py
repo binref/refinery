@@ -39,7 +39,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_nullish,
     is_simple_expression,
     is_truthy,
-    is_valid_identifier,
     is_valid_property_key,
     make_numeric_literal,
     make_string_literal,
@@ -763,7 +762,7 @@ class JsSimplifications(Transformer):
                 ):
                     return elements[idx]
             prop_str = string_value(node.property)
-            if prop_str is not None and is_valid_identifier(prop_str):
+            if prop_str is not None and is_valid_property_key(prop_str):
                 set_value(node, 'computed', False)
                 set_child(node, 'property', JsIdentifier(name=prop_str))
                 self.mark_changed()

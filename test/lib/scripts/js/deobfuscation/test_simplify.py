@@ -112,8 +112,14 @@ class TestBasicSimplifications(TestJsDeobfuscator):
     def test_bracket_non_identifier_unchanged(self):
         self.assertEqual('obj["a-b"];', self._simplify('obj["a-b"];'))
 
-    def test_bracket_reserved_word_unchanged(self):
-        self.assertEqual('obj["class"];', self._simplify('obj["class"];'))
+    def test_bracket_reserved_word_to_dot(self):
+        """
+        No word is reserved in the member position, so a key the identifier check would refuse
+        still folds: `obj.class` and `Array.from` are spellings the language accepts, in a call's
+        callee position as in any other.
+        """
+        self.assertEqual('obj.class;', self._simplify('obj["class"];'))
+        self.assertEqual('Array.from(x);', self._simplify('Array["from"](x);'))
 
     def test_computed_property_key_to_identifier(self):
         self.assertEqual('({ a: 1 });', self._simplify('({ ["a"]: 1 });'))
