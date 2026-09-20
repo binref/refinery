@@ -35,6 +35,7 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
     behavior,
+    completion_values,
     deobfuscate_source,
     module_graph_behavior,
     node_executable,
@@ -2382,3 +2383,58 @@ class TestASetterSwappedOntoObjectPrototypeIsNotSeen(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
+
+
+#: Single-use wrappers whose body's last statement leaves a value, mapped to the value an `eval` of
+#: the file receives. The call to a wrapper that runs off its own end is `undefined`, so that is the
+#: program's completion — the tail expression's own value is not it. Node evaluates each to the
+#: value it maps to.
+A_WRAPPER_WHOSE_TAIL_LEAKS_A_COMPLETION_VALUE = {
+    'var n = 1;\nfunction w() {\n  n++;\n}\nw();\n': 'undefined',
+    'function w() {\n  console.log(1);\n  42;\n}\nw();\n': 'undefined',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWrapperTailIsNotTheCompletionValue(TestBase):
+    """
+    A bare call to a single-use wrapper stands where the wrapper's body already runs, so inlining the
+    body there keeps every print and every write it makes. What the splice does not keep is the value
+    the call handed back: a wrapper that runs off its end returns `undefined`, but its last statement
+    is a value-producing expression, and the splice leaves that expression in a completion position it
+    did not hold inside the body. An `eval` of the file, or a loader reading what a payload was worth,
+    then receives the tail's value where the call gave `undefined`.
+
+    `JsSingleUseFunctionInliner` reaches these, and the `Function`-construction statement-inline
+    shares the gap through the same `sanitize_inlined_body`, which adapts a trailing `return` and
+    answers nothing about the completion position the call occupied. The sibling `JsUnusedCodeRemoval`
+    sweep consults `definitely_answers_the_completion` before it drops a bare read, for this reason;
+    the inliners do not. The pure tail is already sound — a droppable one becomes `void 0`, holding
+    the completion — so only a side-effecting tail leaks.
+
+    Off the release gate: the divergence is in the completion value alone, which a program an engine
+    runs as a script never observes; a file whose whole tail is one such wrapper and whose value a
+    caller then reads has had to be constructed.
+    """
+
+    def test_each_original_evaluates_to_the_value_the_row_names(self):
+        rows = A_WRAPPER_WHOSE_TAIL_LEAKS_A_COMPLETION_VALUE
+        self.assertEqual(
+            {source: completion_values([source])[0] for source in rows},
+            dict(rows),
+        )
+
+    def test_the_fold_preserves_what_each_program_prints(self):
+        rows = A_WRAPPER_WHOSE_TAIL_LEAKS_A_COMPLETION_VALUE
+        self.assertEqual(
+            {source: behavior(folded(source)) for source in rows},
+            {source: behavior(source) for source in rows},
+        )
+
+    @unittest.expectedFailure
+    def test_the_completion_value_survives_the_fold(self):
+        rows = A_WRAPPER_WHOSE_TAIL_LEAKS_A_COMPLETION_VALUE
+        self.assertEqual(
+            {source: completion_values([folded(source)])[0] for source in rows},
+            dict(rows),
+        )

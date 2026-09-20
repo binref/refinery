@@ -163,6 +163,52 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual('console.log(1);', self._remove_unused(source))
 
+    def test_a_dead_in_expression_with_a_primitive_right_operand_is_kept(self):
+        """
+        The `in` operator throws a `TypeError` unless its right operand is an object, so `'a' in 'b'`
+        throws in every host. The discarded expression is not removable — dropping it drops the throw.
+        """
+        source = inspect.cleandoc(
+            """
+            'a' in 'b';
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_dead_instanceof_expression_with_a_non_callable_right_operand_is_kept(self):
+        """
+        The `instanceof` operator throws a `TypeError` unless its right operand is callable, so
+        `x instanceof 5` throws. The discarded expression is not removable — dropping it drops the
+        throw, and a callable right operand would instead run its `Symbol.hasInstance`.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 3;
+            x instanceof 5;
+            console.log(x);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_read_shadowed_only_by_a_block_that_breaks_before_its_value_is_kept(self):
+        """
+        The labeled block completes through `break L` before `99` runs, so its completion is empty
+        and the read `x` ahead of it is the program's completion value. Removing `x` would change
+        what an `eval` of the file returns from `1` to `undefined`.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            x;
+            L: {
+              break L;
+              99;
+            }
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """

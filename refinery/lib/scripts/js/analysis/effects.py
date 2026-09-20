@@ -689,16 +689,26 @@ _COERCING_BINARY_OPERATORS = frozenset({
     '>',
     '<=',
     '>=',
-    'in',
 })
 """
-The binary operators that apply `ToPrimitive` — or `ToNumber` or `ToPropertyKey`, each of which
-begins with it — to an operand. The same reasoning as `_NUMBER_TAKING_UNARY_OPERATORS` applies: the
-coercion is an effect of the operator itself, of no sub-expression, so an operand whose value may be
-an object keeps the whole expression where the caller drops the evaluation. Strict equality is not
-here because it compares values as they are, and neither is `instanceof`, which reads a property off
-its right operand rather than coercing it. The loose equality operators are held to the same rule
-except beside `null`, which the language answers without asking either operand anything.
+The binary operators that apply `ToPrimitive` — or `ToNumber`, which begins with it — to an
+operand. The same reasoning as `_NUMBER_TAKING_UNARY_OPERATORS` applies: the coercion is an effect
+of the operator itself, of no sub-expression, so an operand whose value may be an object keeps the
+whole expression where the caller drops the evaluation. Strict equality is not here because it
+compares values as they are; `in` and `instanceof` are held to the stronger
+`_OBJECT_TESTING_BINARY_OPERATORS` rule instead. The loose equality operators are held to the same
+rule except beside `null`, which the language answers without asking either operand anything.
+"""
+
+_OBJECT_TESTING_BINARY_OPERATORS = frozenset({'in', 'instanceof'})
+"""
+The binary operators the language decides from the *kind* of the right operand rather than from
+coercing an operand, so no operand value settles whether they run cleanly. `in` throws a `TypeError`
+unless its right operand is an object, coerces its left operand to a property key, and fires a
+proxy's `has` trap where the right operand carries one; `instanceof` throws unless its right operand
+is callable and otherwise runs the `Symbol.hasInstance` method or reads the `prototype` getter it
+finds there. Where the caller drops the evaluation (`coercions_may_write`) neither may go: the throw
+and the code it runs are effects of the operator that dropping the operands cannot excuse.
 """
 
 
@@ -816,17 +826,18 @@ class _SideEffectScan:
                 return True
             return self.member_safe is not None and self.member_safe(node)
         if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
-            if (
-                self.coercions_may_write
-                and isinstance(node, JsBinaryExpression)
-                and node.operator in _COERCING_BINARY_OPERATORS
-                and not _comparison_with_null(node)
-                and not (
-                    _value_cannot_be_an_object(node.left)
-                    and _value_cannot_be_an_object(node.right)
-                )
-            ):
-                return False
+            if self.coercions_may_write and isinstance(node, JsBinaryExpression):
+                if node.operator in _OBJECT_TESTING_BINARY_OPERATORS:
+                    return False
+                if (
+                    node.operator in _COERCING_BINARY_OPERATORS
+                    and not _comparison_with_null(node)
+                    and not (
+                        _value_cannot_be_an_object(node.left)
+                        and _value_cannot_be_an_object(node.right)
+                    )
+                ):
+                    return False
             return (
                 node.left is not None
                 and self.free(node.left)

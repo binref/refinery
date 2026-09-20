@@ -67,10 +67,12 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
+    JsBreakStatement,
     JsCallExpression,
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
+    JsContinueStatement,
     JsExportSpecifier,
     JsExpressionStatement,
     JsForInStatement,
@@ -1591,13 +1593,21 @@ def definitely_answers_the_completion(stmt: Statement) -> bool:
     An expression statement supplies one even where evaluating it throws: the throw is what the
     program does then, and no earlier statement was the answer. A `return` supplies its function's
     value and a `throw` aborts, and neither leaves an earlier statement answering. A block or a
-    label passes the question inward. Everything else — a declaration, an empty statement, a
-    `debugger`, and every conditional or iterative construct, whose run may skip the value it
-    guards — answers `False`, which keeps the statement ahead of it standing.
+    label passes the question inward, unless a `break` or `continue` can carry control out of it
+    before the value is reached: such a jump completes the block empty and lets the enclosing
+    construct answer from an earlier value, so a block that holds one is not certain to answer and
+    is refused. Everything else — a declaration, an empty statement, a `debugger`, and every
+    conditional or iterative construct, whose run may skip the value it guards — answers `False`,
+    which keeps the statement ahead of it standing.
     """
     if isinstance(stmt, (JsExpressionStatement, JsReturnStatement, JsThrowStatement)):
         return True
     if isinstance(stmt, JsBlockStatement):
+        if any(
+            isinstance(node, (JsBreakStatement, JsContinueStatement))
+            for node in walk_scope(stmt)
+        ):
+            return False
         return any(definitely_answers_the_completion(inner) for inner in stmt.body)
     if isinstance(stmt, JsLabeledStatement):
         return stmt.body is not None and definitely_answers_the_completion(stmt.body)
