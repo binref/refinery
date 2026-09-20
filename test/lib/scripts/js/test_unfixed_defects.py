@@ -2113,7 +2113,7 @@ class TestAReceiverACallSuppliesMayBeHandedOn(TestBase):
     holds. Which receiver reaches a body is not decided anywhere, so a `this` written inside a
     function is not admitted, and a hand-over spelled with one is recorded nowhere.
 
-    Admitting every `this` is measured, not assumed, and it is what this entry costs: obfuscator.io's
+    Admitting every `this` is measured, not assumed, and it is what this entry costs: a
     self-defending wrapper passes its own `this` to a call, and a run that took that for the global
     object leaves `test_obfuscated_fizzbuzz_01` at twenty times its deobfuscated size. Closing this
     needs the receiver a call supplies, which nothing answers today.
@@ -2131,8 +2131,8 @@ class TestAnObjectPropertyFlagVariantIsStillRemoved(TestBase):
     closure binding, so a variant spelling the flag as an object property — `s.b ? ... : ...` with
     `s.b = false` — no longer matches, and its guard survives. The payload here is a console-member
     write, an anti-analysis marker real payloads carry, so the flag rule alone is what blocks the
-    removal. The variant is hand-written: no obfuscator.io emission spelling the flag this way is
-    witnessed, which is why the recall loss is carried here rather than paid for with matcher
+    removal. The variant is hand-written: no witnessed emission spells the flag this way, which is
+    why the recall loss is carried here rather than paid for with matcher
     surface. The rule that closes it extends the flag rule to a member path whose base resolves
     outside the factory and which is written false inside it.
     """

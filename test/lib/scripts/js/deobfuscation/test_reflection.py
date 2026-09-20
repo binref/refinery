@@ -25,8 +25,9 @@ from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
-#: The obfuscator.io default-preset string array (rotation IIFE, self-overwriting array function,
-#: accessor) with the non-checksum string at index 0xac set to `return this` and the trailing usage
+#: The default-preset string array (rotation IIFE, self-overwriting array function, accessor) a
+#: common obfuscator emits, with the non-checksum string at index 0xac set to `return this` and the
+#: trailing usage
 #: replaced by a separated `Function` global finder. The finder's code is a literal only after the
 #: string-array resolver decodes `_0xe6abe5(0xac)` — a decode the reflection pass cannot perform
 #: itself — so folding it exercises reflection re-running once that surface is revealed.
@@ -809,7 +810,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_payload_clashing_with_the_consumed_temporaries_folds_atomically(self):
         """
-        The obfuscator.io one-shot wrapper: the payload's injected dead code declares the holder's
+        The one-shot wrapper: the payload's injected dead code declares the holder's
         name and reads the construction's name, so the splice preserves meaning only when the two
         declarations it collides with are consumed by the same edit. The invocation is replaced by
         the payload and both temporaries go with it.

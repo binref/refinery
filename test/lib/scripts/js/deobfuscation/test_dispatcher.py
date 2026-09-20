@@ -28,7 +28,7 @@ def a_dispatcher(dict_lines: list, tail_lines: list) -> str:
     the entries of the map and *tail_lines* the calls made through it.
 
     The create-flag branch hands back a wrapper that fills the payload from its own call arguments
-    before invoking the entry, which is the js-confuser idiom the unwrapper reads as the entry's
+    before invoking the entry, the create-flag idiom the unwrapper reads as the entry's
     parameters: a reference taken through it and then called with `fn(42)` genuinely reaches the
     entry with `42` as its first payload element, so the fixture prints what the unwrap claims.
 

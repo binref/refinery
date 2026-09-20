@@ -55,7 +55,7 @@ class TestAntiDebug(TestJsDeobfuscator):
         The factory is kept because `other` still names it once the guard is gone; removing its
         declaration would strand that reference. The reference does not call the factory again: a
         second call to this run-once factory would take its already-flipped branch and return the
-        empty function, a shape real obfuscator.io never emits and the removal is not answerable to,
+        empty function, a shape no real guard payload carries and the removal is not answerable to,
         so the fixture references the factory without re-invoking it and stays stdout-equivalent.
         """
         self.assertEqual(
