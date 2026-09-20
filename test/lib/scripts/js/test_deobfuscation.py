@@ -136,10 +136,10 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
               }
               return i;
             }
-            f();
+            console.log(f());
             """
         )
-        self.assertEqual('3;', self._deobfuscate(source))
+        self.assertEqual('console.log(3);', self._deobfuscate(source))
 
     def test_in_bare_assignment_empty_function_guard_folded(self):
         source = inspect.cleandoc(
@@ -267,66 +267,66 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_free_variable_not_inlined_past_modifying_call(self):
-        source = inspect.cleandoc(
-            """
-            function modifyGlobal() {
-              x = 9;
-            }
-            var x = 12;
-            modifyGlobal();
-            console.log(x);
-            """
-        )
-        self.assertEqual(source, self._deobfuscate_iterative(source))
-
-    def test_free_variable_is_inlined_past_harmless_call(self):
-        test = self._deobfuscate_iterative(inspect.cleandoc(
-            """
-            function harmlessCall() {
-                if (x == 12) {
-                    console.log("good");
-                }
-            }
-            var x = 12;
-            harmlessCall();
-            console.log(x);
-            """
-        ))
-        self.assertEqual(test, inspect.cleandoc(
-            """
-            function harmlessCall() {
-              console.log("good");
-            }
-            harmlessCall();
-            console.log(12);
-            """
-        ))
-
-    def test_local_variable_not_inlined_past_modifying_call(self):
-        source = inspect.cleandoc(
-            """
-            function f() {
-                x = 9;
-            }
-            var a = 1;
-            var x = a;
-            f();
-            console.log(x);
-            """
-        )
         self.assertEqual(
             inspect.cleandoc(
+                """
+                var x = 12;
+                x = 9;
+                console.log(x);
+                """
+            ),
+            self._deobfuscate_iterative(inspect.cleandoc(
+                """
+                function modifyGlobal() {
+                  x = 9;
+                }
+                var x = 12;
+                modifyGlobal();
+                console.log(x);
+                """
+            )))
+
+    def test_free_variable_is_inlined_past_harmless_call(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                console.log("good");
+                console.log(12);
+                """
+            ),
+            self._deobfuscate_iterative(inspect.cleandoc(
+                """
+                function harmlessCall() {
+                    if (x == 12) {
+                        console.log("good");
+                    }
+                }
+                var x = 12;
+                harmlessCall();
+                console.log(x);
+                """
+            )))
+
+    def test_local_variable_not_inlined_past_modifying_call(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1;
+                x = 9;
+                console.log(x);
+                """
+            ),
+            self._deobfuscate(inspect.cleandoc(
                 """
                 function f() {
                   x = 9;
                 }
-                var x = 1;
+                var a = 1;
+                var x = a;
                 f();
                 console.log(x);
                 """
-            ),
-            self._deobfuscate(source),
-        )
+            )))
 
     def test_read_of_lexical_in_dead_zone_is_not_relocated(self):
         """

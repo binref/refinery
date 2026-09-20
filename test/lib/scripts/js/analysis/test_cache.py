@@ -347,7 +347,10 @@ class TestPinnedModels(TestBase):
         """
         Warming builds exactly the slots the cache classifies as root-reading — those whose build
         walks the live tree — leaving every purely-derived slot unbuilt, to build lazily over the
-        held roots.
+        held roots. The one that comes with them is `dominance`: the effect model orders a
+        function's own dead-zone reads through it at build, so warming `effects` warms its base —
+        itself derived from the held roots, so building it there is the entry answer and not a
+        layering over a moved tree.
         """
         cache = ModelCache(self._script('var a = 1; function f(){ var x = 1; return x; } f();'))
         with cache.pinned():
@@ -356,7 +359,7 @@ class TestPinnedModels(TestBase):
             self.assertIsNotNone(cache._control_flow)
             self.assertIsNotNone(cache._effects)
             self.assertIsNotNone(cache._assignment)
-            self.assertIsNone(cache._dominance)
+            self.assertIsNotNone(cache._dominance)
             self.assertIsNone(cache._reaching)
             self.assertIsNone(cache._liveness)
             self.assertIsNone(cache._tampering)
@@ -455,9 +458,9 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
             counts['model'] += 1
             return real_model(root, *args, **kwargs)
 
-        def counting_effects(model):
+        def counting_effects(model, *args, **kwargs):
             counts['effects'] += 1
-            return real_effects(model)
+            return real_effects(model, *args, **kwargs)
 
         script = JsParser(source).parse()
         cache_module.build_semantic_model = counting_model

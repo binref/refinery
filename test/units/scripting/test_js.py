@@ -173,13 +173,10 @@ class TestJsHostEnvironmentPin(TestUnitBase):
     it enables are recovered. The default keeps such a read, since no universal host defines it.
     """
 
-    def test_a_node_finder_that_returns_global_folds_to_nothing_when_pinned(self):
+    def test_a_node_finder_that_returns_global_resolves_the_alias_only_when_pinned(self):
         source = b'function g() { return global; } g();'
-        self.assertEqual(
-            source | self.load() | str,
-            'function g() {\n  return global;\n}\ng();',
-        )
-        self.assertEqual(source | self.load(environment='node') | str, '')
+        self.assertEqual(source | self.load() | str, 'global;')
+        self.assertEqual(source | self.load(environment='node') | str, 'globalThis;')
 
     def test_a_node_host_collapses_a_global_alias_member_read(self):
         source = b'console.log(global.String);'
@@ -187,15 +184,20 @@ class TestJsHostEnvironmentPin(TestUnitBase):
         self.assertEqual(source | self.load(environment='node') | str, 'console.log(String);')
 
     def test_a_node_host_collapses_a_cross_alias_global_property_read(self):
-        second_alias = b'globalThis._V = 1;\nfunction f() { return global._V; }\nf();\nconsole.log(1);'
+        """
+        The write goes through `globalThis` and the read through `global`, so collapsing the read
+        needs the host that makes the two names one object. The call stands last, so the read it
+        lands is the completion value and nothing sweeps it away as dead.
+        """
+        second_alias = b'globalThis._V = 1;\nfunction f() { return global._V; }\nconsole.log(1);\nf();'
         self.assertEqual(
             second_alias | self.load(environment='node') | str,
-            'globalThis._V = 1;\nfunction f() {\n  return _V;\n}\nf();\nconsole.log(1);',
+            'globalThis._V = 1;\nconsole.log(1);\n_V;',
         )
-        bare_assignment = b'foo = 1;\nfunction f() { return global.foo; }\nf();\nconsole.log(1);'
+        bare_assignment = b'foo = 1;\nfunction f() { return global.foo; }\nconsole.log(1);\nf();'
         self.assertEqual(
             bare_assignment | self.load(environment='node') | str,
-            'foo = 1;\nfunction f() {\n  return foo;\n}\nf();\nconsole.log(1);',
+            'foo = 1;\nconsole.log(1);\nfoo;',
         )
 
     def test_a_browser_host_inlines_an_indirect_eval_through_a_same_realm_alias(self):

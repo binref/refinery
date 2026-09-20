@@ -42,6 +42,9 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, code_units, node_executable
 
 from refinery.units.scripting.js import js
+from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 _ASTRAL = chr(0x1F600)
 
@@ -145,8 +148,8 @@ _CALLING_WHAT_THE_STRING_DECIDES: dict[str, tuple[str, str]] = {
 }
 
 #: A statement that a Directive Prologue would take in were it written as a string literal, mapped
-#: to the text the tool leaves it as. The receiver of the read may still fold, since the string it
-#: denotes is a string either way; the read itself may not, because the statement would then be a
+#: to the text the simplifier leaves it as. The receiver of the read may still fold, since the string
+#: it denotes is a string either way; the read itself may not, because the statement would then be a
 #: string literal and the prologue it ended would run on past it.
 _A_READ_AT_THE_TOP_OF_A_BODY: dict[str, str] = {
     "'abc'[0];"                     : "'abc'[0];",
@@ -168,6 +171,19 @@ def _deobfuscated(source: str) -> str:
     The script `refinery.js` emits for *source*.
     """
     return source.encode('utf8') | js(strict=True) | str
+
+
+def _simplified(source: str) -> str:
+    """
+    The script the simplifier alone emits for *source*, which is where the fold of a read is decided.
+    The sweep that later drops a dead statement takes the statement away whole, so it can say nothing
+    about the fold; here the read has to survive its own folding for the answer to be readable.
+    """
+    ast = JsParser(source).parse()
+    instance = JsSimplifications()
+    instance.options = None
+    instance.visit(ast)
+    return JsSynthesizer().convert(ast)
 
 
 def _fold(expression: str) -> str:
@@ -199,11 +215,11 @@ def _a_script_whose_directive_stands_below(head: str) -> str:
 
 def _the_head_it_is_left_as(head: str) -> str:
     """
-    The first line of the script `refinery.js` emits for `_a_script_whose_directive_stands_below`
+    The first line of the script the simplifier emits for `_a_script_whose_directive_stands_below`
     applied to *head*. Each head is one statement and the printer writes one statement to a line, so
     that line is what became of it.
     """
-    return _deobfuscated(_a_script_whose_directive_stands_below(head)).splitlines()[0]
+    return _simplified(_a_script_whose_directive_stands_below(head)).splitlines()[0]
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -424,8 +440,8 @@ class TestAReadThatWouldOpenADirectivePrologue(TestBase):
 
     def test_a_read_below_a_statement_that_is_no_directive_still_folds(self):
         self.assertEqual(
-            _deobfuscated("console.log(1);\n'abc'[0];\nconsole.log(2);"),
-            "console.log(1);\n'a';\nconsole.log(2);",
+            _deobfuscated("console.log(1);\n'abc'[0];"),
+            "console.log(1);\n'a';",
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')

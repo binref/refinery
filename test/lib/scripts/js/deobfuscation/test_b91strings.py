@@ -215,12 +215,9 @@ class TestStringConcealing(TestJsDeobfuscator):
                 var results = [];
                 results.push("hello");
                 console.log(results);
-                function inner() {
-                  var items = [];
-                  items.push("world");
-                  console.log(items);
-                }
-                inner();
+                var items = [];
+                items.push("world");
+                console.log(items);
                 """
             ),
             result,

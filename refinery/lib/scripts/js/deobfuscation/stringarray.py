@@ -167,7 +167,7 @@ def _find_all_accessor_functions(
     array_fn_name: str,
 ) -> list[AccessorFunction]:
     """
-    Detect all accessor functions for a given array. Obfuscator.io can produce multiple accessors
+    Detect all accessor functions for a given array. An obfuscator can produce multiple accessors
     sharing the same array (e.g. one base64 and one RC4). Two structural variants are recognized:
 
     Simple pattern::
@@ -966,7 +966,7 @@ def _simulate_rotation(
 def _collect_accessor_aliases(body: Sequence[Node], accessor_name: str) -> set[str]:
     """
     Collect all variable names that are transitively assigned the accessor function identifier,
-    walking the entire AST. Obfuscator.io creates multi-level alias chains:
+    walking the entire AST. An obfuscator creates multi-level alias chains:
 
         const a0x = a0d;
         const z = a0x, A = a0x;

@@ -283,14 +283,21 @@ class TestRegressionBugs(TestJsDeobfuscator):
 class TestCFFArgParamDeclarations(TestJsDeobfuscator):
 
     def test_undeclared_assignment_not_removed_when_read_in_outer_scope(self):
-        source = inspect.cleandoc(
-            """
-            function modify() {
-              x = 99;
-            }
-            var x = 1;
-            modify();
-            console.log(x);
-            """
-        )
-        self.assertEqual(source, self._deobfuscate_iterative(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1;
+                x = 99;
+                console.log(x);
+                """
+            ),
+            self._deobfuscate_iterative(inspect.cleandoc(
+                """
+                function modify() {
+                  x = 99;
+                }
+                var x = 1;
+                modify();
+                console.log(x);
+                """
+            )))

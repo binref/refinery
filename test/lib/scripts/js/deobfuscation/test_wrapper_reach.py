@@ -98,13 +98,10 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
         """): Row(
         _prints('real 1'),
         _the_answer("""
-            function outer() {
-              function W(a) {
-                console.log('real', a);
-              }
-              W(1);
+            function W(a) {
+              console.log('real', a);
             }
-            outer();
+            W(1);
             2;
             """),
     ),
@@ -122,10 +119,7 @@ A_WRAPPER_THE_EXPANSION_IS_WRONG_FOR = {
             function W(a) {
               console.log('outer', a);
             }
-            function outer() {
-              console.log(1);
-            }
-            outer();
+            console.log(1);
             W(2);
             """),
     ),

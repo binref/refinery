@@ -168,6 +168,12 @@ def denotes_function_intrinsic(
     produces can only reach a callee position through a position the tampering enumeration reads,
     so an unrecognized spelling costs recall there and never a site.
 
+    Every name-to-value hop of an alias chain is ordered against the read that resolves it: the
+    name's single value must be established before the hop's identifier is read, or the name
+    spelled `undefined` there and the construction threw. A chain is a value *at the moment each
+    hop reads it*, which is what the recursion's node positions carry and why the check sits on
+    the hop rather than on the invocation that started the walk.
+
     *eval_string* resolves a computed key the model cannot read by folding; a caller with no folder
     passes `None` and every unresolvable key answers `None` — undecided. *read_effect* rejects a
     navigation base whose evaluation fires an effect; without it more bases read as side-effect
@@ -181,6 +187,58 @@ def denotes_function_intrinsic(
     `SemanticModel.binding_establishment_sites` rules — and the stock
     `DominanceModel.binding_established_before` call runs only beside the stock value.
     """
+    return _denotes_function_intrinsic(
+        callee, model, effects, dominance,
+        eval_string=eval_string, read_effect=read_effect,
+        positioned_value=positioned_value, spliced_names=spliced_names,
+        depth=depth, aliases=None,
+    )
+
+
+def function_intrinsic_aliases(
+    callee: Node | None,
+    model: SemanticModel,
+    effects: EffectModel,
+    dominance: DominanceModel,
+    *,
+    eval_string: Callable[[Node | None], str | None] | None = None,
+    read_effect: Callable[[Node], bool] | None = None,
+    positioned_value: Callable[[Binding, Node], Node | None] | None = None,
+    spliced_names: Collection[str] = (),
+) -> list[Binding] | None:
+    """
+    The name-to-value bindings *callee* resolves through to the `Function` intrinsic — one entry
+    per identifier hop of the spelling, innermost first — or `None` where it does not provably
+    denote it. The verdict is `denotes_function_intrinsic`'s, read off the same walk, so the two
+    can never disagree about a callee; the chain is what a fold that consumes the construction
+    together with the names it was spelled through has to delete, and the hop ordering the walk
+    already proves is what makes each of those declarators hold the value the construction read.
+    """
+    aliases: list[Binding] = []
+    verdict = _denotes_function_intrinsic(
+        callee, model, effects, dominance,
+        eval_string=eval_string, read_effect=read_effect,
+        positioned_value=positioned_value, spliced_names=spliced_names,
+        depth=0, aliases=aliases,
+    )
+    if verdict is True:
+        return aliases
+    return None
+
+
+def _denotes_function_intrinsic(
+    callee: Node | None,
+    model: SemanticModel,
+    effects: EffectModel,
+    dominance: DominanceModel,
+    *,
+    eval_string: Callable[[Node | None], str | None] | None,
+    read_effect: Callable[[Node], bool] | None,
+    positioned_value: Callable[[Binding, Node], Node | None] | None,
+    spliced_names: Collection[str],
+    depth: int,
+    aliases: list[Binding] | None,
+) -> bool | None:
 
     def resolved_member(member: JsMemberExpression) -> bool | None:
         if model.scope_of(member) is None:
@@ -222,16 +280,21 @@ def denotes_function_intrinsic(
             return expr.name == 'Function' and not model.read_has_dynamic_effect(expr)
         if effects.global_key_written('Function', 'constructor'):
             return False
+        if aliases is not None:
+            aliases.append(binding)
         value = model.singular_value(binding)
-        if value is None and positioned_value is not None:
+        if value is not None:
+            if not dominance.binding_established_before(binding, expr):
+                return False
+        elif positioned_value is not None:
             value = positioned_value(binding, expr)
         if value is None:
             return False
-        return denotes_function_intrinsic(
+        return _denotes_function_intrinsic(
             value, model, effects, dominance,
             eval_string=eval_string, read_effect=read_effect,
             positioned_value=positioned_value,
-            spliced_names=spliced_names, depth=depth + 1,
+            spliced_names=spliced_names, depth=depth + 1, aliases=aliases,
         )
     if effects.global_key_written('Function', 'constructor'):
         return False
@@ -354,7 +417,7 @@ class TamperingModel:
         sites = [site for site in sites if site is not anchor]
         if not sites:
             return True
-        if not self._at_most_once(anchor):
+        if not self.at_most_once(anchor):
             return False
         return all(self.dominance.runs_before(anchor, site) for site in sites)
 
@@ -371,7 +434,7 @@ class TamperingModel:
            needs no ordering;
         2. hazards: every dynamic rebind the located question
            (`SemanticModel.binding_dynamic_rebind_sites`) finds first-executes after the read;
-        3. multiplicity: the read executes at most once (`_at_most_once`), since ordering first
+        3. multiplicity: the read executes at most once (`at_most_once`), since ordering first
            executions does not bound what a read on a cycle sees on its second one.
 
         The channels and their completeness are read on the ignore view
@@ -401,7 +464,7 @@ class TamperingModel:
         if not complete or establishment is None or len(values) != 1:
             return None
         hazards = self.model.binding_dynamic_rebind_sites(binding)
-        if hazards is None or not self._at_most_once(at):
+        if hazards is None or not self.at_most_once(at):
             return None
         if not all(self.dominance.runs_before(site, at) for site in establishment):
             return None
@@ -423,7 +486,7 @@ class TamperingModel:
             )
         return self._program_wide
 
-    def _at_most_once(self, anchor: Node) -> bool:
+    def at_most_once(self, anchor: Node) -> bool:
         """
         Whether *anchor* executes at most once: its own control-flow node is off a cycle, and
         every activation up to the script root is invoked at most once — exactly one

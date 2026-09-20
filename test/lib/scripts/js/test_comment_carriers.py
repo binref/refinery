@@ -544,6 +544,6 @@ class TestTheDeobfuscatorKeepsTheCarriers(TestBase):
             'console.log(1); /* a */': 'console.log(1);\n/* a */',
             'console.log(1); /* a': 'console.log(1);\n/* a',
             '#!/usr/bin/env node\nconsole.log(1);': '#!/usr/bin/env node\nconsole.log(1);',
-            'function f() { console.log(1); /* a */ } f();': 'function f() {\n  console.log(1);\n  /* a */\n}\nf();',
+            'function f() { console.log(1); /* a */ } f();': 'console.log(1);\n/* a */',
         }
         self.assertEqual({source: deobfuscate_source(source) for source in rows}, rows)

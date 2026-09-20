@@ -72,9 +72,10 @@ class ModelCache(ModelCacheBase):
     # The slots whose build walks the live tree — the guard refuses any of these built late over a
     # moved tree: `model`/`control_flow` from `root`, `effects`/`assignment` which re-walk
     # `model.root` at build, and `liveness` which walks each graph's element subtrees at build.
-    # `dominance` and `reaching` build purely from held base models. Query-time tree reads —
-    # `tampering`'s site enumeration, `reaching`'s call walk — no warming can force; a pass reading
-    # them across its edits owns that.
+    # `dominance` and `reaching` build purely from held base models — the former is built by
+    # warming `effects` all the same, as the ordering base its summary computation reads.
+    # Query-time tree reads — `tampering`'s site enumeration, `reaching`'s call walk — no warming
+    # can force; a pass reading them across its edits owns that.
     _ROOT_SLOTS = (
         '_model',
         '_control_flow',
@@ -113,7 +114,7 @@ class ModelCache(ModelCacheBase):
 
     @property
     def effects(self) -> EffectModel:
-        return self._lazy('_effects', lambda: build_effects(self.model))
+        return self._lazy('_effects', lambda: build_effects(self.model, self.dominance))
 
     @property
     def control_flow(self) -> ControlFlowModel:

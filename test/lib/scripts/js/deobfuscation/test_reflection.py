@@ -782,6 +782,172 @@ class TestReflectionInlining(TestJsDeobfuscator):
         source = "var x = m();\nconst m = Function('return 1');"
         self.assertEqual(source, self._reflect("var x = m(); const m = Function('return 1');"))
 
+    def test_an_alias_hop_read_before_its_declarator_runs_does_not_fold(self):
+        """
+        `var a = b;` before `var b = function() {}.constructor;` leaves `a` holding `undefined`,
+        so the construction `a('return 1')` throws at runtime and the body it would splice never
+        ran. The alias chain has to be ordered hop by hop, not merely resolved.
+        """
+        source = (
+            'var a = b; var b = function() {}.constructor;'
+            " var c = a('return 1'); c();"
+        )
+        self.assertEqual(
+            "var a = b;\nvar b = function() {}.constructor;\nvar c = a('return 1');\nc();",
+            self._reflect(source))
+
+    def test_a_callee_read_before_its_declarator_runs_does_not_fold(self):
+        """
+        The construction's own callee is a name read at the construction, so a declarator that has
+        not run yet leaves the callee `undefined` and the construction throwing: the recognized
+        body is not what the call runs.
+        """
+        source = "var c = g('return 1'); c(); var g = Function;"
+        self.assertEqual(
+            "var c = g('return 1');\nc();\nvar g = Function;",
+            self._reflect(source))
+
+    def test_payload_clashing_with_the_consumed_temporaries_folds_atomically(self):
+        """
+        The obfuscator.io one-shot wrapper: the payload's injected dead code declares the holder's
+        name and reads the construction's name, so the splice preserves meaning only when the two
+        declarations it collides with are consumed by the same edit. The invocation is replaced by
+        the payload and both temporaries go with it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function w() {
+                  print(1);
+                  var h;
+                  f;
+                }
+                w();
+                """
+            ),
+            self._reflect(inspect.cleandoc(
+                """
+                function w() {
+                  var h = function() {}.constructor;
+                  var f = h('print(1); var h; f;');
+                  f();
+                }
+                w();
+                """
+            )))
+
+    def test_payload_clashing_with_consumed_temporaries_at_script_scope_folds_atomically(self):
+        self.assertEqual(
+            'print(1);\nvar h;\nf;',
+            self._reflect(
+                "var h = function() {}.constructor;"
+                " var f = h('print(1); var h; f;');"
+                ' f();'))
+
+    def test_a_second_read_of_the_holder_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              var h = function() {}.constructor;
+              var f = h('print(1); var h; f;');
+              var g = h('print(2);');
+              f();
+            }
+            w();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_second_read_of_the_construction_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              var h = function() {}.constructor;
+              var f = h('print(1); var h; f;');
+              use(f);
+              f();
+            }
+            w();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_payload_free_name_the_site_function_keeps_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              var t = 1;
+              var h = function() {}.constructor;
+              var f = h('print(t); var h; f;');
+              f();
+            }
+            w();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_payload_free_name_resolving_past_the_temporaries_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              var f = 1;
+              function w() {
+                var h = function() {}.constructor;
+                var f = h('print(f); var h; f;');
+                f();
+              }
+              w();
+            }
+            outer();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_direct_eval_in_the_owner_function_refuses_the_atomic_fold(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              var h = function() {}.constructor;
+              var f = h('print(1); var h; f;');
+              f();
+              eval(x);
+            }
+            w();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_tampered_prototype_chain_refuses_the_atomic_fold(self):
+        """
+        Deleting the holder drops its `.constructor` read, which is droppable only while the
+        prototype chain it consults is intact: a program that has written any key on the chain
+        could have installed a getter the read would run.
+        """
+        source = inspect.cleandoc(
+            """
+            Object.prototype.q = 1;
+            function w() {
+              var h = function() {}.constructor;
+              var f = h('print(1); var h; f;');
+              f();
+            }
+            w();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_body_redeclaring_an_unused_lexical_name_at_the_site_is_refused(self):
+        """
+        A `var` the body declares cannot land in a scope that already binds the name lexically:
+        the merged output redeclares it, a `SyntaxError` no input spelled. The capture check
+        alone cannot see a binding nothing reads.
+        """
+        source = "let x; var f = Function('var x; print(1);'); f();"
+        self.assertEqual(
+            "let x;\nvar f = Function('var x; print(1);');\nf();",
+            self._reflect(source))
+
+
     def test_string_array_revealed_separated_finder_folds_to_globalthis(self):
         """
         A separated `Function` global finder whose code is produced only by the string-array resolver

@@ -190,6 +190,19 @@ def directive_prologue(host: Node | None) -> list[JsExpressionStatement]:
     return leading_string_statements(statement_list(host) or [])
 
 
+def is_bare_string_statement(statement: Node) -> bool:
+    """
+    Whether *statement* consists of nothing but a string literal — the shape a directive is spelled in.
+    The statement a Directive Prologue ends at is the first one without it, so a removal that lets a
+    string-literal statement slide into the opening run promotes it from ordinary code to a directive
+    the source never wrote.
+    """
+    return (
+        isinstance(statement, JsExpressionStatement)
+        and isinstance(statement.expression, JsStringLiteral)
+    )
+
+
 def leading_string_statements(statements: list[Statement]) -> list[JsExpressionStatement]:
     """
     The opening run of *statements* that consist of nothing but a string literal. Where *statements*
@@ -198,9 +211,7 @@ def leading_string_statements(statements: list[Statement]) -> list[JsExpressionS
     """
     run: list[JsExpressionStatement] = []
     for statement in statements:
-        if not isinstance(statement, JsExpressionStatement):
-            break
-        if not isinstance(statement.expression, JsStringLiteral):
+        if not is_bare_string_statement(statement):
             break
         run.append(statement)
     return run

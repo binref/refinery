@@ -18,7 +18,7 @@ import re
 
 from collections import Counter
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Callable, Collection, Iterator, NamedTuple, Sequence
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -51,6 +51,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     Role,
+    Scope,
     SemanticModel,
     build_semantic_model,
     is_invocation_target,
@@ -79,6 +80,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionNode,
     JsIdentifier,
     JsLogicalExpression,
+    JsLabeledStatement,
     JsMemberExpression,
     JsNewExpression,
     JsNullLiteral,
@@ -93,6 +95,7 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsThisExpression,
+    JsThrowStatement,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -1577,6 +1580,30 @@ def value_is_discarded(node: Node) -> bool:
     return False
 
 
+def definitely_answers_the_completion(stmt: Statement) -> bool:
+    """
+    Whether evaluating *stmt* certainly supplies a value — the value the statement list it stands
+    in answers when nothing behind it does, which is what an `eval` of the file receives and what a
+    function hands its caller when control falls off its end. A statement this answers for is one
+    no statement ahead of it can be answering, so a reader deciding whether an inert statement may
+    go finds here the shadow it needs to drop it.
+
+    An expression statement supplies one even where evaluating it throws: the throw is what the
+    program does then, and no earlier statement was the answer. A `return` supplies its function's
+    value and a `throw` aborts, and neither leaves an earlier statement answering. A block or a
+    label passes the question inward. Everything else — a declaration, an empty statement, a
+    `debugger`, and every conditional or iterative construct, whose run may skip the value it
+    guards — answers `False`, which keeps the statement ahead of it standing.
+    """
+    if isinstance(stmt, (JsExpressionStatement, JsReturnStatement, JsThrowStatement)):
+        return True
+    if isinstance(stmt, JsBlockStatement):
+        return any(definitely_answers_the_completion(inner) for inner in stmt.body)
+    if isinstance(stmt, JsLabeledStatement):
+        return stmt.body is not None and definitely_answers_the_completion(stmt.body)
+    return False
+
+
 def insert_after_prologue(host: Node, statements: list[Statement]) -> None:
     """
     Insert *statements* into the body of *host* directly behind its Directive Prologue, adopting them
@@ -1626,6 +1653,111 @@ def remove_declarator(declarator: JsVariableDeclarator) -> None:
     _remove_from_parent(declarator)
     if isinstance(var_decl, JsVariableDeclaration) and not var_decl.declarations:
         _remove_from_parent(var_decl)
+
+
+def sanitize_inlined_body(stmts: list[Statement]) -> list[Statement] | None:
+    """
+    Adapt a spliced body's statements for the statement position they replace, where the call's
+    return value is discarded and no `return` may escape into the container. A trailing `return x`
+    becomes the bare expression `x` (its value was already being thrown away) and a trailing
+    valueless `return` is dropped. Any other `return` — before the last statement, or nested in the
+    control flow of any statement (an `if`, loop, or `try`) rather than at the body's own top level —
+    declines the splice (`None`), since its early exit cannot be reproduced at statement position
+    without reordering and declining is always sound. `walk_scope` finds a nested `return` without
+    descending into a nested function, whose own `return` stays with it. This holds for every
+    container, not only the script: a `return` spliced into a function body would return from that
+    enclosing function, and into the script would be a syntax error.
+    """
+    if not stmts:
+        return stmts
+    trailing = stmts[-1] if isinstance(stmts[-1], JsReturnStatement) else None
+    for stmt in stmts[:-1] if trailing is not None else stmts:
+        if any(isinstance(node, JsReturnStatement) for node in walk_scope(stmt)):
+            return None
+    if trailing is None:
+        return stmts
+    if trailing.argument is not None:
+        return [*stmts[:-1], JsExpressionStatement(expression=trailing.argument)]
+    return stmts[:-1]
+
+
+def references_new_target(root: Node) -> bool:
+    """
+    Whether *root* reads the `new.target` meta-property, which the parser models as a member access
+    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
+    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
+    `new.target` to the caller's, so a body that reads it cannot be inlined.
+    """
+    for node in root.walk():
+        if (
+            isinstance(node, JsMemberExpression)
+            and isinstance(node.object, JsIdentifier)
+            and node.object.name == 'new'
+        ):
+            return True
+    return False
+
+
+def hoist_path_is_clear(
+    names: set[str],
+    site_scope: Scope,
+    var_scope: Scope,
+    *,
+    exclude: Collection[Binding] = (),
+) -> bool:
+    """
+    Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
+    crossing a lexical binding of the same name. A `var` spliced into a block still hoists to the
+    enclosing function or script, but it is a redeclaration SyntaxError if any block it passes
+    through — from the site's own scope up to, but not including, *var_scope* — lexically binds the
+    same name. Conflicts with a binding declared directly in *var_scope* are already caught by the
+    capture check. A binding in *exclude* is read as absent: the edit the caller makes deletes it,
+    taking the name with it out of the scope it passes through.
+    """
+    scope: Scope | None = site_scope
+    while scope is not None and scope is not var_scope:
+        if any(
+            (binding := scope.bindings.get(name)) is not None and binding not in exclude
+            for name in names
+        ):
+            return False
+        scope = scope.parent
+    return True
+
+
+def inlined_declarations_safe(
+    declared_scope: Scope,
+    root_model: SemanticModel,
+    site_scope: Scope,
+    *,
+    exclude: Collection[Binding] = (),
+) -> bool:
+    """
+    Whether the names a spliced body declares at its own top level — the bindings of
+    *declared_scope* — can be introduced at the site it is spliced into without capturing an
+    identifier already meaningful there. Such declarations are local to the body's own function;
+    inlining lifts `var` and function declarations into the caller's function or script scope and
+    `let`/`const`/`class` into the caller's immediate block, where a same-named reference, an
+    inherited binding, or a redeclaration would silently rebind to the inlined declaration or
+    produce a duplicate lexical declaration. Each name is checked against the scope it would
+    actually land in.
+
+    *exclude* names the bindings the same edit deletes elsewhere: a use resolving to one is
+    carried off by the deletion rather than captured, so the introduced declaration may share its
+    name.
+    """
+    bindings = declared_scope.bindings
+    hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
+    lexical = {name for name, binding in bindings.items() if binding.is_lexical}
+    if hoisted:
+        var_scope = site_scope.var_scope
+        if var_scope is None or root_model.would_capture(hoisted, var_scope, exclude=exclude):
+            return False
+        if not hoist_path_is_clear(hoisted, site_scope, var_scope, exclude=exclude):
+            return False
+    if lexical and root_model.would_capture(lexical, site_scope, exclude=exclude):
+        return False
+    return True
 
 
 def extract_identifier_params(params: list) -> list[str] | None:

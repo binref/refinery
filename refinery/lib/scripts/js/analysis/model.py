@@ -31,7 +31,7 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from typing import Callable, Collection, Iterator
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -1908,7 +1908,14 @@ class SemanticModel:
         """
         return self._binding_of.get(id(decl_id))
 
-    def lookup(self, name: str, scope: Scope | None, *, cross_dynamic: bool = False) -> Binding | None:
+    def lookup(
+        self,
+        name: str,
+        scope: Scope | None,
+        *,
+        cross_dynamic: bool = False,
+        exclude: Collection[Binding] = (),
+    ) -> Binding | None:
         """
         Resolve *name* from *scope* outward through enclosing scopes, stopping at a dynamically-scoped
         region where the name could be injected at runtime. Returns `None` for a free name. With
@@ -1917,10 +1924,15 @@ class SemanticModel:
         scope could still reach at runtime — which is how a `with`-body reference is attributed to the
         binding it may touch. The default keeps the definite-resolution semantics every other caller
         relies on.
+
+        A binding in *exclude* is passed over as though its scope did not bind the name: the
+        simulated post-rewrite resolution an atomic fold admits against, where one edit splices a
+        body and deletes the bindings the splice consumes together. What the name denotes without
+        them is what the tree after that edit reads.
         """
         while scope is not None:
             binding = scope.bindings.get(name)
-            if binding is not None:
+            if binding is not None and binding not in exclude:
                 return binding
             if scope.is_dynamic and not cross_dynamic:
                 return None
@@ -2446,7 +2458,9 @@ class SemanticModel:
             return False
         return outer.contains(binding.scope, strict=True)
 
-    def would_capture(self, names: set[str], scope: Scope) -> bool:
+    def would_capture(
+        self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
+    ) -> bool:
         """
         Whether introducing a binding for any of *names* directly in *scope* would capture an
         identifier already meaningful there. Every use-position occurrence of one of *names* within
@@ -2454,9 +2468,21 @@ class SemanticModel:
         resolve to a binding strictly nested below *scope* (see `is_shadowed`); otherwise that
         occurrence — free, inherited from an enclosing scope, or bound in *scope* itself — would be
         rebound by the introduced declaration.
+
+        A use resolving to a binding in *exclude* is skipped: the edit the caller asks this for
+        deletes that binding with the same splice that introduces the declaration, so the use is
+        carried off rather than captured. The natural binding is what decides membership — a
+        resolution walked past an excluded binding answers where the name would land *after* the
+        edit, which is the question the callers below `_admit_reflected_body` ask of their free
+        names, not the one this capture rule asks of a use the tree still holds.
         """
         for node in name_uses_in_scope(names, scope):
-            if not self.is_shadowed(node.name, node, scope):
+            binding = self.lookup(node.name, self._node_scope.get(id(node)))
+            if binding in exclude:
+                continue
+            if binding is None:
+                return True
+            if not scope.contains(binding.scope, strict=True):
                 return True
         return False
 
@@ -3465,9 +3491,9 @@ class SemanticModel:
 
         The object is recognized by `_holds_the_global_object`, so only the `this` a script's top
         level holds is one. A `this` inside a function is the receiver its call supplied, and
-        admitting it costs every fold in a file that hands one to anything: obfuscator.io's
-        self-defending wrapper passes its own `this` to a call, and a run that took it for the
-        global object leaves that sample twenty times its deobfuscated size. `may_be_global_object_base`
+        admitting it costs every fold in a file that hands one to anything: a self-defending
+        wrapper passes its own `this` to a call, and a run that took it for the global object
+        leaves that sample twenty times its deobfuscated size. `may_be_global_object_base`
         admits every `this` for the opposite reason — there the wrong answer only keeps a
         declaration alive, and here it freezes the file.
 
@@ -3944,6 +3970,7 @@ class _ScopeBuilder:
         if split and isinstance(node, JsFunctionExpression) and node.id is not None:
             outer = self._new_scope(ScopeKind.NAME, node, outer)
             self._declare(outer, node.id.name, BindingKind.FUNC_NAME, node.id)
+            self.model._node_scope[id(node.id)] = outer
         pscope = self._new_scope(ScopeKind.PARAMS, node, outer) if split else None
         fscope = self._new_scope(ScopeKind.FUNCTION, node, pscope or outer)
         params = pscope or fscope
@@ -3954,6 +3981,9 @@ class _ScopeBuilder:
         is_arrow = isinstance(node, JsArrowFunctionExpression)
         if not split and isinstance(node, JsFunctionExpression) and node.id is not None:
             self._declare(fscope, node.id.name, BindingKind.FUNC_NAME, node.id)
+            self.model._node_scope[id(node.id)] = fscope
+        if isinstance(node, JsFunctionDeclaration) and node.id is not None:
+            self.model._node_scope[id(node.id)] = enclosing
         for param in node.params:
             for ident in pattern_identifiers(param):
                 self._declare(params, ident.name, BindingKind.PARAM, ident)
@@ -4064,6 +4094,9 @@ class _ScopeBuilder:
         cscope = self._new_scope(ScopeKind.CLASS, node, enclosing)
         if isinstance(node, JsClassExpression) and node.id is not None:
             self._declare(cscope, node.id.name, BindingKind.CLASS, node.id)
+            self.model._node_scope[id(node.id)] = cscope
+        if isinstance(node, JsClassDeclaration) and node.id is not None:
+            self.model._node_scope[id(node.id)] = enclosing
         body = node.body
         if body is not None:
             self.model._node_scope[id(body)] = cscope

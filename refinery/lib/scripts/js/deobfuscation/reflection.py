@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 
-from typing import Callable, NamedTuple
+from typing import Callable, Collection, NamedTuple
 
 from refinery.lib.scripts import (
     Expression,
@@ -20,7 +20,7 @@ from refinery.lib.scripts import (
     set_body,
     spells_its_source,
 )
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     REFLECTIVE_INTRINSICS,
@@ -38,20 +38,23 @@ from refinery.lib.scripts.js.analysis.model import (
     name_uses_in_scope,
     reference_role,
 )
-from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic
+from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic, function_intrinsic_aliases
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
     extract_literal_value,
     get_body,
+    inlined_declarations_safe,
     names_this_realms_global_object,
     nothing_still_names,
     property_key,
+    references_new_target,
     references_receiver_this,
     remove_declarator,
     replace_with_value,
     rewrite_receiver_this_to_global,
+    sanitize_inlined_body,
     string_value,
     walk_scope,
 )
@@ -77,6 +80,7 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
+    JsVariableDeclaration,
     JsVariableDeclarator,
     Statement,
     code_context_at,
@@ -682,23 +686,6 @@ def _has_top_level_return(stmts: list[Statement]) -> bool:
     return any(isinstance(n, JsReturnStatement) for s in stmts for n in walk_scope(s))
 
 
-def _references_new_target(root: Node) -> bool:
-    """
-    Whether *root* reads the `new.target` meta-property, which the parser models as a member access
-    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
-    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
-    `new.target` to the caller's, so a body that reads it cannot be inlined.
-    """
-    for node in root.walk():
-        if (
-            isinstance(node, JsMemberExpression)
-            and isinstance(node.object, JsIdentifier)
-            and node.object.name == 'new'
-        ):
-            return True
-    return False
-
-
 def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
     The names *parsed* reads or writes without binding them locally — the names a
@@ -748,51 +735,6 @@ def _body_written_free_names(body_model: SemanticModel, parsed: JsScript) -> set
     return written
 
 
-def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -> bool:
-    """
-    Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
-    crossing a lexical binding of the same name. A `var` spliced into a block still hoists to the
-    enclosing function or script, but it is a redeclaration SyntaxError if any block it passes
-    through — from the site's own scope up to, but not including, *var_scope* — lexically binds the
-    same name. Conflicts with a binding declared directly in *var_scope* are already caught by the
-    capture check.
-    """
-    scope: Scope | None = site_scope
-    while scope is not None and scope is not var_scope:
-        if any(name in scope.bindings for name in names):
-            return False
-        scope = scope.parent
-    return True
-
-
-def _inlined_declarations_safe(
-    body_model: SemanticModel,
-    root_model: SemanticModel,
-    site_scope: Scope,
-) -> bool:
-    """
-    Whether the names a `Function`-constructed body declares at its top level can be introduced at the
-    call site without capturing an identifier already meaningful there. Such declarations are local to
-    the constructed function; inlining lifts `var` and function declarations into the caller's function
-    or script scope and `let`/`const`/`class` into the caller's immediate block, where a same-named
-    reference, an inherited binding, or a redeclaration would silently rebind to the inlined declaration
-    or produce a duplicate lexical declaration. Each name is checked against the scope it would actually
-    land in.
-    """
-    bindings = body_model.root_scope.bindings
-    hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
-    lexical = {name for name, binding in bindings.items() if binding.is_lexical}
-    if hoisted:
-        var_scope = site_scope.var_scope
-        if var_scope is None or root_model.would_capture(hoisted, var_scope):
-            return False
-        if not _hoist_path_is_clear(hoisted, site_scope, var_scope):
-            return False
-    if lexical and root_model.would_capture(lexical, site_scope):
-        return False
-    return True
-
-
 class JsReflectionInlining(ScriptLevelTransformer):
     """
     Inline reflective code execution: `eval`, `Function` constructor, constructor chains, and
@@ -806,6 +748,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
     _intrinsic_callee: Callable[[Expression | None], bool]
     _pending_retire: dict[int, Binding]
     _retire_candidates: dict[int, JsIdentifier]
+    _pending_atomic: dict[int, list[JsVariableDeclarator]]
     _spliced_names: set[str]
 
     def _process_script(self, node: JsScript) -> None:
@@ -856,6 +799,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             self._intrinsic_callee = self._function_intrinsic_callee(node)
             self._pending_retire = {}
             self._retire_candidates = {}
+            self._pending_atomic = {}
             self._inline_statements(node)
             self._inline_expressions(node)
             self._lower_timers(node)
@@ -1105,40 +1049,18 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if parsed is None:
                     i += 1
                     continue
-                parsed = self._sanitize_inlined_body(parsed)
+                parsed = sanitize_inlined_body(parsed)
                 if parsed is None:
+                    self._pending_atomic.pop(id(original), None)
                     i += 1
                     continue
+                # The deletions an atomically admitted fold carries run before the splice, so the
+                # statements the loop still holds keep their positions.
+                i -= self._remove_consumed_temporaries_of(original, container, i)
                 set_body(container, [*body[:i], *parsed, *body[i + 1:]])
                 self._confirm_retirement(original)
                 self.mark_changed()
                 i += len(parsed)
-
-    @staticmethod
-    def _sanitize_inlined_body(stmts: list[Statement]) -> list[Statement] | None:
-        """
-        Adapt a reflective body's statements for the statement position they replace, where the call's
-        return value is discarded and no `return` may escape into the container. A trailing `return x`
-        becomes the bare expression `x` (its value was already being thrown away) and a trailing
-        valueless `return` is dropped. Any other `return` — before the last statement, or nested in the
-        control flow of any statement (an `if`, loop, or `try`) rather than at the body's own top level —
-        declines the inlining (`None`), since its early exit cannot be reproduced at statement position
-        without reordering and declining is always sound. `walk_scope` finds a nested `return` without
-        descending into a nested function, whose own `return` stays with it. This holds for every
-        container, not only the script: a `return` spliced into a function body would return from that
-        enclosing function, and into the script would be a syntax error.
-        """
-        if not stmts:
-            return stmts
-        trailing = stmts[-1] if isinstance(stmts[-1], JsReturnStatement) else None
-        for stmt in stmts[:-1] if trailing is not None else stmts:
-            if any(isinstance(node, JsReturnStatement) for node in walk_scope(stmt)):
-                return None
-        if trailing is None:
-            return stmts
-        if trailing.argument is not None:
-            return [*stmts[:-1], JsExpressionStatement(expression=trailing.argument)]
-        return stmts[:-1]
 
     def _inline_expressions(self, root: JsScript) -> None:
         for node in list(root.walk()):
@@ -1150,6 +1072,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if replacement is None:
                 continue
             _replace_in_parent(node, replacement)
+            self._remove_consumed_temporaries_of(node, None, 0)
             self._confirm_retirement(node)
             self.mark_changed()
 
@@ -1311,6 +1234,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if parsed is not None:
                     self._note_retirement(site, retire)
                     return ReflectedScope.FUNCTION_CONSTRUCTOR, parsed
+                parsed = self._try_atomic_construction_inline(
+                    node, site, ctor_call, retire, code, root, at_global_scope,
+                    binds=ctor_binds)
+                if parsed is not None:
+                    return ReflectedScope.FUNCTION_CONSTRUCTOR, parsed
                 self._try_evaluate_construction(node, site, ctor_call, code, retire, root)
                 return None
         direct = _extract_eval_code(
@@ -1376,6 +1304,175 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not cache.dominance.binding_established_before(binding, node):
             return None
         return value, binding
+
+    def _try_atomic_construction_inline(
+        self,
+        node: JsCallExpression,
+        site: Node,
+        ctor_call: Node,
+        retire: Binding | None,
+        code: str,
+        root: JsScript,
+        at_global_scope: bool,
+        *,
+        binds: bool = False,
+    ) -> JsScript | None:
+        """
+        The atomic route: splice the constructed body at the invocation and delete the temporaries
+        that spell the construction in the same edit, admitting the body against the tree that edit
+        leaves. The plain route holds every site-scope binding of a spliced body's names to the
+        global-resolution rule and every declaration to the capture rule, which is sound — but a
+        body whose injected dead code names exactly the holder (`var h = … .constructor`) or the
+        construction temporary (`var f = h(code)`) collides only with bindings the fold itself
+        consumes, and the collision is an artifact of asking before the edit. This route asks
+        after it: the bindings are excluded from the model's answers, so a name they occupy resolves
+        past it and a use resolving to one is carried off.
+
+        Only the temporaries may be deleted this way. Everything else the plain route refuses for
+        stays refused — a free name resolving to a binding the fold keeps, a declaration capturing
+        a live reference — because the exclusion covers no binding but the consumed ones.
+
+        The route runs only where the plain admission declined, so a construction whose argument
+        is not droppable (`atob(…)`) keeps every fold the plain route already gives it: the atomic
+        gates — a droppable initializer for each holder, arguments no other fold must keep — are
+        asked of no construction that inlines without them. A body that binds parameters keeps
+        declining with the plain route, which is where the evaluation route below picks it up.
+        """
+        if binds:
+            return None
+        cache = model_cache(self, root)
+        aliases = function_intrinsic_aliases(
+            ctor_call.callee, cache.model, cache.effects, cache.dominance,
+            eval_string=self._eval_string, read_effect=self._read_effect,
+            positioned_value=cache.tampering.singular_value_at,
+            spliced_names=self._spliced_names,
+        )
+        if aliases is None:
+            return None
+        consumed = list(aliases)
+        if retire is not None:
+            consumed.append(retire)
+        if not consumed:
+            return None
+        declarators = self._consumed_temporaries_may_go(cache, consumed, ctor_call, site)
+        if declarators is None:
+            return None
+        parsed = self._resolve_reflected_body(
+            code, site, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope,
+            invocation_arguments=node.arguments,
+            exclude=frozenset(consumed),
+        )
+        if parsed is None:
+            return None
+        self._spliced_names |= {binding.name for binding in consumed}
+        self._pending_atomic[id(site)] = declarators
+        return parsed
+
+    def _consumed_temporaries_may_go(
+        self,
+        cache: ModelCache,
+        consumed: list[Binding],
+        ctor_call: Node,
+        site: Node,
+    ) -> list[JsVariableDeclarator] | None:
+        """
+        Whether every temporary the fold consumes — the holder names the construction's callee
+        resolves through and the construction binding itself — may be deleted together with the
+        splice, returning their declarators or `None`. The questions are the ones
+        `_retire_consumed_temporaries` asks after the pin, asked here against the pinned model
+        because this deletion rides the same edit as the splice rather than following it: nothing
+        outside the region the edit replaces may still name a temporary (a second read, a
+        `with`-body use, an alias through a form no pass matches), no host the analyst named
+        reaches one, and no opaque reflective surface the edit does not carry off could name one
+        at runtime with no reference any model records. The construction itself is the one surface
+        whose code this fold parsed, which is what makes deleting it side-effect-free; its
+        arguments and each holder's initializer must be droppable on their own — a `.constructor`
+        read is a property read, droppable only while the chain it consults is intact. The hop
+        ordering the recognizer proves is what makes each declarator hold the value the
+        construction read, so no establishment question is asked here again.
+        """
+        model = cache.model
+        declarators: list[JsVariableDeclarator] = []
+        for binding in consumed:
+            if binding.exported or len(binding.declarations) != 1:
+                return None
+            declaration = binding.declarations[0]
+            declarator = declaration.parent
+            if not isinstance(declarator, JsVariableDeclarator) or declarator.init is None:
+                return None
+            if a_host_reaches_the_binding(model, binding, self.options):
+                return None
+            declarators.append(declarator)
+        region = [site, *declarators]
+        if not nothing_still_names(model, region):
+            return None
+        for binding in consumed:
+            if any(
+                not any(
+                    surface is removed or surface.is_descendant_of(removed)
+                    for removed in region
+                )
+                for surface in model.reflection_surface_sites(binding)
+            ):
+                return None
+        for declarator in declarators:
+            init = strip_parens(declarator.init)
+            if init is ctor_call:
+                continue
+            if not self._droppable_within_region(cache, init, region):
+                return None
+        if not all(
+            self._droppable_within_region(cache, argument, region)
+            for argument in ctor_call.arguments
+        ):
+            return None
+        return declarators
+
+    def _droppable_within_region(
+        self, cache: ModelCache, node: Node, region: list[Node],
+    ) -> bool:
+        """
+        Whether dropping the evaluation of *node* — an initializer or construction argument
+        inside *region* — removes nothing observable, with every member read judged on the tree
+        the edit deleting *region* leaves standing rather than the one the pass is pinned to.
+        The reads this asks about all live inside the region, so each one's chain question
+        reaches `getter_free_read_dropped_with`, which forgives exactly the opaque surfaces the
+        same edit carries off and none of those it leaves.
+        """
+        return cache.effects.is_side_effect_free(
+            node, None,
+            member_safe=lambda member: cache.effects.getter_free_read_dropped_with(member, region),
+            call_established=cache.call_established, discarded=True,
+            reads_may_throw=True, read_established=cache.read_established,
+        )
+
+    def _remove_consumed_temporaries_of(
+        self, site: Node, container: Node | None, index: int,
+    ) -> int:
+        """
+        Delete the declarators the committed splice at *site* consumes — the second half of the one
+        edit `_try_atomic_construction_inline` admitted against — returning how many statements
+        vanished from the body of *container* before *index*, so a caller splicing at that index
+        splices at the shifted one. Where the splice does not replace a statement of *container*'s
+        body — *container* is `None` — the declarators' parents are untouched by the replacement
+        and no shift is returned. A declaration left with other declarators keeps its statement,
+        which is why only a sole declarator counts as taking one away.
+        """
+        removed = self._pending_atomic.pop(id(site), [])
+        vanished = 0
+        body = get_body(container) if container is not None else None
+        for declarator in removed:
+            declaration = declarator.parent
+            if (
+                body is not None
+                and isinstance(declaration, JsVariableDeclaration)
+                and declaration.parent is container
+                and len(declaration.declarations) == 1
+                and next((k for k, s in enumerate(body) if s is declaration), len(body)) < index
+            ):
+                vanished += 1
+            remove_declarator(declarator)
+        return vanished
 
     def _try_evaluate_construction(
         self,
@@ -1557,6 +1654,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         binds: bool = False,
         destination: CodeContext | None = None,
         invocation_arguments: list[Node] | None = None,
+        exclude: Collection[Binding] = (),
     ) -> JsScript | None:
         """
         Parse reflectively evaluated *code* and admit it through `_admit_reflected_body`, or decline
@@ -1566,7 +1664,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         would replace, where the code is a construction's body and the call is the invocation of
         what it built — `None` where the site is no call that passes any. *destination* is the
         context the text is read in once spliced, where that is not *site*'s own: a string timer's
-        body lands inside a plain function of its own.
+        body lands inside a plain function of its own. *exclude* is the set of bindings the same
+        edit deletes, handed to the admission as its post-rewrite view.
         """
         if binds:
             return None
@@ -1581,6 +1680,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         return self._admit_reflected_body(
             parsed, site, root, scope, at_global_scope,
             invocation_arguments=invocation_arguments,
+            exclude=exclude,
         )
 
     def _admit_reflected_body(
@@ -1593,6 +1693,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         *,
         site_resolved: frozenset[str] = frozenset(),
         invocation_arguments: list[Node] | None = None,
+        exclude: Collection[Binding] = (),
     ) -> JsScript | None:
         """
         Decide whether inlining the reflected body *parsed* at *site* preserves meaning, given the
@@ -1632,7 +1733,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         if resolves_globally:
             rewrite_receiver_this_to_global(parsed)
-            if references_receiver_this(parsed) or _references_new_target(parsed):
+            if references_receiver_this(parsed) or references_new_target(parsed):
                 return None
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
             return None
@@ -1664,13 +1765,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
             for name in free:
                 if name in site_resolved:
                     continue
-                binding = root_model.lookup(name, site_scope)
+                binding = root_model.lookup(name, site_scope, exclude=exclude)
                 if binding is not None and not root_model.reaches_global_object(
                     binding, module_scope=runs_as_module(self.options, root),
                 ):
                     return None
         if declared and not self._reflected_declarations_safe(
-            body_model, root_model, site_scope, site, scope, at_global_scope,
+            body_model, root_model, site_scope, site, scope, at_global_scope, exclude,
         ):
             return None
         self._spliced_names |= declared | _body_written_free_names(body_model, parsed)
@@ -1684,15 +1785,18 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site: Node,
         scope: ReflectedScope,
         at_global_scope: bool,
+        exclude: Collection[Binding] = (),
     ) -> bool:
         """
         Whether the top-level declarations of a reflected body can be reproduced by inlining it at the
         call site. A `Function`-constructed body's declarations are local to the created function and
-        lift into the caller's scopes (`_inlined_declarations_safe`); evaluated code declares in its
-        execution scope and is handled by `_eval_declarations_safe`.
+        lift into the caller's scopes (`inlined_declarations_safe`); evaluated code declares in its
+        execution scope and is handled by `_eval_declarations_safe`. *exclude* carries the atomic
+        fold's post-rewrite view to the lift check.
         """
         if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
-            return _inlined_declarations_safe(body_model, root_model, site_scope)
+            return inlined_declarations_safe(
+                body_model.root_scope, root_model, site_scope, exclude=exclude)
         return self._eval_declarations_safe(
             body_model, root_model, site_scope, site, scope, at_global_scope,
         )

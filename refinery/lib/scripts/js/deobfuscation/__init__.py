@@ -25,6 +25,7 @@ from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlinin
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
+from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
 from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
@@ -75,6 +76,7 @@ _pipeline = DeobfuscationPipeline(
             'cleanup',
             JsRemoveSelfDefending,
             JsUnusedCodeRemoval,
+            JsSingleUseFunctionInliner,
         ),
     ],
     dependencies={

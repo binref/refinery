@@ -689,12 +689,17 @@ class TestABareGlobalObjectAliasIsNotCertainToResolve(TestBase):
         Node prints `1` for `A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS` and prints `1` for its
         deobfuscation, so running the two decides nothing about this alias and the text is what
         carries the answer. The text pinned is the one this program takes now that `global` is a
-        name the analysis does not vouch for: written with `zzz` in place of `global`, it comes back
-        with its function and its call in place and only the layout changed.
+        name the analysis does not vouch for: written with `zzz` in place of `global`, it comes
+        back with its read in place and only the layout changed.
         """
         self.assertEqual(
             folded(A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS),
-            'function f() {\n  return global;\n}\nf();\nconsole.log(1);',
+            inspect.cleandoc(
+                """
+                global;
+                console.log(1);
+                """
+            ),
         )
 
 
@@ -739,7 +744,13 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
         """
         self.assertEqual(
             folded(A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS),
-            'globalThis._V = 1;\nfunction f() {\n  return global._V;\n}\nf();\nconsole.log(1);',
+            inspect.cleandoc(
+                """
+                globalThis._V = 1;
+                global._V;
+                console.log(1);
+                """
+            ),
         )
 
     def test_a_property_established_by_a_bare_assignment_keeps_its_base_throw(self):
@@ -750,7 +761,13 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
         """
         self.assertEqual(
             folded(A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT),
-            'foo = 1;\nfunction f() {\n  return global.foo;\n}\nf();\nconsole.log(1);',
+            inspect.cleandoc(
+                """
+                foo = 1;
+                global.foo;
+                console.log(1);
+                """
+            ),
         )
 
 
@@ -787,38 +804,6 @@ class TestADegenerateFinderThatThrowsATypeErrorIsKept(TestBase):
     def test_a_finder_whose_body_throws_a_typeerror_is_kept(self):
         rows = A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR
         self.assertEqual({source: folded(source) for source in rows}, rows)
-
-
-#: A finder whose only call runs a closure that reads a `const` the closure itself declares, from a
-#: point before that declaration. Node throws a `ReferenceError` calling the finder, so a correct
-#: deobfuscation keeps the call and throws the same.
-A_FINDER_CALLING_A_CLOSURE_THAT_READS_ITS_OWN_DEAD_ZONE = (
-    'function g() { return (function () { var x = c; const c = globalThis; return c; })(); }\n'
-    'var y = g();\nconsole.log(y);\n'
-)
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFinderReadingAnOwnedBindingsDeadZoneThroughAClosureIsKept(TestBase):
-    """
-    The finder fold keeps a call whose body directly reads a `let`/`const` in its own dead zone
-    (`JsGlobalFinderInlining` defers such a read to `dominance.past_dead_zone`). It does not keep one
-    where the dead-zone read is made by a closure the finder calls: `_FinderThrowFreedom` asks the
-    closure's `EffectSummary`, and `EffectModel` strips the bindings a function owns from its
-    `dead_zone_reads` while `read_may_throw` — which fills `throws` — does not model the dead zone, so
-    a closure reading its own `const` in its own dead zone reports neither. The call is folded and the
-    `ReferenceError` it raises in every host is dropped. Closing it needs the closure's own dead-zone
-    read to reach its summary.
-    """
-
-    @unittest.expectedFailure
-    def test_a_finder_calling_a_closure_reading_its_own_dead_zone_is_kept(self):
-        """
-        Node throws `ReferenceError: Cannot access 'c' before initialization` running the input; a
-        correct deobfuscation keeps the call and throws the same, so the two agree.
-        """
-        source = A_FINDER_CALLING_A_CLOSURE_THAT_READS_ITS_OWN_DEAD_ZONE
-        self.assertEqual(before_and_after(source), (('', 'ReferenceError'), ('', 'ReferenceError')))
 
 
 #: A finder whose one global-valued `return` sits in a `try` block that a caught throw skips: reading
@@ -971,56 +956,6 @@ class TestADeadZoneReadReachedThroughACallStillThrows(TestBase):
 
     def test_a_dead_store_call_to_a_dead_zone_reader_still_throws(self):
         rows = A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            {source: (answer, answer) for source, answer in rows.items()},
-        )
-
-
-#: A program whose function reads a `let`/`const`/`class` binding it declares itself, from a
-#: point in its own body before that declaration runs, mapped to the `ReferenceError` Node ends
-#: it with. The read is in the binding's dead zone, but the binding is owned by the function, so
-#: it is filtered out of the call-site-relative `EffectSummary.dead_zone_reads`: judging it
-#: needs the ordering of the read against the declaration inside the body, which the effect
-#: summary — sitting below the dominance model — cannot see. Reached through a named function,
-#: an arrow, and a class binding.
-AN_OWNED_DEAD_ZONE_READ_BEFORE_ITS_DECLARATION = {
-    'function outer() { var d = c; let c = 1; return d; }\n'
-    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'var outer = () => { var d = c; let c = 1; return d; };\n'
-    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function outer() { var d = C; class C {} return d; }\n'
-    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function outer() { function inner() { return c; } var d = inner(); let c = 1; return d; }\n'
-    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function outer() { var inner = () => c; var d = inner(); let c = 1; return d; }\n'
-    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAnOwnedDeadZoneReadBeforeItsDeclarationStillThrows(TestBase):
-    """
-    A function that reads a `let`/`const`/`class` binding it declares itself, before that
-    declaration runs in its own body, throws a `ReferenceError` on the call:
-
-        Cannot access 'c' before initialization
-
-    It throws whether the read is written directly in the body or reached through a nested function
-    the body calls while the declaration is still pending — the nested call runs in the owner's dead
-    zone just the same. The interprocedural dead-store fix records the outer lexical bindings a call
-    may read and refuses to drop the call while any is unestablished, but a binding the function owns
-    is filtered out of that set — it is checked at the callee's call site, where an owned binding is
-    out of scope, and the summary sits below the dominance model that would order the read against the
-    declaration inside the body. So the call is judged pure and the dead store dropped: each program
-    prints `2`. Preserving it needs a dominance-aware summary fact for an owned lexical read before
-    its own declaration, which is a distinct analysis from the call-site establishment this fix
-    carries.
-    """
-
-    @unittest.expectedFailure
-    def test_a_dead_store_call_to_an_owned_dead_zone_reader_still_throws(self):
-        rows = AN_OWNED_DEAD_ZONE_READ_BEFORE_ITS_DECLARATION
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},
@@ -1950,11 +1885,12 @@ class TestAnUnreadableKeyMayRebindAWrapperThroughTheGlobalObject(TestBase):
         """
         The entry above pins the acceptance only while nothing reads the key: a fold that learns to
         answer `['W'].join('')` would flip it to an unexpected success by making the write visible,
-        not by closing the acceptance. This holds the key unread — the program folds away whole
-        under the unread key, so any fold that starts reading it shows here as a kept write.
+        not by closing the acceptance. This holds the key unread — under it every statement folds
+        away except the completion value the lowered call leaves, so any fold that starts reading
+        the key shows here as a kept write.
         """
         source, = A_WRAPPER_REBOUND_UNDER_AN_UNREADABLE_KEY
-        self.assertEqual(folded(source), '')
+        self.assertEqual(folded(source), '1;')
 
 
 #: An accessor an IIFE answers, over a closure the answered function writes through a member of or

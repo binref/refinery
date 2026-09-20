@@ -132,6 +132,37 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_a_read_ending_the_directive_prologue_before_a_literal_is_kept(self):
+        """
+        Deleting the read would move the `'use strict'` behind it into the Directive Prologue and
+        make the script strict, and nothing behind that can remove the literal again: a branch
+        answers no completion value. The read stays even though it computes nothing.
+        """
+        source = inspect.cleandoc(
+            """
+            'abc'[0];
+            'use strict';
+            if (x) {
+              console.log(1);
+            }
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_read_ending_the_directive_prologue_goes_once_the_literal_has(self):
+        """
+        The literal behind the read is itself an inert statement a later call shadows, so it goes
+        first; with the statement behind it no longer a string literal, nothing holds the read back.
+        """
+        source = inspect.cleandoc(
+            """
+            'abc'[0];
+            'hello';
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """
@@ -380,6 +411,69 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         """
         source = 'function f() { let x = 1; return x; }\nvar dead = f();\nconsole.log(2);\n'
         self.assertEqual('console.log(2);', self._remove_unused(source))
+
+    def test_dead_store_calling_a_reader_of_its_own_dead_zone_from_within_is_kept(self):
+        """
+        The reader of the owned `let` now sits before the declaration that ends its dead zone, so
+        the call raises the `ReferenceError` (`Cannot access 'c' before initialization`) the input
+        raises, and the discarded call is not removable. The binding is one the function owns, so
+        no call site can order the read against the declaration: the effect summary orders it
+        itself and records the throw, which is what keeps this store.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var d = c;
+              let c;
+              return d;
+            }
+            var x = f();
+            console.log(2);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_dead_store_calling_a_reader_of_an_owned_class_dead_zone_is_kept(self):
+        """
+        A `class` declaration ends its binding's dead zone the way a `let` declarator does, so a
+        read of it from before the declaration raises the same `ReferenceError` at the call and the
+        discarded call is kept.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var d = C;
+              class C {}
+              return d;
+            }
+            var x = f();
+            console.log(2);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_dead_store_calling_a_nested_reader_of_its_own_dead_zone_is_kept(self):
+        """
+        The dead-zone read is made by a nested function the owner's body calls before the `let`
+        behind it runs, and the nested function's summary is what the owner's absorbs, so the
+        same throw reaches the owner's summary through a call rather than a direct read. The
+        discarded call is kept and the program is returned unchanged.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              function inner() {
+                return c;
+              }
+              var d = inner();
+              let c = 1;
+              return d;
+            }
+            var x = f();
+            console.log(2);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
 
     def test_store_to_captured_binding_is_kept(self):
         source = inspect.cleandoc(
@@ -2123,9 +2217,9 @@ class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):
 #: program still refuses to run.
 A_KEPT_READ_OF_A_NAME_NOTHING_BINDS: dict[str, str] = {
     'function f() { let v = zzz; }\nf();\nconsole.log(1);\n':
-        'function f() {\n  let v = zzz;\n}\nf();\nconsole.log(1);',
+        'let v = zzz;\nconsole.log(1);',
     'function f() { var v = zzz; }\nf();\nconsole.log(1);\n':
-        'function f() {\n  var v = zzz;\n}\nf();\nconsole.log(1);',
+        'var v = zzz;\nconsole.log(1);',
     'y = a;\nconsole.log(1);\n': 'a;\nconsole.log(1);',
     'var o = { p: g };\nconsole.log(1);\n': 'var o = { p: g };\nconsole.log(1);',
     'y = N();\nN = function () {};\nconsole.log(1);\n':

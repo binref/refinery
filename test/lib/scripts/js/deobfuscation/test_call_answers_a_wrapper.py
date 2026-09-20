@@ -411,11 +411,7 @@ THE_SHAPE_EACH_PASS_IS_FOR = {
         a_self_disabling_wrapper_as_a_statement(),
         _lines(
             'var log = [];',
-            'function a() {',
-            "  log.push('a');",
-            '  return 1;',
-            '}',
-            'a();',
+            "log.push('a');",
             'console.log(log.join(","));',
         ).rstrip(NL),
     ),

@@ -66,6 +66,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     a_host_reaches_the_binding,
     access_key,
     collect_identifier_names,
+    definitely_answers_the_completion,
     insert_after_prologue,
     is_binding_site,
     remove_declarator,
@@ -83,6 +84,7 @@ from refinery.lib.scripts.js.model import (
     JsConditionalExpression,
     JsDoWhileStatement,
     JsEmptyStatement,
+    JsLabeledStatement,
     JsExpressionStatement,
     JsForStatement,
     JsFunctionDeclaration,
@@ -108,7 +110,7 @@ from refinery.lib.scripts.js.model import (
     Statement,
     strip_parens,
 )
-from refinery.lib.scripts.js.strict import is_use_strict_directive
+from refinery.lib.scripts.js.strict import is_bare_string_statement, is_use_strict_directive
 
 
 def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]:
@@ -679,11 +681,26 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         Drop an empty statement standing in a statement list: it executes nothing, so removing it
         changes no run. One standing as the whole body of a branch or a loop is not a member of a
-        list and stays, since unwrapping it would rewrite the construct around it.
+        list and stays, since unwrapping it would rewrite the construct around it. An empty block
+        in a list is the same non-event — it declares nothing (a declaration inside it would be a
+        member keeping it alive) and runs nothing — so it goes too, unless it is labeled, the one
+        form a jump can target from within, or it carries comments, which are content rather than
+        residue, or the file ended inside it, which the output has to keep saying.
         """
-        removals: list[JsEmptyStatement] = []
+        removals: list[Statement] = []
         for body in self._statement_lists(root):
-            removals.extend(stmt for stmt in body if isinstance(stmt, JsEmptyStatement))
+            for stmt in body:
+                if isinstance(stmt, JsEmptyStatement):
+                    removals.append(stmt)
+                elif (
+                    isinstance(stmt, JsBlockStatement)
+                    and not stmt.body
+                    and stmt.terminated
+                    and not isinstance(stmt.parent, JsLabeledStatement)
+                    and not stmt.leading_comments
+                    and not stmt.trailing_comments
+                ):
+                    removals.append(stmt)
         for stmt in removals:
             _remove_from_parent(stmt)
             self.mark_changed()
@@ -768,6 +785,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             discarded=True,
             reads_may_throw=True,
             read_established=self._cache.read_established,
+            coercions_may_write=True,
         )
 
     def _call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
@@ -1248,6 +1266,19 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         undeclared name silently creates a global instead of throwing. Deleting a directive that is
         *not* `use strict` is safe, and shortening a prefix-closed run from the front cannot change
         what any statement behind it is.
+
+        The other statement a removal here must not promote is a string literal standing behind one
+        that ends the Directive Prologue. The run is a prefix, so a statement that ends it is one
+        behind which no literal is a directive; deleting it hands that literal the directive position
+        and with it a mode the body never ran in. A candidate is therefore refused while the
+        statements still standing ahead of it are all directives and a string literal follows it —
+        which it cannot itself be, since removing a directive only shortens the run from the front.
+
+        The completion value is the other statement that computes nothing here and stays: the last
+        value-producing statement of a list is the value the list answers — the value an `eval` of
+        the file receives, or a function hands its caller when control falls off its end — so a
+        bare read is removed only where a statement behind it certainly supplies one, which
+        `definitely_answers_the_completion` decides.
         """
         functions: dict[str, JsFunctionDeclaration] = {}
         for stmt in body:
@@ -1296,24 +1327,55 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     if orphan and has_reference:
                         defunct.add(name)
                         extended = True
-        if not defunct:
-            return
-        for stmt in list(body):
-            if not isinstance(stmt, JsExpressionStatement):
-                continue
-            if stmt.expression is None:
-                continue
-            if isinstance(stmt.expression, JsAssignmentExpression):
-                continue
-            if is_use_strict_directive(stmt):
-                continue
-            if self._is_removable(stmt.expression, defunct):
+        statements = list(body)
+        prologue_intact = True
+        for index, stmt in enumerate(statements):
+            if self._dead_expression_may_go(stmt, statements, index, prologue_intact, defunct):
                 _remove_from_parent(stmt)
                 self.mark_changed()
+            else:
+                prologue_intact = prologue_intact and is_bare_string_statement(stmt)
         for name in defunct:
             if name in functions:
                 _remove_from_parent(functions[name])
                 self.mark_changed()
+
+    def _dead_expression_may_go(
+        self,
+        stmt: Statement,
+        statements: list[Statement],
+        index: int,
+        prologue_intact: bool,
+        defunct: set[str],
+    ) -> bool:
+        """
+        Whether *stmt*, a candidate from the sweep over *statements*, leaves the list without changing
+        what any statement behind it computes, answers, or declares. *prologue_intact* is whether the
+        statements still standing ahead of it are all directives, which is what its removal needs to
+        promote the string literal behind it; a removed candidate does not disturb it, so the sweep
+        hands each statement a prefix the tree still has.
+        """
+        if not isinstance(stmt, JsExpressionStatement):
+            return False
+        if stmt.expression is None or isinstance(stmt.expression, JsAssignmentExpression):
+            return False
+        if is_use_strict_directive(stmt):
+            return False
+        if not any(
+            definitely_answers_the_completion(later)
+            for later in statements[index + 1:]
+        ):
+            return False
+        if not self._is_removable(stmt.expression, defunct):
+            return False
+        if (
+            prologue_intact
+            and not is_bare_string_statement(stmt)
+            and index + 1 < len(statements)
+            and is_bare_string_statement(statements[index + 1])
+        ):
+            return False
+        return True
 
     def _remove_empty_declarators(
         self, parent: Node, body: list[Statement], dead_names: set[str],

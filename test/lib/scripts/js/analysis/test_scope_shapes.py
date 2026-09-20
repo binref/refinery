@@ -656,15 +656,7 @@ class TestTheDeclarationsADeadBlockHeldAreKept(TestBase):
             {
                 'a function no branch declares': 'var W;\nconsole.log(W);',
                 'a var no branch declares': 'var v;\nconsole.log(v);',
-                'a function that is the whole of an if clause': inspect.cleandoc(
-                    """
-                    function outer() {
-                      var W;
-                      console.log(W);
-                    }
-                    outer();
-                    """
-                ),
+                'a function that is the whole of an if clause': 'var W;\nconsole.log(W);',
             },
         )
 
@@ -725,15 +717,7 @@ A_CALL_TO_A_BLOCK_FUNCTION = {
             }
             outer();
             """),
-        inspect.cleandoc(
-            """
-            function outer() {
-              {}
-              console.log(1);
-            }
-            outer();
-            """
-        ),
+        'console.log(1);',
     ),
     'a call inside the block': (
         a_program("""
@@ -742,16 +726,9 @@ A_CALL_TO_A_BLOCK_FUNCTION = {
             }
             outer();
             """),
-        inspect.cleandoc(
-            """
-            function outer() {
-              {
-                console.log(1);
-              }
-            }
-            outer();
-            """
-        ),
+        '''{
+  console.log(1);
+}''',
     ),
     'a value taken out of the block': (
         a_program("""
@@ -762,15 +739,7 @@ A_CALL_TO_A_BLOCK_FUNCTION = {
             }
             outer();
             """),
-        inspect.cleandoc(
-            """
-            function outer() {
-              {}
-              console.log(1);
-            }
-            outer();
-            """
-        ),
+        'console.log(1);',
     ),
     'a call before the block': (
         a_program("""
@@ -782,19 +751,16 @@ A_CALL_TO_A_BLOCK_FUNCTION = {
             """),
         inspect.cleandoc(
             """
-            function outer() {
-              try {
-                console.log(W());
-              } catch (e) {
-                console.log('threw');
-              }
-              {
-                function W() {
-                  return 1;
-                }
+            try {
+              console.log(W());
+            } catch (e) {
+              console.log('threw');
+            }
+            {
+              function W() {
+                return 1;
               }
             }
-            outer();
             """
         ),
     ),
@@ -1137,30 +1103,24 @@ class TestTheBlockATakenBranchScopesIsKept(TestBase):
             {
                 'a block function': inspect.cleandoc(
                     """
-                    function outer() {
-                      console.log(typeof W);
-                      {
-                        function W() {
-                          return 1;
-                        }
+                    console.log(typeof W);
+                    {
+                      function W() {
+                        return 1;
                       }
-                      console.log(typeof W);
                     }
-                    outer();
+                    console.log(typeof W);
                     """
                 ),
                 'a function that is the whole of the clause': inspect.cleandoc(
                     """
-                    function outer() {
-                      console.log(typeof W);
-                      {
-                        function W() {
-                          return 1;
-                        }
+                    console.log(typeof W);
+                    {
+                      function W() {
+                        return 1;
                       }
-                      console.log(typeof W);
                     }
-                    outer();
+                    console.log(typeof W);
                     """
                 ),
                 'a class': inspect.cleandoc(

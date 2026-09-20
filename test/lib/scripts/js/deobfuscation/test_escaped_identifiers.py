@@ -507,11 +507,14 @@ A_PROLOGUE_STRING_WRITTEN_OUT = {
 #: A program whose every name is spelled with an escape that the tool has nothing to reduce in.
 #: Each is a file that has to come back as the file it went in as, and what makes that a question
 #: is that writing any of these names out plainly changes what the program does or whether it is
-#: one at all.
+#: one at all. The escaped string stands ahead of a `return` no run is certain to reach, which is
+#: the one shape that keeps it standing: it is no directive, so the function stays sloppy, and its
+#: plain spelling is one.
 A_PROGRAM_THE_TOOL_ONLY_MOVES = tuple(
     _spelled_with_escapes(source) for source in (
         'var lESCAPED[0065]t = [0]; lESCAPED[0065]t[0] = 5; console.log(lESCAPED[0065]t[0]);',
-        "function f(){ 'use stricESCAPED[0074]'; return this === globalThis; } console.log(f());",
+        "function f(x){ 'use stricESCAPED[0074]'; if (x) { return this === globalThis; } }"
+        ' console.log(f(1));',
     )
 )
 

@@ -1,5 +1,5 @@
 """
-Remove the obfuscator.io self-defending anti-tamper pattern.
+Remove the self-defending anti-tamper pattern a common JavaScript obfuscator emits.
 
 The obfuscator emits a run-once wrapper factory and one or more guard sites. Each guard hands the
 global object and a payload function to the factory and invokes the result:
@@ -158,8 +158,8 @@ _SOURCE_SHAPE_REGEX = 'function *\\('
 def _payload_carries_anti_analysis_marker(payload) -> bool:
     """
     Whether the function handed to a matched factory carries positive evidence of an anti-analysis
-    payload. Real obfuscator.io guard payloads — measured over the self-defending, console-disable,
-    and debug-protection features of versions 0.28.5, 2.19.1, and 5.6.0 — each carry at least one
+    payload. Real guard payloads — measured over the self-defending, console-disable, and
+    debug-protection features of versions 0.28.5, 2.19.1, and 5.6.0 — each carry at least one
     of: the ReDoS signature string; an assignment through a `console` member, which the
     console-disable payload uses to overwrite every log method; or a string literal spelling a
     regular expression over function source text, which the debug-protection payload tests its
@@ -265,7 +265,7 @@ def _discardable_guard_invocations(model, binding, declarator) -> list[JsCallExp
 
 class JsRemoveSelfDefending(ScriptLevelTransformer):
     """
-    Detect and remove the obfuscator.io self-defending factory+guard pattern, keyed both by the ReDoS
+    Detect and remove the self-defending factory+guard pattern, keyed both by the ReDoS
     signature string and by the structural run-once `apply`-payload template.
     """
 

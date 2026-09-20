@@ -497,6 +497,28 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
+    def test_a_closure_reading_its_own_dead_zone_is_not_substituted(self):
+        """
+        The finder's own body is throw-free, but its call runs a closure that reads a `const` the
+        closure declares itself from before that declaration, so the call throws a `ReferenceError`
+        (Node: `Cannot access 'c' before initialization`) in every host. The closure's effect
+        summary orders the read against the declaration inside it and records the throw, so the
+        finder is not throw-free and the call is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              return (function() {
+                var x = c;
+                const c = globalThis;
+                return c;
+              })();
+            }
+            var y = g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
     def test_a_captured_read_reached_before_its_declaration_is_not_substituted(self):
         """
         The finder reads the outer `const G` in a body statement, but its only call runs before that

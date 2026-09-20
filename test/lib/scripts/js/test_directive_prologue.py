@@ -545,20 +545,22 @@ A_ROUTE_A_STRING_ARRIVES_AT_THE_HEAD_BY = {
 #: the whole program. A `'use strict'` an edit moved into the prologue is written inside a bracket,
 #: which computes the same string and declares nothing; one the source wrote there is left alone;
 #: and a promoted string that is not `use strict` is left alone too, since parenthesizing it would
-#: end the run for a statement that declares no mode either way.
+#: end the run for a statement that declares no mode either way. The body ends in a declaration
+#: rather than a call: the string statement computes nothing, and the sweep would take it before
+#: the printer ever got to say how it is spelled.
 A_HEAD_THE_PRINTER_ANSWERS_WITH = {
     "'use ' + 'strict';":
-        "function f(a) {\n  ('use strict');\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
     "var dead = 1; 'use strict';":
-        "function f(a) {\n  ('use strict');\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
     "'use ' + 'strict'; 'use strict';":
-        "function f(a) {\n  ('use strict');\n  ('use strict');\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  ('use strict');\n  var b = g(a);\n}\nf(1);",
     "'use strict';":
-        "function f(a) {\n  'use strict';\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  'use strict';\n  var b = g(a);\n}\nf(1);",
     "'use strict'; var dead = 1; 'other';":
-        "function f(a) {\n  'use strict';\n  'other';\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  'use strict';\n  'other';\n  var b = g(a);\n}\nf(1);",
     "var dead = 1; 'other';":
-        "function f(a) {\n  'other';\n  g(a);\n}\nf(1);",
+        "function f(a) {\n  'other';\n  var b = g(a);\n}\nf(1);",
 }
 
 
@@ -717,7 +719,12 @@ def _a_body_opened_by(head: str, template: str) -> str:
 
 
 def _a_function_body_opening_with_and_calling_g(head: str) -> str:
-    return F'function f(a) {{ {head} g(a); }}\nf(1);'
+    """
+    A program whose one function opens with *head* and then calls `g`, keeping what it answers in a
+    declaration so that a statement computing nothing ahead of it is never the shadow of an effect
+    the sweep would sooner remove it than print.
+    """
+    return F'function f(a) {{ {head} var b = g(a); }}\nf(1);'
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

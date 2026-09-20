@@ -320,15 +320,7 @@ class TestStringArray(TestJsDeobfuscator):
             r"rn _0x2fc0();}var _0x1a=_0xe6abe5;function log(){var z=_0x1a,A=_0x1a;console[z(0xa8)](A(0xac));}log();"
         )
         result = self._deobfuscate(source)
-        expected = inspect.cleandoc(
-            """
-            function log() {
-              console.log('test string');
-            }
-            log();
-            """
-        )
-        self.assertEqual(expected, result)
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_self_overwriting_accessor_detected(self):
         source = (

@@ -123,7 +123,7 @@ _THE_OBJECT_HANDED_TO_A_CALL: dict[str, _Row] = {
     ),
     'function p(x) { return 1; } p(globalThis); var r = String.fromCharCode(65);'
     ' console.log(r);': _Row(
-        ('A\n', None), "function p(x) {\n  return 1;\n}\np(globalThis);\nconsole.log('A');",
+        ('A\n', None), "console.log('A');",
     ),
 }
 

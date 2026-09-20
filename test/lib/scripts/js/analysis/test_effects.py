@@ -145,6 +145,29 @@ class TestEffectModel(TestBase):
     def test_local_variable_mutation_is_pure(self):
         self.assertTrue(self._summary('function f(){ var s = 0; s = s + 1; return s; }', 'f').is_pure)
 
+    def test_a_read_of_an_owned_binding_before_its_declaration_throws(self):
+        """
+        A `let` the function declares itself has its dead zone inside the call, so a read from
+        before the declaration is a `ReferenceError` the call itself raises. The summary orders
+        the read against the declaration and records the throw, rather than deferring it to a call
+        site that could not judge a binding out of its scope.
+        """
+        self.assertFalse(self._summary('function f(){ var d = c; let c; return d; }', 'f').is_pure)
+
+    def test_a_read_of_an_owned_binding_past_its_declaration_is_pure(self):
+        self.assertTrue(self._summary('function f(){ let c; var d = c; return d; }', 'f').is_pure)
+
+    def test_a_nested_reader_of_an_owned_dead_zone_throws_through_the_caller(self):
+        """
+        The read sits in a nested function the owner calls while the declaration is still pending,
+        so the owner's summary carries the throw by absorbing the nested one: the nested function
+        defers the binding it does not own, and the owner decides it as one it owns.
+        """
+        source = (
+            'function f(){ function inner(){ return c; } var d = inner(); let c; return d; }'
+        )
+        self.assertFalse(self._summary(source, 'f').is_pure)
+
     def test_pure_intrinsic_call_is_pure(self):
         summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
         self.assertTrue(summary.is_pure)

@@ -9,7 +9,12 @@ This is the second layer of the analysis substrate. Like the model it sits on, i
 and conservative by construction: every effect is an over-approximation (when in doubt, an effect is
 reported), so a function judged pure is pure on every path, and callers may treat a pure call whose
 result is unused as removable. The summary deliberately does not model termination; purity here means
-freedom from observable effects, not a guarantee that the call returns.
+freedom from observable effects, not a guarantee that the call returns. The one ordering question it
+does answer is the temporal dead zone of a binding the function itself owns, where the read and its
+declaration both run inside the call and no call site can order them: the summary consults the
+`refinery.lib.scripts.js.analysis.dominance.DominanceModel` — the one `build_effects` accepts, or a
+private one built on demand — for that alone, so deleting a call never drops the `ReferenceError`
+such a read raises.
 
 Purity of a call to a built-in (for example `String.fromCharCode`) is asserted only under a verified
 *pristine-intrinsics precondition*: the whole program must not reassign or monkeypatch any intrinsic the
@@ -42,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Expression, Node
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -439,10 +445,10 @@ class EffectSummary:
     The flow-insensitive summary cannot collapse this to `throws` — that flag fires at *every*
     call, but this read throws only inside the dead zone and is safe after the declaration — so it
     is deferred per binding to the call site, which owns the ordering judgment. A binding the
-    function itself owns is dropped from the set at completion (see `_scan`): the set is consulted
-    at the callee's call site, where an owned binding is out of scope and unjudgeable, and the
-    summary layer sits below the dominance model and cannot order the owned binding's own dead zone
-    either.
+    function itself owns is decided at the summary instead (see `_scan`): the call site cannot
+    order it, since the read and its declaration both run inside the call, so the summary asks the
+    dominance model whether every read of it runs past its declaration and a read that may land in
+    the zone sets `throws`, the same ReferenceError the call would raise itself.
 
     Four properties read these flags, and they are not a scale from strict to permissive — each answers a
     different question about a *different rewrite*, so a consumer picks by naming the rewrite it is about to
@@ -482,7 +488,9 @@ class EffectSummary:
         evaluation throwing, which aborts the rewrite exactly as reading the binding would. A
         consumer that DELETES the call without evaluating it (the dead-store and orphan sweeps, via
         `call_clearable`) must gate on the call-site establishment of every `dead_zone_reads`
-        binding; reading `is_pure` alone would drop the throw.
+        binding; reading `is_pure` alone would drop the throw. A binding the function itself owns
+        is the exception the summary decides itself: its dead zone runs inside the call, so a read
+        that may land in it sets `throws` and blocks every property alike.
         """
         return not (
             self.writes_global
@@ -653,6 +661,94 @@ def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
 _CallPredicate = Callable[[JsCallExpression | JsNewExpression], bool]
 
 
+_NUMBER_TAKING_UNARY_OPERATORS = frozenset({'+', '-', '~'})
+"""
+The unary operators that take their operand to a number. `ToNumber` enters the object protocol —
+`valueOf` or `Symbol.toPrimitive` answers for an object, and either is code the operand carries —
+so the operand of one of these is held to a value that cannot be an object at all where the caller
+drops the evaluation (`coercions_may_write`). `!` and `typeof` are not here: they take the operand
+to a truth value or a type name without asking it anything.
+"""
+
+_COERCING_BINARY_OPERATORS = frozenset({
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '&',
+    '|',
+    '^',
+    '<<',
+    '>>',
+    '>>>',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    'in',
+})
+"""
+The binary operators that apply `ToPrimitive` — or `ToNumber` or `ToPropertyKey`, each of which
+begins with it — to an operand. The same reasoning as `_NUMBER_TAKING_UNARY_OPERATORS` applies: the
+coercion is an effect of the operator itself, of no sub-expression, so an operand whose value may be
+an object keeps the whole expression where the caller drops the evaluation. Strict equality is not
+here because it compares values as they are, and neither is `instanceof`, which reads a property off
+its right operand rather than coercing it. The loose equality operators are held to the same rule
+except beside `null`, which the language answers without asking either operand anything.
+"""
+
+
+def _comparison_with_null(node: JsBinaryExpression) -> bool:
+    """
+    Whether *node* is a loose equality beside the `null` literal, which the language answers from
+    the two values alone: `x == null` is true where *x* is `null` or `undefined` and false
+    everywhere else, so no operand is coerced and neither needs a value that cannot be an object.
+    """
+    if node.operator not in ('==', '!='):
+        return False
+    return isinstance(node.left, JsNullLiteral) or isinstance(node.right, JsNullLiteral)
+
+
+def _value_cannot_be_an_object(node: Node | None) -> bool:
+    """
+    Whether the value *node* evaluates to is beyond doubt one of the primitives, so a coercion
+    applied to it runs no code and asks no `valueOf` for anything. Every unary, binary, update and
+    template expression answers a primitive by its own operation, whatever its operands were, and
+    the remaining cases are decided by the value they hand on: a parenthesis and a sequence by the
+    expression they group or end with, a logical operator and a conditional by the operand that
+    supplies their answer. A name, a member read, a call, an allocation — anything whose value a
+    program may make an object — is not decided here.
+    """
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+        return True
+    if isinstance(node, (
+        JsUnaryExpression,
+        JsBinaryExpression,
+        JsUpdateExpression,
+        JsTemplateLiteral,
+    )):
+        return True
+    if isinstance(node, JsParenthesizedExpression):
+        return _value_cannot_be_an_object(node.expression)
+    if isinstance(node, JsSequenceExpression):
+        return bool(node.expressions) and _value_cannot_be_an_object(node.expressions[-1])
+    if isinstance(node, JsLogicalExpression):
+        return (
+            _value_cannot_be_an_object(node.left)
+            and _value_cannot_be_an_object(node.right)
+        )
+    if isinstance(node, JsConditionalExpression):
+        return (
+            _value_cannot_be_an_object(node.consequent)
+            and _value_cannot_be_an_object(node.alternate)
+        )
+    return False
+
+
 class _SideEffectScan:
     """
     The recursive engine behind `side_effect_free`. It holds the fixed policy — the callables and the
@@ -678,6 +774,7 @@ class _SideEffectScan:
         member_safe: Callable[[JsMemberExpression], bool] | None,
         call_established: _CallPredicate | None,
         call_pure_discarded: _CallPredicate | None,
+        coercions_may_write: bool = False,
     ):
         self.defunct = defunct
         self.call_pure = call_pure
@@ -685,6 +782,7 @@ class _SideEffectScan:
         self.member_safe = member_safe
         self.call_established = call_established
         self.call_pure_discarded = call_pure_discarded
+        self.coercions_may_write = coercions_may_write
 
     def free(self, node: Node, discarded: bool = False) -> bool:
         if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
@@ -697,6 +795,12 @@ class _SideEffectScan:
             return node.expression is not None and self.free(node.expression, discarded)
         if isinstance(node, JsUnaryExpression):
             if node.operator == 'delete':
+                return False
+            if (
+                self.coercions_may_write
+                and node.operator in _NUMBER_TAKING_UNARY_OPERATORS
+                and not _value_cannot_be_an_object(node.operand)
+            ):
                 return False
             return node.operand is not None and self.free(node.operand)
         if isinstance(node, JsMemberExpression):
@@ -712,6 +816,17 @@ class _SideEffectScan:
                 return True
             return self.member_safe is not None and self.member_safe(node)
         if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
+            if (
+                self.coercions_may_write
+                and isinstance(node, JsBinaryExpression)
+                and node.operator in _COERCING_BINARY_OPERATORS
+                and not _comparison_with_null(node)
+                and not (
+                    _value_cannot_be_an_object(node.left)
+                    and _value_cannot_be_an_object(node.right)
+                )
+            ):
+                return False
             return (
                 node.left is not None
                 and self.free(node.left)
@@ -773,6 +888,7 @@ def side_effect_free(
     call_established: _CallPredicate | None = None,
     discarded: bool = False,
     call_pure_discarded: _CallPredicate | None = None,
+    coercions_may_write: bool = False,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
@@ -801,9 +917,20 @@ def side_effect_free(
     is dropped. The flag reaches only positions that stay discarded — a parenthesized group and every
     element of a sequence — and is reset into any consumed operand, so a nested call whose result is used
     is still held to *call_pure*.
+
+    When *coercions_may_write* is set the caller drops the evaluation, and an operator that converts an
+    operand is then held to a value that cannot be an object: unary `+`, `-` and `~` take their operand
+    to a number, the arithmetic, bitwise, shift, loose-equality and relational operators and `in` take
+    theirs to a primitive or a property key, and a conversion asks the operand's `valueOf` or
+    `Symbol.toPrimitive`, which is code the operand carries. The conversion is an effect of the operator
+    itself, of no sub-expression, so the composition alone cannot see it and the caller must say it is
+    dropping the evaluation for it to matter. A caller that relocates the evaluation — the object fold
+    moving a property value to its use — keeps the conversion where it runs and answers for it with its
+    own gates, which is why the flag is opt-in rather than the rule.
     """
     return _SideEffectScan(
         defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
+        coercions_may_write,
     ).free(node, discarded)
 
 
@@ -873,8 +1000,10 @@ class EffectModel:
     `summary_of` and a call expression's purity with `is_pure_call`. Build through `build_effects`.
     """
 
-    def __init__(self, model: SemanticModel):
+    def __init__(self, model: SemanticModel, dominance: DominanceModel | None = None):
         self.model = model
+        self._dominance = dominance
+        self._dead_zone_safe_cache: dict[int, bool] = {}
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
         self._globals_written, self._global_keys_written = _global_writes_by_name(model)
@@ -1058,6 +1187,7 @@ class EffectModel:
         discarded: bool = False,
         reads_may_throw: bool = False,
         read_established: Callable[[JsIdentifier], bool] | None = None,
+        coercions_may_write: bool = False,
     ) -> bool:
         """
         Whether evaluating *node* can be dropped or reordered without an observable side effect, with
@@ -1096,6 +1226,13 @@ class EffectModel:
         establishes. A proof is only ever offered against the throw it excuses, so supplying one
         asks for that half of the contract as much as *reads_may_throw* does, and neither is quietly
         ignored for want of the other.
+
+        With *coercions_may_write* the caller drops the evaluation, so an operator that converts
+        its operand is held to a value that cannot be an object — the conversion asks the operand's
+        `valueOf` or `Symbol.toPrimitive`, which is code the operand carries, and the composition
+        alone cannot see it. The same drop-versus-relocation divide as *reads_may_throw* applies:
+        a pass that relocates the evaluation keeps the conversion where it runs and answers for it
+        with its own gates.
         """
         read_effect = self.model.read_has_dynamic_effect
         if reads_may_throw or read_established is not None:
@@ -1109,6 +1246,7 @@ class EffectModel:
             call_established or self._established_call_default,
             discarded,
             self.is_pure_call_discarded,
+            coercions_may_write,
         )
 
     def throwing_read_effect(
@@ -1494,6 +1632,12 @@ class EffectModel:
             elif isinstance(node, JsImportExpression):
                 summary.calls_unknown = True
         if isinstance(func, FUNCTION_NODES) and not is_generator_function(func):
+            for binding in summary.dead_zone_reads:
+                if (
+                    self._owns_binding(binding, func)
+                    and not self._binding_reads_past_dead_zone(binding)
+                ):
+                    summary.throws = True
             summary.dead_zone_reads = {
                 binding
                 for binding in summary.dead_zone_reads
@@ -1502,6 +1646,33 @@ class EffectModel:
         else:
             summary.dead_zone_reads = set()
         return summary
+
+    def _binding_reads_past_dead_zone(self, binding: Binding) -> bool:
+        """
+        Whether every read of *binding* is guaranteed to run past its temporal dead zone, so no call
+        that reaches one raises the `ReferenceError` a read before the declaration would. The reads
+        are enumerated from the binding itself rather than the scan that reached it: a function that
+        owns the binding may read it directly or only through a nested function whose summary the
+        scan absorbed, and the question — does some read run before every declaration of it — is the
+        one `DominanceModel.past_dead_zone` answers per read, ordering the read against its
+        declaration across the nested call the same way the call-site gate orders an outer binding
+        against the call. Answered once per binding: it is a pure function of the binding and the
+        model, both fixed for this model's lifetime.
+
+        A function's generator is the one shape that never asks: its body runs at an iteration
+        rather than the call, so a dead-zone read inside it is not an effect the call carries.
+        """
+        cached = self._dead_zone_safe_cache.get(id(binding))
+        if cached is not None:
+            return cached
+        if self._dominance is None:
+            self._dominance = build_dominance(self.model)
+        cached = all(
+            self._dominance.past_dead_zone(binding, read)
+            for read in binding.reads
+        )
+        self._dead_zone_safe_cache[id(binding)] = cached
+        return cached
 
     def _account_write(self, summary: EffectSummary, target: JsIdentifier, func: Node):
         binding = self.model.resolve(target)
@@ -2070,18 +2241,28 @@ class EffectModel:
         """
         return all(name not in self._globals_written for name in (owner, *roots))
 
-    def _prototypes_intact(self, owner: str, roots: frozenset[str]) -> bool:
+    def _prototypes_intact(self, owner: str, roots: frozenset[str], region: list[Node] | None = None) -> bool:
         """
         `_roots_unwritten` with the reflection term, which is what separates the two questions
         `read_chain_intact` and `chain_roots_unwritten` ask. Neither is spelled out twice, so a
         term added to one chain question reaches both arms rather than only the one it was
         written into.
+
+        With *region*, the reflection term is asked of the opaque surfaces the nodes of *region*
+        leave standing rather than of the whole program — the tree an edit that deletes them
+        leaves, which is the tree a fold deciding what that same edit may drop has to judge on.
         """
-        if self.model.has_reflection_surface():
+        if region is None:
+            if self.model.has_reflection_surface():
+                return False
+        elif any(
+            not any(site is root or site.is_descendant_of(root) for root in region)
+            for site in self.model.opaque_reflection_sites()
+        ):
             return False
         return self._roots_unwritten(owner, roots)
 
-    def read_chain_intact(self, value_type: type) -> bool:
+    def read_chain_intact(self, value_type: type, region: list[Node] | None = None) -> bool:
         """
         Whether every prototype a plain property read on a value of *value_type* consults is unmodified, so
         the read touches a data slot and runs nothing. Strictly stronger than `trusted_prototype`, which
@@ -2103,7 +2284,7 @@ class EffectModel:
         owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
         if owner is None:
             return False
-        return self._prototypes_intact(owner, _INHERITED_CHAIN_ROOTS)
+        return self._prototypes_intact(owner, _INHERITED_CHAIN_ROOTS, region)
 
     def chain_roots_unwritten(self, value_type: type) -> bool:
         """
@@ -2481,7 +2662,7 @@ class EffectModel:
             return binding is not None and self._is_rest_param(binding) and not binding.writes
         return False
 
-    def _base_getter_safe(self, node: Node) -> bool:
+    def _base_getter_safe(self, node: Node, region: list[Node] | None = None) -> bool:
         """
         Whether reading a property of *node* cannot run a user-defined getter, so the read carries no
         hidden effect: a literal, or a pristine intrinsic root, whose entire prototype chain the program
@@ -2495,16 +2676,17 @@ class EffectModel:
         container literal must additionally declare no
         accessor of its own, the shared `container_literal_access_is_plain` question, since a getter written
         into the literal needs no prototype at all. There is no member-chain arm, for the reason given on
-        `_base_is_safe`.
+        `_base_is_safe`. With *region*, the chain question is asked of the tree an edit deleting the nodes
+        of *region* leaves standing — see `getter_free_read_dropped_with`.
         """
         inner = strip_parens(node)
         value_type = _LITERAL_READ_TYPES.get(type(inner))
         if value_type is not None:
             if self._literal_declares_accessor(inner):
                 return False
-            return self.read_chain_intact(value_type)
+            return self.read_chain_intact(value_type, region)
         if isinstance(inner, JsIdentifier) and isinstance(self.intrinsic_of(inner), str):
-            return self._prototypes_intact('Object', _INTRINSIC_CHAIN_ROOTS)
+            return self._prototypes_intact('Object', _INTRINSIC_CHAIN_ROOTS, region)
         return False
 
     def _literal_declares_accessor(self, node: Node) -> bool:
@@ -2517,19 +2699,34 @@ class EffectModel:
             return False
         return not container_literal_access_is_plain(node)
 
-    def _getter_free_read(self, member: JsMemberExpression) -> bool:
+    def _getter_free_read(self, member: JsMemberExpression, region: list[Node] | None = None) -> bool:
         """
         Whether reading *member* runs no user getter and cannot fire a poison-pill accessor: the base is a
         getter-safe value (a fresh literal or a pristine intrinsic root) or a trusted global-object data
         property, and the property is not one of the poison-pill names whose read may throw or run an
         `Object.prototype` accessor. This is the single getter-freeness gate the summary scan and
-        `is_side_effect_free` share.
+        `is_side_effect_free` share. With *region*, the chain question on the base is asked of the tree an
+        edit deleting the nodes of *region* leaves standing — see `getter_free_read_dropped_with`.
         """
         if _is_poison_pill_property(member):
             return False
-        if member.object is not None and self._base_getter_safe(member.object):
+        if member.object is not None and self._base_getter_safe(member.object, region):
             return True
         return self._is_trusted_global_read(member)
+
+    def getter_free_read_dropped_with(self, member: JsMemberExpression, region: list[Node]) -> bool:
+        """
+        `member_read_getter_free` asked of the tree an edit deleting the nodes of *region* leaves
+        standing: a read inside the region is dropped together with them, so the opaque surfaces
+        that tree still carries — those outside the region — are the only ones that could have
+        tampered the chain the read consults, and a surface the edit removes never gets to. A
+        read outside the region survives the edit and keeps the stock answer, which the
+        trusted-global arm keeps in full: it rests on `global_pristine`, a whole-program
+        precondition this question does not re-ask per region.
+        """
+        if not any(member is root or member.is_descendant_of(root) for root in region):
+            return self.member_read_getter_free(member)
+        return self._getter_free_read(member, region)
 
 
 def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
@@ -3247,8 +3444,13 @@ def _global_pristine(model: SemanticModel) -> bool:
     return True
 
 
-def build_effects(model: SemanticModel) -> EffectModel:
+def build_effects(
+    model: SemanticModel, dominance: DominanceModel | None = None,
+) -> EffectModel:
     """
-    Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`.
+    Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
+    sharing *dominance* when the caller holds one so the two models order the same tree through one
+    control-flow layer. A `None` is not a refusal: the model builds its own the first time a summary
+    must order a binding's temporal dead zone.
     """
-    return EffectModel(model)
+    return EffectModel(model, dominance)
