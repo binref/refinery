@@ -166,6 +166,16 @@ class TestJsDeobfuscator(TestUnitBase):
             """.replace("[[URL]]", "http"":/""/23.27"".20"".187")
         ))
 
+    def test_multi_stage_unwrap(self):
+        j = self.load
+        u = self.ldu
+        data = self.download_sample('106eac79396a3ff77b8f375c391260ce422be2ae4d55d3aa75b2635cbdc0fa42')
+        test = data | j() | u('csd', 'b64') | u('xtzip') | j() | str
+        # The above implicitly asserts that the first packer was inlined correctly and the b64-encoded ZIP was visible
+        # in stage 2. The next one simply asserts that strings were correctly inlined in the final stage:        
+        self.assertIn(
+            "const vAr77 = rEf67([iTem98, '/F:*', iTem37], 'expand.exe', null, 'ignore', false, true);", test)
+
 
 class TestJsHostEnvironmentPin(TestUnitBase):
     """
