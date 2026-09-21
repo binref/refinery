@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     collect_identifier_names,
     definitely_answers_the_completion,
+    extract_literal_value,
     insert_after_prologue,
     is_binding_site,
     remove_declarator,
@@ -110,6 +111,7 @@ from refinery.lib.scripts.js.model import (
     Statement,
     strip_parens,
 )
+from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import is_bare_string_statement, is_use_strict_directive
 
 
@@ -1358,10 +1360,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     ) -> bool:
         """
         Whether *stmt*, a candidate from the sweep over *statements*, leaves the list without changing
-        what any statement behind it computes, answers, or declares. *prologue_intact* is whether the
-        statements still standing ahead of it are all directives, which is what its removal needs to
-        promote the string literal behind it; a removed candidate does not disturb it, so the sweep
-        hands each statement a prefix the tree still has.
+        what any statement behind it computes, answers, or declares. The value the list itself hands
+        back is one such thing — a bare read standing last is the list's completion — and it is
+        defended, so a computed value the program ends on stays. The one completion not defended is one
+        that spells `undefined`: a `void 0` a fold left where a call returned nothing carries no value a
+        reader wants, so when `preserve_script_return` does not ask for the end value it goes, clearing
+        the residue of a dropped wrapper while the program's own last value stays. *prologue_intact* is
+        whether the statements still standing ahead of it are all directives, which is what its removal
+        needs to promote the string literal behind it; a removed candidate does not disturb it, so the
+        sweep hands each statement a prefix the tree still has.
         """
         if not isinstance(stmt, JsExpressionStatement):
             return False
@@ -1369,10 +1376,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         if is_use_strict_directive(stmt):
             return False
+        answered, value = extract_literal_value(stmt.expression)
+        spells_undefined = answered and value is None
         if not any(
             definitely_answers_the_completion(later)
             for later in statements[index + 1:]
-        ):
+        ) and (preserves_script_return(self.options) or not spells_undefined):
             return False
         if not self._is_removable(stmt.expression, defunct):
             return False

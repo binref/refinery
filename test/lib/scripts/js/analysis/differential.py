@@ -76,6 +76,7 @@ def deobfuscate_source(
     *,
     module: bool = False,
     entrypoints: tuple[str, ...] = (),
+    preserve_script_return: bool = False,
 ) -> str:
     """
     Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *module*
@@ -85,7 +86,12 @@ def deobfuscate_source(
     cannot see.
     """
     ast = JsParser(source).parse()
-    deobfuscate(ast, module=module, entrypoints=entrypoints)
+    deobfuscate(
+        ast,
+        module=module,
+        entrypoints=entrypoints,
+        preserve_script_return=preserve_script_return,
+    )
     return JsSynthesizer().convert(ast)
 
 

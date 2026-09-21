@@ -18,8 +18,10 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
+    definitely_answers_the_completion,
     inlined_declarations_safe,
     nothing_still_names,
+    preserve_script_end_value,
     references_new_target,
     references_receiver_this,
     sanitize_inlined_body,
@@ -29,10 +31,15 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
+    JsReturnStatement,
     JsScript,
     Statement,
 )
-from refinery.lib.scripts.js.options import is_host_entrypoint, runs_as_module
+from refinery.lib.scripts.js.options import (
+    is_host_entrypoint,
+    preserves_script_return,
+    runs_as_module,
+)
 from refinery.lib.scripts.js.strict import declares_use_strict
 
 
@@ -149,6 +156,21 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         statements = sanitize_inlined_body(list(body.body))
         if statements is None:
             return False
+        if preserves_script_return(self.options):
+            returns_undefined = not (
+                body.body
+                and isinstance(body.body[-1], JsReturnStatement)
+                and body.body[-1].argument is not None
+            )
+            at_script_end = not any(
+                definitely_answers_the_completion(later)
+                for later in root.body[root.body.index(statement) + 1:]
+            )
+            statements = preserve_script_end_value(
+                statements,
+                returns_undefined=returns_undefined,
+                at_script_end=at_script_end,
+            )
         self._replace_invocation_with_body(root, declaration, statement, statements)
         self.mark_changed()
         return True

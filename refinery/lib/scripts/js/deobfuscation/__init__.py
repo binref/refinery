@@ -103,6 +103,7 @@ def deobfuscate(
     entrypoints: tuple[str, ...] = (),
     environment: HostEnvironment = HostEnvironment.universal,
     trust_eval: bool = False,
+    preserve_script_return: bool = False,
     observer: PipelineObserver | None = None,
 ) -> int:
     """
@@ -126,6 +127,7 @@ def deobfuscate(
         entrypoints=tuple(entrypoints),
         environment=environment,
         trust_eval=trust_eval,
+        preserve_script_return=preserve_script_return,
     )
     return _pipeline.run(
         ast,

@@ -71,6 +71,7 @@ class DeobfuscationOptions:
     entrypoints: tuple[str, ...] = ()
     environment: HostEnvironment = HostEnvironment.universal
     trust_eval: bool = False
+    preserve_script_return: bool = False
 
     def names_entrypoint(self, name: str) -> bool:
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
@@ -105,6 +106,18 @@ def eval_is_trusted(options: object | None) -> bool:
     told.
     """
     return isinstance(options, DeobfuscationOptions) and options.trust_eval
+
+
+def preserves_script_return(options: object | None) -> bool:
+    """
+    Whether the value the whole script hands back — its top-level completion, what an `eval` or a
+    `vm.runInThisContext` of its text returns to a caller — is part of what the deobfuscation must
+    preserve. Any value that is not a `DeobfuscationOptions` — a transformer run standalone, or with no
+    options attached — defaults to `False`: a script's end value is read only by a caller that consumes
+    it, so it is dropped unless a caller that does asks for it. This governs the return *value* only,
+    never an observable side effect.
+    """
+    return isinstance(options, DeobfuscationOptions) and options.preserve_script_return
 
 
 def runs_as_module(options: object | None, root: JsScript) -> bool:

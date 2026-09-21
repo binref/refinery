@@ -219,7 +219,9 @@ class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
     """
     What a deobfuscated program evaluates to must be what the program it came from evaluated to.
     The value is observable to whoever called `eval` on the payload and to whoever ran the script as
-    a unit, so both are asked, and neither is answered by looking at what the program printed.
+    a unit, so both are asked, and neither is answered by looking at what the program printed. What
+    the default drops is a completion of `undefined` a fold left behind, which changes no value a
+    caller reads; a computed end value the program itself carries stays under the default too.
     """
 
     def test_the_deobfuscation_of_a_program_evaluates_to_what_the_program_does(self):
@@ -238,3 +240,54 @@ class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
                         F'deobfuscation changed what the program evaluates to; result was:'
                         F'{chr(10)}{result}',
                     )
+
+
+#: Single-use wrappers and a `Function` construction whose call ran off its end returning `undefined`,
+#: leaving the body's own last value in the end position the call did not hold. Node evaluates each
+#: original to `undefined` under both the eval and the script model.
+A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK = (
+    'var n = 1; function w(){ n++; } w();',
+    "function w(){ console.log('side'); 42; } w();",
+    'function w(){ L: { 7; } } w();',
+    'new Function("1; 42")();',
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
+    """
+    A single-use wrapper or a `Function` construction whose call ran off its end returned `undefined`;
+    inlining the body leaves the body's own last value where the call stood. `preserve_script_return`
+    holds the script's end value at `undefined`, so an `eval` or a `vm` run of the file receives what
+    it did before the fold. Without the option the end value is not defended and the tail's value
+    stands — which changes no observable a reader of the deobfuscated script consults — and no `void 0`
+    is inserted to hold it.
+    """
+
+    def test_the_option_holds_the_end_value_the_call_gave(self):
+        deobfuscated = [
+            deobfuscate_source(program, preserve_script_return=True)
+            for program in A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK
+        ]
+        for evaluation in JsEvaluation:
+            before = completion_values(A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK, evaluation)
+            after = completion_values(deobfuscated, evaluation)
+            rows = zip(A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK, deobfuscated, before, after)
+            for program, result, source_value, result_value in rows:
+                with self.subTest(evaluation=evaluation.value, program=program):
+                    self.assertEqual(
+                        result_value,
+                        source_value,
+                        F'preserve_script_return did not hold the end value; result was:'
+                        F'{chr(10)}{result}',
+                    )
+
+    def test_the_default_drops_the_inserted_undefined(self):
+        self.assertEqual('', deobfuscate_source('function w(){ Math.max(7); } w();'))
+        self.assertEqual(
+            'var n = 1;\nn++;',
+            deobfuscate_source('var n = 1; function w(){ n++; } w();'),
+        )
+        for program in A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK:
+            with self.subTest(program=program):
+                self.assertNotIn('void 0', deobfuscate_source(program))

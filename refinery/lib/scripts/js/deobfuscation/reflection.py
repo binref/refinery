@@ -43,11 +43,13 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
+    definitely_answers_the_completion,
     extract_literal_value,
     get_body,
     inlined_declarations_safe,
     names_this_realms_global_object,
     nothing_still_names,
+    preserve_script_end_value,
     property_key,
     references_new_target,
     references_receiver_this,
@@ -88,7 +90,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
-from refinery.lib.scripts.js.options import runs_as_module
+from refinery.lib.scripts.js.options import preserves_script_return, runs_as_module
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
     declares_use_strict,
@@ -109,6 +111,20 @@ class ReflectedScope(enum.Enum):
     FUNCTION_CONSTRUCTOR = enum.auto()
     GLOBAL_EVAL = enum.auto()
     DIRECT_EVAL = enum.auto()
+
+
+def _body_returns_undefined(statements: list[Statement]) -> bool:
+    """
+    Whether a function whose body is *statements* hands its caller `undefined` — it runs off its end,
+    or its last statement is a valueless `return`. A trailing `return x` hands back `x`, which
+    `sanitize_inlined_body` turns into the tail expression, so the inlined body already carries it and
+    the caller must not force the end value back to `undefined`.
+    """
+    return not (
+        statements
+        and isinstance(statements[-1], JsReturnStatement)
+        and statements[-1].argument is not None
+    )
 
 
 def _try_parse(
@@ -1045,15 +1061,25 @@ class JsReflectionInlining(ScriptLevelTransformer):
             i = 0
             while i < len(body):
                 original = body[i]
-                parsed = self._try_resolve_statement(original, root, container is root)
-                if parsed is None:
+                resolved = self._try_resolve_statement(original, root, container is root)
+                if resolved is None:
                     i += 1
                     continue
+                returns_undefined, parsed = resolved
                 parsed = sanitize_inlined_body(parsed)
                 if parsed is None:
                     self._pending_atomic.pop(id(original), None)
                     i += 1
                     continue
+                if container is root and preserves_script_return(self.options):
+                    at_script_end = not any(
+                        definitely_answers_the_completion(later) for later in body[i + 1:]
+                    )
+                    parsed = preserve_script_end_value(
+                        parsed,
+                        returns_undefined=returns_undefined,
+                        at_script_end=at_script_end,
+                    )
                 # The deletions an atomically admitted fold carries run before the splice, so the
                 # statements the loop still holds keep their positions.
                 i -= self._remove_consumed_temporaries_of(original, container, i)
@@ -1131,15 +1157,21 @@ class JsReflectionInlining(ScriptLevelTransformer):
 
     def _try_resolve_statement(
         self, stmt: Statement, root: JsScript, at_global_scope: bool,
-    ) -> list[Statement] | None:
+    ) -> tuple[bool, list[Statement]] | None:
         """
-        Resolve a statement-position reflective call to the statements it should become, or `None`. A
-        `Function`-constructor pack is unpacked and its substituted body admitted like any constructed
-        body; a direct or indirect `eval` and a `Function` body are handled by `_resolve_reflected_call`;
-        `execScript("code")` runs its code synchronously in the global scope and discards the value, so
-        at statement position it is replaced by that code inlined in place. An `await`-ed call is not a
-        plain call expression here, so it is left for the expression pass, which rewrites the `eval`
-        inside `await eval("expr")` to `await (expr)` without dropping the `await`.
+        Resolve a statement-position reflective call to the statements it should become, paired with
+        whether the call handed back `undefined`, or `None`. A `Function`-constructor pack is unpacked
+        and its substituted body admitted like any constructed body; a direct or indirect `eval` and a
+        `Function` body are handled by `_resolve_reflected_call`; `execScript("code")` runs its code
+        synchronously in the global scope and discards the value, so at statement position it is
+        replaced by that code inlined in place. An `await`-ed call is not a plain call expression here,
+        so it is left for the expression pass, which rewrites the `eval` inside `await eval("expr")` to
+        `await (expr)` without dropping the `await`.
+
+        The first element is what the call's value was: a constructed function and `execScript` hand
+        back `undefined` (a constructed function unless its body ends in a value `return`), while an
+        `eval` hands back the completion of its own code, which the inlined body reproduces — so only
+        the first kind can leave a value in a script-end position the call did not.
         """
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
@@ -1159,7 +1191,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             )
             if parsed is None:
                 return None
-            return parsed.body
+            return True, parsed.body
         pack = _try_unpack_function_constructor(
             node,
             free_global_name=self._free_global,
@@ -1171,13 +1203,20 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 packed, stmt, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope,
                 site_resolved=site_resolved,
             )
-            return list(admitted.body) if admitted is not None else None
+            if admitted is None:
+                return None
+            return _body_returns_undefined(admitted.body), list(admitted.body)
         if _is_pack_shaped(node, free_global_name=self._free_global):
             return None
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
         if resolved is None:
             return None
-        return resolved[1].body
+        scope, script = resolved
+        returns_undefined = (
+            scope is ReflectedScope.FUNCTION_CONSTRUCTOR
+            and _body_returns_undefined(script.body)
+        )
+        return returns_undefined, script.body
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
         resolved = self._resolve_reflected_call(node, node, root, at_global_scope=False)

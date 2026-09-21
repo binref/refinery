@@ -1614,6 +1614,29 @@ def definitely_answers_the_completion(stmt: Statement) -> bool:
     return False
 
 
+def preserve_script_end_value(
+    statements: list[Statement],
+    *,
+    returns_undefined: bool,
+    at_script_end: bool,
+) -> list[Statement]:
+    """
+    Adapt an inlined body so that, where it replaces a call that stood at the script's own end, the
+    script still hands back the value the call did. A call whose function ran off its end returned
+    `undefined`, but the inlined body may leave a value of its own in the end position the call did not
+    hold, so a `void 0` is appended to hold the end value at `undefined`. The append is unconditional
+    under the gate: the end value of a statement list is its last *non-empty* completion, which a tail
+    that itself completes empty (a declaration, a `break`) does not supply — it is supplied by an
+    earlier statement — so testing only the last statement would miss the leak. A redundant `void 0`
+    after a tail that already completes to `undefined` is inert. Nothing is appended where the call was
+    not at the end (its value was already discarded) or where the function returned a value the splice
+    already carries (a trailing `return x` became the tail expression, so *returns_undefined* is False).
+    """
+    if not (at_script_end and returns_undefined):
+        return statements
+    return [*statements, JsExpressionStatement(expression=make_undefined_expression())]
+
+
 def insert_after_prologue(host: Node, statements: list[Statement]) -> None:
     """
     Insert *statements* into the body of *host* directly behind its Directive Prologue, adopting them
