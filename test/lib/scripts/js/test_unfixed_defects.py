@@ -47,6 +47,9 @@ from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
 )
+from test.lib.scripts.js.deobfuscation.test_namespaces import (
+    A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME,
+)
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
 )
@@ -2426,3 +2429,30 @@ class TestPreserveScriptReturnDoesNotHoldASelfDefendingGuardCompletion(TestBase)
                     F'preserve_script_return changed the completion; result was:'
                     F'{chr(10)}{deobfuscated}',
                 )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program({
+    label: Program(source, prints('2'))
+    for label, source in A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME.items()
+})
+class TestAPropertyReadBelowABindingOfItsOwnName(TestBase):
+    """
+    A namespace property read from inside a function that binds the property's own name keeps that
+    binding between the read and the declaration a flattening would emit, so the read belongs on the
+    namespace object rather than rewritten: Node prints `2` for every program of the corpus and the
+    deobfuscation prints `1`, the value of the binding below.
+
+    Held back as a whole key this is not simply fixed. Obfuscators name the parameters of their
+    decoder functions after the very properties the enclosing namespace flattens, and there the
+    rewrite is sound: every position of the key sits inside the captured scope, the capturing
+    binding is used nowhere else, and a write of the key precedes every read, so the binding below
+    carries the value the property would. The string-array fold of a fold-heavy sample rides on that
+    shape, which a hold-back would take apart. The fix is therefore a per-key question — whether
+    every position is captured, whether the capturing binding is closed under the rewrite, and
+    whether a write precedes every read — rather than the refusal this entry's programs ask for.
+
+    Off the release gate deliberately: the miscompiled shape needs a read below a binding of its
+    name that a live value distinguishes, and the decoy-parameter shape the obfuscators actually emit
+    is the benign one above.
+    """

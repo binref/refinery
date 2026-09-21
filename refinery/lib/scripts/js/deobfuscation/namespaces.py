@@ -85,7 +85,8 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if scope_obj is None:
                 continue
             conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
-            receiver_called = self._receiver_called_keys(scope, name)
+            references_by_key = self._property_references_by_key(scope, name)
+            receiver_called = self._receiver_called_keys(references_by_key)
             this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
             held_back = conflicts | this_unsafe | self._inherited_keys(props, cache.effects)
             flattenable = props - held_back
@@ -223,6 +224,11 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         Return the subset of property names that cannot be flattened because they already appear
         as variable references in the scope. An occurrence that resolves to a binding strictly
         nested below *scope_obj* shadows the would-be declaration and is therefore not a conflict.
+
+        An occurrence in object position (`k.y`) counts the same way a bare one does: it reads the
+        binding, so the declaration the flattening emits would capture it. Only an occurrence in
+        non-computed property position (`x.k`) names a property rather than a variable and is
+        ignored.
         """
         decl_id = declarator.id
         conflicts: set[str] = set()
@@ -235,8 +241,6 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             parent = node.parent
             if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
-                continue
-            if isinstance(parent, JsMemberExpression) and parent.object is node:
                 continue
             if model.is_shadowed(node.name, node, scope_obj):
                 continue
@@ -380,7 +384,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         return buckets
 
     @staticmethod
-    def _receiver_called_keys(scope: Node, name: str) -> set[str]:
+    def _receiver_called_keys(references_by_key: dict[str, list[Node]]) -> set[str]:
         """
         Property keys accessed at least once in a receiver-binding call position (`NS.key(...)`,
         `NS.key` as a template tag), where the call binds `this === NS`. Flattening such an access to a
@@ -389,7 +393,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         """
         return {
             key
-            for key, nodes in JsNamespaceFlattening._property_references_by_key(scope, name).items()
+            for key, nodes in references_by_key.items()
             if any(is_receiver_binding_call(node) for node in nodes)
         }
 

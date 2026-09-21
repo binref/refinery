@@ -6,6 +6,22 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 
+#: Programs reading a namespace property from below a binding of the property's own name, so a
+#: flattening that rewrites the read to a bare identifier would rebind it. Held by
+#: `test.lib.scripts.js.test_unfixed_defects.TestAPropertyReadBelowABindingOfItsOwnName`.
+A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
+    'nested var': (
+        'var NS = {}; NS.p = 2; function f() { var p = 1; return NS.p; } console.log(f());'
+    ),
+    'nested parameter': (
+        'var NS = {}; NS.p = 2; function f(p) { return NS.p; } console.log(f(1));'
+    ),
+    'inner namespace': (
+        'var NS = {}; NS.p = 2;'
+        ' function f() { var NS2 = {}; NS2.p = 1; return NS.p; } console.log(f());'
+    ),
+}
+
 
 class TestNamespaceFlattening(TestJsDeobfuscator):
 
@@ -386,4 +402,43 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 """
             ),
             self._flatten("'use strict';\nvar NS = {};\nNS.p = 1;\nconsole.log(NS.p);"),
+        )
+
+    def test_property_held_back_when_member_object_reads_the_name(self):
+        """
+        A use of the flattened name in object position (`k.y`) is captured by the emitted
+        `var k` the same way a bare use is, so the property stays on the namespace.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var k = { y: 7 };
+                function f() {
+                  var NS = {};
+                  NS.k = 1;
+                  return k.y;
+                }
+                """
+            ),
+            self._flatten(
+                'var k = {y: 7}; function f() { var NS = {}; NS.k = 1; return k.y; }'),
+        )
+
+    def test_hoist_held_back_when_declaration_name_captures_the_bodies_free_name(self):
+        """
+        Raising `NS.g = function () { return g.y; }` to a hoisted `function g(){}` would rebind the
+        `g` the body reads to the declaration itself, so the assignment stays in place behind the
+        namespace object.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS.g = function() {
+                  return g.y;
+                };
+                foo(NS.g);
+                """
+            ),
+            self._flatten('var NS = {}; NS.g = function () { return g.y; }; foo(NS.g);'),
         )
