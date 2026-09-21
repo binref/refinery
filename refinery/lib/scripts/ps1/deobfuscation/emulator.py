@@ -1977,7 +1977,7 @@ class Ps1FunctionEvaluator(Transformer):
             # removal, and an exported name has a caller this walk never read: the definition is a
             # reachable entry point and folding its one internal call proves nothing about it.
             #
-            # `exports_a_name` and not `is_readable`, deliberately: the other four unknowns
+            # `exports_a_name` and not `is_readable`, deliberately: the other five unknowns
             # `is_readable` carries are risks this pass accepts to resolve the `iex` trampolines
             # obfuscators are built out of, but an export is a reachable call site this walk never
             # scans and is worth nothing to accept.

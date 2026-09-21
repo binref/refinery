@@ -200,6 +200,13 @@ class TestPs1AnAliasAttributeBindsASecondNameForTheFunction(TestPs1):
             {_ANCHOR}
         """)
 
+    def test_the_namespace_qualified_spelling_binds_the_name_too(self):
+        self._assertKept(F"""
+            function K {{ [System.Management.Automation.AliasAttribute('q')] param() }}
+            q
+            {_ANCHOR}
+        """)
+
     def test_a_definition_with_no_attribute_alias_is_removed_with_its_call(self):
         self._assertDeobfuscatesTo(F"""
             function K {{ param() }}

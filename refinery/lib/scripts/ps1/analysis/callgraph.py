@@ -200,7 +200,7 @@ class Ps1CallGraph:
     @property
     def exports_a_name(self) -> bool:
         """
-        Whether this script hands a command name to code outside the file, which is one of the five
+        Whether this script hands a command name to code outside the file, which is one of the six
         things `is_readable` reads and the only one that says a *definition* has a reader elsewhere.
 
         The distinction is worth the separate name because the two questions have different answers
