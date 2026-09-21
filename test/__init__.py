@@ -39,6 +39,21 @@ def a_property_of_the_pin_itself(test):
     )(test)
 
 
+def a_property_of_the_batch_itself(test):
+    """
+    The `--no-batch` differential (see `test/conftest.py`) applies every batched pass's edits as
+    they are decided, so a test of the batching mechanism — a build count the batch flattens, or
+    the single-application behavior itself — holds only outside the differential. Every
+    result-equality assertion stays in force there, which is the differential's whole point. The
+    option is read when the test is decorated for the reason `a_property_of_the_pin_itself`
+    states.
+    """
+    return unittest.skipIf(
+        bool(os.environ.get('REFINERY_TEST_NO_BATCH')),
+        'the no-batch differential removed the mechanism this test measures',
+    )(test)
+
+
 class TestBase(unittest.TestCase):
     _STORE = SampleStore()
 

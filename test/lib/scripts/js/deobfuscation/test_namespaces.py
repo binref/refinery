@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 import inspect
+import unittest
 
+from test import a_property_of_the_batch_itself
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+
+#: Programs reading a namespace property from inside a function that binds the namespace's own name,
+#: so the conflict walk prunes the subtree the read stands in and the flattening hoists the key over
+#: the read. The outer namespace of one row is kept by a bare read and the other's flattens. Held by
+#: `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw` and by the
+#: parity row of this module.
+A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
+    'an outer namespace a bare read keeps': (
+        'var A = {}; function f() { var M = {}; M.A = function () { return 1; };'
+        ' function h(M) { A.X = 5; } h(0); return M.A(); } function g() { return A.X; }'
+        ' A.X = 0; var before = g(); f(); var after = g(); try { use(A); } catch (e) {}'
+        ' console.log(before, after);'
+    ),
+    'an outer namespace the batch flattens': (
+        'var A = {}; function f() { var M = {}; M.A = function () { return 1; };'
+        ' function h(M) { A.X = 5; } h(0); return M.A(); } function g() { return A.X; }'
+        ' A.X = 0; var before = g(); f(); var after = g(); console.log(before, after);'
+    ),
+}
 
 #: Programs reading a namespace property from below a binding of the property's own name, so a
 #: flattening that rewrites the read to a bare identifier would rebind it. Held by
@@ -537,4 +558,21 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten(source),
         )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    @a_property_of_the_batch_itself
+    @unittest.expectedFailure
+    def test_a_hoist_a_pruned_conflict_walk_allows_flattens_the_same_way_one_plan_at_a_time(self):
+        """
+        The inner plan's conflict walk prunes `h` for binding the namespace's name `M`, so it never
+        sees the `A` in `A.X = 5` and hoists `function A` over the read. The batched pass flattens
+        the outer namespace too and rewrites the read out from under the hoist; the sequential self
+        declines the outer plan against the tree the inner plan already edited and leaves the capture
+        standing, so the two outputs disagree. The ledger entry
+        `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw`
+        holds the defect.
+        """
+        source = A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME[
+            'an outer namespace the batch flattens'
+        ]
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))

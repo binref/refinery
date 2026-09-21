@@ -49,6 +49,7 @@ from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
 )
 from test.lib.scripts.js.deobfuscation.test_namespaces import (
     A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME,
+    A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME,
 )
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
@@ -2456,3 +2457,50 @@ class TestAPropertyReadBelowABindingOfItsOwnName(TestBase):
     name that a live value distinguishes, and the decoy-parameter shape the obfuscators actually emit
     is the benign one above.
     """
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReadBelowAHoistTheConflictWalkNeverSaw(TestBase):
+    """
+    A namespace's conflict walk prunes every function that binds the namespace's own name — a `M`
+    inside a function with a parameter `M` refers to that parameter and not to the namespace — and
+    the walk serves the key question with the same prune: a read of a key inside the pruned function
+    is a read of an outer binding the flattening's own hoist captures, and the walk never counts it.
+    The hoist of `M.A` therefore lands above the `A.X = 5` a sibling function carries, and that write
+    reaches the hoisted function instead of the outer namespace `A` it resolved to.
+
+    The sibling of `TestAPropertyReadBelowABindingOfItsOwnName`, one step further in: there the
+    binding a read sits below is one the program already carries, and here it is one the flattening
+    itself emits. Both come to the same per-key question — whether every position of the key is
+    captured, and whether the capturing binding is closed under the rewrite — and to the same fix
+    direction: the prune answers the namespace-name question, while the key question wants the
+    resolution `refinery.lib.scripts.js.analysis.model.SemanticModel.is_shadowed` already answers
+    for every occurrence the prune hides.
+
+    The batch is why the corpus is two rows. Where the outer namespace flattens, the batch decides
+    both plans against the entry tree, flattens the outer namespace too, and rewrites the read out
+    from under the hoist — the batched pass answers the program correctly, and the sequential self,
+    deciding the outer plan against the tree the inner plan already edited, declines it and keeps the
+    capture. That divergence is held by the parity law of
+    `test.lib.scripts.js.deobfuscation.test_namespaces`, whose row for it is skipped under the
+    `--no-batch` differential along with every other property of the batch itself; this entry holds
+    the row the pipeline cannot repair, whose outer namespace a bare read keeps.
+
+    Off the release gate deliberately: the shape needs a nested namespace whose key carries an outer
+    namespace's name, a sibling function binding the inner namespace's name, and a read of the outer
+    name inside it, which has had to be constructed; the decoy-parameter shape the obfuscators emit is
+    the benign one the sibling entry records.
+    """
+
+    @unittest.expectedFailure
+    def test_the_write_below_the_hoist_reaches_the_outer_namespace(self):
+        """
+        Node prints `0 5` for the program of `A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME`
+        whose outer namespace a bare read keeps: the write below the hoist reaches the outer
+        namespace. The deobfuscation prints `0 0`, the write having reached the hoisted function
+        instead.
+        """
+        source = A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME[
+            'an outer namespace a bare read keeps'
+        ]
+        self.assertEqual(before_and_after(source), (prints('0 5'), prints('0 5')))
