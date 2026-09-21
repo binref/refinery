@@ -43,6 +43,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
+    body_returns_undefined,
     definitely_answers_the_completion,
     extract_literal_value,
     get_body,
@@ -111,20 +112,6 @@ class ReflectedScope(enum.Enum):
     FUNCTION_CONSTRUCTOR = enum.auto()
     GLOBAL_EVAL = enum.auto()
     DIRECT_EVAL = enum.auto()
-
-
-def _body_returns_undefined(statements: list[Statement]) -> bool:
-    """
-    Whether a function whose body is *statements* hands its caller `undefined` — it runs off its end,
-    or its last statement is a valueless `return`. A trailing `return x` hands back `x`, which
-    `sanitize_inlined_body` turns into the tail expression, so the inlined body already carries it and
-    the caller must not force the end value back to `undefined`.
-    """
-    return not (
-        statements
-        and isinstance(statements[-1], JsReturnStatement)
-        and statements[-1].argument is not None
-    )
 
 
 def _try_parse(
@@ -1205,7 +1192,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             )
             if admitted is None:
                 return None
-            return _body_returns_undefined(admitted.body), list(admitted.body)
+            return body_returns_undefined(admitted.body), list(admitted.body)
         if _is_pack_shaped(node, free_global_name=self._free_global):
             return None
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
@@ -1214,7 +1201,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         scope, script = resolved
         returns_undefined = (
             scope is ReflectedScope.FUNCTION_CONSTRUCTOR
-            and _body_returns_undefined(script.body)
+            and body_returns_undefined(script.body)
         )
         return returns_undefined, script.body
 

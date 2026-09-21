@@ -18,6 +18,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
+    body_returns_undefined,
     definitely_answers_the_completion,
     inlined_declarations_safe,
     nothing_still_names,
@@ -31,7 +32,6 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
-    JsReturnStatement,
     JsScript,
     Statement,
 )
@@ -157,11 +157,7 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         if statements is None:
             return False
         if preserves_script_return(self.options):
-            returns_undefined = not (
-                body.body
-                and isinstance(body.body[-1], JsReturnStatement)
-                and body.body[-1].argument is not None
-            )
+            returns_undefined = body_returns_undefined(body.body)
             at_script_end = not any(
                 definitely_answers_the_completion(later)
                 for later in root.body[root.body.index(statement) + 1:]

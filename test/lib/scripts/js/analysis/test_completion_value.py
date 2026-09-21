@@ -217,11 +217,14 @@ class TestWhichStatementSuppliesTheValueOfAProgram(TestBase):
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationPreservesWhatAProgramEvaluatesTo(TestBase):
     """
-    What a deobfuscated program evaluates to must be what the program it came from evaluated to.
-    The value is observable to whoever called `eval` on the payload and to whoever ran the script as
-    a unit, so both are asked, and neither is answered by looking at what the program printed. What
-    the default drops is a completion of `undefined` a fold left behind, which changes no value a
-    caller reads; a computed end value the program itself carries stays under the default too.
+    What a deobfuscated program evaluates to must be what the program it came from evaluated to,
+    wherever the program carries an end value worth reading. The value is observable to whoever called
+    `eval` on the payload and to whoever ran the script as a unit, so both are asked, and neither is
+    answered by looking at what the program printed. The default keeps a computed end value the program
+    itself carries and drops only a trailing marker that spells `undefined` a fold left behind; every
+    program quantified here carries such a value or falls to the empty program when its lone marker
+    goes, so each reads back with the value it had. Holding a script's end value where dropping that
+    marker would expose a different one is what `preserve_script_return` is for, not the default.
     """
 
     def test_the_deobfuscation_of_a_program_evaluates_to_what_the_program_does(self):
@@ -259,9 +262,9 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
     A single-use wrapper or a `Function` construction whose call ran off its end returned `undefined`;
     inlining the body leaves the body's own last value where the call stood. `preserve_script_return`
     holds the script's end value at `undefined`, so an `eval` or a `vm` run of the file receives what
-    it did before the fold. Without the option the end value is not defended and the tail's value
-    stands — which changes no observable a reader of the deobfuscated script consults — and no `void 0`
-    is inserted to hold it.
+    it did before the fold. Without the option the end value is not held: the tail's value stands,
+    which the default does not undertake to preserve, and no `void 0` is inserted to force it back to
+    `undefined`.
     """
 
     def test_the_option_holds_the_end_value_the_call_gave(self):

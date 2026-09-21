@@ -1614,6 +1614,20 @@ def definitely_answers_the_completion(stmt: Statement) -> bool:
     return False
 
 
+def body_returns_undefined(statements: list[Statement]) -> bool:
+    """
+    Whether a function whose body is *statements* hands its caller `undefined` — it runs off its end,
+    or its last statement is a valueless `return`. A trailing `return x` hands back `x`, which
+    `sanitize_inlined_body` turns into the tail expression, so the inlined body already carries it and
+    the caller must not force the end value back to `undefined`.
+    """
+    return not (
+        statements
+        and isinstance(statements[-1], JsReturnStatement)
+        and statements[-1].argument is not None
+    )
+
+
 def preserve_script_end_value(
     statements: list[Statement],
     *,

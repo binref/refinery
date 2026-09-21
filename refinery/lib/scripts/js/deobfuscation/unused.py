@@ -1376,13 +1376,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         if is_use_strict_directive(stmt):
             return False
-        answered, value = extract_literal_value(stmt.expression)
-        spells_undefined = answered and value is None
         if not any(
             definitely_answers_the_completion(later)
             for later in statements[index + 1:]
-        ) and (preserves_script_return(self.options) or not spells_undefined):
-            return False
+        ):
+            if preserves_script_return(self.options):
+                return False
+            answered, value = extract_literal_value(stmt.expression)
+            if not (answered and value is None):
+                return False
         if not self._is_removable(stmt.expression, defunct):
             return False
         if (
