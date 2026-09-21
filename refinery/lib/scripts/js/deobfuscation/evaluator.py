@@ -287,6 +287,30 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self._failed_counts: dict[int, int] = {}
 
     def _process_script(self, node: JsScript) -> None:
+        """
+        Decide every fold of one invocation against the model snapshot it opened with, holding the
+        cache pinned through analysis and evaluation. The pin's obligation holds in one direction
+        only, and every read obeys it: a fold replaces a call with its value or a substituted clone
+        of a body expression, which only ever deletes — a callee reference, the effects the call
+        carried, a tampering site it contained — so each held answer stays the stricter one and a
+        later fold declines where a fresh model might have proceeded. The dominance a fold reads to
+        know the callee's value is established before the call is a statement-order fact, which no
+        expression replacement moves, and a spliced clone lands exactly where the call stood and
+        carries only names `_substitution_would_break` has already bound identically at that spot,
+        so no held fact is revealed more permissive by the splice.
+
+        The purity analysis fetches the effect model before the first edit, which builds every
+        root-reading model the evaluation reads — no `warm` is owed here, and a read added later
+        that falls past an edit trips the pin's exit guard rather than layering silently.
+
+        The removal of resolved definitions runs after the pin is released, against the model the
+        cache rebuilds over the post-evaluation tree: whether anything still names a function is a
+        structural fact the folds themselves change — each one deletes the references that kept the
+        callee alive, and a spliced clone can name a binding the entry snapshot never saw — so this
+        decision cannot be made against the held model without deleting a live function or holding
+        a dead one back forever. The rebuild it pays is one semantic build per changed invocation,
+        the same freshness the sequential self bought through its mid-evaluation rebuilds.
+        """
         self._script = node
         self._effects = None
         self._functions = []
@@ -295,8 +319,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self._call_counts.clear()
         self._resolved_counts.clear()
         self._failed_counts.clear()
-        self._analyze_purity(node)
-        self._evaluate_calls(node)
+        cache = model_cache(self, node)
+        with cache.pinned():
+            self._analyze_purity(node)
+            self._evaluate_calls(node)
         self._remove_resolved_definitions(node)
 
     def _collect_named_functions(self, script: JsScript) -> list[_FuncNode]:
