@@ -28,6 +28,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     get_command_name,
+    get_param_block,
     implicit_get_retry,
     is_opaque_dispatch,
     normalize_command_name,
@@ -62,6 +63,14 @@ _IDENTITY_SCOPES = frozenset({
 #: see `refinery.lib.scripts.ps1.ast.resolve_command_name` for why that hole is the lexer's.
 _EXPORTING_COMMANDS = frozenset({
     'export-modulemember',
+})
+
+#: The .NET attribute type names that, on a function's `param` block, bind command aliases for the
+#: function — `[Alias('q')]` and its `Attribute`-suffixed and namespace-qualified spellings. Matched
+#: after the namespace is stripped, the way .NET resolves an attribute type name.
+_COMMAND_ALIAS_ATTRIBUTES = frozenset({
+    'alias',
+    'aliasattribute',
 })
 
 
@@ -155,7 +164,7 @@ class Ps1CallGraph:
     def is_readable(self) -> bool:
         """
         Whether this tree is the whole story about what a command name denotes and who reaches it.
-        Five independent things say it is not, and every one of them has to be asked, because none
+        Six independent things say it is not, and every one of them has to be asked, because none
         implies another:
 
         - the command table is open (`Ps1TypeWorld.command_table_closed` is false), so a dot-sourced
@@ -167,6 +176,10 @@ class Ps1CallGraph:
         - an assignment binds the `function:` or `alias:` namespace, which defines a command under a
           spelling the definition scan does not read — and leaves the world closed while doing it,
           since `${function:j} = { }` remaps nothing in the type system;
+        - a function definition carries a function-level `[Alias]` attribute, the declarative form of
+          the same binding: it names a second command for that function under a spelling the
+          definition scan, keyed on the function's own name, does not read; see
+          `_declares_a_command_alias`;
         - the script calls `Export-ModuleMember`, which hands a name to a caller outside the file;
         - a call written under a qualifier resolves onto a name this script defines; see
           `_collides_with_a_definition`.
@@ -339,6 +352,27 @@ def _collides_with_a_definition(
     return any(name in definitions for name in resolved)
 
 
+def _declares_a_command_alias(definition: Ps1FunctionDefinition) -> bool:
+    """
+    Whether `definition` carries a function-level `[Alias(...)]` attribute, which binds each name it
+    lists as a command name for the function the moment the definition runs — a second spelling the
+    definition scan, keyed on the function's own name, never reads, and one the call scan reaches
+    under a name no definition of it stands. It is the declarative form of a `Set-Alias`, so the
+    graph reads it the way `binds_command_identity` reads the imperative `alias:` write: the tree is
+    no longer the whole story about what a command name denotes.
+
+    Only the attributes on the `param` block itself are read. An `[Alias]` on one of the parameters
+    names a parameter of the function, not the command, and leaves the graph the whole story.
+    """
+    block = get_param_block(definition.body)
+    if block is None:
+        return False
+    return any(
+        attribute.name.rpartition('.')[2].lower() in _COMMAND_ALIAS_ATTRIBUTES
+        for attribute in block.attributes
+    )
+
+
 def build_call_graph(
     root: Ps1Script,
     world: Ps1TypeWorld,
@@ -357,9 +391,10 @@ def build_call_graph(
 
     `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` clears exactly the two
     rows that say code nobody can read reaches a name — the open world, through the verdict this is
-    handed, and the opaque dispatch, here. The other three stand under it: an export and a collision
-    are written in the script, and so is an assignment into the `function:` namespace, which is a
-    definition under a spelling the scan does not read rather than a call from outside it.
+    handed, and the opaque dispatch, here. The other four stand under it: an export and a collision
+    are written in the script, and so are an assignment into the `function:` namespace and a
+    function-level `[Alias]` attribute, each a definition under a spelling the scan does not read
+    rather than a call from outside it.
     """
     trusting = eval_is_trusted(options)
     definitions: dict[str, list[Ps1FunctionDefinition]] = {}
@@ -373,6 +408,8 @@ def build_call_graph(
         if isinstance(node, Ps1FunctionDefinition):
             if not _is_class_method(node):
                 definitions.setdefault(normalize_command_name(node.name), []).append(node)
+                if _declares_a_command_alias(node):
+                    readable = False
         elif isinstance(node, Ps1CommandInvocation):
             binding = command_definition_keyword_binding(node)
             if binding is not None:

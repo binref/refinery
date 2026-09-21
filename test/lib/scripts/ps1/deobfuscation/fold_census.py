@@ -1476,7 +1476,7 @@ FOLDS: dict[str, str] = {
     "function K { $Null = [Int]'abc' }; K; Write-Host 'A'":
         "Write-Host 'A'",
     "function K { [Alias('q')] param() $Null = 1 }; q; Write-Host 'A'":
-        "q\nWrite-Host 'A'",
+        "function K {\n  [Alias('q')]\n  Param()\n}\nq\nWrite-Host 'A'",
     "function K { param([int] $x = '42') }; K; Write-Host 'A'":
         "Write-Host 'A'",
     'function Measure-Object { $Null = 1 }; Measure-Object; 1, 2, 3 | measure':

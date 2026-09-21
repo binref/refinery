@@ -279,11 +279,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'snippet calls the definition standing in its own text. This is the risk a name-keyed '
         'removal takes when it stops requiring that the tree be the whole story: not a call to a '
         'name nothing defines, but a call to a body the input never ran.',
-    "function K { [Alias('q')] param() $Null = 1 }; q; Write-Host 'A'":
-        'The definition is removed and the call under its attribute alias is left standing. An '
-        '`[Alias]` attribute on a `param` block binds a second command name for the function when '
-        'the definition runs, and nothing here reads it as a binding, so the output calls a name it '
-        'no longer defines.',
     "Update-TypeData -TypeName System.String -MemberName Zq -MemberType ScriptProperty "
     "-Value { Write-Host 'S' }; $Null = 'abc'.Zq; Write-Host 'A'":
         'The read is discarded and removed, but the member it names is a script property the '

@@ -186,10 +186,16 @@ class TestPs1AnAliasAttributeBindsASecondNameForTheFunction(TestPs1):
     naming nothing.
     """
 
-    @unittest.expectedFailure
     def test_a_definition_called_under_its_attribute_alias_is_kept(self):
         self._assertKept(F"""
             function K {{ [Alias('q')] param() }}
+            q
+            {_ANCHOR}
+        """)
+
+    def test_the_attribute_suffixed_spelling_binds_the_name_too(self):
+        self._assertKept(F"""
+            function K {{ [AliasAttribute('q')] param() }}
             q
             {_ANCHOR}
         """)
@@ -198,6 +204,12 @@ class TestPs1AnAliasAttributeBindsASecondNameForTheFunction(TestPs1):
         self._assertDeobfuscatesTo(F"""
             function K {{ param() }}
             K
+            {_ANCHOR}
+        """, _ANCHOR)
+
+    def test_an_alias_on_a_parameter_names_the_parameter_not_the_command(self):
+        self._assertDeobfuscatesTo(F"""
+            function K {{ param([Alias('q')]$x) }}
             {_ANCHOR}
         """, _ANCHOR)
 
