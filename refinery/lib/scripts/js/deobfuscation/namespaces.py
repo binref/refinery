@@ -46,7 +46,7 @@ from refinery.lib.scripts.js.model import (
 
 class _PropertyAssignment(NamedTuple):
     rhs: Expression
-    stmt_index: int
+    statement: JsExpressionStatement
     write: Node
 
 
@@ -93,16 +93,16 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             func_assigns = self._detect_function_assignments(body, name, flattenable)
             hoisted_keys = (
-                self._hoistable_functions(scope, name, body, func_assigns, cache.dominance)
+                self._hoistable_functions(scope, name, func_assigns, cache.dominance)
                 if func_assigns else set()
             )
             hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
             self._rewrite(scope, name, declarator, flattenable)
-            self._remove_hoisted_statements(scope, body, hoisted)
+            self._remove_hoisted_statements(scope, hoisted)
             self._emit_declarations(scope, body, flattenable - set(hoisted))
             self._emit_function_declarations(scope, hoisted)
             if not held_back:
-                self._remove_declarator(scope, body, declarator, decl_stmt)
+                self._remove_declarator(scope, declarator, decl_stmt)
             self.changed = True
 
     @staticmethod
@@ -278,7 +278,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         """
         counts: dict[str, int] = {}
         found: dict[str, _PropertyAssignment] = {}
-        for idx, stmt in enumerate(body):
+        for stmt in body:
             if not isinstance(stmt, JsExpressionStatement):
                 continue
             expr = stmt.expression
@@ -294,18 +294,18 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             counts[key] = counts.get(key, 0) + 1
             if expr.right is not None and rhs_predicate(expr.right):
-                found[key] = _PropertyAssignment(expr.right, idx, lhs)
+                found[key] = _PropertyAssignment(expr.right, stmt, lhs)
         return {k: v for k, v in found.items() if counts.get(k) == 1}
 
     @staticmethod
-    def _remove_hoisted_statements(scope: Node, body: list, hoisted: dict[str, _PropertyAssignment]) -> None:
+    def _remove_hoisted_statements(scope: Node, hoisted: dict[str, _PropertyAssignment]) -> None:
         """
         Delete the `NS.f = function…` statements whose properties are being raised to hoisted
         `function f(){}` declarations.
         """
         edit = BodyEdit(scope, 'body')
         for entry in hoisted.values():
-            edit.splice(body[entry.stmt_index], [])
+            edit.splice(entry.statement, [])
         edit.apply()
 
     @staticmethod
@@ -330,7 +330,6 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
     def _hoistable_functions(
         scope: Node,
         name: str,
-        body: list,
         func_assigns: dict[str, _PropertyAssignment],
         dominance: DominanceModel,
     ) -> set[str]:
@@ -354,7 +353,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             if func_expr.id is not None and func_expr.id.name != key:
                 continue
-            statement = body[entry.stmt_index]
+            statement = entry.statement
             references = [ref for ref in references_by_key.get(key, ()) if ref is not entry.write]
             if dominance.runs_before_all(statement, references):
                 hoistable.add(key)
@@ -485,7 +484,6 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
     @staticmethod
     def _remove_declarator(
         scope: Node,
-        body: list,
         declarator: JsVariableDeclarator,
         decl_stmt: JsVariableDeclaration,
     ) -> None:
