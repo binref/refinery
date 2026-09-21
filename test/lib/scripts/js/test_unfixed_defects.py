@@ -34,9 +34,7 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
-    JsEvaluation,
     behavior,
-    completion_values,
     deobfuscate_source,
     module_graph_behavior,
     node_executable,
@@ -2384,53 +2382,3 @@ class TestASetterSwappedOntoObjectPrototypeIsNotSeen(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestPreserveScriptReturnDoesNotYetHoldEveryCompletionPosition(TestBase):
-    """
-    `preserve_script_return=True` is meant to hold the script's top-level completion value across the
-    fold — what an `eval` or a `vm` run of the file hands its caller — and the wrapper inliners
-    defend it where a fall-off wrapper stood at the file's own end. Three completion positions are not
-    yet reached, because the option compensates at those inliner sites rather than wherever a
-    statement at the script's completion position is transformed or removed. Node evaluates each
-    original below to the value the fold must return, under both the eval and the script model, and
-    the deobfuscation returns a different one:
-
-        input                          original   deobfuscated (wrong)
-        5; eval("var x = 1");          undefined   5
-        7; { new Function("42")(); }   undefined   42
-        1 + 1; globalThis.h = 1;       1           2
-
-    The first leaks because an `eval` whose body ends in a declaration completes empty, not with a
-    value the inlined body carries, yet the eval path never asks for the compensating `void 0`. The
-    second leaks because a fall-off construction inside a block at the file's tail decides the
-    completion, yet the compensation fires only when the container is the script root. The third leaks
-    because the dead-store sweep removes a completion-carrying store without consulting the option.
-    The three share one cause, so one completion-position invariant retires them together. Kept
-    internal for now: no caller sets the option, whose one intended consumer — inlining an `eval`
-    whose value is needed — is not built.
-    """
-
-    def _completion_is_held(self, source: str) -> None:
-        deobfuscated = deobfuscate_source(source, preserve_script_return=True)
-        for evaluation in JsEvaluation:
-            with self.subTest(evaluation=evaluation.value):
-                self.assertEqual(
-                    completion_values([deobfuscated], evaluation),
-                    completion_values([source], evaluation),
-                    F'preserve_script_return changed the completion; result was:'
-                    F'{chr(10)}{deobfuscated}',
-                )
-
-    @unittest.expectedFailure
-    def test_it_holds_an_eval_whose_body_completes_empty(self):
-        self._completion_is_held('5; eval("var x = 1");')
-
-    @unittest.expectedFailure
-    def test_it_holds_a_fall_off_construction_in_a_tail_block(self):
-        self._completion_is_held('7; { new Function("42")(); }')
-
-    @unittest.expectedFailure
-    def test_it_holds_a_completion_carrying_store_the_sweep_removes(self):
-        self._completion_is_held('1 + 1;\nglobalThis.h = 1;')

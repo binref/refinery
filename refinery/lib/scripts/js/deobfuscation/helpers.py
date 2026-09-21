@@ -1614,6 +1614,45 @@ def definitely_answers_the_completion(stmt: Statement) -> bool:
     return False
 
 
+def body_completes_empty(statements: list[Statement]) -> bool:
+    """
+    Whether a statement list run to its end supplies no completion value, so an `eval` of it hands
+    back `undefined`. The completion of a list is the value of its last statement that answers the
+    completion; a list where none does — every statement a declaration, an empty statement, or a
+    construct whose run may skip the value it guards — completes empty. This is the value a script or
+    a direct `eval` yields, distinct from what a constructed function returns, which is `undefined`
+    unless the body ends in a `return x` (`body_returns_undefined`).
+    """
+    return not any(definitely_answers_the_completion(stmt) for stmt in statements)
+
+
+def reaches_script_completion(stmt: Node, root: JsScript) -> bool:
+    """
+    Whether *stmt* can supply *root*'s top-level completion value — the value an `eval` of the whole
+    script receives. Climbing from *stmt* to the script, at each statement-list ancestor a later
+    sibling that certainly answers the completion (`definitely_answers_the_completion`) shadows
+    everything before it, so *stmt*'s value can never reach the end and the answer is `False`. A
+    conditional or iterative ancestor is passed through: its branch may or may not run, so a statement
+    it guards is conservatively still able to reach the completion. This is the position every pass
+    that would drop or rewrite a completion-supplying statement must spare under `preserve_script_return`.
+    """
+    node: Node = stmt
+    while node is not root:
+        parent = node.parent
+        if parent is None:
+            return False
+        body = get_body(parent)
+        if body is not None:
+            index = next((k for k, s in enumerate(body) if s is node), None)
+            if index is not None and any(
+                definitely_answers_the_completion(later)
+                for later in body[index + 1:]
+            ):
+                return False
+        node = parent
+    return True
+
+
 def body_returns_undefined(statements: list[Statement]) -> bool:
     """
     Whether a function whose body is *statements* hands its caller `undefined` — it runs off its end,
@@ -1632,21 +1671,22 @@ def preserve_script_end_value(
     statements: list[Statement],
     *,
     returns_undefined: bool,
-    at_script_end: bool,
+    reaches_completion: bool,
 ) -> list[Statement]:
     """
-    Adapt an inlined body so that, where it replaces a call that stood at the script's own end, the
-    script still hands back the value the call did. A call whose function ran off its end returned
-    `undefined`, but the inlined body may leave a value of its own in the end position the call did not
-    hold, so a `void 0` is appended to hold the end value at `undefined`. The append is unconditional
-    under the gate: the end value of a statement list is its last *non-empty* completion, which a tail
-    that itself completes empty (a declaration, a `break`) does not supply — it is supplied by an
-    earlier statement — so testing only the last statement would miss the leak. A redundant `void 0`
-    after a tail that already completes to `undefined` is inert. Nothing is appended where the call was
-    not at the end (its value was already discarded) or where the function returned a value the splice
-    already carries (a trailing `return x` became the tail expression, so *returns_undefined* is False).
+    Adapt an inlined body so that, where it replaces a call whose value reached the script's
+    completion, the script still hands back the value the call did. A call whose function ran off its
+    end returned `undefined`, but the inlined body may leave a value of its own in the completion
+    position the call did not hold, so a `void 0` is appended to hold the completion at `undefined`.
+    The append is unconditional under the gate: the completion of a statement list is its last
+    *non-empty* completion, which a tail that itself completes empty (a declaration, a `break`) does
+    not supply — it is supplied by an earlier statement — so testing only the last statement would
+    miss the leak. A redundant `void 0` after a tail that already completes to `undefined` is inert.
+    Nothing is appended where the call's value never reached the completion (it was already discarded)
+    or where the function returned a value the splice already carries (a trailing `return x` became
+    the tail expression, so *returns_undefined* is False).
     """
-    if not (at_script_end and returns_undefined):
+    if not (reaches_completion and returns_undefined):
         return statements
     return [*statements, JsExpressionStatement(expression=make_undefined_expression())]
 

@@ -294,3 +294,43 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
         for program in A_WRAPPER_WHOSE_END_VALUE_WOULD_LEAK:
             with self.subTest(program=program):
                 self.assertNotIn('void 0', deobfuscate_source(program))
+
+
+#: A completion the script yields from a position the wrapper inliners do not own: an `eval` whose
+#: body completes empty, a fall-off construction inside a block at the file's tail, and a store whose
+#: value is the file's completion. Node evaluates the first two to `undefined` and the third to `1`,
+#: under both the eval and the script model.
+A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
+    '5; eval("var x = 1");',
+    '7; { new Function("42")(); }',
+    '1 + 1;\nglobalThis.h = 1;',
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestPreserveScriptReturnHoldsEveryCompletionPosition(TestBase):
+    """
+    `preserve_script_return` holds the script's top-level completion wherever a transform would move
+    it, not only at the wrapper-inliner sites. An `eval` whose body completes empty returned `undefined`
+    the inlined declaration would expose a tail value for; a fall-off construction inside a block at the
+    file's tail decides the completion the same as one at the root; the dead-store sweep would drop a
+    store whose value is the completion. An `eval` or a `vm` run of the fold receives what it did before.
+    """
+
+    def test_the_option_holds_the_completion_at_every_position(self):
+        deobfuscated = [
+            deobfuscate_source(program, preserve_script_return=True)
+            for program in A_COMPLETION_POSITION_THE_OPTION_HOLDS
+        ]
+        for evaluation in JsEvaluation:
+            before = completion_values(A_COMPLETION_POSITION_THE_OPTION_HOLDS, evaluation)
+            after = completion_values(deobfuscated, evaluation)
+            rows = zip(A_COMPLETION_POSITION_THE_OPTION_HOLDS, deobfuscated, before, after)
+            for program, result, source_value, result_value in rows:
+                with self.subTest(evaluation=evaluation.value, program=program):
+                    self.assertEqual(
+                        result_value,
+                        source_value,
+                        F'preserve_script_return did not hold the completion; result was:'
+                        F'{chr(10)}{result}',
+                    )

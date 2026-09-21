@@ -43,8 +43,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
+    body_completes_empty,
     body_returns_undefined,
-    definitely_answers_the_completion,
     extract_literal_value,
     get_body,
     inlined_declarations_safe,
@@ -52,6 +52,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     nothing_still_names,
     preserve_script_end_value,
     property_key,
+    reaches_script_completion,
     references_new_target,
     references_receiver_this,
     remove_declarator,
@@ -1058,14 +1059,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
                     self._pending_atomic.pop(id(original), None)
                     i += 1
                     continue
-                if container is root and preserves_script_return(self.options):
-                    at_script_end = not any(
-                        definitely_answers_the_completion(later) for later in body[i + 1:]
-                    )
+                if preserves_script_return(self.options):
                     parsed = preserve_script_end_value(
                         parsed,
                         returns_undefined=returns_undefined,
-                        at_script_end=at_script_end,
+                        reaches_completion=reaches_script_completion(original, root),
                     )
                 # The deletions an atomically admitted fold carries run before the splice, so the
                 # statements the loop still holds keep their positions.
@@ -1155,10 +1153,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         so it is left for the expression pass, which rewrites the `eval` inside `await eval("expr")` to
         `await (expr)` without dropping the `await`.
 
-        The first element is what the call's value was: a constructed function and `execScript` hand
-        back `undefined` (a constructed function unless its body ends in a value `return`), while an
-        `eval` hands back the completion of its own code, which the inlined body reproduces — so only
-        the first kind can leave a value in a script-end position the call did not.
+        The first element is whether the call handed back `undefined`. A constructed function does
+        unless its body ends in a value `return`, and `execScript` always does. An `eval` hands back
+        its own code's completion — `undefined` exactly when that code completes empty
+        (`body_completes_empty`), a value otherwise — which the inlined body reproduces only where it
+        too answers the completion; a body that completes empty leaves an earlier statement answering,
+        so the caller must hold the completion at `undefined` there as much as for a constructed body.
         """
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
@@ -1199,10 +1199,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if resolved is None:
             return None
         scope, script = resolved
-        returns_undefined = (
-            scope is ReflectedScope.FUNCTION_CONSTRUCTOR
-            and body_returns_undefined(script.body)
-        )
+        if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
+            returns_undefined = body_returns_undefined(script.body)
+        else:
+            returns_undefined = body_completes_empty(script.body)
         return returns_undefined, script.body
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:

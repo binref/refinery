@@ -19,10 +19,10 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     body_returns_undefined,
-    definitely_answers_the_completion,
     inlined_declarations_safe,
     nothing_still_names,
     preserve_script_end_value,
+    reaches_script_completion,
     references_new_target,
     references_receiver_this,
     sanitize_inlined_body,
@@ -157,15 +157,10 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         if statements is None:
             return False
         if preserves_script_return(self.options):
-            returns_undefined = body_returns_undefined(body.body)
-            at_script_end = not any(
-                definitely_answers_the_completion(later)
-                for later in root.body[root.body.index(statement) + 1:]
-            )
             statements = preserve_script_end_value(
                 statements,
-                returns_undefined=returns_undefined,
-                at_script_end=at_script_end,
+                returns_undefined=body_returns_undefined(body.body),
+                reaches_completion=reaches_script_completion(statement, root),
             )
         self._replace_invocation_with_body(root, declaration, statement, statements)
         self.mark_changed()
