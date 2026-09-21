@@ -18,8 +18,7 @@ import re
 
 from collections import Counter
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Collection, Iterator, NamedTuple, Sequence
-
+from typing import TYPE_CHECKING, Callable, Collection, Generic, Iterator, NamedTuple, Sequence, TypeVar
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -30,6 +29,8 @@ if TYPE_CHECKING:
 
     LiteralValue: TypeAlias = str | int | float | bool | list | dict | None
     Value: TypeAlias = str | float | bool | list | dict | _FuncDecl | _FuncExpr | _Arrow | None
+
+_Plan = TypeVar('_Plan')
 
 from refinery.lib.scripts import (
     Expression,
@@ -2753,6 +2754,105 @@ class ScopeProcessingTransformer(Transformer):
 
     def _process_scope_body(self, scope: Node, body: list) -> None:
         raise NotImplementedError
+
+
+class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
+    """
+    Intermediate base for scope-processing transforms that decide every rewrite of one invocation
+    against one entry model snapshot and apply the whole batch afterwards, once. This is a third
+    freshness regime beside the two the codebase already documents: a pin holds the models across a
+    pass whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass whose
+    edits make facts more restrictive. A batched pass emits bindings, so neither regime fits: the
+    models stay fresh for the whole traversal because no edit runs until it ends, and the batch is
+    applied as one unit afterwards. The `--no-batch` differential (`test/conftest.py`) runs every
+    batched pass the sequential way — each plan applied the moment it is decided, against the model
+    the tree then warrants — so a test that fails under only one of the two has found a pass whose
+    batch diverges from its sequential self.
+
+    A subclass owes the batch three obligations, and they compose the existing precedents
+    (`_spliced_names`, `lookup(exclude=...)`) rather than inventing a parallel concept:
+
+    - Every binding the batch emits or exposes — the `var` and `function` declarations it installs,
+      and the bare identifiers its rewrites create — is registered through `emits` at decision time,
+      and a later candidate in the same scope holds a colliding key back through `name_emitted_in`.
+      Without it, the later candidate decides against an entry tree that does not yet carry the
+      earlier emission and the two installs collide; with it, the answer matches the one the
+      sequential pass reaches through the model rebuilt after the earlier edit.
+    - Every node an applied edit holds from the decision — an anchor statement, a declarator — is
+      verified still present in the live tree at apply time through `anchors_still_present`. This is
+      not redundancy: a pass that re-walks the live tree at apply time holds no positions and needs
+      no guard, but a plan that carries a node from the entry snapshot can be pointed at a subtree an
+      earlier plan already detached, and the guard is what keeps the edit out of that garbage. A plan
+      failing its anchors is skipped whole, which is the sequential outcome — there, the model
+      rebuilt over the edited tree declines the same candidate.
+    - A per-pass non-interference docstring of its own: which model facts the decisions read, which
+      batch edits can invalidate them, and in which direction. The contract is the pin's — a decision
+      valid on the pre-batch tree must remain valid on the post-batch tree. Names are only one
+      interference channel; the registry answers that one, the docstring answers the rest.
+
+    The mid-batch freshness the sequential pass gets from its rebuilds is not supplied by anything
+    here. Its recall half comes from the group fixpoint: a changed group re-runs, and the next
+    invocation decides against a model built over the batched tree. Its correctness half is the
+    non-interference contract above. A subclass that cannot state the contract for one of its reads
+    does not batch under this base.
+    """
+
+    batching: bool = True
+
+    def __init__(self):
+        super().__init__()
+        self._plans: list[_Plan] = []
+        self._emitted: dict[Node, set[str]] = {}
+
+    def visit_JsScript(self, node: JsScript):
+        self._plans.clear()
+        self._emitted.clear()
+        super().visit_JsScript(node)
+        for plan in self._plans:
+            self._apply_plan(plan)
+        self._plans.clear()
+        return None
+
+    def _submit(self, plan: _Plan) -> None:
+        """
+        Hand one decided plan to the batch. Batched, it joins the plans applied at the end of the
+        invocation; with `batching` off, it applies at once, against the tree its decision read.
+        """
+        if self.batching:
+            self._plans.append(plan)
+        else:
+            self._apply_plan(plan)
+
+    def _apply_plan(self, plan: _Plan) -> None:
+        raise NotImplementedError
+
+    def emits(self, scope: Node, name: str) -> None:
+        """
+        Record that the batch binds *name* in *scope*, through a declaration it installs or a bare
+        identifier one of its rewrites creates there. Registered at decision time so every later
+        candidate of the same scope reads the accumulated set, whatever mode the pass runs in.
+        """
+        self._emitted.setdefault(scope, set()).add(name)
+
+    def name_emitted_in(self, scope: Node, name: str) -> bool:
+        """
+        Whether an earlier plan of this batch already binds *name* in *scope*.
+        """
+        return name in self._emitted.get(scope, ())
+
+    @staticmethod
+    def anchors_still_present(scope: Node, anchors) -> bool:
+        """
+        Whether every node in *anchors* is still a statement of *scope*'s live body, by identity. A
+        plan whose anchor an earlier plan removed is skipped whole.
+        """
+        body = get_body(scope)
+        if body is None:
+            return False
+        for anchor in anchors:
+            if not any(stmt is anchor for stmt in body):
+                return False
+        return True
 
 
 class ScriptLevelTransformer(Transformer):

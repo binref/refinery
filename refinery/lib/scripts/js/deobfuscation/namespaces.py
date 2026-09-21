@@ -17,7 +17,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    ScopeProcessingTransformer,
+    BatchedScopeTransformer,
     a_host_reaches_the_binding,
     access_key,
     function_binds_name,
@@ -50,12 +50,54 @@ class _PropertyAssignment(NamedTuple):
     write: Node
 
 
-class JsNamespaceFlattening(ScopeProcessingTransformer):
+class _NamespacePlan(NamedTuple):
+    """
+    One namespace's flattening, decided against the entry snapshot and applied later by
+    `_apply_plan`: the properties to rewrite, the function assignments to raise to hoisted
+    declarations, the bare names to declare, and whether the namespace's own declarator goes away.
+    """
+
+    scope: Node
+    name: str
+    declarator: JsVariableDeclarator
+    declaration: JsVariableDeclaration
+    flattenable: set[str]
+    hoisted: dict[str, _PropertyAssignment]
+    declarations: set[str]
+    remove_declarator: bool
+
+
+class JsNamespaceFlattening(BatchedScopeTransformer):
     """
     Replace `NS.prop` member accesses with bare identifiers when `NS` is declared as an empty
     object literal and is only ever used via property access. Emits `var` declarations for the
     flattened property names. A property whose name conflicts with an existing variable in the
     scope, or that a plain object inherits, is left on the namespace object.
+
+    The pass is batched: every scope's decisions read the models the invocation entered with, and
+    the edits run once the traversal ends. The decisions read four kinds of model fact, and the
+    batch's own edits leave each of them valid on the tree it writes:
+
+    - `a_host_reaches_the_binding` over the namespace's binding. The batch neither adds a reference
+      to a namespace variable nor hands one to a host — its rewrites remove the last references
+      there are — so a binding unreachable at entry stays unreachable.
+    - `is_shadowed` answers for conflicting names, including the object-position uses the conflict
+      check counts. A rewrite does create bare identifiers, but only for names the emission
+      registry already covers: a later candidate in the same scope holds a colliding key back, and
+      a binding's shadowing answer for a name nothing in the batch emits is untouched.
+    - `DominanceModel.runs_before_all` for hoisting. A hoisted declaration moves a function body to
+      the prologue without moving when it executes — the body still runs only when called, from
+      call sites no batch edit reorders — and the removed assignment's binding of the property is
+      re-established no later than the assignment established it. A read the assignment provably
+      preceded is preceded by the declaration as well.
+    - `property_absent_from_written_chain` for inherited keys. No batch edit writes a prototype or
+      a global, so the written chain the effects model read is the one the batch leaves behind.
+
+    A plan whose anchors an earlier plan removed is skipped whole — the sequential pass declines the
+    same candidate against the model rebuilt over the edited tree — and a plan whose rewrite finds
+    every target already replaced stands down the same way, which is what two same-name
+    declarators come to under the sequential regime (there, the second collects no properties and
+    never runs its edits).
     """
 
     def __init__(self):
@@ -68,43 +110,92 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
 
     def _process_scope_body(self, scope: Node, body: list) -> None:
         assert self._root is not None
-        for name, declarator, decl_stmt in self._find_candidates(body):
-            if not self._is_safe(scope, name, declarator):
-                continue
-            props = self._collect_properties(scope, name, declarator)
-            if not props:
-                continue
-            cache = model_cache(self, self._root)
-            model = cache.model
-            namespace_id = declarator.id
-            if isinstance(namespace_id, JsIdentifier):
-                binding = model.binding_of(namespace_id)
-                if binding is not None and a_host_reaches_the_binding(model, binding, self.options):
-                    continue
-            scope_obj = model.scope_of(scope)
-            if scope_obj is None:
-                continue
-            conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
-            references_by_key = self._property_references_by_key(scope, name)
-            receiver_called = self._receiver_called_keys(references_by_key)
-            this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
-            held_back = conflicts | this_unsafe | self._inherited_keys(props, cache.effects)
-            flattenable = props - held_back
-            if not flattenable:
-                continue
-            func_assigns = self._detect_function_assignments(body, name, flattenable)
-            hoisted_keys = (
-                self._hoistable_functions(scope, name, func_assigns, cache.dominance)
-                if func_assigns else set()
-            )
-            hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
-            self._rewrite(scope, name, declarator, flattenable)
-            self._remove_hoisted_statements(scope, hoisted)
-            self._emit_declarations(scope, body, flattenable - set(hoisted))
-            self._emit_function_declarations(scope, hoisted)
-            if not held_back:
-                self._remove_declarator(scope, declarator, decl_stmt)
-            self.changed = True
+        for name, declarator, decl_stmt in list(self._find_candidates(body)):
+            plan = self._decide(scope, body, name, declarator, decl_stmt)
+            if plan is not None:
+                self._submit(plan)
+
+    def _decide(
+        self,
+        scope: Node,
+        body: list,
+        name: str,
+        declarator: JsVariableDeclarator,
+        decl_stmt: JsVariableDeclaration,
+    ) -> _NamespacePlan | None:
+        """
+        Decide one namespace's flattening against the entry snapshot, without editing anything.
+        """
+        assert self._root is not None
+        if not self._is_safe(scope, name, declarator):
+            return None
+        props = self._collect_properties(scope, name, declarator)
+        if not props:
+            return None
+        cache = model_cache(self, self._root)
+        model = cache.model
+        namespace_id = declarator.id
+        if isinstance(namespace_id, JsIdentifier):
+            binding = model.binding_of(namespace_id)
+            if binding is not None and a_host_reaches_the_binding(model, binding, self.options):
+                return None
+        scope_obj = model.scope_of(scope)
+        if scope_obj is None:
+            return None
+        conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
+        references_by_key = self._property_references_by_key(scope, name)
+        receiver_called = self._receiver_called_keys(references_by_key)
+        this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
+        inherited = self._inherited_keys(props, cache.effects)
+        flattenable = props - conflicts - this_unsafe - inherited
+        flattenable = {
+            key for key in flattenable
+            if not self.name_emitted_in(scope, key)
+        }
+        if not flattenable:
+            return None
+        func_assigns = self._detect_function_assignments(body, name, flattenable)
+        hoisted_keys = (
+            self._hoistable_functions(scope, name, func_assigns, cache.dominance)
+            if func_assigns else set()
+        )
+        hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
+        declarations = flattenable - set(hoisted) - self._declared_var_names(body)
+        for key in declarations:
+            self.emits(scope, key)
+        for key in hoisted:
+            self.emits(scope, key)
+        return _NamespacePlan(
+            scope=scope,
+            name=name,
+            declarator=declarator,
+            declaration=decl_stmt,
+            flattenable=flattenable,
+            hoisted=hoisted,
+            declarations=declarations,
+            remove_declarator=not (props - flattenable),
+        )
+
+    def _apply_plan(self, plan: _NamespacePlan) -> None:
+        """
+        Apply one decided plan to the live tree. A plan whose rewrite finds every target already
+        replaced — the two-same-name-declarator shape, where an earlier plan claimed the same member
+        accesses — stands down: the sequential pass declines that candidate against the tree its
+        sibling's edits already wrote.
+        """
+        anchors: list[Node] = [entry.statement for entry in plan.hoisted.values()]
+        if plan.remove_declarator:
+            anchors.append(plan.declaration)
+        if not self.anchors_still_present(plan.scope, anchors):
+            return
+        if not self._rewrite(plan.scope, plan.name, plan.declarator, plan.flattenable):
+            return
+        self._remove_hoisted_statements(plan.scope, plan.hoisted)
+        self._emit_declarations(plan.scope, plan.declarations)
+        self._emit_function_declarations(plan.scope, plan.hoisted)
+        if plan.remove_declarator:
+            self._remove_declarator(plan.scope, plan.declarator, plan.declaration)
+        self.changed = True
 
     @staticmethod
     def _walk_pruning_shadows(scope: Node, name: str) -> Iterator[Node]:
@@ -253,8 +344,15 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         name: str,
         declarator: JsVariableDeclarator,
         flattenable: set[str],
-    ) -> None:
+    ) -> bool:
+        """
+        Replace every flattenable `NS.prop` member access in the scope subtree with a bare
+        identifier, walking the tree as it stands. Returns whether any replacement landed; a walk
+        that replaced nothing means every target was claimed by an earlier plan, which is the signal
+        `_apply_plan` stands down on.
+        """
         decl_id = declarator.id
+        moved = False
         for node in list(JsNamespaceFlattening._walk_pruning_shadows(scope, name)):
             if node is decl_id:
                 continue
@@ -267,7 +365,9 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if key is None or key not in flattenable:
                 continue
             replacement = JsIdentifier(name=key, offset=parent.offset)
-            _replace_in_parent(parent, replacement)
+            if _replace_in_parent(parent, replacement):
+                moved = True
+        return moved
 
     @staticmethod
     def _detect_single_assignments(
@@ -459,12 +559,9 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             insert_after_prologue(scope, declarations)
 
     @staticmethod
-    def _emit_declarations(scope: Node, body: list, props: set[str]) -> None:
+    def _declared_var_names(body: list) -> set[str]:
         """
-        Insert a hoisted `var` declaration at the top of the scope for each flattened property that
-        does not already have one. The declarations are uninitialized: a flattened property's value is
-        established by its (in-place) assignment, so a bare `var p;` reproduces the
-        `undefined`-until-assigned semantics of the original `NS.p` member exactly.
+        The names the scope's `var` declarations already bind.
         """
         existing: set[str] = set()
         for stmt in body:
@@ -475,7 +572,19 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             for decl in stmt.declarations:
                 if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
                     existing.add(decl.id.name)
-        needed = sorted(props - existing)
+        return existing
+
+    @staticmethod
+    def _emit_declarations(scope: Node, names: set[str]) -> None:
+        """
+        Insert a hoisted `var` declaration at the top of the scope for each of *names*, decided
+        against the entry body: a name the scope already declared is not re-emitted, and a name an
+        earlier plan of the same batch emits cannot reach here, because the emission registry held
+        the colliding key back. The declarations are uninitialized: a flattened property's value is
+        established by its (in-place) assignment, so a bare `var p;` reproduces the
+        `undefined`-until-assigned semantics of the original `NS.p` member exactly.
+        """
+        needed = sorted(names)
         if not needed:
             return
         declarations = [

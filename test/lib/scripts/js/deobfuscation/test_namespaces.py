@@ -5,6 +5,8 @@ import inspect
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 #: Programs reading a namespace property from below a binding of the property's own name, so a
 #: flattening that rewrites the read to a bare identifier would rebind it. Held by
@@ -27,6 +29,18 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
 
     def _flatten(self, source: str) -> str:
         return self._run_transformer(source, JsNamespaceFlattening)
+
+    def _flatten_one_plan_at_a_time(self, source: str) -> str:
+        """
+        The pass's sequential self: each decided plan applies at the moment it is decided, against
+        the tree the previous plans already changed. Its output must equal the batched run's.
+        """
+        ast = JsParser(source).parse()
+        instance = JsNamespaceFlattening()
+        instance.options = None
+        instance.batching = False
+        instance.visit(ast)
+        return JsSynthesizer().convert(ast)
 
     def test_basic_namespace_flatten(self):
         self.assertEqual(
@@ -442,3 +456,85 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten('var NS = {}; NS.g = function () { return g.y; }; foo(NS.g);'),
         )
+
+    def test_two_declarators_of_one_namespace_name_are_left_alone(self):
+        """
+        The second declarator's own identifier is a bare reference to the name, so neither declaration
+        describes a namespace whose every reference is a property access, and the pass dissolves
+        neither. The batch decides both candidates against one tree and refuses both the same way.
+        """
+        source = (
+            'var NS = {}; NS.g = function () { return 42; };'
+            ' var NS = {}; NS.g = function () { return 7; }; foo(NS.g);'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS.g = function() {
+                  return 42;
+                };
+                var NS = {};
+                NS.g = function() {
+                  return 7;
+                };
+                foo(NS.g);
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    def test_a_batch_holds_back_a_key_an_earlier_plan_emits(self):
+        """
+        `A` and `B` flatten in one batch and both carry the name `k`. The plan for `A` emits
+        `var k`, so the plan for `B` must leave its `B.k` on the namespace rather than rewriting the
+        reads into the binding `A` owns; the sequential self refuses the key by the rebuilt model
+        and the two runs agree.
+        """
+        source = (
+            'var A = {}; var B = {}; A.k = 1; A.j = 2; B.k = 3; B.m = 4;'
+            ' log(A.k + A.j + B.k + B.m);'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var m;
+                var j, k;
+                var B = {};
+                k = 1;
+                j = 2;
+                B.k = 3;
+                m = 4;
+                log(k + j + B.k + m);
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    def test_two_hoists_in_one_batch_splice_by_statement_not_position(self):
+        """
+        Both plans hoist a function declaration into the same body, and applying the first inserts
+        statements the second's recorded positions would no longer point at. The splices carry the
+        assignment statements themselves, so the second plan still finds its own and both runs agree.
+        """
+        source = (
+            'var A = {}; var B = {}; A.f = function () { return 1; };'
+            ' B.g = function () { return 2; }; foo(A.f, B.g);'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function g() {
+                  return 2;
+                }
+                function f() {
+                  return 1;
+                }
+                foo(f, g);
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
