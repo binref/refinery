@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import TestBase
+from test import TestBase, a_property_of_the_batch_itself
 from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     node_executable,
@@ -14,6 +14,10 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
     folded,
 )
+
+from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class TestConstantInlining(TestJsDeobfuscator):
@@ -1690,6 +1694,71 @@ class TestConstantInlining(TestJsDeobfuscator):
             result,
         )
 
+    def _inline_one_plan_at_a_time(self, source: str) -> str:
+        """
+        The pass's sequential self: each decided plan applies at the moment it is decided, against
+        the tree the previous plans already changed. Its output must equal the batched run's.
+        """
+        ast = JsParser(source).parse()
+        instance = JsConstantInlining()
+        instance.options = None
+        instance.batching = False
+        instance.visit(ast)
+        return JsSynthesizer().convert(ast)
+
+    def test_a_substitution_that_clones_a_read_keeps_the_binding_it_was_cloned_from(self):
+        """
+        Substituting `b` at `b.floor` writes a clone of `a`, the only read that keeps `var a`
+        alive once its own read in `var b = a` has folded, so the declarator of `a` survives the
+        round that folded it and the next round inlines `a` itself. A removal predicted from the
+        entry count alone would delete the declaration the clone reads.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Math.floor = function() {
+                  return 1;
+                };
+                console.log(String(Math.floor(1.7)));
+                """
+            ),
+            self._inline(AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND[
+                'a two-hop intrinsic alias']),
+        )
+
+    def test_a_plan_whose_target_an_earlier_plan_detached_folds_the_next_round(self):
+        """
+        The inner plan relocates `K + 1` to the use of `t` and takes the declarator with it,
+        detaching the outer plan's target — the `K` inside the initializer — so the outer plan
+        declines both its substitution and the removal that read was to pay for, and the next
+        round folds the read the relocation cloned.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function inner() {
+                  console.log(5 + 1);
+                }
+                inner();
+                """
+            ),
+            self._inline(AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND[
+                'a constant read inside a relocated initializer']),
+        )
+
+    @a_property_of_the_batch_itself
+    def test_the_same_inlines_fold_the_same_way_one_plan_at_a_time(self):
+        """
+        The sequential self applies each plan the moment it is decided, against the tree the
+        earlier plans already edited; the two rows above are the shapes where that order matters,
+        and the two selves agree on both.
+        """
+        rows = AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND
+        self.assertEqual(
+            {source: self._inline_one_plan_at_a_time(source) for source in rows},
+            {source: self._inline(source) for source in rows},
+        )
+
 
 class TestRegressionBugs(TestJsDeobfuscator):
 
@@ -1957,6 +2026,52 @@ class TestNodePrintsTheSameAboutACallThroughANameBoundToEval(TestBase):
         rewrite binding the call to the name `eval` prints `7` for the first instead.
         """
         rows = WHAT_A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL_PRINTS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs whose inlining has to survive an edit an earlier plan of the same round makes. The
+#: first holds a two-hop intrinsic alias: substituting `b` at `b.floor` writes a clone of `a`, the
+#: very read that keeps `var a` alive, so a removal predicted from the entry count alone would
+#: delete the declaration the clone reads. The second holds an outer constant's read inside the
+#: initializer a nested scope's plan relocates, so the outer plan's substitution finds its target
+#: detached and its removal the read the relocation cloned; both hold back one round and the next
+#: one folds them, which is what the sequential self reaches deciding each plan against the tree
+#: the earlier one already edited.
+AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND = {
+    'a two-hop intrinsic alias': (
+        'var a = Math; var b = a; b.floor = function () { return 1; };'
+        ' console.log(String(Math.floor(1.7)));'
+    ),
+    'a constant read inside a relocated initializer': (
+        'const K = 5; function inner() { var t = K + 1; console.log(t); } inner();'
+    ),
+}
+
+#: What Node prints for each program of `AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND`
+#: — and for the text it is deobfuscated to, which is the agreement the entry exists for.
+WHAT_AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_PRINTS = {
+    AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND[
+        'a two-hop intrinsic alias'
+    ]: '1\n',
+    AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND[
+        'a constant read inside a relocated initializer'
+    ]: '6\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAnInlineThatSurvivesAnEarlierPlan(TestBase):
+
+    def test_the_rounds_that_were_held_back_still_print_the_same(self):
+        """
+        Node prints `1` for the two-hop alias program, whose patch of `Math.floor` has to survive
+        both rounds, and `6` for the relocated initializer, and prints the same two lines for the
+        texts they are deobfuscated to.
+        """
+        rows = WHAT_AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_PRINTS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

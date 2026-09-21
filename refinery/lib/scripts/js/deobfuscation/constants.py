@@ -5,8 +5,14 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts import (
+    Node,
+    _clone_node,
+    _remove_from_parent,
+    _replace_in_parent,
+    is_attached,
+)
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
@@ -22,7 +28,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    ScopeProcessingTransformer,
+    BatchedScopeTransformer,
     a_host_reaches_the_binding,
     collect_identifier_names,
     is_literal,
@@ -79,6 +85,53 @@ class _CandidateEntry(NamedTuple):
 class _MemberArrayEntry(NamedTuple):
     assignment: JsAssignmentExpression
     array: JsArrayExpression
+
+
+class _Substitution(NamedTuple):
+    """
+    One decided inline: the *target* node a read or an index access stands at, the entry snapshot's
+    *value* node a clone of which replaces it, and the *key* the substitution is counted under — a
+    variable name, or an `X.Y` member-array key.
+    """
+    target: Node
+    value: Node
+    key: str
+
+
+class _DeclaratorRemoval(NamedTuple):
+    """
+    One declarator of a round-inlined name that passed every decision-time guard — the prediction
+    that its remaining reads fold, and the binding guards a model must answer — leaving the
+    authoritative count to the plan, which takes it on the tree its substitutions leave behind: a
+    substitution whose value is an identifier adds a read the entry count never saw, so only the
+    post-substitution tree can say a declarator is dead.
+    """
+    declarator: JsVariableDeclarator
+    key: str
+
+
+class _MemberArrayRemoval(NamedTuple):
+    """
+    One member-array assignment statement that passed the same decision-time guards
+    `_DeclaratorRemoval` does, counted the same way where the plan applies it.
+    """
+    assignment: JsAssignmentExpression
+    key: str
+
+
+class _ScopePlan(NamedTuple):
+    """
+    One round of edits for one scope, decided against the round's entry snapshot: the scope the
+    plan counts references in, the substitutions, the removals that passed their decision-time
+    guards, the declaration-site ids the count excludes, and the per-key planned counts its
+    pre-filters read.
+    """
+    scope: Node
+    substitutions: list[_Substitution]
+    declarator_removals: list[_DeclaratorRemoval]
+    member_array_removals: list[_MemberArrayRemoval]
+    decl_ids: set[int]
+    planned: dict[str, int]
 
 
 def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
@@ -304,43 +357,98 @@ def _reader_qualifies(
     return dominance.runs_before_every_invocation(value, reader)
 
 
-class JsConstantInlining(ScopeProcessingTransformer):
+def _planned_counts(substitutions: list[_Substitution]) -> dict[str, int]:
+    """
+    The per-key substitution counts a plan's removal gates read, replacing the `inlined` dict the
+    mutating form of this pass accumulated as it edited.
+    """
+    planned: dict[str, int] = {}
+    for sub in substitutions:
+        planned[sub.key] = planned.get(sub.key, 0) + 1
+    return planned
+
+
+class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     """
     Inline variables that are assigned once and never mutated. Literal-valued variables are inlined
     at all use sites; single-use variables with side-effect-free initializers are inlined when no
     intervening mutation could alter the referenced identifiers. All-literal arrays declared with
     `const` are inlined element-by-element when accessed with numeric literal indices.
+
+    One invocation decides in rounds: each round traverses the tree once, every scope decides one
+    round of edits against the model snapshot the round opened with, and the round's plans apply
+    once the traversal ends, inner scopes first — the order their plans were submitted in. A round
+    that lands no edit ends the invocation, so the per-scope fixpoint the sequential self reaches
+    inside one visit is reached here across rounds, a round being one iteration of that loop for
+    every scope at once.
+
+    Every edit the batch applies removes something — a read, an index access, a declarator, an
+    assignment statement — and installs no binding, so the emission registry the base class keeps
+    has no reader here: the one bare name a substitution can write is an intrinsic alias, checked
+    unshadowed at the site it goes, and no batch edit adds a binding that could shadow it.
+
+    Non-interference, per fact the decisions read:
+
+    - `ReachingModel.value_preserved` — whether a definition's value reaches a read unchanged.
+      Batch edits remove reads, write sites, and declarators; none adds a kill, so a value that
+      reached a read unchanged still does. A declined read — one a kill stood between — may become
+      inlinable once the edit removing the kill applies, which the next round decides; the refusal
+      the batch acted on stays valid.
+    - `DominanceModel.runs_before_function` and `runs_before_every_invocation` — whether a value
+      runs before a function, or before every invocation of one. Batch edits remove statements and
+      reads, so the set of invocation points can only shrink; a value that preceded them all still
+      does.
+    - The effect summaries — `EffectModel.mutated_bindings`, `EffectModel.function_escapes`,
+      `EffectModel.static_callee`, `EffectModel.function_can_mutate` — over functions the batch
+      never rewrites. Removing a call site removes a mutation opportunity rather than adding one,
+      so a function that could not write a binding still cannot.
+    - The reference counts the removals are decided on: the entry snapshot predicts which names may
+      fold to zero reads, but the authoritative count is taken at apply time, on the tree the
+      plan's own substitutions leave behind — a substitution whose value is an identifier adds a
+      read the entry count never saw, and `is_attached` refuses the substitutions an earlier plan
+      detached — so a count another plan's edit disturbed holds its removal back to the next round
+      rather than deleting a declaration a live read still needs.
     """
 
     def __init__(self, max_inline_length: int = 64):
         super().__init__()
         self.max_inline_length = max_inline_length
         self._root: JsScript | None = None
+        self._edits_applied = 0
 
     def visit_JsScript(self, node: JsScript):
         self._root = node
-        return super().visit_JsScript(node)
+        while True:
+            self._edits_applied = 0
+            super().visit_JsScript(node)
+            if not self._edits_applied:
+                break
+        return None
 
     def _process_scope(self, scope: Node) -> None:
         assert self._root is not None
-        effects = model_cache(self, self._root).effects
-        while True:
-            candidates, mutated = self._collect_candidates(scope, effects)
-            member_arrays = self._collect_member_array_candidates(scope)
-            if not candidates and not member_arrays:
-                return
-            inlined = self._substitute_constants(scope, candidates)
-            if member_arrays:
-                self._substitute_member_arrays(scope, member_arrays, inlined)
-            if inlined:
-                self._remove_dead(scope, candidates, inlined)
-                self._remove_dead_member_arrays(scope, member_arrays, inlined)
-                continue
-            inlined = self._substitute_expressions(scope, candidates, mutated)
-            if inlined:
-                self._remove_dead(scope, candidates, inlined)
-                continue
+        cache = model_cache(self, self._root)
+        candidates, mutated = self._collect_candidates(scope, cache.effects)
+        member_arrays = self._collect_member_array_candidates(scope)
+        if not candidates and not member_arrays:
             return
+        substitutions = self._decide_constants(scope, candidates, cache)
+        if member_arrays:
+            substitutions.extend(self._decide_member_arrays(scope, member_arrays))
+        if not substitutions:
+            substitutions = self._decide_expressions(scope, candidates, mutated, cache)
+        if not substitutions:
+            return
+        planned = _planned_counts(substitutions)
+        decl_ids = _candidate_decl_ids(candidates)
+        self._submit(_ScopePlan(
+            scope,
+            substitutions,
+            self._decide_dead_declarators(scope, candidates, planned, decl_ids, cache),
+            self._decide_dead_member_arrays(scope, member_arrays, planned) if member_arrays else [],
+            decl_ids,
+            planned,
+        ))
 
     def _collect_candidates(
         self,
@@ -498,17 +606,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return None
         return model.binding_of(decl.id)
 
-    def _substitute_constants(
+    def _decide_constants(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-    ) -> dict[str, int]:
+        cache: ModelCache,
+    ) -> list[_Substitution]:
         """
-        Inline constant (literal and literal-array) variable references. A reference is inlined only
-        where the definition's value provably reaches it unchanged (`ReachingModel.value_preserved`).
-        Handles both scalar references and computed index access into all-literal arrays.
+        Decide the constant (literal and literal-array) inlines of one round. A reference is inlined
+        only where the definition's value provably reaches it unchanged (`ReachingModel.value_preserved`),
+        covering both scalar references and computed index access into all-literal arrays. The value
+        each decision records is the entry snapshot's own node; the plan clones it where it applies.
         """
-        inlined: dict[str, int] = {}
         bloat_blocked: set[str] = set()
 
         decl_ids = _candidate_decl_ids(candidates)
@@ -527,10 +636,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 if len(value.value) > self.max_inline_length:
                     bloat_blocked.add(name)
 
-        assert self._root is not None
-        cache = model_cache(self, self._root)
         effects = cache.effects
-        dominance = cache.dominance
         reaching = cache.reaching
         model = effects.model
 
@@ -539,9 +645,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if any(_is_constant_value(e.value) or _is_intrinsic_alias_value(effects, e.value) for e in entries)
         }
         if not constant_names:
-            return inlined
+            return []
 
-        for node in list(walk_scope(scope, include_root_body=True)):
+        substitutions: list[_Substitution] = []
+        for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
                 if (
@@ -554,7 +661,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     entry = candidates[obj.name][0]
                     binding = self._candidate_binding(entry, model)
                     if binding is not None and reaching.value_preserved(binding, entry.value, node):
-                        self._apply_index_access_inline(node, entry, obj.name, inlined)
+                        element = self._index_access_element(node, entry)
+                        if element is not None:
+                            substitutions.append(_Substitution(node, element, obj.name))
                     continue
             if not isinstance(node, JsIdentifier):
                 continue
@@ -576,14 +685,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if not reaching.value_preserved(binding, entry.value, node):
                 continue
-            substituted = substitute_use_position(node, _clone_node(entry.value))
-            self._record_inline(substituted, name, inlined)
+            substitutions.append(_Substitution(node, entry.value, name))
 
-        self._substitute_const_across_functions(
-            scope, candidates, decl_ids, bloat_blocked, inlined, effects, dominance,
-        )
+        substitutions.extend(self._decide_const_across_functions(
+            scope, candidates, decl_ids, bloat_blocked, cache,
+        ))
 
-        return inlined
+        return substitutions
 
     @staticmethod
     def _index_array_immutable(
@@ -605,68 +713,55 @@ class JsConstantInlining(ScopeProcessingTransformer):
         return effects.binding_is_immutable_container(
             binding, direct_eval_ordered=direct_eval_ordered)
 
-    def _record_inline(self, substituted: bool, name: str, inlined: dict[str, int]) -> None:
+    @staticmethod
+    def _index_access_element(member: JsMemberExpression, entry: _CandidateEntry) -> Node | None:
         """
-        Announce one inlining of *name*, where it happened. Every edit this pass makes reports
-        whether it found the slot it was aiming at, and a pass that announces a change it did not
-        make announces one every round: the fixpoint the pipeline runs it in never closes.
+        The literal element an index access into a candidate's all-literal array resolves to, or
+        `None` when the access names no in-bounds literal element. The node returned is the entry
+        snapshot's own; the plan clones it where it substitutes.
         """
-        if not substituted:
-            return
-        self.mark_changed()
-        inlined[name] = inlined.get(name, 0) + 1
-
-    def _apply_index_access_inline(
-        self,
-        member: JsMemberExpression,
-        entry: _CandidateEntry,
-        name: str,
-        inlined: dict[str, int],
-    ) -> None:
         prop = member.property
         if not isinstance(prop, JsNumericLiteral):
-            return
+            return None
         idx = exact_integer(prop.value)
         if idx is None:
-            return
+            return None
         value = entry.value
         if not isinstance(value, JsArrayExpression):
-            return
+            return None
         if not (0 <= idx < len(value.elements)):
-            return
+            return None
         element = value.elements[idx]
         if element is None or not is_literal(element):
-            return
-        substituted = _replace_in_parent(member, _clone_node(element))
-        self._record_inline(substituted, name, inlined)
+            return None
+        return element
 
-    def _substitute_const_across_functions(
+    def _decide_const_across_functions(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         decl_ids: set[int],
         bloat_blocked: set[str],
-        inlined: dict[str, int],
-        effects: EffectModel,
-        dominance: DominanceModel,
-    ) -> None:
+        cache: ModelCache,
+    ) -> list[_Substitution]:
         """
-        For constant-valued candidates, walk the full subtree to inline references inside nested
-        function bodies. A `const`-qualified candidate, or an uninitialized `var` later assigned a
-        single constant, is inlined into a function only when the value provably runs before every
-        invocation of that function (`DominanceModel.runs_before_function`) — otherwise a call could
-        read the value early: a stale read for the `var` form, a temporal-dead-zone throw for the
-        `const` form. A `var`/`let` candidate that carries its own initializer is additionally
-        restricted by `_reader_qualifies` to a reader that neither writes the binding nor runs an
-        invocation the value does not precede — a named function invoked in scope, an anonymous IIFE,
-        an arrow, or a function stored in a binding, each of whose invocation points is enumerable
-        and ordered; an uncalled named function is refused, since its ordering answer is the vacuous
-        one an empty set of reference points gives. The interprocedural runs-before check subsumes the
-        earlier escape and statement-position heuristics: a function cannot be invoked before a reference
-        to it has been evaluated, so it orders the value against every point the function is referenced —
-        recursing up the call graph for a reference that lies inside another function — and inlines only
-        when the value dominates all of them, refusing whenever a reference cannot be ordered (its
-        binding is reassigned or redeclared, or it lies on a call cycle).
+        Decide the constant-valued inlines of one round that cross into nested function bodies. A
+        `const`-qualified candidate, or an uninitialized `var` later assigned a single constant, is
+        inlined into a function only when the value provably runs before every invocation of that
+        function (`DominanceModel.runs_before_function`) — otherwise a call could read the value
+        early: a stale read for the `var` form, a temporal-dead-zone throw for the `const` form. A
+        `var`/`let` candidate that carries its own initializer is additionally restricted by
+        `_reader_qualifies` to a reader that neither writes the binding nor runs an invocation the
+        value does not precede — a named function invoked in scope, an anonymous IIFE, an arrow, or
+        a function stored in a binding, each of whose invocation points is enumerable and ordered;
+        an uncalled named function is refused, since its ordering answer is the vacuous one an
+        empty set of reference points gives. The interprocedural runs-before check subsumes the
+        earlier escape and statement-position heuristics: a function cannot be invoked before a
+        reference to it has been evaluated, so it orders the value against every point the function
+        is referenced — recursing up the call graph for a reference that lies inside another
+        function — and inlines only when the value dominates all of them, refusing whenever a
+        reference cannot be ordered (its binding is reassigned or redeclared, or it lies on a call
+        cycle).
 
         A candidate a dynamic scope could rewrite is refused here
         (`binding_maybe_reassigned_dynamically`): this consumer's ordering runs the value before an
@@ -675,6 +770,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
         reads that fold on the located hazards are the same-function ones, which the reaching
         query answers at the use itself.
         """
+        effects = cache.effects
+        dominance = cache.dominance
         model = effects.model
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
         cross_bindings: dict[str, Binding] = {}
@@ -699,7 +796,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 const_names.add(name)
 
         if not cross_candidates:
-            return
+            return []
 
         outer = model.scope_of(scope)
         assert outer is not None
@@ -717,9 +814,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
             del cross_candidates[name]
             del cross_bindings[name]
         if not cross_candidates:
-            return
+            return []
 
-        for node in list(scope.walk()):
+        substitutions: list[_Substitution] = []
+        for node in scope.walk():
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
                 if (
@@ -746,9 +844,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         continue
                     if model.is_shadowed(name, obj, outer):
                         continue
-                    self._apply_index_access_inline(
-                        node, cross_candidates[name][0], name, inlined,
-                    )
+                    element = self._index_access_element(node, cross_candidates[name][0])
+                    if element is not None:
+                        substitutions.append(_Substitution(node, element, name))
                     continue
             if not isinstance(node, JsIdentifier):
                 continue
@@ -790,26 +888,28 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 and model.lookup(entry.value.name, model.scope_of(node)) is not None
             ):
                 continue
-            substituted = substitute_use_position(node, _clone_node(entry.value))
-            self._record_inline(substituted, name, inlined)
+            substitutions.append(_Substitution(node, entry.value, name))
+        return substitutions
 
-    def _substitute_expressions(
+    def _decide_expressions(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         mutated: set[str],
-    ) -> dict[str, int]:
+        cache: ModelCache,
+    ) -> list[_Substitution]:
         """
-        Inline single-use, side-effect-free, non-literal expressions. Relocating the initializer to its
-        use is sound only when the value it computed still holds there — which means the candidate's own
-        binding reaches the use unchanged *and* every variable the initializer reads holds, at the use,
-        the value it held at the definition. `ReachingModel.value_preserved` decides each: the candidate
-        binding for ordering and its own kills, then one query per resolved free variable. The
-        `_is_primitive_and_pure` gate keeps the initializer free of side effects and reference identity,
-        and the `mutated` gate rejects a free variable written through a name no binding resolves (a
-        global reassigned in scope), which the binding-keyed reaching query cannot see. A candidate whose
-        initializer reads a bare name through a `with` body's dynamic scope needs no separate gate here:
-        such an initializer is inside the `with` body, so the candidate's own binding is written in a
+        Decide the single-use, side-effect-free, non-literal expression inlines of one round.
+        Relocating the initializer to its use is sound only when the value it computed still holds
+        there — which means the candidate's own binding reaches the use unchanged *and* every
+        variable the initializer reads holds, at the use, the value it held at the definition.
+        `ReachingModel.value_preserved` decides each: the candidate binding for ordering and its
+        own kills, then one query per resolved free variable. The `_is_primitive_and_pure` gate
+        keeps the initializer free of side effects and reference identity, and the `mutated` gate
+        rejects a free variable written through a name no binding resolves (a global reassigned in
+        scope), which the binding-keyed reaching query cannot see. A candidate whose initializer
+        reads a bare name through a `with` body's dynamic scope needs no separate gate here: such
+        an initializer is inside the `with` body, so the candidate's own binding is written in a
         dynamic scope and the reaching query orders that hazard against the relocated read.
         """
         decl_ids = _candidate_decl_ids(candidates)
@@ -831,15 +931,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
             to_inline[name] = entry
 
         if not to_inline:
-            return {}
+            return []
 
-        assert self._root is not None
-        cache = model_cache(self, self._root)
         reaching = cache.reaching
         model = cache.effects.model
 
-        inlined: dict[str, int] = {}
-        for node in list(walk_scope(scope, include_root_body=True)):
+        substitutions: list[_Substitution] = []
+        for node in walk_scope(scope, include_root_body=True):
             if not isinstance(node, JsIdentifier):
                 continue
             if id(node) in decl_ids:
@@ -855,9 +953,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if not self._free_variables_preserved(entry.value, node, model, reaching):
                 continue
-            substituted = substitute_use_position(node, _clone_node(entry.value))
-            self._record_inline(substituted, name, inlined)
-        return inlined
+            substitutions.append(_Substitution(node, entry.value, name))
+        return substitutions
 
     @staticmethod
     def _free_variables_preserved(
@@ -885,36 +982,39 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 return False
         return True
 
-    def _remove_dead(
+    def _decide_dead_declarators(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-        inlined: dict[str, int],
-    ) -> None:
+        planned: dict[str, int],
+        decl_ids: set[int],
+        cache: ModelCache,
+    ) -> list[_DeclaratorRemoval]:
         """
-        Remove declarators for variables where all references have been inlined. For `const`
-        qualified candidates, check the full subtree since cross-function inlining may have
-        replaced references inside nested functions. An exported binding keeps its declarator even
-        with every local read inlined, because an importer still reads it across the module
-        boundary; removing it would leave an `export` naming a binding the module no longer
-        declares. A binding that code the model cannot read could name keeps its declarator for the
-        same reason: every read this file spells may have folded, and the surface — a direct
-        `eval`, a span of source the model never read, a `with` body — reads the binding through
-        no reference the inlining counted, so removing the declaration would turn its value into
-        a `ReferenceError`. An opaque global write is not such a surface: it stores a property
-        and runs nothing, and the reads it could replace were ordered against it before they
-        folded, so the property it may write is the same residual the fold already concedes.
+        Decide which declarators of the round-inlined names are up for removal. The prediction —
+        the name's entry count against the substitutions planned for it — is a pre-filter only: a
+        substitution whose value is an identifier adds a read the entry count never saw, so the plan
+        counts references on the tree its substitutions leave behind before it removes anything.
+        For `const` qualified candidates the entry count is taken over the full subtree since
+        cross-function inlining may fold reads inside nested functions. An exported binding keeps
+        its declarator even with every local read inlined, because an importer still reads it
+        across the module boundary; removing it would leave an `export` naming a binding the module
+        no longer declares. A binding that code the model cannot read could name keeps its
+        declarator for the same reason: every read this file spells may have folded, and the
+        surface — a direct `eval`, a span of source the model never read, a `with` body — reads the
+        binding through no reference the inlining counted, so removing the declaration would turn
+        its value into a `ReferenceError`. An opaque global write is not such a surface: it stores a
+        property and runs nothing, and the reads it could replace were ordered against it before
+        they folded, so the property it may write is the same residual the fold already concedes.
         """
-        assert self._root is not None
-        model = model_cache(self, self._root).model
-        decl_ids = _candidate_decl_ids(candidates)
+        model = cache.model
         ref_counts = _count_scope_references(
-            scope, set(inlined), decl_ids, walk_full=True,
+            scope, set(planned), decl_ids, walk_full=True,
         )
 
-        for name in inlined:
-            remaining = ref_counts.get(name, 0)
-            if remaining > 0:
+        removals: list[_DeclaratorRemoval] = []
+        for name in planned:
+            if ref_counts.get(name, 0) > planned[name]:
                 continue
             entries = candidates.get(name)
             if entries is None:
@@ -929,8 +1029,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     or bool(binding.dynamic_refs)
                 ):
                     continue
-                remove_declarator(entry.declarator)
-                self.mark_changed()
+                removals.append(_DeclaratorRemoval(entry.declarator, name))
+        return removals
 
     @staticmethod
     def _collect_member_array_candidates(scope: Node) -> dict[str, _MemberArrayEntry]:
@@ -990,17 +1090,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
         return candidates
 
-    def _substitute_member_arrays(
+    def _decide_member_arrays(
         self,
         scope: Node,
         member_arrays: dict[str, _MemberArrayEntry],
-        inlined: dict[str, int],
-    ) -> None:
+    ) -> list[_Substitution]:
         """
-        Inline `X.Y[N]` → element for all collected member-array candidates. Walks the full
-        subtree (including nested function bodies) since these arrays are scope-level constants.
+        Decide the `X.Y[N]` → element inlines of one round for all collected member-array
+        candidates. Walks the full subtree (including nested function bodies) since these arrays
+        are scope-level constants.
         """
-        for node in list(scope.walk()):
+        substitutions: list[_Substitution] = []
+        for node in scope.walk():
             if not isinstance(node, JsMemberExpression) or not node.computed:
                 continue
             prop = node.property
@@ -1021,17 +1122,40 @@ class JsConstantInlining(ScopeProcessingTransformer):
             element = entry.array.elements[idx]
             if element is None or not is_literal(element):
                 continue
-            substituted = _replace_in_parent(node, _clone_node(element))
-            self._record_inline(substituted, key, inlined)
+            substitutions.append(_Substitution(node, element, key))
+        return substitutions
 
-    def _remove_dead_member_arrays(
+    def _decide_dead_member_arrays(
         self,
         scope: Node,
         member_arrays: dict[str, _MemberArrayEntry],
-        inlined: dict[str, int],
-    ) -> None:
+        planned: dict[str, int],
+    ) -> list[_MemberArrayRemoval]:
         """
-        Remove the assignment statement for member arrays where all references were inlined.
+        Decide which member-array assignment statements are up for removal, pre-filtering each key
+        the way `_decide_dead_declarators` pre-filters a name and leaving the authoritative count
+        of the `X.Y[...]` accesses that remain to the plan, which takes it on the tree its
+        substitutions leave behind.
+        """
+        remaining = self._count_member_array_accesses(
+            scope, {key for key in member_arrays if key in planned},
+        )
+        removals: list[_MemberArrayRemoval] = []
+        for key, entry in member_arrays.items():
+            if key not in planned:
+                continue
+            if remaining.get(key, 0) > planned[key]:
+                continue
+            removals.append(_MemberArrayRemoval(entry.assignment, key))
+        return removals
+
+    @staticmethod
+    def _count_member_array_accesses(scope: Node, keys: set[str]) -> dict[str, int]:
+        """
+        The computed `X.Y[...]` accesses standing in *scope*'s subtree per key in *keys*. Counted
+        over whatever tree stands when it is asked, which is what makes the apply-time count the
+        authoritative one: the decision-time call pre-filters against the entry snapshot and the
+        plan re-counts after its substitutions land.
         """
         remaining: dict[str, int] = {}
         for node in scope.walk():
@@ -1043,15 +1167,44 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if not isinstance(obj.object, JsIdentifier) or not isinstance(obj.property, JsIdentifier):
                 continue
             key = F'{obj.object.name}.{obj.property.name}'
-            if key in member_arrays:
+            if key in keys:
                 remaining[key] = remaining.get(key, 0) + 1
+        return remaining
 
-        for key, entry in member_arrays.items():
-            if key not in inlined:
+    def _apply_plan(self, plan: _ScopePlan) -> None:
+        for sub in plan.substitutions:
+            if not is_attached(sub.target):
                 continue
-            if remaining.get(key, 0) > 0:
+            clone = _clone_node(sub.value)
+            if isinstance(sub.target, JsIdentifier):
+                substituted = substitute_use_position(sub.target, clone)
+            else:
+                substituted = _replace_in_parent(sub.target, clone)
+            if not substituted:
                 continue
-            stmt = entry.assignment.parent
-            if isinstance(stmt, JsExpressionStatement):
-                _remove_from_parent(stmt)
+            self.mark_changed()
+            self._edits_applied += 1
+        if plan.declarator_removals:
+            ref_counts = _count_scope_references(
+                plan.scope, set(plan.planned), plan.decl_ids, walk_full=True,
+            )
+            for removal in plan.declarator_removals:
+                if ref_counts.get(removal.key, 0) > 0:
+                    continue
+                if not is_attached(removal.declarator):
+                    continue
+                remove_declarator(removal.declarator)
                 self.mark_changed()
+                self._edits_applied += 1
+        if plan.member_array_removals:
+            keys = {removal.key for removal in plan.member_array_removals}
+            remaining = self._count_member_array_accesses(plan.scope, keys)
+            for removal in plan.member_array_removals:
+                if remaining.get(removal.key, 0) > 0:
+                    continue
+                if not is_attached(removal.assignment):
+                    continue
+                stmt = removal.assignment.parent
+                if isinstance(stmt, JsExpressionStatement) and _remove_from_parent(stmt):
+                    self.mark_changed()
+                    self._edits_applied += 1
