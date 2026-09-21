@@ -298,14 +298,23 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
 
 #: A completion the script yields from a position the wrapper inliners do not own: an `eval` whose
 #: body completes empty, a fall-off construction inside a block at the file's tail, a store whose value
-#: is the file's completion, and a control-flow-flattened dispatcher whose recovered straight-line code
-#: would answer with a value the loop did not. Node evaluates all but the store to `undefined`, and the
-#: store to `1`, under both the eval and the script model.
+#: is the file's completion, a control-flow-flattened dispatcher whose last case loops back with a bare
+#: `continue` so the exhausted dispatch washes the completion to `undefined`, and one whose last case
+#: leaves the switch instead so the loop completes with that case's own value. The last two are `eval`
+#: bodies that answer with a value only when a branch or a loop runs, which an inlined body reproduces
+#: on its own — an appended `void 0` would wrongly force `undefined` over them — and a store carried to
+#: the completion by a `break` reached ahead of the dead statement that appears to shadow it. Node
+#: evaluates these to `undefined`, `undefined`, `1`, `undefined`, `44`, `5`, `2`, and `111`
+#: respectively, under both the eval and the script model.
 A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
     '5; eval("var x = 1");',
     '7; { new Function("42")(); }',
     '1 + 1;\nglobalThis.h = 1;',
     "var o=['a','b'],i=0; while(true){switch(o[i++]){case 'a': 10; continue; case 'b': 22; continue;} break;}",
+    "var p=['a','b'],j=0; while(true){switch(p[j++]){case 'a': 3; continue; case 'b': 44;} break;}",
+    '9; eval("if (globalThis) 5");',
+    '9; eval("for (var k = 0; k < 3; k++) k");',
+    'while (true) { globalThis.g = 111; break; globalThis.gg; }',
 )
 
 

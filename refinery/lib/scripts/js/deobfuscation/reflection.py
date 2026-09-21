@@ -43,7 +43,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
     access_key,
-    body_completes_empty,
     body_returns_undefined,
     extract_literal_value,
     get_body,
@@ -59,6 +58,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     replace_with_value,
     rewrite_receiver_this_to_global,
     sanitize_inlined_body,
+    seed_script_end_value,
     string_value,
     walk_scope,
 )
@@ -113,6 +113,23 @@ class ReflectedScope(enum.Enum):
     FUNCTION_CONSTRUCTOR = enum.auto()
     GLOBAL_EVAL = enum.auto()
     DIRECT_EVAL = enum.auto()
+
+
+class _EndValueMode(enum.Enum):
+    """
+    How an inlined reflective body must be adapted to hold the script's completion under
+    `preserve_script_return`, decided by the reflective form's own completion semantics. A constructed
+    function or an `execScript` that ran off its end returned `undefined` regardless of the value its
+    body's tail answers with, so an appended `void 0` forces the completion to `undefined`
+    (`FORCE_UNDEFINED`). A direct or indirect `eval` returned its code's own completion, so a prepended
+    `void 0` seeds the completion at `undefined` only where the code may complete empty, leaving a value
+    the body answers with in place (`SEED_UNDEFINED`, applied by `seed_script_end_value`). A form that
+    already carries its value — a trailing `return x` the splice exposed as the tail expression — needs
+    no adaptation (`NONE`).
+    """
+    NONE = enum.auto()
+    FORCE_UNDEFINED = enum.auto()
+    SEED_UNDEFINED = enum.auto()
 
 
 def _try_parse(
@@ -1053,18 +1070,22 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 if resolved is None:
                     i += 1
                     continue
-                returns_undefined, parsed = resolved
+                mode, parsed = resolved
                 parsed = sanitize_inlined_body(parsed)
                 if parsed is None:
                     self._pending_atomic.pop(id(original), None)
                     i += 1
                     continue
-                if preserves_script_return(self.options):
-                    parsed = preserve_script_end_value(
-                        parsed,
-                        returns_undefined=returns_undefined,
-                        reaches_completion=reaches_script_completion(original, root),
-                    )
+                if preserves_script_return(self.options) and mode is not _EndValueMode.NONE:
+                    reaches = reaches_script_completion(original, root)
+                    if mode is _EndValueMode.SEED_UNDEFINED:
+                        parsed = seed_script_end_value(parsed, reaches_completion=reaches)
+                    else:
+                        parsed = preserve_script_end_value(
+                            parsed,
+                            returns_undefined=True,
+                            reaches_completion=reaches,
+                        )
                 # The deletions an atomically admitted fold carries run before the splice, so the
                 # statements the loop still holds keep their positions.
                 i -= self._remove_consumed_temporaries_of(original, container, i)
@@ -1142,23 +1163,23 @@ class JsReflectionInlining(ScriptLevelTransformer):
 
     def _try_resolve_statement(
         self, stmt: Statement, root: JsScript, at_global_scope: bool,
-    ) -> tuple[bool, list[Statement]] | None:
+    ) -> tuple[_EndValueMode, list[Statement]] | None:
         """
         Resolve a statement-position reflective call to the statements it should become, paired with
-        whether the call handed back `undefined`, or `None`. A `Function`-constructor pack is unpacked
-        and its substituted body admitted like any constructed body; a direct or indirect `eval` and a
-        `Function` body are handled by `_resolve_reflected_call`; `execScript("code")` runs its code
-        synchronously in the global scope and discards the value, so at statement position it is
-        replaced by that code inlined in place. An `await`-ed call is not a plain call expression here,
-        so it is left for the expression pass, which rewrites the `eval` inside `await eval("expr")` to
-        `await (expr)` without dropping the `await`.
+        how its completion must be held under `preserve_script_return`, or `None`. A
+        `Function`-constructor pack is unpacked and its substituted body admitted like any constructed
+        body; a direct or indirect `eval` and a `Function` body are handled by
+        `_resolve_reflected_call`; `execScript("code")` runs its code synchronously in the global scope
+        and discards the value, so at statement position it is replaced by that code inlined in place.
+        An `await`-ed call is not a plain call expression here, so it is left for the expression pass,
+        which rewrites the `eval` inside `await eval("expr")` to `await (expr)` without dropping the
+        `await`.
 
-        The first element is whether the call handed back `undefined`. A constructed function does
-        unless its body ends in a value `return`, and `execScript` always does. An `eval` hands back
-        its own code's completion — `undefined` exactly when that code completes empty
-        (`body_completes_empty`), a value otherwise — which the inlined body reproduces only where it
-        too answers the completion; a body that completes empty leaves an earlier statement answering,
-        so the caller must hold the completion at `undefined` there as much as for a constructed body.
+        The first element is the completion adaptation the inlined body needs (`_EndValueMode`). A
+        constructed function and `execScript` returned `undefined` unless the body ends in a value
+        `return` the splice exposes, so a fall-off body is forced to `undefined`. An `eval` returned its
+        own code's completion — a value the code answers with, or `undefined` where it completes empty —
+        which the inlined body reproduces on its own, seeded at `undefined` for the empty run.
         """
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
@@ -1178,7 +1199,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             )
             if parsed is None:
                 return None
-            return True, parsed.body
+            return _EndValueMode.FORCE_UNDEFINED, parsed.body
         pack = _try_unpack_function_constructor(
             node,
             free_global_name=self._free_global,
@@ -1192,7 +1213,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
             )
             if admitted is None:
                 return None
-            return body_returns_undefined(admitted.body), list(admitted.body)
+            constructed = (
+                _EndValueMode.FORCE_UNDEFINED
+                if body_returns_undefined(admitted.body)
+                else _EndValueMode.NONE
+            )
+            return constructed, list(admitted.body)
         if _is_pack_shaped(node, free_global_name=self._free_global):
             return None
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
@@ -1200,10 +1226,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         scope, script = resolved
         if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
-            returns_undefined = body_returns_undefined(script.body)
+            mode = (
+                _EndValueMode.FORCE_UNDEFINED
+                if body_returns_undefined(script.body)
+                else _EndValueMode.NONE
+            )
         else:
-            returns_undefined = body_completes_empty(script.body)
-        return returns_undefined, script.body
+            mode = _EndValueMode.SEED_UNDEFINED
+        return mode, script.body
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
         resolved = self._resolve_reflected_call(node, node, root, at_global_scope=False)

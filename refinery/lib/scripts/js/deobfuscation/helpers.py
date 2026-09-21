@@ -1635,9 +1635,12 @@ def reaches_script_completion(stmt: Node, root: JsScript) -> bool:
     conditional or iterative ancestor is passed through: its branch may or may not run, so a statement
     it guards is conservatively still able to reach the completion. A function boundary is the end of
     the walk: a statement inside a function supplies that function's return, not the script's, so a
-    body reached through a function node never reaches the script completion. This is the position
-    every pass that would drop or rewrite a completion-supplying statement must spare under
-    `preserve_script_return`.
+    body reached through a function node never reaches the script completion. Only a *reachable* later
+    sibling can shadow: the scan for one stops at a `break` or `continue`, which ends the block's
+    straight-line run so nothing behind it executes — the value the abrupt exit carries out to the
+    loop it targets is the one standing when it runs, which the climb then follows into that loop.
+    This is the position every pass that would drop or rewrite a completion-supplying statement must
+    spare under `preserve_script_return`.
     """
     node: Node = stmt
     while node is not root:
@@ -1647,11 +1650,12 @@ def reaches_script_completion(stmt: Node, root: JsScript) -> bool:
         body = get_body(parent)
         if body is not None:
             index = next((k for k, s in enumerate(body) if s is node), None)
-            if index is not None and any(
-                definitely_answers_the_completion(later)
-                for later in body[index + 1:]
-            ):
-                return False
+            if index is not None:
+                for later in body[index + 1:]:
+                    if definitely_answers_the_completion(later):
+                        return False
+                    if isinstance(later, (JsBreakStatement, JsContinueStatement)):
+                        break
         node = parent
     return True
 
@@ -1692,6 +1696,31 @@ def preserve_script_end_value(
     if not (reaches_completion and returns_undefined):
         return statements
     return [*statements, JsExpressionStatement(expression=make_undefined_expression())]
+
+
+def seed_script_end_value(
+    statements: list[Statement],
+    *,
+    reaches_completion: bool,
+) -> list[Statement]:
+    """
+    Adapt an inlined `eval` body so that, where it replaces an `eval` whose value reached the script's
+    completion, the script still hands back the value the `eval` did. A direct or indirect `eval`
+    returns its own code's completion — a value the code answers with, or `undefined` where the code
+    completes empty. The inlined body reproduces that value on its own wherever the body answers the
+    completion; where it completes empty (`body_completes_empty`) the completion is instead the value
+    of an earlier statement standing before the splice, which the `eval` had washed away to
+    `undefined`. A `void 0` prepended ahead of such a body seeds the completion at `undefined`, so an
+    empty run yields `undefined` while a value the body does supply at run time — from a branch or a
+    loop no static test could prove would answer — still overrides the seed through the language's
+    completion rule. This holds the `eval` in both outcomes, unlike a `void 0` appended, which would
+    force `undefined` even over a value the body answers with. The seed is placed only where the body
+    answers no completion, so no Directive Prologue that a statement ahead of it could end is ever
+    present at its head.
+    """
+    if not (reaches_completion and body_completes_empty(statements)):
+        return statements
+    return [JsExpressionStatement(expression=make_undefined_expression()), *statements]
 
 
 def insert_after_prologue(host: Node, statements: list[Statement]) -> None:

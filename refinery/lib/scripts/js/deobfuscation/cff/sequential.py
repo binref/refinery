@@ -53,10 +53,22 @@ def _strip_trailing_flow(stmts: list[Statement]) -> list[Statement]:
     return stmts
 
 
+def _case_loops_back(stmts: list[Statement]) -> bool:
+    """
+    Whether a switch case runs on into the next dispatch iteration rather than leaving the loop: its
+    body ends in a bare `continue`, which returns to the `while (true)` head. A case that ends in a
+    bare `break`, or in neither, instead leaves the switch and falls to the loop's trailing `break`,
+    so the loop completes with that case's own value rather than the `undefined` an exhausted dispatch
+    washes in.
+    """
+    return bool(stmts) and isinstance(stmts[-1], JsContinueStatement) and stmts[-1].label is None
+
+
 class _DispatcherMatch(NamedTuple):
     order_var: str
     counter_var: str
     case_map: dict[str, list[Statement]]
+    loops_back: dict[str, bool]
     dispatch: Node
 
 
@@ -105,6 +117,7 @@ def _match_dispatcher(
         return None
     counter_var = prop.argument.name
     case_map: dict[str, list[Statement]] = {}
+    loops_back: dict[str, bool] = {}
     for case in switch.cases:
         if not isinstance(case, JsSwitchCase) or case.test is None:
             return None
@@ -114,8 +127,9 @@ def _match_dispatcher(
                 label = js_number_to_string(case.test.value)
             else:
                 return None
+        loops_back[label] = _case_loops_back(case.body)
         case_map[label] = _strip_trailing_flow(case.body)
-    return _DispatcherMatch(order_var, counter_var, case_map, disc)
+    return _DispatcherMatch(order_var, counter_var, case_map, loops_back, disc)
 
 
 def _extract_order_sequence(node: Node | None) -> list[str] | None:
@@ -233,10 +247,12 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
     """
     Detect and recover CFF dispatchers in function bodies and script-level code.
 
-    The `while (true) { switch (order[i++]) ... } break;` dispatcher completes `undefined` and
-    shadows any earlier statement's value, so under `preserve_script_return` the recovered
-    straight-line code — whose own tail would answer with a value — holds the script's completion at
-    `undefined` where the dispatcher stood at the completion position.
+    A dispatcher whose last dispatched case runs on with a bare `continue` exhausts its order array,
+    matches no case, and completes `undefined`; a last case that instead leaves the switch reaches the
+    loop's own trailing `break` and completes with that case's value. Under `preserve_script_return`
+    the recovered straight-line code holds the script's completion at `undefined` only in the former
+    case — decided per dispatcher by whether the last dispatched case loops back — where the dispatcher
+    stood at the completion position and the recovered tail would otherwise answer with a value.
     """
 
     def __init__(self):
@@ -286,9 +302,10 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
             for label in order_info.order_sequence:
                 recovered.extend(match.case_map[label])
             if preserves_script_return(self.options):
+                last_label = order_info.order_sequence[-1] if order_info.order_sequence else None
                 recovered = preserve_script_end_value(
                     recovered,
-                    returns_undefined=True,
+                    returns_undefined=last_label is None or match.loops_back[last_label],
                     reaches_completion=reaches_script_completion(stmt, self._root),
                 )
             replacement = body[:order_info.first_init_idx] + recovered + body[i + 1:]
