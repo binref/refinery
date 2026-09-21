@@ -16,6 +16,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     binding_has_references,
     is_while_true,
+    preserve_script_end_value,
+    reaches_script_completion,
     string_value,
 )
 from refinery.lib.scripts.js.model import (
@@ -36,6 +38,7 @@ from refinery.lib.scripts.js.model import (
     JsWhileStatement,
 )
 from refinery.lib.scripts.js.numbers import js_number_to_string
+from refinery.lib.scripts.js.options import preserves_script_return
 
 
 def _strip_trailing_flow(stmts: list[Statement]) -> list[Statement]:
@@ -229,6 +232,11 @@ def _consumed_only_by_dispatcher(
 class JsControlFlowUnflattening(BodyProcessingTransformer):
     """
     Detect and recover CFF dispatchers in function bodies and script-level code.
+
+    The `while (true) { switch (order[i++]) ... } break;` dispatcher completes `undefined` and
+    shadows any earlier statement's value, so under `preserve_script_return` the recovered
+    straight-line code — whose own tail would answer with a value — holds the script's completion at
+    `undefined` where the dispatcher stood at the completion position.
     """
 
     def __init__(self):
@@ -277,6 +285,12 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
                 recovered.append(decl_stmt)
             for label in order_info.order_sequence:
                 recovered.extend(match.case_map[label])
+            if preserves_script_return(self.options):
+                recovered = preserve_script_end_value(
+                    recovered,
+                    returns_undefined=True,
+                    reaches_completion=reaches_script_completion(stmt, self._root),
+                )
             replacement = body[:order_info.first_init_idx] + recovered + body[i + 1:]
             self._replace_body(parent, replacement)
             i = order_info.first_init_idx + len(recovered)

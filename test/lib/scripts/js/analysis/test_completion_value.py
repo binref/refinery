@@ -297,13 +297,15 @@ class TestPreserveScriptReturnHoldsAWrapperEndValue(TestBase):
 
 
 #: A completion the script yields from a position the wrapper inliners do not own: an `eval` whose
-#: body completes empty, a fall-off construction inside a block at the file's tail, and a store whose
-#: value is the file's completion. Node evaluates the first two to `undefined` and the third to `1`,
-#: under both the eval and the script model.
+#: body completes empty, a fall-off construction inside a block at the file's tail, a store whose value
+#: is the file's completion, and a control-flow-flattened dispatcher whose recovered straight-line code
+#: would answer with a value the loop did not. Node evaluates all but the store to `undefined`, and the
+#: store to `1`, under both the eval and the script model.
 A_COMPLETION_POSITION_THE_OPTION_HOLDS = (
     '5; eval("var x = 1");',
     '7; { new Function("42")(); }',
     '1 + 1;\nglobalThis.h = 1;',
+    "var o=['a','b'],i=0; while(true){switch(o[i++]){case 'a': 10; continue; case 'b': 22; continue;} break;}",
 )
 
 
@@ -314,7 +316,9 @@ class TestPreserveScriptReturnHoldsEveryCompletionPosition(TestBase):
     it, not only at the wrapper-inliner sites. An `eval` whose body completes empty returned `undefined`
     the inlined declaration would expose a tail value for; a fall-off construction inside a block at the
     file's tail decides the completion the same as one at the root; the dead-store sweep would drop a
-    store whose value is the completion. An `eval` or a `vm` run of the fold receives what it did before.
+    store whose value is the completion; a control-flow-flattened dispatcher completes `undefined` while
+    its recovered straight-line code would answer with a value. An `eval` or a `vm` run of the fold
+    receives what it did before.
     """
 
     def test_the_option_holds_the_completion_at_every_position(self):

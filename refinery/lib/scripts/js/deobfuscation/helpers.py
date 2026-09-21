@@ -1633,13 +1633,16 @@ def reaches_script_completion(stmt: Node, root: JsScript) -> bool:
     sibling that certainly answers the completion (`definitely_answers_the_completion`) shadows
     everything before it, so *stmt*'s value can never reach the end and the answer is `False`. A
     conditional or iterative ancestor is passed through: its branch may or may not run, so a statement
-    it guards is conservatively still able to reach the completion. This is the position every pass
-    that would drop or rewrite a completion-supplying statement must spare under `preserve_script_return`.
+    it guards is conservatively still able to reach the completion. A function boundary is the end of
+    the walk: a statement inside a function supplies that function's return, not the script's, so a
+    body reached through a function node never reaches the script completion. This is the position
+    every pass that would drop or rewrite a completion-supplying statement must spare under
+    `preserve_script_return`.
     """
     node: Node = stmt
     while node is not root:
         parent = node.parent
-        if parent is None:
+        if parent is None or isinstance(parent, JsFunctionNode):
             return False
         body = get_body(parent)
         if body is not None:

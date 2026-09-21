@@ -34,7 +34,9 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
+    JsEvaluation,
     behavior,
+    completion_values,
     deobfuscate_source,
     module_graph_behavior,
     node_executable,
@@ -2382,3 +2384,45 @@ class TestASetterSwappedOntoObjectPrototypeIsNotSeen(TestBase):
             """
         )
         self.assertEqual(source, deobfuscate_source(source))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestPreserveScriptReturnDoesNotHoldASelfDefendingGuardCompletion(TestBase):
+    """
+    `preserve_script_return` holds the script's completion at every position but one: the value of a
+    self-defending guard call. The guard `g = a(this, function(){ ... })` and its bare call `g()` are a
+    single apparatus the deobfuscation removes whole; where that call is the script's completion the
+    value falls from the guard's result to `undefined`. The removal is left ungated on purpose: sparing
+    the call to hold its value keeps the whole self-defense apparatus alive and the pipeline that would
+    take it apart never converges (a `DeobfuscationTimeout`), and a guard read for its value rather than
+    armed for its effect is a shape no real payload carries. Node evaluates the original guard call to
+    `0` and the fold to `undefined`.
+    """
+
+    _DEFENSE_CODE = (
+        'var a = (function() {'
+        '  var b = true;'
+        '  return function(c, d) {'
+        '    var e = b ? function() {'
+        '      if (d) { var f = d.apply(c, arguments); return d = null, f; }'
+        '    } : function() {};'
+        '    return b = false, e;'
+        '  };'
+        '}()), g = a(this, function() {'
+        "  return g.toString().search('(((.+)+)+)+$')"
+        "    .toString().constructor(g).search('(((.+)+)+)+$');"
+        '});'
+    )
+
+    @unittest.expectedFailure
+    def test_it_holds_a_self_defending_guard_call_at_the_completion(self):
+        source = self._DEFENSE_CODE + 'g();'
+        deobfuscated = deobfuscate_source(source, preserve_script_return=True)
+        for evaluation in JsEvaluation:
+            with self.subTest(evaluation=evaluation.value):
+                self.assertEqual(
+                    completion_values([deobfuscated], evaluation),
+                    completion_values([source], evaluation),
+                    F'preserve_script_return changed the completion; result was:'
+                    F'{chr(10)}{deobfuscated}',
+                )

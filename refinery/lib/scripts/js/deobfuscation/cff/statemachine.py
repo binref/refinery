@@ -30,6 +30,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     make_numeric_literal,
     member_key,
     property_key,
+    sanitize_inlined_body,
     substitute_use_position,
 )
 from refinery.lib.scripts.js.model import (
@@ -3046,10 +3047,11 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
             if match.arg_params:
                 recovered = _emit_arg_param_declarations(match) + recovered
             if is_script:
-                recovered = self._sanitize_for_script_scope(recovered)
-                if recovered is None:
+                sanitized = sanitize_inlined_body(recovered)
+                if sanitized is None:
                     i += 1
                     continue
+                recovered = sanitized
             for s in recovered:
                 s.parent = parent
             start = match.gen_decl_index
@@ -3057,16 +3059,3 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
             replacement = body[:start] + recovered + body[end + 1:]
             self._replace_body(parent, replacement)
             i = start + len(recovered)
-
-    @staticmethod
-    def _sanitize_for_script_scope(stmts: list[Statement]) -> list[Statement] | None:
-        for stmt in stmts[:-1] if stmts else ():
-            if isinstance(stmt, JsReturnStatement):
-                return None
-        if stmts and isinstance(stmts[-1], JsReturnStatement):
-            last = stmts[-1]
-            if last.argument is not None:
-                stmts = stmts[:-1] + [JsExpressionStatement(expression=last.argument)]
-            else:
-                stmts = stmts[:-1]
-        return stmts
