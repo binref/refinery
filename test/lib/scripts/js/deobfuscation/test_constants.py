@@ -1759,6 +1759,63 @@ class TestConstantInlining(TestJsDeobfuscator):
             {source: self._inline(source) for source in rows},
         )
 
+    def test_a_shadowing_declaration_folds_its_outer_name_away_in_the_same_round(self):
+        """
+        The nested scope's plan substitutes its own `K` and removes its declarator in the same
+        round the outer plan substitutes the outer `K`, so the outer declarator's liveness can only
+        be judged on the tree the inner plan leaves behind. A removal gated on the entry count —
+        which counts the nested binding occurrence and the reads that resolve to it — is held back
+        forever, because later rounds plan no substitutions to re-decide it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  console.log(9);
+                }
+                f();
+                console.log(5);
+                """
+            ),
+            self._inline(A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE[
+                'a shadowing declaration in a nested scope']),
+        )
+
+    def test_a_shadowing_declaration_two_scopes_deep_folds_its_outer_name_away(self):
+        """
+        The same shape with the shadowing declaration one scope further in: the plans of `g`, `f`,
+        and the script all apply in one round, and the script plan's removal is judged after the
+        plans beneath it landed, the position the sequential self decides from.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  function g() {
+                    console.log(9);
+                  }
+                  g();
+                }
+                f();
+                console.log(5);
+                """
+            ),
+            self._inline(A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE[
+                'a shadowing declaration two scopes deep']),
+        )
+
+    @a_property_of_the_batch_itself
+    def test_a_round_a_shadowing_declaration_shares_folds_the_same_way_one_plan_at_a_time(self):
+        """
+        The sequential self decides the outer removal after the nested plans have applied; the
+        batched self decides it before and counts at apply time instead, and the two agree.
+        """
+        rows = A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE
+        self.assertEqual(
+            {source: self._inline_one_plan_at_a_time(source) for source in rows},
+            {source: self._inline(source) for source in rows},
+        )
+
 
 class TestRegressionBugs(TestJsDeobfuscator):
 
@@ -2049,6 +2106,48 @@ AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND = {
         'const K = 5; function inner() { var t = K + 1; console.log(t); } inner();'
     ),
 }
+
+#: Programs where a nested scope declares a name the outer round inlines under, its own
+#: substitution and removal landing in the same round as the outer one: the entry count the outer
+#: removal would be gated on counts the nested binding occurrence and the reads that resolve to
+#: it, reads the nested plan deletes, so only the count the plan takes once the round's
+#: substitutions have landed can call the outer declarator dead.
+A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE = {
+    'a shadowing declaration in a nested scope': (
+        'var K = 5; function f() { var K = 9; console.log(K); } f(); console.log(K);'
+    ),
+    'a shadowing declaration two scopes deep': (
+        'var K = 5; function f() { function g() { var K = 9; console.log(K); } g(); }'
+        ' f(); console.log(K);'
+    ),
+}
+
+#: What Node prints for each program of `A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE`
+#: — and for the text it is deobfuscated to, which is the agreement the entry exists for.
+WHAT_A_DECLARATION_THAT_SHARES_ITS_ROUND_PRINTS = {
+    A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE[
+        'a shadowing declaration in a nested scope'
+    ]: '9\n5\n',
+    A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE[
+        'a shadowing declaration two scopes deep'
+    ]: '9\n5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutADeclarationThatSharesItsRound(TestBase):
+
+    def test_the_outer_name_still_prints_the_same(self):
+        """
+        Node prints `9` then `5` for both programs — the nested read folds to the shadowing value
+        and the outer read to the outer one — and prints the same two lines for the texts they are
+        deobfuscated to.
+        """
+        rows = WHAT_A_DECLARATION_THAT_SHARES_ITS_ROUND_PRINTS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
 #: What Node prints for each program of `AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND`
 #: — and for the text it is deobfuscated to, which is the agreement the entry exists for.

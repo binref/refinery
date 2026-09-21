@@ -100,11 +100,11 @@ class _Substitution(NamedTuple):
 
 class _DeclaratorRemoval(NamedTuple):
     """
-    One declarator of a round-inlined name that passed every decision-time guard — the prediction
-    that its remaining reads fold, and the binding guards a model must answer — leaving the
-    authoritative count to the plan, which takes it on the tree its substitutions leave behind: a
-    substitution whose value is an identifier adds a read the entry count never saw, so only the
-    post-substitution tree can say a declarator is dead.
+    One declarator of a round-inlined name that passed the binding guards a model must answer,
+    leaving liveness to the plan, which counts references on the tree its substitutions leave
+    behind: a count taken before the round's plans apply cannot see the reads another plan of the
+    same round deletes, and a substitution whose value is an identifier adds a read the entry
+    snapshot never saw, so only the post-substitution tree can say a declarator is dead.
     """
     declarator: JsVariableDeclarator
     key: str
@@ -112,8 +112,9 @@ class _DeclaratorRemoval(NamedTuple):
 
 class _MemberArrayRemoval(NamedTuple):
     """
-    One member-array assignment statement that passed the same decision-time guards
-    `_DeclaratorRemoval` does, counted the same way where the plan applies it.
+    One member-array assignment statement of a round-substituted key, decided the way
+    `_DeclaratorRemoval` is: proposed here, held alive or dead by the plan's own count of the
+    accesses that remain once its substitutions have landed.
     """
     assignment: JsAssignmentExpression
     key: str
@@ -122,16 +123,15 @@ class _MemberArrayRemoval(NamedTuple):
 class _ScopePlan(NamedTuple):
     """
     One round of edits for one scope, decided against the round's entry snapshot: the scope the
-    plan counts references in, the substitutions, the removals that passed their decision-time
-    guards, the declaration-site ids the count excludes, and the per-key planned counts its
-    pre-filters read.
+    plan counts references in, the substitutions, the removals the binding guards admitted, the
+    declaration-site ids the count excludes, and the keys its substitutions cover.
     """
     scope: Node
     substitutions: list[_Substitution]
     declarator_removals: list[_DeclaratorRemoval]
     member_array_removals: list[_MemberArrayRemoval]
     decl_ids: set[int]
-    planned: dict[str, int]
+    planned: set[str]
 
 
 def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
@@ -357,15 +357,12 @@ def _reader_qualifies(
     return dominance.runs_before_every_invocation(value, reader)
 
 
-def _planned_counts(substitutions: list[_Substitution]) -> dict[str, int]:
+def _planned_keys(substitutions: list[_Substitution]) -> set[str]:
     """
-    The per-key substitution counts a plan's removal gates read, replacing the `inlined` dict the
-    mutating form of this pass accumulated as it edited.
+    The keys a plan's substitutions cover: the removal decisions propose the names and keys they
+    hold, and the plan's reference count walk counts the variable names among them.
     """
-    planned: dict[str, int] = {}
-    for sub in substitutions:
-        planned[sub.key] = planned.get(sub.key, 0) + 1
-    return planned
+    return {sub.key for sub in substitutions}
 
 
 class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
@@ -402,12 +399,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
       `EffectModel.static_callee`, `EffectModel.function_can_mutate` — over functions the batch
       never rewrites. Removing a call site removes a mutation opportunity rather than adding one,
       so a function that could not write a binding still cannot.
-    - The reference counts the removals are decided on: the entry snapshot predicts which names may
-      fold to zero reads, but the authoritative count is taken at apply time, on the tree the
-      plan's own substitutions leave behind — a substitution whose value is an identifier adds a
-      read the entry count never saw, and `is_attached` refuses the substitutions an earlier plan
-      detached — so a count another plan's edit disturbed holds its removal back to the next round
-      rather than deleting a declaration a live read still needs.
+    - The reference counts that gate removals: no removal decision reads one — a count taken
+      before the round's plans apply cannot see the reads another plan of the same round deletes,
+      a nested scope's shadowing declaration folding alongside the outer one — so the plan alone
+      decides, counting references on the tree its own substitutions leave behind, where a
+      substitution whose value is an identifier adds a read the entry snapshot never saw and
+      `is_attached` refuses the substitutions an earlier plan detached. A count another plan's
+      edit disturbed holds its removal back to the next round rather than deleting a declaration
+      a live read still needs.
     """
 
     def __init__(self, max_inline_length: int = 64):
@@ -439,13 +438,13 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             substitutions = self._decide_expressions(scope, candidates, mutated, cache)
         if not substitutions:
             return
-        planned = _planned_counts(substitutions)
+        planned = _planned_keys(substitutions)
         decl_ids = _candidate_decl_ids(candidates)
         self._submit(_ScopePlan(
             scope,
             substitutions,
-            self._decide_dead_declarators(scope, candidates, planned, decl_ids, cache),
-            self._decide_dead_member_arrays(scope, member_arrays, planned) if member_arrays else [],
+            self._decide_dead_declarators(candidates, planned, cache),
+            self._decide_dead_member_arrays(member_arrays, planned) if member_arrays else [],
             decl_ids,
             planned,
         ))
@@ -984,20 +983,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
     def _decide_dead_declarators(
         self,
-        scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-        planned: dict[str, int],
-        decl_ids: set[int],
+        planned: set[str],
         cache: ModelCache,
     ) -> list[_DeclaratorRemoval]:
         """
-        Decide which declarators of the round-inlined names are up for removal. The prediction —
-        the name's entry count against the substitutions planned for it — is a pre-filter only: a
-        substitution whose value is an identifier adds a read the entry count never saw, so the plan
-        counts references on the tree its substitutions leave behind before it removes anything.
-        For `const` qualified candidates the entry count is taken over the full subtree since
-        cross-function inlining may fold reads inside nested functions. An exported binding keeps
-        its declarator even with every local read inlined, because an importer still reads it
+        Decide which declarators of the round-inlined names are up for removal. No reference count
+        is read here: one taken before the round's plans apply cannot see the reads another plan of
+        the same round deletes — a nested scope's shadowing declaration folds alongside the outer
+        one — so every name the round substitutes is proposed and the plan alone decides, counting
+        references on the tree its substitutions leave behind. An exported binding keeps its
+        declarator even with every local read inlined, because an importer still reads it
         across the module boundary; removing it would leave an `export` naming a binding the module
         no longer declares. A binding that code the model cannot read could name keeps its
         declarator for the same reason: every read this file spells may have folded, and the
@@ -1008,14 +1004,8 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         they folded, so the property it may write is the same residual the fold already concedes.
         """
         model = cache.model
-        ref_counts = _count_scope_references(
-            scope, set(planned), decl_ids, walk_full=True,
-        )
-
         removals: list[_DeclaratorRemoval] = []
         for name in planned:
-            if ref_counts.get(name, 0) > planned[name]:
-                continue
             entries = candidates.get(name)
             if entries is None:
                 continue
@@ -1127,35 +1117,26 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
     def _decide_dead_member_arrays(
         self,
-        scope: Node,
         member_arrays: dict[str, _MemberArrayEntry],
-        planned: dict[str, int],
+        planned: set[str],
     ) -> list[_MemberArrayRemoval]:
         """
-        Decide which member-array assignment statements are up for removal, pre-filtering each key
-        the way `_decide_dead_declarators` pre-filters a name and leaving the authoritative count
-        of the `X.Y[...]` accesses that remain to the plan, which takes it on the tree its
-        substitutions leave behind.
+        Decide which member-array assignment statements are up for removal: every key the round
+        substitutes is proposed, and the plan alone decides, counting the `X.Y[...]` accesses that
+        remain once its substitutions have landed.
         """
-        remaining = self._count_member_array_accesses(
-            scope, {key for key in member_arrays if key in planned},
-        )
-        removals: list[_MemberArrayRemoval] = []
-        for key, entry in member_arrays.items():
-            if key not in planned:
-                continue
-            if remaining.get(key, 0) > planned[key]:
-                continue
-            removals.append(_MemberArrayRemoval(entry.assignment, key))
-        return removals
+        return [
+            _MemberArrayRemoval(entry.assignment, key)
+            for key, entry in member_arrays.items()
+            if key in planned
+        ]
 
     @staticmethod
     def _count_member_array_accesses(scope: Node, keys: set[str]) -> dict[str, int]:
         """
         The computed `X.Y[...]` accesses standing in *scope*'s subtree per key in *keys*. Counted
-        over whatever tree stands when it is asked, which is what makes the apply-time count the
-        authoritative one: the decision-time call pre-filters against the entry snapshot and the
-        plan re-counts after its substitutions land.
+        over whatever tree stands when it is asked, which is what makes it the authoritative
+        count: the plan asks once its substitutions have landed.
         """
         remaining: dict[str, int] = {}
         for node in scope.walk():
@@ -1186,7 +1167,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             self._edits_applied += 1
         if plan.declarator_removals:
             ref_counts = _count_scope_references(
-                plan.scope, set(plan.planned), plan.decl_ids, walk_full=True,
+                plan.scope, plan.planned, plan.decl_ids, walk_full=True,
             )
             for removal in plan.declarator_removals:
                 if ref_counts.get(removal.key, 0) > 0:

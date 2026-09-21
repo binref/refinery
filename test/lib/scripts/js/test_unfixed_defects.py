@@ -2504,3 +2504,68 @@ class TestAReadBelowAHoistTheConflictWalkNeverSaw(TestBase):
             'an outer namespace a bare read keeps'
         ]
         self.assertEqual(before_and_after(source), (prints('0 5'), prints('0 5')))
+
+
+#: A program whose member array one scope assigns and a sibling scope reads, mapped to what Node
+#: prints for it. The receiver is one the namespace flattener refuses — held in a parameter by the
+#: first row, named by a global the file creates by the second — since a locally-declared empty
+#: object carrying the shape is flattened whole before the pass reaches it. The key `X.Y` is the
+#: same in every position of both programs, and nothing else writes it.
+A_MEMBER_ARRAY_A_SIBLING_SCOPE_READS = {
+    (
+        'function outer(X) {\n'
+        '  function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
+        '  function g() { console.log(X.Y[1]); }\n'
+        '  f();\n'
+        '  g();\n'
+        '}\n'
+        'outer({});\n'
+    ): ('1\n2\n', None),
+
+    (
+        'globalThis.X = {};\n'
+        'function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
+        'function g() { console.log(X.Y[1]); }\n'
+        'f();\n'
+        'g();\n'
+    ): ('1\n2\n', None),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMemberArrayASiblingScopeReadsIsStillWritten(TestBase):
+    """
+    A member array is a property of a receiver every scope in the file shares, so the question of
+    whether a declaration of one is dead is a question about the whole file: an access a sibling
+    scope holds keeps the assignment alive wherever it stands. `refinery.lib.scripts.js
+    .deobfuscation.constants.JsConstantInlining` counts the `X.Y[...]` accesses of a key inside
+    the subtree of the scope whose own statements hold the assignment — the same subtree whose
+    walk decides the inlines — so an access in a sibling scope counts nowhere: it is never
+    substituted, and it holds no count against the removal, which takes the assignment statement
+    out and leaves the sibling reading a property nothing assigned.
+
+    A correct implementation either counts the key's accesses over the whole file or asks the
+    model which reads reach the receiver, the resolution the count's subtree restriction stands
+    in for. What makes the shape reachable at all is a receiver outside the flattener's grasp,
+    since a locally-declared empty object carrying it is flattened before the pass arrives and
+    the member array never forms; a parameter and a file-created global are the two ways around
+    that left standing here.
+
+    Off the release gate deliberately: the miscompile needs the receiver outside the flattener's
+    reach, the assignment and a surviving access in different function scopes, and the access
+    declined by the fold's own index rules — a shape no sample family observed so far spells,
+    the member arrays of real files being read by the same scope that holds them.
+    """
+
+    @unittest.expectedFailure
+    def test_the_assignment_a_sibling_still_reads_is_kept(self):
+        """
+        Node prints `1` and then `2` for both programs of `A_MEMBER_ARRAY_A_SIBLING_SCOPE_READS`.
+        Each deobfuscation prints `1` and then throws a `TypeError`, the sibling's read of `X.Y[1]`
+        having survived an assignment that no longer stands.
+        """
+        rows = A_MEMBER_ARRAY_A_SIBLING_SCOPE_READS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
