@@ -5,16 +5,15 @@ import inspect
 from test import TestBase
 
 from refinery.lib.scripts import Node, _remove_from_parent
+from refinery.lib.scripts.ps1.analysis.aliasdef import AliasDefinition, extract_alias_definition
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.commands import (
-    AliasDefinition,
     CommandKind,
     Denotation,
     Ps1CommandModel,
     build_command_model,
-    extract_alias_definition,
 )
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.world import WorldRole

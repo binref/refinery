@@ -58,8 +58,9 @@ from __future__ import annotations
 from typing import Sequence
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.analysis.aliasdef import AliasDefinition
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
-from refinery.lib.scripts.ps1.analysis.commands import AliasDefinition, CommandKind
+from refinery.lib.scripts.ps1.analysis.commands import CommandKind
 from refinery.lib.scripts.ps1.analysis.world import WorldRole
 from refinery.lib.scripts.ps1.ast import standalone_command_statement
 from refinery.lib.scripts.ps1.deobfuscation.helpers import set_command_name

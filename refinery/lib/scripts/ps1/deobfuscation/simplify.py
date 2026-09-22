@@ -8,7 +8,7 @@ from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
-from refinery.lib.scripts.ps1.ast import get_command_name
+from refinery.lib.scripts.ps1.ast import get_command_name, has_wildcard
 from refinery.lib.scripts.ps1.data import (
     ALL_PARAMETER_NAMES,
     KNOWN_PS_OPERATORS,
@@ -54,10 +54,6 @@ from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 _KNOWN_ENV_NAMES: dict[str, str] = {
     name.lower(): name for name in DEFAULT_ENVIRONMENT_TEMPLATE
 }
-
-
-def _has_wildcard(name: str) -> bool:
-    return any(c in name for c in '*?[')
 
 
 class Ps1Simplifications(Transformer):
@@ -342,7 +338,7 @@ class Ps1Simplifications(Transformer):
                             arg = arg.expression
                         # Only resolve a concrete command name; a wildcard pattern such as
                         # `gcm i*e-e*` must not be substituted verbatim as the command name.
-                        if isinstance(arg, Ps1StringLiteral) and not _has_wildcard(arg.value):
+                        if isinstance(arg, Ps1StringLiteral) and not has_wildcard(arg.value):
                             substitute_field(node, 'name', arg)
         if node.name is not old_name:
             self.mark_changed()
@@ -368,7 +364,7 @@ class Ps1Simplifications(Transformer):
                 if (
                     (SIMPLE_IDENTIFIER.match(name_val) or '-' in name_val)
                     and is_bare_command_name(name_val)
-                    and not _has_wildcard(name_val)
+                    and not has_wildcard(name_val)
                     and self._operator_is_noise(node)
                 ):
                     substitute_field(node, 'name', Ps1StringLiteral(

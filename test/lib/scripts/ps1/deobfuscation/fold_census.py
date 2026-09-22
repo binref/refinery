@@ -1321,6 +1321,8 @@ FOLDS: dict[str, str] = {
         '1, 2',
     '1..3 | ForEach-Object { $_ * 2 }':
         '2, 4, 6',
+    "Get-Command zzqnope -ErrorAction SilentlyContinue; Set-Alias zzq Write-Output; $?":
+        'Get-Command zzqnope -ErrorAction SilentlyContinue\nSet-Alias zzq Write-Output',
     "Get-Item nope -ErrorAc Stop; Write-Host 'after'":
         "Get-Item nope -ErrorAction Stop\nWrite-Host 'after'",
     "Get-Item nope -e Stop; Write-Host 'after'":

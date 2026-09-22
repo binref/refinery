@@ -154,6 +154,15 @@ def get_command_name(cmd: Ps1CommandInvocation) -> str | None:
     return None
 
 
+def has_wildcard(name: str) -> bool:
+    """
+    Whether `name` spells a wildcard pattern rather than one name. PowerShell reads `*`, `?` and
+    `[` in a name handed to a lookup — `Get-Command i*e-e*`, `Set-Alias zzq Write-*` — as a pattern
+    that may match many commands or none, never as the name of exactly one.
+    """
+    return any(character in name for character in '*?[')
+
+
 #: The scope qualifiers a command name may carry. Each selects which scope table the name is written
 #: to or read from, and none of them is part of the name. Spelled through the enum so the set cannot
 #: drift from the scopes the parser produces.
@@ -185,13 +194,12 @@ def normalize_command_name(name: str) -> str:
         name = rest
 
 
-def resolve_command_name(cmd: Ps1CommandInvocation) -> str | None:
+def resolve_command_spelling(name: str) -> str:
     """
-    The lowercased command name a call resolves to, following one level of known alias
-    (`ipmo` → `import-module`), or `None` when the name is not a static literal. A module qualifier
-    is dropped first and a scope qualifier after it, so that
-    `& 'Microsoft.PowerShell.Utility\\Invoke-Expression'` and `& 'global:iex'` each run what the
-    bare spelling runs.
+    The lowercased command the spelling `name` resolves to, following one level of known alias
+    (`ipmo` → `import-module`). A module qualifier is dropped first and a scope qualifier after it,
+    so that `Microsoft.PowerShell.Utility\\Invoke-Expression` and `global:iex` each resolve to what
+    the bare spelling runs.
 
     This is the *deny-list* reading of a name, and it is the exact opposite of what
     `normalize_command_name` advises for an allow-list. Resolving toward a bare name can only match
@@ -199,21 +207,26 @@ def resolve_command_name(cmd: Ps1CommandInvocation) -> str | None:
     nothing — every extra match is the conservative answer, and a spelling that dodges the table is
     the dangerous one. A table whose hits *grant* something must not read a name this way.
 
-    **What decides whether a qualified name arrives here whole is the call operator, not the
-    quoting.** `& Microsoft.PowerShell.Utility\\iex` and `& 'Microsoft.PowerShell.Utility\\iex'`
-    both reach this as one token, and so do both spellings of `& global:iex`. Written as a bare
-    command statement they do not: the lexer splits at the backslash and at the scope colon, so
-    `get_command_name` answers `'Microsoft.PowerShell.Utility'` and `'global'`, and every table
-    keyed on the bare spelling is dodged. That is a hole in the lexer rather than here, and it is
-    the dangerous direction on every caller — a world opener that reads as closed, a silent command
-    that reads as emitting. Until the lexer joins a qualified name, do not read this function as
-    evidence that every qualified call has been seen.
+    `resolve_command_name` is this reading of the name an invocation is written under. It is also
+    the reading for a caller holding a name and no node — a deny-list keyed on names, a binding
+    that spells the name it takes over — so that the name a table holds and the name a call arrives
+    under are resolved by one transform and cannot drift apart.
+    """
+    name = normalize_command_name(name.rpartition('\\')[2])
+    return KNOWN_ALIAS.get(name, name).lower()
+
+
+def resolve_command_name(cmd: Ps1CommandInvocation) -> str | None:
+    """
+    `resolve_command_spelling` of the name `cmd` is invoked under, or `None` when the name is not a
+    static literal. A qualified name reaches this whole under every spelling — `& global:iex`,
+    `& 'global:iex'` and the bare statement `global:iex` alike, and the same for a module qualifier
+    — so every table keyed on the bare spelling sees the qualified call.
     """
     name = get_command_name(cmd)
     if name is None:
         return None
-    name = normalize_command_name(name.rpartition('\\')[2])
-    return KNOWN_ALIAS.get(name, name).lower()
+    return resolve_command_spelling(name)
 
 
 def implicit_get_retry(name: str) -> str | None:

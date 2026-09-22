@@ -34,6 +34,7 @@ import enum
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, tree_version
+from refinery.lib.scripts.ps1.analysis.aliasdef import extract_alias_definition
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     get_member_name,
@@ -44,11 +45,11 @@ from refinery.lib.scripts.ps1.ast import (
     normalize_command_name,
     normalize_dotnet_type_name,
     resolve_command_name,
+    resolve_command_spelling,
     string_value,
     unwrap_assignment_target,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.data import KNOWN_ALIAS
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayLiteral,
@@ -194,22 +195,22 @@ def command_role(name: str) -> WorldRole:
     `WorldRole.UNKNOWN`: a name is by construction something this can look up, and not knowing what
     an invocation runs is a fact about the invocation rather than about any name.
 
-    The lookup key is the *deny-list* reading `refinery.lib.scripts.ps1.ast.resolve_command_name`
-    describes, taken here rather than owed by the caller: the module and scope qualifiers dropped
-    and one hop through the built-in alias table, so that neither `Microsoft.PowerShell.Utility\\iex`
-    nor `global:iex` nor plain `iex` can dodge a table the bare `Invoke-Expression` matches. Eight
-    of the entries below are reachable only through that hop, so a caller handing over a name it
-    had not resolved would otherwise read a deny-list answer of `NONE` — the one direction a
-    deny-list must never fail in. Taking the key here is what makes that impossible to get wrong at
-    a call site. It is idempotent: no built-in alias names what another one resolves to.
+    The lookup key is the *deny-list* reading
+    `refinery.lib.scripts.ps1.ast.resolve_command_spelling` performs, taken here rather than owed
+    by the caller: the module and scope qualifiers dropped and one hop through the built-in alias
+    table, so that neither `Microsoft.PowerShell.Utility\\iex` nor `global:iex` nor plain `iex` can
+    dodge a table the bare `Invoke-Expression` matches. Eight of the entries below are reachable
+    only through that hop, so a caller handing over a name it had not resolved would otherwise
+    read a deny-list answer of `NONE` — the one direction a deny-list must never fail in. Taking
+    the key here is what makes that impossible to get wrong at a call site. It is idempotent: no
+    built-in alias names what another one resolves to.
 
     This is the one place the three tables are read. `refinery.lib.scripts.ps1.analysis.commands`
     asks the same question of a name it reached by following the script's own aliases — which this
     module cannot follow, since the command model is built over the shadow set this one produces —
     and a second reading of the tables there would be a second deny-list to keep in step.
     """
-    key = normalize_command_name(name.rpartition('\\')[2])
-    key = KNOWN_ALIAS.get(key, key).lower()
+    key = resolve_command_spelling(name)
     if key in _LEAK_CMDLETS:
         return WorldRole.LEAK
     if key in _MUTATION_CMDLETS:
@@ -271,13 +272,21 @@ class Ps1ShadowSite(NamedTuple):
 class Ps1WorldMeasurement(NamedTuple):
     """
     One walk's reading of *root*: the whole-run `world` verdict, the `openers` that produced it and
-    the `shadow_sites` where a command name is taken over, each in walk order, and the `root` and
+    the `shadow_sites` where a command name is taken over, each in walk order, the
+    `invoked_command_names` the script calls under a static spelling, and the `root` and
     `build_version` they were measured over. All come from the same walk, so
     `world.closed_for_the_whole_run` and `not openers` are the same fact, and the names of
     `shadow_sites` are exactly `world.shadowed_names` — a node one counts and the other misses
     cannot exist. Held in a `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot;
     `build_world_reach` floods from `openers` and `shadow_sites` and stamps `build_version` onto
     the reach model so a held one notices the tree change.
+
+    The invoked names are read the deny-list way, through
+    `refinery.lib.scripts.ps1.ast.resolve_command_name`, because of what they are held against: an
+    opener that binds one name (`opens_command_table_only_by_binding`) is left out of the flood
+    when no call resolves to that name, and a call that resolves to more names is a call that
+    withholds the skip more often. A computed name is absent, since such a call is an opener in
+    its own right and floods wherever it stands.
 
     The opener and site nodes are live tree references, which is why this is a cache record rather
     than a field of the leaf `Ps1TypeWorld`: a slot is dropped whole on the next version bump, so
@@ -286,6 +295,7 @@ class Ps1WorldMeasurement(NamedTuple):
     world: Ps1TypeWorld
     openers: tuple[Node, ...]
     shadow_sites: tuple[Ps1ShadowSite, ...]
+    invoked_command_names: frozenset[str]
     root: Ps1Script
     build_version: int
 
@@ -400,10 +410,11 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     Walk the whole tree once, computing the world verdict and every position together: whether any
     node opens the type system (`_opens_type_system`) and whether any opens the command table
     (`_opens_command_namespace`) — the two independent axes the world carries apart — the set of
-    command names the script redefines and the site of each redefinition, and every opener node in
-    walk order. A single opener anywhere is global and retroactive, so it closes off the axis it
-    opens. The walk cannot short-circuit on the first opener because the shadow set needs every
-    redefinition, wherever it sits, and the floods need every position.
+    command names the script redefines and the site of each redefinition, every opener node in
+    walk order, and every command name the script invokes under a static spelling. A single opener
+    anywhere is global and retroactive, so it closes off the axis it opens. The walk cannot
+    short-circuit on the first opener because the shadow set needs every redefinition, wherever it
+    sits, and the floods need every position and every invoked name.
 
     An opener is yielded as the node itself, not its role. The class or enum definition among them
     opens the world at no position — the engine compiles it before the first statement runs — and is
@@ -421,7 +432,12 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     shadowed: set[str] = set()
     openers: list[Node] = []
     shadow_sites: list[Ps1ShadowSite] = []
+    invoked: set[str] = set()
     for node in root.walk():
+        if isinstance(node, Ps1CommandInvocation):
+            invoked_name = resolve_command_name(node)
+            if invoked_name is not None:
+                invoked.add(invoked_name)
         redefined = _identity_redefinitions(node)
         shadowed.update(record.name for record in redefined)
         shadow_sites.extend(Ps1ShadowSite(record.name, node) for record in redefined)
@@ -442,7 +458,13 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
         command_table_closed,
     )
     return Ps1WorldMeasurement(
-        world, tuple(openers), tuple(shadow_sites), root, tree_version(root))
+        world,
+        tuple(openers),
+        tuple(shadow_sites),
+        frozenset(invoked),
+        root,
+        tree_version(root),
+    )
 
 
 class Ps1TypeWorld:
@@ -641,7 +663,8 @@ def _opens_world_only_by_binding_an_alias(node) -> bool:
     Whether the sole reason `node` opens the world is that it is a `Set-Alias` — see
     `Ps1TypeWorld.closed_but_for_alias_bindings`. Every other reason the same node might open it is
     excluded here rather than assumed away, because a `Set-Alias` that also dispatches opaquely or
-    addresses a provider path is still each of those things.
+    addresses a provider path is still each of those things. The flow gate asks a wider question
+    of the same node, `opens_command_table_only_by_binding`, and that one says why the two differ.
     """
     if not isinstance(node, Ps1CommandInvocation):
         return False
@@ -650,6 +673,56 @@ def _opens_world_only_by_binding_an_alias(node) -> bool:
     if touches_identity_provider(node):
         return False
     return resolve_command_name(node) in _ALIAS_BINDING_COMMANDS
+
+
+def opens_command_table_only_by_binding(node) -> str | None:
+    """
+    The command name `node` takes over when binding that one name is the whole of what it does to
+    the world — read the way `refinery.lib.scripts.ps1.ast.resolve_command_spelling` reads a name —
+    or `None` when `node` opens the world in any other way. Such an opener runs nothing and rebinds
+    nothing but the name it spells, so where the tree invokes that name nowhere it poisons no
+    position: `refinery.lib.scripts.ps1.analysis.worldflow.build_world_reach` leaves it out of the
+    flood on exactly that condition, and floods from one whose name is invoked, because the call
+    may run a leak this model does not resolve. The node stays an opener of the whole-run verdict
+    either way, so the command axis reads open to the call graph however inert the binding is.
+    Resolving the target instead, to let an invoked alias of a harmless command go the same way,
+    would be a second reading of the alias table beside the command model's, and the table is read
+    once.
+
+    `refinery.lib.scripts.ps1.analysis.aliasdef.extract_alias_definition` reading the node is what
+    makes it a binding and nothing else: an opaque dispatch, a script file and a provider path each
+    resolve to something the reader does not accept. Its `refuse` is the one further gate. A
+    binding it could not account for — an unrecognized parameter, a target that is not written out
+    — is certain about neither half, and an opaque target in particular is the binding
+    `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions.trust_eval` exists to excuse, so
+    accepting it here would remove under the suspecting model what only the trusting one may. The
+    target's shape is otherwise not read: a wildcard or unresolvable target binds the name all the
+    same, and which name is bound is the only thing the flood asks.
+
+    The name is resolved the deny-list way on both sides of the comparison, because a match
+    *withholds* the skip: `Set-Alias Get-ChildItem iex` beside a call spelled `gci` must match, as
+    must `Set-Alias gci Foo` beside one spelled `gci`. A scope qualifier is stripped although the
+    alias table keeps it — measured on 5.1, `Set-Alias global:x` binds a command that only the
+    spelling `global:x` runs — since that spelling resolves to the same bare name, and a bare name
+    matches more calls, never fewer.
+
+    Held apart from `_opens_world_only_by_binding_an_alias`, which answers whether a pass could
+    *delete* every binding and leave the world closed — a question only a `Set-Alias` qualifies
+    for, since a `New-Alias` throws on a bound name and cannot be taken out. A `New-Alias` that
+    throws still binds no other name, so it is as inert to the flood as any.
+
+    What the flood cannot see stays with the option that hides it: under `trust_eval` an opaque
+    `iex $v` is excused, so a name reached only through its payload is neither invoked in the tree
+    nor guarded by a poisoning opener. That is the documented cost of the option and not a new one
+    — it removes the same junk below a bare `iex $v` with no alias beside it — and under the
+    suspecting model every path to a name the tree does not spell is itself an opener that floods.
+    """
+    if not isinstance(node, Ps1CommandInvocation):
+        return None
+    alias = extract_alias_definition(node)
+    if alias is None or alias.refuse:
+        return None
+    return resolve_command_spelling(alias.name)
 
 
 class _IdentityBody(enum.Enum):

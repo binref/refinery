@@ -13,6 +13,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
     build_closed_world,
     command_role,
     measure_world,
+    opens_command_table_only_by_binding,
     touches_identity_provider,
 )
 from refinery.lib.scripts.ps1.ast import get_command_name
@@ -331,6 +332,9 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
             "& 'global:iex' $x",
             "& 'script:Import-Module' Foo",
             "& 'global:Set-Alias' x Update-TypeData",
+            'global:iex $x',
+            'Microsoft.PowerShell.Utility\\iex $x',
+            'Microsoft.PowerShell.Utility\\global:iex $x',
         ):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
@@ -793,8 +797,136 @@ class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
             self.trusting.world.shadowed_names,
         )
 
+    def test_the_invoked_names_are_the_same_under_both_models(self):
+        self.assertEqual(
+            self.suspecting.invoked_command_names,
+            self.trusting.invoked_command_names,
+        )
+
     def test_the_verdict_and_the_opener_list_stay_one_fact(self):
         for name in ('suspecting', 'trusting'):
             with self.subTest(name):
                 measured = getattr(self, name)
                 self.assertEqual(measured.world.closed_for_the_whole_run, not measured.openers)
+
+
+class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
+    """
+    The invoked names are what a binding's name is held against before the flood leaves it out,
+    so they are read the way a deny-list reads a call: resolved through the built-in alias table
+    and stripped of every qualifier, so that a call spelled any way it can be resolves to the name
+    the table holds. A computed name is not a name.
+    """
+
+    @staticmethod
+    def _invoked(source: str) -> frozenset[str]:
+        return measure_world(Ps1Parser(cleandoc(source)).parse()).invoked_command_names
+
+    def test_every_static_spelling_resolves_to_the_command_it_runs(self):
+        self.assertEqual(
+            self._invoked("""
+                gci 'a'
+                & 'global:iex' $x
+                Microsoft.PowerShell.Utility\\Write-Output 'b'
+                WRITE-HOST 'c'
+                script:Get-Date
+            """),
+            {'get-childitem', 'invoke-expression', 'write-output', 'write-host', 'get-date'},
+        )
+
+    def test_a_computed_name_is_not_a_name(self):
+        self.assertEqual(
+            self._invoked("""
+                & $f 'a'
+                & ('i' + 'ex') 'b'
+                & { Write-Host 'c' }
+            """),
+            {'write-host'},
+        )
+
+    def test_a_name_counts_wherever_in_the_tree_it_is_invoked(self):
+        self.assertEqual(
+            self._invoked("""
+                function f { zzq }
+                $b = { zzr }
+                if ($x) { zzs } else { Write-Output (zzt) }
+            """),
+            {'zzq', 'zzr', 'zzs', 'zzt', 'write-output'},
+        )
+
+    def test_a_script_that_invokes_nothing_records_nothing(self):
+        self.assertEqual(self._invoked("$x = 1\n$y = $x + 'a'"), frozenset())
+
+
+class TestPs1ABindingOfOneNameIsTheOpenerTheFloodMayLeaveOut(TestBase):
+    """
+    `opens_command_table_only_by_binding` names the one command an opener takes over when that is
+    all it does, so the flow gate can leave a binding of a name no call reaches out of its flood.
+    The name is read the way a call to it resolves, and every opener that does more than bind one
+    written-out name answers `None`, whatever else it is.
+    """
+
+    @staticmethod
+    def _bound(source: str) -> str | None:
+        opener, = measure_world(Ps1Parser(source).parse()).openers
+        return opens_command_table_only_by_binding(opener)
+
+    def test_a_written_out_binding_names_the_command_it_takes_over(self):
+        for source in (
+            'Set-Alias zzq Write-Output',
+            'sal zzq Write-Output',
+            'New-Alias zzq Write-Output',
+            'nal zzq Write-Output',
+            'Set-Alias -Name zzq -Value Write-Output',
+            'Set-Alias -Value Write-Output -Name zzq',
+            'Set-Alias -N zzq -V Write-Output',
+            'Set-Alias zzq Write-*',
+            'Set-Alias zzq i*x',
+            'Set-Alias zzq zzq',
+            '& Set-Alias zzq Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._bound(source), 'zzq')
+
+    def test_the_name_is_read_the_way_a_call_to_it_resolves(self):
+        for source, name in (
+            ('Set-Alias gci Foo', 'get-childitem'),
+            ('Set-Alias Get-ChildItem Foo', 'get-childitem'),
+            ('Set-Alias ZZQ Foo', 'zzq'),
+            ('Set-Alias global:zzq Foo', 'zzq'),
+            ('Set-Alias script:zzq Foo', 'zzq'),
+            ("Set-Alias 'Microsoft.PowerShell.Utility\\zzq' Foo", 'zzq'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._bound(source), name)
+
+    def test_a_binding_the_reader_cannot_account_for_is_not_one(self):
+        for source in (
+            'Set-Alias zzq $target',
+            "Set-Alias zzq 'dI6tW'.Remove(3, 3)",
+            'Set-Alias zzq (Get-Command Write-Output)',
+            'Set-Alias zzq Write-Output -Force',
+            'Set-Alias zzq Write-Output -Option ReadOnly',
+            'Set-Alias -Scope Global zzq Write-Output',
+            'Set-Alias zzq Write-Output extra',
+            'Set-Alias -Value -Name zzq Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(self._bound(source))
+
+    def test_an_opener_that_is_not_a_written_out_binding_is_not_one(self):
+        for source in (
+            'Set-Item alias:zzq Write-Output',
+            'New-Item -Path Alias:\\zzq -Value Write-Output',
+            "Import-Alias 'C:/a.csv'",
+            'Remove-Alias zzq',
+            '$alias:zzq = 1',
+            '${function:zzq} = $blk',
+            'Invoke-Expression $c',
+            '& $f',
+            '. C:/stage2.ps1',
+            'Update-TypeData -TypeName System.Int32 -MemberName X -Value 1',
+            'class Zzq {}',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(self._bound(source))

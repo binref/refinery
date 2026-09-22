@@ -547,6 +547,27 @@ class TestPs1AnAliasTheScriptRebindsIsNotSpelledAsItsDefaultTarget(TestPs1):
         self.assertNotIn('ForEach-Object', result)
 
 
+class TestPs1AScopeQualifiedCallDoesNotRunAPlainAlias(TestPs1):
+    """
+    `Set-Alias zzq Write-Output` binds `zzq` and nothing else. Measured on Windows PowerShell 5.1,
+    `global:zzq`, `& 'global:zzq'` and `& 'script:zzq'` each raise `CommandNotFoundException`: the
+    alias table is looked up by the literal spelling, and only a function is found under a
+    scope-qualified name. The tool resolves the qualified call through the plain alias and rewrites
+    it to `Write-Output 'qualified'`, so the output runs a command where the input throws.
+    """
+
+    @unittest.expectedFailure
+    def test_a_qualified_call_of_a_plain_alias_is_not_rewritten(self):
+        for call in (
+            "global:zzq 'qualified'",
+            "& 'global:zzq' 'qualified'",
+            "& 'script:zzq' 'qualified'",
+        ):
+            with self.subTest(call):
+                result = self._deobfuscate(F'Set-Alias zzq Write-Output\n{call}')
+                self.assertNotIn("Write-Output 'qualified'", result)
+
+
 class TestPs1AScriptThatRedefinesForEachObjectDoesNotRunTheCmdlet(TestPs1):
     """
     `function ForEach-Object { … }` takes the name over, so the pipeline below it runs the script's

@@ -286,3 +286,114 @@ class TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition(TestBase)
         )
         reach = Ps1ModelCache(script).world_reach
         self.assertTrue(reach.may_trust_command_name_at('get-random', inner))
+
+
+class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
+    """
+    A `Set-Alias` of a name no statement invokes rebinds nothing any call reaches and runs nothing
+    itself, so both positional queries grant below it as they do below no opener at all — while
+    the whole-run verdict, which the call graph reads, still reports the command table open. A
+    binding the script does invoke anywhere, or one the walk cannot read whole, floods like every
+    other opener.
+    """
+
+    @staticmethod
+    def _below(source: str) -> tuple[Ps1ModelCache, object]:
+        script = Ps1Parser(cleandoc(source)).parse()
+        return Ps1ModelCache(script), script.body[-1]
+
+    def test_the_positions_below_the_binding_are_granted_and_the_whole_run_stays_open(self):
+        cache, read = self._below(
+            """
+            Set-Alias zzq i*x
+            $Null = Get-Random
+            """
+        )
+        reach = cache.world_reach
+        self.assertFalse(reach.closed_for_the_whole_run)
+        self.assertFalse(cache.closed_world.command_table_closed)
+        self.assertTrue(cache.closed_world.type_system_closed)
+        self.assertTrue(reach.may_trust_command_name_at('get-random', read))
+        self.assertTrue(reach.closed_at(read))
+
+    def test_a_call_to_the_bound_name_anywhere_keeps_the_flood(self):
+        for source in (
+            """
+            Set-Alias zzq i*x
+            zzq
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias zzq i*x
+            function f { zzq }
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias Get-ChildItem iex
+            gci
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias gci Foo
+            gci
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias global:zzq iex
+            global:zzq
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias zzq iex
+            & 'global:zzq'
+            $Null = Get-Random
+            """,
+        ):
+            with self.subTest(source):
+                cache, read = self._below(source)
+                reach = cache.world_reach
+                self.assertFalse(reach.may_trust_command_name_at('get-random', read))
+                self.assertFalse(reach.closed_at(read))
+
+    def test_a_call_below_the_read_keeps_the_flood_as_well(self):
+        cache, call = self._below(
+            """
+            Set-Alias zzq i*x
+            $Null = Get-Random
+            zzq
+            """
+        )
+        read = cache.root.body[1]
+        self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
+        self.assertFalse(cache.world_reach.closed_at(read))
+
+    def test_a_binding_the_walk_cannot_read_whole_floods(self):
+        for source in (
+            """
+            Set-Alias zzq $target
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias zzq i*x -Force
+            $Null = Get-Random
+            """,
+            """
+            Set-Item alias:zzq i*x
+            $Null = Get-Random
+            """,
+        ):
+            with self.subTest(source):
+                cache, read = self._below(source)
+                self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
+                self.assertFalse(cache.world_reach.closed_at(read))
+
+    def test_a_binding_beside_another_opener_leaves_that_flood_intact(self):
+        cache, read = self._below(
+            """
+            Set-Alias zzq i*x
+            Invoke-Expression $c
+            $Null = Get-Random
+            """
+        )
+        self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
+        self.assertFalse(cache.world_reach.closed_at(read))

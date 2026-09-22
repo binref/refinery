@@ -81,6 +81,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
     Ps1ShadowSite,
     Ps1TypeWorld,
     Ps1WorldMeasurement,
+    opens_command_table_only_by_binding,
 )
 from refinery.lib.scripts.ps1.ast import normalize_command_name, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
@@ -321,6 +322,14 @@ def build_world_reach(
     Each is the fail-closed direction the module docstring states: the floods cannot bound where
     such an opener ran, so no read and no name is granted over it.
 
+    An opener that binds one command name the tree never invokes — a `Set-Alias` of a name no
+    statement calls, which `opens_command_table_only_by_binding` names — is left out of the flood
+    and never asked for a position. It runs nothing and rebinds nothing any call reaches, so no
+    position observes it. A script whose every opener is such a binding floods from nothing and
+    grants every position the graphs place: on the command axis because no call reaches a rebound
+    name, on the type axis because a binding touches no type. The whole-run verdict stays open, so
+    the grant is positional and the call graph still reads the command table as open.
+
     Every wrapper — closed, refused, or measured — is stamped with the root and the version the
     measurement was taken at, so each notices the tree changing under a pass that holds it. A
     measurement already stale against the current tree is refused whole: its opener list may miss a
@@ -346,18 +355,15 @@ def build_world_reach(
         if isinstance(opener, (Ps1ClassDefinition, Ps1EnumDefinition)):
             refuse = True
             continue
+        bound = opens_command_table_only_by_binding(opener)
+        if bound is not None and bound not in measurement.invoked_command_names:
+            continue
         landing = _lift_to_root(control_flow, opener, root_graph)
         if landing is None:
             refuse = True
             continue
         sources.append(landing)
-    # A measured open world has at least one opener by construction — the verdict and `openers` come
-    # from the one `measure_world` walk — so an empty `sources` under an open verdict means every
-    # opener was a class/enum or unplaceable, which already set `refuse`. The guard is a
-    # belt-and-braces floor, since flooding an open world from nothing would grant every position.
-    # A closed world reaching this point carries shadow sites and no opener; its empty opener flood
-    # grants exactly what the whole-run shortcut in `closed_at` already grants.
-    if refuse or (not sources and not world.closed_for_the_whole_run):
+    if refuse:
         return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
     return Ps1WorldReach(
         world,

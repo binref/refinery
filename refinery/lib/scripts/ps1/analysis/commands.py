@@ -101,6 +101,11 @@ from refinery.lib.scripts.analysis.cfg import (
 )
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
+from refinery.lib.scripts.ps1.analysis.aliasdef import (
+    ALIAS_DEFINING_COMMANDS,
+    AliasDefinition,
+    extract_alias_definition,
+)
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
 from refinery.lib.scripts.ps1.analysis.faults import a_stop_may_be_in_force
 from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
@@ -117,6 +122,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
 from refinery.lib.scripts.ps1.ast import (
     consumes_a_value,
     get_command_name,
+    has_wildcard,
     implicit_get_retry,
     is_opaque_dispatch,
     normalize_command_name,
@@ -135,30 +141,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1Variable,
 )
-
-#: The command names that define an alias. `sal` and `nal` are themselves default aliases of
-#: `Set-Alias` and `New-Alias`; they are matched by spelling here because a script that has not
-#: redefined them means exactly what they say, and one that has is caught as a collision when the
-#: redefined name is later used.
-_ALIAS_DEFINING_COMMANDS = frozenset({'set-alias', 'sal', 'new-alias', 'nal'})
-
-#: The defining command that raises rather than rebinding when the name it is given already has a
-#: binding, so that the *first* definition of a name is the one a later use runs. See
-#: `AliasDefinition.throws_if_bound`.
-_BINDS_ONLY_WHEN_UNBOUND = frozenset({'new-alias'})
-
-#: The parameters of `Set-Alias`/`New-Alias` that carry the alias name and its target, written out
-#: with every prefix PowerShell binds them under: a parameter may be abbreviated to any prefix that
-#: names one of the cmdlet's own parameters, and `Set-Alias -N zzq -V Write-Output` binds both
-#: (measured — `-V` is not read as `-Verbose`, since a cmdlet's own parameters win over the common
-#: ones). No prefix of `Description` is here: `Set-Alias` has no `-Definition`, so a spelling that
-#: starts with `d` names a parameter this does not consume.
-_NAME_PARAMS = frozenset({'n', 'na', 'nam', 'name'})
-_VALUE_PARAMS = frozenset({'v', 'va', 'val', 'valu', 'value'})
-
-
-def _has_wildcard(name: str) -> bool:
-    return any(character in name for character in '*?[')
 
 
 class CommandKind(enum.Enum):
@@ -209,27 +191,6 @@ class Ps1ErrorReadSites(NamedTuple):
     """
     persistent: frozenset[Node]
     success: frozenset[Node]
-
-
-class AliasDefinition(NamedTuple):
-    """
-    One `Set-Alias`/`New-Alias` invocation read as a binding: the lowercased alias `name`, the
-    `target` command it names (or `None` when the target is not a literal), the defining `node`, and
-    three reasons the binding may not be resolvable. `refuse` marks a definition the model will not
-    act on — `-Force`/`-Option`, or an unreadable target — and `wildcard` marks a target that matches
-    no single command, so the alias denotes nothing.
-
-    `throws_if_bound` marks `New-Alias`, which raises `AliasAlreadyExists` rather than rebinding, so
-    it takes effect only where nothing bound the name before it. That is the opposite of the
-    nearest-definition-wins rule the rest of the resolution runs on, and it is what makes `New-Alias
-    zzq Write-Output; New-Alias zzq Write-Host; zzq` run the *first* one — measured on 5.1.
-    """
-    name: str
-    target: str | None
-    node: Ps1CommandInvocation
-    refuse: bool
-    wildcard: bool
-    throws_if_bound: bool
 
 
 #: The commands that read the whole alias table however they are asked, so that any of their
@@ -315,10 +276,11 @@ def _read_name_arguments(cmd: Ps1CommandInvocation, command: str) -> frozenset[s
     A parameter that takes a value and is not the name answers `None` rather than being passed
     over. `Get-Alias -Definition Write-Output` reports every alias of a command, `-Exclude` reports
     everything but a pattern, and a parameter this does not know may have taken the very argument
-    that would otherwise have read as a name — the same ambiguity `extract_alias_definition`
-    describes, in the direction where reading on means reporting one name for a form that reports
-    on many. A parameter that takes no value narrows how the report is written rather than deciding
-    what it is about, and it moves no argument, so reading on past one is safe.
+    that would otherwise have read as a name — the same ambiguity
+    `refinery.lib.scripts.ps1.analysis.aliasdef.extract_alias_definition` describes, in the
+    direction where reading on means reporting one name for a form that reports on many. A
+    parameter that takes no value narrows how the report is written rather than deciding what it
+    is about, and it moves no argument, so reading on past one is safe.
     """
     written: list = []
     for argument in cmd.arguments:
@@ -401,97 +363,6 @@ class _Resolution(NamedTuple):
     denotation: Denotation
     implicated: tuple[AliasDefinition, ...]
     unread_binding: bool
-
-
-def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | None:
-    """
-    Read `cmd` as an alias definition, or `None` when it is not one or this could not tell which of
-    its arguments is the name. Positional (`sal x y`), named (`Set-Alias -Name x -Value y`) and
-    mixed forms are all handled, in whichever order they are written; a wildcard target is noted as
-    denoting nothing, and everything else this could not account for is a reason to refuse. A
-    parameter written where the one before it is still waiting for its value is one of those:
-    `Set-Alias -Value -Name zzq Write-Output` binds nothing on a 5.1 host, because `-Value` is left
-    without an argument, so reading the words as the binding they spell reports a name the script
-    never bound and lets the statement that reports it be deleted.
-
-    **A parameter that is not the name or the value makes the binding unreadable, not merely
-    uninteresting.** `-PassThru` writes the alias object to the output stream, `-Scope` binds it
-    somewhere the reaching-definition question was never asked about, `-Option` and `-Force` decide
-    a rebind this model does not resolve, and `-WhatIf` means no alias is created at all. Each is
-    refused. More than that, the parser hands over a value-taking parameter as a switch followed by
-    a bare word, and which of the two it is cannot be told apart here — `Set-Alias -Description d
-    zzq Write-Output` binds `zzq`, because `-Description` took the `d` (measured). So an
-    unrecognized switch does not merely add a reason to refuse: it ends the positional reading,
-    and a name that had not been found by then is not found at all. Reading on regardless is how
-    that same script came to be read as binding `d` to `zzq`.
-
-    **Which switches those are is asked of the command's own parameter metadata**, through
-    `refinery.lib.scripts.ps1.ast.consumes_a_value`, rather than assumed of every switch. A genuine
-    switch takes no argument, so `Set-Alias -Force ls Get-Content` binds `ls` exactly where
-    `Set-Alias ls Get-Content -Force` does; reading the two differently loses the binding for the
-    one form `-Force` exists for — rebinding a `ReadOnly` default alias — and a name the model
-    holds no definition for resolves through the built-in table instead, so `ls` was rewritten to
-    `Get-ChildItem` in a script that had just made it `Get-Content`.
-    """
-    name = get_command_name(cmd)
-    if name is None or name.lower() not in _ALIAS_DEFINING_COMMANDS:
-        return None
-    command = resolve_command_name(cmd) or name.lower()
-    alias_name: str | None = None
-    target: str | None = None
-    target_seen = False
-    refuse = False
-    reading_positionals = True
-    awaiting: frozenset[str] | None = None
-    positional: list[str | None] = []
-    for arg in cmd.arguments:
-        if (
-            isinstance(arg, Ps1CommandArgument)
-            and arg.kind is not Ps1CommandArgumentKind.POSITIONAL
-        ):
-            if awaiting is not None:
-                refuse = True
-                awaiting = None
-            parameter = arg.name.lstrip('-').lower()
-            wanted = (
-                _NAME_PARAMS if parameter in _NAME_PARAMS else
-                _VALUE_PARAMS if parameter in _VALUE_PARAMS else None)
-            if wanted is None:
-                refuse = True
-                if (
-                    arg.kind is Ps1CommandArgumentKind.SWITCH
-                    and consumes_a_value(command, arg.name)
-                ):
-                    reading_positionals = False
-            elif arg.kind is Ps1CommandArgumentKind.SWITCH:
-                awaiting = wanted
-            elif wanted is _NAME_PARAMS:
-                alias_name = string_value(arg.value) if arg.value is not None else None
-            else:
-                target = string_value(arg.value) if arg.value is not None else None
-                target_seen = True
-            continue
-        value = arg.value if isinstance(arg, Ps1CommandArgument) else arg
-        written = string_value(value) if value is not None else None
-        if awaiting is _NAME_PARAMS:
-            alias_name, awaiting = written, None
-        elif awaiting is _VALUE_PARAMS:
-            target, target_seen, awaiting = written, True, None
-        elif reading_positionals:
-            positional.append(written)
-    if alias_name is None and positional:
-        alias_name = positional.pop(0)
-    if not target_seen and positional:
-        target, target_seen = positional.pop(0), True
-    if positional:
-        refuse = True
-    if alias_name is None:
-        return None
-    throws_if_bound = command in _BINDS_ONLY_WHEN_UNBOUND
-    if not target_seen or target is None:
-        return AliasDefinition(alias_name.lower(), None, cmd, True, False, throws_if_bound)
-    return AliasDefinition(
-        alias_name.lower(), target, cmd, refuse, _has_wildcard(target), throws_if_bound)
 
 
 def _stands_alone(at: CfgNode, definition: AliasDefinition) -> bool:
@@ -696,8 +567,9 @@ class Ps1CommandModel:
           the reaching-definition question that decides whether a use needs one was never asked of
           such a name.
         - It must carry **no argument** beyond the name and the value, and both must be **literal**.
-          `extract_alias_definition` reports this as a refusal, because a parameter it does not
-          consume is one it cannot be sure did not consume the name.
+          `refinery.lib.scripts.ps1.analysis.aliasdef.extract_alias_definition` reports this as a
+          refusal, because a parameter it does not consume is one it cannot be sure did not
+          consume the name.
         - It must stand where it **runs**, rather than inside a script block held as a value.
           PowerShell renders a scriptblock as its own source text, so `Write-Output { Set-Alias x
           Y }` writes the definition out instead of running it, and a script without the statement
@@ -783,7 +655,7 @@ class Ps1CommandModel:
             if reader not in _NAME_READING_COMMANDS:
                 continue
             found = _read_name_arguments(node, reader)
-            if found is None or any(_has_wildcard(name) for name in found):
+            if found is None or any(has_wildcard(name) for name in found):
                 return None
             names.update(name.lower() for name in found)
         return frozenset(names)
@@ -1283,11 +1155,12 @@ class Ps1CommandModel:
 
         A definition this model resolves through carries nothing but its name and its target, both
         statically spelled: every other parameter — `-Force`, `-Option`, an `-ErrorAction`, a third
-        positional — makes `AliasDefinition.refuse` true, and an argument with no static reading
-        leaves the target unread, which does the same. So the only errors left are the ones the
-        engine reports for the binding itself, and 5.1 reports those *non-terminating*: a rebinding
-        refused against a read-only entry writes an error record and control carries straight on.
-        A `trap` is offered nothing, and this is a completion.
+        positional — makes `refinery.lib.scripts.ps1.analysis.aliasdef.AliasDefinition.refuse`
+        true, and an argument with no static reading leaves the target unread, which does the
+        same. So the only errors left are the ones the engine reports for the binding itself, and
+        5.1 reports those *non-terminating*: a rebinding refused against a read-only entry writes
+        an error record and control carries straight on. A `trap` is offered nothing, and this is
+        a completion.
 
         That reading holds only while nothing has armed `Stop`, which turns every reported error
         into one a handler takes — so `a_stop_may_be_in_force` is asked of the whole script, in its
@@ -1315,11 +1188,12 @@ class Ps1CommandModel:
         definition left read-only, so the use runs the earlier binding rather than this one.
 
         A `Set-Alias`/`New-Alias` carrying `-Option` or `-Force` may install a `ReadOnly` or
-        `Constant` alias — the model does not read which, so `AliasDefinition.refuse` covers them
-        all — and a plain `Set-Alias` to a name so locked is refused rather than rebinding it. 5.1
-        reports that refusal *non-terminating*: control reaches the use with the earlier binding
-        still in place, so the command the call runs is not the one this definition names. Measured
-        on 5.1, `Set-Alias c Write-Error -Option ReadOnly; Set-Alias c Write-Output; c 'hi'` runs
+        `Constant` alias — the model does not read which, so
+        `refinery.lib.scripts.ps1.analysis.aliasdef.AliasDefinition.refuse` covers them all — and
+        a plain `Set-Alias` to a name so locked is refused rather than rebinding it. 5.1 reports
+        that refusal *non-terminating*: control reaches the use with the earlier binding still in
+        place, so the command the call runs is not the one this definition names. Measured on 5.1,
+        `Set-Alias c Write-Error -Option ReadOnly; Set-Alias c Write-Output; c 'hi'` runs
         `Write-Error`, and rewriting the call to `Write-Output` runs a command the script does not.
 
         Asked only of a plain rebind whose failure would carry on. A definition that itself carries
@@ -1440,7 +1314,7 @@ def _denotes_a_defining_command(model: Ps1CommandModel, node: Ps1CommandInvocati
     if denotation.target is None:
         return None
     command = normalize_command_name(denotation.target)
-    return command if command in _ALIAS_DEFINING_COMMANDS else None
+    return command if command in ALIAS_DEFINING_COMMANDS else None
 
 
 class _SettledTable(NamedTuple):
@@ -1458,11 +1332,11 @@ def _settle_alias_definitions(model: Ps1CommandModel) -> _SettledTable:
     The seeded alias table with every entry whose own invocation does not denote a defining command
     marked refused.
 
-    `extract_alias_definition` matches by spelling, so the seed holds a binding for every statement
-    that *reads* as one. Asking the model what each of those statements denotes is the same
-    resolution the table is there to serve, one step earlier: a script that has taken `Set-Alias`
-    over with a function of its own binds nothing, and a table that says otherwise resolves later
-    uses through a binding that never happened.
+    `refinery.lib.scripts.ps1.analysis.aliasdef.extract_alias_definition` matches by spelling, so
+    the seed holds a binding for every statement that *reads* as one. Asking the model what each of
+    those statements denotes is the same resolution the table is there to serve, one step earlier:
+    a script that has taken `Set-Alias` over with a function of its own binds nothing, and a table
+    that says otherwise resolves later uses through a binding that never happened.
 
     **Refused, not removed.** A statement that spells a binding of `ls` and does something else is
     still a statement about `ls`, and dropping it would let the name fall through to the host's

@@ -158,6 +158,12 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
         'The created block is inlined as the statements it spells and the one statement it is '
         'becomes the bare value `$v + "b"`, which the strip removes as console output — the '
         'documented default the other entries of this table state. `ps1 -k` keeps the value.',
+    "Get-Command zzqnope -ErrorAction SilentlyContinue; Set-Alias zzq Write-Output; $?":
+        'The trailing `$?` is removed as console output, so the snippet writes `True` and the '
+        'default writes nothing; `ps1 -k` keeps it. The `Set-Alias` binds a name nothing invokes, '
+        'so it no longer withholds the strip from the statement below it the way an opener the '
+        'flood cannot see past does. The two statements before the read both stay: the '
+        '`Get-Command` reports a name and the `Set-Alias` sets the `$?` the read observes.',
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
