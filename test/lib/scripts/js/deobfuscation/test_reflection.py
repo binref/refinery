@@ -1084,6 +1084,60 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual('globalThis.f(x);', self._reflect(source))
 
+    def test_pack_this_receiver_shadowed_by_a_body_binding_not_inlined(self):
+        """
+        The receiver rewrite spells `globalThis` where each `this` stood, so a body binding of that
+        name captures the synthesized read: the constructed function reads the global object it
+        was invoked on, the splice would read the body's own binding, which denotes `1` here.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Function('o', 'var globalThis = 1; this.f(o.a);')({ get 'a'() {
+                  return x;
+                } });
+                """
+            ),
+            self._reflect(
+                inspect.cleandoc(
+                    """
+                    Function('o', 'var globalThis = 1; this.f(o.a);')({ get 'a'() { return x; } });
+                    """
+                )
+            ),
+        )
+
+    def test_pack_this_receiver_inside_a_with_body_not_inlined(self):
+        """
+        A `with` object supplies properties to name lookups but never to the `this` keyword, so
+        spelling `globalThis` where a `this` inside the `with` body stood would resolve through the
+        `with` object when a property named `globalThis` is present.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Function('o', 'with(z){ this.f(o.a); }')({ get 'a'() {
+                  return x;
+                } });
+                """
+            ),
+            self._reflect(
+                inspect.cleandoc(
+                    """
+                    Function('o', 'with(z){ this.f(o.a); }')({ get 'a'() { return x; } });
+                    """
+                )
+            ),
+        )
+
+    def test_pack_getter_target_outside_a_with_body_still_inlined(self):
+        source = inspect.cleandoc(
+            """
+            Function('o', 'with(z){ 1; } o.a;')({ get 'a'() { return x; } });
+            """
+        )
+        self.assertEqual('with (z) {\n  1;\n}\nx;', self._reflect(source))
+
     def test_module_pack_setter_target_naming_a_module_var_still_inlined(self):
         source = inspect.cleandoc(
             """

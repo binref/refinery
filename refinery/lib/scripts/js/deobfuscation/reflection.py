@@ -1773,10 +1773,19 @@ class JsReflectionInlining(ScriptLevelTransformer):
         introduced resolves at the site by construction, the accessor spelling it being defined
         there, so it is not held to the global-resolution rule the reflected code's own free names
         must meet. The exemption is conditional, and the admission holds the condition itself:
-        every identifier the substitution introduced (*substituted*) must still resolve to the
-        implicit global where it lands in the body, asked of the same model this admission builds
-        for its other name questions, so no second model of the substituted body is ever built to
-        answer it. Every other check still applies to it.
+        every identifier entering the body from outside its own text must still resolve to the
+        implicit global where it lands, asked of the same model this admission builds for its other
+        name questions, so no second model of the substituted body is ever built to answer it.
+        Those the pack substitution spliced in (*substituted*) are declined where a body binding
+        captures one; a landing inside a `with` body is the one placement left to the risk the
+        packed code this pipeline reads has already accepted, whose with-objects rebind the
+        machinery names the pack itself spells and never the accessor targets, and the divergence
+        a with-object supplying an accessor target's name would make is what the ledger entry
+        holds. Those the receiver rewrite above synthesized are held to the full question, a body
+        binding capturing one declining and so does a read the model cannot resolve determinately,
+        one inside a `with` or another dynamic region: the pipeline chose the name `globalThis`
+        where the text spelled the receiver, so no property of a `with` object was ever part of
+        what the original read. Every other check still applies to an exempted name.
 
         Every name-based answer above is read from the model pinned before any splice, so a body
         naming what an earlier splice this pass declared or wrote is declined outright: for such a
@@ -1789,8 +1798,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site_is_strict = strict_mode_at(site)
         if declares_use_strict(parsed) and (resolves_globally or not site_is_strict):
             return None
+        synthesized: list[JsIdentifier] = []
         if resolves_globally:
-            rewrite_receiver_this_to_global(parsed)
+            synthesized = rewrite_receiver_this_to_global(parsed)
             if references_receiver_this(parsed) or references_new_target(parsed):
                 return None
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
@@ -1804,6 +1814,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         for ident in substituted:
             binding = body_model.resolve(ident)
             if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+                return None
+        for ident in synthesized:
+            binding = body_model.resolve(ident)
+            if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+                return None
+            if binding is None and crosses_dynamic_scope(body_model.scope_of(ident)):
                 return None
         if resolves_globally and self._destination_may_be_strict(site, root) and diverges_under_strict(
             parsed, body_model, site_resolved,

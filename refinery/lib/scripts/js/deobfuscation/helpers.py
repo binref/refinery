@@ -2574,24 +2574,27 @@ def is_receiver_binding_call(member: Node) -> bool:
     return False
 
 
-def rewrite_receiver_this_to_global(root: Node) -> bool:
+def rewrite_receiver_this_to_global(root: Node) -> list[JsIdentifier]:
     """
-    Replace every `this` bound to *root*'s own receiver with a `globalThis` identifier, returning whether
-    any replacement was made. The rewrite descends the receiver boundary `walk_receiver_scope` defines —
-    through arrow functions and a class's `extends` clause and computed keys, but not into a nested
-    regular or generator function, whose `this` is its own — so only *root*'s own `this` is rewritten.
-    A caller uses this where *root* is invoked with no receiver, so its `this` is the global object: a
-    `Function`-constructed body, or a recognized global-object finder whose `… || this` fallback yields
-    the global. The synthesized `globalThis` identifiers stay subject to whatever free-name or shadow
-    check the caller applies, so a binding named `globalThis` in scope declines the rewrite at the
-    caller's discretion.
+    Replace every `this` bound to *root*'s own receiver with a `globalThis` identifier, returning
+    the identifiers it synthesized. The rewrite descends the receiver boundary
+    `walk_receiver_scope` defines — through arrow functions and a class's `extends` clause and
+    computed keys, but not into a nested regular or generator function, whose `this` is its own —
+    so only *root*'s own `this` is rewritten. A caller uses this where *root* is invoked with no
+    receiver, so its `this` is the global object: a `Function`-constructed body, or a recognized
+    global-object finder whose `… || this` fallback yields the global. The synthesized
+    `globalThis` identifiers are returned so the caller can verify each one still reads the
+    implicit global where it lands — a binding of that name inside *root*, or a dynamically-scoped
+    region resolving it at runtime, captures the synthesized read where the `this` it replaced read
+    the receiver.
     """
-    changed = False
+    synthesized: list[JsIdentifier] = []
     for node in list(walk_receiver_scope(root)):
         if isinstance(node, JsThisExpression):
-            _replace_in_parent(node, JsIdentifier(name='globalThis'))
-            changed = True
-    return changed
+            replacement = JsIdentifier(name='globalThis')
+            _replace_in_parent(node, replacement)
+            synthesized.append(replacement)
+    return synthesized
 
 
 def binding_has_references(

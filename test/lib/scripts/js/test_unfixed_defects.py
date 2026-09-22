@@ -2569,3 +2569,47 @@ class TestAMemberArrayASiblingScopeReadsIsStillWritten(TestBase):
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},
         )
+
+
+#: A packed access spliced into a `with` body whose object carries the accessor target's name, mapped
+#: to the behavior Node gives each program. The read row asks the accessor and the write row runs
+#: its setter, so what each prints is what the accessor did with the global the file declared,
+#: printed beside the property the `with` object held all along.
+A_PACKED_ACCESS_A_WITH_OBJECT_SUPPLIES = {
+    'read': Program(
+        'var z = { x: 42 };\n'
+        'var x = 7;\n'
+        "Function('o', 'with(z){ console.log(o.a); }')({ get 'a'() { return x; } });\n",
+        prints('7'),
+        Reading.SCRIPT,
+    ),
+    'write': Program(
+        'var z = { x: 42 };\n'
+        'var x = 7;\n'
+        "Function('o', 'with(z){ o.a = 9; }')({ set 'a'(v) { x = v; } });\n"
+        'console.log(x, z.x);\n',
+        prints('9 42'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_PACKED_ACCESS_A_WITH_OBJECT_SUPPLIES)
+class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
+    """
+    The `Function` pack route resolves each packed `p.key` access through the accessor the call
+    site hands it and splices the accessor's target in the access's place. The access it replaces
+    is a member read on the pack's parameter, which no `with` object supplies, while the name it
+    splices in is a bare one, which the `with` body around it resolves through the `with` object
+    first: a property of the accessor target's name there supplies its own value where the accessor
+    spelled a global the site resolves. A correct implementation declines the substitution for an
+    access inside a dynamically-scoped region — the admission builds the model that answers where
+    each spliced name lands — or asks which properties the `with` object can carry.
+
+    Off the release gate deliberately: the packed code this pipeline reads carries its `with`
+    objects for the scope confusion they buy, and they rebind the machinery names the packed code
+    itself spells, never the accessor targets the substitution splices. Holding the landing to the
+    question above declines the flagship pack rather than a diverging one, and the `with` object
+    that supplies an accessor target's name has so far had to be constructed to reach.
+    """
