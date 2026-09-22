@@ -1056,6 +1056,34 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source),
         )
 
+    def test_pack_getter_target_captured_by_a_body_binding_not_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 2;
+                Function('o', 'var x = 1; o.a;')({ get 'a'() {
+                  return x;
+                } });
+                """
+            ),
+            self._reflect(
+                inspect.cleandoc(
+                    """
+                    var x = 2;
+                    Function('o', 'var x = 1; o.a;')({ get 'a'() { return x; } });
+                    """
+                )
+            ),
+        )
+
+    def test_pack_this_receiver_and_substituted_name_still_inlined(self):
+        source = inspect.cleandoc(
+            """
+            Function('o', 'this.f(o.a);')({ get 'a'() { return x; } });
+            """
+        )
+        self.assertEqual('globalThis.f(x);', self._reflect(source))
+
     def test_module_pack_setter_target_naming_a_module_var_still_inlined(self):
         source = inspect.cleandoc(
             """

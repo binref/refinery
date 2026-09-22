@@ -593,7 +593,7 @@ def _try_unpack_function_constructor(
     *,
     free_global_name: Callable[[Expression | None], str | None],
     module: bool = False,
-) -> tuple[JsScript, frozenset[str]] | None:
+) -> tuple[JsScript, frozenset[str], list[JsIdentifier]] | None:
     """
     Unpack an immediately-invoked `Function` constructor whose single argument is a proxy object
     with getter/setter properties that redirect to global variables:
@@ -603,14 +603,15 @@ def _try_unpack_function_constructor(
         )
 
     Parses the code string and resolves all free `p.key` accesses through the proxy mapping back to
-    their original identifiers. Returns the substituted body paired with the names whose site
-    resolution the substitution has already settled, or `None` if the node does not match —
-    including when the inner callee is not the free global `Function` — or if any proxy access
-    cannot be resolved. The caller must still admit the body the way every reflected body is
-    admitted; this function earns only the one exemption it returns. A getter or setter target is
-    spelled inside an accessor defined at the call site itself, so it resolves at the site exactly
-    as the accessor does, provided the substituted occurrence is still free where it lands in the
-    body — a body binding capturing one fails here — and provided the packed code did not also read
+    their original identifiers. Returns the substituted body, the names whose site resolution the
+    substitution has already settled, and the identifiers the substitution introduced, or `None` if
+    the node does not match — including when the inner callee is not the free global `Function` —
+    or if any proxy access cannot be resolved. The caller must still admit the body the way every
+    reflected body is admitted; this function earns only the one exemption it returns. A getter or
+    setter target is spelled inside an accessor defined at the call site itself, so it resolves at
+    the site exactly as the accessor does, provided the substituted occurrence is still free where
+    it lands in the body — a body binding capturing one declines in the admission, whose own model
+    of the substituted body answers the question — and provided the packed code did not also read
     the name freely, in which case it stays held to the global-resolution rule and is not returned.
     """
     inner = node.callee
@@ -647,19 +648,14 @@ def _try_unpack_function_constructor(
     if parsed is None:
         return None
     if not param_name:
-        return parsed, frozenset()
+        return parsed, frozenset(), []
     body_model = build_semantic_model(parsed)
     originally_free = _body_free_names(body_model, parsed)
     replaced = _substitute_proxy_accesses(parsed, body_model, param_name, getters, setters)
     if replaced is None:
         return None
-    substituted_model = build_semantic_model(parsed)
-    for ident in replaced:
-        binding = substituted_model.resolve(ident)
-        if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
-            return None
     introduced = {ident.name for ident in replaced}
-    return parsed, frozenset(introduced - (originally_free - {param_name}))
+    return parsed, frozenset(introduced - (originally_free - {param_name})), replaced
 
 
 def _is_pack_shaped(
@@ -1206,10 +1202,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
             module=runs_as_module(self.options, root),
         )
         if pack is not None:
-            packed, site_resolved = pack
+            packed, site_resolved, substituted = pack
             admitted = self._admit_reflected_body(
                 packed, stmt, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope,
                 site_resolved=site_resolved,
+                substituted=substituted,
             )
             if admitted is None:
                 return None
@@ -1748,6 +1745,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         at_global_scope: bool,
         *,
         site_resolved: frozenset[str] = frozenset(),
+        substituted: Collection[JsIdentifier] = (),
         invocation_arguments: list[Node] | None = None,
         exclude: Collection[Binding] = (),
     ) -> JsScript | None:
@@ -1774,7 +1772,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         *site_resolved* is the one exemption the pack route earns: a name its proxy substitution
         introduced resolves at the site by construction, the accessor spelling it being defined
         there, so it is not held to the global-resolution rule the reflected code's own free names
-        must meet. Every other check still applies to it.
+        must meet. The exemption is conditional, and the admission holds the condition itself:
+        every identifier the substitution introduced (*substituted*) must still resolve to the
+        implicit global where it lands in the body, asked of the same model this admission builds
+        for its other name questions, so no second model of the substituted body is ever built to
+        answer it. Every other check still applies to it.
 
         Every name-based answer above is read from the model pinned before any splice, so a body
         naming what an earlier splice this pass declared or wrote is declined outright: for such a
@@ -1799,6 +1801,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         ):
             return None
         body_model = build_semantic_model(parsed)
+        for ident in substituted:
+            binding = body_model.resolve(ident)
+            if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+                return None
         if resolves_globally and self._destination_may_be_strict(site, root) and diverges_under_strict(
             parsed, body_model, site_resolved,
         ):
