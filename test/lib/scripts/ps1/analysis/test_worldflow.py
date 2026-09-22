@@ -316,6 +316,31 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
         self.assertTrue(reach.may_trust_command_name_at('get-random', read))
         self.assertTrue(reach.closed_at(read))
 
+    def test_a_dot_sourced_or_provider_target_binding_of_an_uninvoked_name_still_grants(self):
+        """
+        A `Set-Alias` binds exactly the one name it spells, whichever operator carries it and
+        whatever its target looks like: `. Set-Alias` runs no file, and a `function:` target is the
+        command the name is bound to, not a provider write. So a dot-sourced binding and one whose
+        target reads as a provider path each grant below an uninvoked name the way a plain binding
+        does, although both trip guards a stricter opener test excludes a `Set-Alias` for.
+        """
+        for source in (
+            """
+            . Set-Alias zzq i*x
+            $Null = Get-Random
+            """,
+            """
+            Set-Alias zzq function:bar
+            $Null = Get-Random
+            """,
+        ):
+            with self.subTest(source):
+                cache, read = self._below(source)
+                reach = cache.world_reach
+                self.assertTrue(reach.may_trust_command_name_at('get-random', read))
+                self.assertTrue(reach.closed_at(read))
+                self.assertFalse(reach.closed_for_the_whole_run)
+
     def test_a_call_to_the_bound_name_anywhere_keeps_the_flood(self):
         for source in (
             """
@@ -354,6 +379,23 @@ class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):
                 reach = cache.world_reach
                 self.assertFalse(reach.may_trust_command_name_at('get-random', read))
                 self.assertFalse(reach.closed_at(read))
+
+    def test_a_bare_noun_reaching_a_get_prefixed_binding_keeps_the_flood(self):
+        """
+        `Set-Alias Get-Frob iex` binds a name a bare `Frob` reaches through 5.1's implicit `Get-`
+        retry, so the binding is invoked and must flood; the retry name is why the walk records
+        `frob` and `get-frob` both. Granting below it would delete the `Get-Random` discard although
+        the aliased `iex` ran first.
+        """
+        cache, read = self._below(
+            """
+            Set-Alias Get-Frob iex
+            Frob
+            $Null = Get-Random
+            """
+        )
+        self.assertFalse(cache.world_reach.may_trust_command_name_at('get-random', read))
+        self.assertFalse(cache.world_reach.closed_at(read))
 
     def test_a_call_below_the_read_keeps_the_flood_as_well(self):
         cache, call = self._below(

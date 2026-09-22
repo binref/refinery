@@ -19,7 +19,7 @@ from refinery.lib.scripts.ps1.ast import (
     consumes_a_value,
     get_command_name,
     has_wildcard,
-    resolve_command_name,
+    resolve_command_spelling,
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -103,7 +103,7 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
     name = get_command_name(cmd)
     if name is None or name.lower() not in ALIAS_DEFINING_COMMANDS:
         return None
-    command = resolve_command_name(cmd) or name.lower()
+    command = resolve_command_spelling(name)
     alias_name: str | None = None
     target: str | None = None
     target_seen = False

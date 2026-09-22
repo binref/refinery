@@ -46,6 +46,7 @@ from refinery.lib.scripts.ps1.ast import (
     normalize_dotnet_type_name,
     resolve_command_name,
     resolve_command_spelling,
+    resolved_command_names,
     string_value,
     unwrap_assignment_target,
     unwrap_parens,
@@ -282,11 +283,14 @@ class Ps1WorldMeasurement(NamedTuple):
     the reach model so a held one notices the tree change.
 
     The invoked names are read the deny-list way, through
-    `refinery.lib.scripts.ps1.ast.resolve_command_name`, because of what they are held against: an
+    `refinery.lib.scripts.ps1.ast.resolved_command_names`, because of what they are held against: an
     opener that binds one name (`opens_command_table_only_by_binding`) is left out of the flood
     when no call resolves to that name, and a call that resolves to more names is a call that
-    withholds the skip more often. A computed name is absent, since such a call is an opener in
-    its own right and floods wherever it stands.
+    withholds the skip more often. Both names a bare noun may run are recorded — its own spelling
+    and the implicit `Get-` retry `refinery.lib.scripts.ps1.ast.implicit_get_retry` names — so that
+    a `Set-Alias Get-Item iex` beside a bare `item` call is held invoked and floods, since 5.1 runs
+    the alias where `item` misses every table. A computed name is absent, since such a call is an
+    opener in its own right and floods wherever it stands.
 
     The opener and site nodes are live tree references, which is why this is a cache record rather
     than a field of the leaf `Ps1TypeWorld`: a slot is dropped whole on the next version bump, so
@@ -411,10 +415,11 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     node opens the type system (`_opens_type_system`) and whether any opens the command table
     (`_opens_command_namespace`) — the two independent axes the world carries apart — the set of
     command names the script redefines and the site of each redefinition, every opener node in
-    walk order, and every command name the script invokes under a static spelling. A single opener
-    anywhere is global and retroactive, so it closes off the axis it opens. The walk cannot
-    short-circuit on the first opener because the shadow set needs every redefinition, wherever it
-    sits, and the floods need every position and every invoked name.
+    walk order, and every command name a statically-spelled call may run — its resolved name and
+    the implicit `Get-` retry, both the deny-list way. A single opener anywhere is global and
+    retroactive, so it closes off the axis it opens. The walk cannot short-circuit on the first
+    opener because the shadow set needs every redefinition, wherever it sits, and the floods need
+    every position and every invoked name.
 
     An opener is yielded as the node itself, not its role. The class or enum definition among them
     opens the world at no position — the engine compiles it before the first statement runs — and is
@@ -435,9 +440,7 @@ def measure_world(root: Ps1Script, options: object | None = None) -> Ps1WorldMea
     invoked: set[str] = set()
     for node in root.walk():
         if isinstance(node, Ps1CommandInvocation):
-            invoked_name = resolve_command_name(node)
-            if invoked_name is not None:
-                invoked.add(invoked_name)
+            invoked.update(resolved_command_names(node))
         redefined = _identity_redefinitions(node)
         shadowed.update(record.name for record in redefined)
         shadow_sites.extend(Ps1ShadowSite(record.name, node) for record in redefined)

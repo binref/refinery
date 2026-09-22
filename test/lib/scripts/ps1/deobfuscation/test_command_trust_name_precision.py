@@ -86,6 +86,21 @@ class TestPs1DiscardedPureCallNamePrecisionControls(TestPs1):
         self.assertIn(_OTHER_NAME_TOKEN, result)
         self.assertIn(_ANCHOR_TOKEN, result)
 
+    def test_an_invoked_alias_of_a_harmless_command_is_inlined_and_frees_the_discard(self):
+        """
+        An invoked alias of one specific harmless command is resolved to that command and taken out
+        before the trust decision, so no binding survives to distrust the discard: the invoked alias
+        of `Get-Date` leaves `Get-Random` as removable as a clean table does. Only a target the model
+        cannot resolve to one command survives to flood, and flooding that one is right.
+        """
+        result = self._deobfuscate(
+            F'Set-Alias Some-Other-Name Get-Date\n{_CALL_OF_ANOTHER_NAME}\n'
+            F'$Null = Get-Random -Maximum 88175\n{_ANCHOR}')
+        self.assertIn('Get-Date', result)
+        self.assertNotIn(_OTHER_NAME_TOKEN, result)
+        self.assertNotIn(_DISCARDED_TOKEN, result)
+        self.assertIn(_ANCHOR_TOKEN, result)
+
 
 class TestPs1DiscardedPureCallAfterASetAliasOfAnotherNameIsRemoved(TestPs1):
     """
@@ -125,10 +140,11 @@ class TestPs1DiscardedPureCallAfterASetAliasOfAnInvokedNameIsKept(TestPs1):
     """
     A binding the script invokes may run anything — a leak that rebinds `Get-Random` among it — so
     it distrusts every name below it the way any opener does, and the discarded call stays. The
-    bound name is matched the way a deny-list matches: one hop through the built-in alias table
-    and the scope qualifier stripped, so no spelling of the call slips past the binding. Measured
-    on 5.1, `Set-Alias global:x` binds a command that the spelling `global:x` does run. The
-    payloads are variables so that no earlier pass can inline the call away before the trust
+    bound name is matched the way a deny-list matches: one hop through the built-in alias table,
+    the scope qualifier stripped, and the implicit `Get-` retry, so no spelling of the call slips
+    past the binding. Measured on 5.1, `Set-Alias global:x` binds a command that the spelling
+    `global:x` does run, and a bare `Frob` runs a `Set-Alias Get-Frob` binding through the retry.
+    The payloads are variables so that no earlier pass can inline the call away before the trust
     decision is made.
     """
 
@@ -139,6 +155,7 @@ class TestPs1DiscardedPureCallAfterASetAliasOfAnInvokedNameIsKept(TestPs1):
         'Set-Alias X Start-Job\nX { }',
         'Set-Alias global:X iex\nX $payload',
         'Set-Alias global:X iex\nglobal:X $payload',
+        'Set-Alias Get-Frob iex\nFrob $payload',
         'Set-Alias Some-Other-Name i*x\nfunction f { Some-Other-Name }',
     )
 

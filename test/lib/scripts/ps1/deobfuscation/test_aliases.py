@@ -557,15 +557,19 @@ class TestPs1AScopeQualifiedCallDoesNotRunAPlainAlias(TestPs1):
     """
 
     @unittest.expectedFailure
-    def test_a_qualified_call_of_a_plain_alias_is_not_rewritten(self):
-        for call in (
-            "global:zzq 'qualified'",
-            "& 'global:zzq' 'qualified'",
-            "& 'script:zzq' 'qualified'",
-        ):
-            with self.subTest(call):
-                result = self._deobfuscate(F'Set-Alias zzq Write-Output\n{call}')
-                self.assertNotIn("Write-Output 'qualified'", result)
+    def test_a_bare_scope_qualified_call_of_a_plain_alias_is_not_rewritten(self):
+        result = self._deobfuscate("Set-Alias zzq Write-Output\nglobal:zzq 'qualified'")
+        self.assertNotIn("Write-Output 'qualified'", result)
+
+    @unittest.expectedFailure
+    def test_a_call_operator_on_a_global_scoped_plain_alias_is_not_rewritten(self):
+        result = self._deobfuscate("Set-Alias zzq Write-Output\n& 'global:zzq' 'qualified'")
+        self.assertNotIn("Write-Output 'qualified'", result)
+
+    @unittest.expectedFailure
+    def test_a_call_operator_on_a_script_scoped_plain_alias_is_not_rewritten(self):
+        result = self._deobfuscate("Set-Alias zzq Write-Output\n& 'script:zzq' 'qualified'")
+        self.assertNotIn("Write-Output 'qualified'", result)
 
 
 class TestPs1AScriptThatRedefinesForEachObjectDoesNotRunTheCmdlet(TestPs1):

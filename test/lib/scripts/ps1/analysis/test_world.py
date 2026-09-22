@@ -802,6 +802,10 @@ class TestPs1TrustedEvalNarrowsTheOpenerListAndNothingElse(TestBase):
             self.suspecting.invoked_command_names,
             self.trusting.invoked_command_names,
         )
+        self.assertLessEqual(
+            {'invoke-expression', 'set-alias', 'set-item', 'add-type', 'update-typedata'},
+            self.suspecting.invoked_command_names,
+        )
 
     def test_the_verdict_and_the_opener_list_stay_one_fact(self):
         for name in ('suspecting', 'trusting'):
@@ -815,7 +819,9 @@ class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
     The invoked names are what a binding's name is held against before the flood leaves it out,
     so they are read the way a deny-list reads a call: resolved through the built-in alias table
     and stripped of every qualifier, so that a call spelled any way it can be resolves to the name
-    the table holds. A computed name is not a name.
+    the table holds. A bare noun records its implicit `Get-` retry name as well, the second name
+    5.1 may run it under, so a binding of a `Get-` name is held invoked by the bare call that
+    reaches it through the retry. A computed name is not a name.
     """
 
     @staticmethod
@@ -847,11 +853,17 @@ class TestPs1TheMeasurementRecordsEveryNameTheScriptInvokes(TestBase):
     def test_a_name_counts_wherever_in_the_tree_it_is_invoked(self):
         self.assertEqual(
             self._invoked("""
-                function f { zzq }
-                $b = { zzr }
-                if ($x) { zzs } else { Write-Output (zzt) }
+                function f { Zzq-Alpha }
+                $b = { Zzq-Beta }
+                if ($x) { Zzq-Gamma } else { Write-Output (Zzq-Delta) }
             """),
-            {'zzq', 'zzr', 'zzs', 'zzt', 'write-output'},
+            {'zzq-alpha', 'zzq-beta', 'zzq-gamma', 'zzq-delta', 'write-output'},
+        )
+
+    def test_a_bare_noun_records_its_implicit_get_retry_name(self):
+        self.assertEqual(
+            self._invoked('item\nchilditem\nGet-Random'),
+            {'item', 'get-item', 'childitem', 'get-childitem', 'get-random'},
         )
 
     def test_a_script_that_invokes_nothing_records_nothing(self):
