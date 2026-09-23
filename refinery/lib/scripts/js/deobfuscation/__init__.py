@@ -22,6 +22,7 @@ from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlatteni
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.protospelling import JsPrototypeSpellingNormalization
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
+from refinery.lib.scripts.js.deobfuscation.paramcopy import JsParameterCopyCoalescing
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
@@ -62,6 +63,7 @@ _pipeline = DeobfuscationPipeline(
             JsControlFlowUnflattening,
             JsGeneratorCFFUnflattening,
             JsRestArrayUnpacking,
+            JsParameterCopyCoalescing,
             JsArrayUnshuffle,
             JsConstantInlining,
             JsGlobalFinderInlining,
