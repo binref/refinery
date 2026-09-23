@@ -327,3 +327,30 @@ class TestDominance(TestBase):
     def test_runs_before_all_vacuously_true_for_no_references(self):
         ast, dom = self._dominance('var c = 5;')
         self.assertTrue(dom.runs_before_all(self._def(ast, 'c'), []))
+
+    def test_a_store_that_may_throw_is_entered_but_not_completed_before_its_handler(self):
+        """
+        Reading `window` may throw, and the handler runs exactly on that run, so the statement of
+        the store dominates the read in the handler without having completed before it.
+        """
+        ast, dom = self._dominance('var r; try { r = window; } catch (e) { r; }')
+        _, store, read = self._idents(ast, 'r')
+        self.assertTrue(dom.strictly_dominates(store, read))
+        self.assertFalse(dom.completes_before(store, read))
+        self.assertFalse(dom.runs_before(store, read))
+
+    def test_a_store_that_cannot_throw_completes_before_its_handler(self):
+        ast, dom = self._dominance('var r; try { r = 1; g(); } catch (e) { r; }')
+        _, store, read = self._idents(ast, 'r')
+        self.assertTrue(dom.completes_before(store, read))
+        self.assertTrue(dom.runs_before(store, read))
+
+    def test_a_declarator_behind_one_that_may_throw_does_not_run_before_a_later_call(self):
+        ast, dom = self._dominance(
+            'try { var a = window, w = 5; } catch (e) {} function g() { return w; } g();')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'w'), self._func(ast, 'g')))
+
+    def test_a_declaration_that_cannot_throw_runs_before_a_call_after_its_handler(self):
+        ast, dom = self._dominance(
+            'try { var w = 5; h(); } catch (e) {} function g() { return w; } g();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'w'), self._func(ast, 'g')))

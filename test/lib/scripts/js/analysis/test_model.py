@@ -20,11 +20,13 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsCallExpression,
+    JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
     JsReturnStatement,
+    JsVariableDeclaration,
     JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -1896,3 +1898,47 @@ class TestWhichBindingsAnExportMarks(TestBase):
             [JsSynthesizer().convert(read) for read in binding.reads],
             ['a', 'a'],
         )
+
+
+#: Programs mapped to whether their last declaration or expression statement throws on no run. A
+#: read may throw when nothing is certain to bind the name; a store may throw when the binding is
+#: lexical, read-only, reached through a `with` object, or does not exist.
+WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
+    'var a = 1, b = "x", c = null, d = true;': True,
+    'var f = function () {};': True,
+    'var b; var a = b;': True,
+    'var a = globalThis;': True,
+    'var a = window;': False,
+    'var a = q;': False,
+    'let a = 1;': True,
+    'var o = null; var {a} = o;': False,
+    'var a; a = 1;': True,
+    'var a, b; (a = 1, b = a);': True,
+    'function f(p) { p = 1; }': True,
+    'try {} catch (e) { e = 1; }': True,
+    'let a; a = 1;': False,
+    'const a = 1; a = 2;': False,
+    'a = 1;': False,
+    'var f = function g() { g = 1; };': False,
+    'var a; a += 1;': False,
+    'var o = {}; o.p = 1;': False,
+    'function f() {} f();': False,
+    'var o = {}; with (o) { var a = 1; }': False,
+    'var undefined = 1;': False,
+    'function f() { var undefined = 1; }': True,
+}
+
+
+class TestWhichStatementsCannotThrow(TestBase):
+
+    def test_each_statement_throws_or_not_as_the_language_says(self):
+        verdicts = {}
+        for source in WHETHER_THE_LAST_STATEMENT_CANNOT_THROW:
+            ast = JsParser(source).parse()
+            model = build_semantic_model(ast)
+            statements = [
+                node for node in ast.walk_in_order()
+                if isinstance(node, (JsVariableDeclaration, JsExpressionStatement))
+            ]
+            verdicts[source] = model.statement_cannot_throw(statements[-1])
+        self.assertEqual(verdicts, WHETHER_THE_LAST_STATEMENT_CANNOT_THROW)

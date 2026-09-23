@@ -18,21 +18,28 @@ The public surface — `DominanceModel.dominates`, `DominanceModel.strictly_domi
 `DominanceModel.cfg_node_of`, `DominanceModel.runs_before_function`, `build_dominance` — is keyed to AST
 nodes: an arbitrary node is located to the control-flow node of the statement (or loop head) that
 evaluates it, the granularity at which the graph reasons. `strictly_dominates` is the non-reflexive
-`dominates`, refusing a same-statement pair a caller must order. `runs_before_function` lifts dominance
-across calls: it answers whether a definition runs before every invocation of a function, which a single
-graph cannot, by ordering the definition against the points the function is referenced and recursing up
-the call graph. `runs_before` and `runs_before_all` expose that same ordering against a single reference,
-or every reference in a set — the query a transform needs to confirm a value is established before every
-use that could observe it.
+`dominates`, refusing a same-statement pair a caller must order. `completes_before` is the
+ordering the queries below are built from: dominance orders *entering* a statement, and a run
+reaching a handler because the statement threw has entered it without completing it, so a point
+such a run reaches is ordered after the statement only when the statement cannot throw at all.
+`runs_before_function` lifts that ordering across calls: it answers whether a definition runs
+before every invocation of a function, which a single graph cannot, by ordering the definition
+against the points the function is referenced and recursing up the call graph. `runs_before` and
+`runs_before_all` expose that same ordering against a single reference, or every reference in a
+set — the query a transform needs to confirm a value is established before every use that could
+observe it.
 """
 from __future__ import annotations
 
 from typing import Iterable
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.js.analysis.cfg import (
     FUNCTION_NODES,
+    CfgNode,
+    ControlFlowGraph,
     ControlFlowModel,
     build_control_flow_model,
 )
@@ -52,6 +59,32 @@ class DominanceModel(DominatorModel):
         self.model = model
         self._reference_points_cache: dict[int, list[Node] | None] = {}
 
+    def completes_before(self, definition: Node, point: Node) -> bool:
+        """
+        Whether the statement evaluating *definition* has completed on every run that reaches the
+        statement evaluating *point*, both in one graph. Dominance alone orders entering the first
+        statement: in `try { r = window; } catch (e) {} use(r);` the statement `r = window`
+        dominates `use(r)`, yet the handler runs exactly when reading `window` threw and `r` was
+        never written. So a point
+        `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.exit_reach` places after a throw out of
+        the statement is ordered after it only when
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.statement_cannot_throw` holds for the
+        statement. Not reflexive: a point sharing the statement is refused, since statement
+        granularity cannot order within one statement.
+        """
+        located = self.locate_pair(definition, point)
+        return located is not None and self.completes_before_node(*located)
+
+    def completes_before_node(self, graph: ControlFlowGraph, a: CfgNode, b: CfgNode) -> bool:
+        """
+        The node-level counterpart of `completes_before`, for a caller that has already located the
+        two statements in *graph*.
+        """
+        if a is b or not self.dominates_node(graph, a, b, Projection.MAY):
+            return False
+        _, thrown = graph.exit_reach(a)
+        return id(b) not in thrown or self.model.statement_cannot_throw(a.element)
+
     def runs_before_function(self, definition: Node, function: Node) -> bool:
         """
         Whether *definition* is guaranteed to have executed before any invocation of *function* — so a
@@ -60,7 +93,7 @@ class DominanceModel(DominatorModel):
         to it has been evaluated. Its reference points are its own creation, for an anonymous function
         expression, or the uses of its name, for a named binding; no invocation can precede the earliest
         of them. So *definition* runs before every invocation exactly when it runs before every reference
-        point — and that, per point, is strict dominance when the point lies in *definition*'s own
+        point — and that, per point, is `completes_before` when the point lies in *definition*'s own
         function, or the same question applied to the function the point lies in, recursing up the call
         graph. The ordering is *strict*: a reference sharing the definition's statement — an earlier
         declarator or sequence operand evaluated before it — is not accepted, since statement-granularity
@@ -96,9 +129,9 @@ class DominanceModel(DominatorModel):
         """
         Whether *definition* is guaranteed to have executed before *reference* is evaluated — the
         single-reference form of the ordering `runs_before_function` applies per reference point. When
-        *reference* shares *definition*'s activation this is intraprocedural *strict* dominance (a
-        reference sharing *definition*'s statement is not accepted, since statement-granularity
-        dominance is reflexive and cannot order within one statement); when *reference* lies inside a
+        *reference* shares *definition*'s activation this is `completes_before` (a reference sharing
+        *definition*'s statement is not accepted, since statement-granularity dominance is reflexive
+        and cannot order within one statement); when *reference* lies inside a
         function that cannot be invoked until after *definition*, it is the interprocedural
         runs-before-function query, recursing up the call graph. Conservatively `False` whenever the
         ordering cannot be established — a reference in an activation that may run before *definition*,
@@ -248,7 +281,7 @@ class DominanceModel(DominatorModel):
     ) -> bool:
         owner = self._activation_of(point)
         if owner is definition_owner:
-            return self.strictly_dominates(definition, point)
+            return self.completes_before(definition, point)
         if isinstance(owner, FUNCTION_NODES):
             return self._runs_before_function(definition, definition_owner, owner, visiting, memo)
         return False

@@ -373,6 +373,7 @@ class ControlFlowGraph:
         self._hub_bound: set[int] = set()
         self._resuming = False
         self._fallback: dict[int, CfgNode] = {}
+        self._exit_reach: dict[int, tuple[frozenset[int], frozenset[int]]] = {}
         self.entry = CfgNode(self, None)
         self.exit = CfgNode(self, None)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
@@ -426,6 +427,41 @@ class ControlFlowGraph:
         the block is precisely the one that did not finish.
         """
         return bool(self.edge_kind(source, target).value & _RAISE_TAKEN_MASK)
+
+    def exit_reach(self, source: CfgNode) -> tuple[frozenset[int], frozenset[int]]:
+        """
+        The ids of the nodes reached from *source* by first leaving it normally, and the ids of
+        those reached by first leaving it along an edge `raise_taken` answers for — on a run where
+        *source* threw before it completed. A store *source* makes has happened at every node of the
+        first set and may not have happened at a node of the second. Once control has left *source*
+        normally the store is done, so only the first edge out decides which set a node belongs to,
+        and a node control rejoins both ways — the statement after a `try` whose handler swallowed
+        the throw — is in both.
+        """
+        found = self._exit_reach.get(id(source))
+        if found is None:
+            found = self._exit_reach[id(source)] = (
+                self._reached_after(source, raising=False),
+                self._reached_after(source, raising=True),
+            )
+        return found
+
+    def _reached_after(self, source: CfgNode, *, raising: bool) -> frozenset[int]:
+        seen: set[int] = set()
+        stack: list[CfgNode] = []
+        for successor in source.successors:
+            if self.raise_taken(source, successor) != raising:
+                continue
+            if id(successor) not in seen:
+                seen.add(id(successor))
+                stack.append(successor)
+        while stack:
+            node = stack.pop()
+            for successor in node.successors:
+                if id(successor) not in seen:
+                    seen.add(id(successor))
+                    stack.append(successor)
+        return frozenset(seen)
 
     @property
     def hub_bound(self) -> Set[int]:

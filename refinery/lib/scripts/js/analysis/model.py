@@ -44,6 +44,7 @@ from refinery.lib.scripts.js.model import (
     JsAssignmentPattern,
     JsBinaryExpression,
     JsBlockStatement,
+    JsBooleanLiteral,
     JsBreakStatement,
     JsCallExpression,
     JsCatchClause,
@@ -84,6 +85,7 @@ from refinery.lib.scripts.js.model import (
     JsRestElement,
     JsReturnStatement,
     JsScript,
+    JsSequenceExpression,
     JsSpreadElement,
     JsStaticBlock,
     JsStringLiteral,
@@ -1456,6 +1458,23 @@ def _last_positions(params: list[Binding | None]) -> list[Binding | None]:
 
 _DELETE_OPERATOR = frozenset({'delete'})
 
+#: The binding kinds a plain store never refuses: every one of them is a mutable binding that
+#: exists before any code of its scope runs.
+_BINDINGS_A_STORE_CANNOT_REFUSE = frozenset({
+    BindingKind.VAR,
+    BindingKind.FUNCTION,
+    BindingKind.PARAM,
+    BindingKind.CATCH,
+})
+
+#: The global values whose property on the global object is read-only, so a script-level `var` of
+#: the same name shares that property and a strict store to it throws a `TypeError`.
+_READ_ONLY_GLOBAL_VALUES = frozenset({
+    'undefined',
+    'NaN',
+    'Infinity',
+})
+
 
 def _is_delete_operand(node: Node) -> bool:
     """
@@ -2173,6 +2192,99 @@ class SemanticModel:
         (`EffectModel._read_effectful_or_throwing`).
         """
         return self.read_may_throw(node) or self.reads_lexical_binding(node)
+
+    def statement_cannot_throw(
+        self,
+        statement: Node | None,
+        store_cannot_throw: Callable[[JsAssignmentExpression], bool] | None = None,
+    ) -> bool:
+        """
+        Whether evaluating *statement* throws on no run at all, so that a run leaving it for a
+        handler never leaves it half done. Only a declaration of plain names and an expression
+        statement qualify, each when `evaluation_cannot_throw` holds for everything it evaluates.
+        Binding a destructuring pattern can throw after its initializer ran, and a `var` declared
+        inside a `with` body stores through the object, whose setter may throw, so a declaration
+        with either does not qualify. *store_cannot_throw* is handed on to
+        `evaluation_cannot_throw`.
+        """
+        if isinstance(statement, JsVariableDeclaration):
+            for declarator in statement.declarations:
+                if not isinstance(declarator, JsVariableDeclarator):
+                    return False
+                target = declarator.id
+                if not isinstance(target, JsIdentifier):
+                    return False
+                binding = self.binding_of(target)
+                if binding is None or crosses_dynamic_scope(self._node_scope.get(id(target))):
+                    return False
+                if not binding.is_lexical and not self._stores_into_without_throwing(binding):
+                    return False
+                init = declarator.init
+                if init is not None and not self.evaluation_cannot_throw(init, store_cannot_throw):
+                    return False
+            return True
+        if isinstance(statement, JsExpressionStatement):
+            return self.evaluation_cannot_throw(statement.expression, store_cannot_throw)
+        return False
+
+    def evaluation_cannot_throw(
+        self,
+        node: Node | None,
+        store_cannot_throw: Callable[[JsAssignmentExpression], bool] | None = None,
+    ) -> bool:
+        """
+        Whether evaluating the expression *node* throws on no run at all. Deliberately minimal: a
+        primitive literal, a function value, a read that neither `read_may_raise_reference_error`
+        nor `read_has_dynamic_effect` flags, and a plain `=` store of such a value to a name, joined
+        by parentheses and the comma operator.
+
+        A store to a name cannot throw when the name resolves, through no `with` body, to a `var`,
+        a function, a parameter or a catch binding, unless it is a script-level `var` of one of the
+        read-only global values, which a strict store refuses. A `let` may still be in its
+        temporal dead zone, a `const` refuses every store, and a function expression's own name and
+        a name nothing declares refuse a strict one. *store_cannot_throw* vouches for any other
+        store its caller holds a proof for.
+        """
+        if node is None:
+            return False
+        if isinstance(node, (
+            JsStringLiteral,
+            JsNumericLiteral,
+            JsBooleanLiteral,
+            JsNullLiteral,
+        )):
+            return True
+        if isinstance(node, FUNCTION_NODES):
+            return True
+        if isinstance(node, JsParenthesizedExpression):
+            return self.evaluation_cannot_throw(node.expression, store_cannot_throw)
+        if isinstance(node, JsSequenceExpression):
+            return all(
+                self.evaluation_cannot_throw(part, store_cannot_throw) for part in node.expressions
+            )
+        if isinstance(node, JsIdentifier):
+            return (
+                self.is_reference(node)
+                and not self.read_has_dynamic_effect(node)
+                and not self.read_may_raise_reference_error(node)
+            )
+        if isinstance(node, JsAssignmentExpression):
+            if node.operator != '=':
+                return False
+            target = strip_parens(node.left)
+            if not isinstance(target, JsIdentifier):
+                return False
+            binding = self.resolve(target)
+            vouched = binding is not None and self._stores_into_without_throwing(binding)
+            if not vouched and (store_cannot_throw is None or not store_cannot_throw(node)):
+                return False
+            return self.evaluation_cannot_throw(node.right, store_cannot_throw)
+        return False
+
+    def _stores_into_without_throwing(self, binding: Binding) -> bool:
+        if binding.kind not in _BINDINGS_A_STORE_CANNOT_REFUSE:
+            return False
+        return binding.scope is not self.root_scope or binding.name not in _READ_ONLY_GLOBAL_VALUES
 
     def naming_binding(self, function: Node) -> Binding | None:
         """

@@ -10,8 +10,9 @@ an evaluation-order walk of the statement's own expressions, so a write guarded 
 ternary arm, an optional chain, a logical assignment's right-hand side, or a loop target contributes
 nothing. A write whose statement throws first is discarded structurally — the throw leaves along the
 raising edge, which carries no gens, and the meet at the join forgets the fact — except where the
-statement provably cannot throw at all, whose raising edge is never taken and may carry them
-vacuously. No throw analysis decides what the normal edge means.
+statement provably cannot throw at all
+(`refinery.lib.scripts.js.analysis.model.SemanticModel.statement_cannot_throw`), whose raising edge
+is never taken and may carry them vacuously. No throw analysis decides what the normal edge means.
 
 A bare write in sloppy script code creates the property; in strict code, or anywhere under the module
 reading, it throws instead, so it gens nothing there. A member write through this realm's global
@@ -67,7 +68,6 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
-    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsIdentifier,
@@ -277,8 +277,8 @@ class DefiniteAssignmentModel:
             assert node.element is not None
             self._parts[id(node)] = self._evaluated_parts(graph, node.element)
         cannot_throw = {
-            id(node): self._parts_cannot_throw(node.element, self._parts[id(node)])
-            for graph, node in elements
+            id(node): self.model.statement_cannot_throw(node.element, self._creates_the_property)
+            for _, node in elements
         }
         summaries: dict[int, frozenset[Binding]] = {}
         entries: dict[int, frozenset[Binding]] = {}
@@ -463,57 +463,13 @@ class DefiniteAssignmentModel:
             gens |= self._gens(part)
         return frozenset(gens)
 
-    def _parts_cannot_throw(self, element: Node | None, parts: list[Node]) -> bool:
+    def _creates_the_property(self, assignment: JsAssignmentExpression) -> bool:
         """
-        Whether the statement *element* provably throws on no run at all, so that its raising edge
-        is never taken and may carry its gens vacuously.
-
-        A declaration is more than the initializers `_evaluated_parts` reports: each declarator
-        binds its target once its initializer is evaluated, and binding a pattern destructures,
-        which is what `var {a} = null, b = (X = 1);` throws at — after `null` was read and before
-        the second declarator ran. So a declarator naming anything but a plain identifier answers
-        `False` here, while the gen it contributes on the *normal* edge stays what it was.
+        Whether *assignment* is a sloppy bare store to a tracked name, which creates the property
+        and cannot throw: nothing the analysis cannot see can have made the property read-only or
+        given it a setter, or the name would not be tracked.
         """
-        if isinstance(element, JsVariableDeclaration):
-            if not all(
-                isinstance(declarator.id, JsIdentifier) for declarator in element.declarations
-            ):
-                return False
-        elif not isinstance(element, JsExpressionStatement):
-            return False
-        return all(self._cannot_throw(part) for part in parts)
-
-    def _cannot_throw(self, node: Node | None) -> bool:
-        """
-        Whether evaluating *node* is guaranteed not to throw, so its statement's raising edge is never
-        taken and may vacuously carry its gens. Deliberately minimal: literals, function values, a
-        sloppy bare store of such a value to a tracked name, and a member store of one through this
-        realm's global object — the shapes a `try`-wrapped establishment scaffold is written in.
-        """
-        if node is None:
-            return False
-        if isinstance(node, (
-            JsStringLiteral,
-            JsNumericLiteral,
-            JsBooleanLiteral,
-            JsNullLiteral,
-        )):
-            return True
-        if isinstance(node, FUNCTION_NODES):
-            return True
-        if isinstance(node, JsParenthesizedExpression):
-            return node.expression is not None and self._cannot_throw(node.expression)
-        if isinstance(node, JsSequenceExpression):
-            return all(self._cannot_throw(part) for part in node.expressions)
-        if isinstance(node, JsAssignmentExpression):
-            if node.operator != '=':
-                return False
-            if not isinstance(strip_parens(node.left), JsIdentifier):
-                return False
-            if not self._target_gen(node):
-                return False
-            return self._cannot_throw(node.right)
-        return False
+        return bool(self._target_gen(assignment))
 
     def _gens(self, node: Node | None) -> frozenset[Binding]:
         if node is None:

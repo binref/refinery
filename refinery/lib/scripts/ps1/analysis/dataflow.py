@@ -174,7 +174,6 @@ class Ps1VariableFlow:
         self.cycles = cycles
         self._between = ReachabilityQuery(dominators, Projection.MAY)
         self._unknowns: dict[int, Ps1FlowUnknown] = {}
-        self._exits: dict[tuple[int, int], tuple[frozenset[int], frozenset[int]]] = {}
         self._kills: dict[tuple[int, str], frozenset[int]] = {}
         self._unattributable: dict[int, tuple[tuple[CfgNode, Node], ...]] = {}
         self._unattributable_ids_by_graph: dict[int, frozenset[int]] = {}
@@ -886,49 +885,8 @@ class Ps1VariableFlow:
         left the statement normally the store is done, so only the first edge out of *definition*
         decides which walk a node belongs to.
         """
-        completed, thrown = self._exit_reach(graph, definition)
+        completed, thrown = graph.exit_reach(definition)
         return id(use) in completed and id(use) not in thrown
-
-    def _exit_reach(
-        self,
-        graph: ControlFlowGraph,
-        definition: CfgNode,
-    ) -> tuple[frozenset[int], frozenset[int]]:
-        """
-        The ids of the nodes reached from *definition* by first leaving it normally, and the ids of
-        those reached by first leaving it on a run where it threw.
-        """
-        key = (id(graph), id(definition))
-        found = self._exits.get(key)
-        if found is None:
-            found = self._exits[key] = (
-                self._reached_from(graph, definition, raising=False),
-                self._reached_from(graph, definition, raising=True),
-            )
-        return found
-
-    @staticmethod
-    def _reached_from(
-        graph: ControlFlowGraph,
-        definition: CfgNode,
-        *,
-        raising: bool,
-    ) -> frozenset[int]:
-        seen: set[int] = set()
-        stack: list[CfgNode] = []
-        for successor in definition.successors:
-            if graph.raise_taken(definition, successor) != raising:
-                continue
-            if id(successor) not in seen:
-                seen.add(id(successor))
-                stack.append(successor)
-        while stack:
-            node = stack.pop()
-            for successor in node.successors:
-                if id(successor) not in seen:
-                    seen.add(id(successor))
-                    stack.append(successor)
-        return frozenset(seen)
 
 
 #: The qualifiers that name a scope wider than the one a script's own statements write. A bare write

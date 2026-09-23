@@ -9,8 +9,8 @@ This is the query the constant inliner needs, stated once for the binding it inl
 free variable of the expression it inlines: an expression may be relocated to a use only when the
 inlined binding *and* every variable the expression reads all still hold, at the use, the value they
 held at the definition. The layer sits above two others. Dominance
-(`refinery.lib.scripts.js.analysis.dominance.DominanceModel`) orders the definition strictly before
-the use and supplies the reachability primitive
+(`refinery.lib.scripts.js.analysis.dominance.DominanceModel`) orders the definition's statement as
+completed before the use and supplies the reachability primitive
 `refinery.lib.scripts.js.analysis.dominance.DominanceModel.reachable`, from which the path-between
 question is asked as a forward walk from the definition intersected with a backward walk from the
 use; the effect model
@@ -80,11 +80,12 @@ class ReachingModel:
     def value_preserved(self, binding: Binding, definition: Node, use: Node) -> bool:
         """
         Whether the value *binding* holds where *definition* is evaluated is the value observed at *use*:
-        *definition*'s control-flow node strictly dominates *use*'s — it runs first on every path that
-        reaches *use*, and the two do not merely share one statement, which statement granularity cannot
-        order — and no kill of *binding* lies on any control-flow path between them. `False` when either
-        node lies outside the graphs or in a different function, when *definition* does not strictly
-        dominate *use*, or when *binding*'s kills cannot be enumerated. *definition* is the value
+        *definition*'s statement has completed on every path that reaches *use*
+        (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.completes_before`), the two do
+        not merely share one statement, which statement granularity cannot order, and no kill of
+        *binding* lies on any control-flow path between them. `False` when either node lies outside
+        the graphs or in a different function, when *definition*'s statement does not complete
+        before *use*, or when *binding*'s kills cannot be enumerated. *definition* is the value
         expression whose binding is tracked; a free variable of that expression is checked by passing the
         same *definition* and *use* with the variable's own binding.
         """
@@ -96,9 +97,7 @@ class ReachingModel:
         graph_u, node_u = located_u
         if graph_d is not graph_u:
             return False
-        if node_d is node_u:
-            return False
-        if not self.dominance.dominates_node(graph_d, node_d, node_u, Projection.MAY):
+        if not self.dominance.completes_before_node(graph_d, node_d, node_u):
             return False
         kills = self._kill_nodes(binding, graph_d, definition)
         if kills is None:
