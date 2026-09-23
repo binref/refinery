@@ -532,6 +532,51 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
+    def test_two_namespaces_declared_in_one_statement_flatten_together(self):
+        """
+        Both plans hold the one `var` statement that declares `A` and `B`. The first removes its own
+        declarator and leaves the statement to the second, which removes the statement.
+        """
+        source = 'var A = {}, B = {}; A.x = 1; B.y = 2; log(A.x + B.y);'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var y;
+                var x;
+                x = 1;
+                y = 2;
+                log(x + y);
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    def test_two_namespaces_declared_in_one_statement_hoist_together(self):
+        """
+        The same shape with a function on each namespace: both plans hoist, and both still find the
+        declaration they share.
+        """
+        source = (
+            'var A = {}, B = {}; A.f = function () { return 1; };'
+            ' B.g = function () { return 2; }; log(A.f() + B.g());'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function g() {
+                  return 2;
+                }
+                function f() {
+                  return 1;
+                }
+                log(f() + g());
+                """
+            ),
+            self._flatten(source),
+        )
+        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
     def test_two_hoists_in_one_batch_splice_by_statement_not_position(self):
         """
         Both plans hoist a function declaration into the same body, and applying the first inserts

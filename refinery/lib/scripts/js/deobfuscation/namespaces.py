@@ -10,6 +10,7 @@ from refinery.lib.scripts import (
     Expression,
     Node,
     _replace_in_parent,
+    is_attached,
     set_child_list,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -86,6 +87,12 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
       preceded is preceded by the declaration as well.
     - `property_absent_from_written_chain` for inherited keys. No batch edit writes a prototype or
       a global, so the written chain the effects model read is the one the batch leaves behind.
+
+    A hoist moves the function expression's body into the declaration rather than copying it, so
+    the declaration carries every edit a plan of a scope inside that body applied first. Such a
+    plan flattens a namespace its own scope declares: it rewrites accesses to that namespace only
+    and binds the keys inside that scope. The inner name, the outer namespace's accesses, and the
+    names the body reads from outside, which the hoist decision checked, are left as they were.
     """
 
     def __init__(self):
@@ -169,7 +176,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         anchors: list[Node] = [entry.statement for entry in plan.hoisted.values()]
         if plan.remove_declarator:
             anchors.append(plan.declaration)
-        if not self.anchors_still_present(plan.scope, anchors):
+        if not all(is_attached(anchor) for anchor in anchors):
             return
         if not self._rewrite(plan.scope, plan.name, plan.declarator, plan.flattenable):
             return

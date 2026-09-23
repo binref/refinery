@@ -2779,17 +2779,26 @@ class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
     models stay fresh for the whole traversal because no edit runs until it ends, and the batch is
     applied as one unit afterwards.
 
-    A subclass owes the batch three obligations:
+    A subclass owes the batch five obligations:
 
     - Every binding the batch emits or exposes — the `var` and `function` declarations it installs,
       and the bare identifiers its rewrites create — is registered through `emits` at decision time,
       and a later candidate in the same scope holds a colliding key back through `name_emitted_in`.
       Without it, the later candidate decides against an entry tree that does not yet carry the
       earlier emission and the two installs collide.
-    - Every node an applied edit holds from the decision — an anchor statement, a declarator — is
-      verified still present in the live tree at apply time through `anchors_still_present`. A plan
-      that carries a node from the entry snapshot can otherwise be pointed at a subtree an earlier
-      plan already detached. A plan failing its anchors is skipped whole.
+    - Every node an applied edit holds from the decision — an anchor statement, a declarator, a
+      substitution target — is checked still attached to the live tree at apply time through
+      `refinery.lib.scripts.is_attached`. A plan that carries a node from the entry snapshot can
+      otherwise be pointed at a subtree an earlier plan already detached.
+    - A value a plan writes at a position other than where the entry tree holds it is a copy made
+      at decision. An earlier edit, another plan's or the plan's own, may rewrite the original
+      before the plan lands, and the plan would then write something its decision never checked.
+      A plan that moves a subtree instead of copying one carries the edits earlier plans made
+      inside it, and its pass's docstring shows those edits leave the decision valid.
+    - A plan stands down, whole or in part, only where an earlier plan of the same invocation
+      edited a node it holds. That edit marked the invocation changed, so the group runs the pass
+      again, and the next invocation re-decides whatever the stand-down held back, including a
+      key another candidate held back for an emission that never landed.
     - A per-pass non-interference docstring of its own: which model facts the decisions read, which
       batch edits can invalidate them, and in which direction. A decision valid on the pre-batch
       tree must remain valid on the post-batch tree.
@@ -2843,20 +2852,6 @@ class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
         Whether an earlier plan of this batch already binds *name* in *scope*.
         """
         return name in self._emitted.get(scope, ())
-
-    @staticmethod
-    def anchors_still_present(scope: Node, anchors: Collection[Node]) -> bool:
-        """
-        Whether every node in *anchors* is still a statement of *scope*'s live body, by identity. A
-        plan whose anchor an earlier plan removed is skipped whole.
-        """
-        body = get_body(scope)
-        if body is None:
-            return False
-        for anchor in anchors:
-            if not any(stmt is anchor for stmt in body):
-                return False
-        return True
 
 
 class ScriptLevelTransformer(Transformer):
