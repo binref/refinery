@@ -2271,3 +2271,43 @@ class TestNodePrintsTheSameAboutAMemberArrayReadThroughAnotherReceiver(TestBase)
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Programs whose local is declared without a value and given one by a later store, then read once,
+#: mapped to what Node prints for them. Every name the functions store to is local to them, so none
+#: of them is defined outside. The argument is one no fold computes, so the call stays.
+A_LOCAL_A_LATER_STORE_DEFINES = {
+    'function f(q) { var b; b = q; return b + 1; }'
+    ' console.log(f(Date.now() > 0 ? 1 : 0), typeof b);': (
+        '2 undefined\n'
+    ),
+    'function f(p, q) { var a, b; a = p, b = q; return a + b + b; }'
+    ' console.log(f(Date.now() > 0 ? 1 : 0, 2), typeof a, typeof b);': (
+        '5 undefined undefined\n'
+    ),
+}
+
+
+class TestALocalALaterStoreDefines(TestJsDeobfuscator):
+
+    def test_inlining_its_one_read_keeps_the_declaration_the_store_writes(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(q) {
+                  var b;
+                  b = q;
+                  return q + 1;
+                }
+                """
+            ),
+            self._inline('function f(q) { var b; b = q; return b + 1; }'),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_the_store_stays_local(self):
+        rows = A_LOCAL_A_LATER_STORE_DEFINES
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

@@ -906,18 +906,21 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     ) -> list[_DeclaratorRemoval]:
         """
         Decide which declarators of the round-inlined names are up for removal. No reference count
-        is read here — one taken before the round's plans apply cannot see the reads another plan
-        of the same round deletes — so every name the round substitutes is proposed and the plan
-        counts references at apply time. An exported binding keeps its declarator even with every
-        local read inlined, because an importer still reads it across the module boundary;
-        removing it would leave an `export` naming a binding the module no longer declares. A
-        binding that code the model cannot read could name keeps its declarator for the same
-        reason: every read this file spells may have folded, and the surface — a direct `eval`,
-        a span of source the model never read, a `with` body — reads the binding through no
-        reference the inlining counted, so removing the declaration would turn its value into
-        a `ReferenceError`. An opaque global write is not such a surface: it stores a property
-        and runs nothing, and the reads it could replace were ordered against it before they
-        folded, so the property it may write is the same residual the fold already concedes.
+        is read here — one taken before the round's plans apply cannot see the reads another plan of
+        the same round deletes — so every name the round substitutes is proposed and the plan counts
+        references at apply time. Only a declarator that holds the inlined value is proposed: where
+        the value came from a store after a bare `var b;`, removing the declaration would leave that
+        store writing a global, and a dead store goes with its declaration in
+        `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval`. An exported binding
+        keeps its declarator even with every local read inlined, because an importer still reads it
+        across the module boundary; removing it would leave an `export` naming a binding the module
+        no longer declares. A binding that code the model cannot read could name keeps its
+        declarator for the same reason: every read this file spells may have folded, and the surface
+        — a direct `eval`, a span of source the model never read, a `with` body — reads the binding
+        through no reference the inlining counted, so removing the declaration would turn its value
+        into a `ReferenceError`. An opaque global write is not such a surface: it stores a property
+        and runs nothing, and the reads it could replace were ordered against it before they folded,
+        so the property it may write is the same residual the fold already concedes.
         """
         model = cache.model
         removals: list[_DeclaratorRemoval] = []
@@ -926,7 +929,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             if entries is None:
                 continue
             for entry in entries:
-                if entry.declarator is None:
+                if entry.declarator is None or entry.declarator.init is None:
                     continue
                 binding = self._candidate_binding(entry, model)
                 if binding is not None and (
