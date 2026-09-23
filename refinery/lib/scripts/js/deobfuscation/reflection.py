@@ -1781,10 +1781,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         substitution spliced in (*substituted*) are declined where a body binding captures one; a
         landing inside a `with` body is accepted, since the `with` objects of packed code rebind
         the machinery names the pack itself spells and never the accessor targets. Those the
-        receiver rewrite above synthesized are declined by a body binding capture as well, and
-        additionally by a landing the model cannot resolve determinately — inside a `with` or
-        another dynamic region — since the original read was of the receiver, which no `with`
-        object supplies. Every other check still applies to an exempted name.
+        receiver rewrite above synthesized are declined wherever a bare `globalThis` does not reach
+        the global object
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.bare_name_reaches_the_host`), a
+        `with` body among them, since the original read was of the receiver, which no `with` object
+        supplies. Every other check still applies to an exempted name.
 
         Every name-based answer above is read from the model pinned before any splice, so a body
         naming what an earlier splice this pass declared or wrote is declined outright: for such a
@@ -1814,12 +1815,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
             binding = body_model.resolve(ident)
             if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
                 return None
-        for ident in synthesized:
-            binding = body_model.resolve(ident)
-            if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
-                return None
-            if binding is None and crosses_dynamic_scope(body_model.scope_of(ident)):
-                return None
+        if not all(
+            body_model.bare_name_reaches_the_host('globalThis', ident) for ident in synthesized
+        ):
+            return None
         if resolves_globally and self._destination_may_be_strict(site, root) and diverges_under_strict(
             parsed, body_model, site_resolved,
         ):

@@ -2875,6 +2875,23 @@ class SemanticModel:
                 return True
         return False
 
+    def bare_name_reaches_the_host(self, name: str, at: Node) -> bool:
+        """
+        Whether a bare *name* read at *at* denotes what the host supplies under that name: nothing
+        binds it where *at* stands, not even an assignment the model records as an
+        `IMPLICIT_GLOBAL`, no `with` body between *at* and the global scope may supply it from its
+        object, and no direct `eval` may have declared it (`free_name_reachable_by_direct_eval`).
+        *at* need not be an identifier, so a pass can ask before it writes the name there, as one
+        that rewrites a `this` to `globalThis` must.
+        """
+        scope = self.scope_of(at)
+        return (
+            scope is not None
+            and self.lookup(name, scope) is None
+            and not crosses_dynamic_scope(scope)
+            and not self.free_name_reachable_by_direct_eval(at)
+        )
+
     def binding_dynamic_rebind_sites(self, binding: Binding) -> list[Node] | None:
         """
         The AST nodes at which a dynamic scope could rebind *binding*, or `None` for the one such

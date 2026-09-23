@@ -2584,26 +2584,33 @@ def is_receiver_binding_call(member: Node) -> bool:
     return False
 
 
+def receiver_this_expressions(root: Node) -> list[JsThisExpression]:
+    """
+    Every `this` bound to *root*'s own receiver, found along the receiver boundary
+    `walk_receiver_scope` defines — through arrow functions and a class's `extends` clause and
+    computed keys, but not into a nested regular or generator function, whose `this` is its own.
+    """
+    return [node for node in walk_receiver_scope(root) if isinstance(node, JsThisExpression)]
+
+
 def rewrite_receiver_this_to_global(root: Node) -> list[JsIdentifier]:
     """
-    Replace every `this` bound to *root*'s own receiver with a `globalThis` identifier, returning
-    the identifiers it synthesized. The rewrite descends the receiver boundary
-    `walk_receiver_scope` defines — through arrow functions and a class's `extends` clause and
-    computed keys, but not into a nested regular or generator function, whose `this` is its own —
-    so only *root*'s own `this` is rewritten. A caller uses this where *root* is invoked with no
+    Replace every `this` in `receiver_this_expressions` of *root* with a `globalThis` identifier,
+    returning the identifiers it synthesized. A caller uses this where *root* is invoked with no
     receiver, so its `this` is the global object: a `Function`-constructed body, or a recognized
-    global-object finder whose `… || this` fallback yields the global. The synthesized
-    `globalThis` identifiers are returned so the caller can verify each one still reads the
-    implicit global where it lands — a binding of that name inside *root*, or a dynamically-scoped
-    region resolving it at runtime, captures the synthesized read where the `this` it replaced read
-    the receiver.
+    global-object finder whose `… || this` fallback yields the global. Each landing has to be one
+    where a bare `globalThis` reaches the global object
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.bare_name_reaches_the_host`): a binding
+    of that name inside *root*, or a `with` body resolving it at runtime, captures the synthesized
+    read where the `this` it replaced read the receiver. A caller holding a model of the tree
+    before the rewrite asks it of each `this`; one that builds its model afterwards asks it of the
+    returned identifiers.
     """
     synthesized: list[JsIdentifier] = []
-    for node in list(walk_receiver_scope(root)):
-        if isinstance(node, JsThisExpression):
-            replacement = JsIdentifier(name='globalThis')
-            _replace_in_parent(node, replacement)
-            synthesized.append(replacement)
+    for node in receiver_this_expressions(root):
+        replacement = JsIdentifier(name='globalThis')
+        _replace_in_parent(node, replacement)
+        synthesized.append(replacement)
     return synthesized
 
 

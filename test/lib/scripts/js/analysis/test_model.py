@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsReturnStatement,
+    JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -1942,3 +1943,32 @@ class TestWhichStatementsCannotThrow(TestBase):
             ]
             verdicts[source] = model.statement_cannot_throw(statements[-1])
         self.assertEqual(verdicts, WHETHER_THE_LAST_STATEMENT_CANNOT_THROW)
+
+
+#: Programs mapped to whether a bare `globalThis` written where their `this` stands would read the
+#: global object: every binding of the name captures it, a `with` object may supply it, and a direct
+#: `eval` may declare it.
+WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST = {
+    'this;': True,
+    'function f() { this; }': True,
+    'function f() { { let globalThis = 1; this; } }': False,
+    'try {} catch (globalThis) { this; }': False,
+    'function f(globalThis) { this; }': False,
+    'var globalThis; this;': False,
+    'globalThis = 1; this;': False,
+    'var o = {}; with (o) { this; }': False,
+    'function f(s) { eval(s); this; }': False,
+    'function f() { this; } function g(s) { eval(s); }': True,
+}
+
+
+class TestWhereABareNameReachesTheHost(TestBase):
+
+    def test_a_global_this_written_at_each_this_reads_the_global_object_or_not(self):
+        verdicts = {}
+        for source in WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST:
+            ast = JsParser(source).parse()
+            model = build_semantic_model(ast)
+            this = next(node for node in ast.walk() if isinstance(node, JsThisExpression))
+            verdicts[source] = model.bare_name_reaches_the_host('globalThis', this)
+        self.assertEqual(verdicts, WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST)

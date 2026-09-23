@@ -35,6 +35,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     names_this_realms_global_object,
+    receiver_this_expressions,
     rewrite_receiver_this_to_global,
 )
 from refinery.lib.scripts.js.model import (
@@ -108,8 +109,7 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
                 continue
             if not cache.dominance.established_before(target, call):
                 continue
-            scope = model.scope_of(call)
-            if scope is not None and model.lookup('globalThis', scope) is not None:
+            if not model.bare_name_reaches_the_host('globalThis', call):
                 continue
             _replace_in_parent(call, JsIdentifier(name='globalThis'))
             self.mark_changed()
@@ -124,9 +124,10 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
         detach the method while it observes a receiver. Materializing the belief the recognition already
         rests on — that the finder yields the global object — makes the method `this`-free, so flattening
         detaches it to a bare `f()` the fold path then resolves to `globalThis`. Only a non-arrow,
-        member-assigned finder is touched, and only where `globalThis` is not shadowed in its scope: a
-        name-bound finder is left to the fold path untouched (its body needs no rewrite), and an arrow
-        inherits `this` lexically rather than from the call, so neither is a receiver to materialize.
+        member-assigned finder is touched, and only where a bare `globalThis` reaches the global
+        object at every `this` the rewrite replaces: a name-bound finder is left to the fold path
+        untouched (its body needs no rewrite), and an arrow inherits `this` lexically rather than
+        from the call, so neither is a receiver to materialize.
         """
         changed = False
         for finder in finders:
@@ -140,8 +141,10 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
                 and isinstance(parent.left, JsMemberExpression)
             ):
                 continue
-            scope = model.function_scope(finder)
-            if scope is None or model.lookup('globalThis', scope) is not None:
+            if not all(
+                model.bare_name_reaches_the_host('globalThis', node)
+                for node in receiver_this_expressions(finder)
+            ):
                 continue
             if rewrite_receiver_this_to_global(finder):
                 changed = True
