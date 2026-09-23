@@ -377,10 +377,12 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
         A degenerate multi-level-redirect sample: bare `Sub` is used while the `with` redirect still
         points at `NS`, so `Sub` never resolves and the original throws a `ReferenceError`. The
-        recovery keeps the genuinely free `val`/`args` bare (they have no namespace-defining write),
-        declares `var extra;` for the never-written namespace member `scope.NS.extra` so it reads
-        `undefined`, and recovers `Sub` from its `scope.Sub` writes, remaining an equivalent throwing
-        program.
+        recovery keeps the genuinely free `val` bare (it has no namespace-defining write), reads the
+        argument holder the main call never passes as `void 0`, declares `var extra;` for the
+        never-written namespace member `scope.NS.extra` so it reads `undefined`, and recovers `Sub`
+        from its `scope.Sub` writes. Where nothing binds `val` it remains a throwing program; that
+        it does not throw where `val` is bound is tracked by
+        `TestNodePrintsTheSameForEachRecoveredFixture`.
         """
         result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
         self.assertEqual(result, inspect.cleandoc(
@@ -389,7 +391,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               var extra;
               var Sub;
               Sub = {};
-              Sub.arr = args;
+              Sub.arr = void 0;
               return extra + val;
             }
             """
@@ -429,7 +431,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              data = args;
+              data = void 0;
               return val;
             }
             """
@@ -1340,17 +1342,16 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         while the redirect points at `Sub`). Node resolves both to `scope.Sub.slot`, so the recovery
         must canonicalize the member to `Sub.slot` in both positions independently of the momentary
         redirect. `Sub` reaches the scope as an object-literal argument the wrapper threads to the
-        shared generator, making it a structural namespace emitted as `var Sub = {}`. Verified
-        equivalent to the original under Node: the recovered `outer()(7)` returns `7`, as does the
-        original.
+        shared generator, a fresh object for every call of the wrapper, so it is declared as
+        `var Sub = {}` in the wrapper's recovered body.
         """
         result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function outer() {
               var NS = {};
-              var Sub = {};
               NS.make = function(...rest) {
+                var Sub = {};
                 Sub.slot = rest;
                 return Sub.slot[0];
               };
@@ -1792,3 +1793,607 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             }
             """
         ))
+
+    PER_CALL_NAMESPACE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.keep = function(...rest) {
+                      return gen(20, 30, {NS: scope.NS, Loc: {}}, rest)["next"]()["value"];
+                    };
+                    return done = true, NS.keep;
+                    break;
+                  case 50:
+                    [Loc.p, Loc.q] = args;
+                    scope.RV = scope.Loc;
+                    a = 70, b = 0;
+                    break;
+                  case 70:
+                    return done = true, function () { return p + q; };
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_per_call_namespace_is_a_local_of_the_wrapper(self):
+        """
+        Each call of the wrapper hands the generator a fresh `Loc`, which the closure it returns
+        keeps; the recovered wrapper declares `Loc` itself, and the argument store becomes its
+        parameters.
+        """
+        result = self._run_transformer(self.PER_CALL_NAMESPACE_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              NS.keep = function(p_1, q_1) {
+                var Loc = {};
+                Loc.p = p_1, Loc.q = q_1;
+                return function() {
+                  return Loc.p + Loc.q;
+                };
+              };
+              return NS.keep;
+            }
+            """
+        ))
+
+    PER_CALL_SCOPE_VARIABLE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var hold = function(...rest) {
+                      return gen(20, 30, {}, rest)["next"]()["value"];
+                    };
+                    return done = true, hold;
+                    break;
+                  case 50:
+                    scope.t = args[0];
+                    return done = true, function () { return t; };
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_per_call_scope_variable_is_a_local_of_the_wrapper(self):
+        result = self._run_transformer(self.PER_CALL_SCOPE_VARIABLE_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var hold = function(...rest) {
+                var t;
+                t = rest[0];
+                return function() {
+                  return t;
+                };
+              };
+              return hold;
+            }
+            """
+        ))
+
+    ARGUMENT_STORE_WITH_REST_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.count = function(...rest) {
+                      return gen(20, 30, {NS: scope.NS, Loc: {}}, rest)["next"]()["value"];
+                    };
+                    return done = true, NS.count;
+                    break;
+                  case 50:
+                    [Loc.first, ...Loc.others] = args;
+                    scope.RV = scope.Loc;
+                    a = 70, b = 0;
+                    break;
+                  case 70:
+                    return done = true, first + ":" + others.length;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_argument_store_with_a_rest_slot_becomes_a_rest_parameter(self):
+        result = self._run_transformer(
+            self.ARGUMENT_STORE_WITH_REST_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              NS.count = function(first_1, ...others_1) {
+                var Loc = {};
+                Loc.first = first_1, Loc.others = others_1;
+                return Loc.first + ":" + Loc.others.length;
+              };
+              return NS.count;
+            }
+            """
+        ))
+
+    SCOPE_NAME_REBOUND_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.list = [];
+                    scope.fill = function (scope) {
+                      scope.push(1);
+                      return scope.length;
+                    };
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, fill(list);
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_scope_members_below_a_rebinding_of_the_scope_name_stay(self):
+        result = self._run_transformer(self.SCOPE_NAME_REBOUND_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var fill, list;
+              list = [];
+              fill = function(scope) {
+                scope.push(1);
+                return scope.length;
+              };
+              return fill(list);
+            }
+            """
+        ))
+
+    UNREADABLE_WRAPPER_SCOPE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(...rest) {
+                      return gen(40, 0, make(), rest)["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    return done = true, args[0] + typeof k;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    STATE_READ_BY_A_CLOSURE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.peek = function () { return a; };
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, peek();
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    args = [7];
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, args[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ACCESSOR_SCOPE_DEFAULT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {get NS() { return {}; }}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.x = 1;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, NS.x;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_INITIALIZER_WITH_AN_EFFECT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(...rest) {
+                      return gen(40, 0, {Loc: {a: note()}}, rest)["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    return done = true, args[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    WRAPPER_HANDING_ON_ANOTHER_ARGUMENT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(...rest) {
+                      return gen(40, 0, scope, [9])["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    return done = true, args[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    GUARD_WITH_MORE_TO_DO_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { console.log("guard"); return result; }
+          return 2;
+        }
+        """
+    )
+
+    UNGUARDED_RETURN_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          console.log("after", result);
+          return 2;
+        }
+        """
+    )
+
+    GENERATOR_RETURN_WITHOUT_THE_FLAG_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 2;
+        }
+        """
+    )
+
+    RESULT_READ_AFTER_THE_GUARD_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log("ran");
+                    a = 90, b = 10;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return result === undefined ? "none" : result;
+        }
+        """
+    )
+
+    FUNCTION_BETWEEN_GENERATOR_AND_CALL_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, helper();
+                    break;
+                }
+              }
+            }
+          }
+          function helper() { return 3; }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_recovery_declines_what_it_cannot_express(self):
+        """
+        A wrapper handing the generator a scope object a call makes, a nested function reading a
+        state variable when it is called, a run storing to the argument holder the main call never
+        passes, a scope object whose namespace an accessor makes afresh on every read, a namespace
+        nothing refers to whose initializer calls a function, and a wrapper handing on an argument
+        other than its own parameter: each generator is left as it is. So is one whose call is not
+        the obfuscator's scaffolding exactly: a guard that does more than return the result, a
+        return of the generator no guard turns into a return of the function, a result read after
+        the guard, and a declaration standing between the generator and its call.
+        """
+        for source in (
+            self.UNREADABLE_WRAPPER_SCOPE_CFF,
+            self.STATE_READ_BY_A_CLOSURE_CFF,
+            self.MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF,
+            self.ACCESSOR_SCOPE_DEFAULT_CFF,
+            self.NAMESPACE_INITIALIZER_WITH_AN_EFFECT_CFF,
+            self.WRAPPER_HANDING_ON_ANOTHER_ARGUMENT_CFF,
+            self.GUARD_WITH_MORE_TO_DO_CFF,
+            self.UNGUARDED_RETURN_CFF,
+            self.GENERATOR_RETURN_WITHOUT_THE_FLAG_CFF,
+            self.RESULT_READ_AFTER_THE_GUARD_CFF,
+            self.FUNCTION_BETWEEN_GENERATOR_AND_CALL_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
+
+#: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
+#: appended to the fixture and to its recovery alike. A fixture that already prints on its own
+#: needs none; every other one is called with arguments that reach the paths its machine recovers,
+#: and a name it reads from outside is given a value the recovery could lose.
+ENTRY_POINTS = {
+    'FIZZBUZZ_CFF': '',
+    'WITH_DISSOLUTION_CFF': 'console.log(wrapper() === globalThis);',
+    'SHARED_WRAPPER_CFF': 'console.log(wrapper());',
+    'GUARDED_PREDICATE_CFF': 'console.log(wrapper());',
+    'NESTED_WRAPPER_ARG_REBIND_CFF': 'console.log(outer()(7), outer()(1, 2));',
+    'REDIRECT_VAR_CFF': 'console.log(wrapper(), y);',
+    'REDIRECT_QUALIFY_CFF': "var args = 'a', val = 'v'; console.log(wrapper());",
+    'COMPUTED_REDIRECT_CFF': "var args = 'a', val = 'v'; console.log(wrapper(), data);",
+    'LOOPING_CFF': 'console.log(wrapper());',
+    'CONTINUE_IN_LOOP_CFF': 'console.log(wrapper());',
+    'HEADER_PAYLOAD_CFF': 'console.log(wrapper());',
+    'COMPUTED_MEMBER_CFF': 'console.log(wrapper());',
+    'SEQUENCE_STATE_CFF': 'console.log(wrapper());',
+    'NESTED_CONDITIONAL_CFF': 'console.log(wrapper());',
+    'COMPUTED_ROUTING_CFF': 'console.log(wrapper());',
+    'BOOKKEEPING_LEAK_CFF': 'console.log(wrapper());',
+    'SHARED_INTERMEDIATE_CFF': 'console.log(wrapper());',
+    'BARE_SCOPE_CONDITION_CFF': 'console.log(wrapper());',
+    'MIXED_SEQUENCE_BRANCH_CFF': 'var x = 1; console.log(wrapper());',
+    'FREE_NAMES_CFF': 'var y = 2; console.log(wrapper(), x);',
+    'LABELED_CONTINUE_CFF': 'var i = 7; console.log(wrapper(), i);',
+    'FREE_FORMS_CFF': (
+        "var freeObj = { method: function () { console.log('m'); } };"
+        " function freeCall() { console.log('c'); }"
+        " var freeVal = 'v';"
+        ' console.log(wrapper(), freeVar);'
+    ),
+    'NAMESPACE_LOCAL_DEEP_CFF': 'var local = 1; console.log(wrapper());',
+    'NAMESPACE_LOCAL_BARE_CFF': 'var member = 1; console.log(wrapper());',
+    'NAMESPACE_LOCAL_DESTRUCTURING_CFF': 'var p = 1, q = 1; console.log(wrapper());',
+    'SIBLING_NAMESPACE_HOME_CFF': 'var make = outer(); console.log(make(7), make(8, 9));',
+    'AMBIGUOUS_NAMESPACE_HOME_CFF': 'var v = 1; console.log(outer());',
+    'CATCH_PARAM_QUALIFY_CFF': 'var x = 1; console.log(outer());',
+    'ARROW_PARAM_QUALIFY_CFF': 'var x = 1; console.log(outer());',
+    'OBJECT_SHORTHAND_QUALIFY_CFF': 'var x = 1; console.log(JSON.stringify(outer()));',
+    'COMPOUND_ASSIGNMENT_HOME_CFF': 'var c = 1; console.log(outer(0));',
+    'PLAIN_PARAM_WRAPPER_CFF': 'console.log(outer()([1, 2]));',
+    'WRAPPER_REST_FREE_REFERENCE_CFF': 'console.log(outer()(5), sink);',
+    'WRAPPER_SHORTHAND_ARG_CFF': 'console.log(JSON.stringify(outer()(5, 6)));',
+    'STATE_NAME_IN_PROPERTY_SLOTS_CFF': 'var i = 1; console.log(JSON.stringify(outer()));',
+    'PER_CALL_NAMESPACE_CFF': (
+        'var keep = outer(); var one = keep(1, 2), two = keep(3, 4); console.log(one(), two());'
+    ),
+    'PER_CALL_SCOPE_VARIABLE_CFF': (
+        'var hold = outer(); var one = hold(1), two = hold(2); console.log(one(), two(), typeof t);'
+    ),
+    'ARGUMENT_STORE_WITH_REST_CFF': 'var count = outer(); console.log(count(1, 2, 3), count(4));',
+    'SCOPE_NAME_REBOUND_CFF': 'console.log(outer());',
+    'UNREADABLE_WRAPPER_SCOPE_CFF': 'function make() { return { k: 1 }; } console.log(outer()(5));',
+    'STATE_READ_BY_A_CLOSURE_CFF': 'console.log(outer());',
+    'MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF': "var args = 'global'; console.log(outer(), args);",
+    'ACCESSOR_SCOPE_DEFAULT_CFF': 'console.log(outer());',
+    'NAMESPACE_INITIALIZER_WITH_AN_EFFECT_CFF': (
+        "function note() { console.log('noted'); return 1; } console.log(outer()(5));"
+    ),
+    'WRAPPER_HANDING_ON_ANOTHER_ARGUMENT_CFF': 'console.log(outer()(5));',
+    'GUARD_WITH_MORE_TO_DO_CFF': 'console.log(wrapper());',
+    'UNGUARDED_RETURN_CFF': 'console.log(wrapper());',
+    'GENERATOR_RETURN_WITHOUT_THE_FLAG_CFF': 'console.log(wrapper());',
+    'RESULT_READ_AFTER_THE_GUARD_CFF': 'console.log(wrapper());',
+    'FUNCTION_BETWEEN_GENERATOR_AND_CALL_CFF': 'console.log(wrapper());',
+}
+
+#: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
+#: of its own below.
+DIVERGING_FIXTURES = {'REDIRECT_QUALIFY_CFF'}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
+
+    def _fixtures(self):
+        for name, value in vars(TestGeneratorCFFUnflattening).items():
+            if isinstance(value, str) and 'function*' in value:
+                yield name, value
+
+    def _program(self, name: str) -> str:
+        return F'{getattr(TestGeneratorCFFUnflattening, name)}\n{ENTRY_POINTS[name]}'
+
+    def _programs(self):
+        for name, _ in self._fixtures():
+            if name not in DIVERGING_FIXTURES:
+                yield name, self._program(name)
+
+    def test_every_fixture_has_an_entry_point(self):
+        self.assertEqual({name for name, _ in self._fixtures()}, set(ENTRY_POINTS))
+
+    @unittest.expectedFailure
+    def test_a_name_read_while_the_redirect_hides_it_still_throws(self):
+        """
+        `REDIRECT_QUALIFY_CFF` reads `Sub` bare while the `with` redirect points at `NS`, which does
+        not carry it, so the read falls through to the scopes around the generator and throws a
+        `ReferenceError`. The recovery declares `Sub` as a local of the function, reachable from
+        every state, so the recovered read succeeds. Qualification decides where a name lives
+        independently of the momentary redirect; a read whose meaning depends on the redirect
+        would need the redirect tracked through the states, or the recovery declined for it.
+        """
+        program = self._program('REDIRECT_QUALIFY_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    def test_each_fixture_recovered_alone_prints_what_it_printed(self):
+        for name, program in self._programs():
+            with self.subTest(name):
+                recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+                self.assertEqual(behavior(program), behavior(recovered))
