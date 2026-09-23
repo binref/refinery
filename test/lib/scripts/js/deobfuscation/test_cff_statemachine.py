@@ -2397,3 +2397,8 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
             with self.subTest(name):
                 recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
                 self.assertEqual(behavior(program), behavior(recovered))
+
+    def test_each_fixture_deobfuscated_prints_what_it_printed(self):
+        for name, program in self._programs():
+            with self.subTest(name):
+                self.assertEqual(behavior(program), behavior(self._deobfuscate(program)))

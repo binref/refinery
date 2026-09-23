@@ -3,17 +3,16 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from test import a_property_of_the_batch_itself
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import before_and_after
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
 #: Programs reading a namespace property from inside a function that binds the namespace's own name,
-#: so the conflict walk prunes the subtree the read stands in. Held by
-#: `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw`.
+#: where the read of the outer namespace `A` stands below the hoist of the inner namespace's `M.A`.
 A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
     'an outer namespace a bare read keeps': (
         'var A = {}; function f() { var M = {}; M.A = function () { return 1; };'
@@ -29,8 +28,7 @@ A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
 }
 
 #: Programs reading a namespace property from below a binding of the property's own name, so a
-#: flattening that rewrites the read to a bare identifier would rebind it. Held by
-#: `test.lib.scripts.js.test_unfixed_defects.TestAPropertyReadBelowABindingOfItsOwnName`.
+#: flattening that rewrites the read to a bare identifier would rebind it. Each prints `2`.
 A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
     'nested var': (
         'var NS = {}; NS.p = 2; function f() { var p = 1; return NS.p; } console.log(f());'
@@ -615,33 +613,25 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
-    @a_property_of_the_batch_itself
-    @unittest.expectedFailure
-    def test_a_hoist_a_pruned_conflict_walk_allows_flattens_the_same_way_one_plan_at_a_time(self):
-        """
-        The inner plan's conflict walk prunes `h` for binding the namespace's name `M`, so it never
-        sees the `A` in `A.X = 5` and hoists `function A` over the read. The batched pass flattens
-        the outer namespace too and rewrites the read out from under the hoist; one plan at a time
-        the outer plan is declined against the tree the inner plan already edited and the capture
-        is left standing. The ledger entry
-        `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw`
-        holds the defect.
-        """
-        source = A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME[
-            'an outer namespace the batch flattens'
-        ]
-        self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+    def test_a_read_below_a_binding_of_its_name_flattens_the_same_way_one_plan_at_a_time(self):
+        for source in [
+            *A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME.values(),
+            *A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME.values(),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
-    @a_property_of_the_batch_itself
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_the_batch_answered_hoist_row_flattens_soundly(self):
+    def test_a_read_below_a_binding_of_its_name_still_reads_the_namespace(self):
         """
-        The parity law for this row is an expected failure: the batched flattening and its
-        sequential self disagree, and the batched output is the sound one. That xfail records only
-        the disagreement, so it would stay green were the batched output to regress to a different
-        wrong result. Pinning the batched flattening against the Node oracle catches that.
+        A bare name written where the read stood would resolve to the binding between it and the
+        flattened declaration: a parameter, a local, a key an inner namespace declares, or a
+        function the inner namespace's flattening hoists.
         """
-        source = A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME[
-            'an outer namespace the batch flattens'
-        ]
-        self.assertEqual(behavior(source), behavior(self._flatten(source)))
+        for source in [
+            *A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME.values(),
+            *A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME.values(),
+        ]:
+            with self.subTest(source):
+                self.assertEqual(behavior(source), behavior(self._flatten(source)))
+                self.assertEqual(*before_and_after(source))

@@ -77,9 +77,11 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
       to a namespace variable nor hands one to a host — its rewrites remove the last references
       there are — so a binding unreachable at entry stays unreachable.
     - `is_shadowed` answers for conflicting names, including the object-position uses the conflict
-      check counts. A rewrite does create bare identifiers, but only for names the emission
-      registry already covers: a later candidate in the same scope holds a colliding key back, and
-      a binding's shadowing answer for a name nothing in the batch emits is untouched.
+      check counts, and for the bare identifier each rewrite writes where an access stood. A
+      rewrite does create bare identifiers, but only for names the emission registry already
+      covers: a later candidate in the same scope holds a colliding key back, a candidate of an
+      enclosing scope holds back a key a nested plan declares around one of its accesses, and a
+      binding's shadowing answer for a name nothing in the batch emits is untouched.
     - `DominanceModel.runs_before_all` for hoisting. A hoisted declaration moves a function body to
       the prologue without moving when it executes — the body still runs only when called, from
       call sites no batch edit reorders — and the removed assignment's binding of the property is
@@ -134,12 +136,13 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         scope_obj = model.scope_of(scope)
         if scope_obj is None:
             return None
-        conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
+        conflicts = self._find_conflicting_names(model, scope, scope_obj, props, declarator)
         references_by_key = self._property_references_by_key(scope, name)
+        captured = self._captured_keys(model, scope, scope_obj, references_by_key)
         receiver_called = self._receiver_called_keys(references_by_key)
         this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
         inherited = self._inherited_keys(props, cache.effects)
-        flattenable = props - conflicts - this_unsafe - inherited
+        flattenable = props - conflicts - captured - this_unsafe - inherited
         flattenable = {
             key for key in flattenable
             if not self.name_emitted_in(scope, key)
@@ -297,7 +300,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         model: SemanticModel,
         scope: Node,
         scope_obj: Scope,
-        name: str,
         props: set[str],
         declarator: JsVariableDeclarator,
     ) -> set[str]:
@@ -309,11 +311,12 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         An occurrence in object position (`k.y`) counts the same way a bare one does: it reads the
         binding, so the declaration the flattening emits would capture it. Only an occurrence in
         non-computed property position (`x.k`) names a property rather than a variable and is
-        ignored.
+        ignored. The whole subtree is walked: a function that binds the namespace's own name holds
+        no access to the namespace, but a name it reads from outside is captured all the same.
         """
         decl_id = declarator.id
         conflicts: set[str] = set()
-        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
+        for node in scope.walk():
             if not isinstance(node, JsIdentifier):
                 continue
             if node.name not in props or node.name in conflicts:
@@ -327,6 +330,42 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                 continue
             conflicts.add(node.name)
         return conflicts
+
+    def _captured_keys(
+        self,
+        model: SemanticModel,
+        scope: Node,
+        scope_obj: Scope,
+        references_by_key: dict[str, list[Node]],
+    ) -> set[str]:
+        """
+        The keys some access `NS.k` of which the bare `k` that replaces it would not carry to the
+        declaration the flattening emits in *scope*: between the access and *scope* the name is
+        bound anew, by a binding of the program (`SemanticModel.is_shadowed`) or by a declaration
+        an earlier plan of the batch emits into a scope nested below this one (`name_emitted_in`).
+        Scopes are decided innermost first, so every such plan is decided before this one.
+        """
+        captured: set[str] = set()
+        for key, references in references_by_key.items():
+            for reference in references:
+                assert isinstance(reference, JsMemberExpression) and reference.object is not None
+                if model.is_shadowed(key, reference.object, scope_obj) or any(
+                    self.name_emitted_in(enclosing, key)
+                    for enclosing in self._scopes_between(reference, scope)
+                ):
+                    captured.add(key)
+                    break
+        return captured
+
+    @staticmethod
+    def _scopes_between(node: Node, scope: Node) -> Iterator[Node]:
+        """
+        The nodes strictly between *node* and its ancestor *scope*, innermost first.
+        """
+        cursor = node.parent
+        while cursor is not None and cursor is not scope:
+            yield cursor
+            cursor = cursor.parent
 
     @staticmethod
     def _rewrite(
