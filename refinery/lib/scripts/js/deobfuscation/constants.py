@@ -94,7 +94,10 @@ class _ScopePlan(NamedTuple):
     substitutions: list[_Substitution]
     declarator_removals: list[_DeclaratorRemoval]
     decl_ids: set[int]
-    planned: set[str]
+
+    @property
+    def planned(self) -> set[str]:
+        return _planned_keys(self.substitutions)
 
 
 def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
@@ -350,19 +353,17 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         candidates, mutated = self._collect_candidates(scope, cache.effects)
         if not candidates:
             return
-        substitutions = self._decide_constants(scope, candidates, cache)
+        decl_ids = _candidate_decl_ids(candidates)
+        substitutions = self._decide_constants(scope, candidates, decl_ids, cache)
         if not substitutions:
-            substitutions = self._decide_expressions(scope, candidates, mutated, cache)
+            substitutions = self._decide_expressions(scope, candidates, mutated, decl_ids, cache)
         if not substitutions:
             return
-        planned = _planned_keys(substitutions)
-        decl_ids = _candidate_decl_ids(candidates)
         self._submit(_ScopePlan(
             scope,
             [sub._replace(value=_clone_node(sub.value)) for sub in substitutions],
-            self._decide_dead_declarators(candidates, planned, cache),
+            self._decide_dead_declarators(candidates, _planned_keys(substitutions), cache),
             decl_ids,
-            planned,
         ))
 
     def _collect_candidates(
@@ -525,6 +526,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
+        decl_ids: set[int],
         cache: ModelCache,
     ) -> list[_Substitution]:
         """
@@ -536,7 +538,6 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         """
         bloat_blocked: set[str] = set()
 
-        decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(
             scope, set(candidates), decl_ids, count_member_access=True,
         )
@@ -811,6 +812,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         mutated: set[str],
+        decl_ids: set[int],
         cache: ModelCache,
     ) -> list[_Substitution]:
         """
@@ -827,7 +829,6 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         an initializer is inside the `with` body, so the candidate's own binding is written in a
         dynamic scope and the reaching query orders that hazard against the relocated read.
         """
-        decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
 
         to_inline: dict[str, _CandidateEntry] = {}

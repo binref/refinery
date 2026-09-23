@@ -479,9 +479,9 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
 
     def test_two_declarators_of_one_namespace_name_are_left_alone(self):
         """
-        The second declarator's own identifier is a bare reference to the name, so neither declaration
-        describes a namespace whose every reference is a property access, and the pass dissolves
-        neither.
+        The second declarator's own identifier is a bare reference to the name, so neither
+        declaration describes a namespace whose every reference is a property access, and the pass
+        dissolves neither.
         """
         source = (
             'var NS = {}; NS.g = function () { return 42; };'

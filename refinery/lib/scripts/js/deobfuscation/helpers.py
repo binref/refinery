@@ -2781,10 +2781,10 @@ class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
     Intermediate base for scope-processing transforms that decide every rewrite of one invocation
     against one entry model snapshot and apply the whole batch afterwards, once. This is a third
     freshness regime beside the two the codebase already documents: a pin holds the models across a
-    pass whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass whose
-    edits make facts more restrictive. A batched pass emits bindings, so neither regime fits: the
-    models stay fresh for the whole traversal because no edit runs until it ends, and the batch is
-    applied as one unit afterwards.
+    pass whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass
+    whose edits make facts more restrictive. A batched pass emits bindings, so neither regime fits:
+    the models stay fresh for the whole traversal because no edit runs until it ends, and the batch
+    is applied as one unit afterwards.
 
     A subclass owes the batch five obligations:
 

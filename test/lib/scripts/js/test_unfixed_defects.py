@@ -2493,8 +2493,8 @@ class TestAPropertyReadBelowABindingOfItsOwnName(TestBase):
     entry's programs ask for.
 
     Off the release gate deliberately: the miscompiled shape needs a read below a binding of its
-    name that a live value distinguishes, and the decoy-parameter shape the obfuscators actually emit
-    is the benign one above.
+    name that a live value distinguishes, and the decoy-parameter shape the obfuscators actually
+    emit is the benign one above.
     """
 
 
@@ -2505,8 +2505,8 @@ class TestAReadBelowAHoistTheConflictWalkNeverSaw(TestBase):
     inside a function with a parameter `M` refers to that parameter and not to the namespace — and
     the walk serves the key question with the same prune: a read of a key inside the pruned function
     is a read of an outer binding the flattening's own hoist captures, and the walk never counts it.
-    The hoist of `M.A` therefore lands above the `A.X = 5` a sibling function carries, and that write
-    reaches the hoisted function instead of the outer namespace `A` it resolved to.
+    The hoist of `M.A` therefore lands above the `A.X = 5` a sibling function carries, and that
+    write reaches the hoisted function instead of the outer namespace `A` it resolved to.
 
     The sibling of `TestAPropertyReadBelowABindingOfItsOwnName`, one step further in: there the
     binding a read sits below is one the program already carries, and here it is one the flattening
@@ -2524,8 +2524,8 @@ class TestAReadBelowAHoistTheConflictWalkNeverSaw(TestBase):
 
     Off the release gate deliberately: the shape needs a nested namespace whose key carries an outer
     namespace's name, a sibling function binding the inner namespace's name, and a read of the outer
-    name inside it, which has had to be constructed; the decoy-parameter shape the obfuscators emit is
-    the benign one the sibling entry records.
+    name inside it, which has had to be constructed; the decoy-parameter shape the obfuscators
+    emit is the benign one the sibling entry records.
     """
 
     @unittest.expectedFailure
