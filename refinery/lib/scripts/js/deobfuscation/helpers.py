@@ -40,8 +40,6 @@ if TYPE_CHECKING:
     LiteralValue: TypeAlias = str | int | float | bool | list | dict | None
     Value: TypeAlias = str | float | bool | list | dict | _FuncDecl | _FuncExpr | _Arrow | None
 
-_Plan = TypeVar('_Plan')
-
 from refinery.lib.scripts import (
     Expression,
     Node,
@@ -137,6 +135,8 @@ from refinery.lib.scripts.js.strict import (
 )
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 from refinery.lib.scripts.js.utf16 import SURROGATE_PAIR, code_units, from_code_units
+
+_Plan = TypeVar('_Plan')
 
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
