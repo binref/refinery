@@ -375,6 +375,11 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
       and a substitution whose value is an identifier adds a read the entry snapshot never saw —
       so the plan counts at apply time, on the tree its substitutions leave behind, and
       `is_attached` refuses the substitutions an earlier plan detached.
+    - The values the substitutions write: each is a node of the entry tree, an initializer that a
+      substitution of the same round can rewrite in place before the one writing it lands. In
+      `var x = p; var y = x; f(); g(y);` the round substitutes `p` for the `x` in `y`'s initializer
+      and that initializer for the `y` in `g(y)`, so a copy taken at apply time would carry the
+      read of `p` past `f()`. The plan holds a copy made at decision and writes what it checked.
     """
 
     def __init__(self, max_inline_length: int = 64):
@@ -410,7 +415,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         decl_ids = _candidate_decl_ids(candidates)
         self._submit(_ScopePlan(
             scope,
-            substitutions,
+            [sub._replace(value=_clone_node(sub.value)) for sub in substitutions],
             self._decide_dead_declarators(candidates, planned, cache),
             self._decide_dead_member_arrays(member_arrays, planned) if member_arrays else [],
             decl_ids,
@@ -581,9 +586,10 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     ) -> list[_Substitution]:
         """
         Decide the constant (literal and literal-array) inlines of one round. A reference is inlined
-        only where the definition's value provably reaches it unchanged (`ReachingModel.value_preserved`),
-        covering both scalar references and computed index access into all-literal arrays. The value
-        each decision records is the entry snapshot's own node; the plan clones it where it applies.
+        only where the definition's value provably reaches it unchanged
+        (`ReachingModel.value_preserved`), covering both scalar references and computed index access
+        into all-literal arrays. The value each decision records is the entry snapshot's own node,
+        which `_process_scope` copies into the plan.
         """
         bloat_blocked: set[str] = set()
 
@@ -1116,11 +1122,10 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         for sub in plan.substitutions:
             if not is_attached(sub.target):
                 continue
-            clone = _clone_node(sub.value)
             if isinstance(sub.target, JsIdentifier):
-                substituted = substitute_use_position(sub.target, clone)
+                substituted = substitute_use_position(sub.target, sub.value)
             else:
-                substituted = _replace_in_parent(sub.target, clone)
+                substituted = _replace_in_parent(sub.target, sub.value)
             if not substituted:
                 continue
             self.mark_changed()

@@ -2163,3 +2163,52 @@ class TestNodePrintsTheSameAboutAnInlineThatSurvivesAnEarlierPlan(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Programs that read a binding into a chain of single-use locals, then call a function that writes
+#: the binding, then print the end of the chain. One round folds every link into the next, so each
+#: value the round writes is an initializer another substitution of the same round rewrites.
+A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE = {
+    'a free global two functions write': (
+        'function setp() { p = 0; } function bump() { p = 99; }'
+        ' setp(); var x = p + 0; var y = x + 0; bump(); console.log(y);'
+    ),
+    'a script binding two functions write': (
+        'var x = 1; function s() { x = 2; } function f() { x = 9; }'
+        ' s(); var t0 = x + 1; var t1 = t0 * 3; f(); console.log(t1);'
+    ),
+    'a chain three locals long': (
+        'var x = 1; function s() { x = 2; } function f() { x = 9; }'
+        ' s(); var t0 = x + 1; var t1 = t0 * 3; var t2 = t1 - 4; f(); console.log(t2);'
+    ),
+}
+
+#: What Node prints for each program of `A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE` — and for
+#: the text it is deobfuscated to, which is the agreement the entry exists for.
+WHAT_A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE_PRINTS = {
+    A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE[
+        'a free global two functions write'
+    ]: '0\n',
+    A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE[
+        'a script binding two functions write'
+    ]: '9\n',
+    A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE[
+        'a chain three locals long'
+    ]: '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAChainReadAcrossAWrite(TestBase):
+
+    def test_the_chain_still_prints_the_value_read_before_the_write(self):
+        """
+        Node prints the value the binding held before the writing call: `0`, `9` and `5`. The
+        deobfuscation has to print the same, so no fold may carry the read of the binding down the
+        chain past that call.
+        """
+        rows = WHAT_A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE_PRINTS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

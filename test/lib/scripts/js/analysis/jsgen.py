@@ -192,7 +192,8 @@ class _Generator:
         choices += ['arrow_callback', 'arrow_func']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
-            choices += ['cross_call', 'confined_write', 'with', 'objadv', 'throw']
+            choices += ['cross_call', 'confined_write', 'chain_across_writes', 'with', 'objadv']
+            choices += ['throw']
             choices += ['switch', 'do_while', 'for_in', 'construct']
         if scope.all_mutable():
             choices.append('assign')
@@ -631,6 +632,37 @@ class _Generator:
         ]
         if self.rng.random() < 0.5:
             lines.append(F'{func}();')
+        return lines
+
+    def _stmt_chain_across_writes(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A binding two functions write, read into a chain of single-use locals between their calls:
+
+            var x = 1; function s() { x = 2; } function f() { x = 9; }
+            s(); var t0 = x + 1; var t1 = t0 * 3; f(); SINK.push(t1);
+
+        The chain's value is fixed where it is computed, before `f` runs, so a fold that carries the
+        read of `x` down the chain to the push reads it after the write instead. Two writers keep
+        `x` from folding to a constant first, which would take the read of `x` out of the chain
+        before it could move.
+        """
+        var = self._fresh()
+        setter = self._fresh()
+        writer = self._fresh()
+        lines = [
+            F'var {var} = {self.rng.randint(0, 9)};',
+            F'function {setter}() {{ {var} = {self.rng.randint(0, 9)}; }}',
+            F'function {writer}() {{ {var} = {self.rng.randint(10, 99)}; }}',
+            F'{setter}();',
+        ]
+        previous = var
+        for _ in range(self.rng.randint(2, 4)):
+            link = self._fresh()
+            op = self.rng.choice(('+', '-', '*', '|', '^'))
+            lines.append(F'var {link} = {previous} {op} {self.rng.randint(1, 9)};')
+            previous = link
+        lines.append(F'{writer}();')
+        lines.append(F'SINK.push({previous});')
         return lines
 
     def _stmt_with(self, scope: _Scope, depth: int) -> list[str]:
