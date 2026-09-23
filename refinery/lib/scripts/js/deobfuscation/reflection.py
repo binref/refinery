@@ -38,7 +38,10 @@ from refinery.lib.scripts.js.analysis.model import (
     name_uses_in_scope,
     reference_role,
 )
-from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic, function_intrinsic_aliases
+from refinery.lib.scripts.js.analysis.tampering import (
+    denotes_function_intrinsic,
+    function_intrinsic_aliases,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,

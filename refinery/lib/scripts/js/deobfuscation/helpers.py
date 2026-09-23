@@ -28,6 +28,7 @@ from typing import (
     Sequence,
     TypeVar,
 )
+
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -91,8 +92,8 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsFunctionNode,
     JsIdentifier,
-    JsLogicalExpression,
     JsLabeledStatement,
+    JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
     JsNullLiteral,

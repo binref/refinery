@@ -29,15 +29,14 @@ from refinery.lib.scripts.ps1.analysis.model import (
     occurrence_role,
 )
 from refinery.lib.scripts.ps1.analysis.separator import OFS_FALLBACK, OFS_NAME
-from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     Ps1Constant,
     Ps1Fact,
     char_fact,
-    collection_fact,
     coerced_text,
     collect_facts,
+    collection_fact,
     fact_of,
     integer_at,
     integer_of,
@@ -46,6 +45,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
     read,
     render,
 )
+from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.ast import (
     get_body,
     get_command_name,

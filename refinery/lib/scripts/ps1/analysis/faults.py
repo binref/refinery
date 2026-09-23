@@ -34,6 +34,8 @@ from refinery.lib.scripts.analysis.cfg import (
     normal_reach,
 )
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
+from refinery.lib.scripts.ps1.analysis.values import ordinal_of, read
 from refinery.lib.scripts.ps1.ast import (
     STATEMENT_LIST_EXPRESSIONS,
     argument_text,
@@ -49,8 +51,6 @@ from refinery.lib.scripts.ps1.ast import (
     resolve_command_name,
     string_value,
 )
-from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
-from refinery.lib.scripts.ps1.analysis.values import ordinal_of, read
 from refinery.lib.scripts.ps1.data import COMMON_PARAMETERS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,

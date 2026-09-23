@@ -13,7 +13,6 @@ from refinery.lib.dt import date_from_timestamp, isodate
 from refinery.lib.scripts.bat.model import EmulatorException, MissingVariable
 from refinery.lib.scripts.win32const import make_win32_environment
 
-
 STATEMENT_BUDGET = 100_000
 """
 The maximum number of statements a single emulation may execute. Scripts stuck in

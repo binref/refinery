@@ -21,6 +21,7 @@ import lzma
 import operator
 import re
 import typing
+
 from collections import defaultdict
 
 from refinery.lib.json import loads
