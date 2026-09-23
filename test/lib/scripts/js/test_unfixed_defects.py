@@ -821,6 +821,22 @@ A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS = (
     'var x = g();\nconsole.log(typeof x);\n'
 )
 
+#: A finder installed as a namespace method whose primary lookup reads `window` in a `try` block and
+#: falls back to `this`. Called as a method, its `this` is the namespace, so where the host lacks
+#: `window` it returns the namespace rather than a global object.
+A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW = (
+    'var NS = {};\n'
+    'NS.f = function () { var r; try { r = window; } catch (e) {} return r || this; };\n'
+    'console.log(NS.f() === NS);\n'
+)
+
+#: A finder whose one global-valued store to the name it returns reads `window` in a `try` block, so
+#: where the host lacks `window` the store never happens and the finder returns `undefined`.
+A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW = (
+    'function f() { var r; try { r = window; } catch (e) {} return r; }\n'
+    'console.log(typeof f());\n'
+)
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
@@ -830,7 +846,11 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
     catching handler that returns nothing, so the finder answers `undefined` in a host where the block
     throws. Folding its call to `globalThis` then substitutes a global object for `undefined` — a value
     divergence, not a dropped throw. Recognition would have to see that a global-valued return the
-    finder relies on is not guaranteed to run.
+    finder relies on is not guaranteed to run. The same holds for a name the finder returns: one
+    global-valued store to it marks it global everywhere, although a store that threw left it
+    `undefined`. And the recognition reads a fallback `this` as the global object, which it is only
+    for a call with no receiver: a finder called as a method whose primary lookup threw returns its
+    receiver.
     """
 
     @unittest.expectedFailure
@@ -840,6 +860,26 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
         deobfuscation keeps the call and prints the same, so the two agree.
         """
         source = A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS
+        self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
+
+    @unittest.expectedFailure
+    def test_a_method_called_finder_whose_primary_lookup_threw_returns_its_receiver(self):
+        """
+        Node prints `true`: reading `window` throws, `r` stays `undefined`, and the fallback `this`
+        of a method call is the namespace. A correct deobfuscation keeps the call and prints the
+        same.
+        """
+        source = A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW
+        self.assertEqual(before_and_after(source), (('true\n', None), ('true\n', None)))
+
+    @unittest.expectedFailure
+    def test_a_finder_returning_a_name_whose_global_store_threw_is_kept(self):
+        """
+        Node prints `undefined`: reading `window` throws before `r` is written, so the finder
+        returns the `undefined` `r` was declared with. A correct deobfuscation keeps the call and
+        prints the same.
+        """
+        source = A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
 
 
