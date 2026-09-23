@@ -8,7 +8,6 @@ from typing import NamedTuple
 from refinery.lib.scripts import (
     Node,
     _clone_node,
-    _remove_from_parent,
     _replace_in_parent,
     is_attached,
 )
@@ -21,8 +20,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     enclosing_function,
-    is_invocation_target,
-    is_member_write_target,
     pattern_identifiers,
     reference_role,
 )
@@ -44,7 +41,6 @@ from refinery.lib.scripts.js.model import (
     JsAwaitExpression,
     JsCallExpression,
     JsClassExpression,
-    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsFunctionDeclaration,
@@ -82,11 +78,6 @@ class _CandidateEntry(NamedTuple):
     value: Node
 
 
-class _MemberArrayEntry(NamedTuple):
-    assignment: JsAssignmentExpression
-    array: JsArrayExpression
-
-
 class _Substitution(NamedTuple):
     target: Node
     value: Node
@@ -98,16 +89,10 @@ class _DeclaratorRemoval(NamedTuple):
     key: str
 
 
-class _MemberArrayRemoval(NamedTuple):
-    assignment: JsAssignmentExpression
-    key: str
-
-
 class _ScopePlan(NamedTuple):
     scope: Node
     substitutions: list[_Substitution]
     declarator_removals: list[_DeclaratorRemoval]
-    member_array_removals: list[_MemberArrayRemoval]
     decl_ids: set[int]
     planned: set[str]
 
@@ -217,43 +202,6 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
-    """
-    Verify that `prefix.prop` (a member-expression array) is never mutated after its initial
-    assignment. Checks that: (1) the property is never written to via an element write —
-    `prefix.prop[i] = ...`, but also `prefix.prop[i]++`, `delete prefix.prop[i]`, and any other write
-    target, decided by the shared `is_member_write_target` climb rather than a hand-rolled
-    assignment-only test that a compound, update, or `delete` slips past; (2) the property value is
-    never passed as an argument or assigned to another variable (aliased); (3) no method calls that
-    could mutate the array exist (`prefix.prop.push(...)` etc.).
-    """
-    for node in scope.walk():
-        if not isinstance(node, JsMemberExpression):
-            continue
-        if node.object is None or node.property is None:
-            continue
-        obj = node.object
-        if not isinstance(obj, JsIdentifier) or obj.name != prefix_name:
-            continue
-        if not isinstance(node.property, JsIdentifier) or node.property.name != prop_name:
-            continue
-        parent = node.parent
-        if isinstance(parent, JsMemberExpression) and parent.object is node:
-            if parent.computed:
-                if is_member_write_target(parent):
-                    return False
-            else:
-                if is_invocation_target(parent):
-                    return False
-            continue
-        if isinstance(parent, JsAssignmentExpression) and parent.left is node:
-            continue
-        if isinstance(parent, JsCallExpression):
-            if not is_invocation_target(node):
-                return False
-    return True
-
-
 def _is_constant_value(node: Node) -> bool:
     """
     Return whether *node* is a constant value eligible for multi-use inlining: a scalar literal or
@@ -350,10 +298,9 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
     round of edits against the model snapshot the round opened with, and the round's plans apply
     once the traversal ends, inner scopes first. A round that lands no edit ends the invocation.
 
-    Every edit the batch applies removes something — a read, an index access, a declarator, an
-    assignment statement — and installs no binding, so the emission registry has no reader here:
-    the one bare name a substitution can write is an intrinsic alias, checked unshadowed at the
-    site it goes.
+    Every edit the batch applies removes something — a read, an index access, a declarator — and
+    installs no binding, so the emission registry has no reader here: the one bare name a
+    substitution can write is an intrinsic alias, checked unshadowed at the site it goes.
 
     Non-interference, per fact the decisions read:
 
@@ -401,12 +348,9 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         assert self._root is not None
         cache = model_cache(self, self._root)
         candidates, mutated = self._collect_candidates(scope, cache.effects)
-        member_arrays = self._collect_member_array_candidates(scope)
-        if not candidates and not member_arrays:
+        if not candidates:
             return
         substitutions = self._decide_constants(scope, candidates, cache)
-        if member_arrays:
-            substitutions.extend(self._decide_member_arrays(scope, member_arrays))
         if not substitutions:
             substitutions = self._decide_expressions(scope, candidates, mutated, cache)
         if not substitutions:
@@ -417,7 +361,6 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             scope,
             [sub._replace(value=_clone_node(sub.value)) for sub in substitutions],
             self._decide_dead_declarators(candidates, planned, cache),
-            self._decide_dead_member_arrays(member_arrays, planned) if member_arrays else [],
             decl_ids,
             planned,
         ))
@@ -994,130 +937,6 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 removals.append(_DeclaratorRemoval(entry.declarator, name))
         return removals
 
-    @staticmethod
-    def _collect_member_array_candidates(scope: Node) -> dict[str, _MemberArrayEntry]:
-        """
-        Collect member-expression assignments of all-literal arrays: `X.Y = [literals...]`.
-        Returns a dict keyed by `"X.Y"` to `_MemberArrayEntry`. Only single-assignment,
-        non-aliased properties qualify.
-        """
-        candidates: dict[str, _MemberArrayEntry] = {}
-        rejected: set[str] = set()
-        prefix_rejected: set[str] = set()
-
-        for node in walk_scope(scope, include_root_body=True):
-            if not isinstance(node, JsAssignmentExpression) or node.operator != '=':
-                continue
-            lhs = node.left
-            if not isinstance(lhs, JsMemberExpression) or lhs.computed:
-                continue
-            if not isinstance(lhs.object, JsIdentifier) or not isinstance(lhs.property, JsIdentifier):
-                continue
-            key = F'{lhs.object.name}.{lhs.property.name}'
-            if key in rejected:
-                continue
-            rhs = node.right
-            if not isinstance(rhs, JsArrayExpression) or not _is_literal_array(rhs):
-                rejected.add(key)
-                candidates.pop(key, None)
-                continue
-            if key in candidates:
-                rejected.add(key)
-                candidates.pop(key)
-                continue
-            candidates[key] = _MemberArrayEntry(node, rhs)
-
-        if not candidates:
-            return candidates
-
-        prefix_names = {k.split('.', 1)[0] for k in candidates}
-        for node in walk_scope(scope, include_root_body=True):
-            if isinstance(node, JsAssignmentExpression) and node.operator == '=':
-                if isinstance(node.left, JsIdentifier) and node.left.name in prefix_names:
-                    prefix_rejected.add(node.left.name)
-            if isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):
-                if node.argument.name in prefix_names:
-                    prefix_rejected.add(node.argument.name)
-
-        if prefix_rejected:
-            candidates = {
-                k: v for k, v in candidates.items()
-                if k.split('.', 1)[0] not in prefix_rejected
-            }
-
-        for key in list(candidates):
-            prefix, prop = key.split('.', 1)
-            if not _is_member_array_safe(scope, prefix, prop):
-                del candidates[key]
-
-        return candidates
-
-    def _decide_member_arrays(
-        self,
-        scope: Node,
-        member_arrays: dict[str, _MemberArrayEntry],
-    ) -> list[_Substitution]:
-        """
-        Decide the `X.Y[N]` → element inlines of one round for all collected member-array
-        candidates. Walks the full subtree (including nested function bodies) since these arrays
-        are scope-level constants.
-        """
-        substitutions: list[_Substitution] = []
-        for node in scope.walk():
-            if not isinstance(node, JsMemberExpression) or not node.computed:
-                continue
-            prop = node.property
-            if not isinstance(prop, JsNumericLiteral):
-                continue
-            obj = node.object
-            if not isinstance(obj, JsMemberExpression) or obj.computed:
-                continue
-            if not isinstance(obj.object, JsIdentifier) or not isinstance(obj.property, JsIdentifier):
-                continue
-            key = F'{obj.object.name}.{obj.property.name}'
-            entry = member_arrays.get(key)
-            if entry is None:
-                continue
-            idx = exact_integer(prop.value)
-            if idx is None or not (0 <= idx < len(entry.array.elements)):
-                continue
-            element = entry.array.elements[idx]
-            if element is None or not is_literal(element):
-                continue
-            substitutions.append(_Substitution(node, element, key))
-        return substitutions
-
-    def _decide_dead_member_arrays(
-        self,
-        member_arrays: dict[str, _MemberArrayEntry],
-        planned: set[str],
-    ) -> list[_MemberArrayRemoval]:
-        return [
-            _MemberArrayRemoval(entry.assignment, key)
-            for key, entry in member_arrays.items()
-            if key in planned
-        ]
-
-    @staticmethod
-    def _count_member_array_accesses(scope: Node, keys: set[str]) -> dict[str, int]:
-        """
-        The computed `X.Y[...]` accesses standing in *scope*'s subtree per key in *keys*, counted
-        over the tree as it stands when asked — the plan asks once its substitutions have landed.
-        """
-        remaining: dict[str, int] = {}
-        for node in scope.walk():
-            if not isinstance(node, JsMemberExpression) or not node.computed:
-                continue
-            obj = node.object
-            if not isinstance(obj, JsMemberExpression) or obj.computed:
-                continue
-            if not isinstance(obj.object, JsIdentifier) or not isinstance(obj.property, JsIdentifier):
-                continue
-            key = F'{obj.object.name}.{obj.property.name}'
-            if key in keys:
-                remaining[key] = remaining.get(key, 0) + 1
-        return remaining
-
     def _apply_plan(self, plan: _ScopePlan) -> None:
         for sub in plan.substitutions:
             if not is_attached(sub.target):
@@ -1142,15 +961,3 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 remove_declarator(removal.declarator)
                 self.mark_changed()
                 self._edits_applied += 1
-        if plan.member_array_removals:
-            keys = {removal.key for removal in plan.member_array_removals}
-            remaining = self._count_member_array_accesses(plan.scope, keys)
-            for removal in plan.member_array_removals:
-                if remaining.get(removal.key, 0) > 0:
-                    continue
-                if not is_attached(removal.assignment):
-                    continue
-                stmt = removal.assignment.parent
-                if isinstance(stmt, JsExpressionStatement) and _remove_from_parent(stmt):
-                    self.mark_changed()
-                    self._edits_applied += 1

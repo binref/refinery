@@ -950,16 +950,12 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
-    def test_member_array_read_only_element_inlined(self):
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var X = {};
-                SINK(6);
-                """
-            ),
-            self._inline('var X = {}; X.Y = [5, 6]; SINK(X.Y[1]);'),
-        )
+    def test_a_member_array_of_an_empty_namespace_folds_through_the_pipeline(self):
+        """
+        Namespace flattening turns the member array of an empty object literal into a binding of
+        its own, whose element read the inliner then folds.
+        """
+        self.assertEqual('SINK(6);', self._deobfuscate('var X = {}; X.Y = [5, 6]; SINK(X.Y[1]);'))
 
     def test_does_not_cross_function_boundary(self):
         source = (
@@ -2208,6 +2204,69 @@ class TestNodePrintsTheSameAboutAChainReadAcrossAWrite(TestBase):
         chain past that call.
         """
         rows = WHAT_A_CHAIN_OF_SINGLE_USE_LOCALS_READ_ACROSS_A_WRITE_PRINTS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs reading a member array `X.Y[i]` where `X` is not the object the array was stored on, or
+#: where the array stored there was replaced, mapped to what Node prints for them: a sibling
+#: function reading a receiver it shares, a parameter, a function expression's parameter and a
+#: block `let` rebinding the name, and a second name for the object writing the key.
+A_MEMBER_ARRAY_READ_THROUGH_ANOTHER_RECEIVER = {
+    (
+        'function outer(X) {\n'
+        '  function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
+        '  function g() { console.log(X.Y[1]); }\n'
+        '  f();\n'
+        '  g();\n'
+        '}\n'
+        'outer({});\n'
+    ): '1\n2\n',
+    (
+        'globalThis.X = {};\n'
+        'function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
+        'function g() { console.log(X.Y[1]); }\n'
+        'f();\n'
+        'g();\n'
+    ): '1\n2\n',
+    (
+        'function outer(X) { X.Y = [1, 2];'
+        ' function g(X) { return X.Y[0]; } console.log(X.Y[1], g({ Y: [9] })); }\n'
+        'outer({});\n'
+    ): '2 9\n',
+    (
+        'function outer(X) { X.Y = [1, 2];'
+        ' console.log(X.Y[1], (function (X) { return X.Y[0]; })({ Y: [9] })); }\n'
+        'outer({});\n'
+    ): '2 9\n',
+    (
+        'function outer(X) { X.Y = [1, 2];'
+        ' { let X = { Y: [9] }; console.log(X.Y[0]); } console.log(X.Y[1]); }\n'
+        'outer({});\n'
+    ): '9\n2\n',
+    (
+        'function outer(X) { X.Y = [1, 2]; var Z = X; Z.Y = [5, 6]; console.log(X.Y[0]); }\n'
+        'outer({});\n'
+    ): '5\n',
+    (
+        'function outer(X, W) { X.Y = [1, 2]; W.Y = [5, 6]; console.log(X.Y[0]); }\n'
+        'var o = {};\n'
+        'outer(o, o);\n'
+    ): '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAMemberArrayReadThroughAnotherReceiver(TestBase):
+
+    def test_each_read_prints_the_array_its_receiver_holds(self):
+        """
+        Node reads each `X.Y[i]` from the object `X` names where the read stands, which the spelling
+        `X.Y` does not identify. The deobfuscation has to print the same.
+        """
+        rows = A_MEMBER_ARRAY_READ_THROUGH_ANOTHER_RECEIVER
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

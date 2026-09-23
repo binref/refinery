@@ -532,6 +532,18 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
 
+    @unittest.expectedFailure
+    def test_a_namespace_declared_with_properties_flattens_like_an_empty_one(self):
+        """
+        A local object literal read only through static keys is a namespace whether or not it
+        starts empty. Flattening admits only the empty literal, so the member array of a literal
+        with properties stays a member read, and no other pass folds a member read by its spelling.
+        """
+        self.assertEqual(
+            'SINK(1, 6);',
+            self._deobfuscate('var X = {a: 1}; X.Y = [5, 6]; SINK(X.a, X.Y[1]);'),
+        )
+
     def test_two_namespaces_declared_in_one_statement_flatten_together(self):
         """
         Both plans hold the one `var` statement that declares `A` and `B`. The first removes its own
