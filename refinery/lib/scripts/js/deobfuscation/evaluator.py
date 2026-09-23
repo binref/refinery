@@ -299,17 +299,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         carries only names `_substitution_would_break` has already bound identically at that spot,
         so no held fact is revealed more permissive by the splice.
 
-        The purity analysis fetches the effect model before the first edit, which builds every
-        root-reading model the evaluation reads — no `warm` is owed here, and a read added later
-        that falls past an edit trips the pin's exit guard rather than layering silently.
-
         The removal of resolved definitions runs after the pin is released, against the model the
         cache rebuilds over the post-evaluation tree: whether anything still names a function is a
-        structural fact the folds themselves change — each one deletes the references that kept the
-        callee alive, and a spliced clone can name a binding the entry snapshot never saw — so this
-        decision cannot be made against the held model without deleting a live function or holding
-        a dead one back forever. The rebuild it pays is one semantic build per changed invocation,
-        the same freshness the sequential self bought through its mid-evaluation rebuilds.
+        structural fact the folds themselves change — each one deletes the references that kept
+        the callee alive, and a spliced clone can name a binding the entry snapshot never saw —
+        so this decision cannot be made against the held model without deleting a live function
+        or holding a dead one back forever.
         """
         self._script = node
         self._effects = None

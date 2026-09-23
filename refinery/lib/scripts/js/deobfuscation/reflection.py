@@ -610,9 +610,9 @@ def _try_unpack_function_constructor(
     reflected body is admitted; this function earns only the one exemption it returns. A getter or
     setter target is spelled inside an accessor defined at the call site itself, so it resolves at
     the site exactly as the accessor does, provided the substituted occurrence is still free where
-    it lands in the body — a body binding capturing one declines in the admission, whose own model
-    of the substituted body answers the question — and provided the packed code did not also read
-    the name freely, in which case it stays held to the global-resolution rule and is not returned.
+    it lands in the body — a body binding capturing one is declined in the admission — and
+    provided the packed code did not also read the name freely, in which case it stays held to
+    the global-resolution rule and is not returned.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression):
@@ -1774,18 +1774,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
         there, so it is not held to the global-resolution rule the reflected code's own free names
         must meet. The exemption is conditional, and the admission holds the condition itself:
         every identifier entering the body from outside its own text must still resolve to the
-        implicit global where it lands, asked of the same model this admission builds for its other
-        name questions, so no second model of the substituted body is ever built to answer it.
-        Those the pack substitution spliced in (*substituted*) are declined where a body binding
-        captures one; a landing inside a `with` body is the one placement left to the risk the
-        packed code this pipeline reads has already accepted, whose with-objects rebind the
-        machinery names the pack itself spells and never the accessor targets, and the divergence
-        a with-object supplying an accessor target's name would make is what the ledger entry
-        holds. Those the receiver rewrite above synthesized are held to the full question, a body
-        binding capturing one declining and so does a read the model cannot resolve determinately,
-        one inside a `with` or another dynamic region: the pipeline chose the name `globalThis`
-        where the text spelled the receiver, so no property of a `with` object was ever part of
-        what the original read. Every other check still applies to an exempted name.
+        implicit global where it lands, asked of the model this admission builds. Those the pack
+        substitution spliced in (*substituted*) are declined where a body binding captures one; a
+        landing inside a `with` body is accepted, since the `with` objects of packed code rebind
+        the machinery names the pack itself spells and never the accessor targets. Those the
+        receiver rewrite above synthesized are declined by a body binding capture as well, and
+        additionally by a landing the model cannot resolve determinately — inside a `with` or
+        another dynamic region — since the original read was of the receiver, which no `with`
+        object supplies. Every other check still applies to an exempted name.
 
         Every name-based answer above is read from the model pinned before any splice, so a body
         naming what an earlier splice this pass declared or wrote is declined outright: for such a

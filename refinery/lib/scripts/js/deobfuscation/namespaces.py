@@ -51,12 +51,6 @@ class _PropertyAssignment(NamedTuple):
 
 
 class _NamespacePlan(NamedTuple):
-    """
-    One namespace's flattening, decided against the entry snapshot and applied later by
-    `_apply_plan`: the properties to rewrite, the function assignments to raise to hoisted
-    declarations, the bare names to declare, and whether the namespace's own declarator goes away.
-    """
-
     scope: Node
     name: str
     declarator: JsVariableDeclarator
@@ -92,12 +86,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
       preceded is preceded by the declaration as well.
     - `property_absent_from_written_chain` for inherited keys. No batch edit writes a prototype or
       a global, so the written chain the effects model read is the one the batch leaves behind.
-
-    A plan whose anchors an earlier plan removed is skipped whole — the sequential pass declines the
-    same candidate against the model rebuilt over the edited tree — and a plan whose rewrite finds
-    every target already replaced stands down the same way, which is what two same-name
-    declarators come to under the sequential regime (there, the second collects no properties and
-    never runs its edits).
     """
 
     def __init__(self):
@@ -123,9 +111,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         declarator: JsVariableDeclarator,
         decl_stmt: JsVariableDeclaration,
     ) -> _NamespacePlan | None:
-        """
-        Decide one namespace's flattening against the entry snapshot, without editing anything.
-        """
         assert self._root is not None
         if not self._is_safe(scope, name, declarator):
             return None
@@ -178,10 +163,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
 
     def _apply_plan(self, plan: _NamespacePlan) -> None:
         """
-        Apply one decided plan to the live tree. A plan whose rewrite finds every target already
-        replaced — the two-same-name-declarator shape, where an earlier plan claimed the same member
-        accesses — stands down: the sequential pass declines that candidate against the tree its
-        sibling's edits already wrote.
+        Apply one decided plan to the live tree, standing down when the rewrite finds every target
+        already replaced by an earlier plan claiming the same member accesses.
         """
         anchors: list[Node] = [entry.statement for entry in plan.hoisted.values()]
         if plan.remove_declarator:
@@ -347,9 +330,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     ) -> bool:
         """
         Replace every flattenable `NS.prop` member access in the scope subtree with a bare
-        identifier, walking the tree as it stands. Returns whether any replacement landed; a walk
-        that replaced nothing means every target was claimed by an earlier plan, which is the signal
-        `_apply_plan` stands down on.
+        identifier, walking the tree as it stands. Returns whether any replacement landed.
         """
         decl_id = declarator.id
         moved = False
@@ -560,9 +541,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
 
     @staticmethod
     def _declared_var_names(body: list) -> set[str]:
-        """
-        The names the scope's `var` declarations already bind.
-        """
         existing: set[str] = set()
         for stmt in body:
             if not isinstance(stmt, JsVariableDeclaration):
@@ -577,12 +555,10 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     @staticmethod
     def _emit_declarations(scope: Node, names: set[str]) -> None:
         """
-        Insert a hoisted `var` declaration at the top of the scope for each of *names*, decided
-        against the entry body: a name the scope already declared is not re-emitted, and a name an
-        earlier plan of the same batch emits cannot reach here, because the emission registry held
-        the colliding key back. The declarations are uninitialized: a flattened property's value is
-        established by its (in-place) assignment, so a bare `var p;` reproduces the
-        `undefined`-until-assigned semantics of the original `NS.p` member exactly.
+        Insert a hoisted `var` declaration at the top of the scope for each of *names*. The
+        declarations are uninitialized: a flattened property's value is established by its
+        (in-place) assignment, so a bare `var p;` reproduces the `undefined`-until-assigned
+        semantics of the original `NS.p` member exactly.
         """
         needed = sorted(names)
         if not needed:

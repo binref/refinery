@@ -1709,9 +1709,8 @@ class TestConstantInlining(TestJsDeobfuscator):
     def test_a_substitution_that_clones_a_read_keeps_the_binding_it_was_cloned_from(self):
         """
         Substituting `b` at `b.floor` writes a clone of `a`, the only read that keeps `var a`
-        alive once its own read in `var b = a` has folded, so the declarator of `a` survives the
-        round that folded it and the next round inlines `a` itself. A removal predicted from the
-        entry count alone would delete the declaration the clone reads.
+        alive once its own read in `var b = a` has folded, so the declarator of `a` must survive
+        the round that folded it.
         """
         self.assertEqual(
             inspect.cleandoc(
@@ -1728,10 +1727,9 @@ class TestConstantInlining(TestJsDeobfuscator):
 
     def test_a_plan_whose_target_an_earlier_plan_detached_folds_the_next_round(self):
         """
-        The inner plan relocates `K + 1` to the use of `t` and takes the declarator with it,
-        detaching the outer plan's target — the `K` inside the initializer — so the outer plan
-        declines both its substitution and the removal that read was to pay for, and the next
-        round folds the read the relocation cloned.
+        The inner plan's relocation detaches the outer plan's target — the `K` inside the
+        initializer — so the outer plan declines and the next round folds the read the relocation
+        cloned.
         """
         self.assertEqual(
             inspect.cleandoc(
@@ -1749,9 +1747,8 @@ class TestConstantInlining(TestJsDeobfuscator):
     @a_property_of_the_batch_itself
     def test_the_same_inlines_fold_the_same_way_one_plan_at_a_time(self):
         """
-        The sequential self applies each plan the moment it is decided, against the tree the
-        earlier plans already edited; the two rows above are the shapes where that order matters,
-        and the two selves agree on both.
+        The two rows above are the shapes where the order of plan application matters, and the
+        sequential self agrees with the batched run on both.
         """
         rows = AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND
         self.assertEqual(
@@ -1761,11 +1758,9 @@ class TestConstantInlining(TestJsDeobfuscator):
 
     def test_a_shadowing_declaration_folds_its_outer_name_away_in_the_same_round(self):
         """
-        The nested scope's plan substitutes its own `K` and removes its declarator in the same
-        round the outer plan substitutes the outer `K`, so the outer declarator's liveness can only
-        be judged on the tree the inner plan leaves behind. A removal gated on the entry count —
-        which counts the nested binding occurrence and the reads that resolve to it — is held back
-        forever, because later rounds plan no substitutions to re-decide it.
+        The nested scope substitutes its own `K` in the same round the outer plan substitutes the
+        outer `K`, so the outer declarator's liveness can only be judged on the tree the inner plan
+        leaves behind.
         """
         self.assertEqual(
             inspect.cleandoc(
@@ -1784,8 +1779,7 @@ class TestConstantInlining(TestJsDeobfuscator):
     def test_a_shadowing_declaration_two_scopes_deep_folds_its_outer_name_away(self):
         """
         The same shape with the shadowing declaration one scope further in: the plans of `g`, `f`,
-        and the script all apply in one round, and the script plan's removal is judged after the
-        plans beneath it landed, the position the sequential self decides from.
+        and the script all apply in one round.
         """
         self.assertEqual(
             inspect.cleandoc(
@@ -2090,13 +2084,9 @@ class TestNodePrintsTheSameAboutACallThroughANameBoundToEval(TestBase):
 
 
 #: Programs whose inlining has to survive an edit an earlier plan of the same round makes. The
-#: first holds a two-hop intrinsic alias: substituting `b` at `b.floor` writes a clone of `a`, the
-#: very read that keeps `var a` alive, so a removal predicted from the entry count alone would
-#: delete the declaration the clone reads. The second holds an outer constant's read inside the
-#: initializer a nested scope's plan relocates, so the outer plan's substitution finds its target
-#: detached and its removal the read the relocation cloned; both hold back one round and the next
-#: one folds them, which is what the sequential self reaches deciding each plan against the tree
-#: the earlier one already edited.
+#: first holds a two-hop intrinsic alias, the second an outer constant's read inside the
+#: initializer a nested scope's plan relocates; both hold back one round and the next one folds
+#: them.
 AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND = {
     'a two-hop intrinsic alias': (
         'var a = Math; var b = a; b.floor = function () { return 1; };'
@@ -2108,10 +2098,7 @@ AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND = {
 }
 
 #: Programs where a nested scope declares a name the outer round inlines under, its own
-#: substitution and removal landing in the same round as the outer one: the entry count the outer
-#: removal would be gated on counts the nested binding occurrence and the reads that resolve to
-#: it, reads the nested plan deletes, so only the count the plan takes once the round's
-#: substitutions have landed can call the outer declarator dead.
+#: substitution and removal landing in the same round as the outer one.
 A_DECLARATION_THAT_SHARES_ITS_ROUND_WITH_A_SHADOWING_ONE = {
     'a shadowing declaration in a nested scope': (
         'var K = 5; function f() { var K = 9; console.log(K); } f(); console.log(K);'
@@ -2148,6 +2135,7 @@ class TestNodePrintsTheSameAboutADeclarationThatSharesItsRound(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
 
 #: What Node prints for each program of `AN_INLINE_THAT_HAS_TO_SURVIVE_AN_EARLIER_PLAN_OF_ITS_ROUND`
 #: — and for the text it is deobfuscated to, which is the agreement the entry exists for.

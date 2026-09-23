@@ -18,7 +18,16 @@ import re
 
 from collections import Counter
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Collection, Generic, Iterator, NamedTuple, Sequence, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Collection,
+    Generic,
+    Iterator,
+    NamedTuple,
+    Sequence,
+    TypeVar,
+)
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -2767,37 +2776,28 @@ class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
     pass whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass whose
     edits make facts more restrictive. A batched pass emits bindings, so neither regime fits: the
     models stay fresh for the whole traversal because no edit runs until it ends, and the batch is
-    applied as one unit afterwards. The `--no-batch` differential (`test/conftest.py`) runs every
-    batched pass the sequential way — each plan applied the moment it is decided, against the model
-    the tree then warrants — so a test that fails under only one of the two has found a pass whose
-    batch diverges from its sequential self.
+    applied as one unit afterwards.
 
-    A subclass owes the batch three obligations, and they compose the existing precedents
-    (`_spliced_names`, `lookup(exclude=...)`) rather than inventing a parallel concept:
+    A subclass owes the batch three obligations:
 
     - Every binding the batch emits or exposes — the `var` and `function` declarations it installs,
       and the bare identifiers its rewrites create — is registered through `emits` at decision time,
       and a later candidate in the same scope holds a colliding key back through `name_emitted_in`.
       Without it, the later candidate decides against an entry tree that does not yet carry the
-      earlier emission and the two installs collide; with it, the answer matches the one the
-      sequential pass reaches through the model rebuilt after the earlier edit.
+      earlier emission and the two installs collide.
     - Every node an applied edit holds from the decision — an anchor statement, a declarator — is
-      verified still present in the live tree at apply time through `anchors_still_present`. This is
-      not redundancy: a pass that re-walks the live tree at apply time holds no positions and needs
-      no guard, but a plan that carries a node from the entry snapshot can be pointed at a subtree an
-      earlier plan already detached, and the guard is what keeps the edit out of that garbage. A plan
-      failing its anchors is skipped whole, which is the sequential outcome — there, the model
-      rebuilt over the edited tree declines the same candidate.
+      verified still present in the live tree at apply time through `anchors_still_present`. A plan
+      that carries a node from the entry snapshot can otherwise be pointed at a subtree an earlier
+      plan already detached. A plan failing its anchors is skipped whole.
     - A per-pass non-interference docstring of its own: which model facts the decisions read, which
-      batch edits can invalidate them, and in which direction. The contract is the pin's — a decision
-      valid on the pre-batch tree must remain valid on the post-batch tree. Names are only one
-      interference channel; the registry answers that one, the docstring answers the rest.
+      batch edits can invalidate them, and in which direction. A decision valid on the pre-batch
+      tree must remain valid on the post-batch tree.
 
-    The mid-batch freshness the sequential pass gets from its rebuilds is not supplied by anything
-    here. Its recall half comes from the group fixpoint: a changed group re-runs, and the next
-    invocation decides against a model built over the batched tree. Its correctness half is the
-    non-interference contract above. A subclass that cannot state the contract for one of its reads
-    does not batch under this base.
+    The mid-batch freshness a per-edit model rebuild would supply is not replaced by anything here:
+    its recall half comes from the group fixpoint, which re-runs a changed group, and its
+    correctness half is the non-interference contract above. The `--no-batch` differential
+    (`test/conftest.py`) runs every batched pass with `batching` off, applying each plan the moment
+    it is decided.
     """
 
     batching: bool = True
@@ -2844,7 +2844,7 @@ class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
         return name in self._emitted.get(scope, ())
 
     @staticmethod
-    def anchors_still_present(scope: Node, anchors) -> bool:
+    def anchors_still_present(scope: Node, anchors: Collection[Node]) -> bool:
         """
         Whether every node in *anchors* is still a statement of *scope*'s live body, by identity. A
         plan whose anchor an earlier plan removed is skipped whole.

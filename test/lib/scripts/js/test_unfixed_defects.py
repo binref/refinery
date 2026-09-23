@@ -2449,9 +2449,8 @@ class TestAPropertyReadBelowABindingOfItsOwnName(TestBase):
     rewrite is sound: every position of the key sits inside the captured scope, the capturing
     binding is used nowhere else, and a write of the key precedes every read, so the binding below
     carries the value the property would. The string-array fold of a fold-heavy sample rides on that
-    shape, which a hold-back would take apart. The fix is therefore a per-key question — whether
-    every position is captured, whether the capturing binding is closed under the rewrite, and
-    whether a write precedes every read — rather than the refusal this entry's programs ask for.
+    shape, which a hold-back would take apart. The fix is a per-key question, not the refusal this
+    entry's programs ask for.
 
     Off the release gate deliberately: the miscompiled shape needs a read below a binding of its
     name that a live value distinguishes, and the decoy-parameter shape the obfuscators actually emit
@@ -2471,20 +2470,17 @@ class TestAReadBelowAHoistTheConflictWalkNeverSaw(TestBase):
 
     The sibling of `TestAPropertyReadBelowABindingOfItsOwnName`, one step further in: there the
     binding a read sits below is one the program already carries, and here it is one the flattening
-    itself emits. Both come to the same per-key question — whether every position of the key is
-    captured, and whether the capturing binding is closed under the rewrite — and to the same fix
-    direction: the prune answers the namespace-name question, while the key question wants the
-    resolution `refinery.lib.scripts.js.analysis.model.SemanticModel.is_shadowed` already answers
-    for every occurrence the prune hides.
+    itself emits. Both come to the same per-key question, and the same fix direction: the prune
+    answers the namespace-name question, while the key question wants the resolution
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.is_shadowed` already answers for every
+    occurrence the prune hides.
 
-    The batch is why the corpus is two rows. Where the outer namespace flattens, the batch decides
-    both plans against the entry tree, flattens the outer namespace too, and rewrites the read out
-    from under the hoist — the batched pass answers the program correctly, and the sequential self,
-    deciding the outer plan against the tree the inner plan already edited, declines it and keeps the
-    capture. That divergence is held by the parity law of
-    `test.lib.scripts.js.deobfuscation.test_namespaces`, whose row for it is skipped under the
-    `--no-batch` differential along with every other property of the batch itself; this entry holds
-    the row the pipeline cannot repair, whose outer namespace a bare read keeps.
+    The corpus is two rows because the batch answers one of them: where the outer namespace
+    flattens, the batched pass rewrites the read out from under the hoist while one plan at a time
+    the outer plan is declined against the tree the inner plan already edited. That divergence is
+    held by the parity law of `test.lib.scripts.js.deobfuscation.test_namespaces`, whose row for it
+    is skipped under the `--no-batch` differential; this entry holds the row the pipeline cannot
+    repair, whose outer namespace a bare read keeps.
 
     Off the release gate deliberately: the shape needs a nested namespace whose key carries an outer
     namespace's name, a sibling function binding the inner namespace's name, and a read of the outer
@@ -2539,17 +2535,15 @@ class TestAMemberArrayASiblingScopeReadsIsStillWritten(TestBase):
     whether a declaration of one is dead is a question about the whole file: an access a sibling
     scope holds keeps the assignment alive wherever it stands. `refinery.lib.scripts.js
     .deobfuscation.constants.JsConstantInlining` counts the `X.Y[...]` accesses of a key inside
-    the subtree of the scope whose own statements hold the assignment — the same subtree whose
-    walk decides the inlines — so an access in a sibling scope counts nowhere: it is never
-    substituted, and it holds no count against the removal, which takes the assignment statement
-    out and leaves the sibling reading a property nothing assigned.
+    the subtree of the scope whose own statements hold the assignment, so an access in a sibling
+    scope counts nowhere: it is never substituted, and it holds no count against the removal, which
+    takes the assignment statement out and leaves the sibling reading a property nothing assigned.
 
     A correct implementation either counts the key's accesses over the whole file or asks the
-    model which reads reach the receiver, the resolution the count's subtree restriction stands
-    in for. What makes the shape reachable at all is a receiver outside the flattener's grasp,
-    since a locally-declared empty object carrying it is flattened before the pass arrives and
-    the member array never forms; a parameter and a file-created global are the two ways around
-    that left standing here.
+    model which reads reach the receiver. The shape is reachable at all only through a receiver
+    outside the flattener's grasp, since a locally-declared empty object carrying it is flattened
+    before the pass arrives and the member array never forms; a parameter and a file-created global
+    are the two ways around that left standing here.
 
     Off the release gate deliberately: the miscompile needs the receiver outside the flattener's
     reach, the assignment and a surviving access in different function scopes, and the access
@@ -2571,9 +2565,9 @@ class TestAMemberArrayASiblingScopeReadsIsStillWritten(TestBase):
         )
 
 
-#: A packed access spliced into a `with` body whose object carries the accessor target's name, mapped
-#: to the behavior Node gives each program. The read row asks the accessor and the write row runs
-#: its setter, so what each prints is what the accessor did with the global the file declared,
+#: A packed access spliced into a `with` body whose object carries the accessor target's name,
+#: mapped to the behavior Node gives each program. The read row asks the accessor and the write row
+#: runs its setter, so what each prints is what the accessor did with the global the file declared,
 #: printed beside the property the `with` object held all along.
 A_PACKED_ACCESS_A_WITH_OBJECT_SUPPLIES = {
     'read': Program(
@@ -2604,8 +2598,8 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     splices in is a bare one, which the `with` body around it resolves through the `with` object
     first: a property of the accessor target's name there supplies its own value where the accessor
     spelled a global the site resolves. A correct implementation declines the substitution for an
-    access inside a dynamically-scoped region — the admission builds the model that answers where
-    each spliced name lands — or asks which properties the `with` object can carry.
+    access inside a dynamically-scoped region, or asks which properties the `with` object can
+    carry.
 
     Off the release gate deliberately: the packed code this pipeline reads carries its `with`
     objects for the scope confusion they buy, and they rebind the machinery names the packed code

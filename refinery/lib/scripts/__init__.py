@@ -739,12 +739,8 @@ def is_attached(node: Node) -> bool:
     Whether *node* is still held by the tree its parent pointers name. Removal and replacement
     never sever the link of the node they detach — `_remove_from_parent` and `_replace_in_parent`
     leave it pointing at the holder that no longer holds — so a climb to `tree_root` cannot tell a
-    detached node from an attached one, and a replacement aimed at a detached node finds a slot and
-    lands in garbage that only looks live. This walk instead verifies every hop: each parent along
-    the chain must still count *node* among its children, which the edit that detached the subtree
-    breaks at exactly the boundary hop and which holds at every hop nothing detached. A pass whose
-    plan carries a node from an earlier snapshot asks this before editing through it, so its edit
-    stays out of the garbage another plan already removed.
+    detached node from an attached one. Every parent along the chain is therefore checked for
+    still holding its child.
     """
     while (parent := node.parent) is not None:
         if node not in parent.children():

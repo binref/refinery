@@ -11,10 +11,8 @@ from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
 #: Programs reading a namespace property from inside a function that binds the namespace's own name,
-#: so the conflict walk prunes the subtree the read stands in and the flattening hoists the key over
-#: the read. The outer namespace of one row is kept by a bare read and the other's flattens. Held by
-#: `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw` and by the
-#: parity row of this module.
+#: so the conflict walk prunes the subtree the read stands in. Held by
+#: `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw`.
 A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME = {
     'an outer namespace a bare read keeps': (
         'var A = {}; function f() { var M = {}; M.A = function () { return 1; };'
@@ -482,7 +480,7 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         """
         The second declarator's own identifier is a bare reference to the name, so neither declaration
         describes a namespace whose every reference is a property access, and the pass dissolves
-        neither. The batch decides both candidates against one tree and refuses both the same way.
+        neither.
         """
         source = (
             'var NS = {}; NS.g = function () { return 42; };'
@@ -510,8 +508,7 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         """
         `A` and `B` flatten in one batch and both carry the name `k`. The plan for `A` emits
         `var k`, so the plan for `B` must leave its `B.k` on the namespace rather than rewriting the
-        reads into the binding `A` owns; the sequential self refuses the key by the rebuilt model
-        and the two runs agree.
+        reads into the binding `A` owns.
         """
         source = (
             'var A = {}; var B = {}; A.k = 1; A.j = 2; B.k = 3; B.m = 4;'
@@ -538,7 +535,7 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         """
         Both plans hoist a function declaration into the same body, and applying the first inserts
         statements the second's recorded positions would no longer point at. The splices carry the
-        assignment statements themselves, so the second plan still finds its own and both runs agree.
+        assignment statements themselves, so the second plan still finds its own.
         """
         source = (
             'var A = {}; var B = {}; A.f = function () { return 1; };'
@@ -566,9 +563,9 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         """
         The inner plan's conflict walk prunes `h` for binding the namespace's name `M`, so it never
         sees the `A` in `A.X = 5` and hoists `function A` over the read. The batched pass flattens
-        the outer namespace too and rewrites the read out from under the hoist; the sequential self
-        declines the outer plan against the tree the inner plan already edited and leaves the capture
-        standing, so the two outputs disagree. The ledger entry
+        the outer namespace too and rewrites the read out from under the hoist; one plan at a time
+        the outer plan is declined against the tree the inner plan already edited and the capture
+        is left standing. The ledger entry
         `test.lib.scripts.js.test_unfixed_defects.TestAReadBelowAHoistTheConflictWalkNeverSaw`
         holds the defect.
         """
