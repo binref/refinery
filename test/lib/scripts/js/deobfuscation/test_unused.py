@@ -5,7 +5,7 @@ import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import printed
+from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
 
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
@@ -2239,6 +2239,33 @@ class TestALexicalBindingThatStopsABlockFunctionEscapingIsKept(TestJsDeobfuscato
             """
         )
         self.assertEqual(self._remove_unused(source), expected)
+
+
+#: Programs calling a function declared in a block from outside that block, which Annex B makes
+#: legal in sloppy code by copying the function into the enclosing scope, mapped to what Node
+#: prints for them.
+A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK = {
+    '{ let q = 1; function h() { return q; } } console.log(h());\n': '1\n',
+    'function f() { { let q = 2; function h() { return q; } } return h(); }\n'
+    'console.log(f());\n': '2\n',
+    'if (true) { let q = 3; function h() { return q; } } console.log(h());\n': '3\n',
+    '{ let q = 4; function h() { return q; } } { console.log(h()); }\n': '4\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutABlockFunctionCalledFromOutsideItsBlock(TestJsDeobfuscator):
+
+    def test_the_block_function_is_kept_for_the_call_outside(self):
+        """
+        Node prints the value each block function closes over. Removing the function as unused
+        inside its block turns the call outside into a `ReferenceError`.
+        """
+        rows = A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

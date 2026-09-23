@@ -914,8 +914,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 functions[stmt.id.name] = stmt
         if not functions:
             return set()
-        reachable, write_only_stmts = _reachable_functions(
-            body, functions, self._host_entrypoints(functions))
+        roots = self._host_entrypoints(functions) | self._referenced_outside(body, functions)
+        reachable, write_only_stmts = _reachable_functions(body, functions, roots)
         kept_by_reflection = {
             name for name, func in functions.items()
             if isinstance(func.id, JsIdentifier)
@@ -933,6 +933,33 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 _remove_from_parent(stmt)
         self.mark_changed()
         return unreachable
+
+    def _referenced_outside(
+        self, body: list[Statement], functions: dict[str, JsFunctionDeclaration],
+    ) -> frozenset[str]:
+        """
+        Which of *functions* the model resolves a reference to from outside the statement list
+        *body*. Reachability is otherwise read off the names *body* spells, which covers every
+        reference only when *body* is all of the function's scope. A function declared in a block
+        is copied into the enclosing function by Annex B (§B.3.3), and a call after the block reaches
+        it from a list that walk never sees.
+        """
+        members = {id(stmt) for stmt in body}
+        names: set[str] = set()
+        for name, func in functions.items():
+            if not isinstance(func.id, JsIdentifier):
+                continue
+            binding = self.model.binding_of(func.id)
+            if binding is None:
+                continue
+            for reference in self.model.references(binding):
+                cursor: Node | None = reference
+                while cursor is not None and id(cursor) not in members:
+                    cursor = cursor.parent
+                if cursor is None:
+                    names.add(name)
+                    break
+        return frozenset(names)
 
     def _host_entrypoints(
         self, functions: dict[str, JsFunctionDeclaration],
