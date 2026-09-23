@@ -1,6 +1,7 @@
 
 import hashlib
 import http.client
+import os
 import pathlib
 import socket
 import tempfile
@@ -20,6 +21,34 @@ if not (_sample_path := environment.storepath.value) or not _sample_path.is_dir(
             break
     else:
         _sample_path = None
+
+
+class ScriptHostRefused(RuntimeError):
+    """
+    A script host was about to start where a decoded sample is within reach: in the test that
+    decoded one, or anywhere in a process that decoded one outside of a test.
+    """
+
+
+def _current_test() -> str | None:
+    test = os.environ.get('PYTEST_CURRENT_TEST')
+    if test is None:
+        return None
+    name, _, _ = test.rpartition(' (')
+    return name or test
+
+
+_DECODED_IN: set[str | None] = set()
+
+
+def refuse_script_host_near_a_sample(host: str) -> None:
+    """
+    Raise `ScriptHostRefused` when *host* would start where a decoded sample is within reach. Every
+    place that starts a script host calls this first, because the corpus holds live malware and a
+    sample must never run. A decode outside of a test holds for the rest of the process.
+    """
+    if None in _DECODED_IN or _current_test() in _DECODED_IN:
+        raise ScriptHostRefused(F'{host} may not start where a sample was decoded')
 
 
 class SampleStore:
@@ -67,6 +96,7 @@ class SampleStore:
     def decode(self, data: bytes, key: str | None = None):
         if key is None:
             key = 'REFINERYTESTDATA'
+        _DECODED_IN.add(_current_test())
         result = data | aes(mode='CBC', key=key.encode('latin1')) | bytearray
         return result
 

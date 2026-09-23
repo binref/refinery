@@ -47,6 +47,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.analysis.jsgen import generate
+from samples import refuse_script_host_near_a_sample
 
 Behavior = tuple[str, str | None]
 
@@ -100,6 +101,7 @@ def _behavior_batch(programs: list[str], timeout: float) -> list[Behavior]:
     """
     if not programs:
         return []
+    refuse_script_host_near_a_sample('node')
     node = node_executable()
     if node is None:
         raise RuntimeError('node.js is not available')

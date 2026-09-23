@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import typing
 
+from samples import refuse_script_host_near_a_sample
 from test.lib.scripts.ps1.corpus import executable
 
 #: How many hosts may run at once. Kept small because the test suite is itself run across several
@@ -223,6 +224,7 @@ def run(script: str, timeout: float = 120.0) -> Behaviour:
     message reads as if `powershell.exe` were missing. It is reported as an `OracleError` like every
     other way the host cannot be run, so that a caller catching one catches this too.
     """
+    refuse_script_host_near_a_sample('powershell')
     powershell = windows_powershell()
     if powershell is None:
         raise OracleError('Windows PowerShell is not on PATH')

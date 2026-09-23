@@ -40,6 +40,7 @@ from typing import Mapping, Sequence
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from samples import refuse_script_host_near_a_sample
 
 _ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
 
@@ -58,6 +59,7 @@ def node_reads_as_a_program(source: str) -> bool:
     A file the grammar refuses is a syntax error the check reports, so this is the engine answering
     the same question `refinery.lib.scripts.is_well_formed` answers about the tree the parser built.
     """
+    refuse_script_host_near_a_sample('node')
     executable = node_executable()
     assert executable is not None
     with tempfile.TemporaryDirectory() as directory:
@@ -260,6 +262,7 @@ def module_graph_behavior(
     Each file reaches the folder untranslated, for the reason `behavior` gives, and the extension in
     each key is what decides the goal symbol its file is read under.
     """
+    refuse_script_host_near_a_sample('node')
     node = node_executable()
     if node is None:
         raise RuntimeError('node.js is not available')
