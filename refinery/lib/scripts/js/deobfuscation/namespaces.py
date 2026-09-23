@@ -141,7 +141,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             return None
         func_assigns = self._detect_function_assignments(body, name, flattenable)
         hoisted_keys = (
-            self._hoistable_functions(scope, name, func_assigns, cache.dominance)
+            self._hoistable_functions(func_assigns, references_by_key, cache.dominance)
             if func_assigns else set()
         )
         hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
@@ -413,9 +413,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
 
     @staticmethod
     def _hoistable_functions(
-        scope: Node,
-        name: str,
         func_assigns: dict[str, _PropertyAssignment],
+        references_by_key: dict[str, list[Node]],
         dominance: DominanceModel,
     ) -> set[str]:
         """
@@ -431,7 +430,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         `undefined`-until-assigned semantics.
         """
         hoistable: set[str] = set()
-        references_by_key = JsNamespaceFlattening._property_references_by_key(scope, name)
         for key, entry in func_assigns.items():
             func_expr = entry.rhs
             if not isinstance(func_expr, JsFunctionExpression):

@@ -4,6 +4,7 @@ import inspect
 import unittest
 
 from test import a_property_of_the_batch_itself
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
@@ -573,3 +574,17 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             'an outer namespace the batch flattens'
         ]
         self.assertEqual(self._flatten(source), self._flatten_one_plan_at_a_time(source))
+
+    @a_property_of_the_batch_itself
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_the_batch_answered_hoist_row_flattens_soundly(self):
+        """
+        The parity law for this row is an expected failure: the batched flattening and its
+        sequential self disagree, and the batched output is the sound one. That xfail records only
+        the disagreement, so it would stay green were the batched output to regress to a different
+        wrong result. Pinning the batched flattening against the Node oracle catches that.
+        """
+        source = A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME[
+            'an outer namespace the batch flattens'
+        ]
+        self.assertEqual(behavior(source), behavior(self._flatten(source)))

@@ -2270,6 +2270,34 @@ class TestARelocatedMayThrowReadIsReorderedPastAnEffect(TestBase):
         )
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFreeGlobalReadInlinedPastAMutatingCallLosesItsValue(TestBase):
+    """
+    Chained single-use inlining folds `var x = p + 0; var y = x + 0;` into the one use of `y`,
+    carrying the read of `p` down to where `y` is printed. `p` is a free global — written only
+    inside `setp` and `bump`, bound by nothing the reaching-definitions query tracks — so the
+    inliner finds no definition between the read and its new site and relocates it past the
+    `bump()` call standing between them, which writes `p`. Node reads `p` as `0` where the source
+    binds `x` and prints `0`; the deobfuscation reads `p` after `bump` and prints `99`. A correct
+    implementation refuses to relocate a read of a name a call between the two positions may write,
+    so the folded read answers with the value it held where it stood.
+    """
+
+    @unittest.expectedFailure
+    def test_a_free_global_read_keeps_its_value_across_the_mutating_call(self):
+        source = inspect.cleandoc("""
+            function setp() { p = 0; }
+            function bump() { p = 99; }
+            setp();
+            var x = p + 0;
+            var y = x + 0;
+            bump();
+            console.log(y);
+        """)
+        before, after = before_and_after(source)
+        self.assertEqual(before, after)
+
+
 def _a_chain_of_local_increments(n: int) -> str:
     lines = ['var v0 = 1;']
     for i in range(1, n):
