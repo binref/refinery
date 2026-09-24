@@ -2903,6 +2903,72 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case -10:
+                    scope.R = {};
+                    scope.R.k = -10;
+                    a = 20, b = 10;
+                    break;
+                  case 30:
+                    var wrapper = function(...rest) {
+                      return gen(25, 10, scope, rest)["next"]()["value"];
+                    };
+                    a = 40, b = 10;
+                    break;
+                  case 50:
+                    scope.v = wrapper(1, 2);
+                    scope.R.k = 100;
+                    a = 30, b = 30;
+                    break;
+                  case 60:
+                    return done = true, v;
+                  case scope.R.k + 45:
+                    return done = true, "predicate";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, -15)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    CASE_TEST_THE_MACHINE_CANNOT_READ_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.u = Date.now() > 0 ? 35 : 0;
+                    a = 20, b = 15;
+                    break;
+                  case scope.u:
+                    return done = true, "predicate";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
     def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
         """
         A flag and a result some other function reads, a generator called from outside its
@@ -3077,11 +3143,17 @@ ENTRY_POINTS = {
     'SLOT_NAMED_LIKE_A_PARAMETER_CFF': 'var r = wrapper("param"); console.log(r[0](), r[1]);',
     'SLOT_UNDER_A_STRING_KEY_CFF': 'console.log(wrapper());',
     'STRICT_BLOCK_FUNCTION_CFF': 'console.log(outer());',
+    'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF': 'console.log(outer());',
+    'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
 #: of its own below.
-DIVERGING_FIXTURES = {'REDIRECT_QUALIFY_CFF'}
+DIVERGING_FIXTURES = {
+    'REDIRECT_QUALIFY_CFF',
+    'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF',
+    'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF',
+}
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -3114,6 +3186,30 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         would need the redirect tracked through the states, or the recovery declined for it.
         """
         program = self._program('REDIRECT_QUALIFY_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_wrapper_picks_its_case_with_the_routing_values_of_its_call(self):
+        """
+        In `ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF` the wrapper runs while `R.k` is `-10`, so its
+        entry state matches `case scope.R.k + 45` and it returns `"predicate"`; the main run sets
+        `R.k` to `100` afterwards. The recovery runs every wrapper with the routing values the main
+        run ends with, finds no case, and recovers the `default` body instead.
+        """
+        program = self._program('ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_case_test_the_machine_cannot_read_is_not_skipped(self):
+        """
+        In `CASE_TEST_THE_MACHINE_CANNOT_READ_CFF` the routing value `u` is stored from an
+        expression the machine cannot evaluate, and at runtime it matches `case scope.u`. The
+        recovery skips a case test it cannot read and falls back to the `default` body, where the
+        switch would have taken the case, or thrown where reading the test throws.
+        """
+        program = self._program('CASE_TEST_THE_MACHINE_CANNOT_READ_CFF')
         recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
         self.assertEqual(behavior(program), behavior(recovered))
 
