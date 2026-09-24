@@ -1785,7 +1785,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         the global object
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.bare_name_reaches_the_host`), a
         `with` body among them, since the original read was of the receiver, which no `with` object
-        supplies. Every other check still applies to an exempted name.
+        supplies. That holds of the body and of the site alike: the free-name check below accepts a
+        script-level `var globalThis` for reaching the global object's property, but the receiver
+        is the object itself, not whatever the program stored under that name. Every other check
+        still applies to an exempted name.
 
         Every name-based answer above is read from the model pinned before any splice, so a body
         naming what an earlier splice this pass declared or wrote is declined outright: for such a
@@ -1834,6 +1837,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         root_model = model_cache(self, root).model
         site_scope = root_model.scope_of(site)
         if site_scope is None:
+            return None
+        if synthesized and not root_model.bare_name_reaches_the_host('globalThis', site):
             return None
         if resolves_globally and free:
             if crosses_dynamic_scope(site_scope):

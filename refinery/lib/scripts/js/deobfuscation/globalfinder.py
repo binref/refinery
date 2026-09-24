@@ -76,6 +76,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
+from refinery.lib.scripts.js.strict import strict_mode_at
 
 _CLOSURE_NODES = (JsFunctionExpression, JsArrowFunctionExpression)
 
@@ -192,19 +193,43 @@ def _is_finder(
         return False
     if not _FinderThrowFreedom(func, model, effects, dominance).certifies():
         return False
-    taint = _global_taint(func, model)
+    this_is_global = _receiver_is_global(func, called_bare=True, lexical=False)
+    taint = _global_taint(func, model, this_is_global)
     return all(
-        ret.argument is not None and _is_global_valued(ret.argument, func, model, taint, set())
+        ret.argument is not None
+        and _is_global_valued(ret.argument, func, model, taint, set(), this_is_global)
         for ret in returns
     )
 
 
+def _receiver_is_global(function: Node, *, called_bare: bool, lexical: bool) -> bool:
+    """
+    Whether `this` is the global object in the code of *function* when it is called. An arrow
+    function has the `this` of the code around it, which *lexical* answers for. Any other function
+    called with no receiver (*called_bare*) has the global object as its `this` in sloppy code and
+    `undefined` in strict code, and one called as a method, `arr[0]()` among them, has the object it
+    was read from.
+    """
+    if isinstance(function, JsArrowFunctionExpression):
+        return lexical
+    return called_bare and not strict_mode_at(function)
+
+
 def _is_global_valued(
-    expr: Node | None, func: Node, model: SemanticModel, taint: set[int], visiting: set[int]
+    expr: Node | None,
+    func: Node,
+    model: SemanticModel,
+    taint: set[int],
+    visiting: set[int],
+    this_is_global: bool,
 ) -> bool:
+    """
+    Whether *expr*, evaluated in the code of *func*, answers the global object on every run that
+    reaches it. *this_is_global* is whether `this` does there (`_receiver_is_global`).
+    """
     expr = strip_parens(expr)
     if isinstance(expr, JsThisExpression):
-        return True
+        return this_is_global
     if isinstance(expr, JsIdentifier):
         if names_this_realms_global_object(model, expr):
             return True
@@ -212,23 +237,30 @@ def _is_global_valued(
         return binding is not None and id(binding) in taint
     if isinstance(expr, JsLogicalExpression):
         return (
-            _is_global_valued(expr.left, func, model, taint, visiting)
-            or _is_global_valued(expr.right, func, model, taint, visiting)
+            _is_global_valued(expr.left, func, model, taint, visiting, this_is_global)
+            or _is_global_valued(expr.right, func, model, taint, visiting, this_is_global)
         )
     if isinstance(expr, JsConditionalExpression):
         return (
-            _is_global_valued(expr.consequent, func, model, taint, visiting)
-            or _is_global_valued(expr.alternate, func, model, taint, visiting)
+            _is_global_valued(expr.consequent, func, model, taint, visiting, this_is_global)
+            or _is_global_valued(expr.alternate, func, model, taint, visiting, this_is_global)
         )
     if isinstance(expr, JsCallExpression):
         closures = _callee_closures(expr.callee, func, model)
+        called_bare = not isinstance(strip_parens(expr.callee), JsMemberExpression)
         return bool(closures) and all(
-            _closure_returns_global(closure, model, visiting) for closure in closures
+            _closure_returns_global(
+                closure,
+                model,
+                visiting,
+                _receiver_is_global(closure, called_bare=called_bare, lexical=this_is_global),
+            )
+            for closure in closures
         )
     return False
 
 
-def _global_taint(func: Node, model: SemanticModel) -> set[int]:
+def _global_taint(func: Node, model: SemanticModel, this_is_global: bool) -> set[int]:
     defs: list[tuple[Binding | None, Node | None]] = []
     for node in _own_nodes(func):
         if (
@@ -250,7 +282,7 @@ def _global_taint(func: Node, model: SemanticModel) -> set[int]:
         for binding, value in defs:
             if binding is None or id(binding) in taint or not _binding_within(binding, func, model):
                 continue
-            if _is_global_valued(value, func, model, taint, set()):
+            if _is_global_valued(value, func, model, taint, set(), this_is_global):
                 taint.add(id(binding))
                 changed = True
     return taint
@@ -282,14 +314,20 @@ def _array_closures(binding: Binding | None, func: Node, model: SemanticModel) -
     return closures
 
 
-def _closure_returns_global(closure: Node, model: SemanticModel, visiting: set[int]) -> bool:
+def _closure_returns_global(
+    closure: Node,
+    model: SemanticModel,
+    visiting: set[int],
+    this_is_global: bool,
+) -> bool:
     """
-    Whether calling *closure* answers the global object. What the body returns decides that only
-    where the call answers what the body returned: an `async` closure answers a promise and a
-    generator answers a generator object, neither of which is the global object however the body
-    ends. `_is_finder` asks `is_expression_replaceable` of the finder itself, which cannot cover
-    this — `refinery.lib.scripts.js.analysis.effects.EffectSummary.absorb` deliberately leaves
-    `wraps_return` out, so a callee's wrapping never reaches its caller's summary.
+    Whether calling *closure* answers the global object, where *this_is_global* is whether its
+    `this` is the global object on that call (`_receiver_is_global`). What the body returns decides
+    that only where the call answers what the body returned: an `async` closure answers a promise
+    and a generator answers a generator object, neither of which is the global object however the
+    body ends. `_is_finder` asks `is_expression_replaceable` of the finder itself, which cannot
+    cover this — `refinery.lib.scripts.js.analysis.effects.EffectSummary.absorb` deliberately
+    leaves `wraps_return` out, so a callee's wrapping never reaches its caller's summary.
     """
     if isinstance(closure, FUNCTION_NODES) and wraps_return(closure):
         return False
@@ -297,12 +335,13 @@ def _closure_returns_global(closure: Node, model: SemanticModel, visiting: set[i
         return False
     visiting = visiting | {id(closure)}
     body = getattr(closure, 'body', None)
-    taint = _global_taint(closure, model)
+    taint = _global_taint(closure, model, this_is_global)
     if isinstance(closure, JsArrowFunctionExpression) and not isinstance(body, JsBlockStatement):
-        return _is_global_valued(body, closure, model, taint, visiting)
+        return _is_global_valued(body, closure, model, taint, visiting, this_is_global)
     returns = [node for node in _own_nodes(closure) if isinstance(node, JsReturnStatement)]
     return bool(returns) and all(
-        ret.argument is not None and _is_global_valued(ret.argument, closure, model, taint, visiting)
+        ret.argument is not None
+        and _is_global_valued(ret.argument, closure, model, taint, visiting, this_is_global)
         for ret in returns
     )
 
