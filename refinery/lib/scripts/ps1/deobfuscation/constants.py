@@ -3,8 +3,6 @@ Inline constant variable references in PowerShell scripts.
 """
 from __future__ import annotations
 
-import enum
-
 from collections import defaultdict
 from typing import Iterator, TypeGuard
 
@@ -18,7 +16,10 @@ from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
+from refinery.lib.scripts.ps1.analysis.handoff import Ps1Handoff
 from refinery.lib.scripts.ps1.analysis.model import (
+    NARROWER_QUALIFIERS,
+    VARIABLE_QUALIFIERS,
     Binding,
     binding_key,
     is_assignment_write_target,
@@ -28,7 +29,6 @@ from refinery.lib.scripts.ps1.analysis.model import (
     is_write_occurrence,
 )
 from refinery.lib.scripts.ps1.analysis.mutation import value_after
-from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
@@ -72,7 +72,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1ClassDefinition,
-    Ps1CommandInvocation,
     Ps1DoLoop,
     Ps1EnumDefinition,
     Ps1ExpandableHereString,
@@ -80,11 +79,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1ForLoop,
     Ps1FunctionDefinition,
-    Ps1HashLiteral,
     Ps1HereString,
     Ps1IfStatement,
     Ps1IndexExpression,
-    Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1Pipeline,
@@ -128,6 +125,20 @@ _PS1_DEFAULT_VARIABLES: dict[str, str] = {
         'WarningPreference'          : r'Continue',
     }.items()
 }
+
+#: The engine defaults above that every scope holds a copy of. 5.1 creates these with
+#: `ScopedItemOptions.AllScope`, so a read that names one narrower scope and looks nowhere else
+#: still finds them: `$local:ShellId` in a child scope is `Microsoft.PowerShell`. The preference
+#: variables are created with no options and live in the global scope alone, where
+#: `$local:ErrorActionPreference` in a child scope finds nothing.
+_IN_EVERY_SCOPE = frozenset({
+    'consolefilename',
+    'psculture',
+    'psedition',
+    'pshome',
+    'psuiculture',
+    'shellid',
+})
 
 PS1_ENV_CONSTANTS = {
     lower_key: value
@@ -240,15 +251,23 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     return mutated
 
 
+#: The spellings of a read `_candidate_key` names a key for: bare, `$env:`, and every qualifier
+#: that names a script variable.
+_INLINED_SCOPES = frozenset({
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.ENV,
+    *VARIABLE_QUALIFIERS,
+})
+
+
 def _candidate_key(var: Ps1Variable) -> str | None:
     """
-    The constant-inlining lookup key for a variable — its lowercased name for an unqualified or
-    `$env:` variable, `None` for any other scope.
+    The constant-inlining lookup key for a variable — `binding_key` for an unqualified variable, an
+    `$env:` variable and one spelled with a qualifier that names a script variable, and `None` for
+    any other scope.
     """
-    if var.scope == Ps1ScopeModifier.NONE:
-        return var.name.lower()
-    if var.scope == Ps1ScopeModifier.ENV:
-        return F'env:{var.name.lower()}'
+    if var.scope in _INLINED_SCOPES:
+        return binding_key(var)
     return None
 
 
@@ -282,40 +301,56 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
     and a `[Array]::Reverse($x)` below then reaches one and not the other. Measured: without this,
     `$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
 
-    Four conditions must hold, cheapest first. The value must be one a store can reach at all
-    (`_may_be_changed_in_place`); a String, number or Char is never changed in place, so a copy is
-    the object. The script must change some object in place at all
-    (`Ps1SemanticModel.changes_an_object_in_place`) — a fact about the script, not this binding, so
-    that `$h['k'] = $x; $h['k'][0] = 9` is not missed by asking only about `$x`. The position must
-    not store the object (`_where_the_object_goes`). And the refusal is narrowed to where the
-    object's new name can be read off the source: for a plain `$y = $x` it is enough that neither
-    name is stored through, excusing the assignment's own target (the hand-off itself) but not a
-    share onto the name being read (`$a = $x; $a[0] = $x` stores through `$a` against `$x`); where
-    the object is stored somewhere this cannot name, the substitution is refused outright.
+    Where the object goes is `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.handoff`.
+    Where nothing keeps it, where what is kept is never changed in place (`_may_change_at`), and in
+    a script that changes no object in place at all, a copy is the object.
 
-    A callee is a doubt, not a claim: `$list.Add($x)` keeps what it is handed and
-    `[Buffer]::BlockCopy($s, 0, $d, 0, 3)` does not, and nothing here reads which. An argument is
-    refused only where the object it reads is one something is known to change in place under a name
-    this can see, which keeps a decode buffer folding into the call that reads it.
+    A plain `$y = $x` between two names nothing else keeps is decided on those two names: neither
+    may be stored through, excusing the assignment's own target but not a share onto the name
+    being read — `$a = $x; $a[0] = $x` stores through `$a` against `$x`. Every other hand-off keeps
+    the object somewhere no name spells — a container, a callee, the output a caller collects — so
+    the copy is refused wherever anything may change an object in place after it. The one store
+    excused there is the one the hand-off itself makes into a container, which changes the
+    container and not the object, unless the container is a name for the object itself.
     """
-    if not _may_be_changed_in_place(value) or not state.changes_an_object_in_place:
+    handoff = state.flow.handoff(occurrence)
+    if handoff is Ps1Handoff.NOWHERE or not _may_change_at(value, handoff):
         return True
-    goes = _where_the_object_goes(occurrence)
-    if goes is _Destination.NOWHERE:
+    if not state.changes_an_object_in_place:
         return True
-    if goes is _Destination.A_CALLEE:
-        return not _is_changed_in_place(state.binding_of(occurrence))
-    target = _assignment_target(occurrence)
-    if target is None:
-        return False
-    stored_into = state.binding_of(target)
     read_from = state.binding_of(occurrence)
-    if stored_into is None or stored_into is read_from:
+    if read_from is None:
         return False
-    return not (
-        _is_changed_in_place(stored_into, apart_from=target)
-        or _is_changed_in_place(read_from)
-    )
+    target = _assignment_target(occurrence)
+    if handoff is Ps1Handoff.A_NAME:
+        stored_into = None if target is None else state.binding_of(target)
+        if stored_into is None or stored_into is read_from:
+            return False
+        if (
+            state.flow.exposure(stored_into) is Ps1Handoff.NOWHERE
+            and state.flow.exposure(read_from) is Ps1Handoff.NOWHERE
+        ):
+            return not (
+                _is_changed_in_place(stored_into, apart_from=target)
+                or _is_changed_in_place(read_from)
+            )
+    if target is not None and any(write.node is target for write in read_from.writes):
+        target = None
+    return not state.flow.change_may_follow(occurrence, apart_from=target)
+
+
+def _may_change_at(value: Expression, handoff: Ps1Handoff) -> bool:
+    """
+    Whether a store can change what a hand-off keeps of *value*: the object itself, or only the
+    objects inside it where the hand-off keeps `Ps1Handoff.PARTS`. The elements of `1, 2, 3` are
+    numbers, so taking them apart hands on nothing a store can reach.
+    """
+    if handoff is not Ps1Handoff.PARTS:
+        return _may_be_changed_in_place(value)
+    array = _get_array_literal(value)
+    if array is None:
+        return _may_be_changed_in_place(value)
+    return any(_may_be_changed_in_place(element) for element in array.elements)
 
 
 def _may_be_changed_in_place(value: Expression) -> bool:
@@ -326,8 +361,12 @@ def _may_be_changed_in_place(value: Expression) -> bool:
     A String, a number, a Char and a Boolean are what 5.1 hands over by value or never changes at
     all — `$s[0] = 'x'` on a String raises rather than writing — so a copy of one is the object.
     An array is not, and neither is a value the domain declines to name: the list of objects a store
-    can reach is not one this can finish, so anything it cannot read is answered `True`.
+    can reach is not one this can finish, so anything it cannot read is answered `True`. A type
+    literal is the one value the inliner carries that the domain does not name, and it is the
+    `System.Type` it spells, which holds nothing a store can reach.
     """
+    if isinstance(unwrap_parens(value), Ps1TypeExpression):
+        return False
     named = type_of(read(value))
     return named is None or bool(named.ranks)
 
@@ -353,8 +392,8 @@ def _assignment_target(occurrence: Ps1Variable) -> Ps1Variable | None:
     rooted at, because that is the name every later store through the same place is spelled on and
     so the name a caller has to watch. `None` is every position whose destination this cannot name
     that way, and a caller reads it as such: a hash literal's entry, one slot of a multi-assignment,
-    an argument of a call or of a command. The wrappers `_where_the_object_goes` climbs are climbed
-    here too, because each hands its operand on unchanged.
+    an argument of a call or of a command. Parentheses, array literals and conversions are climbed,
+    because each hands its operand on unchanged.
     """
     cursor: Node = occurrence
     parent = cursor.parent
@@ -383,94 +422,6 @@ def _is_transparent_to_the_object(node: Node | None, under: Node) -> TypeGuard[N
     if isinstance(node, (Ps1ParenExpression, Ps1ArrayLiteral, Ps1CastExpression)):
         return True
     return is_conversion_operator(node) and node.left is under
-
-
-class _Destination(enum.Enum):
-    """
-    Where the object an occurrence reads goes once the expression around it has run.
-
-    `NOWHERE` — nothing keeps it past the expression, so a copy and a share are the same thing.
-    `A_CALLEE` — it is handed to code this does not read, which *may* keep it. `$list.Add($x)` does
-    and `[Buffer]::BlockCopy($s, 0, $d, 0, 3)` does not, and no reading of the call says which, so
-    the caller pays it only where the object is one something is known to change in place.
-    `STORED` — it is certainly put somewhere a later statement can reach: an assignment's value, an
-    entry of a hash literal, a slot of a multi-assignment.
-    """
-    NOWHERE  = enum.auto()  # noqa
-    A_CALLEE = enum.auto()  # noqa
-    STORED   = enum.auto()  # noqa
-
-
-def _where_the_object_goes(occurrence: Ps1Variable) -> _Destination:
-    """
-    Where what *occurrence* reads goes once the expression it stands in has run.
-
-    Parentheses, array literals and conversions are climbed on the way, because each hands its
-    operand on: `$a = ,$x` builds a fresh outer array whose one element is the array `$x` names, and
-    `$y = [array]$x` and `$y = $x -as [array]` convert nothing when `$x` already is one, so a value
-    written for `$x` in any of them is as much a copy as `$y = $x` would be.
-
-    A command is asked what it does to the names it addresses rather than assumed to read them.
-    `Write-Output $x` writes the value out and keeps nothing; `New-Variable y $x` binds it to a
-    name that outlives the statement, and `refinery.lib.scripts.ps1.analysis.naming` is what tells
-    the two apart. A pipeline is asked of the whole pipeline and not of the element the occurrence
-    stands in, because a command downstream is handed what an element upstream wrote: `$x |
-    Set-Variable z` binds the array to `z` with no argument of the element `$x` stands in naming it.
-    """
-    cursor: Node = occurrence
-    parent = cursor.parent
-    while _is_transparent_to_the_object(parent, cursor):
-        cursor = parent
-        parent = cursor.parent
-    if isinstance(parent, Ps1AssignmentExpression):
-        return _Destination.STORED if parent.value is cursor else _Destination.NOWHERE
-    if isinstance(parent, Ps1HashLiteral):
-        if any(value is cursor for _, value in parent.pairs):
-            return _Destination.STORED
-        return _Destination.NOWHERE
-    if isinstance(parent, Ps1InvokeMember):
-        if any(argument is cursor for argument in parent.arguments):
-            return _Destination.A_CALLEE
-        return _Destination.NOWHERE
-    if any(_binds_a_name(cmd) for cmd in _commands_handed_the_value(cursor)):
-        return _Destination.A_CALLEE
-    return _Destination.NOWHERE
-
-
-def _commands_handed_the_value(node: Node) -> Iterator[Ps1CommandInvocation]:
-    """
-    Every command invocation the value at *node* may reach: the one whose argument list it stands
-    in, and — where it stands in a pipeline — every element of that pipeline, since each is handed
-    what the one before it wrote.
-
-    The climb does not stop at the command it is standing in, because a command in a pipeline hands
-    its output on. `Write-Output -NoEnumerate $x | Set-Variable z` emits the array itself as one
-    record, and `Set-Variable` binds that single record to the name without collecting it, so `z`
-    names that very object — a walk that reported only `Write-Output` read the position as keeping
-    nothing.
-    """
-    cursor: Node | None = node
-    while cursor is not None:
-        if isinstance(cursor, Ps1CommandInvocation):
-            yield cursor
-        elif isinstance(cursor, Ps1Pipeline):
-            for element in cursor.elements:
-                if isinstance(element.expression, Ps1CommandInvocation):
-                    yield element.expression
-            return
-        elif isinstance(cursor, (Ps1ScriptBlock, Ps1ExpressionStatement)):
-            return
-        cursor = cursor.parent
-
-
-def _binds_a_name(cmd: Ps1CommandInvocation) -> bool:
-    """
-    Whether *cmd* gives one of the values it is handed to a name that outlives it.
-    """
-    return any(
-        reference.role is not Ps1NameRole.READS
-        for reference in named_references(cmd)
-    )
 
 
 def _ancestor_past_parens(node: Node) -> Node | None:
@@ -795,6 +746,13 @@ class _Inlining:
     def value_at(self, var: Ps1Variable, key: str) -> Expression | None:
         """
         The constant *var* holds where it stands, or `None` when no single value does.
+
+        The write the flow model names is only the value if the object it installed is still what
+        it was. One held somewhere no occurrence of the name spells — an element of a container, the
+        argument of a callee, the output a caller collects — may be changed through there without
+        any write of the name, so such a value is refused wherever something may change an object
+        in place between the write and the read and the value is one a store can change.
+        Measured, `$x = 1, 2, 3; function f { ,$x }; $y = f; $y[0] = 9; $x[0]` is `9`.
         """
         return self._value_at(var, key, frozenset())
 
@@ -802,12 +760,31 @@ class _Inlining:
         binding = self.binding_of(var)
         if binding is None:
             value = self.table.ambient.get(key)
-            if value is None or not self.flow.ambient_value_survives(var):
+            if value is None or not self._reaches_the_default(var, key):
                 return None
             return value
         write = self.flow.reaching_definition(var)
         if write is None:
             return None
+        value = self._value_from(write, key, binding, chased)
+        if value is None:
+            return None
+        changed = self.flow.unseen_change(write, var)
+        if changed is Ps1Handoff.NOWHERE or not _may_change_at(value, changed):
+            return value
+        return None
+
+    def _value_from(
+        self,
+        write: Ps1Variable,
+        key: str,
+        binding: Binding,
+        chased: frozenset[int],
+    ) -> Expression | None:
+        """
+        The value *write* leaves under *binding*, chasing a write that changes the value before it
+        rather than replacing it.
+        """
         accumulation = _accumulation_terms(write)
         delta = _increment_delta(write)
         through = isinstance(write, Ps1Variable) and is_mutated_in_place(write)
@@ -829,6 +806,16 @@ class _Inlining:
         if delta is not None:
             return folded_increment(previous, delta)
         return value_after(write, previous)
+
+    def _reaches_the_default(self, var: Ps1Variable, key: str) -> bool:
+        """
+        Whether the read *var* observes the default the engine gave the name *key* before the script
+        ran. A read that names one narrower scope finds a default only where every scope holds one,
+        since the engine keeps the rest in the global scope alone; see `_IN_EVERY_SCOPE`.
+        """
+        if var.scope in NARROWER_QUALIFIERS and key not in _IN_EVERY_SCOPE:
+            return False
+        return self.flow.ambient_value_survives(var)
 
     def binding_of(self, var: Ps1Variable) -> Binding | None:
         return self.flow.semantic.binding_of(var)
@@ -1113,6 +1100,12 @@ class Ps1NullVariableInlining(Transformer):
     name in the calling scope out of data this walk cannot read, so the pass stands down there too.
     The trusting model — `refinery.lib.scripts.ps1.options.eval_is_trusted` — trusts such code to
     touch nothing the script does not spell and restores it.
+
+    A read that names its scope outright is never given `$null`, though it is given a value the
+    script wrote. The pass rests on reading a name nobody writes as an accident of the obfuscation,
+    and `$script:x` or `$global:x` is the opposite evidence: it asks for the variable of one scope
+    by name, which is how a script reads what a profile, a session or a loader dot-sourcing it set
+    up before it ran.
     """
 
     @staticmethod
@@ -1147,7 +1140,7 @@ class Ps1NullVariableInlining(Transformer):
             return
         mutated = _collect_mutated_variables(node)
         for ref in list(node.walk()):
-            if not isinstance(ref, Ps1Variable):
+            if not isinstance(ref, Ps1Variable) or ref.scope in VARIABLE_QUALIFIERS:
                 continue
             key = _candidate_key(ref)
             if key is None:
@@ -1203,7 +1196,7 @@ class Ps1SuccessFlagInlining(Transformer):
         for ref in list(node.walk()):
             if not isinstance(ref, Ps1Variable):
                 continue
-            if _candidate_key(ref) != self._SUCCESS_FLAG_KEY:
+            if ref.scope is not Ps1ScopeModifier.NONE or ref.name != self._SUCCESS_FLAG_KEY:
                 continue
             if is_assignment_write_target(ref):
                 continue

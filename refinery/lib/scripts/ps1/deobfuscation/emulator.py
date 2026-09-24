@@ -2631,8 +2631,8 @@ class Ps1SubExpressionEvaluator(Transformer):
         """
         Whether *name* is referenced anywhere outside *node*'s subtree. The name is asked through the
         semantic model: a same-named local of another scope is not a reader of this write, while a
-        reader inside a nested function or a captured scriptblock is, and a binding a qualifier or a
-        dynamic reach can arrive at counts.
+        reader inside a nested function or a captured scriptblock is, and so is a binding a
+        `$using:` read arrives at.
 
         Every name this is asked reaches it with a binding, because the caller filters out the engine
         variables first and `_body_names` writes only two kinds of name — a variable-spelled store,
@@ -2654,7 +2654,7 @@ class Ps1SubExpressionEvaluator(Transformer):
         if not bindings:
             return True
         for binding in bindings:
-            if binding.dynamic_or_qualified:
+            if binding.read_through_using:
                 return True
             for occurrence in (*binding.reads, *binding.writes):
                 if not self._inside(occurrence.node, node):

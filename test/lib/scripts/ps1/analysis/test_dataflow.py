@@ -327,14 +327,51 @@ class TestPs1FlowUnknowns(TestBase):
             self._unknowns("$x = 'a'; function f { Write-Host $x }; Write-Host $x"),
             Ps1FlowUnknown.NONE)
 
-    def test_a_qualified_reader_is_reported_separately_from_an_unorderable_write(self):
+    def test_a_read_naming_the_scope_the_writes_land_in_leaves_the_binding_answerable(self):
+        for source in [
+            "$x = 'a'; Write-Host $script:x",
+            "$x = 'a'; Write-Host $local:x",
+            "$x = 'a'; Write-Host $variable:x",
+            "$global:x = 'a'; Write-Host $global:x",
+            "$private:x = 'a'; Write-Host $x",
+        ]:
+            with self.subTest(source):
+                self.assertIs(self._unknowns(source), Ps1FlowUnknown.NONE)
+
+    def test_a_using_reader_is_reported_separately_from_an_unorderable_write(self):
         """
         The reason this is a flag: a caller may be able to live with one of these and not the other,
         and a single boolean would make them indistinguishable.
         """
-        found = self._unknowns("$x = 'a'; Write-Host $script:x")
-        self.assertIn(Ps1FlowUnknown.REACHED_BY_QUALIFIER, found)
+        found = self._unknowns("$x = 'a'; Invoke-Command -ScriptBlock { Write-Host $using:x }")
+        self.assertIn(Ps1FlowUnknown.READ_THROUGH_USING, found)
         self.assertNotIn(Ps1FlowUnknown.WRITES_IN_SEVERAL_BODIES, found)
+
+    def test_a_read_naming_one_scope_of_a_name_written_through_the_other_shadows(self):
+        """
+        Run from a session, a script's own scope stands below the global one, and a read that names
+        either of them looks nowhere else: each of these reads finds no variable there. Dot-sourced
+        at the top of a session the two are one scope and each finds the write.
+        """
+        for source in [
+            "$x = 'a'; Write-Host $global:x",
+            "$global:x = 'a'; Write-Host $script:x",
+            "$global:x = 'a'; Write-Host $local:x",
+        ]:
+            with self.subTest(source):
+                self.assertIn(Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE, self._unknowns(source))
+
+    def test_a_private_variable_read_from_another_scope_is_hidden_from_that_reader(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`, a child scope reading a private variable of its
+        caller finds nothing, whether it spells the name bare or through `$script:`.
+        """
+        for source in [
+            "$private:x = 'a'; & { Write-Host $x }",
+            "$private:x = 'a'; & { Write-Host $script:x }",
+        ]:
+            with self.subTest(source):
+                self.assertIn(Ps1FlowUnknown.HIDDEN_FROM_A_READER, self._unknowns(source))
 
     def test_a_stored_block_writing_the_name_defers_the_binding(self):
         self.assertIn(

@@ -192,11 +192,27 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The same rule spelled with the other operator: 5.1 never evaluates the right operand of '
         '`-or` when the left one is true. Held apart from the `-and` entry because the two are '
         'separate spellings and a fix that reaches one need not reach the other.',
-    "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
-        'The store is removed and the read prints nothing. A child scope resolves `$script:x` to '
-        'the caller, where the store put `a`.',
     "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
-        'The same, through a function body rather than a script block.',
+        'The store is removed and the read prints nothing. A function body resolves `$script:x` to '
+        'the caller, where the store put `a`, but the dead-store sweep sees no read of `$x` '
+        'between the two stores: it reads only the bare spelling, and a call is no read at all to '
+        'it.',
+    "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
+        'Both stores are removed and both calls print nothing where the snippet prints `a` and '
+        '`b`. The body reads `$x` when it is called, but the dead-store sweep reads a statement '
+        'for the names it spells: it takes the first store for overwritten with no read between, '
+        'and the last for read by nothing after it.',
+    "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f":
+        'The first store is removed and the first call prints nothing where the snippet prints '
+        '`a`. The same sweep; the last store stays only because the sweep does not read the '
+        'qualified spelling in the body as a read of `$x` at all.',
+    "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x":
+        'The read is folded to `a`. `ForEach-Object` runs its block in its caller\'s scope, so '
+        '`$local:x` there is the caller\'s `$x` and the snippet writes `b`; the model gives the '
+        'block a scope of its own and files the store there.',
+    "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'":
+        'The store is removed and the read writes `$null` where the snippet writes `a`: the same '
+        'scope, read rather than written.',
     "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
         'The store is removed and the read prints nothing. The pattern reads a whole set of '
         'variables without naming any one of them.',
@@ -209,49 +225,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
-    '$x = 1, 2, 3; $a, $b = $x, 9; $a[0] = 7; Write-Output $x[0]':
-        'The read is folded to `1`. A multi-assignment slot is handed the very object standing '
-        'against it, so `$a` and `$x` name one array and the store through `$a` is a store into it; '
-        'the snippet prints `7`. The alias relation is minted from an assignment whose value is a '
-        'bare variable, and the climb breaks on the array literal a multi-assignment stands on.',
-    "$x = 1, 2, 3; $h = @{}; $h['k'] = $x; [Array]::Reverse($h['k']); Write-Output $x":
-        'The read is folded to the array as written. A container holds the object rather than a '
-        'copy of it, so reversing what the key names reverses what `$x` names and the snippet '
-        'prints `3 2 1`. The alias relation joins two *variables*, so nothing relates a name to an '
-        'object a container is holding for it.',
-    '$p = @(@(1, 2), @(3, 4)); foreach ($e in $p) { [Array]::Reverse($e) }; Write-Output $p[0]':
-        'The read is folded to the element as written. A `foreach` variable is bound to the element '
-        'object itself, which is the same hand-off an assignment of a bare variable is, so '
-        'reversing `$e` reverses the element and the snippet prints `2 1`.',
-    'function f($a) { $script:k = $a }; $x = 1, 2, 3; f $x; $x[0] = 9; Write-Output $k[0]':
-        'The argument is substituted, so the callee stores a second array and the read prints `1`. '
-        'The body keeps what it was handed, so `$k` and `$x` name one array and the snippet prints '
-        '`9`. Nothing asks what a called body does with an argument it is given.',
-    '$x = 1, 2, 3; $o = [pscustomobject]@{ P = 0 }; $o.P = $x; $o.P[0] = 9; Write-Output $x':
-        'The read is folded to the array as written. The property holds the array itself, so the '
-        'store through it reaches what `$x` holds and the snippet writes `9 2 3`.',
-    '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; $a[0][0] = 9; Write-Output $x':
-        'The same through an element of another array.',
-    '$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); $l[0][0] = 9; '
-    'Write-Output $x':
-        'The same through a list a call was handed the array to keep.',
-    '$x = 1, 2, 3; $h = @{ k = $x }; $h.k[0] = 9; Write-Output $x':
-        'The same through a key written into a hash literal rather than stored into one.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $y = $h['k']; $y[0] = 9; Write-Output $x":
-        'The same reached from the third side: the array is taken back *out* of the container into '
-        'a name, and a store through that name is one `$x` observes.',
-    '$p = @(@(1, 2), @(3, 4)); $q = $p[0]; $q[0] = 9; Write-Output $p[0][0]':
-        'The same where the container is an array of arrays and the name is taken from an element.',
-    '$p = @(@(1, 2), @(3, 4)); $p | ForEach-Object { [Array]::Reverse($_) }; Write-Output $p[0]':
-        'The pipeline variable is bound to the element object itself, so reversing `$_` reverses '
-        'what the collection holds and the snippet writes `2 1`.',
-    'function f($a) { [Array]::Reverse($a) }; $x = 1, 2, 3; f $x; Write-Output $x':
-        'The parameter is bound to the array the argument named rather than to a copy, so the call '
-        'reverses what `$x` holds and the snippet writes `3 2 1`.',
-    '$sb = { param($a) [Array]::Reverse($a) }; $x = 1, 2, 3; & $sb $x; Write-Output $x':
-        'The same through a script block parameter rather than a function parameter.',
-    '$x = 1, 2, 3; $a, $b = $x, 9; [Array]::Reverse($a); Write-Output $x':
-        'The same through a multi-assignment slot, which is handed the object standing against it.',
     '$x = 1, 2, 3; $y = $($x); [Array]::Reverse($x); Write-Output $y':
         'The read is folded to the reversal. A subexpression collects a fresh array rather than '
         'handing the object over, so the two names hold two arrays and the snippet writes `1 2 3`. '

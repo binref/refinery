@@ -69,12 +69,20 @@ a read outside the trap at all; `refinery.lib.scripts.ps1.analysis.model.Ps1Sema
 model that and binds it to the enclosing scope. What refuses the answer is the kill rule — the
 trap's write is another write of the same binding, and the exceptional edge into the handler with
 the resume edge back out puts it on a path between any earlier write and that read.
+
+**An object can change under a name without any occurrence of the name.** A read hands over the
+object and not a copy, and `refinery.lib.scripts.ps1.analysis.handoff.object_handoff` says whether
+the place it hands it to keeps it: a container, a callee, a caller collecting the output of a body.
+Once one does, a store through that place changes what the name holds, and it is spelled on no
+name the semantic model can link to this one. `unseen_change` answers whether such a store may run
+between a write and a read. It is a fact about the *object*, so whether it matters is the caller's
+question: a String is never changed in place, and only the caller holds the value.
 """
 from __future__ import annotations
 
 import enum
 
-from typing import Iterator
+from typing import Callable, Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -88,7 +96,9 @@ from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
+from refinery.lib.scripts.ps1.analysis.handoff import Ps1Handoff, object_handoff
 from refinery.lib.scripts.ps1.analysis.model import (
+    NARROWER_QUALIFIERS,
     Binding,
     Occurrence,
     Ps1SemanticModel,
@@ -96,8 +106,13 @@ from refinery.lib.scripts.ps1.analysis.model import (
     scope_local_nodes,
 )
 from refinery.lib.scripts.ps1.analysis.opaque import writes_nobody_can_attribute
-from refinery.lib.scripts.ps1.ast import in_evaluation_order
+from refinery.lib.scripts.ps1.ast import (
+    in_evaluation_order,
+    is_reference_cast,
+    unwrap_assignment_target,
+)
 from refinery.lib.scripts.ps1.model import (
+    Ps1AssignmentExpression,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1Variable,
@@ -120,9 +135,10 @@ class Ps1FlowUnknown(enum.Flag):
     #: in one body and a *read* in another is not this: only that read is out of reach, and
     #: `reaching_definition` refuses it where it stands.
     WRITES_IN_SEVERAL_BODIES = enum.auto()
-    #: The binding is reachable through a scope qualifier or a dynamic scope, so an occurrence that
-    #: does not appear in `reads` or `writes` at all may still touch it.
-    REACHED_BY_QUALIFIER = enum.auto()
+    #: The binding is read through `$using:`, by code running wherever and whenever the block
+    #: holding the read is invoked, so an occurrence that does not appear in `reads` at all observes
+    #: it.
+    READ_THROUGH_USING = enum.auto()
     #: A body that may write this binding runs at a time this layer cannot place — a stored block, a
     #: block handed to a command that may or may not invoke it.
     WRITTEN_BY_DEFERRED_BODY = enum.auto()
@@ -130,13 +146,17 @@ class Ps1FlowUnknown(enum.Flag):
     #: binding at a moment nothing here can place: aimed at the script scope out of any body, at a
     #: scope the lexical chain cannot name, or run by a block whose own run time is unplaceable.
     #: The placeable ones are not this; they are nodes in `unattributable_writes`. Kept apart from
-    #: `REACHED_BY_QUALIFIER`, which says a *known* name is reachable another way: these are
+    #: `READ_THROUGH_USING`, which says a *known* name is reachable another way: these are
     #: different reasons and a caller may be able to live with one.
     WRITTEN_BY_UNREADABLE_NAME = enum.auto()
     #: The binding holds writes through two scopes a read resolves in order — see
     #: `_shadows_a_wider_scope`. One name here is two names in the language, and every write of the
     #: wider one is a write a bare read never observes.
     SHADOWS_A_WIDER_SCOPE = enum.auto()
+    #: The binding is written `$private:` and read from another scope, where a private variable is
+    #: invisible: such a read resolves past it to an outer binding or to nothing — see
+    #: `_hidden_from_a_reader`.
+    HIDDEN_FROM_A_READER = enum.auto()
 
 
 class Ps1ObservedWrite(enum.Enum):
@@ -166,12 +186,17 @@ class Ps1VariableFlow:
         dominators: DominatorModel,
         blocks: Ps1BlockModel,
         cycles: CycleModel,
+        trusts: Callable[[str], bool],
     ):
         self.semantic = semantic
         self.flow = flow
         self.dominators = dominators
         self.blocks = blocks
         self.cycles = cycles
+        self._trusts = trusts
+        self._handoffs: dict[int, Ps1Handoff] = {}
+        self._exposures: dict[int, Ps1Handoff] = {}
+        self._changes: dict[int, tuple[dict[int, list[Node]], bool]] = {}
         self._between = ReachabilityQuery(dominators, Projection.MAY)
         self._unknowns: dict[int, Ps1FlowUnknown] = {}
         self._kills: dict[tuple[int, str], frozenset[int]] = {}
@@ -351,8 +376,9 @@ class Ps1VariableFlow:
         binding = self.semantic.root_scope.bindings.get(key)
         if binding is not None:
             if self.unknowns(binding) & (
-                Ps1FlowUnknown.REACHED_BY_QUALIFIER
+                Ps1FlowUnknown.READ_THROUGH_USING
                 | Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE
+                | Ps1FlowUnknown.HIDDEN_FROM_A_READER
             ):
                 return Ps1ObservedWrite.UNKNOWN
             for write in binding.writes:
@@ -502,6 +528,135 @@ class Ps1VariableFlow:
                 return True
         return False
 
+    def handoff(self, var: Ps1Variable) -> Ps1Handoff:
+        """
+        What keeps the object the read *var* produces — see
+        `refinery.lib.scripts.ps1.analysis.handoff.object_handoff`.
+        """
+        found = self._handoffs.get(id(var))
+        if found is None:
+            found = self._handoffs[id(var)] = object_handoff(var, self._trusts)
+        return found
+
+    def exposure(self, binding: Binding) -> Ps1Handoff:
+        """
+        How much of the object *binding* holds a place no occurrence of it spells may keep: the
+        widest hand-off of any read of it, or of a name `$y = $x` gave the same object, as
+        `Ps1Handoff.NOWHERE`, `Ps1Handoff.PARTS` or `Ps1Handoff.OBJECT`.
+
+        A read that hands the whole value to one name by a plain `=` is the link the semantic model
+        files stores across, and is not an exposure unless no link came of it because the target
+        has no binding to hold it by. A string-addressed read hands the value to a command, and a
+        `[ref]` hands the variable itself to a callee; each keeps all of it.
+        """
+        found = self._exposures.get(id(binding))
+        if found is None:
+            found = Ps1Handoff.NOWHERE
+            members = self.semantic.names_for_one_object(binding)
+            for member in members:
+                for read in member.reads:
+                    found = found.widest(self._read_exposure(member, read.node))
+                for write in member.writes:
+                    if is_reference_cast(write.node.parent):
+                        found = Ps1Handoff.OBJECT
+            for member in members:
+                self._exposures[id(member)] = found
+        return found
+
+    def _read_exposure(self, binding: Binding, node: Node) -> Ps1Handoff:
+        """
+        What the read *node* of *binding* exposes of the object: its hand-off, where a hand-off to
+        one name is an exposure only if the semantic model could not link that name.
+        """
+        if not isinstance(node, Ps1Variable):
+            return Ps1Handoff.OBJECT
+        handoff = self.handoff(node)
+        if handoff is not Ps1Handoff.A_NAME:
+            return handoff
+        target = _assigned_variable(node)
+        stored_into = None if target is None else self.semantic.binding_of(target)
+        if stored_into is None:
+            return Ps1Handoff.OBJECT
+        return Ps1Handoff.NOWHERE
+
+    def unseen_change(self, write: Node, read: Ps1Variable) -> Ps1Handoff:
+        """
+        How much of the object the binding of *read* holds may be changed, between *write* and
+        *read*, through a place no occurrence of that binding spells: `Ps1Handoff.NOWHERE` where
+        nothing can be, and otherwise the binding's `exposure`.
+
+        Every place anything in the script may change an object in place is asked, since which
+        object a store through a container reaches is not something the source says. A place this
+        cannot order against the two — a store in a function body or in a stored block — may run in
+        between.
+        """
+        binding = self.semantic.binding_of(read)
+        if binding is None:
+            return Ps1Handoff.OBJECT
+        exposure = self.exposure(binding)
+        if exposure is Ps1Handoff.NOWHERE:
+            return exposure
+        placed = self.flow.locate(write)
+        if placed is None:
+            return exposure
+        graph, source = placed
+        target = self._position_of(read, graph)
+        if target is None:
+            return exposure
+        sites, anywhere = self._change_sites_of(graph)
+        if anywhere:
+            return exposure
+        kills = [
+            site for site, changes in sites.items() if site != id(target) or not all(
+                self._stores_after(target, read, change) for change in changes)
+        ]
+        if self._between.any_between(graph, source, target, kills):
+            return exposure
+        return Ps1Handoff.NOWHERE
+
+    def change_may_follow(self, node: Node, apart_from: Node | None = None) -> bool:
+        """
+        Whether anything may change an object in place once *node* has been evaluated. *apart_from*
+        is a store standing in the statement of *node* that the caller knows to change nothing it
+        cares about. A statement control can return to counts its own stores as following it.
+        """
+        placed = self.flow.locate(node)
+        if placed is None:
+            return True
+        graph, here = placed
+        sites, anywhere = self._change_sites_of(graph)
+        if anywhere:
+            return True
+        after = self._between.reachable(here, forward=True)
+        for site, stores in sites.items():
+            if site not in after:
+                continue
+            if site == id(here) and all(store is apart_from for store in stores):
+                continue
+            return True
+        return False
+
+    def _change_sites_of(self, graph: ControlFlowGraph) -> tuple[dict[int, list[Node]], bool]:
+        """
+        The nodes of *graph* at which something may change an object in place, with what does it
+        there, and whether such a place exists that *graph* cannot order at all. A write nobody can
+        attribute runs code nobody can read, and counts as one.
+        """
+        found = self._changes.get(id(graph))
+        if found is None:
+            sites: dict[int, list[Node]] = {}
+            anywhere = self._doubt_without_a_point()
+            for change in self.semantic.object_change_sites:
+                here = self._position_of(change, graph)
+                if here is None:
+                    anywhere = True
+                    break
+                sites.setdefault(id(here), []).append(change)
+            for node, effect in self._unattributable_pairs(graph):
+                sites.setdefault(id(node), []).append(effect)
+            found = self._changes[id(graph)] = (sites, anywhere)
+        return found
+
     def unknowns(self, binding: Binding) -> Ps1FlowUnknown:
         """
         Every reason *binding*'s values cannot be tracked, or `Ps1FlowUnknown.NONE` when there is
@@ -514,10 +669,12 @@ class Ps1VariableFlow:
 
     def _compute_unknowns(self, binding: Binding) -> Ps1FlowUnknown:
         found = Ps1FlowUnknown.NONE
-        if binding.dynamic_or_qualified:
-            found |= Ps1FlowUnknown.REACHED_BY_QUALIFIER
+        if binding.read_through_using:
+            found |= Ps1FlowUnknown.READ_THROUGH_USING
         if _shadows_a_wider_scope(binding):
             found |= Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE
+        if self._hidden_from_a_reader(binding):
+            found |= Ps1FlowUnknown.HIDDEN_FROM_A_READER
         graphs: set[int] = set()
         for write in binding.writes:
             placed = self.flow.locate(write.node)
@@ -533,7 +690,25 @@ class Ps1VariableFlow:
             found |= Ps1FlowUnknown.WRITTEN_BY_UNREADABLE_NAME
         return found
 
-    def _position_of(self, read: Ps1Variable, graph: ControlFlowGraph) -> CfgNode | None:
+    def _hidden_from_a_reader(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is written `$private:` and read from a scope other than its own.
+
+        A private variable is seen only by code of the scope that holds it; a child scope looking it
+        up skips it, whether by a bare read or by naming the scope outright — `$private:x = 'a'; &
+        { $script:x }` writes nothing. Which binding such a read reaches instead depends on what
+        stands around it at run time, so the binding answers no read at all. The first private
+        write is where the variable becomes private, and a read from another scope before it still
+        sees it; treating every one of them alike is the conservative side of that order.
+        """
+        if not any(
+            isinstance(write.node, Ps1Variable) and write.node.scope is Ps1ScopeModifier.PRIVATE
+            for write in binding.writes
+        ):
+            return False
+        return any(self.semantic.scope_of(read.node) is not binding.scope for read in binding.reads)
+
+    def _position_of(self, read: Node, graph: ControlFlowGraph) -> CfgNode | None:
         """
         The node of *graph* at which *read* is evaluated, or `None` when *graph* never evaluates it.
 
@@ -891,9 +1066,10 @@ class Ps1VariableFlow:
 
 #: The qualifiers that name a scope wider than the one a script's own statements write. A bare write
 #: at the top level of a script lands in the script's scope, and `$global:` names the scope around
-#: it, so the two are different names that a read resolves in order — but `Ps1SemanticModel` binds
-#: both at the root and cannot tell them apart. `$script:` and `$local:` are not among them: at the
-#: top level they name the scope a bare write already lands in.
+#: it when the script is invoked from a session, so the two are different names that a read
+#: resolves in order — but `Ps1SemanticModel` binds both at the root and cannot tell them apart.
+#: `$script:` and `$local:` are not among them: at the top level they name the scope a bare write
+#: already lands in.
 _WIDER_SCOPES = frozenset({
     Ps1ScopeModifier.GLOBAL,
     Ps1ScopeModifier.USING,
@@ -902,11 +1078,17 @@ _WIDER_SCOPES = frozenset({
 
 def _shadows_a_wider_scope(binding: Binding) -> bool:
     """
-    Whether *binding* holds writes through two scopes a read would resolve in order. The model files
+    Whether *binding* is spelled through two scopes a read would resolve in order. The model files
     a `$global:` write at the root beside the script's own, so `$x = 'a'; $global:x = 'b'` reads as
     one name written twice where the language has two, and the second is the one a bare read never
     sees. A single write through a wider scope is not this: with nothing shadowing it, a bare read
     resolves to it and the two readings agree.
+
+    A read that names one of the two scopes outright counts as much as a write does, because it
+    looks in that scope and nowhere else. `$x = 'a'; $global:x` reads `a` where the script scope is
+    the global one and nothing where the script is invoked from a session and its scope is a child
+    of it; `$global:x = 'b'; $script:x` is the same the other way round. A bare read and a
+    `$variable:` read resolve through both in order and name neither.
 
     Published as `Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE` rather than asked by whoever remembers to:
     it is a fact about the binding and every consumer reading `binding.writes` needs it, so a
@@ -923,11 +1105,33 @@ def _shadows_a_wider_scope(binding: Binding) -> bool:
     a claim; it lands on `Scope.writes_unreadable_names` instead, which is a refusal of its own.
     """
     spelled = [write for write in binding.writes if not write.may_define]
-    qualified = sum(
+    wider = sum(
         isinstance(write.node, Ps1Variable) and write.node.scope in _WIDER_SCOPES
         for write in spelled
     )
-    return 0 < qualified < len(spelled)
+    narrower = len(spelled) - wider
+    for read in binding.reads:
+        if not isinstance(node := read.node, Ps1Variable):
+            continue
+        if node.scope in _WIDER_SCOPES:
+            wider += 1
+        elif node.scope in NARROWER_QUALIFIERS:
+            narrower += 1
+    return wider > 0 and narrower > 0
+
+
+def _assigned_variable(read: Ps1Variable) -> Ps1Variable | None:
+    """
+    The variable a plain `=` stores *read* into, climbing the parentheses and conversions a hand-off
+    to one name passes through, or `None` where the read is not such a value.
+    """
+    cursor: Node = read
+    while (parent := cursor.parent) is not None and not isinstance(parent, Ps1AssignmentExpression):
+        cursor = parent
+    if parent is None or parent.value is not cursor:
+        return None
+    target = unwrap_assignment_target(parent.target)
+    return target if isinstance(target, Ps1Variable) else None
 
 
 def _scopes_of(scope: Scope) -> Iterator[Scope]:
@@ -945,5 +1149,11 @@ def build_variable_flow(
     dominators: DominatorModel,
     blocks: Ps1BlockModel,
     cycles: CycleModel,
+    trusts: Callable[[str], bool] = lambda name: False,
 ) -> Ps1VariableFlow:
-    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles)
+    """
+    Build the `Ps1VariableFlow` of one script. *trusts* says whether a command name still runs the
+    command it names there; the default trusts none, which reads every command as one that may keep
+    what it is handed.
+    """
+    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles, trusts)

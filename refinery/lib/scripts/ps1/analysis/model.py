@@ -21,11 +21,12 @@ The model encodes two PowerShell scoping rules:
   that outer binding live. Distinguishing which definition actually reaches a use needs a
   control-flow graph and is left to a later layer.
 
-Where PowerShell scoping is genuinely dynamic — a scope qualifier (`$script:`, `$global:`, …), a
-name reachable through `Invoke-Expression`, `&`/`.` dispatch, or a function invoked elsewhere
-reading a caller's variables — the model errs toward keeping a binding live rather than risk
-treating a live reference as free. A qualified read marks the binding of that name reachable, so it
-is never reported dead.
+A scope qualifier that names a script variable (`$script:`, `$global:`, `$local:`, `$private:`,
+`$variable:`) is resolved to the binding it names and filed there like any other occurrence. Where
+PowerShell scoping is genuinely dynamic — a `$using:` read of a caller's variable, a name reachable
+through `Invoke-Expression`, `&`/`.` dispatch, or a function invoked elsewhere reading a caller's
+variables — the model errs toward keeping a binding live rather than risk treating a live reference
+as free.
 """
 from __future__ import annotations
 
@@ -244,6 +245,47 @@ def is_mutated_in_place(var: Ps1Variable) -> bool:
     return occurrence_role(var).through
 
 
+def _may_change_an_object(node: Node) -> bool:
+    """
+    Whether *node* may change an object in place — see `Ps1SemanticModel.object_change_sites`.
+    """
+    if isinstance(node, Ps1Variable):
+        return occurrence_role(node).through
+    if isinstance(node, Ps1AssignmentExpression):
+        return any(_is_rooted_in_a_value(target) for target in _stored_places(node.target))
+    if isinstance(node, Ps1InvokeMember):
+        member = node.member
+        return not isinstance(member, str) or bool(written_slots_of(node, member).slots)
+    return False
+
+
+def _stored_places(target: Node | None) -> Iterator[Node]:
+    """
+    Every place an assignment target stores into, with the parentheses and casts around it removed:
+    the target itself, or each target of a multi-assignment.
+    """
+    while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
+        target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
+    if isinstance(target, Ps1ArrayLiteral):
+        for element in target.elements:
+            yield from _stored_places(element)
+    elif target is not None:
+        yield target
+
+
+def _is_rooted_in_a_value(place: Node) -> bool:
+    """
+    Whether *place* is a part of a value no variable names — the `(f)[0]` of `(f)[0] = 9`. A place
+    rooted at a variable is the store-through that variable's own occurrence already is.
+    """
+    if not isinstance(place, (Ps1IndexExpression, Ps1MemberAccess)):
+        return False
+    cursor: Node | None = place
+    while isinstance(cursor, (Ps1IndexExpression, Ps1MemberAccess, Ps1ParenExpression)):
+        cursor = cursor.expression if isinstance(cursor, Ps1ParenExpression) else cursor.object
+    return not isinstance(cursor, Ps1Variable)
+
+
 def _stores_through(var: Ps1Variable) -> bool:
     """
     The receiver-chain climb behind `Ps1OccurrenceRole.WRITE_THROUGH`.
@@ -320,10 +362,10 @@ def _stores_through_a_call_slot(found: _CallSlotPosition | None) -> bool:
     member = found.call.member
     if not isinstance(member, str):
         return True
-    return found.slot in _written_slots_of(found.call, member).slots
+    return found.slot in written_slots_of(found.call, member).slots
 
 
-def _written_slots_of(call: Ps1InvokeMember, member: str) -> Ps1WrittenSlots:
+def written_slots_of(call: Ps1InvokeMember, member: str) -> Ps1WrittenSlots:
     """
     Which slots of *call* the callee writes through, given only the call and the name of the member
     it runs. The receiver's type is not asked for; see `written_call_slot`.
@@ -363,7 +405,7 @@ def written_call_slot(var: Ps1Variable) -> Ps1CallSlot | None:
     found = _enclosing_call_slot(var)
     if found is None or not isinstance(member := found.call.member, str):
         return None
-    written = _written_slots_of(found.call, member)
+    written = written_slots_of(found.call, member)
     if found.slot not in written.slots:
         return None
     return Ps1CallSlot(
@@ -503,18 +545,27 @@ class ScopeKind(enum.Enum):
     SCRIPTBLOCK = 'scriptblock'  # noqa
 
 
-#: Scope qualifiers that reach a binding beyond the lexical fall-through a bare reference resolves
-#: by, so a read through one keeps the binding it names live rather than resolving it locally. Which
-#: scope each names is decided by `Ps1SemanticModel._qualified_read_scopes`. `$env:` is excluded —
-#: it names an operating-system environment variable, a namespace distinct from script variables —
-#: as is the bare (unqualified) case.
-_QUALIFIED_SCOPES = frozenset({
+#: The scope qualifiers that name a script variable, so that an occurrence spelled with one is an
+#: occurrence of the binding the qualifier names. Which scope that is, is decided by
+#: `Ps1SemanticModel._qualified_read_scopes`. Excluded are `$env:`, which names an environment
+#: variable and is keyed apart; `$using:`, which names a variable of whoever invokes the block and
+#: not one this scope chain holds; and the provider drives `$function:`, `$alias:` and a drive,
+#: which name no variable at all.
+VARIABLE_QUALIFIERS = frozenset({
     Ps1ScopeModifier.GLOBAL,
     Ps1ScopeModifier.LOCAL,
     Ps1ScopeModifier.SCRIPT,
     Ps1ScopeModifier.PRIVATE,
-    Ps1ScopeModifier.USING,
     Ps1ScopeModifier.VARIABLE,
+})
+
+#: The qualifiers that name one scope narrower than the session's and look nowhere else: a read
+#: spelled with one does not fall through to the scopes around it. `$variable:` is not among them,
+#: as it resolves the way a bare read does.
+NARROWER_QUALIFIERS = frozenset({
+    Ps1ScopeModifier.SCRIPT,
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
 })
 
 
@@ -641,8 +692,9 @@ class Binding:
     command that addresses the name as a string, a store *through* the value such as the `$x` of
     `$x[0] = 9` or of `[Array]::Reverse($x)`, and a store shared in from another name for the same
     object); `reads` holds every occurrence that reads it, including a bare read that fell through
-    from a nested block. `dynamic_or_qualified` marks a binding a scope qualifier or dynamic scope
-    could reach with no occurrence in `reads` — conservatively kept live.
+    from a nested block or spelled with a qualifier that names this binding. `read_through_using`
+    marks a binding a `$using:` read reaches with no occurrence in `reads` — conservatively kept
+    live.
 
     Not every occurrence in `writes` installs a value, so a consumer reading one has to ask.
     `Occurrence.role` says whether the store replaces the value or reaches through it, and
@@ -652,7 +704,7 @@ class Binding:
     scope: Scope
     reads: list[Occurrence] = field(default_factory=list)
     writes: list[Occurrence] = field(default_factory=list)
-    dynamic_or_qualified: bool = False
+    read_through_using: bool = False
     #: Every type a constrained write of this binding names — the `string` of `[string]$q = 5`.
     #: PowerShell stores the constraint on the *variable*, not on the write, so it converts what
     #: every later write stores as well: measured, `[string]$q = 5; $q = 1, 2, 3; $q.Length` is 5,
@@ -692,11 +744,11 @@ class Binding:
     @property
     def is_dead(self) -> bool:
         """
-        Whether no use observes the binding's value: no occurrence observes it and no qualifier or
-        dynamic scope reaches it. The write occurrences of a dead binding can be removed when they
-        carry no other side effect (which the caller decides).
+        Whether no use observes the binding's value: no occurrence observes it and no `$using:` read
+        reaches it. The write occurrences of a dead binding can be removed when they carry no other
+        side effect (which the caller decides).
         """
-        return not self.uses and not self.dynamic_or_qualified
+        return not self.uses and not self.read_through_using
 
 
 @dataclass(eq=False)
@@ -719,7 +771,7 @@ class Scope:
     #: A write landing in the scope it is *written* in is not one of these. That one happens at a
     #: point, and `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.unattributable_writes`
     #: holds it there, which leaves the reads before it answerable. Kept apart from
-    #: `Binding.dynamic_or_qualified`, which says a *known* name is reachable another way; these are
+    #: `Binding.read_through_using`, which says a *known* name is reachable another way; these are
     #: different reasons and a consumer may be able to live with one and not the other.
     writes_unreadable_names: bool = False
 
@@ -768,7 +820,8 @@ class Ps1SemanticModel:
         self._binding_of: dict[int, Binding] = {}
         self.root_scope = Scope(kind=ScopeKind.SCRIPT, node=root)
         self._node_scope[id(root)] = self.root_scope
-        self._changes_in_place: bool | None = None
+        self._change_sites: tuple[Node, ...] | None = None
+        self._one_object: dict[int, tuple[Binding, ...]] | None = None
         self._populate(self.root_scope)
         self._build_def_use()
 
@@ -783,8 +836,8 @@ class Ps1SemanticModel:
     @property
     def changes_an_object_in_place(self) -> bool:
         """
-        Whether any occurrence in the script stores *through* a value rather than into a name — the
-        `$x` of `$x[0] = 9`, of `$h.k = 9` and of `[Array]::Reverse($x)`.
+        Whether anything in the script may change an object after it is built — see
+        `object_change_sites`.
 
         A script with none never changes an object after it is built, so there a copy of one and a
         second name for it are indistinguishable, and a consumer weighing the two may stop asking.
@@ -792,10 +845,40 @@ class Ps1SemanticModel:
         rather than about the name a guard happens to be standing on: an object handed to a
         hashtable key, to a property or to a callee is changed under a name the guard cannot see.
         """
-        if self._changes_in_place is None:
-            self._changes_in_place = any(
-                write.role.through for write in self._every_write())
-        return self._changes_in_place
+        return bool(self.object_change_sites)
+
+    @property
+    def object_change_sites(self) -> tuple[Node, ...]:
+        """
+        Every node that may change an object in place: an occurrence something stores *through* —
+        the `$x` of `$x[0] = 9`, of `$h.k = 9` and of `[Array]::Reverse($x)`, whether or not the
+        model binds the name, so `$_` counts — an assignment into a place of a value no variable
+        names, as `(f)[0] = 9` is, and a call that may write through one of its slots whatever fills
+        it.
+
+        Read off the tree rather than off the bindings, because the stores that matter most here are
+        the ones spelled on no name the model tracks: a store through the pipeline variable of a
+        block reaches the element a caller's name still holds.
+        """
+        if self._change_sites is None:
+            self._change_sites = tuple(
+                node for node in self.root.walk() if _may_change_an_object(node))
+        return self._change_sites
+
+    def names_for_one_object(self, binding: Binding) -> tuple[Binding, ...]:
+        """
+        Every binding a chain of definitions like `$y = $x` may have given the object *binding*
+        holds, *binding* among them — the alias class `_share_stores_through_aliases` files stores
+        across.
+        """
+        if self._one_object is None:
+            one_object: dict[int, tuple[Binding, ...]] = {}
+            for members, _ in self._alias_classes():
+                together = tuple(members)
+                for member in members:
+                    one_object[id(member)] = together
+            self._one_object = one_object
+        return self._one_object.get(id(binding), (binding,))
 
     def scope_of(self, node: Node) -> Scope | None:
         """
@@ -1232,8 +1315,13 @@ class Ps1SemanticModel:
         keep. What it then does to that binding is store into it, so it is recorded among the
         writes, where it both keeps the binding alive through `Binding.uses` and stops an earlier
         value reaching a later read.
+
+        A qualifier that names a script variable changes which binding that is and nothing else.
+        Measured, `$i = 0; [int]::TryParse('42', [ref]$script:i); $i` is `42`, and so is the same
+        call written with `$global:` or `$local:`. Any other qualifier is filed as the read it is
+        spelled as.
         """
-        if var.scope is not Ps1ScopeModifier.NONE:
+        if var.scope is not Ps1ScopeModifier.NONE and var.scope not in VARIABLE_QUALIFIERS:
             self._attribute_read(var, scope)
             return
         for binding in self._bindings_a_read_reaches(var, scope):
@@ -1254,7 +1342,7 @@ class Ps1SemanticModel:
         and `$script:x[0] = 9` both reach the script scope's array, so a qualified occurrence is
         recorded against the bindings the qualifier names rather than dropped to a read.
 
-        It leaves `Binding.dynamic_or_qualified` alone, and so does every other write. That flag is
+        It leaves `Binding.read_through_using` alone, and so does every other write. That flag is
         what keeps a binding *no read names* alive, which is a question about reads; a qualified
         write of any kind — `$script:x = 5` as much as `$script:x[0] = 9` — is resolved through
         the scopes the qualifier names and needs nothing further.
@@ -1336,25 +1424,26 @@ class Ps1SemanticModel:
             binding = self.root_scope.bindings.get(binding_key(var))
             if binding is not None:
                 self._record(binding, var, binding.reads)
-        elif var.scope in _QUALIFIED_SCOPES:
-            self._attribute_qualified_read(var, scope)
+        elif var.scope in VARIABLE_QUALIFIERS:
+            for binding in self._bindings_a_read_reaches(var, scope):
+                self._record(binding, var, binding.reads)
+        elif var.scope is Ps1ScopeModifier.USING:
+            self._attribute_using_read(var, scope)
 
-    def _attribute_qualified_read(self, var: Ps1Variable, scope: Scope):
+    def _attribute_using_read(self, var: Ps1Variable, scope: Scope):
         """
-        Mark every binding a scope-qualified read can reach as `Binding.dynamic_or_qualified`, so it
-        is never reported dead even though no occurrence in `Binding.reads` names it.
+        Mark the binding a `$using:` read names as `Binding.read_through_using`, so it is never
+        reported dead even though no occurrence in `Binding.reads` names it.
+
+        The read is not filed as one. `$using:x` copies the value `$x` holds in whichever scope
+        invokes the block — a remote session, a job, a runspace — at whatever time that happens,
+        and neither is a position this model can order a read at.
         """
-        name = var.name.lower()
-        primary: Binding | None = None
         for target in self._qualified_read_scopes(var, scope):
-            binding = target.bindings.get(name)
-            if binding is None:
-                continue
-            binding.dynamic_or_qualified = True
-            if primary is None:
-                primary = binding
-        if primary is not None:
-            self._binding_of[id(var)] = primary
+            binding = target.bindings.get(binding_key(var))
+            if binding is not None:
+                binding.read_through_using = True
+                self._binding_of[id(var)] = binding
 
     def _qualified_read_scopes(self, var: Ps1Variable, scope: Scope) -> Iterator[Scope]:
         """

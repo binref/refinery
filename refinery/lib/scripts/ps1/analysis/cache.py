@@ -253,9 +253,12 @@ class Ps1ModelCache(ModelCacheBase):
         Which write each variable read observes, over `model`, `control_flow`, `dominance`, `blocks`
         and `cycles`. The one place that question is answered: a pass that decides what a name holds
         at a point asks here rather than walking the tree for an assignment that looks near enough.
+        It reads from `closed_world` which command names still run the command they name, which is
+        what decides whether a command handed an object may keep it.
         """
         return self._lazy('_variable_flow', lambda: build_variable_flow(
-            self.model, self.control_flow, self.dominance, self.blocks, self.cycles))
+            self.model, self.control_flow, self.dominance, self.blocks, self.cycles,
+            self.closed_world.may_trust_command_name))
 
     @property
     def used_before_defined(self) -> frozenset[str]:

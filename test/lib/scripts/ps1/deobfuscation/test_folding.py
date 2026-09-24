@@ -1852,13 +1852,14 @@ class TestPs1AConstraintOnAVariableConvertsWhatIsWrittenToIt(TestPs1):
 
 class TestPs1AScopeQualifierNamesTheBindingItsBareSpellingNames(TestPs1):
     """
-    At script scope `$x`, `$script:x` and `$global:x` are one variable, so a value written under any
-    of the three spellings is the value a read under any other observes. What 5.1 writes for each of
-    these four scripts is measured in `corpus.CLAIMS`: `b`, `b`, `x`, `x`.
+    At script scope `$x` and `$script:x` are one variable, so a value written under either spelling
+    is the value a read under the other observes; a value written under `$global:x` is the value a
+    read under the same spelling observes. What 5.1 writes for each of these four scripts is
+    measured in `corpus.CLAIMS`: `b`, `b`, `x`, `x`.
 
-    A value written under a qualifier is observed by a bare read of the name. A read spelled *with*
-    a qualifier is still withheld and folds nothing (the three xfails here): a qualified read is
-    filed against no occurrence of the name. `$env:` is the one qualifier whose reads are folded,
+    A value written under a qualifier is observed by a bare read of the name, and a read spelled
+    with a qualifier observes the value written under that qualifier or under the bare spelling.
+    `$env:` names an environment variable and not a script variable; its reads are folded as well,
     which the environment-variable test is the control for.
     """
 
@@ -1870,20 +1871,31 @@ class TestPs1AScopeQualifierNamesTheBindingItsBareSpellingNames(TestPs1):
         self.assertEqual(
             self._deobfuscate("$script:s = 'x'; Write-Output $s"), "Write-Output 'x'")
 
-    @unittest.expectedFailure
     def test_a_read_of_a_script_qualified_name_is_the_value_written_under_it(self):
         self.assertEqual(
             self._deobfuscate("$script:y = 'b'; Write-Output $script:y"), "Write-Output 'b'")
 
-    @unittest.expectedFailure
     def test_a_read_of_a_global_qualified_name_is_the_value_written_under_it(self):
         self.assertEqual(
             self._deobfuscate("$global:y = 'b'; Write-Output $global:y"), "Write-Output 'b'")
 
-    @unittest.expectedFailure
     def test_a_qualified_read_observes_what_the_bare_spelling_wrote(self):
         self.assertEqual(
             self._deobfuscate("$s = 'x'; Write-Output $script:s"), "Write-Output 'x'")
+
+    def test_a_read_naming_the_other_scope_of_a_write_is_not_folded(self):
+        """
+        Run from a session, a script's own scope stands below the global one, and a read that names
+        either looks nowhere else: `$global:x` finds nothing the bare write stored, and `$script:x`
+        nothing the `$global:` write stored. Dot-sourced at the top of a session the two are one
+        scope, which is what `corpus.BEHAVIOURS` measures: `a` and `b`.
+        """
+        for source, read in [
+            ("$x = 'a'; Write-Output $global:x", 'Write-Output $global:x'),
+            ("$global:x = 'b'; Write-Output $script:x", 'Write-Output $script:x'),
+        ]:
+            with self.subTest(source):
+                self.assertIn(read, self._deobfuscate(source))
 
 
 class TestPs1AnOperatorOverANameWrittenUnderAQualifierFoldsAsIfItWereNull(TestPs1):

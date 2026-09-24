@@ -384,6 +384,42 @@ BEHAVIOURS: tuple[str, ...] = (
     '$x = 1, 2, 3; function f { , $script:x }; $y = f; $y[0] = 9; Write-Output $x[0]',
     '$x = 1, 2, 3; $a, $b = $x, 9; [Array]::Reverse($a); Write-Output $x',
 
+    #: What an array handed on without being put anywhere is asked to preserve the behaviour of.
+    #: Each hands the array itself to a second name — a comma-return, a switch that writes it as one
+    #: record, an array subexpression whose elements are arrays, a block's output — so a store
+    #: through the second name is a store into what `$x` holds.
+    '$x = 1, 2, 3; function f { , $x }; $y = f; $y[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $y = Write-Output -NoEnumerate $x; $y[0] = 9; Write-Output $x[0]',
+    '$x = @(@(1, 2), @(3, 4)); $y = @($x); $y[0][0] = 9; Write-Output $x[0][0]',
+    '$x = 1, 2, 3; $y = & { , $x }; $y[0] = 9; Write-Output $x[0]',
+
+    #: What a scope qualifier is asked to preserve the behaviour of. A qualifier names the scope a
+    #: name is looked up in, so each row is answered in one scope and not in another: the hand-offs
+    #: above spelled through `$script:`, a private variable read from a child scope, a name written
+    #: through one scope and read through another, an engine default read from a scope the engine
+    #: gave no copy of it and from one it did, a store read by a function defined before it, and
+    #: `$local:` in a block that runs in its caller's scope.
+    'function g($a) { [Array]::Reverse($a) }; $x = 1, 2, 3; g $script:x; Write-Output $x',
+    '$sb = { param($a) [Array]::Reverse($a) }; $x = 1, 2, 3; & $sb $script:x; Write-Output $x',
+    "$x = 1, 2, 3; $h = @{}; $h['k'] = $script:x; [Array]::Reverse($h['k']); Write-Output $x",
+    '$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($script:x); '
+    '$l[0][0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $o = [pscustomobject]@{ P = 0 }; $o.P = $script:x; $o.P[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; Write-Output -NoEnumerate $script:x | Set-Variable z; $z[0] = 9; '
+    'Write-Output $x',
+    "$private:x = 'a'; & { Write-Output $x }",
+    "$private:x = 'a'; & { Write-Output $script:x }",
+    "$private:x = 'a'; Write-Output $x",
+    "$x = 'a'; Write-Output $global:x",
+    "$global:x = 'b'; Write-Output $script:x",
+    '& { Write-Output $local:ErrorActionPreference }',
+    '& { Write-Output $local:ShellId }',
+    'Write-Output $script:ShellId',
+    "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f",
+    "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f",
+    "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x",
+    "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'",
+
     #: What observes the removal of a statement or of a function definition. A junk remover argues
     #: that nothing sees what it drops, and each of these names one thing that does: the statements
     #: a fault would have skipped, the parameter binder, the automatic success variable, a read of

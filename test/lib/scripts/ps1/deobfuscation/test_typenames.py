@@ -248,9 +248,23 @@ class TestPs1MemberFoldsFollowTheWriteAReadObserves(TestPs1):
             Invoke-Expression $code
         """))
 
-    def test_a_read_through_a_scope_qualifier_leaves_the_member_alone(self):
-        self._assertUnchanged(cleandoc("""
+    def test_a_read_through_a_scope_qualifier_spells_the_member_of_the_write_it_names(self):
+        result = self._apply(cleandoc("""
             $global:q = New-Object Net.WebClient
+            $global:q.downloadstring('u')
+        """), Ps1TypeSystemSimplifications)
+        self.assertEqual(result, cleandoc("""
+            $global:q = New-Object Net.WebClient
+            $global:q.DownloadString('u')
+        """))
+
+    def test_a_global_read_of_a_name_written_bare_leaves_the_member_alone(self):
+        """
+        Run from a session, a script's own scope stands below the global one, and `$global:q` finds
+        no variable where the bare write put the WebClient.
+        """
+        self._assertUnchanged(cleandoc("""
+            $q = New-Object Net.WebClient
             $global:q.downloadstring('u')
         """), Ps1TypeSystemSimplifications)
 

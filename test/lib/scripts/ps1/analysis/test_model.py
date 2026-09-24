@@ -410,16 +410,16 @@ class TestPs1StoreThroughAttribution(TestBase):
         assigned = self._model("function f { $x = 'z' }")
         self.assertEqual(list(assigned.script_scope.children[0].bindings), ['x'])
 
-    def test_a_scope_qualified_store_through_is_a_write_where_a_reference_is_not(self):
+    def test_a_scope_qualified_store_through_and_reference_are_writes(self):
         """
-        `$script:x[0] = 9` reaches the script scope's object and changes it, so the qualifier leaves
-        it the write it is. `[ref]$script:x` is where the two part: 5.1 does not wire that up to the
-        variable, and the model reads it as the qualified read it resolves to.
+        `$script:x[0] = 9` reaches the script scope's object and changes it, and `[ref]$script:x`
+        hands the callee the variable to write back through, so the qualifier leaves each the write
+        it is. What 5.1 writes for the reference is measured in `corpus.CLAIMS`: `42`.
         """
         stored = self._model("$x = @('a', 'b')\n$script:x[0] = 9")
         self.assertEqual(len(stored.script_scope.bindings['x'].writes), 2)
         referenced = self._model("$x = 0\n[void][int]::TryParse('7', [ref]$script:x)")
-        self.assertEqual(len(referenced.script_scope.bindings['x'].writes), 1)
+        self.assertEqual(len(referenced.script_scope.bindings['x'].writes), 2)
 
 
 class TestPs1NamedReferenceAttribution(TestBase):

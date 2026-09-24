@@ -138,7 +138,7 @@ class Ps1UnusedVariableRemoval(Transformer):
         world = cache.world_reach
         candidates: dict[Binding, list[Node]] = {}
         for binding in model.script_scope.bindings.values():
-            if binding.dynamic_or_qualified or binding.name in _PS1_SKIP_VARIABLES:
+            if binding.read_through_using or binding.name in _PS1_SKIP_VARIABLES:
                 continue
             mutations = self._removable_mutations(binding)
             if mutations:

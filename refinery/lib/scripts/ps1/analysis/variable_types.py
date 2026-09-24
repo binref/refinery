@@ -42,18 +42,20 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 #: The reasons a binding's values cannot be tracked that no reasoning about its *type* can survive:
-#: each of the four is a way for the writes this layer sees to say nothing about what the name holds
-#: where it is read. Three of them are a store of any type by something out of view. The fourth is
-#: `SHADOWS_A_WIDER_SCOPE`, which is the opposite shape and has the same consequence: the writes are
-#: all in view, and some of them land on a name a bare read never resolves to, so
-#: `$q = 'text'; $global:q = 5` reads as one name typed twice where the language has two.
+#: each of the five is a way for the writes this layer sees to say nothing about what the name holds
+#: where it is read. Three of them are a store of any type by something out of view. The other two
+#: are the opposite shape and have the same consequence: the writes are all in view, and a read
+#: resolves past some of them. `SHADOWS_A_WIDER_SCOPE` reads `$q = 'text'; $global:q = 5` as one
+#: name typed twice where the language has two, and `HIDDEN_FROM_A_READER` a private variable that
+#: a read from another scope never sees.
 #: A write nothing can place is not among them — it says which write ran cannot be settled, and
 #: where the writes agree that question has no bearing on the type. Writes spread over several
 #: bodies are of that kind too, and `type_at` refuses them on its own account rather than
 #: here, because its first rule can still name one of them.
 _INSTALLS_ANY_TYPE = (
-    Ps1FlowUnknown.REACHED_BY_QUALIFIER
+    Ps1FlowUnknown.READ_THROUGH_USING
     | Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE
+    | Ps1FlowUnknown.HIDDEN_FROM_A_READER
     | Ps1FlowUnknown.WRITTEN_BY_DEFERRED_BODY
     | Ps1FlowUnknown.WRITTEN_BY_UNREADABLE_NAME
 )

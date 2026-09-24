@@ -229,7 +229,7 @@ class TestPs1TypeAt(TestBase):
             Invoke-Expression $code
         """)), 'System.Net.WebClient')
 
-    def test_a_read_through_a_scope_qualifier_is_refused(self):
+    def test_a_read_through_a_scope_qualifier_carries_the_type_of_the_write_it_names(self):
         for source in [
             cleandoc("""
                 $global:q = New-Object Net.WebClient
@@ -241,7 +241,7 @@ class TestPs1TypeAt(TestBase):
             """),
         ]:
             with self.subTest(source):
-                self.assertIsNone(self._type_at(source))
+                self.assertEqual(self._type_at(source), 'System.Net.WebClient')
 
     def test_a_foreach_over_a_string_binds_the_string_and_not_its_characters(self):
         self.assertEqual(
@@ -290,6 +290,27 @@ class TestPs1AWriteThroughAWiderScopeIsNotTheNameABareReadResolves(TestPs1TypeAt
             $global:q = New-Object Net.WebClient
             $q.downloadstring('u')
         """)))
+
+    def test_a_read_naming_one_scope_does_not_carry_a_write_through_the_other(self):
+        """
+        `$global:q` looks in the global scope alone and `$script:q` in the script scope alone. Run
+        from a session, a script has a scope of its own below the global one, and each read here
+        finds no variable at all; dot-sourced at the top of a session the two are one scope and
+        each finds the WebClient. The refusal is what this layer has while one binding stands for
+        both.
+        """
+        for source in [
+            cleandoc("""
+                $q = New-Object Net.WebClient
+                $global:q.downloadstring('u')
+            """),
+            cleandoc("""
+                $global:q = New-Object Net.WebClient
+                $script:q.downloadstring('u')
+            """),
+        ]:
+            with self.subTest(source):
+                self.assertIsNone(self._type_at(source))
 
     def test_a_name_only_a_wider_scope_writes_is_the_one_a_bare_read_resolves_to(self):
         self.assertEqual(self._type_at(cleandoc("""

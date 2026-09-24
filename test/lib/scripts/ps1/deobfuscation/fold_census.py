@@ -59,6 +59,8 @@ FOLDS: dict[str, str] = {
         "$env:zzq = '7'\n(Get-Item env:zzq).Value",
     "$env:zzq = '7'; function Get-Item { Write-Output 'from-function' }; item env:zzq":
         "$env:zzq = '7'\nfunction Get-Item {\n  Write-Output 'from-function'\n}\nGet-Item env:zzq",
+    "$global:y = 'b'; Write-Output $global:y":
+        "Write-Output 'b'",
     "$h = @{ k = 'Set-Alias zzq Write-Host' }; Set-Alias zzq Write-Output; iex $h.k; zzq 'x'":
         "$h = @{\n  k = 'Set-Alias zzq Write-Host'\n}\nSet-Alias zzq Write-Output\nInvoke-Expression $h.k\nzzq 'x'",
     "$i = 0; $null = [int]::TryParse('42', [ref]$script:i); Write-Host $i":
@@ -87,14 +89,10 @@ FOLDS: dict[str, str] = {
         "$Null = 'abc' -Match '(b)'\n$t = $Matches[1]\nWrite-Output (,$t)\nWrite-Output $t",
     '$o = [pscustomobject]@{}; Add-Member -Type NoteProperty k v -InputObject $o; $o.k':
         '$o = [pscustomobject]@{}\nAdd-Member -MemberType NoteProperty k v -InputObject $o\n$o.k',
-    '$p = @(@(1, 2), @(3, 4)); $p | ForEach-Object { [Array]::Reverse($_) }; Write-Output $p[0]':
-        '(@(1, 2), @(3, 4)) | ForEach-Object {\n  [Array]::Reverse($_)\n}\nWrite-Output (1, 2)',
-    '$p = @(@(1, 2), @(3, 4)); $q = $p[0]; $q[0] = 9; Write-Output $p[0][0]':
-        '$q = (1, 2)\n$q[0] = 9\nWrite-Output 1',
     '$p = @(@(1, 2), @(3, 4)); for ($i = 0; $i -lt 1; $i++) { [Array]::Reverse($p[$i]) }; Write-Output $p[0]':
         '$p = @(@(1, 2), @(3, 4))\nfor ($i = 0; $i -LT 1; $i++) {\n  [Array]::Reverse($p[$i])\n}\nWrite-Output $p[0]',
-    '$p = @(@(1, 2), @(3, 4)); foreach ($e in $p) { [Array]::Reverse($e) }; Write-Output $p[0]':
-        'foreach ($e in (@(1, 2), @(3, 4))) {\n  [Array]::Reverse($e)\n}\nWrite-Output (1, 2)',
+    "$private:x = 'a'; Write-Output $x":
+        "Write-Output 'a'",
     "$q = 'a'; Write-Output $($q + 'b')":
         "Write-Output 'ab'",
     "$q = 'abc'; [int]$q = 5; Write-Output $q.GetType().FullName":
@@ -109,10 +107,10 @@ FOLDS: dict[str, str] = {
         "'bc'",
     "$s = 'abcd'; $t = $s; $t = 1, 2, 3; [Array]::Reverse($t); Write-Output $s.Length":
         '$t = 1, 2, 3\n[Array]::Reverse($t)\nWrite-Output 4',
+    "$s = 'x'; Write-Output $script:s":
+        "Write-Output 'x'",
     '$s = 0xFF; $t = "$s"; Write-Output (,$t); Write-Output $t':
         "Write-Output (,'255')\nWrite-Output '255'",
-    '$sb = { param($a) [Array]::Reverse($a) }; $x = 1, 2, 3; & $sb $x; Write-Output $x':
-        '$sb = {\n  Param($a)\n  [Array]::Reverse($a)\n}\n& $sb (1, 2, 3)\nWrite-Output (1, 2, 3)',
     "$sb = New-Object Text.StringBuilder -ArgumentList 'aGk='; $x = $sb.ToString(); "
     "$t = [Convert].GetMethod('FromBase64String', [type[]]@([string]))"
     ".Invoke($Null, @($x)); Write-Output (,$t); Write-Output $t":
@@ -120,6 +118,8 @@ FOLDS: dict[str, str] = {
         "$t = [Convert]::FromBase64String($x)\nWrite-Output (,$t)\nWrite-Output $t",
     "$script:s = 'x'; Write-Output $s":
         "Write-Output 'x'",
+    "$script:y = 'b'; Write-Output $script:y":
+        "Write-Output 'b'",
     '$t = $false + 1; Write-Output (,$t); Write-Output $t':
         'Write-Output (,1)\nWrite-Output 1',
     '$t = $false -eq $null; Write-Output (,$t); Write-Output $t':
@@ -1182,9 +1182,13 @@ FOLDS: dict[str, str] = {
     "$x = 'a'; $true -or ($x = 'b'); Write-Host $x":
         "$True -or ($x = 'b')\nWrite-Host 'b'",
     "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
-        "& {\n  Write-Host $script:x\n}\n$x = 'b'",
+        "& {\n  Write-Host 'a'\n}",
     '$x = \'a\'; &(\'i\' + \'ex\') \'$x = "b"\'; Write-Host $x':
         "Write-Host 'a'",
+    "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x":
+        "1 | ForEach-Object {\n  $local:x = 'b'\n}\nWrite-Output 'a'",
+    "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'":
+        '1 | ForEach-Object {\n  Write-Output $local:x\n}',
     "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'":
         "1, 2 | ForEach-Object {\n  Write-Host 'a'\n}",
     "$x = 'a'; Get-Variable x; $x = 'c'":
@@ -1209,32 +1213,16 @@ FOLDS: dict[str, str] = {
         "'hello'",
     '$x = (1).5':
         '$x = $Null',
-    '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; $a[0][0] = 9; Write-Output $x':
-        '$x = 1, 2, 3\n$a = 0, 0\n$a[0] = $x\n$a[0][0] = 9\nWrite-Output (1, 2, 3)',
     '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; Write-Output $a[0]':
         '$a = 0, 0\n$a[0] = (1, 2, 3)\nWrite-Output $a[0]',
-    '$x = 1, 2, 3; $a, $b = $x, 9; $a[0] = 7; Write-Output $x[0]':
-        '$x = 1, 2, 3\n$a, $b = $x, 9\n$a[0] = 7\nWrite-Output 1',
     '$x = 1, 2, 3; $a, $b = $x, 9; Write-Output $a':
         '$a, $b = (1, 2, 3), 9\nWrite-Output $a',
-    '$x = 1, 2, 3; $a, $b = $x, 9; [Array]::Reverse($a); Write-Output $x':
-        '$x = 1, 2, 3\n$a, $b = $x, 9\n[Array]::Reverse($a)\nWrite-Output (1, 2, 3)',
     "$x = 1, 2, 3; $c = '$x = 7, 8, 9'; iex $c; [Array]::Reverse($x); Write-Output $x":
         '$x = 7, 8, 9\n[Array]::Reverse($x)\nWrite-Output (9, 8, 7)',
-    '$x = 1, 2, 3; $h = @{ k = $x }; $h.k[0] = 9; Write-Output $x':
-        '$x = 1, 2, 3\n$h = @{\n  k = $x\n}\n$h.k[0] = 9\nWrite-Output (1, 2, 3)',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $y = $h['k']; $y[0] = 9; Write-Output $x":
-        "$x = 1, 2, 3\n$h = @{\n  k = $x\n}\n$y = $h['k']\n$y[0] = 9\nWrite-Output (1, 2, 3)",
     '$x = 1, 2, 3; $h = @{ k = $x }; Write-Output $h.k':
         '$h = @{\n  k = (1, 2, 3)\n}\nWrite-Output $h.k',
     "$x = 1, 2, 3; $h = @{}; $h['k'] = $x; Write-Output $h['k']":
         "$h = @{}\n$h['k'] = (1, 2, 3)\nWrite-Output $h['k']",
-    "$x = 1, 2, 3; $h = @{}; $h['k'] = $x; [Array]::Reverse($h['k']); Write-Output $x":
-        "$x = 1, 2, 3\n$h = @{}\n$h['k'] = $x\n[Array]::Reverse($h['k'])\nWrite-Output (1, 2, 3)",
-    '$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); $l[0][0] = 9; Write-Output $x':
-        '$l = New-Object Collections.ArrayList\n[void]$l.Add((1, 2, 3))\n$l[0][0] = 9\nWrite-Output (1, 2, 3)',
-    '$x = 1, 2, 3; $o = [pscustomobject]@{ P = 0 }; $o.P = $x; $o.P[0] = 9; Write-Output $x':
-        '$x = 1, 2, 3\n$o = [pscustomobject]@{\n  P = 0\n}\n$o.P = $x\n$o.P[0] = 9\nWrite-Output (1, 2, 3)',
     '$x = 1, 2, 3; $o = [pscustomobject]@{ P = 0 }; $o.P = $x; Write-Output $o.P':
         '$o = [pscustomobject]@{\n  P = 0\n}\n$o.P = (1, 2, 3)\nWrite-Output $o.P',
     '$x = 1, 2, 3; $r = [Array]::Reverse($x); Write-Output $x':
@@ -1245,6 +1233,8 @@ FOLDS: dict[str, str] = {
         '$x = 1, 2, 3\n$y = $x -As [array]\n$y[0] = 9\nWrite-Output $x',
     '$x = 1, 2, 3; $y = $x; $x = 9, 9, 9; Write-Output $y':
         'Write-Output (1, 2, 3)',
+    '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z':
+        '$x = 1, 2, 3\n$y = $x\n(1, 2, 3) | Set-Variable z\n$y[0] = 9\nWrite-Output $z',
     '$x = 1, 2, 3; $y = $x; $y = 9, 9, 9; [Array]::Reverse($x); Write-Output $y':
         '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output (9, 9, 9)',
     '$x = 1, 2, 3; $y = $x; & { $y = 9, 9, 9 }; [Array]::Reverse($x); Write-Output $y':
@@ -1295,6 +1285,8 @@ FOLDS: dict[str, str] = {
         'Write-Output (,3.00d)\nWrite-Output 3.00d',
     '% { Write-Host 1 }':
         'ForEach-Object {\n  Write-Host 1\n}',
+    '& { Write-Output $local:ShellId }':
+        "& {\n  Write-Output 'Microsoft.PowerShell'\n}",
     "&('Write' + '-Output') 'indirect'":
         "Write-Output 'indirect'",
     "'ABC'.ToLower()":
@@ -1383,6 +1375,8 @@ FOLDS: dict[str, str] = {
         "Write-Output 'x'\nWrite-Output 'x'",
     "Write-Output $(foreach ($e in 'a', 'b') { $e })":
         "Write-Output $('a', 'b')",
+    'Write-Output $script:ShellId':
+        "Write-Output 'Microsoft.PowerShell'",
     "Write-Output 'abc'.Length":
         'Write-Output 3',
     "Write-Output ('A' * 3)":
@@ -1499,14 +1493,14 @@ FOLDS: dict[str, str] = {
         'Write-Output (,(0, 1))\nWrite-Output (0, 1)',
     'function f { ,$args }; $t = f 1 2; Write-Output (,$t); Write-Output $t.Count':
         'Write-Output (,(1, 2))\nWrite-Output 2',
+    "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f":
+        "function f {\n  Write-Host $script:x\n}\nf\n$x = 'b'\nf",
+    "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
+        'function f {\n  Write-Host $x\n}\nf\nf',
     'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f':
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
     "function f { try { 'tail' } catch {} }; Write-Host (f)":
         "Write-Host 'tail'",
-    'function f($a) { $script:k = $a }; $x = 1, 2, 3; f $x; $x[0] = 9; Write-Output $k[0]':
-        'function f {\n  Param($a)\n  $script:k = $a\n}\n$x = 1, 2, 3\nf (1, 2, 3)\n$x[0] = 9\nWrite-Output $k[0]',
-    'function f($a) { [Array]::Reverse($a) }; $x = 1, 2, 3; f $x; Write-Output $x':
-        'function f {\n  Param($a)\n  [Array]::Reverse($a)\n}\nf (1, 2, 3)\nWrite-Output (1, 2, 3)',
     'function g { ,(1, 2) }; $t = @(g); Write-Output $t.Count; Write-Output (,$t[0])':
         'Write-Output 2\nWrite-Output (,1)',
     "function q { $Null = 1 }; ${function:q} = { Write-Host 'P' }; q":

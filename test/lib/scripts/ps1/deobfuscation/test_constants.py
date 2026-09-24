@@ -106,9 +106,30 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertNotIn('$foo', result)
         self.assertNotIn('$Foo', result)
 
-    def test_scoped_variable_not_inlined(self):
+    def test_scoped_variable_inlined(self):
         result = self._deobfuscate("$script:x = 'val'; Write-Output $script:x")
-        self.assertIn('$script:x', result)
+        self.assertEqual(result, "Write-Output 'val'")
+
+    def test_an_engine_default_every_scope_holds_is_inlined_through_a_narrower_qualifier(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`, both reads write `Microsoft.PowerShell`.
+        """
+        for source in [
+            '& { Write-Output $local:ShellId }',
+            'Write-Output $script:ShellId',
+        ]:
+            with self.subTest(source):
+                result = self._deobfuscate(source)
+                self.assertIn("'Microsoft.PowerShell'", result)
+                self.assertNotIn('ShellId', result)
+
+    def test_a_preference_is_not_inlined_through_a_narrower_qualifier(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`, the read writes `$null`: the engine keeps its
+        preference variables in the global scope alone, and the block's own scope holds none.
+        """
+        result = self._deobfuscate('& { Write-Output $local:ErrorActionPreference }')
+        self.assertIn('$local:ErrorActionPreference', result)
 
     def test_increment_folds(self):
         result = self._deobfuscate("$i = 0; $i++; Write-Output $i")
