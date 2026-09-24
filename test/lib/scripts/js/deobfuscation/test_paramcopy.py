@@ -16,7 +16,7 @@ A_PARAMETER_COPIED_AT_ENTRY = [
     ' a.push(a.shift()); } return a; } console.log(f([1, 2, 3], 1));',
     'function f(...r_1) { var r; r = r_1; r.length = 1; return r[0] + r.length; }'
     ' console.log(f(4, 5, 6));',
-    "function f(a_1) { 'use strict'; var a; a = a_1; arguments[0] = 9; return a + arguments[0]; }"
+    'function f(a_1) { "use strict"; var a; a = a_1; arguments[0] = 9; return a + arguments[0]; }'
     ' console.log(f(1));',
     'function f(a_1) { var a; a = a_1; function g() { return a + 1; } return g(); }'
     ' console.log(f(1));',

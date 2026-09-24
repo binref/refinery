@@ -23,8 +23,8 @@ def a_program(text: str) -> str:
     return inspect.cleandoc(text) + chr(10)
 
 
-#: Programs where a binding of the name `globalThis` stands where a rewrite would write it, mapped to
-#: what Node prints for them.
+#: Programs where a binding of the name `globalThis` stands where a rewrite would write it, mapped
+#: to what Node prints for them.
 A_GLOBAL_THIS_LANDING_UNDER_A_BINDING_OF_ITS_NAME = {
     a_program("""
         var NS = {};

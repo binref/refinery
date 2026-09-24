@@ -2215,46 +2215,54 @@ class TestNodePrintsTheSameAboutAChainReadAcrossAWrite(TestBase):
 #: function reading a receiver it shares, a parameter, a function expression's parameter and a
 #: block `let` rebinding the name, and a second name for the object writing the key.
 A_MEMBER_ARRAY_READ_THROUGH_ANOTHER_RECEIVER = {
-    (
-        'function outer(X) {\n'
-        '  function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
-        '  function g() { console.log(X.Y[1]); }\n'
-        '  f();\n'
-        '  g();\n'
-        '}\n'
-        'outer({});\n'
-    ): '1\n2\n',
-    (
-        'globalThis.X = {};\n'
-        'function f() { X.Y = [1, 2]; console.log(X.Y[0]); }\n'
-        'function g() { console.log(X.Y[1]); }\n'
-        'f();\n'
-        'g();\n'
-    ): '1\n2\n',
-    (
-        'function outer(X) { X.Y = [1, 2];'
-        ' function g(X) { return X.Y[0]; } console.log(X.Y[1], g({ Y: [9] })); }\n'
-        'outer({});\n'
-    ): '2 9\n',
-    (
-        'function outer(X) { X.Y = [1, 2];'
-        ' console.log(X.Y[1], (function (X) { return X.Y[0]; })({ Y: [9] })); }\n'
-        'outer({});\n'
-    ): '2 9\n',
-    (
-        'function outer(X) { X.Y = [1, 2];'
-        ' { let X = { Y: [9] }; console.log(X.Y[0]); } console.log(X.Y[1]); }\n'
-        'outer({});\n'
-    ): '9\n2\n',
-    (
-        'function outer(X) { X.Y = [1, 2]; var Z = X; Z.Y = [5, 6]; console.log(X.Y[0]); }\n'
-        'outer({});\n'
-    ): '5\n',
-    (
-        'function outer(X, W) { X.Y = [1, 2]; W.Y = [5, 6]; console.log(X.Y[0]); }\n'
-        'var o = {};\n'
-        'outer(o, o);\n'
-    ): '5\n',
+    inspect.cleandoc("""
+        function outer(X) {
+          function f() { X.Y = [1, 2]; console.log(X.Y[0]); }
+          function g() { console.log(X.Y[1]); }
+          f();
+          g();
+        }
+        outer({});
+    """): '1\n2\n',
+    inspect.cleandoc("""
+        globalThis.X = {};
+        function f() { X.Y = [1, 2]; console.log(X.Y[0]); }
+        function g() { console.log(X.Y[1]); }
+        f();
+        g();
+    """): '1\n2\n',
+    inspect.cleandoc("""
+        function outer(X) {
+          X.Y = [1, 2];
+          function g(X) { return X.Y[0]; }
+          console.log(X.Y[1], g({ Y: [9] }));
+        }
+        outer({});
+    """): '2 9\n',
+    inspect.cleandoc("""
+        function outer(X) {
+          X.Y = [1, 2];
+          console.log(X.Y[1], (function (X) { return X.Y[0]; })({ Y: [9] }));
+        }
+        outer({});
+    """): '2 9\n',
+    inspect.cleandoc("""
+        function outer(X) {
+          X.Y = [1, 2];
+          { let X = { Y: [9] }; console.log(X.Y[0]); }
+          console.log(X.Y[1]);
+        }
+        outer({});
+    """): '9\n2\n',
+    inspect.cleandoc("""
+        function outer(X) { X.Y = [1, 2]; var Z = X; Z.Y = [5, 6]; console.log(X.Y[0]); }
+        outer({});
+    """): '5\n',
+    inspect.cleandoc("""
+        function outer(X, W) { X.Y = [1, 2]; W.Y = [5, 6]; console.log(X.Y[0]); }
+        var o = {};
+        outer(o, o);
+    """): '5\n',
 }
 
 

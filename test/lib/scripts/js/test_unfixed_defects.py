@@ -812,26 +812,27 @@ class TestADegenerateFinderThatThrowsATypeErrorIsKept(TestBase):
 #: `window.p` throws where the host lacks `window`, the empty `catch` swallows it, and the finder
 #: returns `undefined` rather than a global object. Node prints `undefined`, so a correct
 #: deobfuscation keeps the call and prints the same.
-A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS = (
-    'function g() { try { window.p; return self; } catch (e) {} }\n'
-    'var x = g();\nconsole.log(typeof x);\n'
-)
+A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS = inspect.cleandoc("""
+    function g() { try { window.p; return self; } catch (e) {} }
+    var x = g();
+    console.log(typeof x);
+""")
 
 #: A finder installed as a namespace method whose primary lookup reads `window` in a `try` block and
 #: falls back to `this`. Called as a method, its `this` is the namespace, so where the host lacks
 #: `window` it returns the namespace rather than a global object.
-A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW = (
-    'var NS = {};\n'
-    'NS.f = function () { var r; try { r = window; } catch (e) {} return r || this; };\n'
-    'console.log(NS.f() === NS);\n'
-)
+A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW = inspect.cleandoc("""
+    var NS = {};
+    NS.f = function () { var r; try { r = window; } catch (e) {} return r || this; };
+    console.log(NS.f() === NS);
+""")
 
 #: A finder whose one global-valued store to the name it returns reads `window` in a `try` block, so
 #: where the host lacks `window` the store never happens and the finder returns `undefined`.
-A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW = (
-    'function f() { var r; try { r = window; } catch (e) {} return r; }\n'
-    'console.log(typeof f());\n'
-)
+A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW = inspect.cleandoc("""
+    function f() { var r; try { r = window; } catch (e) {} return r; }
+    console.log(typeof f());
+""")
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

@@ -3062,8 +3062,8 @@ ENTRY_POINTS = {
     'GUARDED_PREDICATE_CFF': 'console.log(wrapper());',
     'NESTED_WRAPPER_ARG_REBIND_CFF': 'console.log(outer()(7), outer()(1, 2));',
     'REDIRECT_VAR_CFF': 'console.log(wrapper(), y);',
-    'REDIRECT_QUALIFY_CFF': "var args = 'a', val = 'v'; console.log(wrapper());",
-    'COMPUTED_REDIRECT_CFF': "var args = 'a', val = 'v'; console.log(wrapper(), data);",
+    'REDIRECT_QUALIFY_CFF': 'var args = "a", val = "v"; console.log(wrapper());',
+    'COMPUTED_REDIRECT_CFF': 'var args = "a", val = "v"; console.log(wrapper(), data);',
     'LOOPING_CFF': 'console.log(wrapper());',
     'CONTINUE_IN_LOOP_CFF': 'console.log(wrapper());',
     'HEADER_PAYLOAD_CFF': 'console.log(wrapper());',
@@ -3078,9 +3078,9 @@ ENTRY_POINTS = {
     'FREE_NAMES_CFF': 'var y = 2; console.log(wrapper(), x);',
     'LABELED_CONTINUE_CFF': 'var i = 7; console.log(wrapper(), i);',
     'FREE_FORMS_CFF': (
-        "var freeObj = { method: function () { console.log('m'); } };"
-        " function freeCall() { console.log('c'); }"
-        " var freeVal = 'v';"
+        'var freeObj = { method: function () { console.log("m"); } };'
+        ' function freeCall() { console.log("c"); }'
+        ' var freeVal = "v";'
         ' console.log(wrapper(), freeVar);'
     ),
     'NAMESPACE_LOCAL_DEEP_CFF': 'var local = 1; console.log(wrapper());',
@@ -3106,10 +3106,10 @@ ENTRY_POINTS = {
     'SCOPE_NAME_REBOUND_CFF': 'console.log(outer());',
     'UNREADABLE_WRAPPER_SCOPE_CFF': 'function make() { return { k: 1 }; } console.log(outer()(5));',
     'STATE_READ_BY_A_CLOSURE_CFF': 'console.log(outer());',
-    'MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF': "var args = 'global'; console.log(outer(), args);",
+    'MAIN_RUN_WRITES_ITS_ARGUMENTS_CFF': 'var args = "global"; console.log(outer(), args);',
     'ACCESSOR_SCOPE_DEFAULT_CFF': 'console.log(outer());',
     'NAMESPACE_INITIALIZER_WITH_AN_EFFECT_CFF': (
-        "function note() { console.log('noted'); return 1; } console.log(outer()(5));"
+        'function note() { console.log("noted"); return 1; } console.log(outer()(5));'
     ),
     'WRAPPER_HANDING_ON_ANOTHER_ARGUMENT_CFF': 'console.log(outer()(5));',
     'GUARD_WITH_MORE_TO_DO_CFF': 'console.log(wrapper());',

@@ -940,8 +940,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         Which of *functions* the model resolves a reference to from outside the statement list
         *body*. Reachability is otherwise read off the names *body* spells, which covers every
         reference only when *body* is all of the function's scope. A function declared in a block
-        is copied into the enclosing function by Annex B (§B.3.3), and a call after the block reaches
-        it from a list that walk never sees.
+        is copied into the enclosing function by Annex B (§B.3.3), and a call after the block
+        reaches it from a list that walk never sees.
         """
         members = {id(stmt) for stmt in body}
         names: set[str] = set()
