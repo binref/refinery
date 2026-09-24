@@ -83,10 +83,12 @@ from refinery.lib.scripts.js.model import (
     JsClassExpression,
     JsConditionalExpression,
     JsContinueStatement,
+    JsEmptyStatement,
     JsExportSpecifier,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
+    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsFunctionNode,
@@ -1795,13 +1797,29 @@ def get_body(node: Node) -> list[Statement] | None:
 def remove_declarator(declarator: JsVariableDeclarator) -> None:
     """
     Remove a `refinery.lib.scripts.js.model.JsVariableDeclarator` from its parent
-    `refinery.lib.scripts.js.model.JsVariableDeclaration`. If the declaration has no remaining
-    declarators afterward, remove it from the body as well.
+    `refinery.lib.scripts.js.model.JsVariableDeclaration`. A declaration left with no declarator is
+    removed as well: from the statement list that holds it, as the initializer of a `for` loop, and
+    by an empty statement where it stands as the one statement of another, such as the body of a
+    label or of an `if`. The one declarator of a `for-in` or `for-of` head stays where it is, since
+    that head cannot do without it.
     """
     var_decl = declarator.parent
+    if (
+        isinstance(var_decl, JsVariableDeclaration)
+        and len(var_decl.declarations) == 1
+        and isinstance(var_decl.parent, (JsForInStatement, JsForOfStatement))
+    ):
+        return
     _remove_from_parent(declarator)
-    if isinstance(var_decl, JsVariableDeclaration) and not var_decl.declarations:
-        _remove_from_parent(var_decl)
+    if not isinstance(var_decl, JsVariableDeclaration) or var_decl.declarations:
+        return
+    if _remove_from_parent(var_decl):
+        return
+    holder = var_decl.parent
+    if isinstance(holder, JsForStatement) and holder.init is var_decl:
+        set_child(holder, 'init', None)
+    elif holder is not None:
+        _replace_in_parent(var_decl, JsEmptyStatement())
 
 
 def sanitize_inlined_body(stmts: list[Statement]) -> list[Statement] | None:

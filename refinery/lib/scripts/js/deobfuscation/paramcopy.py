@@ -25,6 +25,7 @@ from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
     BindingKind,
+    Scope,
     SemanticModel,
     references_own_arguments,
 )
@@ -39,6 +40,7 @@ from refinery.lib.scripts.js.model import (
     JsRestElement,
     JsScript,
     JsSequenceExpression,
+    JsSwitchCase,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -51,17 +53,34 @@ class _Copy(NamedTuple):
     local: Binding
 
 
-def _entry_copies(function: JsFunctionNode) -> list[JsAssignmentExpression]:
+def _parameters(function: JsFunctionNode) -> dict[int, JsIdentifier]:
     """
-    The assignments `x = p` between two identifiers that run first in *function*, before any
-    other statement of its body: those in the statements that open the body, where the only
-    statements before them are directives, `var` declarations without an initializer and function
-    declarations, none of which runs anything at its position. A statement joining several such
-    assignments with commas contributes each of them.
+    The plain and rest parameters of *function*, by the id of the identifier each one declares.
+    """
+    params: dict[int, JsIdentifier] = {}
+    for param in function.params:
+        if isinstance(param, JsRestElement):
+            param = param.argument
+        if isinstance(param, JsIdentifier):
+            params[id(param)] = param
+    return params
+
+
+def _entry_copies(function: JsFunctionNode, model: SemanticModel) -> list[JsAssignmentExpression]:
+    """
+    The assignments that run first in *function*, before any other statement of its body, and copy
+    one of its parameters into a `var` of its body (`_copies_a_parameter`): those in the statements
+    that open the body, where the only statements before them are directives, `var` declarations
+    without an initializer and function declarations, none of which runs anything at its position.
+    A statement joining several such assignments with commas contributes each of them. The run ends
+    at the first assignment of any other kind, so no assignment before a copy reads a local or can
+    throw.
     """
     body = function.body
     if not isinstance(body, JsBlockStatement):
         return []
+    params = _parameters(function)
+    body_scope = model.function_scope(function)
     statements = body.body[len(directive_prologue(body)):]
     copies: list[JsAssignmentExpression] = []
     for statement in statements:
@@ -80,17 +99,40 @@ def _entry_copies(function: JsFunctionNode) -> list[JsAssignmentExpression]:
         parts = [expression]
         if isinstance(expression, JsSequenceExpression):
             parts = expression.expressions
-        assignments = [
-            part for part in parts
-            if isinstance(part, JsAssignmentExpression)
-            and part.operator == '='
-            and isinstance(part.left, JsIdentifier)
-            and isinstance(part.right, JsIdentifier)
-        ]
-        if len(assignments) != len(parts):
-            break
-        copies.extend(assignments)
+        for part in parts:
+            if not _copies_a_parameter(part, params, body_scope, model):
+                return copies
+            assert isinstance(part, JsAssignmentExpression)
+            copies.append(part)
     return copies
+
+
+def _copies_a_parameter(
+    part: Node | None,
+    params: dict[int, JsIdentifier],
+    body_scope: Scope | None,
+    model: SemanticModel,
+) -> bool:
+    """
+    Whether *part* is `x = p` for one of the parameters *params* and a `var` `x` of the function
+    whose body scope is *body_scope*.
+    """
+    if not isinstance(part, JsAssignmentExpression) or part.operator != '=':
+        return False
+    left = part.left
+    right = part.right
+    if not isinstance(left, JsIdentifier) or not isinstance(right, JsIdentifier):
+        return False
+    source = model.resolve(right)
+    local = model.resolve(left)
+    return (
+        source is not None
+        and source.kind is BindingKind.PARAM
+        and any(id(declaration) in params for declaration in source.declarations)
+        and local is not None
+        and local.kind is BindingKind.VAR
+        and local.scope is body_scope
+    )
 
 
 def _is_sole_access(binding: Binding | None, reference: Node, model: SemanticModel) -> bool:
@@ -108,57 +150,77 @@ def _is_sole_access(binding: Binding | None, reference: Node, model: SemanticMod
     )
 
 
+def _names_in_the_parameter_list(function: JsFunctionNode) -> set[str]:
+    """
+    Every name spelled in the parameter list of *function*: the parameters it binds, and the names
+    its default values read, which are resolved in a scope of their own that does not see the body.
+    A parameter renamed to one of them would clash with a binding of the list or capture the read.
+    """
+    return {
+        node.name
+        for param in function.params
+        for node in param.walk()
+        if isinstance(node, JsIdentifier)
+    }
+
+
+def _declared_in_a_statement(declaration: Node) -> bool:
+    """
+    Whether *declaration* is the name of a declarator without an initializer whose `var` statement
+    stands directly in a statement list, from which `remove_declarator` takes it without a gap.
+    """
+    declarator = declaration.parent
+    if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not declaration:
+        return False
+    statement = declarator.parent
+    return (
+        declarator.init is None
+        and isinstance(statement, JsVariableDeclaration)
+        and isinstance(statement.parent, (JsBlockStatement, JsScript, JsSwitchCase))
+    )
+
+
 def _coalescible(function: JsFunctionNode, model: SemanticModel) -> list[_Copy]:
     """
     The entry copies of *function* whose parameter can take the local's place. The parameter is a
-    plain or rest one of *function*'s own, read by the copy and by nothing else; the local is a
-    `var` of *function* the copy writes and nothing else writes, so it holds the argument wherever
-    it is read. A sloppy body that reads its own `arguments` sees the parameters through it, and
-    moving an argument from one name to another would change what a write through either one
-    reaches.
+    plain or rest one of *function*'s own, declared by nothing else, and read by the copy and by
+    nothing else. The local holds the copied value and no other (`SemanticModel.singular_value`),
+    is declared only by declarators `remove_declarator` can take out, and its name is spelled
+    nowhere in the parameter list (`_names_in_the_parameter_list`). A sloppy body that reads its own
+    `arguments` sees the parameters through it, and moving an argument from one name to another
+    would change what a write through either one reaches.
     """
     if not strict_mode_at(function) and references_own_arguments(function):
         return []
-    params: dict[int, JsIdentifier] = {}
-    for param in function.params:
-        if isinstance(param, JsRestElement):
-            param = param.argument
-        if isinstance(param, JsIdentifier):
-            params[id(param)] = param
-    names = {param.name for param in params.values()}
-    body_scope = model.function_scope(function)
+    params = _parameters(function)
+    spelled = _names_in_the_parameter_list(function)
     copies: list[_Copy] = []
-    for assignment in _entry_copies(function):
+    for assignment in _entry_copies(function, model):
         left = assignment.left
         right = assignment.right
         assert isinstance(left, JsIdentifier) and isinstance(right, JsIdentifier)
         source = model.resolve(right)
-        if source is None or source.kind is not BindingKind.PARAM:
-            continue
-        declared = [ident for ident in source.declarations if id(ident) in params]
-        if len(declared) != 1 or not _is_sole_access(source, right, model):
+        if (
+            source is None
+            or len(source.declarations) != 1
+            or id(source.declarations[0]) not in params
+            or not _is_sole_access(source, right, model)
+        ):
             continue
         local = model.resolve(left)
         if (
             local is None
-            or local.kind is not BindingKind.VAR
-            or local.scope is not body_scope
-            or local.name in names
-            or local.reads == []
-            or local.writes != [left]
+            or local.name in spelled
+            or not local.reads
+            or model.singular_value(local) is not right
             or local.dynamic_refs
             or local.exported
             or model.reflection_can_reach(local)
-            or not all(
-                isinstance(declarator := declaration.parent, JsVariableDeclarator)
-                and declarator.id is declaration
-                and declarator.init is None
-                for declaration in local.declarations
-            )
+            or not all(map(_declared_in_a_statement, local.declarations))
         ):
             continue
-        names.add(local.name)
-        copies.append(_Copy(assignment, declared[0], local))
+        spelled.add(local.name)
+        copies.append(_Copy(assignment, params[id(source.declarations[0])], local))
     return copies
 
 

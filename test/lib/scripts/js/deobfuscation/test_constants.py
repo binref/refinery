@@ -2329,11 +2329,25 @@ A_STORE_ITS_STATEMENT_DOES_NOT_ALWAYS_RUN = {
     'function f() { var i, a = {}; for (a[i = 5] in {}); console.log(i); } f();\n': 'undefined\n',
 }
 
+#: A declaration standing as the body of a label, whose one declarator the inlining removes, mapped
+#: to what Node prints for it.
+A_DECLARATION_A_LABEL_HOLDS = {
+    'lbl: var k = 5; console.log(k, k);\n': '5 5\n',
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAStoreItsStatementDoesNotAlwaysRun(TestBase):
 
     def test_the_read_after_the_statement_keeps_the_value_from_before(self):
         rows = A_STORE_ITS_STATEMENT_DOES_NOT_ALWAYS_RUN
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_declaration_a_label_holds_leaves_a_statement_behind(self):
+        rows = A_DECLARATION_A_LABEL_HOLDS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
