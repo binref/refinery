@@ -23,10 +23,14 @@ from refinery.lib.scripts import (
     set_child,
     set_child_list,
 )
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
+    annex_b_var_home,
     is_member_write_target,
+    is_use_position,
     lexically_declared_names,
     references_own_arguments,
+    walk_receiver_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
@@ -34,7 +38,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     eval_binary_op,
     is_literal,
     is_reference,
+    is_valid_identifier,
     make_numeric_literal,
+    make_undefined_expression,
     member_key,
     property_key,
     sanitize_inlined_body,
@@ -47,6 +53,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayPattern,
     JsAssignmentExpression,
     JsAssignmentPattern,
+    JsAwaitExpression,
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
@@ -68,6 +75,8 @@ from refinery.lib.scripts.js.model import (
     JsLabeledStatement,
     JsLogicalExpression,
     JsMemberExpression,
+    JsMetaProperty,
+    JsNewExpression,
     JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
@@ -81,6 +90,8 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
+    JsTaggedTemplateExpression,
+    JsThisExpression,
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
@@ -88,17 +99,20 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     JsWhileStatement,
     JsWithStatement,
+    JsYieldExpression,
     is_async_function,
     is_generator_function,
     static_string,
 )
 from refinery.lib.scripts.js.strict import (
-    declares_use_strict,
     directive_prologue,
     keeping_directives,
+    strict_mode_at,
 )
 
 if TYPE_CHECKING:
+    from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+
     _StateEnv = dict[str, int | float]
 
 _MAX_STEPS = 2000
@@ -191,7 +205,6 @@ class _GeneratorCFFMatch:
     scope_default_props: list[str] = field(default_factory=list)
     scope_default_inits: dict[str, Expression] = field(default_factory=dict)
     scope_prop_names: set[str] = field(default_factory=set)
-    scope_prop_writes: set[str] = field(default_factory=set)
     namespaces: set[str] = field(default_factory=set)
     namespace_homes: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -313,6 +326,8 @@ def _scope_object_properties(scope: JsObjectExpression) -> dict[str, Expression]
     plain data property under a key known before it runs: a spread, a method or accessor, a computed
     key that is not a constant string, or a non-computed `__proto__`, which sets the prototype of
     the object rather than creating a property. `{["K"]: {}}` creates `K` as surely as `{K: {}}`.
+    A key written twice gives `None` as well: the literal evaluates both values and keeps the
+    second, and only the kept one is read here.
     """
     properties: dict[str, Expression] = {}
     for prop in scope.properties:
@@ -322,7 +337,7 @@ def _scope_object_properties(scope: JsObjectExpression) -> dict[str, Expression]
             key = static_string(prop.key)
         elif (key := property_key(prop)) == '__proto__' and not prop.shorthand:
             return None
-        if key is None or prop.value is None:
+        if key is None or prop.value is None or key in properties:
             return None
         properties[key] = prop.value
     return properties
@@ -552,7 +567,13 @@ def _collect_namespace_homes(
 def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch | None:
     """
     Starting at index *idx* in *body*, test whether the statement is a generator function
-    declaration matching the state machine CFF pattern, with its call site following.
+    declaration matching the state machine CFF pattern, with its call site following. Its parameters
+    are the state variables, the scope parameter with its default, and at most the argument holder
+    behind it. A generator whose own code reads what its invocation binds
+    (`_reads_its_own_invocation`) does not match, and neither does one in strict code that declares
+    a function inside a block: the recovered code is read apart from the tree, where it cannot tell
+    that it is strict, so `_hoisted_names` would give such a function the Annex B copy only sloppy
+    code makes.
     """
     stmt = body[idx]
     if not isinstance(stmt, JsFunctionDeclaration):
@@ -567,17 +588,26 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     params = stmt.params
     if len(params) < 3:
         return None
+    if _reads_its_own_invocation(stmt):
+        return None
+    if strict_mode_at(stmt) and _holds_a_block_function(stmt.body):
+        return None
     scope_param_name: str | None = None
     arg_var_name: str | None = None
     state_var_names: list[str] = []
     for p in params:
-        if isinstance(p, JsIdentifier):
-            if scope_param_name is not None:
-                arg_var_name = p.name
-                break
-            state_var_names.append(p.name)
-        elif isinstance(p, JsAssignmentPattern) and isinstance(p.left, JsIdentifier):
+        if not isinstance(p, JsIdentifier):
+            if (
+                scope_param_name is not None
+                or not isinstance(p, JsAssignmentPattern)
+                or not isinstance(p.left, JsIdentifier)
+            ):
+                return None
             scope_param_name = p.left.name
+        elif scope_param_name is None:
+            state_var_names.append(p.name)
+        elif arg_var_name is None:
+            arg_var_name = p.name
         else:
             return None
     if not state_var_names:
@@ -612,6 +642,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         return None
     scope_default_props, scope_default_inits = scope_defaults
     with_redirect_var: str | None = None
+    routed = isinstance(inner, JsWithStatement)
     if isinstance(inner, JsWithStatement):
         with_redirect_var = _extract_with_redirect_var(inner.object, scope_param_name)
         inner = inner.body
@@ -629,6 +660,8 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     if not _is_discriminant_sum(inner.discriminant, state_var_names):
         return None
     switch_stmt = inner
+    if not routed and _spells_a_slot_bare(switch_stmt, scope_param_name, scope_default_props):
+        return None
     call_info = _find_generator_call_site(body, idx, gen_name)
     if call_info is None:
         return None
@@ -673,6 +706,63 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         namespaces=namespaces,
         namespace_homes=namespace_homes,
     )
+
+
+def _reads_its_own_invocation(generator: JsFunctionDeclaration) -> bool:
+    """
+    Whether the code of *generator* reads what its own invocation binds: its receiver `this`, a
+    `super` reference, its `arguments` object or `new.target`, or whether it suspends with `yield`.
+    The recovery moves that code into the function around the call, or into a wrapper, where each
+    of these means that function's own.
+    """
+    for node in walk_receiver_scope(generator):
+        if isinstance(node, (JsThisExpression, JsYieldExpression, JsMetaProperty)):
+            return True
+        if (
+            isinstance(node, JsIdentifier)
+            and node.name in ('arguments', 'super', 'new')
+            and is_use_position(node)
+        ):
+            return True
+    return False
+
+
+def _spells_a_slot_bare(
+    switch_stmt: JsSwitchStatement,
+    scope_param_name: str | None,
+    defaults: list[str],
+) -> bool:
+    """
+    Whether the code of a generator that reads its scope object through no `with` body spells the
+    name of a slot of that object bare. There the bare name means some other binding, and once the
+    strip turns `scope.K` into `K` it would name the slot instead.
+    """
+    slots = set(defaults)
+    if scope_param_name is not None:
+        for member in _scope_members(switch_stmt, scope_param_name):
+            if (name := _deepest_property_name(member)) is not None:
+                slots.add(name)
+    return any(
+        isinstance(node, JsIdentifier) and node.name in slots and is_use_position(node)
+        for node in switch_stmt.walk()
+    )
+
+
+def _holds_a_block_function(root: Node) -> bool:
+    """
+    Whether a function is declared inside a block anywhere below *root*, where sloppy code would
+    copy its name into the function around the block.
+    """
+    for node in root.walk():
+        if not isinstance(node, JsFunctionDeclaration):
+            continue
+        holder = node.parent
+        if isinstance(holder, JsScript):
+            continue
+        if isinstance(holder, JsBlockStatement) and isinstance(holder.parent, FUNCTION_NODES):
+            continue
+        return True
+    return False
 
 
 def _did_return_reset(stmt: Statement) -> str | None:
@@ -787,10 +877,12 @@ def _extract_generator_call(
     """
     Extract a generator call from a statement. Handles:
     - var X = gen(...)["next"]()["value"];
+    - X = gen(...)["next"]()["value"];
     - gen(...)["next"]()["value"];
     - return gen(...)["next"]()["value"];
 
-    Returns a `(call, name)` pair (the inner call to gen and the result variable name) or `None`.
+    Returns a `(call, name)` pair (the inner call to gen and the result variable name) or `None`. A
+    result stored anywhere but in a plain name is refused: the recovery would drop the store.
     """
     result_name: str | None = None
     expr: Expression | None = None
@@ -798,16 +890,16 @@ def _extract_generator_call(
         if len(stmt.declarations) != 1:
             return None
         decl = stmt.declarations[0]
-        if not isinstance(decl, JsVariableDeclarator):
+        if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
             return None
-        if isinstance(decl.id, JsIdentifier):
-            result_name = decl.id.name
+        result_name = decl.id.name
         expr = decl.init
     elif isinstance(stmt, JsExpressionStatement):
         expr = stmt.expression
-        if isinstance(expr, JsAssignmentExpression) and expr.operator == '=':
-            if isinstance(expr.left, JsIdentifier):
-                result_name = expr.left.name
+        if isinstance(expr, JsAssignmentExpression):
+            if expr.operator != '=' or not isinstance(expr.left, JsIdentifier):
+                return None
+            result_name = expr.left.name
             expr = expr.right
     elif isinstance(stmt, JsReturnStatement):
         expr = stmt.argument
@@ -2104,29 +2196,39 @@ def _substitute_state_vars(stmts: list[Statement], env: _StateEnv) -> list[State
     return result
 
 
-def _function_bound_names(func: JsFunctionNode) -> set[str]:
+def _parameter_names(func: JsFunctionNode) -> set[str]:
     """
-    The names *func* binds for the code inside it: its parameters, the name of a function
-    expression, every `var` and every function its body declares outside nested functions, and the
-    `let`, `const` and class declarations of the body itself. A function declared in a nested block
-    binds its name for the whole body too unless the body is strict, which is what Annex B makes of
-    sloppy code.
+    The names *func* binds for its parameter list: its parameters and the name of a function
+    expression. A default value is evaluated in a scope of its own and does not see what the body
+    declares.
     """
     names: set[str] = set()
     if isinstance(func, JsFunctionExpression) and func.id is not None:
         names.add(func.id.name)
     for param in func.params:
         _collect_binding_names(param, names)
-    body = func.body
-    if not isinstance(body, JsBlockStatement):
-        return names
-    names |= _block_bound_names(body.body)
-    annex_b = not declares_use_strict(body)
-    queue: deque[Node] = deque(body.body)
+    return names
+
+
+def _hoisted_names(statements: list[Statement], home: JsFunctionNode | None) -> set[str]:
+    """
+    The names the statements of a body bind for the whole function beyond their own lexical
+    declarations: every `var` outside nested functions and classes, and every function declared in
+    a nested block whose name Annex B copies into the function *home* (`annex_b_var_home`). A list
+    of statements not yet standing in the function it becomes the body of is given no such copy.
+    """
+    names: set[str] = set()
+    queue: deque[Node] = deque(statements)
     while queue:
         node = queue.popleft()
         if isinstance(node, JsFunctionDeclaration):
-            if annex_b and node.id is not None:
+            if (
+                home is not None
+                and node.id is not None
+                and not is_generator_function(node)
+                and not is_async_function(node)
+                and annex_b_var_home(node) is home
+            ):
                 names.add(node.id.name)
             continue
         if isinstance(node, (*FUNCTION_NODES, JsClassDeclaration, JsClassExpression)):
@@ -2137,6 +2239,19 @@ def _function_bound_names(func: JsFunctionNode) -> set[str]:
                     _collect_binding_names(declarator.id, names)
         queue.extend(node.children())
     return names
+
+
+def _function_bound_names(func: JsFunctionNode) -> set[str]:
+    """
+    The names *func* binds for the code of its body: its parameter names (`_parameter_names`), the
+    `let`, `const`, class and function declarations of the body itself, and what the body hoists
+    (`_hoisted_names`).
+    """
+    names = _parameter_names(func)
+    body = func.body
+    if not isinstance(body, JsBlockStatement):
+        return names
+    return names | _block_bound_names(body.body) | _hoisted_names(body.body, func)
 
 
 def _block_bound_names(statements: list[Statement]) -> set[str]:
@@ -2153,12 +2268,10 @@ def _block_bound_names(statements: list[Statement]) -> set[str]:
 
 def _names_bound_by(node: Node) -> set[str]:
     """
-    The names *node* binds for the code of its children, beyond what the code around it binds: a
-    function's own names, a catch parameter, a block's declarations, the `let` or `const` head of a
-    loop, and the name of a class inside the class.
+    The names *node* binds for the code of all its children, beyond what the code around it binds:
+    a catch parameter, a block's declarations, the `let` or `const` head of a loop, and the name of
+    a class inside the class.
     """
-    if isinstance(node, FUNCTION_NODES):
-        return _function_bound_names(node)
     names: set[str] = set()
     if isinstance(node, JsCatchClause):
         _collect_binding_names(node.param, names)
@@ -2177,9 +2290,17 @@ def _names_bound_by(node: Node) -> set[str]:
 
 def _scoped_children(node: Node) -> Iterator[tuple[Node, set[str]]]:
     """
-    Each child of *node* together with the names *node* binds for that child. The declarations of a
-    `switch` bind for its cases, not for the discriminant evaluated before the block is entered.
+    Each child of *node* together with the names *node* binds for that child. A function binds its
+    parameter names for its parameter list (`_parameter_names`) and everything it declares for its
+    body (`_function_bound_names`). The declarations of a `switch` bind for its cases, not for the
+    discriminant evaluated before the block is entered.
     """
+    if isinstance(node, FUNCTION_NODES):
+        head = _parameter_names(node)
+        whole = _function_bound_names(node)
+        for child in node.children():
+            yield child, whole if child is node.body else head
+        return
     if isinstance(node, JsSwitchStatement):
         names = _block_bound_names([
             statement for case in node.cases if isinstance(case, JsSwitchCase)
@@ -2199,22 +2320,29 @@ def _walk_scoped(
     shadowed: frozenset[str] = frozenset(),
 ) -> Iterator[tuple[Node, frozenset[str]]]:
     """
-    Every node under *node*, *node* included, with the names of *watched* that something between
-    *node* and it binds anew: where a name is in that set, the name no longer refers to what it
-    refers to at *node*.
+    Every node under *node*, *node* included, in source order, with the names of *watched* that
+    something between *node* and it binds anew: where a name is in that set, the name no longer
+    refers to what it refers to at *node*.
     """
-    yield node, shadowed
-    for child, bound in _scoped_children(node):
-        yield from _walk_scoped(child, watched, shadowed | (watched & bound))
+    stack: list[tuple[Node, frozenset[str]]] = [(node, shadowed)]
+    while stack:
+        current, hidden = stack.pop()
+        yield current, hidden
+        stack.extend(
+            (child, hidden | (watched & bound) if bound else hidden)
+            for child, bound in reversed(list(_scoped_children(current)))
+        )
 
 
 def _references_to(stmts: list[Statement], names: frozenset[str]) -> Iterator[JsIdentifier]:
     """
-    Every identifier in *stmts* that reads or writes one of *names* as the code around *stmts*
-    binds it.
+    Every identifier in *stmts* that reads or writes one of *names* as the body *stmts* becomes
+    binds it: a name the statements declare for that body themselves (`_declared_names_in_stmts`)
+    is theirs, and any other one is bound by the code around them.
     """
+    own = names & frozenset(_declared_names_in_stmts(stmts))
     for stmt in stmts:
-        for node, shadowed in _walk_scoped(stmt, names):
+        for node, shadowed in _walk_scoped(stmt, names, own):
             if (
                 isinstance(node, JsIdentifier)
                 and node.name in names
@@ -2262,14 +2390,17 @@ def _strip_scope_param_prefix(
 def _scope_members(node: Node, scope_param_name: str) -> list[JsMemberExpression]:
     """
     The direct scope members `scope.X` under *node* whose `scope` is the generator's scope
-    parameter, leaving out those below a construct that binds the name anew.
+    parameter and whose key a declaration may bind as a name (`is_valid_identifier`), leaving out
+    those below a construct that binds the scope parameter's name anew. A member under any other key
+    keeps its `scope`, which `_leaves_the_generator` then refuses.
     """
     return [
         member for member, shadowed in _walk_scoped(node, frozenset({scope_param_name}))
         if not shadowed
         and isinstance(member, JsMemberExpression)
         and _is_direct_scope_member(member, scope_param_name)
-        and _deepest_property_name(member) is not None
+        and (name := _deepest_property_name(member)) is not None
+        and is_valid_identifier(name)
     ]
 
 
@@ -2403,9 +2534,13 @@ def _qualify_with_identifiers(
     if not match.qualifies_namespaces:
         return stmts
     exempt = _qualify_exempt(match)
+    _convert_function_declarations(
+        stmts,
+        match.namespace_homes,
+        exempt | _hoisted_names(stmts, None),
+    )
     for stmt in stmts:
         _qualify_bare_walk(stmt, match.namespace_homes, exempt)
-    _convert_function_declarations(stmts, match.namespace_homes, exempt)
     return stmts
 
 
@@ -2460,18 +2595,32 @@ def _make_namespace_node(ns_path: list[str]) -> Expression:
     return node
 
 
-def _qualify_bare_walk(node: Node, homes: dict[str, tuple[str, ...]], exempt: set[str]) -> None:
+def _qualify_bare_walk(
+    node: Node,
+    homes: dict[str, tuple[str, ...]],
+    exempt: set[str],
+    shadowed: frozenset[str] = frozenset(),
+) -> None:
+    """
+    Qualify the bare names under *node* that have a home. A name something between *node* and the
+    identifier binds anew (*shadowed*) is left alone there, and a name the payload declares for the
+    generator itself joins *exempt* from its declaration on, which is shared by the whole payload.
+    """
     for child, bound in _scoped_children(node):
+        hidden = shadowed | bound if bound else shadowed
         if (
             isinstance(child, JsIdentifier)
             and child.name in homes
             and child.name not in exempt
-            and child.name not in bound
+            and child.name not in hidden
         ):
             parent = child.parent
             if isinstance(parent, (JsVariableDeclarator, JsRestElement)):
                 exempt.add(child.name)
                 continue
+            if isinstance(parent, (JsFunctionDeclaration, JsClassDeclaration)):
+                if parent.id is child:
+                    continue
             if isinstance(parent, (JsLabeledStatement, JsContinueStatement, JsBreakStatement)):
                 if getattr(parent, 'label', None) is child:
                     continue
@@ -2481,7 +2630,7 @@ def _qualify_bare_walk(node: Node, homes: dict[str, tuple[str, ...]], exempt: se
                 as_spelled=True,
             )
             continue
-        _qualify_bare_walk(child, homes, exempt | bound if bound else exempt)
+        _qualify_bare_walk(child, homes, exempt, hidden)
 
 
 def _collect_binding_names(pattern: Expression | None, out: set[str]) -> None:
@@ -2780,26 +2929,56 @@ def _wrapper_activation(
     The activation of the run a wrapper's call starts, read off the scope argument it hands the
     generator, in the recovered code the creating run's payload became. The scope parameter itself
     shares *creator*'s scope object. An object literal is a fresh scope object per call: each
-    property holding an inert object literal (`_is_inert`) is a namespace created with it, and a
-    property `scope.K` under its own key `K`, which the strip of the creating run's payload left as
-    a bare `K`, hands on the creating run's `K`, which that run has to hold. Any other scope
-    argument gives `None`.
+    property holding an inert object literal (`_is_inert`) that reads no name is a namespace created
+    with it, and a property `scope.K` under its own key `K`, which the strip of the creating run's
+    payload left as a bare `K`, hands on the creating run's `K`, which that run has to hold. A
+    namespace is declared in the wrapper's body only once the recovery has renamed the wrapper's
+    parameters, so a name its value read could no longer mean what it meant. Where something between
+    the generator and the scope argument binds the scope parameter's name anew, the argument is not
+    the creator's scope object. Any other scope argument gives `None`.
     """
     if isinstance(scope_arg, JsIdentifier) and scope_arg.name == match.scope_param_name:
-        return creator
+        return None if _bound_on_the_way_to(scope_arg, scope_arg.name) else creator
     if not isinstance(scope_arg, JsObjectExpression):
         return None
     if (properties := _scope_object_properties(scope_arg)) is None:
         return None
     activation = _Activation(node, {})
     for key, value in properties.items():
-        if isinstance(value, JsObjectExpression) and _is_inert(value):
+        if (
+            isinstance(value, JsObjectExpression)
+            and _is_inert(value)
+            and not _reads_a_name(value)
+        ):
             activation.namespaces[key] = value
         elif isinstance(value, JsIdentifier) and value.name == key and creator.holds(key):
             activation.inherited.add(key)
         else:
             return None
     return activation
+
+
+def _reads_a_name(node: Node) -> bool:
+    """
+    Whether evaluating *node* reads a name anywhere below it.
+    """
+    return any(isinstance(part, JsIdentifier) and is_reference(part) for part in node.walk())
+
+
+def _bound_on_the_way_to(node: Node, name: str) -> bool:
+    """
+    Whether something between the top of the tree that holds *node* and *node* binds *name* anew
+    (`_scoped_children`).
+    """
+    cursor = node
+    while (parent := cursor.parent) is not None:
+        for child, bound in _scoped_children(parent):
+            if child is cursor:
+                if name in bound:
+                    return True
+                break
+        cursor = parent
+    return False
 
 
 def _resolve_shared_wrappers(
@@ -2816,14 +2995,18 @@ def _resolve_shared_wrappers(
     carries scope routing values from the primary execution so that predicate-gated cases in
     wrapper paths can resolve. Iterates until no more wrappers are resolved (handles nesting).
 
-    Returns the activations of the resolved wrappers that own a scope object, or `None` where a
-    wrapper cannot be resolved: it would be left calling the generator the recovery removes. A run
-    that stores to a namespace it only hands on from its creator (`_wrapper_activation`) is not
-    resolved either, since the recovered store would reach the creator's namespace.
+    Returns the activations of the resolved wrappers, each one once and *main* among them where a
+    wrapper shares its scope object, or `None` where a wrapper cannot be resolved: it would be left
+    calling the generator the recovery removes. So is a wrapper nested in the recovered body of one
+    that enters the machine at the same state, whose resolution would recover the same wrapper again
+    without end, and a key a wrapper hands on from its creator (`_wrapper_activation`) that any run
+    stores to (`_stores_to_any`): the wrapper's scope object holds a copy of the creator's value
+    made when it is called, which the recovered code can only share with the creator.
     """
     gen_name = match.generator_name
     num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
+    entries: dict[int, list[int | float]] = {}
 
     while True:
         resolved_any = False
@@ -2836,6 +3019,8 @@ def _resolve_shared_wrappers(
             wrapper_info = _detect_wrapper_function(node, gen_name, num_vars)
             if wrapper_info is None:
                 continue
+            if _reenters(node, wrapper_info.initial_state, entries):
+                return None
             creator = _creating_activation(node, activations, main)
             activation = _wrapper_activation(node, wrapper_info.scope_arg, creator, match)
             if activation is None:
@@ -2859,10 +3044,11 @@ def _resolve_shared_wrappers(
                 namespace_homes=match.namespace_homes,
             )
             result = _execute_machine(machine, synthetic, inherited_state=outer_state)
-            if result is None or not activation.inherited.isdisjoint(synthetic.scope_prop_writes):
+            if result is None:
                 return None
             activation.props |= synthetic.scope_prop_names
             activations[node_id] = activation
+            entries[node_id] = wrapper_info.initial_state
             recovered, _ = result
             target = _wrapper_arg_param_name(match, wrapper_info, recovered)
             if match.arg_var_name and target and match.arg_var_name != target:
@@ -2877,11 +3063,44 @@ def _resolve_shared_wrappers(
         if not resolved_any:
             break
 
-    owned: dict[int, _Activation] = {}
-    for activation in activations.values():
-        if activation.function is not None:
-            owned[id(activation)] = activation
-    return list(owned.values())
+    resolved = list({id(activation): activation for activation in activations.values()}.values())
+    inherited = frozenset(name for activation in resolved for name in activation.inherited)
+    if inherited and _stores_to_any(stmts, inherited):
+        return None
+    return resolved
+
+
+def _reenters(
+    node: JsFunctionExpression,
+    initial_state: list[int | float],
+    entries: dict[int, list[int | float]],
+) -> bool:
+    """
+    Whether a resolved wrapper whose recovered body holds the wrapper *node* enters the machine at
+    the same *initial_state*, as recorded in *entries* by the node ids of the resolved wrappers.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if entries.get(id(cursor)) == initial_state:
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _stores_to_any(stmts: list[Statement], names: frozenset[str]) -> bool:
+    """
+    Whether *stmts* store to one of *names* where nothing between the statement and the store binds
+    the name anew.
+    """
+    return any(
+        isinstance(node, JsIdentifier)
+        and node.name in names
+        and node.name not in shadowed
+        and is_reference(node)
+        and is_member_write_target(node)
+        for stmt in stmts
+        for node, shadowed in _walk_scoped(stmt, names)
+    )
 
 
 def _is_activation_slot(target: Node | None, activation: _Activation) -> bool:
@@ -2932,11 +3151,12 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     parameters ended in a rest parameter is stored as `[NS.a, ...NS.r] = rest`. Where the rest
     parameter is read by such stores and nothing else, the wrapper takes the parameters `(a, ...r)`
     and the store becomes `NS.a = a, NS.r = r`: every slot receives what it received, the remainder
-    being an array of the same arguments, and a store that runs again stores the same again. The
-    wrapper's `length` counts the new parameters, as the function the obfuscator flattened counted
-    them, and the destructuring's array iterator is trusted the way the recovery trusts the rest of
-    the obfuscator's scaffolding. A body that reads its own `arguments`, whose elements a simple
-    parameter list aliases, is left alone.
+    being an array of the same arguments. Every store has to be a statement of the body itself,
+    which runs once per call: the destructuring makes a new array each time it runs, and the rest
+    parameter is one array per call. The wrapper's `length` counts the new parameters, as the
+    function the obfuscator flattened counted them, and the destructuring's array iterator is
+    trusted the way the recovery trusts the rest of the obfuscator's scaffolding. A body that reads
+    its own `arguments`, whose elements a simple parameter list aliases, is left alone.
     """
     params = function.params
     if (
@@ -2954,7 +3174,8 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
             isinstance(store, JsAssignmentExpression)
             and store.operator == '='
             and store.right is read
-            and isinstance(store.parent, JsExpressionStatement)
+            and isinstance(statement := store.parent, JsExpressionStatement)
+            and statement.parent is function.body
             and isinstance(pattern := store.left, (JsArrayExpression, JsArrayPattern))
             and (slots := _argument_slots(pattern, activation)) is not None
         ):
@@ -2965,7 +3186,8 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     taken = {node.name for node in function.walk() if isinstance(node, JsIdentifier)}
 
     def fresh(slot: Expression) -> str:
-        name = _fresh_arg_name(_deepest_property_name(slot) or 'p', taken)
+        base = _deepest_property_name(slot)
+        name = _fresh_arg_name(base if base and is_valid_identifier(base) else 'p', taken)
         taken.add(name)
         return name
 
@@ -2984,7 +3206,8 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
             assignments.append(JsAssignmentExpression(
                 operator='=', left=remainder, right=JsIdentifier(name=remainder_name)))
         if not assignments:
-            assert isinstance(statement := store.parent, JsExpressionStatement)
+            statement = store.parent
+            assert statement is not None
             _remove_from_parent(statement)
         elif len(assignments) == 1:
             _replace_in_parent(store, assignments[0])
@@ -3071,7 +3294,7 @@ def _rebind_free_arg_var(
 ) -> list[Statement]:
     """
     Rename free references to the shared generator's argument variable to a wrapper's parameter
-    name. A construct that binds either name anew (`_names_bound_by`) owns that identifier and is
+    name. A construct that binds either name anew (`_scoped_children`) owns that identifier and is
     left untouched; a function binding neither is descended into, so a genuine closure over the
     wrapper arguments is still rebound. Member-property and object-key
     positions are skipped because a name there is not a variable reference; an object shorthand
@@ -3122,10 +3345,9 @@ def _emit_scope_namespace_declarations(
 def _collect_scope_props(stmts: list[Statement], match: _GeneratorCFFMatch) -> None:
     """
     Record the property names of depth-1 scope-member accesses (`scope.X` / `scope["X"]`) in
-    *stmts* in `scope_prop_names`, and those of the accesses that store to the property in
-    `scope_prop_writes`. The names identify which bare identifiers in the recovered code originated
-    as variables stored on the scope object, so the recovery can declare the live ones and drop
-    write-only routing slots.
+    *stmts* in `scope_prop_names`. The names identify which bare identifiers in the recovered code
+    originated as variables stored on the scope object, so the recovery can declare the live ones
+    and drop write-only routing slots.
     """
     if match.scope_param_name is None:
         return
@@ -3134,8 +3356,6 @@ def _collect_scope_props(stmts: list[Statement], match: _GeneratorCFFMatch) -> N
             name = _deepest_property_name(member)
             assert name is not None
             match.scope_prop_names.add(name)
-            if is_member_write_target(member):
-                match.scope_prop_writes.add(name)
 
 
 def _collect_read_names(node: Node | None, out: set[str]) -> None:
@@ -3176,22 +3396,40 @@ def _collect_read_names(node: Node | None, out: set[str]) -> None:
         _collect_read_names(child, out)
 
 
-def _is_pure_rhs(node: Node) -> bool:
+def _is_pure_rhs(node: Node, known: set[str]) -> bool:
     """
-    Conservative purity check for dead-store removal: the expression must contain no calls or nested
-    assignments, so dropping the statement cannot discard an observable side effect.
+    Conservative purity check for dead-store removal: the expression contains no call, `new`,
+    tagged template, assignment, update, `delete`, `yield` or `await`, and reads no name but those
+    in *known*, which the recovered code declares itself; any other name may be unbound, and reading
+    it throws. Dropping the statement then cannot discard an observable side effect.
     """
     for n in node.walk():
-        if isinstance(n, (JsCallExpression, JsAssignmentExpression)):
+        if isinstance(n, (
+            JsCallExpression,
+            JsNewExpression,
+            JsTaggedTemplateExpression,
+            JsAssignmentExpression,
+            JsUpdateExpression,
+            JsYieldExpression,
+            JsAwaitExpression,
+        )):
+            return False
+        if isinstance(n, JsUnaryExpression) and n.operator == 'delete':
+            return False
+        if isinstance(n, JsIdentifier) and n.name not in known and is_reference(n):
             return False
     return True
 
 
-def _remove_dead_scope_writes(stmts: list[Statement], dead: set[str]) -> list[Statement]:
+def _remove_dead_scope_writes(
+    stmts: list[Statement],
+    dead: set[str],
+    known: set[str],
+) -> list[Statement]:
     """
     Remove pure `name = value` writes (and such sub-expressions of sequences) where *name* is a
     write-only scope slot, i.e. routing bookkeeping that is never read. Writes with side-effecting
-    right-hand sides are preserved.
+    right-hand sides are preserved (`_is_pure_rhs`, with the names *known* to be declared).
     """
     if not dead:
         return stmts
@@ -3203,7 +3441,7 @@ def _remove_dead_scope_writes(stmts: list[Statement], dead: set[str]) -> list[St
             and isinstance(e.left, JsIdentifier)
             and e.left.name in dead
             and e.right is not None
-            and _is_pure_rhs(e.right)
+            and _is_pure_rhs(e.right, known)
         )
 
     result: list[Statement] = []
@@ -3229,16 +3467,12 @@ def _remove_dead_scope_writes(stmts: list[Statement], dead: set[str]) -> list[St
 
 def _declared_names_in_stmts(stmts: list[Statement]) -> set[str]:
     """
-    Collect var-declared binding names appearing anywhere in *stmts*.
+    The names the statement list *stmts* declares for the body it becomes: its own `let`, `const`,
+    class and function declarations and every `var` outside nested functions and classes
+    (`_hoisted_names`). A declaration inside a nested function, or a lexical one inside a nested
+    block, binds nothing for that body.
     """
-    names: set[str] = set()
-    for stmt in stmts:
-        for node in stmt.walk():
-            if isinstance(node, JsVariableDeclaration):
-                for decl in node.declarations:
-                    if isinstance(decl, JsVariableDeclarator):
-                        _collect_binding_names(decl.id, names)
-    return names
+    return _block_bound_names(stmts) | _hoisted_names(stmts, None)
 
 
 def _declare_recovered_scope_vars(
@@ -3259,7 +3493,13 @@ def _declare_recovered_scope_vars(
         for stmt in recovered:
             _collect_read_names(stmt, reads)
         dead = {p for p in props if p not in reads}
-        recovered = _remove_dead_scope_writes(recovered, dead)
+        known = (
+            props
+            | activation.inherited
+            | set(activation.namespaces)
+            | _declared_names_in_stmts(recovered)
+        )
+        recovered = _remove_dead_scope_writes(recovered, dead, known)
     present: set[str] = set()
     for stmt in recovered:
         for node in stmt.walk():
@@ -3305,8 +3545,7 @@ def _bind_main_arguments(recovered: list[Statement], match: _GeneratorCFFMatch) 
     if any(is_member_write_target(read) for read in reads):
         return False
     for read in reads:
-        substitute_use_position(read, JsUnaryExpression(
-            operator='void', operand=JsNumericLiteral(value=0), prefix=True))
+        substitute_use_position(read, make_undefined_expression())
     return True
 
 
@@ -3314,17 +3553,22 @@ def _settle_returns(
     recovered: list[Statement],
     match: _GeneratorCFFMatch,
     trailing: list[Statement],
+    wrapped: bool,
 ) -> list[Statement] | None:
     """
     The recovered code with every `return` of the generator doing what it did, or `None` where
-    that cannot be written. A return of the generator only ends the generator, and its value is the
-    result of the call. A returned call makes every such return a return of the function, and has
-    the function return `undefined` where the generator ends without one, which the recovered code
-    running on into the statements behind it (*trailing*) would not. The guard
-    `if (didReturn) { return result; }` makes a return that raises the flag a return of the
-    function and lets any other one fall through to what follows, which only a return at the end
-    of the recovered code could be written as. Without either, every return falls through, and
-    `sanitize_inlined_body` writes the one at the end as the expression it returns.
+    that cannot be written. The code replaces the call in the body of a function or a script, so
+    running off its end runs into the statements behind the call (*trailing*) and nothing else. A
+    return of the generator only ends the generator, and its value is the result of the call. A
+    returned call makes every such return a return of the function, and has the function return
+    `undefined` where the generator ends without one, which the recovered code running on into
+    *trailing* would not. The guard `if (didReturn) { return result; }` makes a return that raises
+    the flag a return of the function and lets any other one fall through to what follows, which
+    only a return at the end of the recovered code could be written as. A wrapper's run raises the
+    same flag when it returns, so where the call has *wrapped* one and *trailing* is not empty, a
+    wrapper called during the call would make the guard return where the recovered code runs on.
+    Without either, every return falls through, and `sanitize_inlined_body` writes the one at the
+    end as the expression it returns.
     """
     plain = False
     for node in walk_scope(match.switch_stmt):
@@ -3340,54 +3584,112 @@ def _settle_returns(
     if match.returns_value:
         return None if trailing else recovered
     if match.guarded:
-        return None if plain else recovered
+        return None if plain or (wrapped and trailing) else recovered
     return sanitize_inlined_body(recovered)
 
 
 def _scaffolding_is_private(
-    parent: Node,
+    model: SemanticModel,
     body: list[Statement],
     match: _GeneratorCFFMatch,
 ) -> bool:
     """
-    Whether nothing but the scaffolding the recovery removes refers to the flag and the result
-    of the generator's call: no code of the function around it, and no code of the generator,
-    which `_leaves_the_generator` asks of the recovered code.
+    Whether nothing but the scaffolding the recovery removes can reach a binding it removes: the
+    generator, and the flag and the result of its call (`_reached_only_from`).
     """
-    names = frozenset(n for n in (match.did_return_var, match.result_var) if n is not None)
+    removed = body[match.gen_decl_index:match.scaffolding_end + 1]
+    inside = {id(node) for statement in removed for node in statement.walk()}
+    generator = removed[0]
+    assert isinstance(generator, JsFunctionDeclaration) and generator.id is not None
+    names = {match.did_return_var, match.result_var}
+    anchors = [generator.id]
+    for statement in removed[1:]:
+        anchors.extend(
+            node for node in statement.walk()
+            if isinstance(node, JsIdentifier) and node.name in names
+        )
+    for anchor in anchors:
+        binding = model.binding_of(anchor) or model.resolve(anchor)
+        if binding is None or not _reached_only_from(model, binding, inside):
+            return False
+    return True
+
+
+def _reached_only_from(model: SemanticModel, binding: Binding, inside: set[int]) -> bool:
+    """
+    Whether every way the program can reach *binding* stands among the nodes whose ids are
+    *inside*: its references, those a `with` body resolves, the opaque reflective surfaces that
+    could name it (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_surface_sites`),
+    and every declaration that stores a value in it (`_declaration_stores`).
+    """
+    return (
+        all(id(node) in inside for node in model.references(binding))
+        and all(id(node) in inside for node in binding.dynamic_refs)
+        and all(id(node) in inside for node in model.reflection_surface_sites(binding))
+        and all(
+            id(node) in inside or not _declaration_stores(node) for node in binding.declarations
+        )
+    )
+
+
+def _declaration_stores(identifier: Node) -> bool:
+    """
+    Whether the declaration that *identifier* names puts a value in its binding, which all but a
+    declarator without an initializer do.
+    """
+    declarator = identifier.parent
+    return not (
+        isinstance(declarator, JsVariableDeclarator)
+        and declarator.id is identifier
+        and declarator.init is None
+    )
+
+
+def _declares_only_its_own_names(
+    model: SemanticModel,
+    body: list[Statement],
+    match: _GeneratorCFFMatch,
+    recovered: list[Statement],
+) -> bool:
+    """
+    Whether no code of the function around the call means anything else by a name the recovered
+    code declares for that function (`_declared_names_in_stmts`). The recovery makes the
+    generator's locals and the slots of its scope object locals of that function, where they would
+    otherwise capture a name the function reads from outside, merge with one it declares, or clash
+    with a lexical declaration of the same name. Every occurrence of such a name in the parameters
+    and the body of that function, outside the removed statements, has to resolve to a binding
+    declared below the function's own scope, and the function may not declare the name lexically.
+    The name a function declaration gives itself stands in the scope around it and is not read.
+    """
+    names = _declared_names_in_stmts(recovered)
     if not names:
         return True
-    home: Node | None = parent
-    while home is not None and not isinstance(home, (*FUNCTION_NODES, JsScript)):
-        home = home.parent
+    removed = body[match.gen_decl_index:match.scaffolding_end + 1]
+    inside = {id(node) for statement in removed for node in statement.walk()}
+    home = model.scope_of(body[match.scaffolding_end])
     if home is None:
         return False
-    removed = {id(stmt) for stmt in body[match.gen_decl_index:match.scaffolding_end + 1]}
-
-    def refers(node: Node, shadowed: frozenset[str]) -> bool:
-        if id(node) in removed:
+    for name in names:
+        binding = model.lookup(name, home)
+        if binding is not None and binding.scope is home and binding.is_lexical:
             return False
-        if (
-            isinstance(node, JsIdentifier)
-            and node.name in names
-            and node.name not in shadowed
-            and is_reference(node)
-        ):
-            return True
-        return any(
-            refers(child, shadowed | (names & bound)) for child, bound in _scoped_children(node)
-        )
-
-    roots: list[Node] = []
-    block: Node | None = home
-    if isinstance(home, FUNCTION_NODES):
-        roots.extend(home.params)
-        block = home.body
-    if isinstance(block, (JsBlockStatement, JsScript)):
-        roots.extend(block.body)
-    elif block is not None:
-        roots.append(block)
-    return not any(refers(root, frozenset()) for root in roots)
+    owner = home.node
+    roots: list[Node] = list(body)
+    if isinstance(owner, FUNCTION_NODES):
+        roots.extend(owner.params)
+    for root in roots:
+        for node in root.walk():
+            if (
+                id(node) in inside
+                or not isinstance(node, JsIdentifier)
+                or node.name not in names
+                or not is_use_position(node)
+            ):
+                continue
+            binding = model.binding_of(node) or model.resolve(node)
+            if binding is None or not home.contains(binding.scope, strict=True):
+                return False
+    return True
 
 
 def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch) -> bool:
@@ -3408,6 +3710,22 @@ def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch)
     return any(True for _ in _references_to(recovered, frozenset(names)))
 
 
+def _is_a_function_body(node: Node) -> bool:
+    """
+    Whether *node* holds the statements a script or a function runs rather than a block inside
+    them. Only there does running off the end of the recovered code mean what the end of the
+    generator meant, and only there do the slots it declares live as long as one call does.
+    """
+    if isinstance(node, JsScript):
+        return True
+    function = node.parent
+    return (
+        isinstance(node, JsBlockStatement)
+        and isinstance(function, FUNCTION_NODES)
+        and function.body is node
+    )
+
+
 class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
     """
     Recover original code from generator-based state-machine CFF dispatchers. Handles the pattern
@@ -3415,11 +3733,26 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
     machine driven by multiple state variables.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
+
     def _process_body(self, parent: Node, body: list[Statement]) -> None:
+        if not _is_a_function_body(parent):
+            return
         i = 0
         while i < len(body):
             match = _match_generator_cff(body, i)
             if match is None:
+                i += 1
+                continue
+            assert self._root is not None
+            model = model_cache(self, self._root).model
+            if not _scaffolding_is_private(model, body, match):
                 i += 1
                 continue
             machine = _extract_state_blocks(match)
@@ -3437,14 +3770,21 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
                 i += 1
                 continue
             for activation in wrappers:
-                _declare_wrapper_scope_vars(activation)
+                if activation.function is not None:
+                    _declare_wrapper_scope_vars(activation)
             recovered = _declare_recovered_scope_vars(recovered, main)
-            if _leaves_the_generator(recovered, match) or not _scaffolding_is_private(
-                parent, body, match
+            if (
+                _leaves_the_generator(recovered, match)
+                or not _declares_only_its_own_names(model, body, match, recovered)
             ):
                 i += 1
                 continue
-            settled = _settle_returns(recovered, match, body[match.scaffolding_end + 1:])
+            settled = _settle_returns(
+                recovered,
+                match,
+                body[match.scaffolding_end + 1:],
+                bool(wrappers),
+            )
             if settled is None:
                 i += 1
                 continue

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
+import threading
 import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts import TREE_RECURSION_DEPTH
 from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
+from refinery.lib.tools import RecursionDepth
 
 
 class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
@@ -2285,6 +2288,702 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                     self._run_transformer(source, JsGeneratorCFFUnflattening),
                 )
 
+    MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.t = n;
+                    var hold = function(...rest) {
+                      return gen(20, 30, {}, rest)["next"]()["value"];
+                    };
+                    return done = true, [hold, function () { return t; }];
+                    break;
+                  case 50:
+                    scope.t = args[0];
+                    return done = true, function () { return t; };
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_main_slot_is_declared_beside_a_wrapper_slot_of_its_name(self):
+        """
+        The wrapper's run keeps its own `t` on the scope object each call makes, and the main run
+        keeps another on its own. Declaring the wrapper's must not stop the main run's from being
+        declared, or the main run's `t` becomes a global every call of `outer` shares.
+        """
+        result = self._run_transformer(
+            self.MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(n) {
+              var t;
+              t = n;
+              var hold = function(...rest) {
+                var t;
+                t = rest[0];
+                return function() {
+                  return t;
+                };
+              };
+              return [hold, function() {
+                return t;
+              }];
+            }
+            """
+        ))
+
+    DEFAULT_READING_A_SLOT_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              switch (a + b) {
+                case 10:
+                  scope.v = 3;
+                  a = 40, b = 0;
+                  break;
+                case 40:
+                  return done = true, function (f = () => scope.v) { var scope; return f(); };
+                  break;
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_parameter_default_does_not_see_the_body_it_belongs_to(self):
+        """
+        The default `() => scope.v` is evaluated in the scope of the parameter list, where the
+        body's `var scope` does not exist, so it reads the generator's scope object.
+        """
+        result = self._run_transformer(self.DEFAULT_READING_A_SLOT_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var v;
+              v = 3;
+              return function(f = () => v) {
+                var scope;
+                return f();
+              };
+            }
+            """
+        ))
+
+    VAR_IN_A_BLOCK_WITH_A_LET_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.local = 7;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    { let t = 0; var local = 3; }
+                    return done = true, local + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BLOCK_FUNCTION_WITH_A_HOME_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.f = 0;
+                    NS.r = 0;
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    if (a > 0) {
+                      function f() { return "fn"; }
+                      r = f();
+                    }
+                    return done = true, r;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    FUNCTION_DECLARATION_WITH_A_HOME_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.member = 7;
+                    function member() { return 1; }
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, typeof member;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    PAYLOAD_DECLARING_THE_ARGUMENT_HOLDER_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var args = [7];
+                    return done = true, args[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_payload_declaring_the_argument_holder_reads_its_declaration(self):
+        result = self._run_transformer(
+            self.PAYLOAD_DECLARING_THE_ARGUMENT_HOLDER_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var args = [7];
+              return args[0];
+            }
+            """
+        ))
+
+    FLAG_AND_RESULT_OF_AN_OUTER_FUNCTION_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          var result, done;
+          function inner() {
+            function* gen(a, b, scope = {}, args) {
+              while (a + b !== 100) {
+                with (scope) {
+                  switch (a + b) {
+                    case 10:
+                      return done = true, 5;
+                      break;
+                  }
+                }
+              }
+            }
+            done = void 0;
+            result = gen(5, 5)["next"]()["value"];
+            if (done) { return result; }
+          }
+          inner();
+          return [result, done];
+        }
+        """
+    )
+
+    GENERATOR_CALLED_BEFORE_ITS_DECLARATION_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          var other = function () { return gen(40, 0)["next"]()["value"]; };
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, other;
+                    break;
+                  case 40:
+                    return done = true, 7;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RESULT_STORED_ON_AN_OBJECT_CFF = inspect.cleandoc(
+        """
+        function wrapper(box) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, 42;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          box.result = gen(5, 5)["next"]()["value"];
+        }
+        """
+    )
+
+    RETURNED_CALL_IN_A_BLOCK_CFF = inspect.cleandoc(
+        """
+        function wrapper(c) {
+          if (c) {
+            function* gen(a, b, scope = {}, args) {
+              while (a + b !== 100) {
+                with (scope) {
+                  switch (a + b) {
+                    case 10:
+                      console.log("ran");
+                      a = 90, b = 10;
+                      break;
+                  }
+                }
+              }
+            }
+            return gen(5, 5)["next"]()["value"];
+          }
+          return "after";
+        }
+        """
+    )
+
+    CALL_IN_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          var seen = [];
+          for (var i = 0; i < 3; i++) {
+            function* gen(a, b, scope = {}, args) {
+              while (a + b !== 100) {
+                with (scope) {
+                  switch (a + b) {
+                    case 10:
+                      scope.t = (scope.t || 0) + 1;
+                      seen.push(scope.t);
+                      a = 90, b = 10;
+                      break;
+                  }
+                }
+              }
+            }
+            gen(5, 5)["next"]()["value"];
+          }
+          return seen.join(",");
+        }
+        """
+    )
+
+    WRAPPER_MAKING_ITSELF_AGAIN_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.w = function(...r) { return gen(20, 30, scope, r)["next"]()["value"]; };
+                    return done = true, scope.w;
+                    break;
+                  case 50:
+                    scope.w = function(...r) { return gen(20, 30, scope, r)["next"]()["value"]; };
+                    return done = true, 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    COPIED_SLOT_CHANGED_BY_THE_CREATOR_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.t = 1;
+                    scope.w = function(...rest) {
+                      return gen(20, 30, {t: scope.t}, rest)["next"]()["value"];
+                    };
+                    scope.f = w();
+                    scope.t = 2;
+                    return done = true, f;
+                    break;
+                  case 50:
+                    return done = true, function () { return t; };
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    HANDED_ON_NAMESPACE_REBOUND_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.keep = function(...rest) {
+                      return gen(20, 30, {NS: scope.NS, Loc: {}}, rest)["next"]()["value"];
+                    };
+                    return done = true, [NS.keep, function () { return typeof NS; }];
+                    break;
+                  case 50:
+                    NS = 5;
+                    return done = true, 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ARGUMENT_STORE_IN_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.count = function(...rest) {
+                      return gen(20, 30, {NS: scope.NS, Loc: {}}, rest)["next"]()["value"];
+                    };
+                    return done = true, NS.count;
+                    break;
+                  case 50:
+                    Loc.n = 0;
+                    a = 55, b = 0;
+                    break;
+                  case 55:
+                    [Loc.first, ...Loc.others] = args;
+                    a = 60, b = 0;
+                    break;
+                  case 60:
+                    Loc.others.push(0);
+                    Loc.n = Loc.n + 1;
+                    if (Loc.n < 3) {
+                      a = 55, b = 0;
+                    } else {
+                      a = 70, b = 0;
+                    }
+                    break;
+                  case 70:
+                    return done = true, Loc.first + ":" + Loc.others.length;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    FLAG_RAISED_BY_A_WRAPPER_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.w = function(...rest) {
+                      return gen(40, 0, {}, rest)["next"]()["value"];
+                    };
+                    scope.v = w();
+                    a = 90, b = 10;
+                    break;
+                  case 40:
+                    return done = true, 42;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return "after";
+        }
+        """
+    )
+
+    RECEIVER_AND_ARGUMENTS_OF_THE_GENERATOR_CFF = inspect.cleandoc(
+        """
+        var host = { method: function () {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, [this === host, arguments.length];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        } };
+        """
+    )
+
+    YIELD_IN_A_CASE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.x = yield 1;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, x;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return "fell";
+        }
+        """
+    )
+
+    SLOT_NAMED_LIKE_A_PARAMETER_CFF = inspect.cleandoc(
+        """
+        function wrapper(t) {
+          var get = function () { return t; };
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.t = 5;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, [get, t];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    SLOT_UNDER_A_STRING_KEY_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope["a-b"] = 2;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, scope["a-b"] + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    STRICT_BLOCK_FUNCTION_CFF = inspect.cleandoc(
+        """
+        'use strict';
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              switch (a + b) {
+                case 10:
+                  scope.peek = function () { { function a() {} } return a; };
+                  a = 40, b = 0;
+                  break;
+                case 40:
+                  return done = true, scope.peek();
+                  break;
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
+        """
+        A flag and a result some other function reads, a generator called from outside its
+        scaffolding, a result stored on an object, a returned call inside a block, a call inside a
+        loop, a key a wrapper copies from its creator that the creator then changes, a namespace a
+        wrapper hands on and rebinds, a flag a wrapper raises before code behind the guard, a
+        generator reading its own receiver and arguments or suspending, a slot named like a
+        parameter the function around the call reads, a slot under a key no declaration can bind,
+        and a block function in strict code: the recovered code would mean something else where it
+        lands, and each generator is left as it is.
+        """
+        for source in (
+            self.FLAG_AND_RESULT_OF_AN_OUTER_FUNCTION_CFF,
+            self.GENERATOR_CALLED_BEFORE_ITS_DECLARATION_CFF,
+            self.RESULT_STORED_ON_AN_OBJECT_CFF,
+            self.RETURNED_CALL_IN_A_BLOCK_CFF,
+            self.CALL_IN_A_LOOP_CFF,
+            self.COPIED_SLOT_CHANGED_BY_THE_CREATOR_CFF,
+            self.HANDED_ON_NAMESPACE_REBOUND_CFF,
+            self.FLAG_RAISED_BY_A_WRAPPER_CFF,
+            self.RECEIVER_AND_ARGUMENTS_OF_THE_GENERATOR_CFF,
+            self.YIELD_IN_A_CASE_CFF,
+            self.SLOT_NAMED_LIKE_A_PARAMETER_CFF,
+            self.SLOT_UNDER_A_STRING_KEY_CFF,
+            self.STRICT_BLOCK_FUNCTION_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
+    def test_generator_cff_wrapper_making_itself_again_is_declined_in_time(self):
+        """
+        The wrapper's run makes the same wrapper again, so recovering every wrapper the recovered
+        code holds never ends. The recovery has to give up instead; a run that does not end within
+        a minute fails here rather than hanging the suite.
+        """
+        source = self.WRAPPER_MAKING_ITSELF_AGAIN_CFF
+        outcome: list[str] = []
+
+        def recover():
+            outcome.append(self._run_transformer(source, JsGeneratorCFFUnflattening))
+
+        worker = threading.Thread(target=recover, daemon=True)
+        worker.start()
+        worker.join(60)
+        self.assertEqual(outcome, [self._run_transformers(source)])
+
+    def test_generator_cff_recovery_survives_a_deep_expression_beside_the_call(self):
+        """
+        The checks that ask whether the scaffolding is private read the whole function around the
+        call, which holds a chain of two thousand additions here; the recovery still goes through
+        under the recursion depth the unit runs with.
+        """
+        chain = ' + '.join(['q'] * 2000)
+        source = inspect.cleandoc(
+            F"""
+            function wrapper(q) {{
+              var s = {chain};
+              function* gen(a, b, scope = {{}}, args) {{
+                while (a + b !== 100) {{
+                  with (scope) {{
+                    switch (a + b) {{
+                      case 10:
+                        return done = true, s;
+                        break;
+                    }}
+                  }}
+                }}
+              }}
+              var done;
+              var result = gen(5, 5)["next"]()["value"];
+              if (done) {{ return result; }}
+            }}
+            """
+        )
+        with RecursionDepth(TREE_RECURSION_DEPTH):
+            result = self._run_transformer(source, JsGeneratorCFFUnflattening)
+        self.assertNotIn('function*', result)
+
 
 #: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
 #: appended to the fixture and to its recovery alike. A fixture that already prints on its own
@@ -2352,6 +3051,32 @@ ENTRY_POINTS = {
     'GENERATOR_RETURN_WITHOUT_THE_FLAG_CFF': 'console.log(wrapper());',
     'RESULT_READ_AFTER_THE_GUARD_CFF': 'console.log(wrapper());',
     'FUNCTION_BETWEEN_GENERATOR_AND_CALL_CFF': 'console.log(wrapper());',
+    'MAIN_SLOT_NAMED_LIKE_A_WRAPPER_SLOT_CFF': (
+        'var one = outer(1), two = outer(2);'
+        ' console.log(one[1](), two[1](), one[0](3)(), typeof t);'
+    ),
+    'DEFAULT_READING_A_SLOT_CFF': 'console.log(wrapper()());',
+    'VAR_IN_A_BLOCK_WITH_A_LET_CFF': 'console.log(wrapper());',
+    'BLOCK_FUNCTION_WITH_A_HOME_CFF': 'console.log(JSON.stringify(wrapper()));',
+    'FUNCTION_DECLARATION_WITH_A_HOME_CFF': 'console.log(wrapper());',
+    'PAYLOAD_DECLARING_THE_ARGUMENT_HOLDER_CFF': 'console.log(wrapper());',
+    'FLAG_AND_RESULT_OF_AN_OUTER_FUNCTION_CFF': 'console.log(JSON.stringify(outer()));',
+    'GENERATOR_CALLED_BEFORE_ITS_DECLARATION_CFF': 'console.log(wrapper()());',
+    'RESULT_STORED_ON_AN_OBJECT_CFF': 'var box = {}; wrapper(box); console.log(box.result);',
+    'RETURNED_CALL_IN_A_BLOCK_CFF': 'console.log(wrapper(true));',
+    'CALL_IN_A_LOOP_CFF': 'console.log(wrapper());',
+    'WRAPPER_MAKING_ITSELF_AGAIN_CFF': 'console.log(outer()());',
+    'COPIED_SLOT_CHANGED_BY_THE_CREATOR_CFF': 'console.log(outer()());',
+    'HANDED_ON_NAMESPACE_REBOUND_CFF': 'var r = outer(); r[0](); console.log(r[1]());',
+    'ARGUMENT_STORE_IN_A_LOOP_CFF': 'var count = outer(); console.log(count(1, 2, 3), count(4));',
+    'FLAG_RAISED_BY_A_WRAPPER_CFF': 'console.log(wrapper());',
+    'RECEIVER_AND_ARGUMENTS_OF_THE_GENERATOR_CFF': (
+        'console.log(JSON.stringify(host.method(1, 2, 3)));'
+    ),
+    'YIELD_IN_A_CASE_CFF': 'console.log(wrapper());',
+    'SLOT_NAMED_LIKE_A_PARAMETER_CFF': 'var r = wrapper("param"); console.log(r[0](), r[1]);',
+    'SLOT_UNDER_A_STRING_KEY_CFF': 'console.log(wrapper());',
+    'STRICT_BLOCK_FUNCTION_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
