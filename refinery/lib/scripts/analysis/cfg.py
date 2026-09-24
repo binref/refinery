@@ -373,7 +373,7 @@ class ControlFlowGraph:
         self._hub_bound: set[int] = set()
         self._resuming = False
         self._fallback: dict[int, CfgNode] = {}
-        self._exit_reach: dict[int, tuple[frozenset[int], frozenset[int]]] = {}
+        self._reached_after: dict[tuple[int, bool], frozenset[int]] = {}
         self.entry = CfgNode(self, None)
         self.exit = CfgNode(self, None)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
@@ -436,17 +436,27 @@ class ControlFlowGraph:
         first set and may not have happened at a node of the second. Once control has left *source*
         normally the store is done, so only the first edge out decides which set a node belongs to,
         and a node control rejoins both ways — the statement after a `try` whose handler swallowed
-        the throw — is in both.
+        the throw — is in both. A caller that needs only the second set asks
+        `reached_after_a_throw`.
         """
-        found = self._exit_reach.get(id(source))
+        return self._reached_after_cached(source, raising=False), self.reached_after_a_throw(source)
+
+    def reached_after_a_throw(self, source: CfgNode) -> frozenset[int]:
+        """
+        The second set `exit_reach` answers: the ids of the nodes reached from *source* by first
+        leaving it along an edge `raise_taken` answers for. Each set is computed on first use and
+        kept, so a caller asking only this one never pays for the other, which is most of the graph.
+        """
+        return self._reached_after_cached(source, raising=True)
+
+    def _reached_after_cached(self, source: CfgNode, *, raising: bool) -> frozenset[int]:
+        key = (id(source), raising)
+        found = self._reached_after.get(key)
         if found is None:
-            found = self._exit_reach[id(source)] = (
-                self._reached_after(source, raising=False),
-                self._reached_after(source, raising=True),
-            )
+            found = self._reached_after[key] = self._reached_after_uncached(source, raising=raising)
         return found
 
-    def _reached_after(self, source: CfgNode, *, raising: bool) -> frozenset[int]:
+    def _reached_after_uncached(self, source: CfgNode, *, raising: bool) -> frozenset[int]:
         seen: set[int] = set()
         stack: list[CfgNode] = []
         for successor in source.successors:

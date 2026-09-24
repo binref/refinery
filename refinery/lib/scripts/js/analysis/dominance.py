@@ -66,8 +66,8 @@ class DominanceModel(DominatorModel):
         statement: in `try { r = window; } catch (e) {} use(r);` the statement `r = window`
         dominates `use(r)`, yet the handler runs exactly when reading `window` threw and `r` was
         never written. So a point
-        `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.exit_reach` places after a throw out of
-        the statement is ordered after it only when
+        `refinery.lib.scripts.analysis.cfg.ControlFlowGraph.reached_after_a_throw` places after a
+        throw out of the statement is ordered after it only when
         `refinery.lib.scripts.js.analysis.model.SemanticModel.statement_cannot_throw` holds for the
         statement. Not reflexive: a point sharing the statement is refused, since statement
         granularity cannot order within one statement.
@@ -82,7 +82,7 @@ class DominanceModel(DominatorModel):
         """
         if a is b or not self.dominates_node(graph, a, b, Projection.MAY):
             return False
-        _, thrown = graph.exit_reach(a)
+        thrown = graph.reached_after_a_throw(a)
         return id(b) not in thrown or self.model.statement_cannot_throw(a.element)
 
     def runs_before_function(self, definition: Node, function: Node) -> bool:
