@@ -277,6 +277,14 @@ def _occurrences(root: Node, key: str) -> list[Ps1Variable]:
     ]
 
 
+def _occurrences_ahead_of_the_read(root: Ps1Script, key: str) -> int:
+    """
+    How many occurrences of the variable under `key` stand in the statements of `root` before its
+    last, which in a ledger script is the read whose output is asked about.
+    """
+    return sum(len(_occurrences(statement, key)) for statement in root.body[:-1])
+
+
 def _dot_sourced_blocks(root: Node) -> list[Ps1ScriptBlock]:
     """
     Every script block `root` dot-invokes. Such a block runs in the caller's scope, so a store it
@@ -722,14 +730,14 @@ class _Ps1Ledger(TestPs1):
         """
         The output must still be able to write `written` for a script that changes the array the
         name under `key` holds without spelling that name: either it already spells what is
-        written, or the name is still spelled where the array was handed on, which is the whole of
-        what carries the change to the read. `corrupt` is what an output that spelled the array in
-        that position writes instead.
+        written, or every occurrence of the name ahead of the read is still spelled, which is the
+        whole of what carries the change to the read. A copy spelled where the source handed on
+        the name is one occurrence fewer, and `corrupt` is what such an output writes instead.
         """
         tree = self._deobfuscated_tree(source)
-        names_it = any(
-            isinstance(node, Ps1Variable) and _binding_key(node) == key for node in tree.walk())
-        self._assertWrites(tree, written, corrupt, names_it)
+        kept = _occurrences_ahead_of_the_read(tree, key) >= _occurrences_ahead_of_the_read(
+            Ps1Parser(source).parse(), key)
+        self._assertWrites(tree, written, corrupt, kept)
 
 
 class TestPs1Corruptions(_Ps1Ledger):
@@ -1169,7 +1177,6 @@ class TestPs1Corruptions(_Ps1Ledger):
         tree = self._deobfuscated_tree("$x = 'a'; & { Write-Host $script:x }; $x = 'b'")
         self._assertPrints(tree, 'x', 'a', 'b')
 
-    @unittest.expectedFailure
     def test_function_body_reads_the_script_scoped_variable(self):
         """
         `$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'` prints `a` under 5.1.
@@ -2161,9 +2168,9 @@ class TestPs1AStoreIsReadByEveryCallStandingAfterIt(_Ps1Ledger):
 
 class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(_Ps1Ledger):
     """
-    `ForEach-Object` runs its block in its caller's scope rather than in a child scope, so
-    `$local:x` inside it is the caller's `$x`. Measured on 5.1 in `corpus.BEHAVIOURS`, the first
-    script writes `b` and the second writes `a`.
+    `ForEach-Object` runs its block in its caller's scope rather than in a child scope, and so does
+    a dot, so `$local:x` inside either is the caller's `$x`. Measured on 5.1 in `corpus.BEHAVIOURS`,
+    each store is seen by the caller's read and each read writes the caller's `a`.
 
     The model gives every block a scope of its own and files `$local:x` there, as a variable
     nothing outside the block reads or writes.
@@ -2180,3 +2187,364 @@ class TestPs1ALocalQualifierInABlockRunInItsCallersScopeNamesTheCallersVariable(
         tree = self._deobfuscated_tree(
             "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'")
         self._assertWrites(tree, [['a']], [[None]], _stores_value(tree, 'x', 'a'))
+
+    @unittest.expectedFailure
+    def test_a_local_store_in_a_dot_sourced_block_is_seen_by_the_caller(self):
+        tree = self._deobfuscated_tree("$x = 'a'; . { $local:x = 'b' }; Write-Output $x")
+        self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'x', 'b'))
+
+    @unittest.expectedFailure
+    def test_a_local_read_in_a_dot_sourced_block_sees_the_callers_store(self):
+        tree = self._deobfuscated_tree("$x = 'a'; . { Write-Output $local:x }; $x = 'b'")
+        self._assertWrites(tree, [['a']], [[None]], _stores_value(tree, 'x', 'a'))
+
+
+class TestPs1AnAssignmentUsedAsAValueHandsOnTheObjectItStored(_Ps1Ledger):
+    """
+    An assignment is a value where it is not a statement of its own, and that value is the object
+    it stored rather than a copy. Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes the
+    number the store through the other name put at the front.
+    """
+
+    def test_the_outer_name_of_a_chained_assignment_holds_the_array_the_read_names(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $z = $y = $x; $z[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_the_outer_name_of_a_chained_assignment_holds_the_array_the_inner_one_was_given(self):
+        self._assertTheStoreReachesTheName(
+            '$y = $x = 1, 2, 3; $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_hash_entry_given_an_assignment_holds_the_array_it_stored(self):
+        self._assertTheStoreReachesTheName(
+            '$h = @{ k = ($x = 1, 2, 3) }; $h.k[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+
+class TestPs1APlaceTheClimbPassesByKeepsWhatItIsHanded(_Ps1Ledger):
+    """
+    Each script hands the array to a place that keeps it: a member that is the object itself, a
+    filtering cmdlet handed the array as `-InputObject` or given a block that runs over each object,
+    an information record, a parameter default, a hashtable key, a call filling a slot from its
+    receiver or writing the slot it is handed, a class method returning it whole, a class property
+    initialized with it, and the right operand of an addition to `$null`. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, each writes what the store through that place did to the array.
+    """
+
+    def test_a_name_given_the_sync_root_holds_the_array_itself(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $y = $x.SyncRoot; $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_name_given_the_base_object_of_the_wrapper_holds_the_array_itself(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $y = $x.psobject.BaseObject; $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_select_object_writes_an_input_object_whole(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $y = Select-Object -InputObject $x; $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_where_object_filter_runs_over_the_element_and_not_a_copy(self):
+        self._assertTheStoreReachesTheName(
+            '$p = @(@(1, 2), @(3, 4)); $p | Where-Object { $_[0] = 9 }; Write-Output $p[0][0]',
+            'p',
+            [[9]],
+            [[1]],
+        )
+
+    def test_an_information_record_holds_the_array_it_was_handed(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $r = Write-Information $x 6>&1; $r.MessageData[0] = 9; '
+            'Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_parameter_default_is_bound_to_the_array_it_reads(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; & { param($a = $x) [Array]::Reverse($a) }; Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_hashtable_keeps_the_array_it_is_given_as_a_key(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{}; $h[$x] = 'v'; foreach ($k in @($h.Keys)) { $k[0] = 9 }; "
+            'Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_copy_to_fills_the_slot_with_the_arrays_its_receiver_holds(self):
+        self._assertTheStoreReachesTheName(
+            '$x = @(@(1, 2), @(3, 4)); $y = 0, 0; $x.CopyTo($y, 0); $y[0][0] = 9; '
+            'Write-Output $x[0][0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_reverse_turns_around_the_array_a_subexpression_hands_it(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; [Array]::Reverse($(,$x)); Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_class_method_returns_the_array_whole(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; class C { static [object] M() { return $script:x } }; '
+            '$y = [C]::M(); $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_class_property_is_initialized_with_the_array_itself(self):
+        self._assertTheStoreReachesTheName(
+            'class C { $P = $script:x }; $x = 1, 2, 3; $o = [C]::new(); $o.P[0] = 9; '
+            'Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_adding_the_array_to_null_hands_on_the_array_itself(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+
+class TestPs1ACollectionOfWrittenObjectsHoldsTheObjectsThemselves(_Ps1Ledger):
+    """
+    A value made of what was written out holds each written object: `@(,$x)` is an array whose one
+    element is the array `$x` holds, and a multi-assignment of a record written without enumerating
+    gives its first name that record. Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes
+    the number the store put at the front.
+    """
+
+    def test_a_foreach_over_a_collected_array_binds_the_array_itself(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; foreach ($e in @(,$x)) { $e[0] = 9 }; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_multi_assignment_of_one_written_record_binds_the_record(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $a, $b = Write-Output -NoEnumerate $x; $a[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+
+class TestPs1ASecondNameInABodyIsOnTheArrayTheReadReached(_Ps1Ledger):
+    """
+    A read in a body reaches the caller's variable until the body gives the name one of its own, and
+    a `ForEach-Object` body gives it nothing: it runs in its caller's scope, so the name it assigns
+    is the caller's. Measured on 5.1 in `corpus.BEHAVIOURS`, both scripts write 9.
+    """
+
+    def test_a_read_before_the_bodys_own_write_hands_on_the_callers_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; & { $y = $x; $y[0] = 9; $x = 5 }; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_name_assigned_in_a_foreach_object_body_is_the_callers(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; 1 | ForEach-Object { $y = $x }; $y[0] = 9; Write-Output $x[0]',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+
+class TestPs1AnIncrementThroughAnElementChangesTheArray(_Ps1Ledger):
+    """
+    `$y[0]++` writes the element it reads, so it changes the array `$y` shares with `$x`. Measured
+    on 5.1 in `corpus.BEHAVIOURS`, the script writes 2.
+    """
+
+    def test_an_increment_through_a_second_name_reaches_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $y = $x; $y[0]++; Write-Output $x[0]',
+            'x',
+            [[2]],
+            [[1]],
+        )
+
+
+class TestPs1AnInvocationEvaluatesItsArgumentsBeforeItRunsTheBlock(_Ps1Ledger):
+    """
+    A command evaluates every argument before it runs the block it invokes, so a read in the block
+    observes what an argument written after it stored. Measured on 5.1 in `corpus.BEHAVIOURS`, the
+    first script writes 9 and the second writes `b`.
+    """
+
+    def test_a_read_in_the_block_observes_the_store_an_argument_made_through_a_container(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $h = @{ k = $x }; & { Write-Output $x[0] } ($h.k[0] = 9)',
+            'x',
+            [[9]],
+            [[1]],
+        )
+
+    def test_a_read_in_the_block_observes_the_store_an_argument_made(self):
+        tree = self._deobfuscated_tree("$x = 'a'; & { Write-Output $x } ($x = 'b')")
+        self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'x', 'b'))
+
+
+class TestPs1AReadAScopeCannotSeeIsNotGivenTheValue(_Ps1Ledger):
+    """
+    A `trap` body runs in a scope of its own, where `$local:x` finds nothing, and a variable a
+    command makes private is hidden from a child scope. Measured on 5.1 in `corpus.BEHAVIOURS`,
+    neither script writes `a`.
+    """
+
+    def test_a_local_read_in_a_trap_body_does_not_see_the_enclosing_variable(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; if ($true) { trap { Write-Output $local:x; continue }; throw 'e' }")
+        self.assertNotIn(['a'], _output_writes(tree))
+
+    def test_a_variable_new_variable_made_private_is_hidden_from_a_child_scope(self):
+        tree = self._deobfuscated_tree(
+            "New-Variable -Name x -Option Private; $x = 'a'; & { Write-Output $x }")
+        self.assertNotIn(['a'], _output_writes(tree))
+
+
+class TestPs1ANameIsWrittenByMoreThanItsSpellingsAsAVariable(_Ps1Ledger):
+    """
+    A store read only through a qualifier is still read, and a command naming a variable assigns
+    it. Measured on 5.1 in `corpus.BEHAVIOURS`, the first script writes 0 before 5 and the second
+    writes 6. `Get-Random -Maximum 1` is always 0, and it is there because nothing reads that off
+    the source: the store has to survive for the read to write it.
+    """
+
+    def test_a_store_read_through_the_script_qualifier_is_not_overwritten_unread(self):
+        tree = self._deobfuscated_tree(
+            '$x = Get-Random -Maximum 1; Write-Output $script:x; $x = 5; Write-Output $x')
+        self.assertTrue(any(
+            _invocations(store, frozenset({'get-random'})) for store in _stores(tree, 'x')))
+
+    def test_a_name_new_variable_assigns_is_not_read_as_null(self):
+        tree = self._deobfuscated_tree('New-Variable -Name q -Value 5; Write-Output ($q + 1)')
+        self._assertWrites(tree, [[6]], [[1]], bool(_occurrences(tree, 'q')))
+
+
+class TestPs1AStoreNoStatementOfTheScriptPlacesIsStillAStore(_Ps1Ledger):
+    """
+    A class property's initializer runs each time the class is constructed and not at the class
+    statement it is written in, and an array's `Set` and `Clear` write the array they are called
+    on. Measured on 5.1 in `corpus.BEHAVIOURS`, the scripts write 42, 5, 9 and `$null`.
+    """
+
+    def test_a_reference_in_a_class_property_initializer_writes_at_construction(self):
+        tree = self._deobfuscated_tree(
+            "class C { $P = [int]::TryParse('42', [ref]$script:x) }; $x = 0; $o = [C]::new(); "
+            'Write-Output $x')
+        self._assertWrites(tree, [[42]], [[0]], _stores_value(tree, 'x', 0))
+
+    def test_a_store_in_a_class_property_initializer_writes_at_construction(self):
+        tree = self._deobfuscated_tree(
+            "class C { $P = ($script:x = 5) }; $x = 0; $o = [C]::new(); Write-Output $x")
+        self._assertWrites(tree, [[5]], [[0]], _stores_value(tree, 'x', 0))
+
+    def test_an_array_set_writes_the_array_it_is_called_on(self):
+        tree = self._deobfuscated_tree('$x = 1, 2, 3; $x.Set(0, 9); Write-Output $x[0]')
+        writes_into_the_variable = any(
+            _reads_variable(call.object, 'x') for call in _instance_calls(tree, 'set'))
+        self._assertWrites(tree, [[9]], [[1]], writes_into_the_variable)
+
+    def test_an_array_clear_writes_the_array_it_is_called_on(self):
+        tree = self._deobfuscated_tree('$x = 1, 2, 3; $x.Clear(); Write-Output $x[0]')
+        writes_into_the_variable = any(
+            _reads_variable(call.object, 'x') for call in _instance_calls(tree, 'clear'))
+        self._assertWrites(tree, [[None]], [[1]], writes_into_the_variable)
+
+
+class TestPs1AVariableTheSessionStateWritesByNameIsWritten(_Ps1Ledger):
+    """
+    `$ExecutionContext.SessionState.PSVariable.Set('x', 'b')` assigns `$x` by name. Measured on 5.1
+    in `corpus.BEHAVIOURS`, the script writes `b`.
+
+    The call is read as a method of the automatic variable it is called on and as nothing else, so
+    the read below it is folded to the store before it.
+    """
+
+    @unittest.expectedFailure
+    def test_a_read_after_the_session_state_wrote_the_name_is_not_the_store_before_it(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x")
+        self._assertWrites(tree, [['b']], [['a']], bool(_instance_calls(tree, 'set')))
+
+
+class TestPs1ACopyIsNotPutWhereCodeNobodyCanReadMayStoreThroughIt(_Ps1Ledger):
+    """
+    Code nobody can read may store through anything the script can name, a container among them,
+    and a store through a container holding the array `$x` holds changes that array. Measured on
+    5.1 in `corpus.BEHAVIOURS`, the script writes `9 2 3`: the payload is `$h.k[0] = 9`, picked by
+    an index no reading of the source settles.
+
+    A script that spells no store in place lets every hand-off but the one to a second name
+    through, so the array is spelled into the hash literal and the payload is handed a copy.
+    """
+
+    @unittest.expectedFailure
+    def test_the_container_is_still_handed_the_array_the_name_holds(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+            'iex $c; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1ABodyWritingAByteArrayWritesBytes(_Ps1Ledger):
+    """
+    `New-Object byte[] 2` makes an array of Bytes, and a body that fills and writes it writes
+    Bytes. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes the Bytes 5 and 1.
+
+    The call is folded to the numbers alone, and spelled bare they are two Int32 values: the value
+    the ledger compares is right and the type it is written as is not.
+    """
+
+    @unittest.expectedFailure
+    def test_a_folded_call_to_a_body_writing_a_byte_array_does_not_spell_bare_numbers(self):
+        tree = self._deobfuscated_tree(
+            'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
+            'Write-Output (dec 5)')
+        self.assertNotEqual(_output_writes(tree), [[5, 1]])

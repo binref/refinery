@@ -542,11 +542,16 @@ class ElementLocator:
     graph node stands for (`node_of`), or by climbing to the enclosing statement for one nested
     inside an expression (`locate`). Every flow-sensitive layer built on the graphs shares it, so the
     AST-to-graph mapping and its parent-climb live in one place.
+
+    *deferred* names the node types whose content a language evaluates at a time of its own rather
+    than where the node is written, outside every body a graph is drawn for: the initializer of a
+    PowerShell class property runs at each construction, not at the class statement.
     """
 
-    def __init__(self, graphs: dict[int, ControlFlowGraph]):
+    def __init__(self, graphs: dict[int, ControlFlowGraph], deferred: tuple[type, ...] = ()):
         self._element_graph: dict[int, ControlFlowGraph] = {}
         self._owners = {id(graph.owner) for graph in graphs.values()}
+        self._deferred = deferred
         for graph in graphs.values():
             for node in graph.nodes:
                 if node.element is not None:
@@ -574,7 +579,8 @@ class ElementLocator:
         caller reads that as unknown.
 
         The body *element* is itself is not its own boundary: a block is a value written at a point
-        in the body around it, so locating one climbs out to the statement that mentions it.
+        in the body around it, so locating one climbs out to the statement that mentions it. A
+        deferred node is a boundary in the same way a body is, for the same reason.
         """
         cursor: Node | None = element
         while cursor is not None:
@@ -583,7 +589,9 @@ class ElementLocator:
                 node = graph.node_of(cursor)
                 if node is not None:
                     return graph, node
-            if cursor is not element and id(cursor) in self._owners:
+            if cursor is not element and (
+                id(cursor) in self._owners or isinstance(cursor, self._deferred)
+            ):
                 return None
             cursor = cursor.parent
         return None
@@ -1330,12 +1338,12 @@ class ControlFlowModel:
     The per-body control-flow graphs of one script, paired with the `ElementLocator` that maps any
     AST node to the graph node evaluating it. Built once over the script root — the graphs are purely
     syntactic and need no semantic model — and shared by every solver layered on it, which would
-    otherwise each rebuild the whole set.
+    otherwise each rebuild the whole set. *deferred* is the `ElementLocator` argument of that name.
     """
 
-    def __init__(self, graphs: dict[int, ControlFlowGraph]):
+    def __init__(self, graphs: dict[int, ControlFlowGraph], deferred: tuple[type, ...] = ()):
         self.graphs = graphs
-        self._locator = ElementLocator(graphs)
+        self._locator = ElementLocator(graphs, deferred)
 
     def graph_of(self, owner: Node) -> ControlFlowGraph | None:
         """

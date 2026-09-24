@@ -624,6 +624,16 @@ class Ps1TypeWorld:
         """
         return self.closed_for_the_whole_run and not self.command_shadowed(name)
 
+    def runs_the_command_it_names(self, name: str) -> bool:
+        """
+        Whether the command `name` runs the command it names wherever the script calls it: the
+        command table is closed for the whole run and the script does not take the name over. This
+        is the command half of `may_trust_command_name` alone. A `class` or an `Add-Type` changes
+        what a *type* name denotes and never what a command name runs, so a caller asking only which
+        command a name runs reads this rather than refusing over a mutation that cannot answer it.
+        """
+        return self.command_table_closed and not self.command_shadowed(name)
+
     @property
     def shadowed_names(self) -> frozenset[str]:
         """

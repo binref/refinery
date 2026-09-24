@@ -1097,3 +1097,78 @@ class TestPs1AnUnsetReadIsNotNullWhereADataCodeLeakCanAssignIt(TestPs1):
                 Write-Host 'live'
                 """
             ))
+
+
+class TestPs1AnArrayHandedOnFoldsWhereNothingCanChangeItAfterwards(TestPs1):
+    """
+    A hand-off only matters where something may change the object after it. An array handed to a
+    call is still folded into it where nothing that may change it runs between its write and the
+    call, and a class definition leaves `Write-Host` the command that keeps nothing it is handed:
+    a class changes what a type name denotes and never what a command name runs.
+    """
+
+    def test_a_buffer_folds_into_the_call_whose_result_is_invoked(self):
+        self.assertEqual(
+            self._deobfuscate_iterative("$b = 'Write-Host', 'hi'; iex ([string]::Join(' ', $b))"),
+            'Write-Host hi',
+        )
+
+    def test_a_store_into_another_array_before_the_call_does_not_hold_the_argument_back(self):
+        self.assertIn(
+            "Write-Output '1,2,3'",
+            self._deobfuscate_iterative(
+                "$a = 1, 2, 3; $b = 4, 5, 6; $b[0] = 9; Write-Output ([string]::Join(',', $a))"),
+        )
+
+    def test_a_class_definition_does_not_make_write_host_keep_its_argument(self):
+        self.assertIn(
+            'Write-Output 2',
+            self._deobfuscate_iterative(
+                'class Q {}; $a = 1, 2, 3; Write-Host $a; $b = 4, 5, 6; $b[0] = 9; '
+                'Write-Output $a[1]'),
+        )
+
+
+class TestPs1AStoreThatCannotReachAHandedOnArrayDoesNotHoldItBack(TestPs1):
+    """
+    A store holds back an array handed to a call only if it can reach that array. Measured on 5.1
+    in `corpus.CLAIMS`, the first script writes `Hi` and the second `5 7 5`.
+
+    Every store in place counts against every array a hand-off exposes, wherever it stands: the
+    store into the fresh `$buf` after the call, and the one the decoder body makes into its own
+    buffer, each keep the array out of the call that reads it. Neither can reach it, since neither
+    stores through a name the array was ever handed to.
+    """
+
+    @unittest.expectedFailure
+    def test_a_store_into_a_fresh_buffer_after_the_call_does_not_hold_back_its_argument(self):
+        self.assertIn(
+            "Write-Output 'Hi'",
+            self._deobfuscate_iterative(
+                '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); '
+                'Write-Output $s; $buf = 0, 0; $buf[0] = 7'),
+        )
+
+    @unittest.expectedFailure
+    def test_a_decoder_storing_into_its_own_buffer_does_not_hold_back_the_key(self):
+        self.assertNotIn(
+            '$key',
+            self._deobfuscate_iterative(
+                'function dec($d, $k) { $o = @(0) * $d.Length; '
+                'for ($i = 0; $i -lt $d.Length; $i++) { '
+                '$o[$i] = $d[$i] -bxor $k[$i % $k.Length] }; '
+                '$o }; $key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)'),
+        )
+
+
+class TestPs1ASecondNameIsNotACopyWhereUnreadableCodeRunsAfterIt(TestPs1):
+    """
+    Code nobody can read may store through any name, so `$y = $x` before an `Invoke-Expression`
+    gives `$y` the array a later store through `$y` changes for `$x` as well.
+    """
+
+    def test_the_hand_off_before_an_invoke_expression_keeps_the_name(self):
+        self.assertIn(
+            '$y = $x',
+            self._deobfuscate('$x = 1, 2, 3; $y = $x; Invoke-Expression $c; Write-Output $x'),
+        )

@@ -55,6 +55,7 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     binding_key,
     is_reference_cast,
+    unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
@@ -75,6 +76,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
+    Ps1TrapStatement,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -253,6 +255,8 @@ def _may_change_an_object(node: Node) -> bool:
         return occurrence_role(node).through
     if isinstance(node, Ps1AssignmentExpression):
         return any(_is_rooted_in_a_value(target) for target in _stored_places(node.target))
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
+        return any(_is_rooted_in_a_value(target) for target in _stored_places(node.operand))
     if isinstance(node, Ps1InvokeMember):
         member = node.member
         return not isinstance(member, str) or bool(written_slots_of(node, member).slots)
@@ -264,8 +268,7 @@ def _stored_places(target: Node | None) -> Iterator[Node]:
     Every place an assignment target stores into, with the parentheses and casts around it removed:
     the target itself, or each target of a multi-assignment.
     """
-    while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
-        target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
+    target = unwrap_assignment_target(target)
     if isinstance(target, Ps1ArrayLiteral):
         for element in target.elements:
             yield from _stored_places(element)
@@ -294,6 +297,9 @@ def _stores_through(var: Ps1Variable) -> bool:
     and member accesses, the parentheses, the casts and the multi-assignment slots between it and
     the assignment have been climbed, and stopping at the first of them answers `$x[0] = 'z'` while
     missing `$x[0][1] = 'z'`.
+
+    An increment is a store as much as an assignment is: `$x[0]++` writes the element it reads, so
+    the `$x` it is rooted at is stored through and no value may stand in its place.
     """
     cursor: Node = var
     parent = cursor.parent
@@ -310,6 +316,8 @@ def _stores_through(var: Ps1Variable) -> bool:
             pass
         elif isinstance(parent, Ps1AssignmentExpression):
             return through and parent.target is cursor
+        elif isinstance(parent, Ps1UnaryExpression) and parent.operator in ('++', '--'):
+            return through and parent.operand is cursor
         else:
             return False
         cursor = parent
@@ -567,6 +575,34 @@ NARROWER_QUALIFIERS = frozenset({
     Ps1ScopeModifier.LOCAL,
     Ps1ScopeModifier.PRIVATE,
 })
+
+#: Every spelling under which an occurrence names a script variable: bare, through a qualifier
+#: that names one, and through `$using:`, which reads one of the scope that invokes the block.
+_SCRIPT_VARIABLE_SPELLINGS = frozenset({
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.USING,
+    *VARIABLE_QUALIFIERS,
+})
+
+#: The qualifiers that name the scope the occurrence itself runs in and look nowhere else.
+_OWN_SCOPE_QUALIFIERS = frozenset({
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
+})
+
+
+def stands_in_a_trap_body(node: Node, scope: Scope) -> bool:
+    """
+    Whether *node* stands in the body of a `trap` written in *scope*. 5.1 runs a trap body in a
+    scope of its own, and `Ps1SemanticModel` folds that scope into the one around it, so a question
+    about which scope an occurrence runs in has to ask this beside `Ps1SemanticModel.scope_of`.
+    """
+    cursor = node.parent
+    while cursor is not None and cursor is not scope.node:
+        if isinstance(cursor, Ps1TrapStatement):
+            return True
+        cursor = cursor.parent
+    return False
 
 
 class Ps1AliasLink(typing.NamedTuple):
@@ -899,18 +935,20 @@ class Ps1SemanticModel:
 
     def reads_in_scope(self, node: Node, scope: Scope) -> set[str]:
         """
-        The names of *scope*'s bindings read anywhere within *node*'s subtree — every bare read of a
-        name *scope* binds, including one nested in a scriptblock, but not the target of a plain `=`
-        assignment, which replaces the value without observing it. A compound-assignment target
-        (`$x += 1`) does observe it and counts as a read. This is the read set the dead-store sweep
-        flushes pending stores against: unlike the walk it replaces, it does not stop at a nested
-        scriptblock, so a store read only through a captured block is correctly seen as live.
+        The names of *scope*'s bindings read anywhere within *node*'s subtree — every read of a
+        name *scope* binds that is spelled bare or through a qualifier naming a script variable,
+        including one nested in a scriptblock, but not the target of a plain `=` assignment, which
+        replaces the value without observing it. A compound-assignment target (`$x += 1`) does
+        observe it and counts as a read. This is the read set the dead-store sweep flushes pending
+        stores against: unlike the walk it replaces, it does not stop at a nested scriptblock, so a
+        store read only through a captured block is correctly seen as live, and `$script:x` reads
+        the store `$x` made as surely as `$x` does.
         """
         names: set[str] = set()
         for descendant in node.walk():
             if not isinstance(descendant, Ps1Variable):
                 continue
-            if descendant.scope is not Ps1ScopeModifier.NONE:
+            if descendant.scope not in _SCRIPT_VARIABLE_SPELLINGS:
                 continue
             name = descendant.name.lower()
             if name in scope.bindings and not replaces_value(descendant):
@@ -919,14 +957,17 @@ class Ps1SemanticModel:
 
     def variables_in_scope(self, node: Node, scope: Scope) -> set[str]:
         """
-        The names of *scope*'s bindings referenced in any way — read or written — within *node*'s
-        subtree. The conservative flush set for a control-flow statement whose internal effect on a
-        variable the linear sweep does not model: any mention of a bound name defers its pending
-        store.
+        The names of *scope*'s bindings referenced in any way — read or written, bare or through a
+        qualifier naming a script variable — within *node*'s subtree. The conservative flush set
+        for a control-flow statement whose internal effect on a variable the linear sweep does not
+        model: any mention of a bound name defers its pending store.
         """
         names: set[str] = set()
         for descendant in node.walk():
-            if isinstance(descendant, Ps1Variable) and descendant.scope is Ps1ScopeModifier.NONE:
+            if (
+                isinstance(descendant, Ps1Variable)
+                and descendant.scope in _SCRIPT_VARIABLE_SPELLINGS
+            ):
                 name = descendant.name.lower()
                 if name in scope.bindings:
                     names.add(name)
@@ -1452,12 +1493,20 @@ class Ps1SemanticModel:
         every other qualifier names the one scope `_defining_scope` binds a write through it in —
         the scope of the reference itself for `$local:` and `$private:`, the script scope for
         `$script:`, `$global:`, and `$using:`.
+
+        A `$local:` or `$private:` read in the body of a `trap` reaches none of them. 5.1 runs a
+        trap body in a scope of its own, which this model folds into the scope around it, and those
+        two qualifiers look in that scope alone, so this writes nothing:
+
+            $x = 'a'; if (1) { trap { $local:x; continue }; throw 'e' }
         """
         if var.scope is Ps1ScopeModifier.VARIABLE:
             cursor: Scope | None = scope
             while cursor is not None:
                 yield cursor
                 cursor = cursor.parent
+            return
+        if var.scope in _OWN_SCOPE_QUALIFIERS and stands_in_a_trap_body(var, scope):
             return
         defining = self._defining_scope(var, scope)
         if defining is not None:

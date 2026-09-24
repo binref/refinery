@@ -29,6 +29,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     is_write_occurrence,
 )
 from refinery.lib.scripts.ps1.analysis.mutation import value_after
+from refinery.lib.scripts.ps1.analysis.naming import unreadable_name_target
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
@@ -57,6 +58,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.data import (
+    ALL_SCOPE_VARIABLES,
     PS1_KNOWN_VARIABLES,
     SHAPE_MEMBERS,
     VARIABLE_TYPES,
@@ -72,6 +74,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1ClassDefinition,
+    Ps1CommandInvocation,
     Ps1DoLoop,
     Ps1EnumDefinition,
     Ps1ExpandableHereString,
@@ -125,20 +128,6 @@ _PS1_DEFAULT_VARIABLES: dict[str, str] = {
         'WarningPreference'          : r'Continue',
     }.items()
 }
-
-#: The engine defaults above that every scope holds a copy of. 5.1 creates these with
-#: `ScopedItemOptions.AllScope`, so a read that names one narrower scope and looks nowhere else
-#: still finds them: `$local:ShellId` in a child scope is `Microsoft.PowerShell`. The preference
-#: variables are created with no options and live in the global scope alone, where
-#: `$local:ErrorActionPreference` in a child scope finds nothing.
-_IN_EVERY_SCOPE = frozenset({
-    'consolefilename',
-    'psculture',
-    'psedition',
-    'pshome',
-    'psuiculture',
-    'shellid',
-})
 
 PS1_ENV_CONSTANTS = {
     lower_key: value
@@ -238,9 +227,9 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     That list is `refinery.lib.scripts.ps1.analysis.model.is_write_occurrence`'s to keep, and this
     asks it rather than repeating it.
 
-    The key is `binding_key`, not `_candidate_key`: a write reaches the binding its qualifier
-    names, so `$script:q = 5` writes the name `q` a later bare `$q` reads, and reading it under
-    `_candidate_key` — which refuses every qualifier — left that name looking never-written, so
+    The key is `refinery.lib.scripts.ps1.ast.binding_key` for every write: a write reaches the
+    binding its qualifier names, so `$script:q = 5` writes the name `q` a later bare `$q` reads, and
+    reading it under a key that refused every qualifier left that name looking never-written, so
     `Ps1NullVariableInlining` replaced the bare read with `$Null` and folded `$q + 1` to `1`.
     """
     mutated: set[str] = set()
@@ -262,9 +251,9 @@ _INLINED_SCOPES = frozenset({
 
 def _candidate_key(var: Ps1Variable) -> str | None:
     """
-    The constant-inlining lookup key for a variable — `binding_key` for an unqualified variable, an
-    `$env:` variable and one spelled with a qualifier that names a script variable, and `None` for
-    any other scope.
+    The constant-inlining lookup key for a variable — `refinery.lib.scripts.ps1.ast.binding_key`
+    for an unqualified variable, an `$env:` variable and one spelled with a qualifier that names a
+    script variable, and `None` for any other scope.
     """
     if var.scope in _INLINED_SCOPES:
         return binding_key(var)
@@ -302,21 +291,28 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
     `$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
 
     Where the object goes is `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.handoff`.
-    Where nothing keeps it, where what is kept is never changed in place (`_may_change_at`), and in
-    a script that changes no object in place at all, a copy is the object.
+    Where nothing keeps it and where what is kept is never changed in place (`_may_change_at`), a
+    copy is the object.
 
-    A plain `$y = $x` between two names nothing else keeps is decided on those two names: neither
-    may be stored through, excusing the assignment's own target but not a share onto the name
-    being read — `$a = $x; $a[0] = $x` stores through `$a` against `$x`. Every other hand-off keeps
-    the object somewhere no name spells — a container, a callee, the output a caller collects — so
-    the copy is refused wherever anything may change an object in place after it. The one store
-    excused there is the one the hand-off itself makes into a container, which changes the
-    container and not the object, unless the container is a name for the object itself.
+    A plain `$y = $x` whose target the semantic model files stores across, between two names
+    nothing else keeps, is decided on those two names: no store through either may be spelled
+    anywhere, and no code nobody can read may run after the hand-off, since such code may store
+    through either name. Every other hand-off keeps the object somewhere no name spells — a
+    container, a callee, the output a caller collects — so the copy is refused wherever anything
+    may change an object in place after it. The one store excused is the one the hand-off itself
+    makes into a container, which changes the container and not the object, unless the container
+    is a name for the object itself.
+
+    A script that spells no change in place at all lets every hand-off but the one to a name
+    through. That is a doubt taken on purpose rather than a claim: a callee may keep what it is
+    handed where code nobody can read finds it, and refusing that doubt refuses the decoded buffer
+    a loader hands to the call whose result it runs. A second name is no such doubt, since that
+    code may store through the name itself.
     """
+    if not _may_be_changed_in_place(value):
+        return True
     handoff = state.flow.handoff(occurrence)
     if handoff is Ps1Handoff.NOWHERE or not _may_change_at(value, handoff):
-        return True
-    if not state.changes_an_object_in_place:
         return True
     read_from = state.binding_of(occurrence)
     if read_from is None:
@@ -327,13 +323,15 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
         if stored_into is None or stored_into is read_from:
             return False
         if (
-            state.flow.exposure(stored_into) is Ps1Handoff.NOWHERE
+            state.flow.files_stores_across(read_from, stored_into)
             and state.flow.exposure(read_from) is Ps1Handoff.NOWHERE
         ):
             return not (
-                _is_changed_in_place(stored_into, apart_from=target)
-                or _is_changed_in_place(read_from)
+                _is_changed_in_place(read_from)
+                or state.flow.unreadable_code_may_follow(occurrence)
             )
+    elif not state.changes_an_object_in_place:
+        return True
     if target is not None and any(write.node is target for write in read_from.writes):
         target = None
     return not state.flow.change_may_follow(occurrence, apart_from=target)
@@ -342,8 +340,9 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
 def _may_change_at(value: Expression, handoff: Ps1Handoff) -> bool:
     """
     Whether a store can change what a hand-off keeps of *value*: the object itself, or only the
-    objects inside it where the hand-off keeps `Ps1Handoff.PARTS`. The elements of `1, 2, 3` are
-    numbers, so taking them apart hands on nothing a store can reach.
+    objects inside it where the hand-off keeps `PARTS` of
+    `refinery.lib.scripts.ps1.analysis.handoff.Ps1Handoff`. The elements of `1, 2, 3` are numbers,
+    so taking them apart hands on nothing a store can reach.
     """
     if handoff is not Ps1Handoff.PARTS:
         return _may_be_changed_in_place(value)
@@ -371,16 +370,13 @@ def _may_be_changed_in_place(value: Expression) -> bool:
     return named is None or bool(named.ranks)
 
 
-def _is_changed_in_place(binding: Binding | None, apart_from: Node | None = None) -> bool:
+def _is_changed_in_place(binding: Binding) -> bool:
     """
-    Whether anything stores through a name for the object *binding* holds, disregarding a store
-    spelled at *apart_from*. `True` for a binding this cannot name, because a name it cannot see is
-    one it cannot clear.
+    Whether anything stores through a name for the object *binding* holds. The semantic model files
+    a store through any name of the alias class against every member of it, so asking one member
+    answers for all of them.
     """
-    return binding is None or any(
-        write.role.through and write.node is not apart_from
-        for write in binding.writes
-    )
+    return any(write.role.through for write in binding.writes)
 
 
 def _assignment_target(occurrence: Ps1Variable) -> Ps1Variable | None:
@@ -767,8 +763,8 @@ class _Inlining:
         if write is None:
             return None
         value = self._value_from(write, key, binding, chased)
-        if value is None:
-            return None
+        if value is None or not _may_be_changed_in_place(value):
+            return value
         changed = self.flow.unseen_change(write, var)
         if changed is Ps1Handoff.NOWHERE or not _may_change_at(value, changed):
             return value
@@ -811,9 +807,11 @@ class _Inlining:
         """
         Whether the read *var* observes the default the engine gave the name *key* before the script
         ran. A read that names one narrower scope finds a default only where every scope holds one,
-        since the engine keeps the rest in the global scope alone; see `_IN_EVERY_SCOPE`.
+        since the engine keeps the rest in the global scope alone: `$local:ShellId` in a child scope
+        is `Microsoft.PowerShell`, and `$local:ErrorActionPreference` there finds nothing. Which
+        defaults every scope holds is `refinery.lib.scripts.ps1.data.ALL_SCOPE_VARIABLES`.
         """
-        if var.scope in NARROWER_QUALIFIERS and key not in _IN_EVERY_SCOPE:
+        if var.scope in NARROWER_QUALIFIERS and key not in ALL_SCOPE_VARIABLES:
             return False
         return self.flow.ambient_value_survives(var)
 
@@ -1106,6 +1104,11 @@ class Ps1NullVariableInlining(Transformer):
     and `$script:x` or `$global:x` is the opposite evidence: it asks for the variable of one scope
     by name, which is how a script reads what a profile, a session or a loader dot-sourcing it set
     up before it ran.
+
+    A name is written by more than its spellings as a variable. `New-Variable q 5` and
+    `-OutVariable q` assign `$q` as surely as `$q = 5` does, and the semantic model files those
+    writes against the name; a command addressing a name this cannot read may write any of them,
+    so the pass stands down wherever one does.
     """
 
     @staticmethod
@@ -1138,7 +1141,13 @@ class Ps1NullVariableInlining(Transformer):
             return
         if runs_code_supplied_as_data(cache.world_measurement):
             return
-        mutated = _collect_mutated_variables(node)
+        model = cache.model
+        if model.writes_unreadable_names or any(
+            unreadable_name_target(command) is not None
+            for command in node.walk() if isinstance(command, Ps1CommandInvocation)
+        ):
+            return
+        mutated = _collect_mutated_variables(node) | set(model.write_sites())
         for ref in list(node.walk()):
             if not isinstance(ref, Ps1Variable) or ref.scope in VARIABLE_QUALIFIERS:
                 continue

@@ -373,6 +373,28 @@ class TestPs1FlowUnknowns(TestBase):
             with self.subTest(source):
                 self.assertIn(Ps1FlowUnknown.HIDDEN_FROM_A_READER, self._unknowns(source))
 
+    def test_a_private_variable_read_in_a_trap_body_is_hidden_from_that_reader(self):
+        """
+        A `trap` body runs in a scope of its own, which the semantic model folds into the one
+        around it.
+        """
+        source = "$private:x = 'a'; if (1) { trap { Write-Host $x; continue }; throw 'e' }"
+        self.assertIn(Ps1FlowUnknown.HIDDEN_FROM_A_READER, self._unknowns(source))
+
+    def test_a_variable_a_command_makes_private_is_hidden_from_a_child_scope(self):
+        for source in [
+            "New-Variable -Name x -Option Private; $x = 'a'; & { Write-Host $x }",
+            "Set-Variable -Name x -Value 'a' -Option Private; & { Write-Host $x }",
+        ]:
+            with self.subTest(source):
+                self.assertIn(Ps1FlowUnknown.HIDDEN_FROM_A_READER, self._unknowns(source))
+
+    def test_a_command_giving_other_options_hides_nothing(self):
+        self.assertNotIn(
+            Ps1FlowUnknown.HIDDEN_FROM_A_READER,
+            self._unknowns("New-Variable -Name x -Option ReadOnly; & { Write-Host $x }"),
+        )
+
     def test_a_stored_block_writing_the_name_defers_the_binding(self):
         self.assertIn(
             Ps1FlowUnknown.WRITTEN_BY_DEFERRED_BODY,

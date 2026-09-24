@@ -15,6 +15,10 @@ operator, the output of a body — takes the elements out of their container, so
 survives only if it was inside one, and otherwise only its elements go on. Taking an index or a
 member hands on a part of the value and no more. Where the climb ends, a place that keeps what it
 is handed keeps the object itself if the depth is not negative and only objects inside it if it is.
+
+Objects a command writes are collected when a value is made of them, and the collection is a
+container around them: `@(,$x)` holds the array `$x` holds as its one element, and a `foreach` over
+it hands that very array to the loop variable.
 """
 from __future__ import annotations
 
@@ -27,7 +31,13 @@ from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER
 from refinery.lib.scripts.ps1.analysis.model import written_slots_of
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
-from refinery.lib.scripts.ps1.ast import get_command_name, get_member_name, unwrap_assignment_target
+from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, read
+from refinery.lib.scripts.ps1.ast import (
+    binds_parameter,
+    get_command_name,
+    get_member_name,
+    unwrap_assignment_target,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
@@ -40,13 +50,17 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
+    Ps1FunctionDefinition,
     Ps1HashLiteral,
     Ps1IndexExpression,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1MethodMember,
+    Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1PropertyMember,
     Ps1RangeExpression,
     Ps1ReturnStatement,
     Ps1Script,
@@ -64,9 +78,9 @@ class Ps1Handoff(enum.Enum):
     What keeps the object a read produces once the expression around the read has run.
 
     `NOWHERE` — nothing keeps the object or anything inside it.
-    `A_NAME` — a plain `=` stores the whole of it under one variable, as in `$y = $x` or
-    `$y = [array]$x`. The semantic model links the two names and files the stores of either against
-    both, so this is the one hand-off that needs nothing further.
+    `A_NAME` — a plain `=` standing as a statement of its own stores the whole of it under one
+    variable, as in `$y = $x` or `$y = [array]$x`. The semantic model links the two names and files
+    the stores of either against both, so this is the one hand-off that needs nothing further.
     `PARTS` — something keeps objects the value holds but not the value itself: `$y = @($x)`,
     `foreach ($e in $x)`, `$q = $x[0]`.
     `OBJECT` — something keeps the object itself: an element of a new array, a hash entry, a slot of
@@ -84,33 +98,44 @@ class Ps1Handoff(enum.Enum):
         return self if self.value >= other.value else other
 
 
-#: Members whose value is the object they are read from rather than a part of it: an array's
-#: `SyncRoot` is the array, and `PSObject` wraps the very object it is read from.
+#: Members whose value is the object they are read from rather than a part of it, lowercased: an
+#: array's `SyncRoot` is the array, `PSObject` wraps the very object it is read from, and the
+#: `BaseObject` and `ImmediateBaseObject` of that wrapper are the object again.
 _IDENTITY_MEMBERS = frozenset({
+    'baseobject',
+    'immediatebaseobject',
     'psobject',
     'syncroot',
 })
 
 #: Commands that consume what they are handed and keep nothing of it: each writes a rendering of it
-#: somewhere that is not a value of the script.
+#: somewhere that is not a value of the script. `Write-Information` is not one of them, because the
+#: record it writes holds the object itself and `6>&1` hands that record to whoever collects it.
 _CONSUMING_COMMANDS = frozenset({
     'out-host',
     'out-null',
     'out-string',
     'write-debug',
     'write-host',
-    'write-information',
     'write-verbose',
     'write-warning',
 })
 
 #: Commands that write out the objects they are handed and keep none of them. What they write goes
-#: wherever their own output goes.
+#: wherever their own output goes. `Write-Output` writes the elements of a value handed to it as an
+#: argument unless it is told `-NoEnumerate`.
 _PASSING_COMMANDS = frozenset({
+    'write-output',
+})
+
+#: Commands that write out the objects piped into them, one at a time, and keep none of them while
+#: every argument they are given is a constant. A script block or a calculated property among the
+#: arguments runs with `$_` bound to each object, and a value handed as `-InputObject` is written as
+#: one record rather than element by element; either is a place that keeps what it is handed.
+_FILTERING_COMMANDS = frozenset({
     'select-object',
     'sort-object',
     'where-object',
-    'write-output',
 })
 
 
@@ -136,17 +161,42 @@ def object_handoff(var: Ps1Variable, trusts: Callable[[str], bool]) -> Ps1Handof
     return _climb(var, _Position(0, direct=True, streamed=False), trusts)
 
 
+def assignment_handoff(
+    assignment: Ps1AssignmentExpression,
+    trusts: Callable[[str], bool],
+) -> Ps1Handoff:
+    """
+    What keeps the object *assignment* stores, apart from its own target, once the assignment is
+    used as a value. `$y = $x = 1, 2, 3` gives the one array to both names, and
+    `@{ k = ($x = 1, 2, 3) }` puts it into the table. `Ps1Handoff.NOWHERE` for an assignment that
+    stands as a statement of its own, which writes nothing out.
+    """
+    if not _yields_its_value(assignment):
+        return Ps1Handoff.NOWHERE
+    return _climb(assignment, _Position(0, direct=False, streamed=False), trusts)
+
+
 class _Position(typing.NamedTuple):
     """
     What the climb knows about the value at its cursor. `depth` is how deep inside that value the
     object sits, negative where only objects inside it are there; `direct` says that nothing but
     parentheses and conversions stand between the read and the cursor; `streamed` says that the
     value is the objects a command wrote rather than the value of an expression, so writing it out
-    does not take it apart again.
+    does not take it apart again, and making a value of it collects it.
     """
     depth: int
     direct: bool
     streamed: bool
+
+
+#: The places that hand on the objects a command wrote as they are, without collecting them into a
+#: value first: the next element of a pipeline, and a statement writing them out.
+_STREAMING_PARENTS = (
+    Ps1Pipeline,
+    Ps1PipelineElement,
+    Ps1ExpressionStatement,
+    Ps1ReturnStatement,
+)
 
 
 def _wrapped(depth: int) -> int:
@@ -186,11 +236,12 @@ def _converted_operand(node: Node) -> Node | None:
 def _takes_a_part(node: Ps1IndexExpression | Ps1MemberAccess | Ps1InvokeMember) -> bool:
     """
     Whether reading *node* off its object yields something inside that object rather than the
-    object itself.
+    object itself. A member whose name the source does not spell may be one that is the object.
     """
     if isinstance(node, Ps1IndexExpression):
         return True
-    return get_member_name(node.member) not in _IDENTITY_MEMBERS
+    name = get_member_name(node.member)
+    return name is not None and name.lower() not in _IDENTITY_MEMBERS
 
 
 def _is_no_enumerate(cmd: Ps1CommandInvocation) -> bool:
@@ -200,9 +251,52 @@ def _is_no_enumerate(cmd: Ps1CommandInvocation) -> bool:
     return any(
         isinstance(argument, Ps1CommandArgument)
         and argument.kind is not Ps1CommandArgumentKind.POSITIONAL
-        and 'noenumerate'.startswith(argument.name.lstrip('-').lower() or '?')
+        and binds_parameter(argument.name, 'noenumerate')
         for argument in cmd.arguments
     )
+
+
+def _hands_only_constants(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Whether every argument *cmd* is given is a switch or a constant, so that no block it is given
+    runs for the objects it is handed and none of them is handed to it as an argument.
+    """
+    for argument in cmd.arguments:
+        value = argument.value if isinstance(argument, Ps1CommandArgument) else argument
+        if value is not None and read(value) is UNKNOWN:
+            return False
+    return True
+
+
+def _yields_its_value(assignment: Ps1AssignmentExpression) -> bool:
+    """
+    Whether *assignment* is used as a value. One standing as a statement of its own writes nothing
+    out; anywhere else it is the value it stored, the very object and not a copy of it.
+    """
+    return not isinstance(assignment.parent, Ps1ExpressionStatement)
+
+
+def _is_a_store_target(index: Ps1IndexExpression) -> bool:
+    """
+    Whether *index* is a place an assignment stores into, so that the index is handed to the store:
+    a hashtable keeps the key `$h[$x] = 'v'` is given, and hands it back through `Keys`.
+    """
+    cursor: Node = index
+    parent = cursor.parent
+    while isinstance(parent, (Ps1ParenExpression, Ps1CastExpression, Ps1ArrayLiteral)):
+        cursor = parent
+        parent = cursor.parent
+    return isinstance(parent, Ps1AssignmentExpression) and parent.target is cursor
+
+
+def _is_a_method_body(block: Ps1ScriptBlock) -> bool:
+    """
+    Whether *block* is the body of a method of a class, which writes out nothing but what it
+    returns and returns that whole.
+    """
+    definition = block.parent
+    return isinstance(definition, Ps1FunctionDefinition) and isinstance(
+        definition.parent, Ps1MethodMember)
 
 
 def _assigned(assignment: Ps1AssignmentExpression, at: _Position) -> Ps1Handoff:
@@ -231,11 +325,15 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         parent = cursor.parent
         if parent is None:
             return Ps1Handoff.NOWHERE
+        if streamed and not isinstance(parent, _STREAMING_PARENTS):
+            depth = _wrapped(depth)
+            streamed = False
         if isinstance(parent, Ps1ParenExpression):
             cursor = parent
             continue
-        if isinstance(parent, Ps1CastExpression) or (
-            isinstance(parent, Ps1BinaryExpression) and parent.operator.lower() == '-as'
+        if (
+            isinstance(parent, Ps1CastExpression)
+            or isinstance(parent, Ps1BinaryExpression) and parent.operator.lower() == '-as'
         ):
             if _converted_operand(parent) is not cursor:
                 return Ps1Handoff.NOWHERE
@@ -244,25 +342,32 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         if isinstance(parent, Ps1AssignmentExpression):
             if parent.value is not cursor:
                 return Ps1Handoff.NOWHERE
-            return _assigned(parent, _Position(depth, direct, streamed))
+            kept = _assigned(parent, _Position(depth, direct, streamed))
+            if not _yields_its_value(parent):
+                return kept
+            return kept.widest(_climb(parent, _Position(depth, False, False), trusts))
         direct = False
         if isinstance(parent, (Ps1ArrayLiteral, Ps1HashLiteral)):
             depth = _wrapped(depth)
-            streamed = False
         elif isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess, Ps1InvokeMember)):
             if parent.object is not cursor:
-                if isinstance(parent, Ps1InvokeMember) and any(
-                    argument is cursor for argument in parent.arguments
-                ):
-                    return _kept_by_callee(parent, depth)
+                if isinstance(parent, Ps1InvokeMember):
+                    if any(argument is cursor for argument in parent.arguments):
+                        return _kept_by_callee(parent, cursor, depth)
+                elif isinstance(parent, Ps1IndexExpression):
+                    if parent.index is cursor and _is_a_store_target(parent):
+                        return _kept(depth)
                 return Ps1Handoff.NOWHERE
+            if isinstance(parent, Ps1InvokeMember) and _hands_its_receiver_on(parent):
+                return _kept(_unrolled(depth))
             if _takes_a_part(parent):
                 depth = _unrolled(depth)
-            streamed = False
+        elif isinstance(parent, Ps1BinaryExpression) and parent.operator == '+':
+            if parent.right is not cursor and depth <= 0:
+                depth = _unrolled(depth)
         elif isinstance(parent, (Ps1BinaryExpression, Ps1UnaryExpression)):
             if depth <= 0:
                 depth = _unrolled(depth)
-            streamed = False
         elif isinstance(parent, Ps1CommandInvocation):
             if parent.name is cursor:
                 return Ps1Handoff.NOWHERE
@@ -279,6 +384,10 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         elif isinstance(parent, (Ps1ForEachLoop, Ps1SwitchStatement)):
             iterated = parent.iterable if isinstance(parent, Ps1ForEachLoop) else parent.value
             return _kept(_unrolled(depth)) if iterated is cursor else Ps1Handoff.NOWHERE
+        elif isinstance(parent, Ps1ParameterDeclaration):
+            return _kept(depth) if parent.default_value is cursor else Ps1Handoff.NOWHERE
+        elif isinstance(parent, Ps1PropertyMember):
+            return _kept(depth) if parent.initial_value is cursor else Ps1Handoff.NOWHERE
         elif isinstance(parent, Ps1ThrowStatement):
             return _kept(depth)
         elif isinstance(parent, (Ps1ExpandableString, Ps1RangeExpression)):
@@ -292,23 +401,41 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         cursor = parent
 
 
-def _kept_by_callee(call: Ps1InvokeMember, depth: int) -> Ps1Handoff:
+def _hands_its_receiver_on(call: Ps1InvokeMember) -> bool:
     """
-    What a .NET call keeps of an object handed to it as an argument.
+    Whether *call* may hand what its receiver holds to a place other than its own result: a call
+    that writes through an argument slot may fill it from the receiver, as `$a.CopyTo($b, 0)` puts
+    the elements of `$a` into `$b`, and a block among the arguments may be run with `$_` bound to
+    each of them, as `.ForEach({ })` and `.Where({ })` do.
+    """
+    if any(isinstance(argument, Ps1ScriptBlock) for argument in call.arguments):
+        return True
+    member = call.member
+    return not isinstance(member, str) or bool(written_slots_of(call, member).slots)
+
+
+def _kept_by_callee(call: Ps1InvokeMember, argument: Node, depth: int) -> Ps1Handoff:
+    """
+    What a .NET call keeps of an object handed to it as *argument*.
 
     A call is code this does not read, so in general it may keep anything — `$list.Add($x)` keeps
     `$x` inside the list. The calls `refinery.lib.scripts.ps1.analysis.arguments.written_slots`
     knows to write through a slot are the exception, because what they do is known: each fills or
     rearranges the buffer in a slot it writes, and an argument it does not write is read for what
     it holds. `[Array]::Copy($a, $b, 3)` puts the elements of `$a` into `$b` and never `$a` itself,
-    and `[Buffer]::BlockCopy` copies bytes. Only a call that writes its *receiver* — `SetValue` —
-    stores an argument into it whole.
+    and `[Buffer]::BlockCopy` copies bytes. A call that writes its *receiver* — `SetValue` —
+    stores an argument into it whole, and one that writes the slot *argument* stands in changes
+    the very object it is handed.
     """
     member = call.member
     if not isinstance(member, str):
         return _kept(depth)
     written = written_slots_of(call, member).slots
-    if not written or RECEIVER in written:
+    slot = next(
+        (position for position, candidate in enumerate(call.arguments) if candidate is argument),
+        None,
+    )
+    if not written or RECEIVER in written or slot in written:
         return _kept(depth)
     return _kept(_unrolled(depth))
 
@@ -332,6 +459,8 @@ def _handed_to_command(
     if name in _CONSUMING_COMMANDS:
         return Ps1Handoff.NOWHERE
     if name in _PASSING_COMMANDS:
+        return None
+    if name in _FILTERING_COMMANDS and _hands_only_constants(cmd):
         return None
     return _kept(depth)
 
@@ -371,6 +500,9 @@ def _written_out(statement: Node, at: _Position, trusts: Callable[[str], bool]) 
     Where a value a statement writes to the output goes: nowhere at the top of the script, to
     whoever runs a body, and into the value around it where the statement stands in an expression.
     The value of an expression is taken apart as it is written; what a command wrote is not.
+
+    A method of a class is the exception on both counts. It writes out nothing but what it returns,
+    and its `return` hands the value back whole rather than element by element.
     """
     depth = at.depth if at.streamed else _unrolled(at.depth)
     written = _Position(depth, False, True)
@@ -380,9 +512,13 @@ def _written_out(statement: Node, at: _Position, trusts: Callable[[str], bool]) 
         if parent is None or isinstance(parent, Ps1Script):
             return Ps1Handoff.NOWHERE
         if isinstance(parent, Ps1ScriptBlock):
-            return _kept(depth)
+            if not _is_a_method_body(parent):
+                return _kept(depth)
+            if isinstance(statement, Ps1ReturnStatement):
+                return _kept(at.depth)
+            return Ps1Handoff.NOWHERE
         if isinstance(parent, (Ps1ArrayExpression, Ps1SubExpression)):
-            return _climb(parent, written._replace(streamed=False), trusts)
+            return _climb(parent, written, trusts)
         if isinstance(parent, Expression):
             return _climb(cursor, written, trusts)
         cursor = parent

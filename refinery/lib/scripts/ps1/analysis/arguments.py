@@ -154,8 +154,11 @@ _STATIC_WRITES = _floored({
 #: A row is answered by member *name* here, because `written_slots` is asked where no receiver type
 #: is known — so one row per name is what the union needs and a second type spelling the same name
 #: adds nothing. `System.IO.Stream` stands for every reader that fills a buffer at three arguments,
-#: `System.Collections.ArrayList` for every collection that fills one at one, and
-#: `System.Security.Cryptography.ICryptoTransform` for `HashAlgorithm` as well.
+#: `System.Collections.ArrayList` for every collection that fills one at one and for every `Clear`,
+#: `System.Collections.BitArray` for every `Set` of an element, and
+#: `System.Security.Cryptography.ICryptoTransform` for `HashAlgorithm` as well. An array's own `Set`
+#: and `Clear` are among those the stand-ins cover: 5.1 runs both on the array they are called on,
+#: and the collected metadata carries neither, so no row can be written for the array itself.
 #:
 #: `[Text.Encoding]::ASCII.GetBytes($s)` is why the encoders carry an empty row at every arity but
 #: the last: the name they share with `RNGCryptoServiceProvider::GetBytes`, which fills its *first*
@@ -165,7 +168,9 @@ _STATIC_WRITES = _floored({
 _INSTANCE_WRITES = _floored({
     ('array', 'copyto')                 : {2: (0,)},
     ('array', 'setvalue')               : {2: (RECEIVER,), 3: (RECEIVER,), 4: (RECEIVER,)},
+    ('collections.arraylist', 'clear')  : {0: (RECEIVER,)},
     ('collections.arraylist', 'copyto') : {1: (0,), 2: (0,), 4: (1,)},
+    ('collections.bitarray', 'set')     : {2: (RECEIVER,)},
     ('io.stream', 'read')               : {3: (0,)},
     ('random', 'nextbytes')             : {1: (0,)},
     ('security.cryptography.icryptotransform', 'transformblock'): {5: (3,)},

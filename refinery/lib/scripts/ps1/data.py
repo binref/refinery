@@ -247,6 +247,15 @@ VARIABLE_TYPES: dict[str, str] = {
 #: because it is absent.
 VARIABLE_TYPES.setdefault('pscmdlet', 'system.management.automation.psscriptcmdlet')
 
+#: The engine variables every scope holds a copy of, lowercased: those the collected table records
+#: with `ScopedItemOptions.AllScope`. A read that names one scope and looks nowhere else still
+#: finds one of these, where it finds any other engine variable only in the scope that holds it.
+ALL_SCOPE_VARIABLES = frozenset(
+    _name.lower()
+    for _name, _info in _VARIABLES['variables'].items()
+    if 'AllScope' in (_info['options'] or '').split(', ')
+)
+
 #: The set of type-accelerator spellings, lowercased. An accelerator is already the shortest
 #: readable name for its type, so display normalization leaves it as written rather than expanding
 #: it to the verbose full name: `[ref]` and `[int]` stay, where `[System.Int32]` folds to `[Int32]`.

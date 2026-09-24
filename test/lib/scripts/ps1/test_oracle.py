@@ -192,20 +192,13 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The same rule spelled with the other operator: 5.1 never evaluates the right operand of '
         '`-or` when the left one is true. Held apart from the `-and` entry because the two are '
         'separate spellings and a fix that reaches one need not reach the other.',
-    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
-        'The store is removed and the read prints nothing. A function body resolves `$script:x` to '
-        'the caller, where the store put `a`, but the dead-store sweep sees no read of `$x` '
-        'between the two stores: it reads only the bare spelling, and a call is no read at all to '
-        'it.',
     "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
         'Both stores are removed and both calls print nothing where the snippet prints `a` and '
         '`b`. The body reads `$x` when it is called, but the dead-store sweep reads a statement '
         'for the names it spells: it takes the first store for overwritten with no read between, '
         'and the last for read by nothing after it.',
     "function f { Write-Host $script:x }; $x = 'a'; f; $x = 'b'; f":
-        'The first store is removed and the first call prints nothing where the snippet prints '
-        '`a`. The same sweep; the last store stays only because the sweep does not read the '
-        'qualified spelling in the body as a read of `$x` at all.',
+        'The same sweep and the same two removals, through the qualified spelling in the body.',
     "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x":
         'The read is folded to `a`. `ForEach-Object` runs its block in its caller\'s scope, so '
         '`$local:x` there is the caller\'s `$x` and the snippet writes `b`; the model gives the '
@@ -213,6 +206,25 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'":
         'The store is removed and the read writes `$null` where the snippet writes `a`: the same '
         'scope, read rather than written.',
+    "$x = 'a'; . { Write-Output $local:x }; $x = 'b'":
+        'The same through a dot, which runs the block in its caller\'s scope as `ForEach-Object` '
+        'does.',
+    "$x = 'a'; . { $local:x = 'b' }; Write-Output $x":
+        'The same through a dot, written rather than read: the read is folded to `a` where the '
+        'snippet writes `b`.',
+    "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x":
+        'The read is folded to `a`. The call assigns `$x` by name, so the snippet writes `b`; it '
+        'is read as a method of the automatic variable it is called on and as nothing else.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x':
+        'The array is spelled into the hash literal, so the payload stores into a copy and the '
+        'read writes `1 2 3` where the snippet writes `9 2 3`. A script that spells no store in '
+        'place lets a hand-off to a container through although code nobody can read runs after '
+        'it.',
+    'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
+    'Write-Output (dec 5)':
+        'The call is folded to `(5, 1)`, which writes two Int32 values where the snippet writes '
+        'two Bytes: the values are right and the type they are spelled as is not.',
     "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
         'The store is removed and the read prints nothing. The pattern reads a whole set of '
         'variables without naming any one of them.',
@@ -280,6 +292,13 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
 #: `INFO` is what `Write-Host` produces, which since 5.0 writes an information record rather than
 #: going straight to the console. An empty one is a read of a variable that holds nothing.
 CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
+    'function dec($d, $k) { $o = @(0) * $d.Length; '
+    'for ($i = 0; $i -lt $d.Length; $i++) { $o[$i] = $d[$i] -bxor $k[$i % $k.Length] }; $o }; '
+    '$key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)':
+        ('OUT\tSystem.Int32\t5', 'OUT\tSystem.Int32\t7', 'OUT\tSystem.Int32\t5'),
+    '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; '
+    '$buf = 0, 0; $buf[0] = 7':
+        ('OUT\tSystem.String\tHi',),
     "trap { continue }; 1/0; Write-Host 'after'":
         ('INFO\tafter',),
     "trap { continue }; $x = \"$(1/0)$(Set-Alias zzq Write-Output)\"; zzq 'hi'":

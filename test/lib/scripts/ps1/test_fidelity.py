@@ -272,6 +272,24 @@ class TestPs1Fidelity(TestBase):
     def test_every_known_bracket_violation_is_an_input_of_the_corpus(self):
         self.assertEqual(sorted(set(KNOWN_BRACKET_VIOLATIONS) - set(self._corpus())), [])
 
+    def test_an_expression_slot_brackets_a_command_or_an_assignment_put_into_it(self):
+        """
+        An index and a class property's initial value each hold an expression, where neither a
+        command nor an assignment reads back as the one value it is. A pass that folds the bracket
+        around one away leaves it bare, and printing has to put the bracket back.
+        """
+        for source in (
+            '$a[(Get-Random -Maximum 1)]',
+            '$a[($i = 0)]',
+            'class C { $P = (Get-Random -Maximum 1) }',
+            'class C { $P = ($x = 5) }',
+        ):
+            with self.subTest(source):
+                tree = self._parse(source)
+                while _strip_parentheses(tree):
+                    pass
+                self.assertTrue(self._is_faithful(tree), F'not faithful: {self._synth(tree)!r}')
+
     def test_the_synthesizer_inverts_the_parser_for_both_readings_of_a_sign(self):
         """
         A sign is the one place where a rendering that re-lexes changes a type rather than a shape,

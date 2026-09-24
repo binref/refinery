@@ -419,6 +419,73 @@ BEHAVIOURS: tuple[str, ...] = (
     "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f",
     "$x = 'a'; 1 | ForEach-Object { $local:x = 'b' }; Write-Output $x",
     "$x = 'a'; 1 | ForEach-Object { Write-Output $local:x }; $x = 'b'",
+    "$x = 'a'; . { Write-Output $local:x }; $x = 'b'",
+    "$x = 'a'; . { $local:x = 'b' }; Write-Output $x",
+
+    #: What a store no statement of the script places is asked to preserve the behaviour of. A
+    #: class property's initializer runs each time the class is constructed and not at the class
+    #: statement, an array's `Set` and `Clear` and `PSVariable.Set` each write a variable no store
+    #: spells, `Marshal.Copy` handed an array of objects fills a typed copy of it and leaves that
+    #: array alone, code nobody can read may store through a container holding an array, and a body
+    #: writing a Byte array writes Bytes.
+    "class C { $P = [int]::TryParse('42', [ref]$script:x) }; $x = 0; $o = [C]::new(); "
+    'Write-Output $x',
+    "class C { $P = ($script:x = 5) }; $x = 0; $o = [C]::new(); Write-Output $x",
+    '$x = 1, 2, 3; $x.Set(0, 9); Write-Output $x[0]',
+    "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x",
+    '$b = 0, 0; $p = [Runtime.InteropServices.Marshal]::AllocHGlobal(2); '
+    '[Runtime.InteropServices.Marshal]::WriteByte($p, 0, 7); '
+    '[Runtime.InteropServices.Marshal]::Copy($p, $b, 0, 2); '
+    '[Runtime.InteropServices.Marshal]::FreeHGlobal($p); Write-Output $b[0]',
+    '$x = 1, 2, 3; $x.Clear(); Write-Output $x[0]',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x',
+    'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
+    'Write-Output (dec 5)',
+
+    #: What the hand-offs the rows above do not spell are asked to preserve the behaviour of. Each
+    #: hands the array itself on through a place no occurrence of its name spells: an assignment
+    #: used as a value, a member that is the object, a filtering cmdlet handed a block or the value
+    #: itself, an information record, a parameter default, a hashtable key, a call filling a slot
+    #: from its receiver or writing the slot it is handed, a collection of written objects, a class
+    #: method's return, a class property's initial value, a null left operand, a read that reaches
+    #: the caller's name, and an increment through an element. The last two rows order a read in an
+    #: invoked block against the arguments the invocation evaluates before it runs the block.
+    '$x = 1, 2, 3; $z = $y = $x; $z[0] = 9; Write-Output $x[0]',
+    '$y = $x = 1, 2, 3; $y[0] = 9; Write-Output $x[0]',
+    '$h = @{ k = ($x = 1, 2, 3) }; $h.k[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $y = $x.SyncRoot; $y[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $y = $x.psobject.BaseObject; $y[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $y = Select-Object -InputObject $x; $y[0] = 9; Write-Output $x[0]',
+    '$p = @(@(1, 2), @(3, 4)); $p | Where-Object { $_[0] = 9 }; Write-Output $p[0][0]',
+    '$x = 1, 2, 3; $r = Write-Information $x 6>&1; $r.MessageData[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; & { param($a = $x) [Array]::Reverse($a) }; Write-Output $x',
+    "$x = 1, 2, 3; $h = @{}; $h[$x] = 'v'; foreach ($k in @($h.Keys)) { $k[0] = 9 }; "
+    'Write-Output $x[0]',
+    '$x = @(@(1, 2), @(3, 4)); $y = 0, 0; $x.CopyTo($y, 0); $y[0][0] = 9; Write-Output $x[0][0]',
+    '$x = 1, 2, 3; [Array]::Reverse($(,$x)); Write-Output $x',
+    '$x = 1, 2, 3; foreach ($e in @(,$x)) { $e[0] = 9 }; Write-Output $x[0]',
+    '$x = 1, 2, 3; $a, $b = Write-Output -NoEnumerate $x; $a[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; class C { static [object] M() { return $script:x } }; $y = [C]::M(); '
+    '$y[0] = 9; Write-Output $x[0]',
+    'class C { $P = $script:x }; $x = 1, 2, 3; $o = [C]::new(); $o.P[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; & { $y = $x; $y[0] = 9; $x = 5 }; Write-Output $x[0]',
+    '$x = 1, 2, 3; 1 | ForEach-Object { $y = $x }; $y[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; $y = $x; $y[0]++; Write-Output $x[0]',
+    '$x = 1, 2, 3; $h = @{ k = $x }; & { Write-Output $x[0] } ($h.k[0] = 9)',
+    "$x = 'a'; & { Write-Output $x } ($x = 'b')",
+
+    #: What a scope a read cannot see into is asked to preserve the behaviour of: a `trap` body runs
+    #: in a scope of its own, and a variable a command makes private is as hidden from a child scope
+    #: as one written `$private:`.
+    "$x = 'a'; if ($true) { trap { Write-Output $local:x; continue }; throw 'e' }",
+    "New-Variable -Name x -Option Private; $x = 'a'; & { Write-Output $x }",
+
+    #: What a pass that reads names off the source is asked to preserve the behaviour of: a store
+    #: read through a qualifier before it is overwritten, and a name a command assigns.
+    '$x = Get-Random -Maximum 1; Write-Output $script:x; $x = 5; Write-Output $x',
+    'New-Variable -Name q -Value 5; Write-Output ($q + 1)',
 
     #: What observes the removal of a statement or of a function definition. A junk remover argues
     #: that nothing sees what it drops, and each of these names one thing that does: the statements
@@ -546,6 +613,11 @@ BEHAVIOURS: tuple[str, ...] = (
 #: host-free test once a host has said it — so the backlog entries of
 #: `test/lib/scripts/ps1/deobfuscation/test_folding.py` are carried here beside the ledger's.
 CLAIMS: tuple[str, ...] = (
+    'function dec($d, $k) { $o = @(0) * $d.Length; '
+    'for ($i = 0; $i -lt $d.Length; $i++) { $o[$i] = $d[$i] -bxor $k[$i % $k.Length] }; $o }; '
+    '$key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)',
+    '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; '
+    '$buf = 0, 0; $buf[0] = 7',
     "$x = 'a'; . { Remove-Variable x }; Write-Host $x",
     "$x = 'a'; . { New-Variable x 'b' -Force }; Write-Host $x",
     "$x = 'a'; . { Write-Output 'b' -OutVariable x }; Write-Host $x",

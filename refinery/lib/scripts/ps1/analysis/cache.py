@@ -257,8 +257,13 @@ class Ps1ModelCache(ModelCacheBase):
         what decides whether a command handed an object may keep it.
         """
         return self._lazy('_variable_flow', lambda: build_variable_flow(
-            self.model, self.control_flow, self.dominance, self.blocks, self.cycles,
-            self.closed_world.may_trust_command_name))
+            self.model,
+            self.control_flow,
+            self.dominance,
+            self.blocks,
+            self.cycles,
+            self.closed_world.runs_the_command_it_names,
+        ))
 
     @property
     def used_before_defined(self) -> frozenset[str]:

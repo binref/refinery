@@ -367,12 +367,16 @@ class Ps1Synthesizer(Synthesizer):
         self._emit_member_prefix(node)
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
+        """
+        The brackets of an index hold an expression and not a statement, so an assignment or a
+        command written there needs brackets of its own: `$a[Get-Random]` is not a call.
+        """
         if node.object:
             self._emit_receiver(node.object, '[')
         self._write('[')
         if node.index:
             with self._reading(Ps1LexerMode.EXPRESSION):
-                self.visit(node.index)
+                self._emit_operand(node.index, precedence.LOGICAL)
         self._write(']')
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
@@ -809,6 +813,10 @@ class Ps1Synthesizer(Synthesizer):
             self._write('hidden ')
 
     def visit_Ps1PropertyMember(self, node: Ps1PropertyMember):
+        """
+        A property's initial value is an expression and not a statement, so an assignment or a
+        command given as one needs brackets: `$P = $x = 5` does not read as one initial value.
+        """
         for attr in node.attributes:
             self.visit(attr)
         self._emit_member_modifiers(node.modifiers)
@@ -818,7 +826,7 @@ class Ps1Synthesizer(Synthesizer):
             self.visit(node.variable)
         if node.initial_value:
             self._write(' = ')
-            self.visit(node.initial_value)
+            self._emit_operand(node.initial_value, precedence.LOGICAL)
 
     def visit_Ps1MethodMember(self, node: Ps1MethodMember):
         for attr in node.attributes:

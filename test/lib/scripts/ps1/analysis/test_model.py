@@ -17,7 +17,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     occurrence_role,
     replaces_value,
 )
-from refinery.lib.scripts.ps1.model import Ps1AssignmentExpression, Ps1Variable
+from refinery.lib.scripts.ps1.model import Ps1AssignmentExpression, Ps1ScopeModifier, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -283,6 +283,11 @@ class TestPs1OccurrenceRoles(TestBase):
             with self.subTest(source):
                 self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
 
+    def test_an_occurrence_an_increment_stores_through_keeps_its_own_value(self):
+        for source in ('$x[0]++', '$x[0]--', '++$x[0]', '$x.P[1]++'):
+            with self.subTest(source):
+                self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
+
     def test_a_class_property_declaration_references_no_variable(self):
         self.assertIs(
             self._role('class C { [int]$x }'), Ps1OccurrenceRole.NOT_A_REFERENCE)
@@ -420,6 +425,42 @@ class TestPs1StoreThroughAttribution(TestBase):
         self.assertEqual(len(stored.script_scope.bindings['x'].writes), 2)
         referenced = self._model("$x = 0\n[void][int]::TryParse('7', [ref]$script:x)")
         self.assertEqual(len(referenced.script_scope.bindings['x'].writes), 2)
+
+
+class TestPs1AQualifiedReadIsFiledOnTheBindingItsScopeHolds(TestBase):
+    """
+    A qualifier naming a script variable resolves to the binding of the scope it names. A `trap`
+    body runs in a scope of its own that the model folds into the one around it, so a qualifier
+    that looks in the reading scope alone names no binding there.
+    """
+
+    @staticmethod
+    def _qualified_read(source: str, scope: Ps1ScopeModifier):
+        tree = Ps1Parser(source).parse()
+        model = build_semantic_model(tree)
+        for node in tree.walk():
+            if isinstance(node, Ps1Variable) and node.scope is scope:
+                return model, node
+        raise AssertionError(F'no {scope.value}-qualified read in {source!r}')
+
+    def test_a_local_or_private_read_in_a_trap_body_names_no_binding(self):
+        for scope in (Ps1ScopeModifier.LOCAL, Ps1ScopeModifier.PRIVATE):
+            source = F"$x = 'a'; if (1) {{ trap {{ ${scope.value}:x; continue }}; throw 'e' }}"
+            with self.subTest(source):
+                model, read = self._qualified_read(source, scope)
+                self.assertIsNone(model.binding_of(read))
+
+    def test_a_script_read_in_a_trap_body_names_the_script_binding(self):
+        model, read = self._qualified_read(
+            "$x = 'a'; if (1) { trap { $script:x; continue }; throw 'e' }",
+            Ps1ScopeModifier.SCRIPT,
+        )
+        self.assertIs(model.binding_of(read), model.script_scope.bindings['x'])
+
+    def test_the_dead_store_read_set_holds_a_qualified_read(self):
+        tree = Ps1Parser("$x = 'a'; Write-Host $script:x").parse()
+        model = build_semantic_model(tree)
+        self.assertEqual(model.reads_in_scope(tree.body[1], model.script_scope), {'x'})
 
 
 class TestPs1NamedReferenceAttribution(TestBase):

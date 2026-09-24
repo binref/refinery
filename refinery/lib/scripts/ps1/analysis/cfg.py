@@ -61,6 +61,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ForLoop,
     Ps1IfStatement,
     Ps1Jump,
+    Ps1PropertyMember,
     Ps1ReturnStatement,
     Ps1Script,
     Ps1ScriptBlock,
@@ -83,6 +84,11 @@ from refinery.lib.scripts.ps1.model import (
 #: makes — one body, one scope, one graph. A `trap` divides more finely still: it belongs to the
 #: statement block it is written in, of which a body is only the outermost.
 FUNCTION_NODES = (Ps1ScriptBlock,)
+
+#: The nodes whose content runs at a time of its own and outside every body a graph is drawn for.
+#: A class property's initializer runs each time the class is constructed, or when the type is first
+#: used for a `static` one, and never at the class statement it is written in.
+DEFERRED_NODES = (Ps1PropertyMember,)
 
 _LOOP_NODES = (
     Ps1WhileLoop,
@@ -594,4 +600,4 @@ def build_ps1_control_flow(root: Ps1Script, descend: bool = False) -> dict[int, 
 
 
 def build_control_flow_model(root: Ps1Script, descend: bool = False) -> ControlFlowModel:
-    return ControlFlowModel(build_ps1_control_flow(root, descend))
+    return ControlFlowModel(build_ps1_control_flow(root, descend), DEFERRED_NODES)

@@ -850,10 +850,13 @@ def in_evaluation_order(node: Node) -> Iterator[Node]:
     """
     The subtree of `node` in the order PowerShell evaluates it, `node` itself first.
 
-    Source order, with one inversion: an assignment produces the value before it stores it, so its
+    Source order, with two inversions. An assignment produces the value before it stores it, so its
     value is yielded ahead of its target. That is why `$x = [char]($x)` reads the previous `$x` and
-    why `$x, $y = $y, $x` swaps. Every other form evaluates its parts left to right, which is the
-    order `refinery.lib.scripts.Node.children` returns them in.
+    why `$x, $y = $y, $x` swaps. And a command evaluates every argument before it runs a script
+    block it is given, as its name or as an argument, so such a block is yielded after the rest of
+    the command: `& { $x } ($x = 'b')` reads the store the argument makes. Every other form
+    evaluates its parts left to right, which is the order `refinery.lib.scripts.Node.children`
+    returns them in.
 
     This orders the parts of *one* statement against each other, which the control-flow graphs do
     not: a graph node stands for a whole statement, so a read and a write inside it share a point.
@@ -873,7 +876,25 @@ def _evaluation_children(node: Node) -> Iterator[Node]:
             if child is not node.value:
                 yield child
         return
+    if isinstance(node, Ps1CommandInvocation):
+        blocks: list[Node] = []
+        for child in node.children():
+            if _is_a_block_the_command_runs(child):
+                blocks.append(child)
+            else:
+                yield child
+        yield from blocks
+        return
     yield from node.children()
+
+
+def _is_a_block_the_command_runs(child: Node) -> bool:
+    """
+    Whether *child* of a command invocation is a script block the command is given to run, as its
+    name or as an argument, rather than an expression evaluated to produce an argument.
+    """
+    value = child.value if isinstance(child, Ps1CommandArgument) else child
+    return isinstance(value, Ps1ScriptBlock)
 
 
 def assignment_of(var: Ps1Variable) -> Ps1AssignmentExpression | None:
