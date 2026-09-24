@@ -1467,14 +1467,6 @@ _BINDINGS_A_STORE_CANNOT_REFUSE = frozenset({
     BindingKind.CATCH,
 })
 
-#: The global values whose property on the global object is read-only, so a script-level `var` of
-#: the same name shares that property and a strict store to it throws a `TypeError`.
-_READ_ONLY_GLOBAL_VALUES = frozenset({
-    'undefined',
-    'NaN',
-    'Infinity',
-})
-
 
 def _is_delete_operand(node: Node) -> bool:
     """
@@ -2217,9 +2209,13 @@ class SemanticModel:
                 binding = self.binding_of(target)
                 if binding is None or crosses_dynamic_scope(self._node_scope.get(id(target))):
                     return False
-                if not binding.is_lexical and not self._stores_into_without_throwing(binding):
-                    return False
                 init = declarator.init
+                if (
+                    init is not None
+                    and not binding.is_lexical
+                    and not self._stores_into_without_throwing(binding, declarator)
+                ):
+                    return False
                 if init is not None and not self.evaluation_cannot_throw(init, store_cannot_throw):
                     return False
             return True
@@ -2239,11 +2235,14 @@ class SemanticModel:
         by parentheses and the comma operator.
 
         A store to a name cannot throw when the name resolves, through no `with` body, to a `var`,
-        a function, a parameter or a catch binding, unless it is a script-level `var` of one of the
-        read-only global values, which a strict store refuses. A `let` may still be in its
-        temporal dead zone, a `const` refuses every store, and a function expression's own name and
-        a name nothing declares refuse a strict one. *store_cannot_throw* vouches for any other
-        store its caller holds a proof for.
+        a function, a parameter or a catch binding, unless it is a strict store to a script-level
+        `var` or function. Such a binding is a property of the global object, whose attributes are
+        the host's: the language makes `undefined`, `NaN` and `Infinity` read-only, and a browser
+        gives `window`, `document`, `top`, `navigator` and many more a getter without a setter,
+        which a strict store refuses and a sloppy one ignores. A `let` may still be in its temporal
+        dead zone, a `const` refuses every store, and a function expression's own name and a name
+        nothing declares refuse a strict one. *store_cannot_throw* vouches for any other store its
+        caller holds a proof for.
         """
         if node is None:
             return False
@@ -2275,16 +2274,16 @@ class SemanticModel:
             if not isinstance(target, JsIdentifier):
                 return False
             binding = self.resolve(target)
-            vouched = binding is not None and self._stores_into_without_throwing(binding)
+            vouched = binding is not None and self._stores_into_without_throwing(binding, node)
             if not vouched and (store_cannot_throw is None or not store_cannot_throw(node)):
                 return False
             return self.evaluation_cannot_throw(node.right, store_cannot_throw)
         return False
 
-    def _stores_into_without_throwing(self, binding: Binding) -> bool:
+    def _stores_into_without_throwing(self, binding: Binding, store: Node) -> bool:
         if binding.kind not in _BINDINGS_A_STORE_CANNOT_REFUSE:
             return False
-        return binding.scope is not self.root_scope or binding.name not in _READ_ONLY_GLOBAL_VALUES
+        return binding.scope is not self.root_scope or not strict_mode_at(store)
 
     def naming_binding(self, function: Node) -> Binding | None:
         """

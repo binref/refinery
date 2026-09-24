@@ -1903,7 +1903,9 @@ class TestWhichBindingsAnExportMarks(TestBase):
 
 #: Programs mapped to whether their last declaration or expression statement throws on no run. A
 #: read may throw when nothing is certain to bind the name; a store may throw when the binding is
-#: lexical, read-only, reached through a `with` object, or does not exist.
+#: lexical, reached through a `with` object, or does not exist, and a strict one when the binding
+#: is a property of the global object, which the language (`undefined`) or a browser (`top`) makes
+#: read-only.
 WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
     'var a = 1, b = "x", c = null, d = true;': True,
     'var f = function () {};': True,
@@ -1925,8 +1927,12 @@ WHETHER_THE_LAST_STATEMENT_CANNOT_THROW = {
     'var o = {}; o.p = 1;': False,
     'function f() {} f();': False,
     'var o = {}; with (o) { var a = 1; }': False,
-    'var undefined = 1;': False,
+    'var undefined = 1;': True,
+    '"use strict"; var undefined = 1;': False,
     'function f() { var undefined = 1; }': True,
+    'var top; top = 1;': True,
+    '"use strict"; var top; top = 1;': False,
+    '"use strict"; function f() { var top; top = 1; }': True,
 }
 
 

@@ -2552,3 +2552,46 @@ class TestAPackedAccessAWithObjectSuppliesStillGoesThroughTheProxy(TestBase):
     question above declines the flagship pack rather than a diverging one, and the `with` object
     that supplies an accessor target's name has so far had to be constructed to reach.
     """
+
+
+#: A classic script that declares a name the global object holds as a read-only property and stores
+#: a value in it, mapped to what the host prints: the store is ignored in sloppy code, and the name
+#: still reads what the global object holds.
+A_STORE_A_READ_ONLY_GLOBAL_IGNORES = {
+    a_program("""
+        var NaN = 5;
+        console.log(NaN);
+        """): 'NaN\n',
+}
+
+
+class TestAScriptLevelVarSharingAReadOnlyGlobalHoldsNoStoredValue(TestBase):
+    """
+    A script-level `var` names a property of the global object, and where that property is
+    read-only, sloppy code ignores the store a declaration or an assignment makes to it. The
+    language makes `NaN`, `Infinity` and `undefined` read-only, and a browser does the same for
+    `window`, `document`, `top` and many more names. The deobfuscation folds the read to the stored
+    value. A correct one keeps the read, or folds it to what the global object holds where the host
+    is known.
+    """
+
+    @unittest.expectedFailure
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_read_after_a_store_a_language_global_ignores_prints_the_global(self):
+        rows = A_STORE_A_READ_ONLY_GLOBAL_IGNORES
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @unittest.expectedFailure
+    def test_a_read_after_a_store_a_browser_global_ignores_is_kept(self):
+        """
+        Node has no read-only `top`, so the text of the output holds this row: in a browser the
+        read prints the window, not `5`.
+        """
+        source = a_program("""
+            var top = 5;
+            console.log(top);
+            """)
+        self.assertIn('console.log(top)', folded(source))
