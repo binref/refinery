@@ -42,6 +42,22 @@ A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME = {
     ),
 }
 
+#: Programs whose namespace keys a bare name cannot carry: keys that are no name a declaration may
+#: take, a read a `with` object answers, a direct `eval` that sees the namespace or declares a key
+#: between a read and the namespace. Each call takes an argument no fold computes.
+A_KEY_A_BARE_NAME_CANNOT_CARRY = [
+    'function f(q) { var NS = {}; NS["foo-bar"] = q; return NS["foo-bar"]; }'
+    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    'function f(q) { var NS = {}; NS.if = q; return NS.if + 1; }'
+    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    'function f(q) { var NS = {}; NS.default = function () { return q; }; return NS.default(); }'
+    ' console.log(f(Date.now() > 0 ? 1 : 0));',
+    'function f(o) { var NS = {}; NS.x = 1; with (o) { console.log(NS.x); } } f({ x: 2 });',
+    'function f(s) { var NS = {}; NS.x = 1; eval(s); console.log(NS.x); } f("x = 2");',
+    'var NS = {}; NS.k = 1; function inner(s) { eval(s); return NS.k; } NS.k = 2;'
+    ' console.log(inner("var k = 3"));',
+]
+
 
 class TestNamespaceFlattening(TestJsDeobfuscator):
 
@@ -632,6 +648,18 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             *A_READ_INSIDE_A_FUNCTION_BINDING_THE_NAMESPACES_NAME.values(),
             *A_PROPERTY_READ_BELOW_A_BINDING_OF_ITS_OWN_NAME.values(),
         ]:
+            with self.subTest(source):
+                self.assertEqual(behavior(source), behavior(self._flatten(source)))
+                self.assertEqual(*before_and_after(source))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_key_a_bare_name_cannot_carry_stays_on_the_namespace(self):
+        """
+        A key that is no name a declaration may take, a read that a `with` object answers where it
+        stands, and a namespace a direct `eval` can see, or a key one can declare between the read
+        and the namespace: flattening any of these prints something else, or nothing that parses.
+        """
+        for source in A_KEY_A_BARE_NAME_CANNOT_CARRY:
             with self.subTest(source):
                 self.assertEqual(behavior(source), behavior(self._flatten(source)))
                 self.assertEqual(*before_and_after(source))

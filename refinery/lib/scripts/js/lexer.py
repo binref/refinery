@@ -118,6 +118,14 @@ def _continues_a_name(c: str) -> bool:
     return unicodedata.category(c) in _ID_CONTINUE_CATEGORIES or c in _EXTRA_NAME_PART
 
 
+def is_identifier_name(text: str) -> bool:
+    """
+    Whether *text* is an IdentifierName written without an escape: a character that opens a name
+    followed by characters that continue one.
+    """
+    return bool(text) and _opens_a_name(text[0]) and all(map(_continues_a_name, text[1:]))
+
+
 def _at_identifier_start(src: str, pos: int) -> bool:
     """
     Whether an IdentifierName begins at *pos*. A backslash opens one only where it opens a

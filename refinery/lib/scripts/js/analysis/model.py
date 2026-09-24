@@ -2861,6 +2861,32 @@ class SemanticModel:
         scope = self.scope_of(node)
         if scope is None:
             return True
+        return any(
+            owner is None or owner.contains(scope)
+            for owner in self._var_scopes_of_evals_before(node)
+        )
+
+    def direct_eval_declares_below(self, node: Node, outer: Scope) -> bool:
+        """
+        Whether a direct `eval` could have installed a `var` that a name written at *node* finds
+        before its lookup reaches the scope *outer*: one whose var scope contains the scope of
+        *node* and lies strictly inside *outer*. The bounded form of
+        `free_name_reachable_by_direct_eval`, for a caller about to declare the name in *outer*.
+        """
+        scope = self.scope_of(node)
+        if scope is None:
+            return True
+        return any(
+            owner is None or owner.contains(scope) and outer.contains(owner, strict=True)
+            for owner in self._var_scopes_of_evals_before(node)
+        )
+
+    def _var_scopes_of_evals_before(self, node: Node) -> Iterator[Scope | None]:
+        """
+        The var scope of every direct `eval` that can have run before *node* is evaluated, or `None`
+        where the scope of one is unknown: all of them but those whose own argument holds *node*,
+        which is evaluated before its `eval` runs (`free_name_reachable_by_direct_eval`).
+        """
         enclosing = {id(node)}
         cursor = node.parent
         while cursor is not None:
@@ -2870,10 +2896,7 @@ class SemanticModel:
             if any(id(argument) in enclosing for argument in getattr(site, 'arguments', ())):
                 continue
             site_scope = self.scope_of(site)
-            owner = site_scope.var_scope if site_scope is not None else None
-            if owner is None or owner.contains(scope):
-                return True
-        return False
+            yield site_scope.var_scope if site_scope is not None else None
 
     def bare_name_reaches_the_host(self, name: str, at: Node) -> bool:
         """

@@ -69,6 +69,7 @@ from refinery.lib.scripts.js.analysis.model import (
     tolerates_unresolvable,
     walk_receiver_scope,
 )
+from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -141,6 +142,18 @@ _Plan = TypeVar('_Plan')
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
 JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
+
+UNDECLARABLE_NAMES = frozenset({
+    'arguments',
+    'eval',
+    'NaN',
+    'Infinity',
+})
+"""
+The names beyond `JS_RESERVED` that a declaration cannot take everywhere: strict code refuses to
+bind `arguments` and `eval`, and a declaration at the top of a script shares the read-only property
+the global object holds for `NaN` and `Infinity`.
+"""
 
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
@@ -1342,7 +1355,13 @@ def is_while_true(node: JsWhileStatement) -> bool:
 
 
 def is_valid_identifier(name: str) -> bool:
-    return bool(SIMPLE_IDENTIFIER.match(name)) and name not in JS_RESERVED
+    """
+    Whether a declaration may bind *name* wherever it stands: an IdentifierName
+    (`refinery.lib.scripts.js.lexer.is_identifier_name`) that is no keyword and no future reserved
+    word (`JS_RESERVED`), and none of the names a declaration cannot take everywhere
+    (`UNDECLARABLE_NAMES`).
+    """
+    return is_identifier_name(name) and name not in JS_RESERVED and name not in UNDECLARABLE_NAMES
 
 
 def is_valid_property_key(name: str) -> bool:

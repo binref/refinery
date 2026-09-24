@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     function_binds_name,
     insert_after_prologue,
     is_receiver_binding_call,
+    is_valid_identifier,
     property_absent_from_written_chain,
     references_receiver_this,
 )
@@ -131,7 +132,13 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         namespace_id = declarator.id
         if isinstance(namespace_id, JsIdentifier):
             binding = model.binding_of(namespace_id)
-            if binding is not None and a_host_reaches_the_binding(model, binding, self.options):
+            if (
+                binding is not None
+                and (
+                    a_host_reaches_the_binding(model, binding, self.options)
+                    or model.local_reachable_by_direct_eval(binding)
+                )
+            ):
                 return None
         scope_obj = model.scope_of(scope)
         if scope_obj is None:
@@ -145,7 +152,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         flattenable = props - conflicts - captured - this_unsafe - inherited
         flattenable = {
             key for key in flattenable
-            if not self.name_emitted_in(scope, key)
+            if is_valid_identifier(key) and not self.name_emitted_in(scope, key)
         }
         if not flattenable:
             return None
@@ -341,21 +348,44 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         """
         The keys some access `NS.k` of which the bare `k` that replaces it would not carry to the
         declaration the flattening emits in *scope*: between the access and *scope* the name is
-        bound anew, by a binding of the program (`SemanticModel.is_shadowed`) or by a declaration
-        an earlier plan of the batch emits into a scope nested below this one (`name_emitted_in`).
+        bound anew, by a binding of the program
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.is_shadowed`), by a declaration an
+        earlier plan of the batch emits into a scope nested below this one
+        (`refinery.lib.scripts.js.deobfuscation.helpers.BatchedScopeTransformer.name_emitted_in`),
+        or at runtime: by the object of a `with` body the access stands in, or by a `var` a direct
+        `eval` declares below *scope* where the access can see it
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.direct_eval_declares_below`).
         Scopes are decided innermost first, so every such plan is decided before this one.
         """
         captured: set[str] = set()
         for key, references in references_by_key.items():
             for reference in references:
                 assert isinstance(reference, JsMemberExpression) and reference.object is not None
-                if model.is_shadowed(key, reference.object, scope_obj) or any(
-                    self.name_emitted_in(enclosing, key)
-                    for enclosing in self._scopes_between(reference, scope)
+                if (
+                    model.is_shadowed(key, reference.object, scope_obj)
+                    or self._crosses_a_with_body(model, reference, scope_obj)
+                    or model.direct_eval_declares_below(reference, scope_obj)
+                    or any(
+                        self.name_emitted_in(enclosing, key)
+                        for enclosing in self._scopes_between(reference, scope)
+                    )
                 ):
                     captured.add(key)
                     break
         return captured
+
+    @staticmethod
+    def _crosses_a_with_body(model: SemanticModel, node: Node, outer: Scope) -> bool:
+        """
+        Whether a name written at *node* is resolved through the object of a `with` body before
+        the lookup reaches the scope *outer*.
+        """
+        cursor = model.scope_of(node)
+        while cursor is not None and cursor is not outer:
+            if cursor.is_dynamic:
+                return True
+            cursor = cursor.parent
+        return False
 
     @staticmethod
     def _scopes_between(node: Node, scope: Node) -> Iterator[Node]:
