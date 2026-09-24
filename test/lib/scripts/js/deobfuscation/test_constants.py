@@ -2311,3 +2311,30 @@ class TestALocalALaterStoreDefines(TestJsDeobfuscator):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Programs whose local is declared without a value and given one by a store that its statement
+#: runs on some runs only: behind a short-circuit operator, in an arm of a conditional expression,
+#: past an optional link, in a later `case` test, and as the target of a `for-in` head over an empty
+#: object. Each is mapped to what Node prints, which is the value the local held before the store.
+A_STORE_ITS_STATEMENT_DOES_NOT_ALWAYS_RUN = {
+    'var b; Math.random() > 2 && (b = 1); console.log(b);\n': 'undefined\n',
+    'function f(a) { var b; a > 0 && (b = 1); console.log(b); } f(0); f(1);\n': (
+        'undefined\n1\n'
+    ),
+    'function f(a) { var b; a > 0 ? (b = 1) : 0; console.log(b); } f(0);\n': 'undefined\n',
+    'function f(a) { var b; a?.[(b = 2)]; console.log(b); } f(null);\n': 'undefined\n',
+    'function f(k) { var y; switch (k) { case 1: console.log(y); break; case (y = 5): break; } }'
+    ' f(1);\n': 'undefined\n',
+    'function f() { var i, a = {}; for (a[i = 5] in {}); console.log(i); } f();\n': 'undefined\n',
+}
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAStoreItsStatementDoesNotAlwaysRun(TestBase):
+
+    def test_the_read_after_the_statement_keeps_the_value_from_before(self):
+        rows = A_STORE_ITS_STATEMENT_DOES_NOT_ALWAYS_RUN
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
