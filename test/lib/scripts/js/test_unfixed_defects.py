@@ -879,6 +879,48 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
 
 
+#: Programs whose `try` block reads `window` before it stores `r`, so where the host lacks `window`
+#: the store never runs, and whose `catch` clause then leaves by a throw or a `return` before the
+#: `finally` reads `r`, mapped to what Node prints: the value `r` held before the store.
+A_STORE_SKIPPED_BEFORE_A_CATCH_LEAVES_FOR_THE_FINALLY = {
+    inspect.cleandoc("""
+        function f() {
+          var r = 1;
+          try { window; r = 5; } catch (e) { throw e; } finally { console.log(r); }
+        }
+        try { f(); } catch (e) {}
+    """): '1\n',
+    inspect.cleandoc("""
+        function f() {
+          var r;
+          try { window; r = 5; } catch (e) { return; } finally { console.log(r); }
+        }
+        f();
+    """): 'undefined\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStoreSkippedBeforeACatchLeavesIsNotDoneInTheFinally(TestBase):
+    """
+    The control-flow graph builds the body of a `catch` clause after it closes the guarded block's
+    handler, so a throw out of the clause goes to the handlers around the statement or to the exit,
+    and a `return` goes to the exit, and neither enters the `finally`. The `finally` is then reached
+    only from the end of the `try` block, where every store of the block has completed, and the
+    constant inliner folds the store the throw skipped into what the `finally` reads. A correct
+    graph routes every abrupt exit of the block and of its clauses through the finalizer. The
+    builder is shared with PowerShell, whose traps route through the same method.
+    """
+
+    @unittest.expectedFailure
+    def test_the_finally_reads_the_value_from_before_the_store(self):
+        rows = A_STORE_SKIPPED_BEFORE_A_CATCH_LEAVES_FOR_THE_FINALLY
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 #: A reflective `eval` reached through a host-conditional alias base. `window.eval(code)` reads
 #: `window` before the call, so where the host lacks it (Node) the whole statement throws a
 #: `ReferenceError`. A correct deobfuscation keeps the call and throws the same.
