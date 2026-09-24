@@ -2243,13 +2243,24 @@ class TestALexicalBindingThatStopsABlockFunctionEscapingIsKept(TestJsDeobfuscato
 
 #: Programs calling a function declared in a block from outside that block, which Annex B makes
 #: legal in sloppy code by copying the function into the enclosing scope, mapped to what Node
-#: prints for them.
+#: prints for them. In the last two the block also writes a property of the function, which is all
+#: the block itself does with it.
 A_BLOCK_FUNCTION_CALLED_FROM_OUTSIDE_ITS_BLOCK = {
-    '{ let q = 1; function h() { return q; } } console.log(h());\n': '1\n',
-    'function f() { { let q = 2; function h() { return q; } } return h(); }\n'
-    'console.log(f());\n': '2\n',
-    'if (true) { let q = 3; function h() { return q; } } console.log(h());\n': '3\n',
-    '{ let q = 4; function h() { return q; } } { console.log(h()); }\n': '4\n',
+    '{ let q = 1; function h() { return q; } } console.log(h());': '1\n',
+    inspect.cleandoc("""
+        function f() { { let q = 2; function h() { return q; } } return h(); }
+        console.log(f());
+    """): '2\n',
+    'if (true) { let q = 3; function h() { return q; } } console.log(h());': '3\n',
+    '{ let q = 4; function h() { return q; } } { console.log(h()); }': '4\n',
+    inspect.cleandoc("""
+        function f() { { function g() {} g.x = 1; } return g.x; }
+        console.log(f());
+    """): '1\n',
+    inspect.cleandoc("""
+        function f() { { function h() { return 7; } h.x = 1; } return h() + h.x; }
+        console.log(f());
+    """): '8\n',
 }
 
 

@@ -236,15 +236,14 @@ def _reachable_functions(
     object, so the file is not the whole program and its references are not the whole call graph.
     Seeding such a name here rather than exempting it from removal later is what makes everything it
     calls survive too — the transitive closure below then does that work — which matters because the
-    entrypoint is typically the root of the whole program. Keeping the entrypoint's *own* declaration is
-    not this function's job; the caller spares it by binding, so the write-only demotion below needs no
-    exception for it.
+    entrypoint is typically the root of the whole program.
 
     Functions that are only referenced as the object of property-write statements
     (`funcName.prop = ...`) where neither the function nor its properties are read anywhere else
-    are considered unreachable. Returns a `(set, dict)` pair: the set of reachable function
-    names and a dict mapping each write-only function name to the statements that are its only
-    references.
+    are considered unreachable, unless they are in *entrypoints*: code outside *body* reaches those,
+    and what it reads of them is not in *body* to see. Returns a `(set, dict)` pair: the set of
+    reachable function names and a dict mapping each write-only function name to the statements
+    that are its only references.
     """
     referenced: set[str] = set()
     for stmt in body:
@@ -262,7 +261,7 @@ def _reachable_functions(
                 reachable.add(ident_name)
                 frontier.append(ident_name)
     write_only_stmts: dict[str, list[Statement]] = {}
-    for name in list(reachable):
+    for name in list(reachable - entrypoints):
         if name not in functions:
             continue
         stmts = _classify_property_write_only(body, name)
