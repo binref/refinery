@@ -16,8 +16,6 @@ from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
-from refinery.lib.scripts.ps1.analysis.handoff import Ps1Handoff
-from refinery.lib.scripts.ps1.analysis.identity import passage_out_of
 from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
     VARIABLE_QUALIFIERS,
@@ -43,7 +41,6 @@ from refinery.lib.scripts.ps1.analysis.values import (
     read,
     render,
     survives_being_written,
-    type_of,
     unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.analysis.variable_types import (
@@ -278,141 +275,6 @@ def _survives_this_position(value: Node, occurrence: Ps1Variable) -> bool:
         return True
     return not isinstance(
         _ancestor_past_parens(occurrence), (Ps1BinaryExpression, Ps1UnaryExpression))
-
-
-def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlining) -> bool:
-    """
-    Whether installing *value* where *occurrence* stands leaves every other name for the object it
-    reads observing what it observed.
-
-    A bare read hands over the object the name holds rather than a copy of it, so `$y = $x` gives
-    one array two names. Writing the array's value where `$x` stands gives `$y` an array of its own,
-    and a `[Array]::Reverse($x)` below then reaches one and not the other. Measured: without this,
-    `$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
-
-    Where the object goes is `refinery.lib.scripts.ps1.analysis.objects.Ps1ObjectFlow.handoff`.
-    Where nothing keeps it and where what is kept is never changed in place (`_may_change_at`), a
-    copy is the object.
-
-    A plain `$y = $x` whose target the semantic model files stores across, between two names
-    nothing else keeps, is decided on those two names: no store through either may be spelled
-    anywhere, and no code nobody can read may run after the hand-off, since such code may store
-    through either name. Every other hand-off keeps the object somewhere no name spells — a
-    container, a callee, the output a caller collects — so the copy is refused wherever anything
-    may change an object in place after it. The one store excused is the one the hand-off itself
-    makes into a container, which changes the container and not the object, unless the container
-    is a name for the object itself.
-
-    A script that spells no change in place at all lets every hand-off but the one to a name
-    through. That is a doubt taken on purpose rather than a claim: a callee may keep what it is
-    handed where code nobody can read finds it, and refusing that doubt refuses the decoded buffer
-    a loader hands to the call whose result it runs. A second name is no such doubt, since that
-    code may store through the name itself.
-    """
-    if not _may_be_changed_in_place(value):
-        return True
-    handoff = state.objects.handoff(occurrence)
-    if handoff is Ps1Handoff.NOWHERE or not _may_change_at(value, handoff):
-        return True
-    read_from = state.binding_of(occurrence)
-    if read_from is None:
-        return False
-    target = _assignment_target(occurrence)
-    if handoff is Ps1Handoff.A_NAME:
-        stored_into = None if target is None else state.binding_of(target)
-        if stored_into is None or stored_into is read_from:
-            return False
-        if (
-            state.objects.files_stores_across(read_from, stored_into)
-            and state.objects.exposure(read_from) is Ps1Handoff.NOWHERE
-        ):
-            return not (
-                _is_changed_in_place(read_from)
-                or state.objects.unreadable_code_may_follow(occurrence)
-            )
-    elif not state.changes_an_object_in_place:
-        return True
-    if target is not None and any(write.node is target for write in read_from.writes):
-        target = None
-    return not state.objects.change_may_follow(occurrence, apart_from=target)
-
-
-def _may_change_at(value: Expression, handoff: Ps1Handoff) -> bool:
-    """
-    Whether a store can change what a hand-off keeps of *value*: the object itself, or only the
-    objects inside it where the hand-off keeps `PARTS` of
-    `refinery.lib.scripts.ps1.analysis.handoff.Ps1Handoff`. The elements of `1, 2, 3` are numbers,
-    so taking them apart hands on nothing a store can reach.
-    """
-    if handoff is not Ps1Handoff.PARTS:
-        return _may_be_changed_in_place(value)
-    array = _get_array_literal(value)
-    if array is None:
-        return _may_be_changed_in_place(value)
-    return any(_may_be_changed_in_place(element) for element in array.elements)
-
-
-def _may_be_changed_in_place(value: Expression) -> bool:
-    """
-    Whether a store can reach the object *value* names, so that a copy of it and a second name for
-    it are two different things.
-
-    A String, a number, a Char and a Boolean are what 5.1 hands over by value or never changes at
-    all — `$s[0] = 'x'` on a String raises rather than writing — so a copy of one is the object.
-    An array is not, and neither is a value the domain declines to name: the list of objects a store
-    can reach is not one this can finish, so anything it cannot read is answered `True`. A type
-    literal is the one value the inliner carries that the domain does not name, and it is the
-    `System.Type` it spells, which holds nothing a store can reach.
-    """
-    if isinstance(unwrap_parens(value), Ps1TypeExpression):
-        return False
-    named = type_of(read(value))
-    return named is None or bool(named.ranks)
-
-
-def _is_changed_in_place(binding: Binding) -> bool:
-    """
-    Whether anything stores through a name for the object *binding* holds. The semantic model files
-    a store through any name of the alias class against every member of it, so asking one member
-    answers for all of them.
-    """
-    return any(write.role.through for write in binding.writes)
-
-
-def _assignment_target(occurrence: Ps1Variable) -> Ps1Variable | None:
-    """
-    The one variable a plain assignment stores *occurrence* into, where the occurrence is the whole
-    of what it stores, or `None` where the position names no single variable.
-
-    A target reaching into a value — `$h['k']`, `$o.P`, `$a[0]` — names the variable its chain is
-    rooted at, because that is the name every later store through the same place is spelled on and
-    so the name a caller has to watch. `None` is every position whose destination this cannot name
-    that way, and a caller reads it as such: a hash literal's entry, one slot of a multi-assignment,
-    an argument of a call or of a command.
-
-    What is climbed on the way to the assignment is every expression that may give back the object
-    it was handed, as `refinery.lib.scripts.ps1.analysis.identity.passage_out_of` names them, and
-    an array literal: the `$a = ,$x` that builds a fresh outer array whose one element is the array
-    `$x` names still stores that array under `$a`, one level down.
-    """
-    cursor: Node = occurrence
-    while True:
-        passage = passage_out_of(cursor)
-        if passage is not None and not isinstance(passage.expression, Ps1AssignmentExpression):
-            cursor = passage.expression
-        elif isinstance(cursor.parent, Ps1ArrayLiteral):
-            cursor = cursor.parent
-        else:
-            break
-    parent = cursor.parent
-    if not isinstance(parent, Ps1AssignmentExpression) or parent.operator != '=':
-        return None
-    if parent.value is not cursor:
-        return None
-    target = unwrap_assignment_target(parent.target)
-    while isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
-        target = unwrap_assignment_target(target.object)
-    return target if isinstance(target, Ps1Variable) else None
 
 
 def _ancestor_past_parens(node: Node) -> Node | None:
@@ -772,12 +634,9 @@ class _Inlining:
         if write is None:
             return None
         value = self._value_from(write, key, binding, chased)
-        if value is None or not _may_be_changed_in_place(value):
-            return value
-        changed = self.objects.unseen_change(write, var)
-        if changed is Ps1Handoff.NOWHERE or not _may_change_at(value, changed):
-            return value
-        return None
+        if value is None or not self.objects.still_holds(write, var, value):
+            return None
+        return value
 
     def _value_from(
         self,
@@ -826,10 +685,6 @@ class _Inlining:
 
     def binding_of(self, var: Ps1Variable) -> Binding | None:
         return self.flow.semantic.binding_of(var)
-
-    @property
-    def changes_an_object_in_place(self) -> bool:
-        return self.flow.semantic.changes_an_object_in_place
 
     def installed(self, var: Ps1Variable, replacement: Node):
         binding = self.binding_of(var)
@@ -981,7 +836,7 @@ class Ps1ConstantInlining(Transformer):
         state: _Inlining,
     ) -> None:
         const_value = state.value_at(var, key)
-        if const_value is None or not _preserves_sharing(var, const_value, state):
+        if const_value is None or not state.objects.a_copy_may_stand_for(var, const_value):
             return
         idx = integer_of(read(node.index))
         if idx is None:
@@ -1015,7 +870,7 @@ class Ps1ConstantInlining(Transformer):
         const_value = state.value_at(node, key)
         if const_value is None or not _survives_this_position(const_value, node):
             return
-        if not _preserves_sharing(node, const_value, state):
+        if not state.objects.a_copy_may_stand_for(node, const_value):
             return
         if isinstance(node.parent, Ps1ExpandableString):
             replacement = _interpolated(const_value, node, state.flow)

@@ -157,3 +157,47 @@ class ReachabilityQuery:
         if self.any_between(graph, nearest_node, use, blocking):
             return None
         return nearest
+
+    def reaching_definitions(
+        self,
+        graph: ControlFlowGraph,
+        use: CfgNode,
+        definitions: Sequence[tuple[_D, CfgNode]],
+        kills: Iterable[int] = (),
+    ) -> list[_D] | None:
+        """
+        Every definition among *definitions* whose value may be observed at *use*, or `None` where a
+        value none of them established may be: the one standing before *graph* ran, or one a kill
+        left behind.
+
+        A definition reaches *use* when some path runs from it to *use* with no other definition on
+        it, so the answer is read off a walk backwards from *use* that stops at every definition it
+        meets. Those it stops at are the answer; reaching the entry, or a node in *kills* — a
+        definition's own node among them — on the way is a path along which no definition stands
+        last, and the answer is then `None`. A definition sharing *use*'s node is not ordered
+        against it at this granularity and is refused, as `reaching_definition` refuses it.
+        """
+        at: dict[int, list[_D]] = {}
+        for value, node in definitions:
+            at.setdefault(id(node), []).append(value)
+        if id(use) in at or use is graph.entry:
+            return None
+        blocking = frozenset(kills)
+        found: list[_D] = []
+        seen: set[int] = {id(use)}
+        stack = list(self._projection.predecessors(use))
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            if id(node) in blocking:
+                return None
+            reached = at.get(id(node))
+            if reached is not None:
+                found.extend(reached)
+                continue
+            if node is graph.entry:
+                return None
+            stack.extend(self._projection.predecessors(node))
+        return found

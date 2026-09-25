@@ -7,7 +7,7 @@ from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.handoff import Ps1Handoff
 from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow
 from refinery.lib.scripts.ps1.analysis.world import runs_code_it_cannot_read
-from refinery.lib.scripts.ps1.model import Ps1Variable
+from refinery.lib.scripts.ps1.model import Ps1ArrayLiteral, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -68,7 +68,7 @@ class TestPs1AChangeIsOrderedWhereTheNodeIsPlaced(TestBase):
 
     def test_unreadable_code_after_the_statement_that_runs_a_block_follows_a_node_in_it(self):
         tree, objects = _objects('$x = 1, 2, 3; $y = & { ,$x }; iex $c')
-        self.assertTrue(objects.unreadable_code_may_follow(_occurrences(tree, 'x')[1]))
+        self.assertTrue(objects.change_may_follow(_occurrences(tree, 'x')[1]))
 
     def test_a_change_before_the_statement_that_runs_a_block_does_not_follow_a_node_in_it(self):
         tree, objects = _objects('$z = 0, 0; $z[0] = 7; $x = 1, 2, 3; $y = & { ,$x }')
@@ -99,14 +99,18 @@ class TestPs1AChangeTheObjectMaySeeBetweenAWriteAndARead(TestBase):
             Ps1Handoff.OBJECT,
         )
 
-    def test_a_store_through_a_second_name_is_no_unseen_change(self):
-        """
-        The semantic model files a store spelled through `$y` against `$x` as well, so the change
-        is a write of the name and not one this has to report.
-        """
+    def test_a_store_into_an_array_made_elsewhere_changes_nothing_the_read_observes(self):
         self.assertIs(
-            self._unseen('$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x'),
+            self._unseen("$x = 1, 2, 3; $h = @{ k = $x }; $z = 0, 0; $z[0] = 9; Write-Output $x"),
             Ps1Handoff.NOWHERE,
+        )
+
+    def test_a_store_into_an_array_either_arm_may_have_made_changes_the_read(self):
+        self.assertIs(
+            self._unseen(
+                "$x = 1, 2, 3; $h = @{ k = $x }; if ($a) { $z = 0, 0 } else { $z = $x }; "
+                '$z[0] = 9; Write-Output $x'),
+            Ps1Handoff.OBJECT,
         )
 
     def test_code_nobody_can_read_may_store_through_a_second_name(self):
@@ -120,3 +124,90 @@ class TestPs1AChangeTheObjectMaySeeBetweenAWriteAndARead(TestBase):
             self._unseen("$z = 0, 0; $z[0] = 7; $x = 1, 2, 3; $h = @{ k = $x }; Write-Output $x"),
             Ps1Handoff.NOWHERE,
         )
+
+
+class TestPs1TheObjectANameHoldsIsWhereItWasMade(TestBase):
+    """
+    The object a read holds is named by the expressions whose evaluation may have made it: an array
+    literal makes one, a second name hands on the one it holds, and a value this cannot follow may
+    be any object at all.
+    """
+
+    @staticmethod
+    def _made(source: str) -> tuple[set[int], set[int] | None]:
+        """
+        The array literals of *source*, and the expressions that may have made the object the last
+        read of `$x` holds.
+        """
+        tree, objects = _objects(source)
+        literals = {id(node) for node in tree.walk() if isinstance(node, Ps1ArrayLiteral)}
+        made = objects.allocations_at(_occurrences(tree, 'x')[-1])
+        return literals, None if made is None else {id(node) for node in made}
+
+    def test_a_name_assigned_an_array_literal_holds_what_the_literal_made(self):
+        literals, made = self._made('$x = 1, 2; Write-Output $x')
+        self.assertEqual(made, literals)
+
+    def test_a_second_name_holds_what_the_first_one_held(self):
+        literals, made = self._made('$y = 1, 2; $x = $y; Write-Output $x')
+        self.assertEqual(made, literals)
+
+    def test_a_name_assigned_on_two_arms_holds_what_either_made(self):
+        literals, made = self._made('if ($a) { $x = 1, 2 } else { $x = 3, 4 }; Write-Output $x')
+        self.assertEqual(len(literals), 2)
+        self.assertEqual(made, literals)
+
+    def test_the_output_of_a_command_may_be_any_object(self):
+        _, made = self._made('$x = Get-Thing; Write-Output $x')
+        self.assertIsNone(made)
+
+    def test_a_parameter_may_be_any_object(self):
+        _, made = self._made('function f($x) { Write-Output $x }')
+        self.assertIsNone(made)
+
+
+class TestPs1AChangeReachesTheObjectsItsNameMayHold(TestBase):
+    """
+    A store one step into what a name holds changes the object that name holds, and a call that
+    rearranges a slot changes the object in that slot. What a store two steps in reaches, and what
+    code nobody can read reaches, is any object at all.
+    """
+
+    @staticmethod
+    def _may_change(source: str) -> bool:
+        """
+        Whether a change in place *source* makes may change the object the last read of `$x` holds.
+        """
+        tree, objects = _objects(source)
+        held = objects.allocations_at(_occurrences(tree, 'x')[-1])
+        for change in (*objects.semantic.object_change_sites, *objects.unreadable_code):
+            changed = objects.changes_of(change)
+            if held is None or changed is None or not changed.isdisjoint(held):
+                return True
+        return False
+
+    def test_a_store_into_an_element_changes_what_the_name_holds(self):
+        self.assertTrue(self._may_change('$x = 0, 0; $z = $x; $z[0] = 7; Write-Output $x'))
+
+    def test_a_store_into_an_element_of_another_array_does_not(self):
+        self.assertFalse(self._may_change('$x = 0, 0; $z = 1, 1; $z[0] = 7; Write-Output $x'))
+
+    def test_a_reversal_changes_what_the_name_it_is_handed_holds(self):
+        self.assertTrue(
+            self._may_change('$x = 1, 2; $z = $x; [Array]::Reverse($z); Write-Output $x'))
+
+    def test_a_reversal_of_another_array_does_not(self):
+        self.assertFalse(
+            self._may_change('$x = 1, 2; $z = 3, 4; [Array]::Reverse($z); Write-Output $x'))
+
+    def test_reversing_a_list_adapter_may_change_the_array_it_wraps(self):
+        self.assertTrue(self._may_change(
+            '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); '
+            'Write-Output $x'))
+
+    def test_a_store_two_steps_in_may_change_any_array(self):
+        self.assertTrue(
+            self._may_change('$x = 1, 2; $z = @(0, 0), 1; $z[0][0] = 7; Write-Output $x'))
+
+    def test_code_nobody_can_read_may_change_any_array(self):
+        self.assertTrue(self._may_change('$x = 1, 2; iex $c; Write-Output $x'))

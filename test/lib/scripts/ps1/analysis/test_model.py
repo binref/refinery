@@ -4,7 +4,13 @@ import time
 
 from test import TestBase
 
-from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER, _floored
+from refinery.lib.scripts.ps1 import data
+from refinery.lib.scripts.ps1.analysis.arguments import (
+    RECEIVER,
+    _floored,
+    _floored_keepers,
+    keeps_nothing,
+)
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1OccurrenceRole,
     ScopeKind,
@@ -784,6 +790,37 @@ class TestPs1TheWrittenSlotTableIsFlooredAgainstTheCollectedMetadata(TestBase):
         self.assertEqual(
             list(built.values()),
             [{arity: frozenset({RECEIVER}) for arity in (2, 3, 4)}])
+
+
+class TestPs1TheKeepNothingTableIsFlooredAgainstTheCollectedMetadata(TestBase):
+    """
+    A call the keep-nothing table names is taken to hand back nothing it was handed, so an array
+    handed to it has no second holder. A member an overload of which returns an object may return
+    the argument itself or a wrapper around it, as `[Array]::AsReadOnly` does, and one taking a
+    parameter by reference may hand an argument out through that, so either is refused where the
+    table is built.
+    """
+
+    def test_a_member_returning_an_object_is_refused(self):
+        with self.assertRaises(ValueError):
+            _floored_keepers({('array', 'asreadonly')})
+
+    def test_a_member_taking_a_parameter_by_reference_is_refused(self):
+        with self.assertRaises(ValueError):
+            _floored_keepers({('array', 'resize')})
+
+    def test_a_member_the_metadata_does_not_carry_is_refused(self):
+        with self.assertRaises(ValueError):
+            _floored_keepers({('string', 'fill')})
+
+    def test_a_member_every_overload_of_which_returns_a_string_is_built(self):
+        self.assertEqual([member for _, member in _floored_keepers({('string', 'join')})], ['join'])
+
+    def test_the_table_is_asked_by_the_type_whatever_its_spelling(self):
+        string = data.resolve_type('System.String')
+        assert string is not None
+        self.assertTrue(keeps_nothing(string, 'JOIN'))
+        self.assertFalse(keeps_nothing(string, 'Split'))
 
 
 class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):

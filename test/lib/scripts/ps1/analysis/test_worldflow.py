@@ -11,7 +11,7 @@ from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.world import build_closed_world
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import resolve_command_name
-from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Script
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1InvokeMember, Ps1Script
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -286,6 +286,48 @@ class TestPs1AReadInsideABlockTheStatementRunsHasTheStatementsPosition(TestBase)
         )
         reach = Ps1ModelCache(script).world_reach
         self.assertTrue(reach.may_trust_command_name_at('get-random', inner))
+
+
+class TestPs1WhatAnOpenerIsHandedIsEvaluatedBeforeItRuns(TestBase):
+    """
+    A command's arguments are evaluated before the command runs, so what `Invoke-Expression` is
+    handed is evaluated in the world as it stood before the payload ran. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, `$b = 'Write-Host', 'hi'; iex ([string]::Join(' ', $b))` writes `hi`.
+    """
+
+    @staticmethod
+    def _join_is_closed(source: str) -> bool:
+        script = Ps1Parser(cleandoc(source)).parse()
+        join = next(
+            node for node in script.walk()
+            if isinstance(node, Ps1InvokeMember) and node.member == 'Join'
+        )
+        return Ps1ModelCache(script).world_reach.closed_at(join)
+
+    def test_an_argument_of_the_opener_is_closed(self):
+        self.assertTrue(self._join_is_closed("iex ([string]::Join(' ', $b))"))
+
+    def test_a_node_after_the_opener_in_its_statement_is_not(self):
+        self.assertFalse(self._join_is_closed("(iex $env:PAYLOAD) + [string]::Join(' ', $b)"))
+
+    def test_an_argument_of_the_second_of_two_openers_in_a_statement_is_not(self):
+        self.assertFalse(self._join_is_closed(
+            "(iex $env:PAYLOAD) + (iex ([string]::Join(' ', $b)))"))
+
+    def test_an_argument_of_an_opener_below_another_one_is_not(self):
+        self.assertFalse(self._join_is_closed(
+            """
+            iex $env:PAYLOAD
+            iex ([string]::Join(' ', $b))
+            """))
+
+    def test_an_argument_of_an_opener_in_a_loop_is_not(self):
+        self.assertFalse(self._join_is_closed("while ($true) { iex ([string]::Join(' ', $b)) }"))
+
+    def test_a_node_in_a_block_handed_to_the_opener_is_not(self):
+        self.assertFalse(self._join_is_closed(
+            "Invoke-Command -ScriptBlock { [string]::Join(' ', $b) } -ArgumentList $env:PAYLOAD; "
+            'iex $env:PAYLOAD'))
 
 
 class TestPs1ABindingOfAnUninvokedNameFloodsNothing(TestBase):

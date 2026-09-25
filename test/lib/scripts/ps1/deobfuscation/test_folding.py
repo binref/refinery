@@ -2012,7 +2012,7 @@ class TestPs1ASharedArrayIsOneOnlyBetweenTheAliasAndTheNextRebinding(TestPs1):
     does not run, was never on the array the call turned around at all.
 
     Measured on 5.1, the six scripts here write `3 2 1`, `9 9 9`, `7 7 7`, `1 2 3`, `1 2 3` and
-    `3 2 1`. Three of them are refused rather than answered, and what none of them may do is report
+    `3 2 1`. Two of them are refused rather than answered, and what none of them may do is report
     the reversal of an array the name being read had already stopped holding.
     """
 
@@ -2073,7 +2073,7 @@ class TestPs1ASharedArrayIsOneOnlyBetweenTheAliasAndTheNextRebinding(TestPs1):
         """)
         self.assertEqual(self._deobfuscate(source), expected)
 
-    def test_a_name_whose_source_was_rebound_before_the_reversal_is_not_answered(self):
+    def test_a_name_whose_source_was_rebound_before_the_reversal_keeps_its_array(self):
         source = inspect.cleandoc("""
             $x = 1, 2, 3
             $y = $x
@@ -2081,7 +2081,12 @@ class TestPs1ASharedArrayIsOneOnlyBetweenTheAliasAndTheNextRebinding(TestPs1):
             [Array]::Reverse($x)
             Write-Output $y
         """)
-        self.assertEqual(self._deobfuscate(source), source)
+        expected = inspect.cleandoc("""
+            $x = 9, 9, 9
+            [Array]::Reverse($x)
+            Write-Output (1, 2, 3)
+        """)
+        self.assertEqual(self._deobfuscate(source), expected)
 
     def test_a_reversal_through_a_third_name_is_not_answered_with_the_order_from_above(self):
         source = inspect.cleandoc("""

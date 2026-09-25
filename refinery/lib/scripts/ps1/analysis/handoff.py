@@ -30,7 +30,8 @@ import typing
 from typing import Callable
 
 from refinery.lib.scripts import Expression, Node
-from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER
+from refinery.lib.scripts.ps1 import data
+from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER, keeps_nothing
 from refinery.lib.scripts.ps1.analysis.identity import passage_out_of
 from refinery.lib.scripts.ps1.analysis.model import written_slots_of
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
@@ -42,6 +43,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
@@ -71,6 +73,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1SubExpression,
     Ps1SwitchStatement,
     Ps1ThrowStatement,
+    Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
 )
@@ -143,20 +146,34 @@ def binds_a_name(cmd: Ps1CommandInvocation) -> bool:
     )
 
 
-def object_handoff(var: Ps1Variable, trusts: Callable[[str], bool]) -> Ps1Handoff:
+class Ps1CallTrust(typing.NamedTuple):
     """
-    What keeps the object *var* reads once the expression around it has run.
+    What the classifier may believe about the code a read is handed to. `trusts` says whether a
+    command name still runs the command it names: a name the script may have taken over runs code
+    this cannot see, which may keep anything. `closed_at` says whether no code this analysis cannot
+    read has run by the time a node is evaluated, so that a type still names the type the metadata
+    describes: such code can put another type behind `[string]`, and what a call on it keeps is then
+    anything at all.
+    """
+    trusts: Callable[[str], bool]
+    closed_at: Callable[[Node], bool]
 
-    *trusts* says whether a command name still runs the command it names in this script. A name the
-    script may have taken over runs code this cannot see, which may keep anything, so only a command
-    this module lets go of the object asks it.
+
+#: Believe nothing: every command and every call may keep what it is handed.
+TRUST_NOTHING = Ps1CallTrust(lambda name: False, lambda node: False)
+
+
+def object_handoff(var: Ps1Variable, trust: Ps1CallTrust) -> Ps1Handoff:
     """
-    return _climb(var, _Position(0, direct=True, streamed=False), trusts)
+    What keeps the object *var* reads once the expression around it has run. What a command or a
+    call is believed to let go of is what *trust* allows.
+    """
+    return _climb(var, _Position(0, direct=True, streamed=False), trust)
 
 
 def assignment_handoff(
     assignment: Ps1AssignmentExpression,
-    trusts: Callable[[str], bool],
+    trust: Ps1CallTrust,
 ) -> Ps1Handoff:
     """
     What keeps the object *assignment* stores, apart from its own target, once the assignment is
@@ -166,7 +183,7 @@ def assignment_handoff(
     """
     if not _yields_its_value(assignment):
         return Ps1Handoff.NOWHERE
-    return _climb(assignment, _Position(0, direct=False, streamed=False), trusts)
+    return _climb(assignment, _Position(0, direct=False, streamed=False), trust)
 
 
 class _Position(typing.NamedTuple):
@@ -295,7 +312,7 @@ def _assigned(assignment: Ps1AssignmentExpression, at: _Position) -> Ps1Handoff:
     return _kept(at.depth)
 
 
-def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Handoff:
+def _climb(start: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Handoff:
     """
     What keeps the object once the expression around *start* has run, the value at *start* holding
     it as *at* says.
@@ -315,7 +332,7 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
             kept = _assigned(parent, _Position(depth, direct, streamed))
             if not _yields_its_value(parent):
                 return kept
-            return kept.widest(_climb(parent, _Position(depth, direct, False), trusts))
+            return kept.widest(_climb(parent, _Position(depth, direct, False), trust))
         passage = passage_out_of(cursor)
         if passage is not None:
             cursor = passage.expression
@@ -329,7 +346,7 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
             if parent.object is not cursor:
                 if isinstance(parent, Ps1InvokeMember):
                     if any(argument is cursor for argument in parent.arguments):
-                        return _kept_by_callee(parent, cursor, depth)
+                        return _kept_by_callee(parent, cursor, depth, trust)
                 elif isinstance(parent, Ps1IndexExpression):
                     if parent.index is cursor and _is_a_store_target(parent):
                         return _kept(depth)
@@ -344,16 +361,16 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         elif isinstance(parent, Ps1CommandInvocation):
             if parent.name is cursor:
                 return Ps1Handoff.NOWHERE
-            kept = _handed_to_command(parent, depth, trusts)
+            kept = _handed_to_command(parent, depth, trust)
             if kept is not None:
                 return kept
             if not _is_no_enumerate(parent):
                 depth = _unrolled(depth)
             streamed = True
         elif isinstance(parent, Ps1Pipeline):
-            return _piped(parent, cursor, _Position(depth, False, streamed), trusts)
+            return _piped(parent, cursor, _Position(depth, False, streamed), trust)
         elif isinstance(parent, (Ps1ExpressionStatement, Ps1ReturnStatement)):
-            return _written_out(parent, _Position(depth, False, streamed), trusts)
+            return _written_out(parent, _Position(depth, False, streamed), trust)
         elif isinstance(parent, (Ps1ForEachLoop, Ps1SwitchStatement)):
             iterated = parent.iterable if isinstance(parent, Ps1ForEachLoop) else parent.value
             return _kept(_unrolled(depth)) if iterated is cursor else Ps1Handoff.NOWHERE
@@ -387,22 +404,34 @@ def _hands_its_receiver_on(call: Ps1InvokeMember) -> bool:
     return not isinstance(member, str) or bool(written_slots_of(call, member).slots)
 
 
-def _kept_by_callee(call: Ps1InvokeMember, argument: Node, depth: int) -> Ps1Handoff:
+def _kept_by_callee(
+    call: Ps1InvokeMember,
+    argument: Node,
+    depth: int,
+    trust: Ps1CallTrust,
+) -> Ps1Handoff:
     """
     What a .NET call keeps of an object handed to it as *argument*.
 
     A call is code this does not read, so in general it may keep anything — `$list.Add($x)` keeps
-    `$x` inside the list. The calls `refinery.lib.scripts.ps1.analysis.arguments.written_slots`
-    knows to write through a slot are the exception, because what they do is known: each fills or
-    rearranges the buffer in a slot it writes, and an argument it does not write is read for what
-    it holds. `[Array]::Copy($a, $b, 3)` puts the elements of `$a` into `$b` and never `$a` itself,
-    and `[Buffer]::BlockCopy` copies bytes. A call that writes its *receiver* — `SetValue` —
+    `$x` inside the list. Two kinds of call are the exception, because what they do is known. One
+    keeps nothing at all: `refinery.lib.scripts.ps1.analysis.arguments.keeps_nothing` names it —
+    `[string]::Join(' ', $b)` returns a String built from what `$b` holds. The other is a call
+    `refinery.lib.scripts.ps1.analysis.arguments.written_slots` knows to write through a slot: each
+    fills or rearranges the buffer in a slot it writes, and an argument it does not write is read
+    for what it holds. `[Array]::Copy($a, $b, 3)` puts the elements of `$a` into `$b` and never `$a`
+    itself, and `[Buffer]::BlockCopy` copies bytes. A call that writes its *receiver* — `SetValue` —
     stores an argument into it whole, and one that writes the slot *argument* stands in changes
     the very object it is handed.
+
+    Both hold only where no code this cannot read has run by the time the call is evaluated, since
+    such code can put another type behind the name the call is spelled on.
     """
     member = call.member
-    if not isinstance(member, str):
+    if not isinstance(member, str) or not trust.closed_at(call):
         return _kept(depth)
+    if _keeps_nothing(call, member):
+        return Ps1Handoff.NOWHERE
     written = written_slots_of(call, member).slots
     slot = next(
         (position for position, candidate in enumerate(call.arguments) if candidate is argument),
@@ -413,10 +442,21 @@ def _kept_by_callee(call: Ps1InvokeMember, argument: Node, depth: int) -> Ps1Han
     return _kept(_unrolled(depth))
 
 
+def _keeps_nothing(call: Ps1InvokeMember, member: str) -> bool:
+    """
+    Whether *call* is a static call of a member that keeps nothing it is handed.
+    """
+    named = call.object
+    if call.access is not Ps1AccessKind.STATIC or not isinstance(named, Ps1TypeExpression):
+        return False
+    resolved = data.resolve_type(named.name)
+    return resolved is not None and keeps_nothing(resolved, member)
+
+
 def _handed_to_command(
     cmd: Ps1CommandInvocation,
     depth: int,
-    trusts: Callable[[str], bool],
+    trust: Ps1CallTrust,
 ) -> Ps1Handoff | None:
     """
     What *cmd* keeps of an object it is handed, as an argument or as pipeline input. `None` where
@@ -426,7 +466,7 @@ def _handed_to_command(
     if binds_a_name(cmd):
         return _kept(depth)
     name = get_command_name(cmd)
-    if name is None or not trusts(name.lower()):
+    if name is None or not trust.trusts(name.lower()):
         return _kept(depth)
     name = name.lower()
     if name in _CONSUMING_COMMANDS:
@@ -442,7 +482,7 @@ def _piped(
     pipeline: Ps1Pipeline,
     element: Node,
     at: _Position,
-    trusts: Callable[[str], bool],
+    trust: Ps1CallTrust,
 ) -> Ps1Handoff:
     """
     Where the objects a pipeline element writes go: into the next element, one at a time, or out of
@@ -461,14 +501,14 @@ def _piped(
             command = following.expression
             if not isinstance(command, Ps1CommandInvocation):
                 return _kept(depth)
-            kept = _handed_to_command(command, depth, trusts)
+            kept = _handed_to_command(command, depth, trust)
             if kept is not None:
                 return kept
-        return _climb(pipeline, _Position(depth, False, streamed), trusts)
+        return _climb(pipeline, _Position(depth, False, streamed), trust)
     return _kept(depth)
 
 
-def _written_out(statement: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Handoff:
+def _written_out(statement: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Handoff:
     """
     Where a value a statement writes to the output goes: nowhere at the top of the script, to
     whoever runs a body, and into the value around it where the statement stands in an expression.
@@ -491,7 +531,7 @@ def _written_out(statement: Node, at: _Position, trusts: Callable[[str], bool]) 
                 return _kept(at.depth)
             return Ps1Handoff.NOWHERE
         if isinstance(parent, (Ps1ArrayExpression, Ps1SubExpression)):
-            return _climb(parent, written, trusts)
+            return _climb(parent, written, trust)
         if isinstance(parent, Expression):
-            return _climb(cursor, written, trusts)
+            return _climb(cursor, written, trust)
         cursor = parent

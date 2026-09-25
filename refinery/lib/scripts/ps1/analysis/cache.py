@@ -32,6 +32,7 @@ from refinery.lib.scripts.ps1.analysis.errorstate import (
     build_error_state_reach,
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, build_fault_reach
+from refinery.lib.scripts.ps1.analysis.handoff import Ps1CallTrust
 from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel, build_semantic_model
 from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow, build_object_flow
 from refinery.lib.scripts.ps1.analysis.world import (
@@ -288,11 +289,12 @@ class Ps1ModelCache(ModelCacheBase):
         """
         Which object each name holds, who else keeps it, and what may change it, over
         `variable_flow`. It reads from `closed_world` which command names still run the command they
-        name, which is what decides whether a command handed an object may keep it.
+        name, and from `world_reach` where no code it cannot read has run yet, which is what decides
+        whether a command or a call handed an object may keep it.
         """
         return self._lazy('_object_flow', lambda: build_object_flow(
             self.variable_flow,
-            self.closed_world.runs_the_command_it_names,
+            Ps1CallTrust(self.closed_world.runs_the_command_it_names, self.world_reach.closed_at),
         ))
 
     @property

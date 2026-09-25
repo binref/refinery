@@ -119,3 +119,69 @@ class TestReachingDefinition(TestBase):
         }
         self.assertIsNone(self._observed(edges, [('taken', 't'), ('other', 'f')], 'u'))
         self.assertIsNone(self._observed(edges, [('other', 'f'), ('taken', 't')], 'u'))
+
+
+class TestReachingDefinitions(TestBase):
+
+    def _observed(
+        self,
+        edges: dict[str, list[str]],
+        definitions: Sequence[tuple[str, str]],
+        use: str,
+        kills: Iterable[str] = (),
+    ) -> list[str] | None:
+        """
+        The labels of every definition that may be observed at *use*, in sorted order, where
+        *definitions* pairs a label with the name of the node evaluating it.
+        """
+        graph, named = graph_from_edges(edges)
+        query = ReachabilityQuery(
+            DominatorModel(ControlFlowModel({id(graph.owner): graph})), Projection.MAY)
+        found = query.reaching_definitions(
+            graph,
+            named[use],
+            [(label, named[name]) for label, name in definitions],
+            [id(named[name]) for name in kills],
+        )
+        return None if found is None else sorted(found)
+
+    def test_a_definition_on_the_first_node_reaches_every_later_use(self):
+        self.assertEqual(self._observed(STRAIGHT, [('first', 'a')], 'c'), ['first'])
+
+    def test_the_nearer_of_two_definitions_hides_the_earlier(self):
+        self.assertEqual(
+            self._observed(STRAIGHT, [('first', 'a'), ('second', 'b')], 'c'), ['second'])
+
+    def test_both_arms_of_a_branch_reach_the_join(self):
+        self.assertEqual(
+            self._observed(BRANCH, [('taken', 't'), ('other', 'f')], 'j'), ['other', 'taken'])
+
+    def test_a_definition_in_one_arm_reaches_the_join_beside_the_one_before_the_branch(self):
+        self.assertEqual(
+            self._observed(BRANCH, [('before', 'a'), ('in_arm', 't')], 'j'), ['before', 'in_arm'])
+
+    def test_an_arm_without_a_definition_leaves_the_value_from_before_the_graph(self):
+        self.assertIsNone(self._observed(BRANCH, [('in_arm', 't')], 'j'))
+
+    def test_the_back_edge_carries_the_loop_body_s_definition_to_the_head(self):
+        self.assertEqual(
+            self._observed(LOOP, [('before', 'a'), ('in_body', 'b')], 'h'), ['before', 'in_body'])
+
+    def test_no_definition_at_all_leaves_the_value_from_before_the_graph(self):
+        self.assertIsNone(self._observed(STRAIGHT, [], 'c'))
+
+    def test_a_use_at_the_first_node_observes_the_value_from_before_the_graph(self):
+        self.assertIsNone(self._observed(STRAIGHT, [('later', 'b')], 'a'))
+
+    def test_a_definition_sharing_the_use_s_node_is_not_ordered_against_it(self):
+        self.assertIsNone(self._observed(STRAIGHT, [('first', 'a'), ('here', 'c')], 'c'))
+
+    def test_a_kill_between_a_definition_and_the_use_leaves_no_answer(self):
+        self.assertIsNone(self._observed(STRAIGHT, [('first', 'a')], 'c', kills=['b']))
+
+    def test_a_kill_the_use_cannot_be_reached_from_does_not_stop_it(self):
+        self.assertEqual(self._observed(FORK, [('first', 'a')], 'c', kills=['d']), ['first'])
+
+    def test_a_kill_above_the_nearest_definition_does_not_stop_it(self):
+        self.assertEqual(
+            self._observed(STRAIGHT, [('second', 'b')], 'c', kills=['a']), ['second'])

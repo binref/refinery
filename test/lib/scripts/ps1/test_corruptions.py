@@ -2524,12 +2524,8 @@ class TestPs1ACopyIsNotPutWhereCodeNobodyCanReadMayStoreThroughIt(_Ps1Ledger):
     and a store through a container holding the array `$x` holds changes that array. Measured on
     5.1 in `corpus.BEHAVIOURS`, the script writes `9 2 3`: the payload is `$h.k[0] = 9`, picked by
     an index no reading of the source settles.
-
-    A script that spells no store in place lets every hand-off but the one to a second name
-    through, so the array is spelled into the hash literal and the payload is handed a copy.
     """
 
-    @unittest.expectedFailure
     def test_the_container_is_still_handed_the_array_the_name_holds(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2803,12 +2799,8 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
     a hand-off that stands in a block of its own. Measured on 5.1 in `corpus.BEHAVIOURS`, each
     script writes `9 2 3`: the payload stores through the place that holds the array, picked by an
     index no reading of the source settles.
-
-    A script that spells no store in place lets every hand-off but the one to a second name
-    through, so each container and each body's output is handed a copy.
     """
 
-    @unittest.expectedFailure
     def test_a_called_function_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2836,7 +2828,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_code_after_a_block_reaches_the_array_the_block_wrote_out(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
@@ -2846,7 +2837,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_created_block_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2856,7 +2846,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_invoke_script_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2866,7 +2855,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_invoke_command_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2876,7 +2864,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_block_created_in_a_called_function_reaches_the_container(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
@@ -2893,10 +2880,11 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
     called function, and from a block created from a string, whose scope of its own does not stop a
     qualified write. It may store through a variable of the scopes around it the same way, since a
     bare name reads the caller's variable. Measured on 5.1 in `corpus.BEHAVIOURS`, the first two
-    scripts write `5` and the other two `9 2 3`.
+    scripts write `5`, the next two `9 2 3` and the last `9`.
 
     Such code is read as writing the scope it runs in and nothing else, so the reads are folded to
-    `a` and to `1 2 3`.
+    `a`, to `1 2 3` and to `2`. Where the read hands the whole array to a command, it is kept for
+    that hand-off and not for the store.
     """
 
     @unittest.expectedFailure
@@ -2919,7 +2907,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_called_function_stores_through_the_callers_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2937,6 +2924,16 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             'x',
             [[9, 2, 3]],
             [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_called_function_stores_through_the_callers_array_before_an_element_is_read(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+            'function f { iex $c }; f; Write-Output $x[1]',
+            'x',
+            [[9]],
+            [[2]],
         )
 
 
@@ -2975,12 +2972,8 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
     a note property, a property bag, a list, a list adapter, the application domain's data, and the
     array `Sort-Object -InputObject` hands back. Measured on 5.1 in `corpus.BEHAVIOURS`, each script
     writes `9 2 3`.
-
-    A script that spells no store in place lets every hand-off but the one to a second name through,
-    although code nobody can read runs after it, so each keeper is handed a copy.
     """
 
-    @unittest.expectedFailure
     def test_a_note_property_added_through_the_pipeline_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
@@ -2991,7 +2984,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_note_property_added_to_an_argument_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$o = New-Object PSObject; $x = 1, 2, 3; "
@@ -3003,7 +2995,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_property_bag_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
@@ -3013,7 +3004,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_list_filled_through_for_each_object_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
@@ -3024,7 +3014,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_list_filled_by_its_add_method_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
@@ -3034,7 +3023,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_list_adapter_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
@@ -3044,7 +3032,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_the_application_domain_keeps_the_array(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
@@ -3055,7 +3042,6 @@ class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_sort_object_handed_the_array_as_input_hands_it_back(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; "
@@ -3071,12 +3057,8 @@ class TestPs1AMethodOfAKeeperChangesTheArrayItKeeps(_Ps1Ledger):
     `ArrayList.Adapter` wraps the array it is handed rather than copying it, and the wrapper's
     `Reverse` turns that array around. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes
     `3 2 1`.
-
-    A method of an object is read as changing nothing unless the written-slot table names it, so the
-    adapter is handed a copy and the read is folded to `1 2 3`.
     """
 
-    @unittest.expectedFailure
     def test_reversing_the_adapter_reverses_the_array(self):
         self._assertTheStoreReachesTheName(
             '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); '
@@ -3085,6 +3067,68 @@ class TestPs1AMethodOfAKeeperChangesTheArrayItKeeps(_Ps1Ledger):
             [[3, 2, 1]],
             [[1, 2, 3]],
         )
+
+
+class TestPs1AStoreReachesEveryArrayItsNameMayHold(_Ps1Ledger):
+    """
+    A store one step into what a name holds changes every array the writes that may reach it made,
+    however the array came to the name: through a multi-assignment slot, as the variable of the
+    caller a function body reads, through a chained assignment, as a `[ref]`, by a rebinding in a
+    dot-sourced block or on one arm of a branch. A store two steps in may change any array.
+    Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes `9 2 3`.
+    """
+
+    def _assertTheStoreReaches(self, source: str) -> None:
+        self._assertTheStoreReachesTheName(source, 'x', [[9, 2, 3]], [[1, 2, 3]])
+
+    def test_a_multi_assignment_slot_holds_the_array_opposite_it(self):
+        self._assertTheStoreReaches('$x = 1, 2, 3; $a, $b = 0, $x; $b[0] = 9; Write-Output $x')
+
+    def test_a_store_two_steps_into_the_last_multi_assignment_slot(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; $a, $b = 0, $x, 5; $b[0][0] = 9; Write-Output $x')
+
+    def test_a_function_body_stores_through_the_variable_of_its_caller(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; function f { $o[0] = 9 }; function g($p) { $o = $p; f }; $o = 0, 0; '
+            'g $x; Write-Output $x')
+
+    def test_a_function_body_that_may_not_rebind_stores_through_the_variable_of_its_caller(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; function f { if ((Get-Random -Maximum 1) -eq 1) { $o = 0, 0 }; '
+            '$o[0] = 9 }; function g($p) { $o = $p; f }; g $x; Write-Output $x')
+
+    def test_a_chained_assignment_gives_every_name_in_it_the_array(self):
+        self._assertTheStoreReaches('$x = 1, 2, 3; $a = $b = $x; $a[0] = 9; Write-Output $x')
+
+    def test_a_callee_handed_the_variable_stores_through_it(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; function f([ref]$r) { $r.Value[0] = 9 }; f ([ref]$x); Write-Output $x')
+
+    def test_a_rebinding_in_a_dot_sourced_block_hands_on_the_array(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; $y = 0, 0; . { $y = $x }; $y[0] = 9; Write-Output $x')
+
+    def test_a_rebinding_on_a_branch_that_may_run_hands_on_the_array(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; $y = 0, 0; if ((Get-Random -Maximum 1) -eq 0) { $y = $x }; '
+            '$y[0] = 9; Write-Output $x')
+
+    def test_a_store_two_steps_into_a_table_reaches_the_array_it_holds(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; $h = @{ k = @{ j = $x } }; $h.k.j[0] = 9; Write-Output $x')
+
+
+class TestPs1ABareReadInAFunctionBodyFindsTheVariableOfItsCaller(_Ps1Ledger):
+    """
+    A function body runs inside whoever calls it, so a bare read there finds the caller's variable
+    before the script's. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes `b`.
+    """
+
+    def test_the_read_is_not_answered_with_the_script_variable(self):
+        tree = self._deobfuscated_tree(
+            "function f { $script:o = 'a'; Write-Output $o }; function g { $o = 'b'; f }; g")
+        self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'o', 'b'))
 
 
 class TestPs1ACopyIsToldApartFromTheArrayByItsIdentity(_Ps1Ledger):

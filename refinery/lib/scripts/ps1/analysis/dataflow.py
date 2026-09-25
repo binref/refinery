@@ -77,8 +77,9 @@ over the positions this layer gives a node.
 from __future__ import annotations
 
 import enum
+import typing
 
-from typing import Iterator
+from typing import Callable, Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -161,6 +162,18 @@ class Ps1FlowUnknown(enum.Flag):
     WRITTEN_THROUGH_ITS_VARIABLE = enum.auto()
 
 
+class _Selection(typing.NamedTuple):
+    """
+    What `Ps1VariableFlow._selection` hands the questions it is shared by.
+    """
+    binding: Binding
+    graph: ControlFlowGraph
+    use: CfgNode
+    definitions: list[tuple[Node, CfgNode]]
+    kills: frozenset[int]
+    placed: dict[int, CfgNode]
+
+
 class Ps1ObservedWrite(enum.Enum):
     """
     What `Ps1VariableFlow.write_observed_at` answers where it names no write occurrence. Two answers
@@ -225,10 +238,70 @@ class Ps1VariableFlow:
         A read in another body is asked at the point that body runs, or not at all — see
         `position_of`.
         """
+        selection = self._selection(read, lambda write: True)
+        if selection is None:
+            return None
+        found = self._between.reaching_definition(
+            selection.graph, selection.use, selection.definitions, selection.kills)
+        if found is None:
+            return None
+        if not self._observes_completed_store(
+            selection.graph, selection.placed[id(found)], selection.use
+        ):
+            return None
+        if not self._shared_write_names_a_value(selection.binding, found, selection.graph):
+            return None
+        return found
+
+    def writes_reaching(self, read: Ps1Variable) -> list[Node] | None:
+        """
+        Every write that may have given *read* the object it holds, or `None` where one this cannot
+        name may have: the value from before the script, or one a write nobody can attribute left.
+
+        Only a write that rebinds the name is one of these. A store *through* the name — `$x[0] =
+        9`, and one another name for the same object carries in — changes the object the name holds
+        and not which object that is, so the writes behind it still reach. The selection is the one
+        `reaching_definition` makes, the same unknowns, kills and completed-store rule, so the two
+        cannot disagree about which writes stand at a read.
+        """
+        selection = self._selection(
+            read, lambda write: not write.role.through and not write.may_define)
+        if selection is None:
+            return None
+        found = self._between.reaching_definitions(
+            selection.graph, selection.use, selection.definitions, selection.kills)
+        if found is None:
+            return None
+        for write in found:
+            if not self._observes_completed_store(
+                selection.graph, selection.placed[id(write)], selection.use
+            ):
+                return None
+        return found
+
+    def _selection(
+        self,
+        read: Ps1Variable,
+        defines: Callable[[Occurrence], bool],
+    ) -> _Selection | None:
+        """
+        What a question about the writes *read* observes is asked over: its binding, the graph that
+        holds its writes, the point the read is evaluated at there, the writes *defines* keeps as
+        definitions with their points, and the points that may change the value without defining
+        it. `None` where the question has no answer at all.
+
+        **A read answers only where it reaches its binding at run time.** A bare name is looked up
+        through the scopes standing around the read when it runs, and a function body runs inside
+        whoever calls it: `function f { $script:o = 0, 0; $o }` reads the `$o` of a caller that
+        binds one before the script's. So a bare read answers only where it stands in its binding's
+        own scope, or in a block that runs where it is written inside that scope.
+        """
         binding = self.semantic.binding_of(read)
         if binding is None or not binding.writes:
             return None
         if self.unknowns(binding) is not Ps1FlowUnknown.NONE:
+            return None
+        if not self._reaches_its_binding(read, binding):
             return None
         placed = {id(write.node): self.flow.locate(write.node) for write in binding.writes}
         graph = placed[id(binding.writes[0].node)][0]
@@ -237,21 +310,32 @@ class Ps1VariableFlow:
             return None
         definitions = [
             (write.node, placed[id(write.node)][1]) for write in binding.writes
-            if not self._stores_after(use, read, write.node)
+            if defines(write) and not self._stores_after(use, read, write.node)
         ]
-        found = self._between.reaching_definition(
-            graph,
-            use,
-            definitions,
-            self._block_kills(graph, binding.name) | self._unattributable_kills(graph, read, use),
+        kills = (
+            self._block_kills(graph, binding.name)
+            | self._unattributable_kills(graph, read, use)
         )
-        if found is None:
-            return None
-        if not self._observes_completed_store(graph, placed[id(found)][1], use):
-            return None
-        if not self._shared_write_names_a_value(binding, found, graph):
-            return None
-        return found
+        points = {key: where[1] for key, where in placed.items()}
+        return _Selection(binding, graph, use, definitions, kills, points)
+
+    def _reaches_its_binding(self, read: Ps1Variable, binding: Binding) -> bool:
+        """
+        Whether *read* resolves to *binding* whatever calls the body it stands in: it names its
+        scope outright, or it stands in the binding's own scope or in blocks that run where they are
+        written inside it.
+        """
+        if read.scope is not Ps1ScopeModifier.NONE and read.scope is not Ps1ScopeModifier.VARIABLE:
+            return True
+        scope = self.semantic.scope_of(read)
+        while scope is not None and scope is not binding.scope:
+            node = scope.node
+            if not isinstance(node, Ps1ScriptBlock):
+                return False
+            if self.blocks.facts(node).reach is not Ps1BlockReach.IMMEDIATE:
+                return False
+            scope = scope.parent
+        return scope is binding.scope
 
     def _shared_write_names_a_value(
         self,

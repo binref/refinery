@@ -74,6 +74,7 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
+    Projection,
     reachable_forward_from_any,
 )
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockReach, classify_block
@@ -136,6 +137,7 @@ class Ps1WorldReach:
         root: Ps1Script | None = None,
         control_flow: ControlFlowModel | None = None,
         poisoned: frozenset[int] = frozenset(),
+        poisoned_only_by: Mapping[int, tuple[Node, ...]] | None = None,
         shadow_poisoned: Mapping[str, frozenset[int]] | None = None,
         refuse: bool = False,
         build_version: int = 0,
@@ -144,6 +146,7 @@ class Ps1WorldReach:
         self._root = root
         self._control_flow = control_flow
         self._poisoned = poisoned
+        self._poisoned_only_by = poisoned_only_by or {}
         self._shadow_poisoned = shadow_poisoned or {}
         self._refuse = refuse
         self._build_version = build_version
@@ -239,13 +242,25 @@ class Ps1WorldReach:
         have opened a world the old walk read shut. The shortcut in turn precedes the
         `_position_in_root` refusals, because a wrapper can be built refused for the identity
         floods' sake while the type axis, with no opener anywhere, still holds at every position.
+
+        **An opener's own arguments run before it.** The statement holding an opener is poisoned
+        from the opener on, and what the opener is handed is evaluated before it runs: the `Join`
+        of `iex ([string]::Join(' ', $b))` runs in a world nothing has opened yet. So a node
+        standing in the arguments of every opener its statement holds, and in no block one of them
+        runs, is closed where nothing else poisons that statement — no opener before it, and no way
+        back into it for its own openers, which a statement control returns to has.
         """
         if self._stale:
             return False
         if self.closed_for_the_whole_run:
             return True
         position = self._position_in_root(node)
-        return position is not None and id(position) not in self._poisoned
+        if position is None:
+            return False
+        if id(position) not in self._poisoned:
+            return True
+        openers = self._poisoned_only_by.get(id(position))
+        return openers is not None and all(_evaluated_before(node, opener) for opener in openers)
 
     def _position_in_root(self, node) -> CfgNode | None:
         """
@@ -351,6 +366,7 @@ def build_world_reach(
         return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
     refuse = False
     sources: list[CfgNode] = []
+    standing: dict[int, list[Node | None]] = {}
     for opener in measurement.openers:
         if isinstance(opener, (Ps1ClassDefinition, Ps1EnumDefinition)):
             refuse = True
@@ -363,16 +379,43 @@ def build_world_reach(
             refuse = True
             continue
         sources.append(landing)
+        located = control_flow.locate(opener)
+        direct = located is not None and located[1] is landing
+        standing.setdefault(id(landing), []).append(opener if direct else None)
     if refuse:
         return Ps1WorldReach(world, root=root, refuse=True, build_version=version)
+    after = reachable_forward_from_any(root_graph, [
+        successor for source in sources for successor in Projection.FORWARD.successors(source)])
+    poisoned_only_by: dict[int, tuple[Node, ...]] = {}
+    for source in sources:
+        openers = standing[id(source)]
+        if id(source) in after or id(source) in root_graph.hub_bound or None in openers:
+            continue
+        poisoned_only_by[id(source)] = tuple(opener for opener in openers if opener is not None)
     return Ps1WorldReach(
         world,
         root=root,
         control_flow=control_flow,
         poisoned=reachable_forward_from_any(root_graph, sources),
+        poisoned_only_by=poisoned_only_by,
         shadow_poisoned=_flood_shadow_sites(measurement.shadow_sites, control_flow, root_graph),
         build_version=version,
     )
+
+
+def _evaluated_before(node: Node, opener: Node) -> bool:
+    """
+    Whether *node* is evaluated to produce what *opener* is handed, and so before *opener* runs: it
+    stands inside *opener* and in no block *opener* runs or holds.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if cursor is opener:
+            return True
+        if isinstance(cursor, Ps1ScriptBlock):
+            return False
+        cursor = cursor.parent
+    return False
 
 
 def _flood_shadow_sites(

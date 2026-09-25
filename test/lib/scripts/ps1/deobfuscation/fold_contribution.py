@@ -221,6 +221,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$a = 'a,b,c' -split ',', 2; $t = $a.Count; Write-Output (,$t); Write-Output $t",
             "$a = 'a,b,c' -split ',', 2; $t = $a[1]; Write-Output (,$t); Write-Output $t",
             '$a = 1; $b = 2; $a + $b',
+            "$b = 'Write-Host', 'hi'; $z = 0, 0; $z[0] = 1; iex ([string]::Join(' ', $b)); $n = @('Write-Host $b')[(Get-Random -Maximum 1)]; iex $n",
+            '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; $buf = 0, 0; $buf[0] = 7',
             '$null -eq $undefined',
             "$s = 'abc'; $s.Substring(1, 2)",
             "$s = 'abcd'; $t = $s; $t = 1, 2, 3; [Array]::Reverse($t); Write-Output $s.Length",
@@ -482,6 +484,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$a = @(0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
             "$a = @(0, 0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t",
             '$b = 0, 0; $p = [Runtime.InteropServices.Marshal]::AllocHGlobal(2); [Runtime.InteropServices.Marshal]::WriteByte($p, 0, 7); [Runtime.InteropServices.Marshal]::Copy($p, $b, 0, 2); [Runtime.InteropServices.Marshal]::FreeHGlobal($p); Write-Output $b[0]',
+            '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; $buf = 0, 0; $buf[0] = 7',
             "$c = 'Write-Out'; $c += 'put 5'; Invoke-Expression $c",
             '$c = [char]65; $s = \'A\'; Write-Output "$c"; Write-Output "$s"',
             '$c = [char]65; foreach ($e in $c) { Write-Output $e }',
@@ -571,18 +574,9 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = 1, 2, 3; $a, $b = $x, 9; Write-Output $a',
             '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
             "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); Write-Output $x",
-            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-            '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x',
-            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-            '$s = [scriptblock]::Create($c); & $s; Write-Output $x',
-            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-            '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x',
             '$x = 1, 2, 3; $h = @{ k = $x }; Write-Output $h.k',
-            "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
-            "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x",
             "$x = 1, 2, 3; $h = @{}; $h['k'] = $x; Write-Output $h['k']",
             '$x = 1, 2, 3; $o = [pscustomobject]@{ P = 0 }; $o.P = $x; Write-Output $o.P',
-            '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); Write-Output $x',
             '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z',
             '$x = 1, 2, 3; $y = $x; & { $y = 9, 9, 9 }; [Array]::Reverse($x); Write-Output $y',
             '$x = 1, 2, 3; $y = $x; Write-Output $y[0]; [Array]::Reverse($x); Write-Output $y[0]',
@@ -613,6 +607,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$OFS = '-'; $t = [string]('a', 'b'); Write-Output $t",
             '$a = $null; $b = 5; $t = $a * $b; Write-Output (,$t)',
             '$a = $null; $t = $a * 5; Write-Output (,$t)',
+            "$b = 'Write-Host', 'hi'; $z = 0, 0; $z[0] = 1; iex ([string]::Join(' ', $b)); $n = @('Write-Host $b')[(Get-Random -Maximum 1)]; iex $n",
             "$b = 'a'; $v = Get-Variable b -ValueOnly; $v = 'x'; Write-Output $b",
             "$b = 'a'; (Get-Variable b).Value = 'b'; Write-Output $b",
             "$c = 'Write-Output $w'; $x = $($w = 'a'; 'v'); iex $c",
@@ -620,14 +615,9 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x",
             "$env:B = 'function K { Write-Host P }'; Invoke-Expression $env:B; function K { 42 }; $x = K; Write-Output $x; $env:C = 'K'; Invoke-Expression $env:C",
             "$env:z = '7'; $ok = [int]::TryParse('42', [ref]$env:z); Write-Host $env:z",
+            '$k = 1, 2, 3; $h = @{ k = $k }; if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; $buf[0] = 7; Write-Output $k',
             '$l = [byte]1; $r = 4; $t = $l -shl $r; Write-Output (,$t); Write-Output $t',
             "$n = 'q'; function K { $Null = 1 }; Set-Alias $n K; q; Write-Host 'A'",
-            "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
-            "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-            'Write-Output $x',
-            "$o = New-Object PSObject; $x = 1, 2, 3; Add-Member -InputObject $o -NotePropertyName k "
-            "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-            'Write-Output $x',
             '$q = [string]5; $q = 1, 2, 3; Write-Output (,$q)',
             "$s = 'abcd'; $t = $s; $t = 1, 2, 3; [Array]::Reverse($t); Write-Output $s.Length",
             '$t = $false + 1; Write-Output (,$t); Write-Output $t',
@@ -1064,31 +1054,16 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 'a'; Write-Host $x; $c = @('Write-Host $x')[(Get-Random -Maximum 1)]; iex $c",
             "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; Write-Output $x",
             "$x = 'hello'; $x",
+            '$x = 1, 2, 3; $a = $null; $a = $a + $x; $a[0] = 9; Write-Output $x[0]',
             '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))',
             '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
             '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))',
             "$x = 1, 2, 3; $c = '$x = 7, 8, 9'; iex $c; [Array]::Reverse($x); Write-Output $x",
-            "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
-            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
-            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
-            ",$l | ForEach-Object -MemberName Add -ArgumentList (,$x) | Out-Null; "
-            "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
-            "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
-            "$c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x[1]",
             '$x = 1, 2, 3; $r = [Array]::Reverse($x); Write-Output $x',
-            "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
-            "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             '$x = 1, 2, 3; $y = $($x); [Array]::Reverse($x); Write-Output $y',
             '$x = 1, 2, 3; $y = $x; $x = 9, 9, 9; Write-Output $y',
             '$x = 1, 2, 3; $y = $x; $y = 9, 9, 9; [Array]::Reverse($x); Write-Output $y',
-            "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
-            "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-            'Write-Output $x',
             '$x = 1, 2; $y = Sort-Object -InputObject $x; Write-Output ([object]::ReferenceEquals($x, $y))',
             '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))',
             "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
@@ -1104,6 +1079,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             '& { Write-Output $local:ShellId }',
             "Set-Variable s 'A'; Write-Output $($s + 'B')",
             'Write-Output $script:ShellId',
+            'function dec($d, $k) { $o = @(0) * $d.Length; for ($i = 0; $i -lt $d.Length; $i++) { $o[$i] = $d[$i] -bxor $k[$i % $k.Length] }; $o }; $key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)',
             'function f { $i = 0; $i++; $i++; $i }; $t = f; Write-Output (,$t); Write-Output $t',
             'function f { $null; 1; $null }; $t = f; Write-Output $t.Count; Write-Output (,$t)',
             "function f { $s = 'abc'; $s++; $s }; $t = f; Write-Output (,$t); Write-Output $t",

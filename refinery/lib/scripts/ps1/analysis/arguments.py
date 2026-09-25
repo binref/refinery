@@ -154,8 +154,11 @@ _STATIC_WRITES = _floored({
 #: A row is answered by member *name* here, because `written_slots` is asked where no receiver type
 #: is known — so one row per name is what the union needs and a second type spelling the same name
 #: adds nothing. `System.IO.Stream` stands for every reader that fills a buffer at three arguments,
-#: `System.Collections.ArrayList` for every collection that fills one at one and for every `Clear`,
-#: `System.Collections.BitArray` for every `Set` of an element, and
+#: `System.Collections.ArrayList` for every collection that fills one at one, for every `Clear`, and
+#: for every `Reverse` and `Sort` that rearranges the collection it is called on — measured, the
+#: `Reverse` of `[Collections.ArrayList]::Adapter($x)` turns `$x` itself around, since the adapter
+#: wraps the array rather than copying it — `System.Collections.BitArray` for every `Set` of an
+#: element, and
 #: `System.Security.Cryptography.ICryptoTransform` for `HashAlgorithm` as well. An array's own `Set`
 #: and `Clear` are among those the stand-ins cover: 5.1 runs both on the array they are called on,
 #: and the collected metadata carries neither, so no row can be written for the array itself.
@@ -170,6 +173,8 @@ _INSTANCE_WRITES = _floored({
     ('array', 'setvalue')               : {2: (RECEIVER,), 3: (RECEIVER,), 4: (RECEIVER,)},
     ('collections.arraylist', 'clear')  : {0: (RECEIVER,)},
     ('collections.arraylist', 'copyto') : {1: (0,), 2: (0,), 4: (1,)},
+    ('collections.arraylist', 'reverse'): {0: (RECEIVER,), 2: (RECEIVER,)},
+    ('collections.arraylist', 'sort')   : {0: (RECEIVER,), 1: (RECEIVER,), 3: (RECEIVER,)},
     ('collections.bitarray', 'set')     : {2: (RECEIVER,)},
     ('io.stream', 'read')               : {3: (0,)},
     ('random', 'nextbytes')             : {1: (0,)},
@@ -178,6 +183,76 @@ _INSTANCE_WRITES = _floored({
     ('text.encoding', 'getbytes')       : {1: (), 3: (), 4: (), 5: (3,)},
     ('text.encoding', 'getchars')       : {1: (), 3: (), 4: (), 5: (3,)},
 }, static=False)
+
+
+#: The types whose values hold no reference to any other object, lowercased by full name, so that a
+#: call returning one of them hands back nothing any of its arguments was.
+_HOLDS_NOTHING = frozenset({
+    'system.boolean',
+    'system.byte',
+    'system.char',
+    'system.decimal',
+    'system.double',
+    'system.int16',
+    'system.int32',
+    'system.int64',
+    'system.sbyte',
+    'system.single',
+    'system.string',
+    'system.uint16',
+    'system.uint32',
+    'system.uint64',
+    'system.void',
+})
+
+
+def _floored_keepers(entries: set[tuple[str, str]]) -> frozenset[tuple[Ps1TypeName, str]]:
+    """
+    The static calls of *entries* that keep nothing of what they are handed, each checked against
+    the collected metadata: the type must resolve and carry static overloads of the member, every
+    overload must return a type that holds no reference — see `_HOLDS_NOTHING` — and none may take a
+    parameter by reference, through which it could hand an argument back out.
+
+    The metadata decides the half it can: what the call returns cannot hold the argument. That the
+    call stores it nowhere else is the claim the row makes, and it is why an entry is added only
+    where a measured fold needs it.
+    """
+    table: set[tuple[Ps1TypeName, str]] = set()
+    for type_name, member in entries:
+        key = data.required_type_key(type_name)
+        overloads = data.static_overloads(key, member)
+        if not overloads:
+            raise ValueError(
+                F'the keep-nothing table names {type_name}::{member}, which the collected metadata '
+                F'carries no static overload of.')
+        for overload in overloads:
+            returns = str(overload.get('returns') or '').lower()
+            if returns not in _HOLDS_NOTHING:
+                raise ValueError(
+                    F'the keep-nothing table names {type_name}::{member}, an overload of which '
+                    F'returns {returns or "nothing the metadata names"}, which may hold what it '
+                    F'was handed.')
+            if any(parameter.get('byref') for parameter in overload.get('parameters') or ()):
+                raise ValueError(
+                    F'the keep-nothing table names {type_name}::{member}, an overload of which '
+                    F'takes a parameter by reference.')
+        table.add((key, member.lower()))
+    return frozenset(table)
+
+
+#: The static calls that keep nothing of any argument they are handed. `[string]::Join` is the one a
+#: loader hands its decoded array to: `iex ([string]::Join(' ', $b))`.
+_KEEPS_NOTHING = _floored_keepers({
+    ('string', 'join'),
+})
+
+
+def keeps_nothing(type_name: Ps1TypeName, member: str) -> bool:
+    """
+    Whether a static call of *member* on *type_name* keeps nothing of any argument it is handed:
+    what it returns cannot hold one, and it stores none anywhere else.
+    """
+    return (type_name.generic_definition, member.lower()) in _KEEPS_NOTHING
 
 
 @functools.lru_cache(maxsize=None)

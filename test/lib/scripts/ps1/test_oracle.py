@@ -182,15 +182,17 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: asks whether a store survived in the tree and what the reads below it can still print. That is
 #: not evidence for what is written here, because this reaches its verdict by running both scripts.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
-    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
-    'function f { iex $c }; f; Write-Output $x':
-        'The read is folded to `1 2 3` where the snippet writes `9 2 3`. The payload runs in the '
-        'body of the function that calls it and stores through `$x`, which a bare name there reads '
-        'from the caller; code nobody can read is taken to write only the scope it runs in.',
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x[1]':
+        'The read is folded to `2` where the snippet writes `9`. The payload runs in the body of '
+        'the function that calls it and stores through `$x`, which a bare name there reads from '
+        'the caller; code nobody can read is taken to write only the scope it runs in.',
     "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
     '& ([scriptblock]::Create($c)); Write-Output $x':
-        'The same, with the payload run as a block created from the string in a scope of its '
-        'own.',
+        'The read is folded to `1 2 3` where the snippet writes `9 2 3`. The payload stores '
+        'through `$x` from a block created from the string, which runs in a scope of its own and '
+        'reads the variables of its caller; code nobody can read is taken to write only the '
+        'scope it runs in.',
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
         'read as the store the following read needs.',
@@ -221,12 +223,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; . { $local:x = 'b' }; Write-Output $x":
         'The same through a dot, written rather than read: the read is folded to `a` where the '
         'snippet writes `b`.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-    'Write-Output $x':
-        'The array is spelled into the hash literal, so the payload stores into a copy and the '
-        'read writes `1 2 3` where the snippet writes `9 2 3`. A script that spells no store in '
-        'place lets a hand-off to a container through although code nobody can read runs after '
-        'it.',
     'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
     'Write-Output (dec 5)':
         'The call is folded to `(5, 1)`, which writes two Int32 values where the snippet writes '
@@ -282,31 +278,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'metadata proves inert: `Length` is re-pointed to a script property and the read is '
         'folded to the number the metadata carries, so the output prints a value 5.1 never '
         'produces.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-    'function f { iex $c }; f; Write-Output $x':
-        'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
-        'snippet writes `9 2 3`. The payload runs in the body of the function that calls it, '
-        'and code nobody can read is counted only in the body that holds the hand-off.',
-    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-    'Write-Output $x':
-        'The copy is spelled into the block, so the payload stores into it and the read writes '
-        '`1 2 3` where the snippet writes `9 2 3`. The hand-off stands in the block and the '
-        '`iex` in the script around it, and only the block\'s own statements are asked what '
-        'follows the hand-off.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-    '$s = [scriptblock]::Create($c); & $s; Write-Output $x':
-        'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
-        'snippet writes `9 2 3`. A block created from a string runs in a scope of its own, and '
-        'that is read as reaching nothing of its caller\'s; it still reaches the table.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-    '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x':
-        'The same, with the payload run by `InvokeScript`.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
-    '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x':
-        'The same, with the payload run by `Invoke-Command`.',
-    "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
-    "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x":
-        'The same, with the created block run inside a called function.',
     "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; "
     'Write-Output $x':
         'The read is folded to `a` where the snippet writes `5`: the payload the called '
@@ -325,43 +296,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x":
         'The same, with the redefined command storing through the table that holds the array: '
         'the read is folded to `1 2 3` where the snippet writes `9 2 3`.',
-    "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
-    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-    'Write-Output $x':
-        'The array is spelled into the note property, so the payload stores into a copy and '
-        'the read writes `1 2 3` where the snippet writes `9 2 3`. A script that spells no '
-        'store in place lets every hand-off but the one to a second name through, although '
-        'code nobody can read runs after it.',
-    "$o = New-Object PSObject; $x = 1, 2, 3; Add-Member -InputObject $o -NotePropertyName k "
-    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-    'Write-Output $x':
-        'The same, with the object handed to `Add-Member` as an argument.',
-    "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
-    "$c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
-        'The same, with the array handed to the new object as a property.',
-    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
-    ",$l | ForEach-Object -MemberName Add -ArgumentList (,$x) | Out-Null; "
-    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
-        'The same, with the array added to a list by `ForEach-Object -MemberName`.',
-    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
-    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
-        'The same, with the array added to a list by its `Add` method.',
-    "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
-    "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
-        'The same, with the array wrapped by `ArrayList.Adapter`, whose elements are the '
-        'array\'s own.',
-    "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
-    "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
-    'Write-Output $x':
-        'The same, with the array kept in the application domain\'s data.',
-    "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
-    'iex $c; Write-Output $x':
-        'The same, with the array handed to `Sort-Object -InputObject`, which hands back that '
-        'very array.',
-    '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); Write-Output $x':
-        'The read is folded to `1 2 3` where the snippet writes `3 2 1`. The adapter\'s '
-        '`Reverse` turns around the array it wraps, and a method of an object is read as '
-        'changing nothing unless the written-slot table names it.',
     '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
         'Both reads are replaced by copies, so the call compares two arrays and writes `False` '
         'where the snippet writes `True`. Nothing stores into the array, and a copy is still '
@@ -405,6 +339,13 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('OUT\tSystem.String\tHi',),
     '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y':
         ('OUT\tSystem.Int32\t1', 'OUT\tSystem.Int32\t2'),
+    '$k = 1, 2, 3; $h = @{ k = $k }; '
+    'if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; $buf[0] = 7; '
+    'Write-Output $k':
+        ('OUT\tSystem.Int32\t1', 'OUT\tSystem.Int32\t2', 'OUT\tSystem.Int32\t3'),
+    "$b = 'Write-Host', 'hi'; $z = 0, 0; $z[0] = 1; iex ([string]::Join(' ', $b)); "
+    "$n = @('Write-Host $b')[(Get-Random -Maximum 1)]; iex $n":
+        ('INFO\thi', 'INFO\tWrite-Host hi'),
     "trap { continue }; 1/0; Write-Host 'after'":
         ('INFO\tafter',),
     "trap { continue }; $x = \"$(1/0)$(Set-Alias zzq Write-Output)\"; zzq 'hi'":

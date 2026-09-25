@@ -1133,14 +1133,8 @@ class TestPs1AStoreThatCannotReachAHandedOnArrayDoesNotHoldItBack(TestPs1):
     """
     A store holds back an array handed to a call only if it can reach that array. Measured on 5.1
     in `corpus.CLAIMS`, the first script writes `Hi` and the second `5 7 5`.
-
-    Every store in place counts against every array a hand-off exposes, wherever it stands: the
-    store into the fresh `$buf` after the call, and the one the decoder body makes into its own
-    buffer, each keep the array out of the call that reads it. Neither can reach it, since neither
-    stores through a name the array was ever handed to.
     """
 
-    @unittest.expectedFailure
     def test_a_store_into_a_fresh_buffer_after_the_call_does_not_hold_back_its_argument(self):
         self.assertIn(
             "Write-Output 'Hi'",
@@ -1149,7 +1143,6 @@ class TestPs1AStoreThatCannotReachAHandedOnArrayDoesNotHoldItBack(TestPs1):
                 'Write-Output $s; $buf = 0, 0; $buf[0] = 7'),
         )
 
-    @unittest.expectedFailure
     def test_a_decoder_storing_into_its_own_buffer_does_not_hold_back_the_key(self):
         self.assertNotIn(
             '$key',
@@ -1159,6 +1152,30 @@ class TestPs1AStoreThatCannotReachAHandedOnArrayDoesNotHoldItBack(TestPs1):
                 '$o[$i] = $d[$i] -bxor $k[$i % $k.Length] }; '
                 '$o }; $key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)'),
         )
+
+
+class TestPs1AStoreIntoAnArrayMadeElsewhereDoesNotHoldBackAFold(TestPs1):
+    """
+    A store holds back the fold of a read only if it may change the array that read holds, and a
+    payload run later holds back only what it may still read. Measured on 5.1 in `corpus.CLAIMS`,
+    the first script writes `1 2 3` and the second `hi` and then `Write-Host hi`.
+    """
+
+    def test_a_store_into_a_buffer_either_arm_made_does_not_hold_back_an_array_in_a_table(self):
+        self.assertIn(
+            'Write-Output (1, 2, 3)',
+            self._deobfuscate_iterative(
+                '$k = 1, 2, 3; $h = @{ k = $k }; '
+                'if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; '
+                '$buf[0] = 7; Write-Output $k'),
+        )
+
+    def test_the_loader_folds_beside_an_unrelated_store_and_a_later_payload(self):
+        output = self._deobfuscate_iterative(
+            "$b = 'Write-Host', 'hi'; $z = 0, 0; $z[0] = 1; iex ([string]::Join(' ', $b)); "
+            "$n = @('Write-Host $b')[(Get-Random -Maximum 1)]; iex $n")
+        self.assertIn('Write-Host hi', output)
+        self.assertIn("$b = 'Write-Host', 'hi'", output)
 
 
 class TestPs1AProductByACountOtherThanOneIsANewArray(TestPs1):

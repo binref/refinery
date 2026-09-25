@@ -293,7 +293,16 @@ def _is_rooted_in_a_value(place: Node) -> bool:
 
 def _stores_through(var: Ps1Variable) -> bool:
     """
-    The receiver-chain climb behind `Ps1OccurrenceRole.WRITE_THROUGH`.
+    The receiver-chain climb behind `Ps1OccurrenceRole.WRITE_THROUGH`; see `_steps_through`.
+    """
+    return _steps_through(var) > 0
+
+
+def _steps_through(var: Ps1Variable) -> int:
+    """
+    How many index and member steps into what the name holds the store *var* is the root of
+    reaches — one for `$x[0] = 'z'`, two for `$x[0][1] = 'z'` — or zero where no assignment and no
+    increment stores through *var*.
 
     The whole chain counts, not just its innermost step. A target is only a target once the index
     and member accesses, the expressions that may give back the object they were handed, and the
@@ -306,7 +315,7 @@ def _stores_through(var: Ps1Variable) -> bool:
     the `$x` it is rooted at is stored through and no value may stand in its place.
     """
     cursor: Node = var
-    through = False
+    steps = 0
     while True:
         passage = passage_out_of(cursor)
         if passage is not None:
@@ -315,17 +324,31 @@ def _stores_through(var: Ps1Variable) -> bool:
         parent = cursor.parent
         if isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess)):
             if parent.object is not cursor:
-                return False
-            through = True
+                return 0
+            steps += 1
         elif isinstance(parent, Ps1ArrayLiteral):
             pass
         elif isinstance(parent, Ps1AssignmentExpression):
-            return through and parent.target is cursor
+            return steps if parent.target is cursor else 0
         elif isinstance(parent, Ps1UnaryExpression) and parent.operator in ('++', '--'):
-            return through and parent.operand is cursor
+            return steps if parent.operand is cursor else 0
         else:
-            return False
+            return 0
         cursor = parent
+
+
+def changes_the_object_it_names(var: Ps1Variable) -> bool:
+    """
+    Whether the store *var* stands in changes the very object the name holds, rather than one that
+    object holds: `$x[0] = 'z'`, `$x.P = 5` and `$x[0]++` store one step into it, and
+    `[Array]::Reverse($x)` writes through a slot *var* fills whole. `$x[0][1] = 'z'` and
+    `[Array]::Reverse($x[0])` change an object the name's object holds, which may be any object at
+    all.
+    """
+    if _steps_through(var) == 1:
+        return True
+    found = _enclosing_call_slot(var)
+    return found is not None and not found.through_a_part and _stores_through_a_call_slot(found)
 
 
 class Ps1CallSlot(typing.NamedTuple):
@@ -826,20 +849,6 @@ class Ps1SemanticModel:
         script-level variables.
         """
         return self.root_scope
-
-    @property
-    def changes_an_object_in_place(self) -> bool:
-        """
-        Whether anything in the script may change an object after it is built — see
-        `object_change_sites`.
-
-        A script with none never changes an object after it is built, so there a copy of one and a
-        second name for it are indistinguishable, and a consumer weighing the two may stop asking.
-        That is the question every sharing guard is really about, and it is a fact about the script
-        rather than about the name a guard happens to be standing on: an object handed to a
-        hashtable key, to a property or to a callee is changed under a name the guard cannot see.
-        """
-        return bool(self.object_change_sites)
 
     @property
     def object_change_sites(self) -> tuple[Node, ...]:

@@ -299,6 +299,67 @@ class TestPs1VariableFlow(TestBase):
         self.assertIsNone(self._observed("$x = @('a', 'b'); & { $x[0] = 'z' }; Write-Host $x"))
 
 
+class TestPs1EveryWriteThatMayGiveAReadItsObject(TestPs1VariableFlow):
+    """
+    Which writes may have given a read the object it holds, named by their positions among the
+    writes of that variable. Only a write that rebinds the name is one: a store through the name
+    changes the object the name holds and not which object that is.
+    """
+
+    def _reaching(self, source: str, name: str = 'x', read: int = -1) -> list[int] | None:
+        flow, writes, reads = self._flow(source, name)
+        found = flow.writes_reaching(reads[read])
+        if found is None:
+            return None
+        return sorted(
+            next(index for index, write in enumerate(writes) if write is node) for node in found)
+
+    def test_the_only_write_before_a_read_reaches_it(self):
+        self.assertEqual(self._reaching('$x = 1, 2; Write-Output $x'), [0])
+
+    def test_a_later_write_hides_the_earlier_one(self):
+        self.assertEqual(self._reaching('$x = 1, 2; $x = 3, 4; Write-Output $x'), [1])
+
+    def test_both_arms_of_a_branch_reach_the_read_after_it(self):
+        self.assertEqual(
+            self._reaching('if ($a) { $x = 1, 2 } else { $x = 3, 4 }; Write-Output $x'), [0, 1])
+
+    def test_a_write_in_one_arm_reaches_beside_the_write_before_the_branch(self):
+        self.assertEqual(
+            self._reaching('$x = 1, 2; if ($a) { $x = 3, 4 }; Write-Output $x'), [0, 1])
+
+    def test_a_write_in_a_loop_body_reaches_the_condition_beside_the_write_before_the_loop(self):
+        self.assertEqual(self._reaching('$x = 1, 2; while ($x) { $x = 3, 4 }', read=0), [0, 1])
+
+    def test_a_store_through_the_name_does_not_hide_the_write_before_it(self):
+        self.assertEqual(self._reaching('$x = 0, 0; $x[0] = 7; Write-Output $x'), [0])
+
+    def test_a_read_that_may_observe_the_value_from_before_the_script_has_no_answer(self):
+        self.assertIsNone(self._reaching('if ($a) { $x = 1, 2 }; Write-Output $x'))
+
+
+class TestPs1ABareReadAnswersOnlyWhereItReachesItsBinding(TestPs1VariableFlow):
+    """
+    A bare name is looked up through the scopes standing around the read when it runs, and a
+    function body runs inside whoever calls it. Measured on 5.1 in `corpus.BEHAVIOURS`,
+    `function f { $script:o = 'a'; $o }; function g { $o = 'b'; f }; g` writes `b`: the read in `f`
+    finds the `$o` of its caller before the one of the script.
+    """
+
+    def test_a_bare_read_in_a_function_body_of_a_script_variable_has_no_answer(self):
+        source = 'function f { $script:o = 0, 0; Write-Output $o }'
+        self.assertIsNone(self._observed(source, 'o'))
+        flow, _, reads = self._flow(source, 'o')
+        self.assertIsNone(flow.writes_reaching(reads[-1]))
+
+    def test_a_read_that_names_the_scope_it_reads_is_answered(self):
+        source = 'function f { $script:o = 0, 0; Write-Output $script:o }'
+        self.assertEqual(self._observed(source, 'o'), 0)
+
+    def test_a_bare_read_in_a_block_run_where_it_is_written_is_answered(self):
+        self.assertEqual(self._observed("$x = 'a'; & { Write-Output $x }"), 0)
+
+
 class TestPs1FlowUnknowns(TestBase):
 
     def _unknowns(self, source: str, name: str = 'x') -> Ps1FlowUnknown:

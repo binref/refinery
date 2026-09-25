@@ -661,6 +661,8 @@ BEHAVIOURS: tuple[str, ...] = (
     'Write-Output $x',
     "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
     'Write-Output $x',
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x[1]',
     "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; iex $c; "
     "$x = 'b'; Write-Host 'hi'; Write-Output $x",
     "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]; iex $c; "
@@ -691,6 +693,25 @@ BEHAVIOURS: tuple[str, ...] = (
     "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
     'iex $c; Write-Output $x',
     '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); Write-Output $x',
+
+    #: What a store into the array a name holds is asked to preserve the behaviour of, where the
+    #: array came to the name some other way than a plain assignment: a multi-assignment slot, a
+    #: caller's variable a function body reads, a chained assignment, a `[ref]`, a rebinding in a
+    #: dot-sourced block or on one arm of a branch. The last row stores two steps into a table, and
+    #: the row before it is the caller's variable a function body reads in place of the script's.
+    '$x = 1, 2, 3; $a, $b = 0, $x; $b[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $a, $b = 0, $x, 5; $b[0][0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; function f { $o[0] = 9 }; function g($p) { $o = $p; f }; $o = 0, 0; g $x; '
+    'Write-Output $x',
+    '$x = 1, 2, 3; function f { if ((Get-Random -Maximum 1) -eq 1) { $o = 0, 0 }; $o[0] = 9 }; '
+    'function g($p) { $o = $p; f }; g $x; Write-Output $x',
+    '$x = 1, 2, 3; $a = $b = $x; $a[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; function f([ref]$r) { $r.Value[0] = 9 }; f ([ref]$x); Write-Output $x',
+    '$x = 1, 2, 3; $y = 0, 0; . { $y = $x }; $y[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; $y = 0, 0; if ((Get-Random -Maximum 1) -eq 0) { $y = $x }; $y[0] = 9; '
+    'Write-Output $x',
+    "function f { $script:o = 'a'; Write-Output $o }; function g { $o = 'b'; f }; g",
+    '$x = 1, 2, 3; $h = @{ k = @{ j = $x } }; $h.k.j[0] = 9; Write-Output $x',
 
     #: What compares the identity of an array is asked to preserve the behaviour of: nothing stores
     #: into the array, and a copy put in place of one read is still told apart from the array the
@@ -731,6 +752,11 @@ CLAIMS: tuple[str, ...] = (
     '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; '
     '$buf = 0, 0; $buf[0] = 7',
     '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y',
+    '$k = 1, 2, 3; $h = @{ k = $k }; '
+    'if ((Get-Random -Maximum 1) -eq 0) { $buf = 0, 0 } else { $buf = 1, 1 }; $buf[0] = 7; '
+    'Write-Output $k',
+    "$b = 'Write-Host', 'hi'; $z = 0, 0; $z[0] = 1; iex ([string]::Join(' ', $b)); "
+    "$n = @('Write-Host $b')[(Get-Random -Maximum 1)]; iex $n",
     "$x = 'a'; . { Remove-Variable x }; Write-Host $x",
     "$x = 'a'; . { New-Variable x 'b' -Force }; Write-Host $x",
     "$x = 'a'; . { Write-Output 'b' -OutVariable x }; Write-Host $x",
