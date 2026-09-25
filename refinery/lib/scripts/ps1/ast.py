@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import io
 
-from typing import Iterator, TypeGuard
+from typing import Iterator, NamedTuple, TypeGuard
 
 from refinery.lib.scripts import Block, Node, Statement, owning_field
 from refinery.lib.scripts.ps1.data import (
@@ -912,6 +912,54 @@ def assignment_of(var: Ps1Variable) -> Ps1AssignmentExpression | None:
     if isinstance(parent, Ps1AssignmentExpression) and parent.target is cursor:
         return parent
     return None
+
+
+class Ps1StoredValue(NamedTuple):
+    """
+    What a plain assignment stores into one of its targets. `value` is the expression whose value
+    it is, or `None` where no expression spells it; `constraint` is the type a cast on the target
+    converts it to on the way in, if the target carries one.
+    """
+    value: Node | None
+    constraint: str | None
+
+
+def stored_value(var: Ps1Variable) -> Ps1StoredValue | None:
+    """
+    What the plain assignment *var* is a target of stores into it, or `None` where *var* is not the
+    target of a plain `=`: a compound assignment, a `[ref]`, a parameter, a `foreach` variable and
+    a read all store nothing an assignment spells.
+
+    The target of a plain `=` is handed the whole value. A slot of a multi-assignment is handed the
+    element standing opposite it, which is its own only where both sides have the same number of
+    elements: `$a, $b = 1, 2, 3` gives `$b` the rest as a new array, `$a, $b = 1` gives it `$null`,
+    and `$b, $c = $x` gives `$b` the first element of whatever `$x` holds. Measured,
+    `$b, $c = $x, 5` gives `$b` the very array `$x` holds. Where no expression spells what the slot
+    is handed, the value is `None` and the constraint is still read.
+    """
+    assignment = assignment_of(var)
+    if assignment is None or assignment.operator != '=' or assignment.value is None:
+        return None
+    constraint = target_constraint(var)
+    cursor: Node = var
+    slot: int | None = None
+    while (parent := cursor.parent) is not None and parent is not assignment:
+        if isinstance(parent, Ps1ArrayLiteral):
+            if slot is not None:
+                return Ps1StoredValue(None, constraint)
+            slot = next(at for at, element in enumerate(parent.elements) if element is cursor)
+        cursor = parent
+    if slot is None:
+        return Ps1StoredValue(assignment.value, constraint)
+    written = unwrap_parens(assignment.value)
+    targets = unwrap_parens(assignment.target) if assignment.target is not None else None
+    if (
+        not isinstance(written, Ps1ArrayLiteral)
+        or not isinstance(targets, Ps1ArrayLiteral)
+        or len(written.elements) != len(targets.elements)
+    ):
+        return Ps1StoredValue(None, constraint)
+    return Ps1StoredValue(written.elements[slot], constraint)
 
 
 def target_constraint(var: Ps1Variable) -> str | None:

@@ -56,6 +56,7 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     binding_key,
     is_reference_cast,
+    stored_value,
     target_constraint,
     unwrap_assignment_target,
 )
@@ -1246,6 +1247,11 @@ class Ps1SemanticModel:
         Each definition that hands one object to a second name, as the link between the two
         bindings it joins.
 
+        What the definition stores is `refinery.lib.scripts.ps1.ast.stored_value`'s to say, so a
+        slot of a multi-assignment is linked to the element standing opposite it and to nothing
+        where no element stands there: measured, `$b, $c = $x` gives `$b` the first element of the
+        array `$x` holds, and `$b, $c = $x, 5` gives it that very array.
+
         The value is followed down through every expression that may give back the very object of
         one of its parts, as `refinery.lib.scripts.ps1.analysis.identity.object_sources` names them,
         to the variable it may have been read from. A step that may make a new object instead makes
@@ -1270,11 +1276,11 @@ class Ps1SemanticModel:
         for write in self._every_write():
             if write.may_define or not isinstance(write.node, Ps1Variable) or write.role.through:
                 continue
-            assignment = assignment_of(write.node)
-            if assignment is None or assignment.operator != '=' or assignment.value is None:
+            stored = stored_value(write.node)
+            if stored is None:
                 continue
             certain = True
-            source: Node | None = assignment.value
+            source = stored.value
             while source is not None and not isinstance(source, Ps1Variable):
                 sources = object_sources(source)
                 certain = certain and sources.certain

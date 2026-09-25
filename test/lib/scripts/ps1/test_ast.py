@@ -13,6 +13,7 @@ from refinery.lib.scripts.ps1.ast import (
     is_soft_error_source,
     resolved_command_names,
     standalone_command_statement,
+    stored_value,
 )
 from refinery.lib.scripts.ps1.data import (
     KNOWN_ALIAS,
@@ -31,6 +32,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
+from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 
 def _command(source: str) -> Ps1CommandInvocation:
@@ -501,3 +503,60 @@ class TestPs1SoftErrorSource(TestBase):
 
     def test_a_statement_does_not_claim_a_cast_inside_a_nested_script_block(self):
         self.assertFalse(is_soft_error_source(self._statement("$x = { [int]'a' }")))
+
+
+class TestPs1StoredValue(TestBase):
+    """
+    What a plain assignment hands one of its targets. Each multi-assignment expectation is how 5.1
+    distributes a list over the slots: the element opposite each slot where the two sides match,
+    the rest as a new array for a last slot facing more elements, and `$null` for one facing none.
+    """
+
+    def _stored(self, source: str, name: str) -> tuple[str | None, str | None] | None:
+        for node in Ps1Parser(source).parse().walk_in_order():
+            if isinstance(node, Ps1Variable) and node.name == name:
+                stored = stored_value(node)
+                if stored is None:
+                    return None
+                value = None if stored.value is None else Ps1Synthesizer().convert(stored.value)
+                return value, stored.constraint
+        raise AssertionError(F'no ${name} in {source!r}')
+
+    def test_the_target_of_a_plain_assignment_is_handed_the_whole_value(self):
+        self.assertEqual(self._stored('$y = $x, 5', 'y'), ('$x, 5', None))
+
+    def test_a_constrained_target_names_its_constraint(self):
+        self.assertEqual(self._stored('[string]$y = 5', 'y'), ('5', 'string'))
+
+    def test_a_slot_facing_as_many_elements_is_handed_the_one_opposite_it(self):
+        """
+        Measured: `$b, $c = $x, 5` gives `$b` the very array `$x` holds.
+        """
+        self.assertEqual(self._stored('$b, $c = $x, 5', 'b'), ('$x', None))
+        self.assertEqual(self._stored('$b, $c = ($x, 5)', 'c'), ('5', None))
+        self.assertEqual(self._stored('$b, [int]$c = $x, 5', 'c'), ('5', 'int'))
+
+    def test_a_slot_facing_a_value_that_is_not_a_list_is_handed_no_value_spelled_here(self):
+        """
+        Measured: `$b, $c = $x` gives `$b` the first element of the array `$x` holds.
+        """
+        self.assertEqual(self._stored('$b, $c = $x', 'b'), (None, None))
+
+    def test_a_slot_facing_a_different_number_of_elements_is_handed_no_value_spelled_here(self):
+        for source in ('$a, $b = 1, 2, 3', '$a, $b, $c = 1, 2', '$a, [string]$b = 1, 2, 3'):
+            with self.subTest(source):
+                stored = self._stored(source, 'b')
+                assert stored is not None
+                self.assertIsNone(stored[0])
+        self.assertEqual(self._stored('$a, [string]$b = 1, 2, 3', 'b'), (None, 'string'))
+
+    def test_a_write_that_is_no_plain_assignment_stores_nothing_spelled_here(self):
+        for source, name in (
+            ('$y += $x', 'y'),
+            ('[int]::TryParse($s, [ref]$y)', 'y'),
+            ('function f($y) { }', 'y'),
+            ('foreach ($y in $x) { }', 'y'),
+            ('$y = $x', 'x'),
+        ):
+            with self.subTest(source):
+                self.assertIsNone(self._stored(source, name))

@@ -27,14 +27,12 @@ from refinery.lib.scripts.ps1.analysis.values import (
     render,
     resolve_expression_type,
 )
-from refinery.lib.scripts.ps1.ast import assignment_of, unwrap_parens
+from refinery.lib.scripts.ps1.ast import assignment_of, stored_value
 from refinery.lib.scripts.ps1.data import named_type, resolve_type
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayLiteral,
-    Ps1AssignmentExpression,
-    Ps1CastExpression,
     Ps1ForEachLoop,
     Ps1HereString,
     Ps1StringLiteral,
@@ -181,56 +179,24 @@ def _origin_established_by(
     The non-null type *write* puts under the name, judged from the value it stores. Only a plain
     `=` assignment carries a value this can name; `_established_by` also reads a `foreach`
     binding, whose element is a value no single write installed.
+
+    What the assignment stores is `refinery.lib.scripts.ps1.ast.stored_value`'s to say: a cast on
+    the target is a constraint the store converts through, so the value judged is the literal
+    `value_under_declared_constraint` answers, and a multi-assignment slot's value is the element
+    standing opposite it. A constraint the binding installed *earlier* converts the value on the
+    way in, so `constraint_converts` refuses those the same way `_stored_type` does.
     """
     if not isinstance(write, Ps1Variable):
         return None
-    assignment = assignment_of(write)
-    if assignment is None:
+    stored = stored_value(write)
+    if stored is None or not isinstance(value := stored.value, Expression):
         return None
-    return _origin_assigned_type(write, assignment, flow, chased)
-
-
-def _origin_assigned_type(
-    write: Ps1Variable,
-    assignment: Ps1AssignmentExpression,
-    flow: Ps1VariableFlow,
-    chased: frozenset[int],
-) -> Ps1TypeName | None:
-    """
-    The non-null type *assignment* puts into *write*, judged from the value it stores. The walk
-    from the occurrence up to the assignment is `_assigned_type`'s walk and is read the same way:
-    a cast passed on the way is a constraint the store converts through, so the value judged is
-    the literal `value_under_declared_constraint` answers; an array literal passed on the way is
-    a multi-assignment, whose slot's value is the element standing opposite it. A constraint the
-    binding installed *earlier* converts the value on the way in, so `constraint_converts` refuses
-    those the same way `_stored_type` does.
-    """
-    position = _target_position(write, assignment)
-    if position is None:
+    if stored.constraint is not None:
+        converted = value_under_declared_constraint(write, value)
+        return None if converted is None else _judged(converted, flow, chased)
+    if constraint_converts(flow.semantic.binding_of(write), value):
         return None
-    constraint, slot = position
-    value = assignment.value
-    if not isinstance(value, Expression):
-        return None
-    if constraint is not None:
-        stored = value_under_declared_constraint(write, value)
-        return None if stored is None else _judged(stored, flow, chased)
-    if slot is None:
-        if constraint_converts(flow.semantic.binding_of(write), value):
-            return None
-        return _judged(value, flow, chased)
-    written = unwrap_parens(value)
-    if not isinstance(written, Ps1ArrayLiteral):
-        return None
-    targets = _multi_assignment_targets(assignment.target)
-    if targets is None or len(targets) != len(written.elements):
-        return None
-    element = written.elements[slot]
-    if not isinstance(element, Expression):
-        return None
-    if constraint_converts(flow.semantic.binding_of(write), element):
-        return None
-    return _judged(element, flow, chased)
+    return _judged(value, flow, chased)
 
 
 def _judged(
@@ -303,91 +269,31 @@ def _established_by(write: Node, flow: Ps1VariableFlow) -> Ps1TypeName | None:
     'abc'` types `$q` as `String` and every member spelling below it reads against that — and a
     multi-assignment slot, where the value is the element standing opposite it.
     """
-    if isinstance(write, Ps1Variable):
-        assignment = assignment_of(write)
-        if assignment is not None:
-            return _assigned_type(write, assignment, flow)
+    if isinstance(write, Ps1Variable) and assignment_of(write) is not None:
+        return _assigned_type(write, flow)
     parent = write.parent
     if isinstance(parent, Ps1ForEachLoop) and parent.variable is write:
         return _element_type(parent.iterable)
     return None
 
 
-def _target_position(
-    write: Ps1Variable,
-    assignment: Ps1AssignmentExpression,
-) -> tuple[str | None, int | None] | None:
+def _assigned_type(write: Ps1Variable, flow: Ps1VariableFlow) -> Ps1TypeName | None:
     """
-    The cast and the array slot standing between *write* and the plain assignment it belongs to —
-    the `[string]` and the slot index of `[string]$a, $b = 5, 6` — or `None` where the target is
-    not a plain `=` one or the position cannot name its slot: a target reached through two array
-    literals, or one an array on the way does not hold. Every question about the target of a write
-    reads this one walk, so a new node kind between the two is answered once for all of them: the
-    cast is the constraint the store converts through, and the slot names the element standing
-    opposite it. The first cast on the way is the one kept, which is the constraint the binding
-    declares.
-    """
-    if assignment.operator != '=':
-        return None
-    cursor: Node = write
-    parent = cursor.parent
-    constraint: str | None = None
-    slot: int | None = None
-    while parent is not None and parent is not assignment:
-        if isinstance(parent, Ps1CastExpression) and constraint is None:
-            constraint = parent.type_name
-        elif isinstance(parent, Ps1ArrayLiteral):
-            if slot is not None:
-                return None
-            slot = next(
-                (
-                    at for at, element in enumerate(parent.elements) if element is cursor
-                ),
-                None,
-            )
-            if slot is None:
-                return None
-        cursor = parent
-        parent = cursor.parent
-    return constraint, slot
+    The type the assignment *write* is a target of puts into it, or `None` where it names none.
 
-
-def _assigned_type(
-    write: Ps1Variable,
-    assignment: Ps1AssignmentExpression,
-    flow: Ps1VariableFlow,
-) -> Ps1TypeName | None:
+    What the assignment stores is `refinery.lib.scripts.ps1.ast.stored_value`'s to say. A cast on
+    the target is a type constraint, and PowerShell converts to it rather than storing what was
+    written — `[string]$q = 5` leaves a String — so the constraint answers even for a slot whose
+    value no expression spells. Otherwise the type is the stored value's own.
     """
-    The type `assignment` puts into *write*, or `None` where it names none.
-
-    The walk from the occurrence up to the assignment is what reads the target apart: a cast passed
-    on the way is a type constraint, and PowerShell converts to it rather than storing what was
-    written — `[string]$q = 5` leaves a String. An array literal passed on the way is a
-    multi-assignment, and the slot's own value is the element opposite it, which only holds where
-    the two sides have the same number of elements: `$a, $b = 1, 2, 3` gives `$b` the *rest* as an
-    array, and `$a, $b = 1` gives it `$null`.
-    """
-    position = _target_position(write, assignment)
-    if position is None:
+    stored = stored_value(write)
+    if stored is None:
         return None
-    constraint, slot = position
-    if constraint is not None:
-        return resolve_type(constraint)
-    value = assignment.value
-    if not isinstance(value, Expression):
+    if stored.constraint is not None:
+        return resolve_type(stored.constraint)
+    if not isinstance(value := stored.value, Expression):
         return None
-    if slot is None:
-        return _stored_type(value, flow.semantic.binding_of(write))
-    written = unwrap_parens(value)
-    if not isinstance(written, Ps1ArrayLiteral):
-        return None
-    targets = _multi_assignment_targets(assignment.target)
-    if targets is None or len(targets) != len(written.elements):
-        return None
-    element = written.elements[slot]
-    if not isinstance(element, Expression):
-        return None
-    return _stored_type(element, flow.semantic.binding_of(write))
+    return _stored_type(value, flow.semantic.binding_of(write))
 
 
 def _stored_type(value: Expression, binding: Binding | None) -> Ps1TypeName | None:
@@ -437,13 +343,10 @@ def _declared_constraint_type(write: Node) -> Ps1TypeName | None:
     """
     if not isinstance(write, Ps1Variable):
         return None
-    assignment = assignment_of(write)
-    if assignment is None:
+    stored = stored_value(write)
+    if stored is None or stored.constraint is None:
         return None
-    position = _target_position(write, assignment)
-    if position is None or position[0] is None:
-        return None
-    return resolve_type(position[0])
+    return resolve_type(stored.constraint)
 
 
 def value_under_declared_constraint(write: Node, value: Expression) -> Expression | None:
@@ -465,14 +368,6 @@ def value_under_declared_constraint(write: Node, value: Expression) -> Expressio
         return None
     outcome = convert(read(value), constrained)
     return None if outcome.may_throw else render(outcome.value)
-
-
-def _multi_assignment_targets(target: Node | None) -> list[Node] | None:
-    """
-    The slots a multi-assignment target holds, or `None` where the target is not one.
-    """
-    target = unwrap_parens(target) if target is not None else None
-    return list(target.elements) if isinstance(target, Ps1ArrayLiteral) else None
 
 
 #: What `foreach` yields from a string: the string itself, not its characters.

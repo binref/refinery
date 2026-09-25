@@ -1288,7 +1288,7 @@ FOLDS: dict[str, str] = {
     '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))':
         '$b = @(([Object[]](1, 2, 3)))\nWrite-Output ([Object]::ReferenceEquals((1, 2, 3), $b))',
     '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b':
-        '$x = 1, 2, 3\n[Array]::Reverse($x)\nWrite-Output (3, 2, 1)',
+        '$x = 1, 2, 3\n$b, $c = (1, 2, 3)\n[Array]::Reverse($x)\nWrite-Output $b',
     "$x = 1, 2, 3; $c = '$x = 7, 8, 9'; iex $c; [Array]::Reverse($x); Write-Output $x":
         '$x = 7, 8, 9\n[Array]::Reverse($x)\nWrite-Output (9, 8, 7)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "

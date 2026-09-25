@@ -52,8 +52,8 @@ from refinery.lib.scripts.ps1.analysis.variable_types import (
 from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
-    assignment_target_variables,
     get_member_name,
+    stored_value,
     unwrap_assignment_target,
     unwrap_parens,
 )
@@ -640,24 +640,31 @@ class _ConstantTable:
         self._collect_ambient(root)
 
     def _collect_writes(self, root: Node):
+        """
+        Record the value of every plain assignment to one variable. A multi-assignment is not
+        recorded even where the value a slot is handed is known: the assignment is removed once
+        every read of a recorded value is replaced, and removing it would lose what it stores into
+        its other slots.
+        """
         for node in root.walk():
             if not isinstance(node, Ps1AssignmentExpression):
                 continue
-            if node.operator != '=' or node.value is None:
+            target = unwrap_assignment_target(node.target)
+            if not isinstance(target, Ps1Variable):
                 continue
-            targets = assignment_target_variables(node.target)
-            if len(targets) != 1:
+            stored = stored_value(target)
+            if stored is None or stored.value is None:
                 continue
-            key = binding_key(targets[0])
+            key = binding_key(target)
             if key in PS1_ENGINE_VARIABLES:
                 # A preference or automatic variable is the engine's as much as the script's, so a
                 # write of one is not recorded here; the ambient table answers for it, and only
                 # while the script leaves the name alone.
                 continue
-            if _constant_value_key(node.value) is None:
+            if _constant_value_key(stored.value) is None:
                 continue
-            value = unwrap_parens(node.value)
-            self.by_write[id(targets[0])] = value
+            value = unwrap_parens(stored.value)
+            self.by_write[id(target)] = value
             self.values[key].append(value)
 
     def _collect_ambient(self, root: Node):

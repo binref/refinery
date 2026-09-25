@@ -314,10 +314,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b":
         'The read is folded to `a`. `PSVariable.Remove` removes `$b` by name, so the snippet '
         'writes `$null`.',
-    '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b':
-        'The read is folded to the reversal `3 2 1`. A multi-assignment gives `$b` the first '
-        'element of `$x` and not the array, so the snippet writes `1`; the two names are '
-        'linked as if `$b = $x` had been written.',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     'function f { iex $c }; f; Write-Output $x':
         'The array is spelled into the hash literal and the read folded to `1 2 3` where the '

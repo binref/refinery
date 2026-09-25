@@ -2679,15 +2679,11 @@ class TestPs1TheSessionStateReadsWritesAndRemovesAVariableByName(_Ps1Ledger):
 
 class TestPs1AMultiAssignmentSlotHoldsTheElementOppositeIt(_Ps1Ledger):
     """
-    A multi-assignment of a value not written as a list gives its first name the first element of
-    that value and not the value itself. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes
-    `1`.
-
-    The slot is linked to the whole value as if `$b = $x` had been written, so the reversal of `$x`
-    is filed against `$b` and its read is folded to `3 2 1`.
+    A multi-assignment gives each slot the element standing opposite it: the first element of a
+    value not written as a list, and the very object an element of a list names. Measured on 5.1
+    in `corpus.BEHAVIOURS`, the scripts write `1`, `9 2 3`, and `1` and then `2`.
     """
 
-    @unittest.expectedFailure
     def test_a_slot_given_an_element_is_not_a_second_name_for_the_array(self):
         self._assertTheStoreReachesTheName(
             '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
@@ -2695,6 +2691,19 @@ class TestPs1AMultiAssignmentSlotHoldsTheElementOppositeIt(_Ps1Ledger):
             [[1]],
             [[3, 2, 1]],
         )
+
+    def test_a_slot_opposite_a_name_is_a_second_name_for_its_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $b, $c = $x, 5; $b[0] = 9; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_slot_beside_a_store_into_a_container_is_not_handed_the_whole_value(self):
+        tree = self._deobfuscated_tree(
+            "$h = @{}; $a, $h['k'] = 1, 2; Write-Output $a; Write-Output $h['k']")
+        self._assertWrites(tree, [[1], [2]], [[1, 2], [2]], bool(_stores(tree, 'a')))
 
 
 class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
