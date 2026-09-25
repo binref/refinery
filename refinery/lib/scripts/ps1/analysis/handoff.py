@@ -7,7 +7,7 @@ a slot of a container that already exists, the parameter of a body it is passed 
 variable of a block it is piped into, a `foreach` variable, and the output a caller of a body
 collects. A store reaching the object through any of those places changes what the name holds, and
 none of them is an occurrence of the name. `object_handoff` classifies a read by which of those it
-reaches; `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow` orders the stores against it.
+reaches; `refinery.lib.scripts.ps1.analysis.objects.Ps1ObjectFlow` orders the stores against it.
 
 The climb follows the object outwards and counts how deep inside the value at the cursor it sits.
 An expression that may give back the very object it was handed passes it on at the same depth;
@@ -35,7 +35,7 @@ from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER, keeps_nothing
 from refinery.lib.scripts.ps1.analysis.identity import passage_out_of
 from refinery.lib.scripts.ps1.analysis.model import written_slots_of
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
-from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, read
+from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, read, resolve_expression_type
 from refinery.lib.scripts.ps1.ast import (
     binds_parameter,
     get_command_name,
@@ -84,18 +84,15 @@ class Ps1Handoff(enum.Enum):
     What keeps the object a read produces once the expression around the read has run.
 
     `NOWHERE` — nothing keeps the object or anything inside it.
-    `A_NAME` — a plain `=` standing as a statement of its own stores the whole of it under one
-    variable, as in `$y = $x` or `$y = [array]$x`. The semantic model links the two names and files
-    the stores of either against both, so this is the one hand-off that needs nothing further.
     `PARTS` — something keeps objects the value holds but not the value itself: `$y = @($x)`,
     `foreach ($e in $x)`, `$q = $x[0]`.
-    `OBJECT` — something keeps the object itself: an element of a new array, a hash entry, a slot of
-    another container, a callee, a caller collecting the output of a body.
+    `OBJECT` — something keeps the object itself: a second name, as `$y = $x` gives it one, an
+    element of a new array, a hash entry, a slot of another container, a callee, a caller
+    collecting the output of a body.
     """
     NOWHERE = 0
-    A_NAME  = 1  # noqa
-    PARTS   = 2  # noqa
-    OBJECT  = 3  # noqa
+    PARTS   = 1  # noqa
+    OBJECT  = 2  # noqa
 
     def widest(self, other: Ps1Handoff) -> Ps1Handoff:
         """
@@ -159,16 +156,12 @@ class Ps1CallTrust(typing.NamedTuple):
     closed_at: Callable[[Node], bool]
 
 
-#: Believe nothing: every command and every call may keep what it is handed.
-TRUST_NOTHING = Ps1CallTrust(lambda name: False, lambda node: False)
-
-
 def object_handoff(var: Ps1Variable, trust: Ps1CallTrust) -> Ps1Handoff:
     """
     What keeps the object *var* reads once the expression around it has run. What a command or a
     call is believed to let go of is what *trust* allows.
     """
-    return _climb(var, _Position(0, direct=True, streamed=False), trust)
+    return _climb(var, _Position(0, streamed=False), trust)
 
 
 def assignment_handoff(
@@ -183,19 +176,17 @@ def assignment_handoff(
     """
     if not _yields_its_value(assignment):
         return Ps1Handoff.NOWHERE
-    return _climb(assignment, _Position(0, direct=False, streamed=False), trust)
+    return _climb(assignment, _Position(0, streamed=False), trust)
 
 
 class _Position(typing.NamedTuple):
     """
     What the climb knows about the value at its cursor. `depth` is how deep inside that value the
-    object sits, negative where only objects inside it are there; `direct` says that nothing but
-    parentheses and conversions stand between the read and the cursor; `streamed` says that the
-    value is the objects a command wrote rather than the value of an expression, so writing it out
-    does not take it apart again, and making a value of it collects it.
+    object sits, negative where only objects inside it are there; `streamed` says that the value is
+    the objects a command wrote rather than the value of an expression, so writing it out does not
+    take it apart again, and making a value of it collects it.
     """
     depth: int
-    direct: bool
     streamed: bool
 
 
@@ -299,16 +290,13 @@ def _is_a_method_body(block: Ps1ScriptBlock) -> bool:
 
 def _assigned(assignment: Ps1AssignmentExpression, at: _Position) -> Ps1Handoff:
     """
-    What an assignment keeps of the object its value holds. A plain `=` of the read itself to one
-    variable is the link the semantic model owns; every other target keeps what it is given, and a
-    multi-assignment gives each target one element of it.
+    What an assignment keeps of the object its value holds. Every target keeps what it is given,
+    a second name as much as a container, and a multi-assignment gives each target one element of
+    it.
     """
     target = unwrap_assignment_target(assignment.target)
-    if assignment.operator == '=':
-        if isinstance(target, Ps1Variable):
-            return Ps1Handoff.A_NAME if at.direct else _kept(at.depth)
-        if isinstance(target, Ps1ArrayLiteral):
-            return _kept(_unrolled(at.depth))
+    if assignment.operator == '=' and isinstance(target, Ps1ArrayLiteral):
+        return _kept(_unrolled(at.depth))
     return _kept(at.depth)
 
 
@@ -317,7 +305,7 @@ def _climb(start: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Handoff:
     What keeps the object once the expression around *start* has run, the value at *start* holding
     it as *at* says.
     """
-    depth, direct, streamed = at
+    depth, streamed = at
     cursor: Node = start
     while True:
         parent = cursor.parent
@@ -329,17 +317,16 @@ def _climb(start: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Handoff:
         if isinstance(parent, Ps1AssignmentExpression):
             if parent.value is not cursor:
                 return Ps1Handoff.NOWHERE
-            kept = _assigned(parent, _Position(depth, direct, streamed))
+            kept = _assigned(parent, _Position(depth, streamed))
             if not _yields_its_value(parent):
                 return kept
-            return kept.widest(_climb(parent, _Position(depth, direct, False), trust))
+            return kept.widest(_climb(parent, _Position(depth, False), trust))
         passage = passage_out_of(cursor)
         if passage is not None:
             cursor = passage.expression
             continue
         if isinstance(parent, Ps1BinaryExpression) and parent.operator.lower() == '-as':
             return Ps1Handoff.NOWHERE
-        direct = False
         if isinstance(parent, (Ps1ArrayLiteral, Ps1HashLiteral)):
             depth = _wrapped(depth)
         elif isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess, Ps1InvokeMember)):
@@ -368,9 +355,9 @@ def _climb(start: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Handoff:
                 depth = _unrolled(depth)
             streamed = True
         elif isinstance(parent, Ps1Pipeline):
-            return _piped(parent, cursor, _Position(depth, False, streamed), trust)
+            return _piped(parent, cursor, _Position(depth, streamed), trust)
         elif isinstance(parent, (Ps1ExpressionStatement, Ps1ReturnStatement)):
-            return _written_out(parent, _Position(depth, False, streamed), trust)
+            return _written_out(parent, _Position(depth, streamed), trust)
         elif isinstance(parent, (Ps1ForEachLoop, Ps1SwitchStatement)):
             iterated = parent.iterable if isinstance(parent, Ps1ForEachLoop) else parent.value
             return _kept(_unrolled(depth)) if iterated is cursor else Ps1Handoff.NOWHERE
@@ -416,7 +403,8 @@ def _kept_by_callee(
     A call is code this does not read, so in general it may keep anything — `$list.Add($x)` keeps
     `$x` inside the list. Two kinds of call are the exception, because what they do is known. One
     keeps nothing at all: `refinery.lib.scripts.ps1.analysis.arguments.keeps_nothing` names it —
-    `[string]::Join(' ', $b)` returns a String built from what `$b` holds. The other is a call
+    `[string]::Join(' ', $b)` and `[Text.Encoding]::UTF8.GetString($b)` return a String built from
+    what `$b` holds. The other is a call
     `refinery.lib.scripts.ps1.analysis.arguments.written_slots` knows to write through a slot: each
     fills or rearranges the buffer in a slot it writes, and an argument it does not write is read
     for what it holds. `[Array]::Copy($a, $b, 3)` puts the elements of `$a` into `$b` and never `$a`
@@ -444,13 +432,20 @@ def _kept_by_callee(
 
 def _keeps_nothing(call: Ps1InvokeMember, member: str) -> bool:
     """
-    Whether *call* is a static call of a member that keeps nothing it is handed.
+    Whether *call* is a call of a member that keeps nothing it is handed: a static one on the type
+    it spells, or one on a value whose type the spelling of the receiver names, as
+    `[Text.Encoding]::UTF8.GetString($b)` names an `Encoding`.
     """
     named = call.object
-    if call.access is not Ps1AccessKind.STATIC or not isinstance(named, Ps1TypeExpression):
+    if named is None:
         return False
-    resolved = data.resolve_type(named.name)
-    return resolved is not None and keeps_nothing(resolved, member)
+    if call.access is Ps1AccessKind.STATIC:
+        if not isinstance(named, Ps1TypeExpression):
+            return False
+        resolved = data.resolve_type(named.name)
+        return resolved is not None and keeps_nothing(resolved, member, static=True)
+    resolved = resolve_expression_type(named)
+    return resolved is not None and keeps_nothing(resolved, member, static=False)
 
 
 def _handed_to_command(
@@ -489,7 +484,7 @@ def _piped(
     the pipeline as its value where the element is the last one. The value of an expression is
     taken apart on its way into the next element; what a command wrote already is its objects.
     """
-    depth, _, streamed = at
+    depth, streamed = at
     elements = pipeline.elements
     for position, candidate in enumerate(elements):
         if candidate is not element:
@@ -504,7 +499,7 @@ def _piped(
             kept = _handed_to_command(command, depth, trust)
             if kept is not None:
                 return kept
-        return _climb(pipeline, _Position(depth, False, streamed), trust)
+        return _climb(pipeline, _Position(depth, streamed), trust)
     return _kept(depth)
 
 
@@ -518,7 +513,7 @@ def _written_out(statement: Node, at: _Position, trust: Ps1CallTrust) -> Ps1Hand
     and its `return` hands the value back whole rather than element by element.
     """
     depth = at.depth if at.streamed else _unrolled(at.depth)
-    written = _Position(depth, False, True)
+    written = _Position(depth, True)
     cursor = statement
     while True:
         parent = cursor.parent

@@ -713,6 +713,79 @@ BEHAVIOURS: tuple[str, ...] = (
     "function f { $script:o = 'a'; Write-Output $o }; function g { $o = 'b'; f }; g",
     '$x = 1, 2, 3; $h = @{ k = @{ j = $x } }; $h.k.j[0] = 9; Write-Output $x',
 
+    #: What a store the object layer places against the objects its name may hold is asked to
+    #: preserve the behaviour of: a name rebound in the statement of the store, an assignment a
+    #: call writes through, a member the source does not name, a body run once per object, a
+    #: reference kept in a variable, the pipeline variable of a `switch`, and a chained assignment.
+    '$x = 1, 2, 3; $b = 7, 8; $null = (. { $b = $x }), ($b[0] = 9); Write-Output $x',
+    '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $n = @('k')[(Get-Random -Maximum 1)]; $h.$n[0] = 9; "
+    'Write-Output $x',
+    '$x = 1, 2, 3; $h = @{ SyncRoot = $x }; $h.SyncRoot[0] = 9; Write-Output $x',
+    '$all = @(); 1..2 | ForEach-Object { if ($h) { $h.k[0] = 9 }; $x = 1, 2, 3; '
+    '$h = @{ k = $x }; $all += ,$x }; Write-Output $all[0]',
+    "$y = 'x'; $r = [ref]$y; $y = 'a'; $r.Value = 'b'; Write-Output $y",
+    '$_ = 0, 0; $x = 1, 2, 3; switch (,$x) { default { $_[0] = 9 } }; Write-Output $x',
+    '$x = 1, 2, 3; $w = ($z = $y = $x)[0]; $z[0] = 9; Write-Output $x',
+
+    #: Each spelling of a name addressed as a string that hands the variable out or lists every
+    #: variable is asked to preserve the behaviour of the one the census measured.
+    "$x = 'a'; $v = Get-Item variable:\\x; $v.Value = 'b'; Write-Output $x",
+    "$x = 'a'; $v = Get-Variable x -ValueOnly:$false; $v.Value = 'b'; Write-Output $x",
+    "$x = 'a'; $global:ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x",
+    "$x = 'a'; $v = Get-ChildItem variable:\\; ($v | Where-Object Name -eq 'x').Value = 'b'; "
+    'Write-Output $x',
+    "$b = 'a'; $a, $ExecutionContext.SessionState.PSVariable.Get('b').Value = 1, 2; "
+    'Write-Output $b',
+    "$b = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('b'); $b = 'c'; "
+    'Write-Output $b',
+    "$x = 'a'; $n = @('x')[(Get-Random -Maximum 1)]; $v = Get-Item \"variable:$n\"; "
+    "$v.Value = 'b'; Write-Output $x",
+    "$x = 'a'; $n = @('x')[(Get-Random -Maximum 1)]; Write-Output (Get-Item \"variable:$n\").Value",
+
+    #: What a variable another scope's command removes, copies over or renames is asked to preserve
+    #: the behaviour of: the session state's `PSVariable.Remove` and `Remove-Item variable:` remove
+    #: the nearest variable of that name up the scope chain, `Copy-Item` and `Rename-Item` on the
+    #: `Variable:` drive read one variable by name and write another, and `Get-Variable` run in a
+    #: function hands out the caller's variable. `-OutVariable` keeps what `Get-Variable` wrote.
+    "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; "
+    'Write-Output $x',
+    "$x = 'a'; & { $ExecutionContext.SessionState.PSVariable.Remove('x') }; Write-Output $x",
+    "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x",
+    "$y = 'b'; $x = 'a'; Copy-Item variable:y variable:x; Write-Output $x",
+    "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x",
+    '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c',
+    "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name",
+
+    #: What an error preference set by name is asked to preserve the behaviour of: `Stop` set
+    #: through the session state or through a variable handed out makes a failed conversion
+    #: terminate the script unless a `trap` handles it. What a caught error cuts short is asked the
+    #: same of a store: the store before the failure is the one the read below the `try` observes.
+    "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
+    "trap { continue }; [int]'a'; Write-Output 'after'",
+    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; "
+    "Write-Output 'after'",
+    "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y",
+
+    #: What a store into an array made by no occurrence of its name is asked to preserve the
+    #: behaviour of: code nobody can read run in a child scope, a method invoked by name through
+    #: `ForEach`, a property read through its getter, an adapter's setter, and a store the right
+    #: operand of `-join` makes after its left operand was evaluated.
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; Write-Output $x[1]",
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+    '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x[1]',
+    "$x = 1, 2, 3; (,$x).ForEach('SetValue', 9, 0); Write-Output $x[0]",
+    '$x = 1, 2, 3; ,$x | ForEach-Object SetValue 9 0; Write-Output $x[0]',
+    '$x = 1, 2, 3; $x.get_SyncRoot()[0] = 9; Write-Output $x[0]',
+    '$x = 1, 2, 3; [Collections.ArrayList]::Adapter($x).set_Item(0, 9); Write-Output $x[0]',
+    "$x = 1, 2, 3; $h = @{ k = $x }; Write-Output ($x -join (& { $h.k[0] = 9; ',' }))",
+
+    #: What a body reading a name its caller binds is asked to preserve the behaviour of: a called
+    #: function reads the variable of the block that calls it, and a `switch` clause reads the value
+    #: it runs for as `$_`, not what the script stored there.
+    "function f { $x }; & { $x = 'a'; f }",
+    '$_ = 5; switch (1) { default { Write-Output $_ } }',
+
     #: What compares the identity of an array is asked to preserve the behaviour of: nothing stores
     #: into the array, and a copy put in place of one read is still told apart from the array the
     #: other read names, by the same read twice, a sorted copy, the application domain's data, `*`

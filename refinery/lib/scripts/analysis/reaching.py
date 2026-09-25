@@ -174,15 +174,15 @@ class ReachabilityQuery:
         it, so the answer is read off a walk backwards from *use* that stops at every definition it
         meets. Those it stops at are the answer; reaching the entry, or a node in *kills* — a
         definition's own node among them — on the way is a path along which no definition stands
-        last, and the answer is then `None`. A definition sharing *use*'s node is not ordered
-        against it at this granularity and is refused, as `reaching_definition` refuses it.
+        last, and the answer is then `None`. A definition or a kill sharing *use*'s node is not
+        ordered against it at this granularity and is refused, as `reaching_definition` refuses it.
         """
         at: dict[int, list[_D]] = {}
         for value, node in definitions:
             at.setdefault(id(node), []).append(value)
-        if id(use) in at or use is graph.entry:
-            return None
         blocking = frozenset(kills)
+        if id(use) in at or id(use) in blocking or use is graph.entry:
+            return None
         found: list[_D] = []
         seen: set[int] = {id(use)}
         stack = list(self._projection.predecessors(use))

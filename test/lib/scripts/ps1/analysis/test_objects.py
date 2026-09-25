@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest.mock
+
 from test import TestBase
 
 from refinery.lib.scripts import Node
@@ -211,3 +213,110 @@ class TestPs1AChangeReachesTheObjectsItsNameMayHold(TestBase):
 
     def test_code_nobody_can_read_may_change_any_array(self):
         self.assertTrue(self._may_change('$x = 1, 2; iex $c; Write-Output $x'))
+
+
+class TestPs1ACallAroundAnAssignmentChangesWhatItStored(TestBase):
+    """
+    An assignment used as a value hands the call around it the very object it stored, and a call
+    that writes through the slot it fills changes that object after the assignment ran. Measured on
+    5.1 in `corpus.BEHAVIOURS`: an assignment used as a value is the object it stored, and
+    `[Array]::Reverse(($x))` turns around the array `$x` holds.
+    """
+
+    @staticmethod
+    def _unseen(source: str) -> Ps1Handoff:
+        tree, objects = _objects(source)
+        occurrences = _occurrences(tree, 'x')
+        return objects.unseen_change(occurrences[0], occurrences[-1])
+
+    def test_a_call_writing_the_slot_an_assignment_fills_changes_what_it_stored(self):
+        for source in (
+            '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x',
+            '[Array]::Clear(($x = 1, 2, 3), 0, 3); Write-Output $x',
+            '$s = 7, 8; [Array]::Copy($s, ($x = 0, 0), 2); Write-Output $x',
+        ):
+            with self.subTest(source):
+                self.assertIsNot(self._unseen(source), Ps1Handoff.NOWHERE)
+
+    def test_the_reversal_a_name_is_read_off_is_not_a_change_it_has_not_seen(self):
+        tree, objects = _objects('$x = 1, 2, 3; [Array]::Reverse($x); Write-Output $x')
+        occurrences = _occurrences(tree, 'x')
+        self.assertIs(objects.unseen_change(occurrences[1], occurrences[-1]), Ps1Handoff.NOWHERE)
+
+
+class TestPs1ABodyRunAgainRunsItsChangesAfterItsReads(TestBase):
+    """
+    A body its site runs once per input object, and a block a loop runs again, runs every one of
+    its statements again after a read it made. Measured on 5.1 in `corpus.BEHAVIOURS`: a
+    `ForEach-Object` body runs once for each object, in the scope of its caller.
+    """
+
+    def test_a_change_before_a_read_in_a_body_run_per_object_follows_the_read(self):
+        tree, objects = _objects(
+            '1..2 | ForEach-Object { $h.k[0] = 9; $x = 1, 2, 3; $h = @{ k = $x } }')
+        self.assertTrue(objects.change_may_follow(_occurrences(tree, 'x')[1]))
+
+    def test_a_change_before_a_read_in_a_block_a_loop_runs_follows_the_read(self):
+        tree, objects = _objects(
+            'foreach ($i in 1..2) { . { $h.k[0] = 9; $x = 1, 2, 3; $h = @{ k = $x } } }')
+        self.assertTrue(objects.change_may_follow(_occurrences(tree, 'x')[1]))
+
+    def test_a_change_before_a_read_in_a_block_run_once_does_not_follow_the_read(self):
+        tree, objects = _objects('. { $h.k[0] = 9; $x = 1, 2, 3; $h = @{ k = $x } }')
+        self.assertFalse(objects.change_may_follow(_occurrences(tree, 'x')[1]))
+
+
+class TestPs1ANameOfAChainIsHandedTheWholeObject(TestBase):
+    """
+    Each name of a chained assignment holds the very object the chain was handed, however the
+    value of the chain is taken apart afterwards. Measured on 5.1 in `corpus.BEHAVIOURS`: `$z = $y
+    = $x; $z[0] = 9` changes the array `$x` holds.
+    """
+
+    def test_an_assignment_used_as_a_value_keeps_the_object_whatever_is_read_off_it(self):
+        for source in (
+            '$n = ($y = $x).Count',
+            '$w = ($z = $y = $x)[0]',
+            'foreach ($e in ($y = $x)) { }',
+        ):
+            with self.subTest(source):
+                tree, objects = _objects(source)
+                self.assertIs(objects.handoff(_occurrences(tree, 'x')[0]), Ps1Handoff.OBJECT)
+
+
+class TestPs1TheObjectANameHoldsIsFollowedOncePerRead(TestBase):
+    """
+    The input is written by whoever is being analysed, and a chain of branches that each hand one
+    name the object of the one before is one line of a generator. What a read holds is the same on
+    every path that leads to it, so asking it once per path is a hang on a chain a few dozen
+    branches long.
+    """
+
+    def test_a_chain_of_branches_is_followed_once_per_read(self):
+        length = 12
+        lines = ['$a0 = 5, 6']
+        lines.extend(
+            F'if ($c) {{ $a{k} = $a{k - 1} }} else {{ $a{k} = $a{k - 1} }}'
+            for k in range(1, length + 1)
+        )
+        lines.append(F'Write-Output $a{length}')
+        tree, objects = _objects('\n'.join(lines))
+        variables = objects.variables
+        with unittest.mock.patch.object(
+            variables, 'writes_reaching', wraps=variables.writes_reaching
+        ) as asked:
+            self.assertIsNotNone(objects.allocations_at(_occurrences(tree, F'a{length}')[-1]))
+        self.assertLessEqual(asked.call_count, 2 * length + 1)
+
+
+class TestPs1AnAutomaticVariableHoldsWhatTheEngineGaveIt(TestBase):
+    """
+    The engine rebinds `$_` in every `switch` clause, whatever the script last assigned to it, so
+    the object a store through it changes is not one the script's write made.
+    """
+
+    def test_a_store_through_the_pipeline_variable_of_a_switch_may_change_any_object(self):
+        tree, objects = _objects(
+            '$_ = 0, 0; $x = 1, 2, 3; switch (,$x) { default { $_[0] = 9 } }; Write-Output $x')
+        store = [node for node in _occurrences(tree, '_') if node.parent is not None][-1]
+        self.assertIsNone(objects.changes_of(store))

@@ -4,7 +4,6 @@ from test import TestBase
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.naming import (
-    Ps1NameRole,
     Ps1NameTarget,
     addresses_unreadable_name,
     named_references,
@@ -242,6 +241,21 @@ class TestPs1UnreadableNames(TestBase):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
 
+    def test_a_name_computed_after_the_variable_drive_is_spelled_is_unreadable(self):
+        for source, target in (
+            ('$v = Get-Item "variable:$n"', Ps1NameTarget.UNREADABLE),
+            ("$v = Get-ChildItem ('Variable:\\' + $n)", Ps1NameTarget.UNREADABLE),
+            ("Set-Item \"variable:$n\" 'v'", Ps1NameTarget.LOCAL),
+            ("Set-Item ('variable:{0}' -f $n) 'v'", Ps1NameTarget.LOCAL),
+        ):
+            with self.subTest(source):
+                self.assertIs(unreadable_name_target(self._command(source)), target)
+
+    def test_a_name_computed_after_another_drive_is_spelled_is_no_variable(self):
+        for source in ("Set-Item \"function:$n\" { 'v' }", "Set-Item ('alias:' + $n) 'v'"):
+            with self.subTest(source):
+                self.assertFalse(addresses_unreadable_name(self._command(source)))
+
 
 def _first(source: str, kind: type, name: str | None = None) -> Node:
     """
@@ -293,6 +307,56 @@ class TestPs1AVariableHandedOut(TestBase):
             [('b', True)],
         )
 
+    def test_a_variable_on_a_path_rooted_at_the_drive_is_handed_out(self):
+        for source in (
+            "$v = Get-Item variable:\\b; $v.Value = 'b'",
+            "$v = Get-Item variable:/b; $v.Value = 'b'",
+            "$v = Get-Item variable::b; $v.Value = 'b'",
+            "$v = Get-ChildItem Variable:\\b; $v.Value = 'b'",
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._handed_out(source), [('b', True)])
+
+    def test_a_value_only_switch_bound_to_false_hands_the_variable_out(self):
+        for source, handed_out in (
+            ("$v = Get-Variable b -ValueOnly:$false; $v.Value = 'b'", True),
+            ("$v = Get-Variable b -ValueOnly:$c; $v.Value = 'b'", True),
+            ('$v = Get-Variable b -ValueOnly:$true', False),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._handed_out(source), [('b', handed_out)])
+
+    def test_a_store_into_the_value_in_a_slot_of_a_multi_assignment_hands_the_variable_out(self):
+        self.assertEqual(self._handed_out('$a, (Get-Variable b).Value = 1, 2'), [('b', True)])
+        self.assertEqual(
+            self._handed_out(
+                "$a, $ExecutionContext.SessionState.PSVariable.Get('b').Value = 1, 2",
+                Ps1InvokeMember,
+            ),
+            [('b', True)],
+        )
+
+    def test_a_variable_an_output_variable_keeps_is_handed_out(self):
+        """
+        What a command writes out also lands in the variable its `-OutVariable` names, so the
+        variable object leaves in `$o` whatever is read of it where the command stands.
+        """
+        self.assertEqual(
+            self._handed_out('$n = (Get-Variable b -OutVariable o).Name'),
+            [('b', True), ('o', False)],
+        )
+
+    def test_a_reference_kept_hands_out_the_variable_it_is_spelled_around(self):
+        referenced = _first("$r = [ref]$b; $r.Value = 'b'", Ps1Variable, 'b')
+        self.assertEqual(
+            [(ref.key, ref.hands_out) for ref in named_references(referenced)],
+            [('b', True)],
+        )
+
+    def test_a_reference_handed_to_a_call_is_the_parameter_it_fills(self):
+        referenced = _first("[int]::TryParse('5', [ref]$b)", Ps1Variable, 'b')
+        self.assertEqual(named_references(referenced), [])
+
 
 class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
     """
@@ -325,6 +389,18 @@ class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
             [('x', 'WRITES', 'SCRIPT')],
         )
 
+    def test_the_session_state_is_reached_through_any_qualifier_of_its_holder(self):
+        """
+        `$ExecutionContext` is a constant every scope carries, so a qualified spelling of it is the
+        same engine intrinsics the bare one is.
+        """
+        for source in (
+            "$global:ExecutionContext.SessionState.PSVariable.Set('x', 'b')",
+            "$script:ExecutionContext.SessionState.PSVariable.Set('x', 'b')",
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._refs(source), [('x', 'WRITES', 'LOCAL')])
+
     def test_a_computed_name_is_unreadable_where_the_call_runs(self):
         call = _first("$ExecutionContext.SessionState.PSVariable.Set($n, 'b')", Ps1InvokeMember)
         self.assertIs(unreadable_name_target(call), Ps1NameTarget.LOCAL)
@@ -349,6 +425,7 @@ class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
     def test_a_member_that_reaches_no_variable_leaks_nothing(self):
         for source in (
             "$ExecutionContext.InvokeCommand.GetCommand('x', 'Cmdlet')",
+            "$ExecutionContext.SessionState.InvokeCommand.GetCommand('x', 'Cmdlet')",
             '$ExecutionContext.SessionState.LanguageMode',
             "$ExecutionContext.SessionState.PSVariable.GetValue('x')",
         ):
@@ -371,7 +448,17 @@ class TestPs1AReadOfNamesNobodyCanRead(TestBase):
             'Get-Variable x* | ForEach-Object Value',
             'Get-Variable $n -ValueOnly',
             'Get-ChildItem variable:',
+            'Get-ChildItem variable:\\',
+            'dir variable:/',
             'dir variable:x*',
+        ):
+            with self.subTest(source):
+                self.assertTrue(reads_unreadable_name(_first(source, Ps1CommandInvocation)))
+
+    def test_a_name_computed_after_the_drive_is_spelled_may_be_any_name(self):
+        for source in (
+            '(Get-Item "variable:$n").Value',
+            "(Get-ChildItem ('variable:' + $n)).Value",
         ):
             with self.subTest(source):
                 self.assertTrue(reads_unreadable_name(_first(source, Ps1CommandInvocation)))

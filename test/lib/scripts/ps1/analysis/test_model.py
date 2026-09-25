@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     Ps1OccurrenceRole,
     ScopeKind,
     build_semantic_model,
+    changes_the_object_it_names,
     declares_binding,
     is_mutated_in_place,
     is_substitutable_position,
@@ -249,6 +250,23 @@ class TestPs1OccurrenceRoles(TestBase):
 
     def _role(self, source: str, name: str = 'x', index: int = 0) -> Ps1OccurrenceRole:
         return occurrence_role(self._occurrence(source, name, index))
+
+    def test_a_store_into_a_member_the_source_does_not_name_stores_through_the_name(self):
+        for source in ('$x.$m = 5', '$x.$m++', '$x.SyncRoot = 5'):
+            with self.subTest(source):
+                self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
+
+    def test_a_store_through_a_member_that_may_be_an_entry_reaches_past_the_object(self):
+        """
+        A member whose name the source does not spell, and a member of a table that a key may
+        answer, may be an entry of the object rather than the object: `$h.$k` and `$h.SyncRoot` of
+        `@{ SyncRoot = $x }` are the array `$x` holds. A store one step into them is two steps into
+        what the name holds.
+        """
+        for source in ('$x.$m[0] = 9', '$x.SyncRoot[0] = 9', '$x.$($m)[0]++'):
+            with self.subTest(source):
+                self.assertIs(self._role(source), Ps1OccurrenceRole.WRITE_THROUGH)
+                self.assertFalse(changes_the_object_it_names(self._occurrence(source)))
 
     def test_an_occurrence_that_only_observes_the_value_is_a_read(self):
         for source in ('Write-Host $x', '$y = $x + 1', 'Write-Host $x[0]', 'Get-Item @x'):
@@ -602,6 +620,27 @@ class TestPs1NamedReferenceAttribution(TestBase):
     def test_a_variable_of_any_name_handed_out_puts_the_script_in_doubt(self):
         self.assertTrue(self._model('$v = Get-Variable').script_scope.writes_unreadable_names)
 
+    def test_the_session_state_handed_out_puts_every_scope_in_doubt(self):
+        """
+        `PSVariable.Set` writes the scope that runs the call, and the session state kept in `$ss`
+        may be called from any body of the script.
+        """
+        model = self._model(
+            '$ss = $ExecutionContext.SessionState\n'
+            "$sb = { $y = 'abc'; $ss.PSVariable.Set('y', 'def'); Write-Output $y }")
+        self.assertTrue(all(scope.writes_unreadable_names for scope in model.scopes()))
+
+    def test_a_name_the_session_state_reads_is_in_the_read_set_of_the_statement(self):
+        """
+        The dead-store sweep flushes a pending store against this set, so a read it leaves out is
+        a store deleted from under the call that reads it.
+        """
+        source = "$b = 'a'\nWrite-Output $ExecutionContext.SessionState.PSVariable.GetValue('b')"
+        model = self._model(source)
+        statement = model.root.body[1]
+        self.assertIn('b', model.reads_in_scope(statement, model.script_scope))
+        self.assertIn('b', model.variables_in_scope(statement, model.script_scope))
+
 
 class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
     """
@@ -803,24 +842,38 @@ class TestPs1TheKeepNothingTableIsFlooredAgainstTheCollectedMetadata(TestBase):
 
     def test_a_member_returning_an_object_is_refused(self):
         with self.assertRaises(ValueError):
-            _floored_keepers({('array', 'asreadonly')})
+            _floored_keepers({('array', 'asreadonly')}, static=True)
 
     def test_a_member_taking_a_parameter_by_reference_is_refused(self):
         with self.assertRaises(ValueError):
-            _floored_keepers({('array', 'resize')})
+            _floored_keepers({('array', 'resize')}, static=True)
 
     def test_a_member_the_metadata_does_not_carry_is_refused(self):
         with self.assertRaises(ValueError):
-            _floored_keepers({('string', 'fill')})
+            _floored_keepers({('string', 'fill')}, static=True)
 
     def test_a_member_every_overload_of_which_returns_a_string_is_built(self):
-        self.assertEqual([member for _, member in _floored_keepers({('string', 'join')})], ['join'])
+        self.assertEqual(
+            [member for _, member in _floored_keepers({('string', 'join')}, static=True)],
+            ['join'],
+        )
 
     def test_the_table_is_asked_by_the_type_whatever_its_spelling(self):
         string = data.resolve_type('System.String')
         assert string is not None
-        self.assertTrue(keeps_nothing(string, 'JOIN'))
-        self.assertFalse(keeps_nothing(string, 'Split'))
+        self.assertTrue(keeps_nothing(string, 'JOIN', static=True))
+        self.assertFalse(keeps_nothing(string, 'Split', static=True))
+
+    def test_a_member_is_refused_on_the_side_the_metadata_does_not_carry_it(self):
+        with self.assertRaises(ValueError):
+            _floored_keepers({('string', 'join')}, static=False)
+
+    def test_the_string_an_encoding_decodes_keeps_nothing_of_the_buffer(self):
+        encoding = data.resolve_type('System.Text.Encoding')
+        assert encoding is not None
+        self.assertTrue(keeps_nothing(encoding, 'GetString', static=False))
+        self.assertFalse(keeps_nothing(encoding, 'GetString', static=True))
+        self.assertFalse(keeps_nothing(encoding, 'GetBytes', static=False))
 
 
 class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):

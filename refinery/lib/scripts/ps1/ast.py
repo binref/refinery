@@ -566,6 +566,34 @@ def binds_parameter(written: str, parameter: str) -> bool:
     return bool(written) and parameter.startswith(written)
 
 
+def switch_setting(cmd: Ps1CommandInvocation, parameter: str) -> bool | None:
+    """
+    Whether *cmd* turns on the switch *parameter*, given in full, lowercased and without its dash:
+    `True` where it is written bare or bound to `$true`, `False` where it is not written or is bound
+    to `$false`, and `None` where it is bound to a value this does not read. A switch takes its
+    value only through a colon, so `-ValueOnly:$false` turns the switch off while
+    `-ValueOnly $false` turns it on and leaves `$false` a positional argument of its own.
+    """
+    setting: bool | None = False
+    for argument in cmd.arguments:
+        if not isinstance(argument, Ps1CommandArgument):
+            continue
+        if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
+            continue
+        if not binds_parameter(argument.name, parameter):
+            continue
+        value = argument.value
+        if argument.kind is Ps1CommandArgumentKind.SWITCH or value is None:
+            setting = True
+        elif is_builtin_variable(value, {'true'}):
+            setting = True
+        elif is_builtin_variable(value, {'false'}):
+            setting = False
+        else:
+            setting = None
+    return setting
+
+
 def bound_argument_value(
     cmd: Ps1CommandInvocation, parameter: str,
 ) -> Expression | None:
@@ -643,7 +671,7 @@ def free_positional_values(
     return result
 
 
-def is_reference_cast(expr: Node | None) -> bool:
+def is_reference_cast(expr: Node | None) -> TypeGuard[Ps1CastExpression]:
     """
     Whether `expr` is a `[ref]` cast, which hands the callee a wrapper it can store back through
     rather than the operand's value. What the operand then denotes is the caller's question: a cast
@@ -897,14 +925,14 @@ def _is_a_block_the_command_runs(child: Node) -> bool:
     return isinstance(value, Ps1ScriptBlock)
 
 
-def assignment_of(var: Ps1Variable) -> Ps1AssignmentExpression | None:
+def assignment_of(node: Node) -> Ps1AssignmentExpression | None:
     """
-    The `refinery.lib.scripts.ps1.model.Ps1AssignmentExpression` that writes `var` when `var`
+    The `refinery.lib.scripts.ps1.model.Ps1AssignmentExpression` that writes *node* when *node*
     occupies its target position — directly, or as an element of a multi-assignment
     `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral` target — else `None`. Enclosing
     type-constraint casts and parentheses are transparent.
     """
-    cursor: Node = var
+    cursor: Node = node
     parent = cursor.parent
     while isinstance(parent, (Ps1CastExpression, Ps1ParenExpression, Ps1ArrayLiteral)):
         cursor = parent

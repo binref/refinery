@@ -104,10 +104,12 @@ from refinery.lib.scripts.ps1.analysis.model import (
 )
 from refinery.lib.scripts.ps1.analysis.opaque import writes_nobody_can_attribute
 from refinery.lib.scripts.ps1.ast import (
+    binding_key,
     bound_argument_value,
     in_evaluation_order,
     string_value,
 )
+from refinery.lib.scripts.ps1.data import PS1_AUTOMATIC_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ScopeModifier,
@@ -218,6 +220,7 @@ class Ps1VariableFlow:
         self._blocks_by_owner: dict[int, list[Ps1ScriptBlock]] = {}
         self._deferred_writes: dict[tuple[str, int], bool] = {}
         self._alias_holds: dict[tuple[int, int], bool] = {}
+        self._placements: dict[int, tuple[ControlFlowGraph, dict[int, CfgNode]]] = {}
 
     def reaching_definition(self, read: Ps1Variable) -> Ps1Variable | None:
         """
@@ -295,29 +298,47 @@ class Ps1VariableFlow:
         whoever calls it: `function f { $script:o = 0, 0; $o }` reads the `$o` of a caller that
         binds one before the script's. So a bare read answers only where it stands in its binding's
         own scope, or in a block that runs where it is written inside that scope.
+
+        **An automatic variable answers nothing.** The engine rebinds most of them with no write of
+        the script to show for it: `$_ = 0, 0; switch (,$x) { default { $_[0] = 9 } }` stores
+        through the array `$x` holds, which the clause's `$_` is, and not through the one the
+        script wrote.
         """
         binding = self.semantic.binding_of(read)
-        if binding is None or not binding.writes:
+        if binding is None or not binding.writes or binding.name in PS1_AUTOMATIC_VARIABLES:
             return None
         if self.unknowns(binding) is not Ps1FlowUnknown.NONE:
             return None
         if not self._reaches_its_binding(read, binding):
             return None
-        placed = {id(write.node): self.flow.locate(write.node) for write in binding.writes}
-        graph = placed[id(binding.writes[0].node)][0]
+        graph, points = self._placements_of(binding)
         use = self.position_of(read, graph)
         if use is None:
             return None
         definitions = [
-            (write.node, placed[id(write.node)][1]) for write in binding.writes
+            (write.node, points[id(write.node)]) for write in binding.writes
             if defines(write) and not self._stores_after(use, read, write.node)
         ]
         kills = (
             self._block_kills(graph, binding.name)
             | self._unattributable_kills(graph, read, use)
         )
-        points = {key: where[1] for key, where in placed.items()}
         return _Selection(binding, graph, use, definitions, kills, points)
+
+    def _placements_of(self, binding: Binding) -> tuple[ControlFlowGraph, dict[int, CfgNode]]:
+        """
+        The graph that holds the writes of *binding* and the node of it that evaluates each write,
+        by the id of the write's node. The graphs are fixed for as long as this model lives, so the
+        writes are placed once per binding rather than once per question asked of a read of it;
+        `unknowns` has already refused a binding with a write no graph places.
+        """
+        found = self._placements.get(id(binding))
+        if found is None:
+            placed = {id(write.node): self.flow.locate(write.node) for write in binding.writes}
+            graph = placed[id(binding.writes[0].node)][0]
+            points = {key: where[1] for key, where in placed.items()}
+            found = self._placements[id(binding)] = graph, points
+        return found
 
     def _reaches_its_binding(self, read: Ps1Variable, binding: Binding) -> bool:
         """
@@ -445,6 +466,8 @@ class Ps1VariableFlow:
         """
         graph = self.flow.graph_of(self.semantic.root)
         if graph is None or self._doubt_without_a_point():
+            return Ps1ObservedWrite.UNKNOWN
+        if key in self.semantic.variables_handed_out:
             return Ps1ObservedWrite.UNKNOWN
         if self._deferred_body_writes(key, self.semantic.root):
             return Ps1ObservedWrite.UNKNOWN
@@ -949,8 +972,9 @@ class Ps1VariableFlow:
         answers it exactly as it answers any other read. `iex $c; Write-Host $env:ComSpec` must not
         publish the default, and `Write-Host $env:ComSpec; iex $c` must still publish it.
 
-        Refused outright where nothing places the doubt: a scope held in doubt as a whole, and an
-        unattributable write in a body whose run time is unknown.
+        Refused outright where nothing places the doubt: a scope held in doubt as a whole, an
+        unattributable write in a body whose run time is unknown, and a variable handed out, which
+        a store into its `Value` rebinds wherever the variable has gone.
 
         A read this cannot project into the script's own graph — one inside a function body or a
         stored block — has no position to order against either, so it is answered by whether the
@@ -959,6 +983,8 @@ class Ps1VariableFlow:
         nothing could have displaced the default in the first place.
         """
         if self._doubt_without_a_point():
+            return False
+        if binding_key(read) in self.semantic.variables_handed_out:
             return False
         graph = self.flow.graph_of(self.semantic.root)
         if graph is None:

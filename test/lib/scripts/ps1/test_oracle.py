@@ -320,6 +320,68 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))':
         'The same, with the second array made by `+=` onto `$null`, which gives back its right '
         'operand.',
+    "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; "
+    'Write-Output $x':
+        'The read is folded to `a` where the snippet writes `$null`. `PSVariable.Remove` removes '
+        'the nearest variable of the name up the scope chain, which is the caller\'s; it is read '
+        'as removing one of the scope the call runs in.',
+    "$x = 'a'; & { $ExecutionContext.SessionState.PSVariable.Remove('x') }; Write-Output $x":
+        'The same, with the removal run in a child block.',
+    "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x":
+        'The same, with the variable removed through the `Variable:` drive.',
+    "$y = 'b'; $x = 'a'; Copy-Item variable:y variable:x; Write-Output $x":
+        'Both stores are removed and the read folded to `a` where the snippet writes `b`: '
+        '`Copy-Item` on the `Variable:` drive is read as addressing no variable.',
+    "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x":
+        'The store of `$y` is removed, so the rename fails and the read writes `$null` where the '
+        'snippet writes `b`: `Rename-Item` on the `Variable:` drive is read as addressing no '
+        'variable.',
+    '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c':
+        'The read is folded to `1` where the snippet writes `2`. `Get-Variable` in the function '
+        'hands out the caller\'s `$c`, and the wildcard pass rewrites the increment of its '
+        '`Value` to one of a local `$c`.',
+    "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name":
+        'The second read writes `$null` where the snippet writes `x`: the wildcard pass rewrites '
+        'the read of the handed-out `Value` to `$x` and drops the command whose `-OutVariable` '
+        'fills `$v`.',
+    "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
+    "trap { continue }; [int]'a'; Write-Output 'after'":
+        'The `trap` is removed, so the failed conversion terminates the script where the snippet '
+        'writes `after`. The fault model reads the error preference off the stores that spell '
+        'it and takes it for `Continue`.',
+    "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; [int]'a'; "
+    "Write-Output 'after'":
+        'The same, with the preference set through the variable `Get-Variable` hands out.',
+    "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y":
+        'The read is folded to `w` where the snippet writes `x`. The failure leaves for the '
+        '`catch` before the last store runs, and the dead-store sweep reads the `try` body as '
+        'running to its end.',
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; Write-Output $x[1]":
+        'The read is folded to `2` where the snippet writes `9`: the payload runs in a child '
+        'block and stores through the `$x` a bare name there reads from the caller.',
+    "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+    '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x[1]':
+        'The same, with the payload run by `InvokeScript`.',
+    "$x = 1, 2, 3; (,$x).ForEach('SetValue', 9, 0); Write-Output $x[0]":
+        'The read is folded to `1` where the snippet writes `9`: `SetValue` invoked by name '
+        'through `ForEach` is read as changing nothing.',
+    '$x = 1, 2, 3; ,$x | ForEach-Object SetValue 9 0; Write-Output $x[0]':
+        'The same, invoked by name through `ForEach-Object`.',
+    '$x = 1, 2, 3; $x.get_SyncRoot()[0] = 9; Write-Output $x[0]':
+        'The same, with the store made through the array `get_SyncRoot` hands back.',
+    '$x = 1, 2, 3; [Collections.ArrayList]::Adapter($x).set_Item(0, 9); Write-Output $x[0]':
+        'The same, with the store made by the `set_Item` of an adapter wrapping the array.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; Write-Output ($x -join (& { $h.k[0] = 9; ',' }))":
+        'The left operand is replaced by a copy, so the join writes `1,2,3` where the snippet '
+        'writes `9,2,3`: the right operand stores through the table after the left one named '
+        'the array, and a change is ordered against the whole statement.',
+    "function f { $x }; & { $x = 'a'; f }":
+        'The call and the function are removed, so nothing is written where the snippet writes '
+        '`a`: the body is read as writing an unset `$x`, where it reads the one of the block '
+        'that calls it.',
+    '$_ = 5; switch (1) { default { Write-Output $_ } }':
+        'The `switch` over a constant is folded to its clause, which then reads the `$_` the '
+        'script stored and writes `5` where the snippet writes `1`.',
 }
 
 

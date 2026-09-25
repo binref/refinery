@@ -38,22 +38,28 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.ast import (
     argument_text,
+    assignment_of,
+    binding_key,
     binds_parameter,
     bound_argument_value,
     free_positional_values,
     get_member_name,
     has_wildcard,
+    is_reference_cast,
     resolve_command_name,
     resolved_command_names,
     string_value,
+    switch_setting,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
+    Expression,
     Ps1AccessKind,
-    Ps1AssignmentExpression,
+    Ps1BinaryExpression,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1InvokeMember,
     Ps1MemberAccess,
@@ -170,16 +176,40 @@ _HOLDER_MEMBERS_WITH_VARIABLES = frozenset({
 
 #: The members of the session state that reach no variable, lowercased. Every other member may:
 #: `PSVariable` addresses them by name, `InvokeProvider` reaches the `Variable:` drive, and `Module`
-#: holds a session state of its own.
+#: holds a session state of its own. `InvokeCommand` is the engine's command intrinsics, the very
+#: object `$ExecutionContext.InvokeCommand` is: what it runs is code this analysis cannot read,
+#: which the world model answers for, and it holds no variable table of its own.
 _SESSION_STATE_MEMBERS_WITHOUT_VARIABLES = frozenset({
     'applications',
     'drive',
+    'invokecommand',
     'languagemode',
     'path',
     'provider',
     'scripts',
     'usefulllanguagemodeindebugger',
 })
+
+#: The qualifiers under which a variable of the session state holders may be spelled. The engine
+#: gives `$ExecutionContext` to every scope, so `$global:ExecutionContext` reaches it as surely as
+#: the bare name does; only the provider namespaces that are not variables name something else.
+_HOLDER_QUALIFIERS = frozenset({
+    Ps1ScopeModifier.NONE,
+    Ps1ScopeModifier.GLOBAL,
+    Ps1ScopeModifier.LOCAL,
+    Ps1ScopeModifier.PRIVATE,
+    Ps1ScopeModifier.SCRIPT,
+    Ps1ScopeModifier.USING,
+    Ps1ScopeModifier.VARIABLE,
+})
+
+#: The common parameters that keep what a command writes out in a variable of their own, with their
+#: aliases: whatever `-OutVariable v` is handed leaves in `$v` whatever else is done with it.
+_OUTPUT_KEEPING_PARAMETERS = frozenset(
+    spelling
+    for parameter in ('outvariable', 'pipelinevariable')
+    for spelling in (parameter, *data.COMMON_PARAMETERS[parameter])
+)
 
 #: What each method of the session state's `PSVariable` does to the name it is handed first.
 _VARIABLE_INTRINSIC_METHODS: dict[str, Ps1NameRole] = {
@@ -218,13 +248,16 @@ def named_references(node: Node) -> list[Ps1NamedReference]:
     """
     Every reference *node* makes to a name addressed as a string, or an empty list when it makes
     none. A single command may make several: `Get-Variable x -OutVariable y` reads one and writes
-    another. A call of the session state's `PSVariable` makes one.
+    another. A call of the session state's `PSVariable` makes one, and so does a `[ref]` that hands
+    out the variable it is spelled around.
 
     Both names a call may run are asked about, because `variable x` and `item variable:x` reach
     `Get-Variable` and `Get-Item` through the implicit `Get-` retry and a table keyed on the bare
     spelling misses them. At most one of the two is in either table, and reading a name a `function
     variable` would have taken back only over-reports a read, which withholds a removal.
     """
+    if isinstance(node, Ps1Variable):
+        return list(_reference_references(node))
     if isinstance(node, Ps1InvokeMember):
         return list(_intrinsic_references(node))
     if not isinstance(node, Ps1CommandInvocation):
@@ -253,8 +286,9 @@ def unreadable_name_target(node: Node) -> Ps1NameTarget | None:
 
     A `Set-Item` whose path is computed might address the `Variable:` drive and might equally be
     writing a file, and answering for every one of them would put most scripts permanently in doubt;
-    that is left as a known hole rather than paid for everywhere. A command that only reads is not
-    reported: not knowing which name was read changes no value.
+    that is left as a known hole rather than paid for everywhere. A path that spells the drive ahead
+    of what it computes, `Set-Item "variable:$n" 'v'`, is no such doubt and is answered. A command
+    that only reads is not reported: not knowing which name was read changes no value.
 
     The implicit `Get-` retry needs no reading here, unlike in `named_references`: it prefixes
     `Get-`, so the only commands it can reach are readers, and a reader hands out a variable of a
@@ -287,10 +321,10 @@ def unreadable_name_target(node: Node) -> Ps1NameTarget | None:
 def reads_unreadable_name(node: Node) -> bool:
     """
     Whether *node* reads a variable whose name this cannot read: `Get-Variable` with no name, with
-    a pattern or with a name it computes, `Get-ChildItem variable:` and its patterns, a `GetValue`
-    or a `Get` of the session state's `PSVariable` handed a name it computes, and the session state
-    handed anywhere but to one of the methods of its `PSVariable`. Such a read may observe every
-    name, so no store is dead for want of a read of it.
+    a pattern or with a name it computes, `Get-ChildItem variable:`, its patterns and a name it
+    computes after the drive, a `GetValue` or a `Get` of the session state's `PSVariable` handed a
+    name it computes, and the session state handed anywhere but to one of the methods of its
+    `PSVariable`. Such a read may observe every name, so no store is dead for want of a read of it.
     """
     if isinstance(node, Ps1Variable):
         return _leaks_the_variable_table(node)
@@ -347,8 +381,8 @@ def _subject_references(
     written = _subject_name(cmd, command, 'path')
     if written is None:
         return
-    drive, _, rest = written.partition(':')
-    prefix = _NAME_DRIVES.get(drive.lower())
+    drive, rest = _drive_path(written)
+    prefix = _NAME_DRIVES.get(drive)
     if prefix is None or not rest or has_wildcard(rest):
         return
     yield Ps1NamedReference(
@@ -380,26 +414,36 @@ def _out_variable_references(cmd: Ps1CommandInvocation) -> Iterator[Ps1NamedRefe
             yield from _resolve(cmd, written, role, Ps1NameTarget.LOCAL)
 
 
-def _subject_name(cmd: Ps1CommandInvocation, command: str, parameter: str) -> str | None:
+def _subject_value(
+    cmd: Ps1CommandInvocation, command: str, parameter: str,
+) -> Expression | None:
     """
-    The literal name a command is about, written either as `-Name x` or as the first positional
-    argument, or `None` when it is not a literal this can read.
+    The argument a command is about, written either as `-Name x` or as the first positional
+    argument, or `None` when it has none.
 
     The positional fallback skips the arguments a preceding value-taking switch consumed, which is
     what tells `Set-Variable -Scope Global x 5` — where the name is `x` — from a reading of the
     argument list that would call it `Global`.
+    """
+    explicit = bound_argument_value(cmd, parameter)
+    if explicit is not None:
+        return explicit
+    for value in free_positional_values(cmd, command):
+        return value
+    return None
+
+
+def _subject_name(cmd: Ps1CommandInvocation, command: str, parameter: str) -> str | None:
+    """
+    The literal name a command is about, or `None` when it has none or it is not a literal this can
+    read.
 
     A name written as a number is a literal like any other and is read through
     `refinery.lib.scripts.ps1.ast.argument_text`. Reading it with `string_value` answers `None`,
     which says the name is *computed* and puts every binding in the enclosing scope in doubt over a
     name that is sitting in the source.
     """
-    explicit = bound_argument_value(cmd, parameter)
-    if explicit is not None:
-        return argument_text(explicit)
-    for value in free_positional_values(cmd, command):
-        return argument_text(value)
-    return None
+    return argument_text(_subject_value(cmd, command, parameter))
 
 
 def _declared_target(cmd: Ps1CommandInvocation) -> Ps1NameTarget:
@@ -462,15 +506,58 @@ def _is_a_pattern(cmd: Ps1CommandInvocation, command: str) -> bool:
 def _addresses_unreadable_variables(cmd: Ps1CommandInvocation, command: str) -> bool:
     """
     Whether an item command addresses variables on the `Variable:` drive whose names this cannot
-    read: the whole drive, as `Get-ChildItem variable:` lists it, or a pattern over it.
+    read: the whole drive, as `Get-ChildItem variable:` lists it, a pattern over it, or a name the
+    source computes after spelling the drive, as `Get-Item "variable:$n"` does.
     """
-    written = _subject_name(cmd, command, 'path')
-    if written is None:
+    value = _subject_value(cmd, command, 'path')
+    if value is None:
         return False
-    drive, _, rest = written.partition(':')
-    if drive.lower() != 'variable':
+    written = argument_text(value)
+    if written is None:
+        return _spelled_drive(value) == 'variable'
+    drive, rest = _drive_path(written)
+    if drive != 'variable':
         return False
     return not rest or has_wildcard(rest)
+
+
+def _spelled_drive(value: Expression) -> str | None:
+    """
+    The drive a path the source computes spells ahead of what it computes, lowercased, or `None`
+    where it spells none: `"variable:$n"`, `'variable:' + $n` and `'variable:{0}' -f $n` all name
+    the `Variable:` drive, whatever `$n` holds.
+    """
+    head: Node = unwrap_parens(value)
+    while (
+        isinstance(head, Ps1BinaryExpression)
+        and head.operator == '+'
+        and head.left is not None
+    ):
+        head = unwrap_parens(head.left)
+    if (
+        isinstance(head, Ps1BinaryExpression)
+        and head.operator == '-f'
+        and head.left is not None
+    ):
+        pattern = string_value(unwrap_parens(head.left))
+        text = None if pattern is None else pattern.partition('{')[0]
+    elif isinstance(head, Ps1ExpandableString) and head.parts:
+        text = string_value(head.parts[0])
+    else:
+        text = string_value(head)
+    if text is None or ':' not in text:
+        return None
+    return _drive_path(text)[0]
+
+
+def _drive_path(written: str) -> tuple[str, str]:
+    """
+    The drive a provider path names, lowercased, and the path of the item on it without the
+    separator that roots it: `variable:\\x`, `variable:/x`, the provider-qualified `variable::x`
+    and `variable:x` all address `$x`, and `variable:\\` is the whole drive as `variable:` is.
+    """
+    drive, _, rest = written.partition(':')
+    return drive.lower(), rest.lstrip('\\/:')
 
 
 class _Left(enum.Enum):
@@ -520,19 +607,29 @@ def _left_by(node: Node) -> _Left:
 
 def _writes_out_variables(cmd: Ps1CommandInvocation, command: str) -> bool:
     """
-    Whether *cmd* writes out the variables it addresses rather than their values or nothing.
+    Whether *cmd* may write out the variables it addresses rather than their values or nothing. A
+    switch bound to a value this cannot read may be either way, so it counts on the side where the
+    variables leave: `-ValueOnly:$v` may write them out and `-PassThru:$v` may too.
     """
     if command in _HANDING_OUT_COMMANDS:
-        return command != 'get-variable' or not _binds_switch(cmd, 'valueonly')
-    return command in _HANDING_OUT_WITH_PASSTHRU and _binds_switch(cmd, 'passthru')
+        return command != 'get-variable' or switch_setting(cmd, 'valueonly') is not True
+    return command in _HANDING_OUT_WITH_PASSTHRU and switch_setting(cmd, 'passthru') is not False
 
 
 def _hands_out(cmd: Ps1CommandInvocation, command: str) -> bool:
     """
     Whether *cmd* hands the variables it addresses to something other than a read of a property
-    where it stands.
+    where it stands. What it writes out also leaves in the variable an `-OutVariable` or a
+    `-PipelineVariable` names, whatever is read of it where it stands.
     """
-    return _writes_out_variables(cmd, command) and _left_by(cmd) is _Left.VARIABLES
+    if not _writes_out_variables(cmd, command):
+        return False
+    return _left_by(cmd) is _Left.VARIABLES or any(
+        isinstance(argument, Ps1CommandArgument)
+        and argument.kind is not Ps1CommandArgumentKind.POSITIONAL
+        and any(binds_parameter(argument.name, kept) for kept in _OUTPUT_KEEPING_PARAMETERS)
+        for argument in cmd.arguments
+    )
 
 
 def _reads_values(cmd: Ps1CommandInvocation, command: str) -> bool:
@@ -543,34 +640,29 @@ def _reads_values(cmd: Ps1CommandInvocation, command: str) -> bool:
     return not _writes_out_variables(cmd, command) or _left_by(cmd) is not _Left.NAMES
 
 
-def _binds_switch(cmd: Ps1CommandInvocation, parameter: str) -> bool:
-    return any(
-        isinstance(argument, Ps1CommandArgument)
-        and argument.kind is not Ps1CommandArgumentKind.POSITIONAL
-        and binds_parameter(argument.name, parameter)
-        for argument in cmd.arguments
-    )
-
-
 def _is_stored_into(node: Node) -> bool:
     """
-    Whether *node* is, through parentheses, what an assignment or an increment stores into.
+    Whether *node* is what an assignment stores into — through parentheses and as one slot of a
+    multi-assignment, the way `refinery.lib.scripts.ps1.ast.assignment_of` reads a target — or
+    what an increment stores into.
     """
+    if assignment_of(node) is not None:
+        return True
     cursor = node
     parent = cursor.parent
     while isinstance(parent, Ps1ParenExpression):
         cursor, parent = parent, parent.parent
-    if isinstance(parent, Ps1AssignmentExpression):
-        return parent.target is cursor
-    if isinstance(parent, Ps1UnaryExpression) and parent.operator in ('++', '--'):
-        return parent.operand is cursor
-    return False
+    return (
+        isinstance(parent, Ps1UnaryExpression)
+        and parent.operator in ('++', '--')
+        and parent.operand is cursor
+    )
 
 
 def _is_a_session_state_holder(node: Node | None) -> bool:
     return (
         isinstance(node, Ps1Variable)
-        and node.scope is Ps1ScopeModifier.NONE
+        and node.scope in _HOLDER_QUALIFIERS
         and node.name.lower() in _SESSION_STATE_HOLDERS
     )
 
@@ -641,6 +733,33 @@ def _intrinsic_references(call: Ps1InvokeMember) -> Iterator[Ps1NamedReference]:
         return
     hands_out = method == 'get' and _left_by(call) is _Left.VARIABLES
     yield from _resolve(call, written, role, Ps1NameTarget.LOCAL, hands_out)
+
+
+def _reference_references(var: Ps1Variable) -> Iterator[Ps1NamedReference]:
+    """
+    The variable a `[ref]` spelled around *var* hands out. `$r = [ref]$y` keeps a reference to the
+    variable `$y` itself, and a store into `$r.Value` rebinds `$y` wherever the reference has gone
+    by then. A reference handed straight to a .NET call as one of its arguments is the parameter
+    the call fills by reference, and it leaves with nothing once the call returns.
+    """
+    cast = var.parent
+    if not is_reference_cast(cast):
+        return
+    cursor: Node = cast
+    parent = cursor.parent
+    while isinstance(parent, Ps1ParenExpression):
+        cursor, parent = parent, parent.parent
+    if isinstance(parent, Ps1InvokeMember) and any(
+        argument is cursor for argument in parent.arguments
+    ):
+        return
+    yield Ps1NamedReference(
+        key=binding_key(var),
+        role=Ps1NameRole.READS,
+        target=Ps1NameTarget.LOCAL,
+        node=var,
+        hands_out=True,
+    )
 
 
 def _intrinsic_unreadable_target(call: Ps1InvokeMember) -> Ps1NameTarget | None:

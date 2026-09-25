@@ -81,10 +81,14 @@ class Ps1ObjectSources(typing.NamedTuple):
 class Ps1Passage(typing.NamedTuple):
     """
     The expression around a node whose value may be the very object the node evaluates to, and
-    whether it certainly is.
+    whether it certainly is. `whole` says the value is otherwise one made where the expression
+    runs, never another object: a conversion may copy what it is handed, but a member whose name
+    the source does not spell may just as well be a part of the object as the object itself, so a
+    store through `$h.$k[0]` reaches two steps into what `$h` holds, not one.
     """
     expression: Expression
     certain: bool
+    whole: bool
 
 
 #: What the value of an expression is when this says nothing else about it.
@@ -165,8 +169,9 @@ def passage_out_of(node: Node) -> Ps1Passage | None:
     where the expression around it gives back no such object.
 
     The statement `@( )` holds its one expression in is stepped over, so the passage out of the
-    `[object[]]$x` of `@([object[]]$x)` is the `@( )`. An assignment is a passage only where it is
-    used as a value; one standing as a statement of its own gives back nothing.
+    `[object[]]$x` of `@([object[]]$x)` is the `@( )`. An assignment is a passage only for the value
+    it stores and only where it is used as a value; one standing as a statement of its own gives
+    back nothing, and its target is what it stores into rather than what it gives back.
     """
     outer = node.parent
     if isinstance(outer, Ps1ExpressionStatement):
@@ -174,14 +179,14 @@ def passage_out_of(node: Node) -> Ps1Passage | None:
         if not isinstance(outer, Ps1ArrayExpression):
             return None
     elif isinstance(outer, Ps1AssignmentExpression):
-        if isinstance(outer.parent, Ps1ExpressionStatement):
+        if outer.value is not node or isinstance(outer.parent, Ps1ExpressionStatement):
             return None
     if not isinstance(outer, Expression):
         return None
     sources = object_sources(outer)
     if sources.operand is not node:
         return None
-    return Ps1Passage(outer, sources.certain)
+    return Ps1Passage(outer, sources.certain, not sources.unknown)
 
 
 def _converted(cast: Ps1CastExpression) -> Ps1ObjectSources:

@@ -309,7 +309,8 @@ def _steps_through(var: Ps1Variable) -> int:
     multi-assignment slots between it and the assignment have been climbed, and stopping at the
     first of them answers `$x[0] = 'z'` while missing `$x[0][1] = 'z'` and `($x * 1)[0] = 'z'`.
     Which expressions give back that object is `refinery.lib.scripts.ps1.analysis.identity`'s to
-    say.
+    say, and one that may as well give back a part of it — a member the source does not name — is
+    a step as much as an index is.
 
     An increment is a store as much as an assignment is: `$x[0]++` writes the element it reads, so
     the `$x` it is rooted at is stored through and no value may stand in its place.
@@ -319,6 +320,8 @@ def _steps_through(var: Ps1Variable) -> int:
     while True:
         passage = passage_out_of(cursor)
         if passage is not None:
+            if not passage.whole:
+                steps += 1
             cursor = passage.expression
             continue
         parent = cursor.parent
@@ -475,6 +478,7 @@ def _enclosing_call_slot(var: Ps1Variable) -> _CallSlotPosition | None:
         passage = passage_out_of(cursor)
         if passage is not None:
             copied = copied or not passage.certain
+            part = part or not passage.whole
             cursor = passage.expression
             continue
         parent = cursor.parent
@@ -561,6 +565,13 @@ _SCRIPT_VARIABLE_SPELLINGS = frozenset({
     Ps1ScopeModifier.NONE,
     Ps1ScopeModifier.USING,
     *VARIABLE_QUALIFIERS,
+})
+
+#: What a command or a call does to a name that observes the value the name held: a read, and an
+#: `-OutVariable +p` that appends to it.
+_OBSERVING_NAME_ROLES = frozenset({
+    Ps1NameRole.READS,
+    Ps1NameRole.APPENDS,
 })
 
 #: The qualifiers that name the scope the occurrence itself runs in and look nowhere else.
@@ -839,7 +850,11 @@ class Ps1SemanticModel:
         self._one_object: dict[int, tuple[Binding, ...]] | None = None
         self._reads_unreadable_names = False
         self._handed_out: set[str] = set()
+        self._doubts_every_scope = False
         self._populate(self.root_scope)
+        if self._doubts_every_scope:
+            for scope in self.scopes():
+                scope.writes_unreadable_names = True
         self._build_def_use()
 
     @property
@@ -909,10 +924,17 @@ class Ps1SemanticModel:
         observe it and counts as a read. This is the read set the dead-store sweep flushes pending
         stores against: unlike the walk it replaces, it does not stop at a nested scriptblock, so a
         store read only through a captured block is correctly seen as live, and `$script:x` reads
-        the store `$x` made as surely as `$x` does.
+        the store `$x` made as surely as `$x` does. So does a command or a call that addresses the
+        name as a string: `$ExecutionContext.SessionState.PSVariable.GetValue('x')` reads `$x`.
         """
         names: set[str] = set()
         for descendant in node.walk():
+            if isinstance(descendant, (Ps1CommandInvocation, Ps1InvokeMember)):
+                names.update(
+                    reference.key for reference in named_references(descendant)
+                    if reference.role in _OBSERVING_NAME_ROLES and reference.key in scope.bindings
+                )
+                continue
             if not isinstance(descendant, Ps1Variable):
                 continue
             if descendant.scope not in _SCRIPT_VARIABLE_SPELLINGS:
@@ -924,14 +946,20 @@ class Ps1SemanticModel:
 
     def variables_in_scope(self, node: Node, scope: Scope) -> set[str]:
         """
-        The names of *scope*'s bindings referenced in any way — read or written, bare or through a
-        qualifier naming a script variable — within *node*'s subtree. The conservative flush set
-        for a control-flow statement whose internal effect on a variable the linear sweep does not
-        model: any mention of a bound name defers its pending store.
+        The names of *scope*'s bindings referenced in any way — read or written, bare, through a
+        qualifier naming a script variable, or as a string a command or a call addresses — within
+        *node*'s subtree. The conservative flush set for a control-flow statement whose internal
+        effect on a variable the linear sweep does not model: any mention of a bound name defers
+        its pending store.
         """
         names: set[str] = set()
         for descendant in node.walk():
-            if (
+            if isinstance(descendant, (Ps1CommandInvocation, Ps1InvokeMember)):
+                names.update(
+                    reference.key for reference in named_references(descendant)
+                    if reference.key in scope.bindings
+                )
+            elif (
                 isinstance(descendant, Ps1Variable)
                 and descendant.scope in _SCRIPT_VARIABLE_SPELLINGS
             ):
@@ -1114,8 +1142,9 @@ class Ps1SemanticModel:
         Record that a write nobody can attribute lands in *target*, so every binding it could reach
         is in doubt.
 
-        A target the lexical chain cannot name reaches anywhere, and the script scope is the one
-        scope every other can see through, so it is marked as well as the scope holding the command:
+        A target the lexical chain cannot name reaches anywhere: a variable handed out of a listing,
+        or the session state handed on, is written through from whatever scope runs the store, which
+        may be any body of the script. So every scope is marked, once the walk has made them all:
         under-marking here is a fold across a write, which is the direction that corrupts.
         """
         if target is Ps1NameTarget.SCRIPT:
@@ -1123,7 +1152,7 @@ class Ps1SemanticModel:
             return
         current.writes_unreadable_names = True
         if target is Ps1NameTarget.UNREADABLE:
-            self.root_scope.writes_unreadable_names = True
+            self._doubts_every_scope = True
 
     def _defining_scope(self, var: Ps1Variable, current: Scope) -> Scope | None:
         """

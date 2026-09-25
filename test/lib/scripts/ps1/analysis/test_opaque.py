@@ -81,10 +81,17 @@ class TestPs1UnreadableCode(TestBase):
         for source in (
             'Invoke-Command -NoNewScope -ScriptBlock $sb',
             'Invoke-Command -ScriptBlock $sb -NoNewScope',
+            'Invoke-Command -NoNewScope:$true -ScriptBlock $sb',
+            'Invoke-Command -NoNewScope:$c -ScriptBlock $sb',
         ):
             with self.subTest(source):
                 self.assertTrue(runs_unreadable_code(_command(source)))
-        self.assertFalse(runs_unreadable_code(_command('Invoke-Command -ScriptBlock $sb')))
+        for source in (
+            'Invoke-Command -ScriptBlock $sb',
+            'Invoke-Command -NoNewScope:$false -ScriptBlock $sb',
+        ):
+            with self.subTest(source):
+                self.assertFalse(runs_unreadable_code(_command(source)))
 
     def test_a_dot_invoked_inline_block_is_not_unreadable(self):
         """

@@ -69,6 +69,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
+    Ps1SwitchStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1TypeExpression,
@@ -3129,6 +3130,374 @@ class TestPs1ABareReadInAFunctionBodyFindsTheVariableOfItsCaller(_Ps1Ledger):
         tree = self._deobfuscated_tree(
             "function f { $script:o = 'a'; Write-Output $o }; function g { $o = 'b'; f }; g")
         self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'o', 'b'))
+
+
+class TestPs1AStoreIsPlacedAgainstEveryObjectItsNameMayHold(_Ps1Ledger):
+    """
+    A store is counted against the objects its name may hold, and each script here gives the name
+    an object the reading of its writes does not see: a dotted block rebinds it in the statement of
+    the store, the assignment a call writes through is the object the call changes, a member the
+    source does not name is the entry of a table, a body run once per object stores after it read,
+    and the pipeline variable of a `switch` is the element the clause runs for. Each script is in
+    `corpus.BEHAVIOURS`; what it writes follows from the measured rows beside it — an assignment
+    used as a value is the object it stored, a table hands out the array its entry holds, a dotted
+    block and a `ForEach-Object` body run in the scope of their caller.
+    """
+
+    def test_a_block_rebinding_the_name_in_the_statement_of_the_store_hands_it_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $b = 7, 8; $null = (. { $b = $x }), ($b[0] = 9); Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_call_around_an_assignment_changes_the_array_the_assignment_stored(self):
+        self._assertTheStoreReachesTheName(
+            '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_member_the_source_does_not_name_is_the_entry_of_the_table(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $n = @('k')[(Get-Random -Maximum 1)]; "
+            '$h.$n[0] = 9; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_key_of_a_table_answers_before_the_property_it_shadows(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $h = @{ SyncRoot = $x }; $h.SyncRoot[0] = 9; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_a_body_run_for_the_next_object_stores_into_the_array_the_last_one_kept(self):
+        self._assertTheStoreReachesTheName(
+            '$all = @(); 1..2 | ForEach-Object { if ($h) { $h.k[0] = 9 }; $x = 1, 2, 3; '
+            '$h = @{ k = $x }; $all += ,$x }; Write-Output $all[0]',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_the_pipeline_variable_of_a_switch_is_the_element_its_clause_runs_for(self):
+        self._assertTheStoreReachesTheName(
+            '$_ = 0, 0; $x = 1, 2, 3; switch (,$x) { default { $_[0] = 9 } }; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    def test_each_name_of_a_chain_holds_the_array_whatever_is_read_off_the_chain(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $w = ($z = $y = $x)[0]; $z[0] = 9; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1AVariableHandedOutUnderAnySpellingIsWrittenThroughIt(_Ps1Ledger):
+    """
+    A variable handed out, and the session state that writes one by name, rebind the name from
+    wherever they have gone. Each script is in `corpus.BEHAVIOURS`, beside the measured row it
+    spells differently: a path rooted at the drive, a switch turned off through its value, a
+    qualified holder of the session state, a listing of the whole drive, a store in a slot of a
+    multi-assignment, a kept `[ref]`, a read of the session state the next store overwrites, and a
+    name computed after the drive is spelled.
+    """
+
+    def test_a_variable_on_a_path_rooted_at_the_drive_is_written_through(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $v = Get-Item variable:\\x; $v.Value = 'b'; Write-Output $x",
+            'x',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_variable_handed_out_by_a_value_only_switch_turned_off_is_written_through(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $v = Get-Variable x -ValueOnly:$false; $v.Value = 'b'; Write-Output $x",
+            'x',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_qualified_holder_of_the_session_state_writes_the_name(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $global:ExecutionContext.SessionState.PSVariable.Set('x', 'b'); "
+            'Write-Output $x',
+            'x',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_variable_picked_out_of_a_listing_of_the_drive_root_is_written_through(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $v = Get-ChildItem variable:\\; "
+            "($v | Where-Object Name -eq 'x').Value = 'b'; Write-Output $x",
+            'x',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_store_into_the_value_in_a_slot_of_a_multi_assignment_writes_the_name(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $a, $ExecutionContext.SessionState.PSVariable.Get('b').Value = 1, 2; "
+            'Write-Output $b',
+            'b',
+            [[2]],
+            [['a']],
+        )
+
+    def test_a_reference_kept_in_a_variable_writes_the_name(self):
+        self._assertTheStoreReachesTheName(
+            "$y = 'x'; $r = [ref]$y; $y = 'a'; $r.Value = 'b'; Write-Output $y",
+            'y',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_read_of_the_session_state_keeps_the_store_it_reads(self):
+        tree = self._deobfuscated_tree(
+            "$b = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('b'); "
+            "$b = 'c'; Write-Output $b")
+        self.assertTrue(_stores_value(tree, 'b', 'a'))
+
+    def test_a_variable_named_after_the_drive_is_spelled_is_written_through(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $n = @('x')[(Get-Random -Maximum 1)]; $v = Get-Item \"variable:$n\"; "
+            "$v.Value = 'b'; Write-Output $x",
+            'x',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_read_of_a_variable_named_after_the_drive_is_spelled_keeps_the_store(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; $n = @('x')[(Get-Random -Maximum 1)]; "
+            "Write-Output (Get-Item \"variable:$n\").Value")
+        self.assertTrue(_stores_value(tree, 'x', 'a'))
+
+
+class TestPs1ACommandInAnotherScopeRemovesOrCopiesTheVariableItNames(_Ps1Ledger):
+    """
+    The session state's `PSVariable.Remove` and `Remove-Item variable:x` remove the nearest `$x` up
+    the scope chain, so run in a function or a child block they remove the caller's. `Copy-Item`
+    and `Rename-Item` on the `Variable:` drive read one variable by name and write another. Measured
+    on 5.1 in `corpus.BEHAVIOURS`, the three removals leave the read writing `$null`, and the copy
+    and the rename leave it writing `b`.
+
+    A removal is read as removing a variable of the scope it runs in, and the item commands are not
+    read as addressing variables at all: the reads are folded to `a`, and the store of `$y` the
+    rename reads is removed.
+    """
+
+    def _assertTheReadIsNotTheRemovedValue(self, source: str) -> None:
+        tree = self._deobfuscated_tree(source)
+        self.assertNotIn(['a'], _output_writes(tree), 'the read was folded to the removed value')
+
+    @unittest.expectedFailure
+    def test_the_session_state_removes_the_variable_of_the_function_s_caller(self):
+        self._assertTheReadIsNotTheRemovedValue(
+            "$x = 'a'; function f { $ExecutionContext.SessionState.PSVariable.Remove('x') }; f; "
+            'Write-Output $x')
+
+    @unittest.expectedFailure
+    def test_the_session_state_removes_the_variable_of_the_block_s_caller(self):
+        self._assertTheReadIsNotTheRemovedValue(
+            "$x = 'a'; & { $ExecutionContext.SessionState.PSVariable.Remove('x') }; "
+            'Write-Output $x')
+
+    @unittest.expectedFailure
+    def test_remove_item_removes_the_variable_of_the_function_s_caller(self):
+        self._assertTheReadIsNotTheRemovedValue(
+            "$x = 'a'; function f { Remove-Item variable:x }; f; Write-Output $x")
+
+    @unittest.expectedFailure
+    def test_copy_item_writes_the_variable_it_copies_onto(self):
+        tree = self._deobfuscated_tree(
+            "$y = 'b'; $x = 'a'; Copy-Item variable:y variable:x; Write-Output $x")
+        self._assertWrites(tree, [['b']], [['a']], _stores_value(tree, 'y', 'b'))
+
+    @unittest.expectedFailure
+    def test_rename_item_reads_the_variable_it_renames(self):
+        tree = self._deobfuscated_tree(
+            "$y = 'b'; $x = 'a'; Remove-Variable x; Rename-Item variable:y x; Write-Output $x")
+        self._assertWrites(tree, [['b']], [[None]], _stores_value(tree, 'y', 'b'))
+
+
+class TestPs1AVariableHandedOutInAFunctionIsTheCallers(_Ps1Ledger):
+    """
+    `Get-Variable c` run in a function hands out the nearest `$c` up the scope chain, which is the
+    caller's, and `-OutVariable v` keeps what it wrote in `$v`. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, the first script writes `2` and the second `a` and then `x`.
+
+    The wildcard pass rewrites the read of the handed-out variable's `Value` to the name itself: in
+    the function that makes the increment one of a local `$c`, and beside `-OutVariable` it drops
+    the command that fills `$v`.
+    """
+
+    @unittest.expectedFailure
+    def test_an_increment_through_the_variable_a_function_is_handed_is_the_caller_s(self):
+        tree = self._deobfuscated_tree(
+            '$c = 1; function f { (Get-Variable c).Value++ }; f; Write-Output $c')
+        self._assertWrites(tree, [[2]], [[1]], bool(_invocations(tree, _GET_VARIABLE)))
+
+    @unittest.expectedFailure
+    def test_the_variable_an_output_variable_keeps_is_still_filled(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; Write-Output (Get-Variable x -OutVariable v).Value; Write-Output $v.Name")
+        self.assertTrue(
+            any(_binds(command, 'outvariable') for command in _commands(tree))
+            or _output_writes(tree) == [['a'], ['x']],
+            'nothing left in the output fills $v',
+        )
+
+
+class TestPs1AnErrorPreferenceSetByNameIsStillHandled(_Ps1Ledger):
+    """
+    `Stop` set as the error preference through the session state or through the variable
+    `Get-Variable` hands out makes a failed conversion terminate the script unless a `trap` handles
+    it. Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes `after`.
+
+    The fault model reads the preference off the stores that spell it, so it takes the preference
+    for `Continue`, the failure for one the script survives, and the `trap` for one nothing needs.
+    """
+
+    def _assertTheTrapIsKept(self, source: str) -> None:
+        tree = self._deobfuscated_tree(source)
+        self.assertTrue(
+            [node for node in tree.walk() if isinstance(node, Ps1TrapStatement)],
+            'the trap that handles the failed conversion was removed',
+        )
+
+    @unittest.expectedFailure
+    def test_a_preference_the_session_state_sets_is_one_a_trap_handles(self):
+        self._assertTheTrapIsKept(
+            "$ExecutionContext.SessionState.PSVariable.Set('ErrorActionPreference', 'Stop'); "
+            "trap { continue }; [int]'a'; Write-Output 'after'")
+
+    @unittest.expectedFailure
+    def test_a_preference_set_through_the_handed_out_variable_is_one_a_trap_handles(self):
+        self._assertTheTrapIsKept(
+            "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'; trap { continue }; "
+            "[int]'a'; Write-Output 'after'")
+
+
+class TestPs1AStoreACaughtErrorCutsShortIsTheOneObserved(_Ps1Ledger):
+    """
+    A failure inside `try` leaves for the `catch` before the statements below it run, so the store
+    above the failure is the last one made. Measured on 5.1 in `corpus.BEHAVIOURS`, the script
+    writes `x`.
+
+    The dead-store sweep reads the `try` body as running to its end, so it takes the store above the
+    failure for one the store below overwrites, removes it, and the read is folded to `w`.
+    """
+
+    @unittest.expectedFailure
+    def test_the_store_above_the_failure_is_observed_after_the_catch(self):
+        tree = self._deobfuscated_tree(
+            "$y = 'w'; try { $y = 'x'; [int]'a'; $y = 'v' } catch {}; Write-Output $y")
+        self._assertWrites(tree, [['x']], [['w']], _stores_value(tree, 'y', 'x'))
+
+
+class TestPs1AStoreNoOccurrenceOfTheNameSpellsIsStillSeen(_Ps1Ledger):
+    """
+    An array is changed in place by code nobody can read run in a child block or by `InvokeScript`,
+    by `SetValue` invoked by name through `ForEach` or `ForEach-Object`, through the array
+    `get_SyncRoot` hands back, through an adapter's `set_Item`, and by a store the right operand of
+    `-join` makes after the left operand was evaluated. Measured on 5.1 in `corpus.BEHAVIOURS`, the
+    first two scripts write `9`, the next four `9` and the last `9,2,3`.
+
+    None of these is read as a change of the array, so a copy is spelled where the source handed
+    the name on and the reads are folded to what the array held before.
+    """
+
+    def _assertTheStoreReaches(self, source: str, written: int, corrupt: int) -> None:
+        self._assertTheStoreReachesTheName(source, 'x', [[written]], [[corrupt]])
+
+    @unittest.expectedFailure
+    def test_code_nobody_can_read_in_a_child_block_stores_through_the_array(self):
+        self._assertTheStoreReaches(
+            "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; & { iex $c }; "
+            'Write-Output $x[1]',
+            9, 2)
+
+    @unittest.expectedFailure
+    def test_code_nobody_can_read_run_by_invoke_script_stores_through_the_array(self):
+        self._assertTheStoreReaches(
+            "$x = 1, 2, 3; $c = @('$x[1] = 9')[(Get-Random -Maximum 1)]; "
+            '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x[1]',
+            9, 2)
+
+    @unittest.expectedFailure
+    def test_set_value_invoked_by_name_through_for_each_stores_into_the_array(self):
+        self._assertTheStoreReaches(
+            "$x = 1, 2, 3; (,$x).ForEach('SetValue', 9, 0); Write-Output $x[0]", 9, 1)
+
+    @unittest.expectedFailure
+    def test_set_value_invoked_by_name_through_for_each_object_stores_into_the_array(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; ,$x | ForEach-Object SetValue 9 0; Write-Output $x[0]', 9, 1)
+
+    @unittest.expectedFailure
+    def test_a_store_through_the_array_its_getter_hands_back_stores_into_it(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; $x.get_SyncRoot()[0] = 9; Write-Output $x[0]', 9, 1)
+
+    @unittest.expectedFailure
+    def test_the_setter_of_an_adapter_stores_into_the_array_it_wraps(self):
+        self._assertTheStoreReaches(
+            '$x = 1, 2, 3; [Collections.ArrayList]::Adapter($x).set_Item(0, 9); '
+            'Write-Output $x[0]',
+            9, 1)
+
+    @unittest.expectedFailure
+    def test_the_right_operand_of_a_join_stores_into_the_array_the_left_one_named(self):
+        self._assertNoOccurrenceIsReplaced(
+            "$x = 1, 2, 3; $h = @{ k = $x }; Write-Output ($x -join (& { $h.k[0] = 9; ',' }))",
+            'x',
+        )
+
+
+class TestPs1ABodyReadsTheNameItsCallerBinds(_Ps1Ledger):
+    """
+    A called function reads the variables of the block that calls it, and a `switch` clause reads
+    the value it runs for as `$_`, whatever the script stored there. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, the first script writes `a` and the second `1`.
+
+    The call is removed together with the function, whose body is read as writing an unset `$x`,
+    and the `switch` over a constant is folded to its clause with `$_` left reading the script's.
+    """
+
+    @unittest.expectedFailure
+    def test_a_function_called_from_a_block_writes_the_block_s_variable(self):
+        tree = self._deobfuscated_tree("function f { $x }; & { $x = 'a'; f }")
+        written = [
+            _literal_value(node.expression) for node in tree.walk()
+            if isinstance(node, Ps1ExpressionStatement)
+        ]
+        self.assertTrue(
+            'a' in written or bool(_invocations(tree, frozenset({'f'}))),
+            'nothing left in the output can write a',
+        )
+
+    @unittest.expectedFailure
+    def test_a_switch_clause_reads_the_value_it_runs_for(self):
+        tree = self._deobfuscated_tree('$_ = 5; switch (1) { default { Write-Output $_ } }')
+        self._assertWrites(
+            tree,
+            [[1]],
+            [[5]],
+            any(isinstance(node, Ps1SwitchStatement) for node in tree.walk()),
+        )
 
 
 class TestPs1ACopyIsToldApartFromTheArrayByItsIdentity(_Ps1Ledger):

@@ -57,15 +57,13 @@ from refinery.lib.scripts.ps1.ast import (
 from refinery.lib.scripts.ps1.data import (
     COMPARISON_OPS,
     ENCODING_MAP,
+    PS1_AUTOMATIC_VARIABLES,
     PS1_KNOWN_VARIABLES,
     is_type,
     named_type,
     resolve_type,
 )
-from refinery.lib.scripts.ps1.deobfuscation.constants import (
-    PS1_AUTOMATIC_VARIABLES,
-    PS1_ENGINE_VARIABLES,
-)
+from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENGINE_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     StringMethodError,
     apply_format_string,

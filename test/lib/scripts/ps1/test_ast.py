@@ -14,6 +14,7 @@ from refinery.lib.scripts.ps1.ast import (
     resolved_command_names,
     standalone_command_statement,
     stored_value,
+    switch_setting,
 )
 from refinery.lib.scripts.ps1.data import (
     KNOWN_ALIAS,
@@ -263,6 +264,34 @@ class TestPs1BoundArgumentValue(TestBase):
     def test_an_alias_of_a_parameter_binds_it_only_as_its_own_name(self):
         self.assertEqual(self._value('Get-Process -ov p', 'ov'), 'p')
         self.assertIsNone(self._value('Get-Process -ov p', 'outvariable'))
+
+
+class TestPs1SwitchSetting(TestBase):
+    """
+    Whether a command turns a switch on. A switch takes a value only through a colon, and one bound
+    to a value that is not a constant may be either way, so the caller decides which side is safe.
+    """
+
+    def test_a_switch_written_bare_or_bound_to_true_is_on(self):
+        for source in (
+            'Get-Variable x -ValueOnly',
+            'Get-Variable x -Val',
+            'Get-Variable x -ValueOnly:$true',
+        ):
+            with self.subTest(source):
+                self.assertIs(switch_setting(_command(source), 'valueonly'), True)
+
+    def test_a_switch_not_written_or_bound_to_false_is_off(self):
+        for source in ('Get-Variable x', 'Get-Variable x -ValueOnly:$false'):
+            with self.subTest(source):
+                self.assertIs(switch_setting(_command(source), 'valueonly'), False)
+
+    def test_a_switch_bound_to_a_value_this_does_not_read_is_undecided(self):
+        self.assertIsNone(switch_setting(_command('Get-Variable x -ValueOnly:$v'), 'valueonly'))
+
+    def test_a_value_after_a_space_is_a_positional_and_leaves_the_switch_on(self):
+        command = _command('Get-Variable x -ValueOnly $false')
+        self.assertIs(switch_setting(command, 'valueonly'), True)
 
 
 class TestPs1FreePositionalValues(TestBase):

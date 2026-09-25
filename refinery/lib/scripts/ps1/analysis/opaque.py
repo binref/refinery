@@ -39,13 +39,8 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameTarget, unreadable_name_target
-from refinery.lib.scripts.ps1.ast import binds_parameter, resolve_command_name
-from refinery.lib.scripts.ps1.model import (
-    Ps1CommandArgument,
-    Ps1CommandArgumentKind,
-    Ps1CommandInvocation,
-    Ps1ScriptBlock,
-)
+from refinery.lib.scripts.ps1.ast import resolve_command_name, switch_setting
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1ScriptBlock
 
 #: Commands that run arbitrary code supplied as data, in the scope of whatever calls them. Resolved
 #: through `refinery.lib.scripts.ps1.ast.resolve_command_name`, so `iex` arrives here canonical.
@@ -100,26 +95,10 @@ def runs_unreadable_code(node: Node) -> bool:
     command = resolve_command_name(node)
     if command in _UNREADABLE_CODE_COMMANDS:
         return True
-    if command in _NO_NEW_SCOPE_COMMANDS and _binds_switch(node, 'nonewscope'):
+    if command in _NO_NEW_SCOPE_COMMANDS and switch_setting(node, 'nonewscope') is not False:
         return True
     return (
         node.invocation_operator == '.'
         and node.name is not None
         and not isinstance(node.name, Ps1ScriptBlock)
     )
-
-
-def _binds_switch(node: Ps1CommandInvocation, parameter: str) -> bool:
-    """
-    Whether *node* is written with a switch that binds *parameter*, given in full, lowercased and
-    without its dash. PowerShell binds any unambiguous abbreviation, which
-    `refinery.lib.scripts.ps1.ast.binds_parameter` is the rule for.
-    """
-    for argument in node.arguments:
-        if not isinstance(argument, Ps1CommandArgument):
-            continue
-        if argument.kind is not Ps1CommandArgumentKind.SWITCH:
-            continue
-        if binds_parameter(argument.name, parameter):
-            return True
-    return False

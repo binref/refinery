@@ -88,7 +88,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_commands',
         '_error_state',
         '_used_before_defined',
-        '_unseen_reads',
+        '_names_may_be_read_unseen',
     )
 
     root: Ps1Script
@@ -107,7 +107,7 @@ class Ps1ModelCache(ModelCacheBase):
     _commands: Ps1CommandModel | None
     _error_state: Ps1ErrorStateReach | None
     _used_before_defined: frozenset[str] | None
-    _unseen_reads: Ps1UnseenReads | None
+    _names_may_be_read_unseen: Ps1UnseenReads | None
 
     @property
     def model(self) -> Ps1SemanticModel:
@@ -325,7 +325,7 @@ class Ps1ModelCache(ModelCacheBase):
         variable handed out may be read through its `Value` from wherever it has gone; see
         `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.variables_handed_out`.
         """
-        return self._lazy('_unseen_reads', lambda: Ps1UnseenReads(
+        return self._lazy('_names_may_be_read_unseen', lambda: Ps1UnseenReads(
             runs_code_supplied_as_data(self.world_measurement)
             or self.model.reads_unreadable_names,
             self.model.variables_handed_out,

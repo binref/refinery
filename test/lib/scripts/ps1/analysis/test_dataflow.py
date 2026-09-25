@@ -18,7 +18,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     build_semantic_model,
     is_write_occurrence,
 )
-from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Variable
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1IndexExpression, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -336,6 +336,31 @@ class TestPs1EveryWriteThatMayGiveAReadItsObject(TestPs1VariableFlow):
 
     def test_a_read_that_may_observe_the_value_from_before_the_script_has_no_answer(self):
         self.assertIsNone(self._reaching('if ($a) { $x = 1, 2 }; Write-Output $x'))
+
+    def test_a_rebinding_in_the_statement_of_the_read_leaves_it_with_no_answer(self):
+        """
+        The dotted block runs before the store its statement makes through `$x`, and gives `$x`
+        the array `$y` holds; `reaching_definition` refuses the same read for the same reason.
+        """
+        for source in (
+            '$x = 0, 0; $y = 1, 2; $null = (. { $x = $y }), ($x[0] = 9)',
+            '$x = 0, 0; $y = 1, 2; $x[0] = (. { $x = $y; 9 })',
+        ):
+            with self.subTest(source):
+                flow, writes, _ = self._flow(source)
+                store = next(
+                    write for write in writes if isinstance(write.parent, Ps1IndexExpression))
+                self.assertIsNone(flow.writes_reaching(store))
+                self.assertIsNone(flow.reaching_definition(store))
+
+    def test_an_automatic_variable_holds_what_the_engine_gave_it(self):
+        """
+        The engine sets `$_` to the element a `switch` clause runs for, whatever the script last
+        assigned to it.
+        """
+        source = '$_ = 0, 0; switch (1, 2) { default { Write-Output $_ } }'
+        self.assertIsNone(self._reaching(source, name='_'))
+        self.assertIsNone(self._observed(source, name='_'))
 
 
 class TestPs1ABareReadAnswersOnlyWhereItReachesItsBinding(TestPs1VariableFlow):
@@ -868,6 +893,26 @@ class TestPs1WhatStandsWhereNoSingleWriteIsObserved(TestBase):
 
     def test_a_name_no_statement_writes_still_holds_what_the_session_established(self):
         self.assertIs(self._observed_at('Write-Host $x'), Ps1ObservedWrite.NOTHING)
+
+    def test_a_variable_handed_out_is_written_where_no_write_of_it_stands(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: a store into the `Value` of the variable
+        `Get-Variable` hands out rebinds the name, from wherever the variable has gone.
+        """
+        self.assertIs(
+            self._observed_at("$x = 'a'; $v = Get-Variable x; $v.Value = 'b'; Write-Host $x"),
+            Ps1ObservedWrite.UNKNOWN,
+        )
+
+    def test_the_session_value_of_a_variable_handed_out_is_not_what_stands(self):
+        tree, _, flow = _models(
+            "$v = Get-Variable ErrorActionPreference; $v.Value = 'Stop'\n"
+            'Write-Host $ErrorActionPreference')
+        read = [
+            node for node in _in_source_order(tree)
+            if isinstance(node, Ps1Variable) and node.name.lower() == 'erroractionpreference'
+        ][-1]
+        self.assertFalse(flow.ambient_value_survives(read))
 
     def test_the_write_standing_at_the_point_is_the_one_observed_there(self):
         self.assertEqual(self._observed_at("$x = 'a'; Write-Host $x"), 0)

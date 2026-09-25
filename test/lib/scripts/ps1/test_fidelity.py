@@ -88,8 +88,16 @@ KNOWN_VIOLATIONS: dict[str, str] = {}
 #: standing as a command argument or behind `&`, is written without the bracket it needs there.
 _TYPE_MEMBER_AS_A_WORD = 'a static member of a type is written into a command argument bare'
 
+#: Tracked by `test_synth.py::TestPs1SlotsThatSwallowASpelling`: an assignment handed to a call as
+#: an argument is written without the bracket that makes it a value there.
+_ASSIGNMENT_AS_AN_ARGUMENT = 'an assignment handed to a call is written into its argument list bare'
+
 #: The same, for the paren-stripped tier.
 KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
+    '[Array]::Reverse(($x = 1, 2, 3)); Write-Output $x':
+        _ASSIGNMENT_AS_AN_ARGUMENT,
+    '[Array]::Reverse(($x = 1, 2))':
+        _ASSIGNMENT_AS_AN_ARGUMENT,
     'Write-Output ([Math]::Max(2, 1))':
         _TYPE_MEMBER_AS_A_WORD,
     "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "

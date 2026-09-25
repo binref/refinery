@@ -83,6 +83,9 @@ class TestReachingDefinition(TestBase):
         self.assertEqual(self._observed(STRAIGHT, [('first', 'a')], 'c'), 'first')
         self.assertIsNone(self._observed(STRAIGHT, [('first', 'a')], 'c', kills=['b']))
 
+    def test_a_kill_sharing_the_use_s_node_is_not_ordered_against_it(self):
+        self.assertIsNone(self._observed(STRAIGHT, [('first', 'a')], 'c', kills=['c']))
+
     def test_a_kill_the_use_cannot_be_reached_from_does_not_stop_it(self):
         """
         `d` runs after the definition on some path but no path from it reaches `c`, so nothing it
@@ -175,6 +178,9 @@ class TestReachingDefinitions(TestBase):
 
     def test_a_definition_sharing_the_use_s_node_is_not_ordered_against_it(self):
         self.assertIsNone(self._observed(STRAIGHT, [('first', 'a'), ('here', 'c')], 'c'))
+
+    def test_a_kill_sharing_the_use_s_node_is_not_ordered_against_it(self):
+        self.assertIsNone(self._observed(STRAIGHT, [('first', 'a')], 'c', kills=['c']))
 
     def test_a_kill_between_a_definition_and_the_use_leaves_no_answer(self):
         self.assertIsNone(self._observed(STRAIGHT, [('first', 'a')], 'c', kills=['b']))

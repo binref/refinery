@@ -51,6 +51,11 @@ class TestPs1ModelCache(TestBase):
         unseen = Ps1ModelCache(self._script("$x = 'a'; Write-Host $x")).names_may_be_read_unseen
         self.assertNotIn('x', unseen)
 
+    def test_warming_builds_every_model_the_cache_holds(self):
+        cache = Ps1ModelCache(self._script("$x = 'a'; Write-Host $x"))
+        cache.warm()
+        self.assertNotIn('x', cache.names_may_be_read_unseen)
+
     def test_model_is_memoized_while_the_tree_is_unchanged(self):
         cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
         first = cache.model

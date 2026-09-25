@@ -41,6 +41,7 @@ from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, Projection
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER
+from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockIteration
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.handoff import (
     Ps1CallTrust,
@@ -53,6 +54,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
     Binding,
     Occurrence,
     changes_the_object_it_names,
+    written_call_slot,
     written_slots_of,
 )
 from refinery.lib.scripts.ps1.analysis.opaque import runs_unreadable_code
@@ -67,6 +69,7 @@ from refinery.lib.scripts.ps1.ast import (
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
+    Ps1ScriptBlock,
     Ps1TypeExpression,
     Ps1Variable,
 )
@@ -101,6 +104,17 @@ def may_change_at(value: Expression, handoff: Ps1Handoff) -> bool:
     if array is None:
         return may_be_changed_in_place(value)
     return any(may_be_changed_in_place(element) for element in array.elements)
+
+
+def _call_written_through(write: Node) -> Ps1InvokeMember | None:
+    """
+    The call that writes through the slot *write* fills, so that its change is the value *write*
+    leaves under the name, or `None` where *write* fills no such slot.
+    """
+    if not isinstance(write, Ps1Variable):
+        return None
+    found = written_call_slot(write)
+    return None if found is None else found.call
 
 
 class Ps1ObjectFlow:
@@ -177,7 +191,9 @@ class Ps1ObjectFlow:
         the statement of *read* runs before it unless the language orders it after, which
         `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.runs_after` decides. The change
         *write* itself makes — the `[Array]::Reverse($y)` a reversal of `$x` is read off — is the
-        value the caller holds and not a change it has not seen.
+        value the caller holds and not a change it has not seen. A call that merely holds *write*
+        in an argument is not that change: `[Array]::Reverse(($x = 1, 2, 3))` turns around the
+        array the assignment has just stored.
         """
         binding = self.semantic.binding_of(read)
         if binding is None:
@@ -192,9 +208,10 @@ class Ps1ObjectFlow:
         if exposure is Ps1Handoff.NOWHERE:
             return exposure
         held = self.allocations_at(read)
+        written_through = _call_written_through(write)
         kills: set[int] = set()
         for change, here in zip(self._every_change(), self._placements_in(graph)):
-            if change is write or write.is_descendant_of(change):
+            if change is write or change is written_through:
                 continue
             if not self._may_reach(change, held):
                 continue
@@ -217,10 +234,16 @@ class Ps1ObjectFlow:
         around the statement that runs it. There a change at that very statement may run before
         the body or after it, since the body and the rest of the statement interleave, so it
         follows. A statement control can return to counts its own changes as following it, and a
-        change no graph on the way places may follow anything.
+        change no graph on the way places may follow anything. So does every change a graph places
+        where that graph's body may run again: the `ForEach-Object` body that stores through a
+        table before it reads runs that store after the read for the next object.
         """
         levels = [
-            (here, self._between.reachable(here, forward=True), self._placements_in(graph))
+            (
+                self._between.reachable(here, forward=True),
+                self._placements_in(graph),
+                self._may_run_again(graph),
+            )
             for graph, here in self.variables.positions_on_the_way_out(read)
         ]
         if not levels:
@@ -229,16 +252,31 @@ class Ps1ObjectFlow:
         for index, change in enumerate(self._every_change()):
             if not self._may_reach(change, held):
                 continue
-            for here, after, placements in levels:
+            for after, placements, again in levels:
                 placed = placements[index]
                 if placed is None:
                     continue
-                if id(placed) in after:
+                if again or id(placed) in after:
                     return True
                 break
             else:
                 return True
         return False
+
+    def _may_run_again(self, graph: ControlFlowGraph) -> bool:
+        """
+        Whether the body *graph* evaluates may run again once it has run: a block its site runs per
+        input object, a block whose site may itself run again, and a body no site in the script
+        runs where it is written — a function body, a stored block — which may be run any number
+        of times. The script itself runs once.
+        """
+        owner = graph.owner
+        if not isinstance(owner, Ps1ScriptBlock):
+            return False
+        facts = self.variables.blocks.facts(owner)
+        if facts.site is None or facts.iteration is not Ps1BlockIteration.ONCE:
+            return True
+        return self.variables.cycles.repeats(facts.site)
 
     def allocations_at(self, read: Ps1Variable) -> frozenset[Node] | None:
         """
@@ -253,7 +291,7 @@ class Ps1ObjectFlow:
         """
         key = id(read)
         if key not in self._allocations:
-            self._allocations[key] = self._allocations_of_read(read, frozenset())
+            self._allocations[key] = self._allocations_behind([read], [])
         return self._allocations[key]
 
     def changes_of(self, site: Node) -> frozenset[Node] | None:
@@ -296,7 +334,7 @@ class Ps1ObjectFlow:
             member = site.member
             if not isinstance(member, str):
                 return None
-            found: set[Node] = set()
+            filled: list[Node] = []
             for slot in written_slots_of(site, member).slots:
                 if slot == RECEIVER:
                     written = site.object
@@ -306,11 +344,8 @@ class Ps1ObjectFlow:
                     return None
                 if written is None:
                     return None
-                made = self._allocations_of_value(written, frozenset())
-                if made is None:
-                    return None
-                found.update(made)
-            return frozenset(found)
+                filled.append(written)
+            return self._allocations_behind([], filled)
         return None
 
     def _may_reach(self, change: Node, held: frozenset[Node] | None) -> bool:
@@ -322,59 +357,58 @@ class Ps1ObjectFlow:
         changed = self.changes_of(change)
         return changed is None or not changed.isdisjoint(held)
 
-    def _allocations_of_read(
-        self, read: Ps1Variable, chased: frozenset[int],
+    def _allocations_behind(
+        self,
+        reads: list[Ps1Variable],
+        values: list[Node],
     ) -> frozenset[Node] | None:
         """
-        `allocations_at` for *read*, where the reads in *chased* are already being answered: a read
-        met again on the way contributes nothing, since what it holds is what the writes already
-        being followed made.
-        """
-        if id(read) in chased:
-            return frozenset()
-        writes = self.variables.writes_reaching(read)
-        if writes is None:
-            return None
-        chased = chased | {id(read)}
-        found: set[Node] = set()
-        for write in writes:
-            if not isinstance(write, Ps1Variable):
-                return None
-            stored = stored_value(write)
-            if stored is None or stored.value is None:
-                return None
-            made = self._allocations_of_value(stored.value, chased)
-            if made is None:
-                return None
-            found.update(made)
-            if stored.constraint is not None:
-                found.add(write)
-        return frozenset(found)
+        The expressions whose evaluation may have made an object *reads* hold or *values* evaluate
+        to, or `None` where that cannot be said. `$null`, `$true` and `$false` are no object a store
+        can reach.
 
-    def _allocations_of_value(
-        self, value: Node, chased: frozenset[int],
-    ) -> frozenset[Node] | None:
-        """
-        The expressions whose evaluation may have made the object *value* evaluates to, or `None`
-        where that cannot be said. `$null`, `$true` and `$false` are no object a store can reach.
+        A value is followed through the expressions that give back the object they were handed to
+        the variable it may have been read from, and a read through the writes that reach it to the
+        values they stored. Each read is followed once however many paths lead to it: what it holds
+        is the same on every one, and following it per path is exponential in a chain of branches
+        that each hand one name the object of the one before.
         """
         found: set[Node] = set()
-        cursor: Node | None = value
-        while cursor is not None:
-            if isinstance(cursor, Ps1Variable):
-                if is_builtin_variable(cursor):
-                    break
-                made = self._allocations_of_read(cursor, chased)
-                if made is None:
-                    return None
-                found.update(made)
+        followed: set[int] = set()
+        pending_reads = list(reads)
+        pending_values = list(values)
+        while pending_reads or pending_values:
+            while pending_values:
+                cursor: Node | None = pending_values.pop()
+                while cursor is not None:
+                    if isinstance(cursor, Ps1Variable):
+                        if not is_builtin_variable(cursor):
+                            pending_reads.append(cursor)
+                        break
+                    sources = object_sources(cursor, self._trust.trusts)
+                    if sources.unknown:
+                        return None
+                    if sources.made_here:
+                        found.add(cursor)
+                    cursor = sources.operand
+            if not pending_reads:
                 break
-            sources = object_sources(cursor, self._trust.trusts)
-            if sources.unknown:
+            read = pending_reads.pop()
+            if id(read) in followed:
+                continue
+            followed.add(id(read))
+            writes = self.variables.writes_reaching(read)
+            if writes is None:
                 return None
-            if sources.made_here:
-                found.add(cursor)
-            cursor = sources.operand
+            for write in writes:
+                if not isinstance(write, Ps1Variable):
+                    return None
+                stored = stored_value(write)
+                if stored is None or stored.value is None:
+                    return None
+                if stored.constraint is not None:
+                    found.add(write)
+                pending_values.append(stored.value)
         return frozenset(found)
 
     def _widest_exposure(self, binding: Binding) -> Ps1Handoff:
@@ -410,13 +444,12 @@ class Ps1ObjectFlow:
 
     def _read_exposure(self, node: Node) -> Ps1Handoff:
         """
-        What the read *node* exposes of the object: its hand-off, where a hand-off to one name
-        exposes all of it, and a string-addressed read hands all of it to a command.
+        What the read *node* exposes of the object: its hand-off, and all of it for a
+        string-addressed read, which hands the object to a command.
         """
         if not isinstance(node, Ps1Variable):
             return Ps1Handoff.OBJECT
-        handoff = self.handoff(node)
-        return Ps1Handoff.OBJECT if handoff is Ps1Handoff.A_NAME else handoff
+        return self.handoff(node)
 
     def _write_exposure(self, write: Occurrence) -> Ps1Handoff:
         """
@@ -435,8 +468,7 @@ class Ps1ObjectFlow:
         assignment = assignment_of(node)
         if assignment is None:
             return Ps1Handoff.NOWHERE
-        handoff = assignment_handoff(assignment, self._trust)
-        return Ps1Handoff.OBJECT if handoff is Ps1Handoff.A_NAME else handoff
+        return assignment_handoff(assignment, self._trust)
 
     def _exposure_before(
         self,

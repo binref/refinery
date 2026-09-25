@@ -206,53 +206,74 @@ _HOLDS_NOTHING = frozenset({
 })
 
 
-def _floored_keepers(entries: set[tuple[str, str]]) -> frozenset[tuple[Ps1TypeName, str]]:
+def _floored_keepers(
+    entries: set[tuple[str, str]],
+    *,
+    static: bool,
+) -> frozenset[tuple[Ps1TypeName, str]]:
     """
-    The static calls of *entries* that keep nothing of what they are handed, each checked against
-    the collected metadata: the type must resolve and carry static overloads of the member, every
-    overload must return a type that holds no reference — see `_HOLDS_NOTHING` — and none may take a
-    parameter by reference, through which it could hand an argument back out.
+    The calls of *entries* that keep nothing of what they are handed, each checked against the
+    collected metadata: the type must resolve and carry overloads of the member on the side the
+    table is about, every overload must return a type that holds no reference — see
+    `_HOLDS_NOTHING` — and none may take a parameter by reference, through which it could hand an
+    argument back out.
 
     The metadata decides the half it can: what the call returns cannot hold the argument. That the
     call stores it nowhere else is the claim the row makes, and it is why an entry is added only
     where a measured fold needs it.
     """
+    side = 'static' if static else 'instance'
     table: set[tuple[Ps1TypeName, str]] = set()
     for type_name, member in entries:
         key = data.required_type_key(type_name)
-        overloads = data.static_overloads(key, member)
+        overloads = (
+            data.static_overloads(key, member) if static
+            else data.instance_overloads(key, member)
+        )
         if not overloads:
             raise ValueError(
                 F'the keep-nothing table names {type_name}::{member}, which the collected metadata '
-                F'carries no static overload of.')
+                F'carries no {side} overload of.'
+            )
         for overload in overloads:
             returns = str(overload.get('returns') or '').lower()
             if returns not in _HOLDS_NOTHING:
+                spelled = returns or 'nothing the metadata names'
                 raise ValueError(
                     F'the keep-nothing table names {type_name}::{member}, an overload of which '
-                    F'returns {returns or "nothing the metadata names"}, which may hold what it '
-                    F'was handed.')
+                    F'returns {spelled}, which may hold what it was handed.'
+                )
             if any(parameter.get('byref') for parameter in overload.get('parameters') or ()):
                 raise ValueError(
                     F'the keep-nothing table names {type_name}::{member}, an overload of which '
-                    F'takes a parameter by reference.')
+                    F'takes a parameter by reference.'
+                )
         table.add((key, member.lower()))
     return frozenset(table)
 
 
 #: The static calls that keep nothing of any argument they are handed. `[string]::Join` is the one a
 #: loader hands its decoded array to: `iex ([string]::Join(' ', $b))`.
-_KEEPS_NOTHING = _floored_keepers({
+_KEEPS_NOTHING_STATIC = _floored_keepers({
     ('string', 'join'),
-})
+}, static=True)
+
+#: The calls on a value of the named type that keep nothing of any argument they are handed.
+#: `GetString` of an `Encoding` is the other call a loader hands its decoded buffer to:
+#: `iex ([Text.Encoding]::UTF8.GetString($b))`.
+_KEEPS_NOTHING_ON_A_VALUE = _floored_keepers({
+    ('text.encoding', 'getstring'),
+}, static=False)
 
 
-def keeps_nothing(type_name: Ps1TypeName, member: str) -> bool:
+def keeps_nothing(type_name: Ps1TypeName, member: str, *, static: bool) -> bool:
     """
-    Whether a static call of *member* on *type_name* keeps nothing of any argument it is handed:
-    what it returns cannot hold one, and it stores none anywhere else.
+    Whether a call of *member* on *type_name* — a static one, or one on a value of that type —
+    keeps nothing of any argument it is handed: what it returns cannot hold one, and it stores
+    none anywhere else.
     """
-    return (type_name.generic_definition, member.lower()) in _KEEPS_NOTHING
+    table = _KEEPS_NOTHING_STATIC if static else _KEEPS_NOTHING_ON_A_VALUE
+    return (type_name.generic_definition, member.lower()) in table
 
 
 @functools.lru_cache(maxsize=None)

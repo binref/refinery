@@ -1113,6 +1113,24 @@ class TestPs1AnArrayHandedOnFoldsWhereNothingCanChangeItAfterwards(TestPs1):
             'Write-Host hi',
         )
 
+    def test_a_buffer_folds_into_the_decoder_whose_result_is_invoked(self):
+        for source in (
+            "$b = [Convert]::FromBase64String('V3JpdGUtSG9zdCAx'); "
+            'iex ([Text.Encoding]::ASCII.GetString($b))',
+            "$b = [Convert]::FromBase64String('V3JpdGUtSG9zdCAx'); "
+            '$s = [Text.Encoding]::UTF8.GetString($b); iex $s',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._deobfuscate_iterative(source), 'Write-Host 1')
+
+    def test_the_command_intrinsics_of_the_session_state_hold_back_no_fold(self):
+        self.assertIn(
+            "InvokeScript('Write-Host hi')",
+            self._deobfuscate_iterative(
+                "$a = 'Write-'; $b = 'Host'; "
+                "$ExecutionContext.SessionState.InvokeCommand.InvokeScript($a + $b + ' hi')"),
+        )
+
     def test_a_store_into_another_array_before_the_call_does_not_hold_the_argument_back(self):
         self.assertIn(
             "Write-Output '1,2,3'",

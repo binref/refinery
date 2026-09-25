@@ -694,6 +694,48 @@ ENCODING_MAP = {
 
 BUILTIN_VARIABLES = frozenset({'null', 'true', 'false'})
 
+#: The automatic variables: names the engine defines, most of which it also rebinds between
+#: statements with no write of the script to show for it — `$_` per pipeline object and in every
+#: `switch` clause, `$Matches` at every `-match`, `$LASTEXITCODE` by every native command — so what
+#: a script last assigned to one is not what a later read of it observes.
+PS1_AUTOMATIC_VARIABLES = frozenset({
+    '?',
+    '_',
+    'args',
+    'error',
+    'event',
+    'eventargs',
+    'eventsubscriber',
+    'executioncontext',
+    'false',
+    'foreach',
+    'home',
+    'host',
+    'input',
+    'lastexitcode',
+    'matches',
+    'myinvocation',
+    'nestedpromptlevel',
+    'null',
+    'ofs',
+    'pid',
+    'profile',
+    'psboundparameters',
+    'pscmdlet',
+    'pscommandpath',
+    'psitem',
+    'psscriptroot',
+    'psversiontable',
+    'pwd',
+    'sender',
+    'sourceargs',
+    'sourceeventargs',
+    'stacktrace',
+    'switch',
+    'this',
+    'true',
+})
+
 PS1_KNOWN_VARIABLES: dict[str, str] = {
     name.lower(): name for name in [
         'ConfirmPreference',

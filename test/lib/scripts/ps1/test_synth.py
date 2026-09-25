@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
+    Ps1Variable,
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
@@ -519,6 +520,25 @@ class TestPs1SlotsThatSwallowASpelling(TestBase):
             arguments=[Ps1IntegerLiteral(raw='2'), Ps1IntegerLiteral(raw='1')],
         )
         self.assertEqual(_written(_write_output(call)), 'Write-Output ([Math]::Max(2, 1))')
+
+    @unittest.expectedFailure
+    def test_an_assignment_handed_to_a_call_as_an_argument_is_bracketed(self):
+        """
+        An assignment is a value only inside a bracket, so one handed to a call needs it:
+        `[Array]::Reverse($x = 1, 2)` parses as no call at all. The bracket is written only where
+        the tree holds the one the source spelled.
+        """
+        call = Ps1InvokeMember(
+            object=Ps1TypeExpression(name='Array'),
+            member='Reverse',
+            access=Ps1AccessKind.STATIC,
+            arguments=[Ps1AssignmentExpression(
+                target=Ps1Variable(name='x'),
+                operator='=',
+                value=Ps1ArrayLiteral(elements=[_numeral('1'), _numeral('2')]),
+            )],
+        )
+        self.assertEqual(_written(call), '[Array]::Reverse(($x = 1, 2))')
 
     def test_a_receiver_inside_a_command_argument_is_still_read_in_command_mode(self):
         """

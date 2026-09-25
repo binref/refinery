@@ -57,6 +57,7 @@ from refinery.lib.scripts.ps1.ast import (
 )
 from refinery.lib.scripts.ps1.data import (
     ALL_SCOPE_VARIABLES,
+    PS1_AUTOMATIC_VARIABLES,
     PS1_KNOWN_VARIABLES,
     SHAPE_MEMBERS,
     VARIABLE_TYPES,
@@ -161,44 +162,6 @@ _PS1_DEFAULT_FACTS: dict[str, Ps1Fact] = {
     key: _ambient_default_fact(key, value) for key, value in _PS1_DEFAULT_VARIABLES.items()
 }
 
-
-PS1_AUTOMATIC_VARIABLES = frozenset({
-    '?',
-    '_',
-    'args',
-    'error',
-    'event',
-    'eventargs',
-    'eventsubscriber',
-    'executioncontext',
-    'false',
-    'foreach',
-    'home',
-    'host',
-    'input',
-    'lastexitcode',
-    'matches',
-    'myinvocation',
-    'nestedpromptlevel',
-    'null',
-    'ofs',
-    'pid',
-    'profile',
-    'psboundparameters',
-    'pscmdlet',
-    'pscommandpath',
-    'psitem',
-    'psscriptroot',
-    'psversiontable',
-    'pwd',
-    'sender',
-    'sourceargs',
-    'sourceeventargs',
-    'stacktrace',
-    'switch',
-    'this',
-    'true',
-})
 
 _PS1_SKIP_VARIABLES = (
     PS1_AUTOMATIC_VARIABLES
