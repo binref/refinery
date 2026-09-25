@@ -659,16 +659,24 @@ def build_closed_world(root: Ps1Script) -> Ps1TypeWorld:
 
 def runs_code_supplied_as_data(measurement: Ps1WorldMeasurement) -> bool:
     """
-    Whether any opener the measurement recorded runs code this analysis cannot read — the
-    `WorldRole.LEAK` and `WorldRole.UNKNOWN` openers, the ones that can write script state out of
-    data the tree does not contain. A driver asked to read a name no binding claims may answer
-    `$null` only where this says no such site exists, because an `Invoke-Expression` payload writing
-    that name is state no collection in the tree sees.
+    Whether any opener the measurement recorded runs code this analysis cannot read — see
+    `runs_code_it_cannot_read` — the ones that can write script state out of data the tree does not
+    contain. A driver asked to read a name no binding claims may answer `$null` only where this
+    says no such site exists, because an `Invoke-Expression` payload writing that name is state no
+    collection in the tree sees. The openers the measurement recorded are the ones the run's
+    options leave standing.
     """
-    return any(
-        _opens_world(node, _identity_redefinitions(node)) in (WorldRole.LEAK, WorldRole.UNKNOWN)
-        for node in measurement.openers
-    )
+    return any(runs_code_it_cannot_read(node) for node in measurement.openers)
+
+
+def runs_code_it_cannot_read(node: Node) -> bool:
+    """
+    Whether *node* runs code this analysis cannot read, in whatever scope it runs it: the
+    `WorldRole.LEAK` and `WorldRole.UNKNOWN` openers — a block made or run from a string, code a
+    command runs out of data, a dispatch whose target the source does not spell. Asked of the node
+    alone, whatever the options of a run excuse.
+    """
+    return _opens_world(node, _identity_redefinitions(node)) in (WorldRole.LEAK, WorldRole.UNKNOWN)
 
 
 def _opens_world_only_by_binding_an_alias(node) -> bool:

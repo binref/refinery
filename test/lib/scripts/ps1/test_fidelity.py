@@ -98,6 +98,9 @@ KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
     "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
     'Write-Output $x':
         _TYPE_MEMBER_AS_A_WORD,
+    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
+    '& ([scriptblock]::Create($c)); Write-Output $x':
+        _TYPE_MEMBER_AS_A_WORD,
     '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
         _TYPE_MEMBER_AS_A_WORD,
     '$x = 1, 2; $y = Sort-Object -InputObject $x; '

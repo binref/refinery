@@ -1307,6 +1307,19 @@ FOLDS: dict[str, str] = {
         '$x = 1, 2, 3\n$b, $c = (1, 2, 3)\n[Array]::Reverse($x)\nWrite-Output $b',
     "$x = 1, 2, 3; $c = '$x = 7, 8, 9'; iex $c; [Array]::Reverse($x); Write-Output $x":
         '$x = 7, 8, 9\n[Array]::Reverse($x)\nWrite-Output (9, 8, 7)',
+    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
+        '$x = 1, 2, 3\n'
+        "$c = @('$x[0] = 9')[(Get-Random -Maximum 1)]\n"
+        'function f {\n'
+        '  Invoke-Expression $c\n'
+        '}\n'
+        'f\n'
+        'Write-Output (1, 2, 3)',
+    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); Write-Output $x":
+        '$x = 1, 2, 3\n'
+        "$c = @('$x[0] = 9')[(Get-Random -Maximum 1)]\n"
+        '& ([scriptblock]::Create($c))\n'
+        'Write-Output (1, 2, 3)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x':
         '$x = 1, 2, 3\n'
@@ -1407,13 +1420,13 @@ FOLDS: dict[str, str] = {
         '$x = 1, 2, 3\n$y = $x -As [array]\n$y[0] = 9\nWrite-Output $x',
     "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
         '$x = 1, 2, 3\n'
-        '$y = (1, 2, 3)\n'
+        '$y = $x\n'
         "$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]\n"
         'function f {\n'
         '  Invoke-Expression $c\n'
         '}\n'
         'f\n'
-        'Write-Output (1, 2, 3)',
+        'Write-Output $x',
     '$x = 1, 2, 3; $y = $x; $x = 9, 9, 9; Write-Output $y':
         'Write-Output (1, 2, 3)',
     '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z':
@@ -1427,14 +1440,14 @@ FOLDS: dict[str, str] = {
     "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
         '$x = 1, 2, 3\n'
         '$y = & {\n'
-        '  ,(1, 2, 3)\n'
+        '  ,$x\n'
         '}\n'
         "$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]\n"
         'function f {\n'
         '  Invoke-Expression $c\n'
         '}\n'
         'f\n'
-        'Write-Output (1, 2, 3)',
+        'Write-Output $x',
     "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
         "$x = 1, 2, 3\n$y = & {\n  ,(1, 2, 3)\n}\n$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]\nInvoke-Expression $c\nWrite-Output $x",
     '$x = 1, 2, 3; $y = 0, 0, 0; $x.CopyTo($y, 0); Write-Output $y':

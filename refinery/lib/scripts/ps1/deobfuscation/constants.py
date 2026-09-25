@@ -30,6 +30,7 @@ from refinery.lib.scripts.ps1.analysis.model import (
 )
 from refinery.lib.scripts.ps1.analysis.mutation import value_after
 from refinery.lib.scripts.ps1.analysis.naming import unreadable_name_target
+from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow
 from refinery.lib.scripts.ps1.analysis.separator import coerced_text_at
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
@@ -289,7 +290,7 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
     and a `[Array]::Reverse($x)` below then reaches one and not the other. Measured: without this,
     `$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
 
-    Where the object goes is `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.handoff`.
+    Where the object goes is `refinery.lib.scripts.ps1.analysis.objects.Ps1ObjectFlow.handoff`.
     Where nothing keeps it and where what is kept is never changed in place (`_may_change_at`), a
     copy is the object.
 
@@ -310,7 +311,7 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
     """
     if not _may_be_changed_in_place(value):
         return True
-    handoff = state.flow.handoff(occurrence)
+    handoff = state.objects.handoff(occurrence)
     if handoff is Ps1Handoff.NOWHERE or not _may_change_at(value, handoff):
         return True
     read_from = state.binding_of(occurrence)
@@ -322,18 +323,18 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
         if stored_into is None or stored_into is read_from:
             return False
         if (
-            state.flow.files_stores_across(read_from, stored_into)
-            and state.flow.exposure(read_from) is Ps1Handoff.NOWHERE
+            state.objects.files_stores_across(read_from, stored_into)
+            and state.objects.exposure(read_from) is Ps1Handoff.NOWHERE
         ):
             return not (
                 _is_changed_in_place(read_from)
-                or state.flow.unreadable_code_may_follow(occurrence)
+                or state.objects.unreadable_code_may_follow(occurrence)
             )
     elif not state.changes_an_object_in_place:
         return True
     if target is not None and any(write.node is target for write in read_from.writes):
         target = None
-    return not state.flow.change_may_follow(occurrence, apart_from=target)
+    return not state.objects.change_may_follow(occurrence, apart_from=target)
 
 
 def _may_change_at(value: Expression, handoff: Ps1Handoff) -> bool:
@@ -729,13 +730,20 @@ class _InlineRecord:
 class _Inlining:
     """
     The state one substitution walk carries: the constants it may install, the flow model that says
-    which of them a read observes, the keys the expansion budget has already refused, the variable
-    occurrences an enclosing index expression has already spoken for, and what was replaced.
+    which of them a read observes, the object model that says whether what it held is still what it
+    was, the keys the expansion budget has already refused, the variable occurrences an enclosing
+    index expression has already spoken for, and what was replaced.
     """
 
-    def __init__(self, table: _ConstantTable, flow: Ps1VariableFlow, blocked: set[str]):
+    def __init__(
+        self,
+        table: _ConstantTable,
+        objects: Ps1ObjectFlow,
+        blocked: set[str],
+    ):
         self.table = table
-        self.flow = flow
+        self.objects = objects
+        self.flow = objects.variables
         self.blocked = blocked
         self.handled: set[int] = set()
         self.record = _InlineRecord()
@@ -766,7 +774,7 @@ class _Inlining:
         value = self._value_from(write, key, binding, chased)
         if value is None or not _may_be_changed_in_place(value):
             return value
-        changed = self.flow.unseen_change(write, var)
+        changed = self.objects.unseen_change(write, var)
         if changed is Ps1Handoff.NOWHERE or not _may_change_at(value, changed):
             return value
         return None
@@ -842,13 +850,13 @@ class Ps1ConstantInlining(Transformer):
         # of the whole script once per inlined variable. Nothing this pass adds or removes is a
         # statement, so the graphs it would rebuild are the graphs it already has.
         cache = model_cache(self, node)
-        flow, faults = cache.variable_flow, cache.faults
+        objects, faults = cache.object_flow, cache.faults
         table = _ConstantTable(node)
         if not table:
             return None
         unseen = cache.names_may_be_read_unseen
         error_state = cache.error_state
-        state = _Inlining(table, flow, self._blocked_by_expansion(node, table))
+        state = _Inlining(table, objects, self._blocked_by_expansion(node, table))
         self._substitute(node, state)
         self._remove_dead_assignments(table, state, faults, error_state, unseen)
         return None

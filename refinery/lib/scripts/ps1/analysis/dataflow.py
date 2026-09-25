@@ -70,19 +70,15 @@ model that and binds it to the enclosing scope. What refuses the answer is the k
 trap's write is another write of the same binding, and the exceptional edge into the handler with
 the resume edge back out puts it on a path between any earlier write and that read.
 
-**An object can change under a name without any occurrence of the name.** A read hands over the
-object and not a copy, and `refinery.lib.scripts.ps1.analysis.handoff.object_handoff` says whether
-the place it hands it to keeps it: a container, a callee, a caller collecting the output of a body.
-Once one does, a store through that place changes what the name holds, and it is spelled on no
-name the semantic model can link to this one. `unseen_change` answers whether such a store may run
-between a write and a read. It is a fact about the *object*, so whether it matters is the caller's
-question: a String is never changed in place, and only the caller holds the value.
+**An object can change under a name without any occurrence of the name.** That is a question about
+objects rather than names, and `refinery.lib.scripts.ps1.analysis.objects.Ps1ObjectFlow` answers it
+over the positions this layer gives a node.
 """
 from __future__ import annotations
 
 import enum
 
-from typing import Callable, Iterator
+from typing import Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import (
@@ -96,11 +92,6 @@ from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
-from refinery.lib.scripts.ps1.analysis.handoff import (
-    Ps1Handoff,
-    assignment_handoff,
-    object_handoff,
-)
 from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
     Binding,
@@ -112,15 +103,11 @@ from refinery.lib.scripts.ps1.analysis.model import (
 )
 from refinery.lib.scripts.ps1.analysis.opaque import writes_nobody_can_attribute
 from refinery.lib.scripts.ps1.ast import (
-    assignment_of,
     bound_argument_value,
     in_evaluation_order,
-    is_reference_cast,
     string_value,
-    unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.model import (
-    Ps1AssignmentExpression,
     Ps1CommandInvocation,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
@@ -201,17 +188,12 @@ class Ps1VariableFlow:
         dominators: DominatorModel,
         blocks: Ps1BlockModel,
         cycles: CycleModel,
-        trusts: Callable[[str], bool],
     ):
         self.semantic = semantic
         self.flow = flow
         self.dominators = dominators
         self.blocks = blocks
         self.cycles = cycles
-        self._trusts = trusts
-        self._handoffs: dict[int, Ps1Handoff] = {}
-        self._exposures: dict[int, tuple[tuple[Node, Ps1Handoff], ...]] = {}
-        self._changes: dict[int, dict[int, list[Node]] | None] = {}
         self._between = ReachabilityQuery(dominators, Projection.MAY)
         self._unknowns: dict[int, Ps1FlowUnknown] = {}
         self._kills: dict[tuple[int, str], frozenset[int]] = {}
@@ -241,7 +223,7 @@ class Ps1VariableFlow:
         holding.
 
         A read in another body is asked at the point that body runs, or not at all — see
-        `_position_of`.
+        `position_of`.
         """
         binding = self.semantic.binding_of(read)
         if binding is None or not binding.writes:
@@ -250,7 +232,7 @@ class Ps1VariableFlow:
             return None
         placed = {id(write.node): self.flow.locate(write.node) for write in binding.writes}
         graph = placed[id(binding.writes[0].node)][0]
-        use = self._position_of(read, graph)
+        use = self.position_of(read, graph)
         if use is None:
             return None
         definitions = [
@@ -436,7 +418,7 @@ class Ps1VariableFlow:
         statement is ordered by the language where the graphs cannot order it at all, which is what
         a script that builds a name and reads it inside one `$( ... )` depends on.
 
-        The read is asked at the position `_position_of` gives it, so a read inside a body that runs
+        The read is asked at the position `position_of` gives it, so a read inside a body that runs
         exactly where it is written is ordered against the writes around that body. Locating the
         read where it is *spelled* instead refuses `$q = New-Object …; & { $q.Foo }` outright, which
         is the shape this whole question was kept for. The graph a write is asked in is the write's
@@ -454,7 +436,7 @@ class Ps1VariableFlow:
                 continue
             graph, at = where
             if id(graph) not in positions:
-                positions[id(graph)] = self._position_of(read, graph)
+                positions[id(graph)] = self.position_of(read, graph)
             use = positions[id(graph)]
             if use is None:
                 continue
@@ -475,8 +457,8 @@ class Ps1VariableFlow:
         Whether *write* is evaluated before *read*, both of them parts of the one statement *use*
         stands for.
 
-        The positive counterpart of `_runs_after`, and it has to be its own question rather than
-        that one negated: `_runs_after` answers `False` wherever it cannot tell, which is the safe
+        The positive counterpart of `runs_after`, and it has to be its own question rather than
+        that one negated: `runs_after` answers `False` wherever it cannot tell, which is the safe
         answer for a caller keeping a kill and the unsafe one for a caller claiming an order. A
         statement control can return to is refused for the reason stated there — the previous visit
         ordered the two the other way round — and so is a read projected here out of a body, which
@@ -519,7 +501,7 @@ class Ps1VariableFlow:
         spelled as that rather than assembled again: asking the read's *own* graph would let an
         `Invoke-Expression` in the script around it go unseen, since the graph of a block holds none
         of the statements that surround the block. `written_before` projects the read with
-        `_position_of` and this has to be answered at the same position or the two say nothing
+        `position_of` and this has to be answered at the same position or the two say nothing
         together.
         """
         if not self.ambient_value_survives(read):
@@ -534,7 +516,7 @@ class Ps1VariableFlow:
                 return True
             graph = placed[0]
             if id(graph) not in positions:
-                positions[id(graph)] = self._position_of(read, graph)
+                positions[id(graph)] = self.position_of(read, graph)
             use = positions[id(graph)]
             if use is None:
                 return True
@@ -542,259 +524,6 @@ class Ps1VariableFlow:
             if self._between.any_between(graph, graph.entry, use, kills):
                 return True
         return False
-
-    def handoff(self, var: Ps1Variable) -> Ps1Handoff:
-        """
-        What keeps the object the read *var* produces — see
-        `refinery.lib.scripts.ps1.analysis.handoff.object_handoff`.
-        """
-        found = self._handoffs.get(id(var))
-        if found is None:
-            found = self._handoffs[id(var)] = object_handoff(var, self._trusts)
-        return found
-
-    def exposure(self, binding: Binding) -> Ps1Handoff:
-        """
-        How much of the object *binding* holds a place no occurrence of it spells may keep: the
-        widest hand-off of any read of it, or of a name `$y = $x` gave the same object, as a
-        `refinery.lib.scripts.ps1.analysis.handoff.Ps1Handoff` other than `A_NAME`.
-
-        A read that hands the whole value to one name by a plain `=` is the link the semantic model
-        files stores across, and is not an exposure unless no link came of it because the target
-        has no binding to hold it by. A string-addressed read hands the value to a command, and a
-        `[ref]` hands the variable itself to a callee; each keeps all of it. So does an assignment
-        of the name that is used as a value, which hands on the very object it stored.
-        """
-        found = Ps1Handoff.NOWHERE
-        for _, handoff in self._hand_offs_of(binding):
-            found = found.widest(handoff)
-        return found
-
-    def _hand_offs_of(self, binding: Binding) -> tuple[tuple[Node, Ps1Handoff], ...]:
-        """
-        Every occurrence of a name for the object *binding* holds that hands the object to a place
-        no occurrence of those names spells, each with how much of the object it hands on. Computed
-        once for the whole alias class, since each of its names holds the same object.
-        """
-        found = self._exposures.get(id(binding))
-        if found is None:
-            hand_offs: list[tuple[Node, Ps1Handoff]] = []
-            members = self.semantic.names_for_one_object(binding)
-            for member in members:
-                for read in member.reads:
-                    handoff = self._read_exposure(member, read.node)
-                    if handoff is not Ps1Handoff.NOWHERE:
-                        hand_offs.append((read.node, handoff))
-                for write in member.writes:
-                    handoff = self._write_exposure(write)
-                    if handoff is not Ps1Handoff.NOWHERE:
-                        hand_offs.append((write.node, handoff))
-            found = tuple(hand_offs)
-            for member in members:
-                self._exposures[id(member)] = found
-        return found
-
-    def _read_exposure(self, binding: Binding, node: Node) -> Ps1Handoff:
-        """
-        What the read *node* of *binding* exposes of the object: its hand-off, where a hand-off to
-        one name is an exposure only where the semantic model files the stores of that name against
-        *binding* — see `files_stores_across`.
-        """
-        if not isinstance(node, Ps1Variable):
-            return Ps1Handoff.OBJECT
-        handoff = self.handoff(node)
-        if handoff is not Ps1Handoff.A_NAME:
-            return handoff
-        target = _assigned_variable(node)
-        stored_into = None if target is None else self.semantic.binding_of(target)
-        if stored_into is None or not self.files_stores_across(binding, stored_into):
-            return Ps1Handoff.OBJECT
-        return Ps1Handoff.NOWHERE
-
-    def _write_exposure(self, write: Occurrence) -> Ps1Handoff:
-        """
-        What the write *write* exposes of the object it leaves under its name: all of it for a
-        `[ref]`, whose callee holds the variable itself, and for an assignment used as a value
-        whatever keeps that value — see
-        `refinery.lib.scripts.ps1.analysis.handoff.assignment_handoff`.
-        """
-        if write.may_define:
-            return Ps1Handoff.NOWHERE
-        node = write.node
-        if is_reference_cast(node.parent):
-            return Ps1Handoff.OBJECT
-        if not isinstance(node, Ps1Variable) or write.role.through:
-            return Ps1Handoff.NOWHERE
-        assignment = assignment_of(node)
-        if assignment is None:
-            return Ps1Handoff.NOWHERE
-        return assignment_handoff(assignment, self._trusts)
-
-    def files_stores_across(self, binding: Binding, other: Binding) -> bool:
-        """
-        Whether a store through *other* is filed against *binding*, so that handing the object one
-        holds to the other by a plain `=` needs nothing further. Both must be names for one object
-        in the semantic model, and *other* must end with its own body: a block that runs in its
-        caller's scope, as a `ForEach-Object` body does, stores into the caller's name rather than
-        into the one the model gives it.
-        """
-        if other not in self.semantic.names_for_one_object(binding):
-            return False
-        node = other.scope.node
-        return not isinstance(node, Ps1ScriptBlock) or not self.blocks.may_write_caller_scope(node)
-
-    def unseen_change(self, write: Node, read: Ps1Variable) -> Ps1Handoff:
-        """
-        How much of the object the binding of *read* holds may be changed, between *write* and
-        *read*, through a place no occurrence of that binding spells: `NOWHERE` of
-        `refinery.lib.scripts.ps1.analysis.handoff.Ps1Handoff` where nothing can be, and otherwise
-        the widest hand-off of the object that may already have run when *read* is evaluated — a
-        hand-off only *read* itself makes, or one that runs after it, leaves nothing the read
-        observes.
-
-        Every place anything in the script may change an object in place is asked, since which
-        object a store through a container reaches is not something the source says. A place this
-        cannot order against the two — a store in a function body or in a stored block — may run in
-        between. One standing in the statement of *read* runs before it unless the language orders
-        it after, which `_runs_after` decides.
-        """
-        binding = self.semantic.binding_of(read)
-        if binding is None:
-            return Ps1Handoff.OBJECT
-        placed = self.flow.locate(write)
-        if placed is None:
-            return self.exposure(binding)
-        graph, source = placed
-        target = self._position_of(read, graph)
-        if target is None:
-            return self.exposure(binding)
-        exposure = self._exposure_before(binding, read, graph, target)
-        if exposure is Ps1Handoff.NOWHERE:
-            return exposure
-        sites = self._change_sites_of(graph)
-        if sites is None:
-            return exposure
-        kills = [
-            site for site, changes in sites.items()
-            if site != id(target) or not all(
-                self._runs_after(graph, target, read, change) for change in changes)
-        ]
-        if self._between.any_between(graph, source, target, kills):
-            return exposure
-        return Ps1Handoff.NOWHERE
-
-    def _exposure_before(
-        self,
-        binding: Binding,
-        read: Ps1Variable,
-        graph: ControlFlowGraph,
-        target: CfgNode,
-    ) -> Ps1Handoff:
-        """
-        The widest hand-off of the object *binding* holds that may have run by the time *read* is
-        evaluated at *target* of *graph*. A hand-off this cannot place may have run at any time, and
-        *read* hands its own value on only after it has been read, unless its statement repeats.
-        """
-        earlier = self._between.reachable(target, forward=False)
-        found = Ps1Handoff.NOWHERE
-        for node, handoff in self._hand_offs_of(binding):
-            if node is read and self._evaluated_once_at(graph, target, read):
-                continue
-            here = self._position_of(node, graph)
-            if here is not None and id(here) not in earlier:
-                continue
-            found = found.widest(handoff)
-        return found
-
-    def _evaluated_once_at(self, graph: ControlFlowGraph, use: CfgNode, read: Node) -> bool:
-        """
-        Whether *read* is written in the statement *use* stands for rather than projected onto it
-        out of a body, and that statement is not one control can return to.
-        """
-        if use.element is None or self.cycles.repeats(use.element):
-            return False
-        placed = self.flow.locate(read)
-        return placed is not None and placed[0] is graph and placed[1] is use
-
-    def change_may_follow(self, node: Node, apart_from: Node | None = None) -> bool:
-        """
-        Whether anything may change an object in place once *node* has been evaluated. *apart_from*
-        is a store standing in the statement of *node* that the caller knows to change nothing it
-        cares about. A statement control can return to counts its own stores as following it.
-        """
-        placed = self.flow.locate(node)
-        if placed is None:
-            return True
-        graph, here = placed
-        return self._follows(here, self._change_sites_of(graph), apart_from)
-
-    def unreadable_code_may_follow(self, node: Node) -> bool:
-        """
-        Whether code nobody can read may run once *node* has been evaluated. Such code may store
-        through any name it likes, so it is the one change in place that no store-through of a name
-        the semantic model files can stand for.
-        """
-        placed = self.flow.locate(node)
-        if placed is None:
-            return True
-        graph, here = placed
-        return self._follows(here, self._unreadable_sites_of(graph), None)
-
-    def _follows(
-        self,
-        here: CfgNode,
-        sites: dict[int, list[Node]] | None,
-        apart_from: Node | None,
-    ) -> bool:
-        """
-        Whether one of *sites* may run once *here* has, the stores at *here* that are all
-        *apart_from* excepted. `None` is a site that cannot be ordered at all, which may.
-        """
-        if sites is None:
-            return True
-        after = self._between.reachable(here, forward=True)
-        for site, stores in sites.items():
-            if site not in after:
-                continue
-            if site == id(here) and all(store is apart_from for store in stores):
-                continue
-            return True
-        return False
-
-    def _change_sites_of(self, graph: ControlFlowGraph) -> dict[int, list[Node]] | None:
-        """
-        The nodes of *graph* at which something may change an object in place, each with what does
-        it there, or `None` where such a place exists that *graph* cannot order at all. A write
-        nobody can attribute runs code nobody can read, and counts as one; see
-        `_unreadable_sites_of`.
-        """
-        if id(graph) not in self._changes:
-            self._changes[id(graph)] = self._find_change_sites(graph)
-        return self._changes[id(graph)]
-
-    def _find_change_sites(self, graph: ControlFlowGraph) -> dict[int, list[Node]] | None:
-        unreadable = self._unreadable_sites_of(graph)
-        if unreadable is None:
-            return None
-        sites = {site: list(effects) for site, effects in unreadable.items()}
-        for change in self.semantic.object_change_sites:
-            here = self._position_of(change, graph)
-            if here is None:
-                return None
-            sites.setdefault(id(here), []).append(change)
-        return sites
-
-    def _unreadable_sites_of(self, graph: ControlFlowGraph) -> dict[int, list[Node]] | None:
-        """
-        The nodes of *graph* at which code nobody can read runs, each with the node that runs it, or
-        `None` where such code runs at a point no graph holds.
-        """
-        if self._doubt_without_a_point():
-            return None
-        sites: dict[int, list[Node]] = {}
-        for node, effect in self._unattributable_pairs(graph):
-            sites.setdefault(id(node), []).append(effect)
-        return sites
 
     def unknowns(self, binding: Binding) -> Ps1FlowUnknown:
         """
@@ -857,7 +586,7 @@ class Ps1VariableFlow:
             for read in binding.reads
         )
 
-    def _position_of(self, read: Node, graph: ControlFlowGraph) -> CfgNode | None:
+    def position_of(self, read: Node, graph: ControlFlowGraph) -> CfgNode | None:
         """
         The node of *graph* at which *read* is evaluated, or `None` when *graph* never evaluates it.
 
@@ -873,19 +602,27 @@ class Ps1VariableFlow:
         the position of the statement they are *written* in is the false claim the per-body split
         exists to avoid, so the climb stops there and the read goes unanswered.
         """
-        located = self.flow.locate(read)
-        while located is not None:
-            found, node = located
+        for found, node in self.positions_on_the_way_out(read):
             if found is graph:
                 return node
-            owner = found.owner
+        return None
+
+    def positions_on_the_way_out(self, node: Node) -> Iterator[tuple[ControlFlowGraph, CfgNode]]:
+        """
+        Every graph that evaluates *node*, with the node of it that does: the graph *node* is
+        written in first, and then, while that graph is the body of a block that runs exactly where
+        it is written, the graph around the statement that runs it — the climb `position_of` makes.
+        """
+        located = self.flow.locate(node)
+        while located is not None:
+            yield located
+            owner = located[0].owner
             if not isinstance(owner, Ps1ScriptBlock):
-                return None
+                return
             facts = self.blocks.facts(owner)
             if facts.reach is not Ps1BlockReach.IMMEDIATE or facts.site is None:
-                return None
+                return
             located = self.flow.locate(facts.site)
-        return None
 
     def _stores_after(self, use: CfgNode, read: Node, write: Node) -> bool:
         """
@@ -1057,7 +794,7 @@ class Ps1VariableFlow:
         if id(use) not in kills:
             return kills
         if any(
-            not self._runs_after(graph, use, read, effect)
+            not self.runs_after(graph, use, read, effect)
             for node, effect in self._unattributable_pairs(graph) if node is use
         ):
             return kills
@@ -1071,7 +808,7 @@ class Ps1VariableFlow:
             )
         return found
 
-    def _runs_after(
+    def runs_after(
         self, graph: ControlFlowGraph, use: CfgNode, read: Node, effect: Node,
     ) -> bool:
         """
@@ -1142,7 +879,7 @@ class Ps1VariableFlow:
         graph = self.flow.graph_of(self.semantic.root)
         if graph is None:
             return False
-        use = self._position_of(read, graph)
+        use = self.position_of(read, graph)
         if use is None:
             return not self._any_placed_unattributable_write()
         kills = self._unattributable_kills(graph, read, use)
@@ -1289,20 +1026,6 @@ def _makes_private(write: Occurrence) -> bool:
     return written is None or 'private' in written.lower()
 
 
-def _assigned_variable(read: Ps1Variable) -> Ps1Variable | None:
-    """
-    The variable a plain `=` stores *read* into, climbing the parentheses and conversions a hand-off
-    to one name passes through, or `None` where the read is not such a value.
-    """
-    cursor: Node = read
-    while (parent := cursor.parent) is not None and not isinstance(parent, Ps1AssignmentExpression):
-        cursor = parent
-    if parent is None or parent.value is not cursor:
-        return None
-    target = unwrap_assignment_target(parent.target)
-    return target if isinstance(target, Ps1Variable) else None
-
-
 def _scopes_of(scope: Scope) -> Iterator[Scope]:
     """
     *scope* and every scope nested inside it.
@@ -1318,11 +1041,8 @@ def build_variable_flow(
     dominators: DominatorModel,
     blocks: Ps1BlockModel,
     cycles: CycleModel,
-    trusts: Callable[[str], bool] = lambda name: False,
 ) -> Ps1VariableFlow:
     """
-    Build the `Ps1VariableFlow` of one script. *trusts* says whether a command name still runs the
-    command it names there; the default trusts none, which reads every command as one that may keep
-    what it is handed.
+    Build the `Ps1VariableFlow` of one script.
     """
-    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles, trusts)
+    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles)

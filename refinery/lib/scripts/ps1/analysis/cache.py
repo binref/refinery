@@ -33,6 +33,7 @@ from refinery.lib.scripts.ps1.analysis.errorstate import (
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, build_fault_reach
 from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel, build_semantic_model
+from refinery.lib.scripts.ps1.analysis.objects import Ps1ObjectFlow, build_object_flow
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     Ps1WorldMeasurement,
@@ -82,6 +83,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_blocks',
         '_cycles',
         '_variable_flow',
+        '_object_flow',
         '_commands',
         '_error_state',
         '_used_before_defined',
@@ -100,6 +102,7 @@ class Ps1ModelCache(ModelCacheBase):
     _blocks: Ps1BlockModel | None
     _cycles: CycleModel | None
     _variable_flow: Ps1VariableFlow | None
+    _object_flow: Ps1ObjectFlow | None
     _commands: Ps1CommandModel | None
     _error_state: Ps1ErrorStateReach | None
     _used_before_defined: frozenset[str] | None
@@ -271,8 +274,6 @@ class Ps1ModelCache(ModelCacheBase):
         Which write each variable read observes, over `model`, `control_flow`, `dominance`, `blocks`
         and `cycles`. The one place that question is answered: a pass that decides what a name holds
         at a point asks here rather than walking the tree for an assignment that looks near enough.
-        It reads from `closed_world` which command names still run the command they name, which is
-        what decides whether a command handed an object may keep it.
         """
         return self._lazy('_variable_flow', lambda: build_variable_flow(
             self.model,
@@ -280,6 +281,17 @@ class Ps1ModelCache(ModelCacheBase):
             self.dominance,
             self.blocks,
             self.cycles,
+        ))
+
+    @property
+    def object_flow(self) -> Ps1ObjectFlow:
+        """
+        Which object each name holds, who else keeps it, and what may change it, over
+        `variable_flow`. It reads from `closed_world` which command names still run the command they
+        name, which is what decides whether a command handed an object may keep it.
+        """
+        return self._lazy('_object_flow', lambda: build_object_flow(
+            self.variable_flow,
             self.closed_world.runs_the_command_it_names,
         ))
 

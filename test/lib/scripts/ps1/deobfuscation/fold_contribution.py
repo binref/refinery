@@ -570,6 +570,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = 1, 2, 3; $a = 0, 0; $a[0] = $x; Write-Output $a[0]',
             '$x = 1, 2, 3; $a, $b = $x, 9; Write-Output $a',
             '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
+            "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); Write-Output $x",
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
             '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x',
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -1067,6 +1068,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
             '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))',
             "$x = 1, 2, 3; $c = '$x = 7, 8, 9'; iex $c; [Array]::Reverse($x); Write-Output $x",
+            "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
             "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
@@ -1080,10 +1082,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
             "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             '$x = 1, 2, 3; $y = $($x); [Array]::Reverse($x); Write-Output $y',
-            "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
             '$x = 1, 2, 3; $y = $x; $x = 9, 9, 9; Write-Output $y',
             '$x = 1, 2, 3; $y = $x; $y = 9, 9, 9; [Array]::Reverse($x); Write-Output $y',
-            "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
             "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "

@@ -2804,8 +2804,8 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
     script writes `9 2 3`: the payload stores through the place that holds the array, picked by an
     index no reading of the source settles.
 
-    Such code is counted only where it runs in the scope and the body that hold the hand-off, so
-    each place is handed a copy.
+    A script that spells no store in place lets every hand-off but the one to a second name
+    through, so each container and each body's output is handed a copy.
     """
 
     @unittest.expectedFailure
@@ -2818,7 +2818,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_called_function_reaches_the_second_name(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2828,7 +2827,6 @@ class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_a_called_function_reaches_the_array_a_block_wrote_out(self):
         self._assertTheStoreReachesTheName(
             "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
@@ -2893,10 +2891,12 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
     """
     Code nobody can read may set a `$script:` variable from wherever it runs: from the body of a
     called function, and from a block created from a string, whose scope of its own does not stop a
-    qualified write. Measured on 5.1 in `corpus.BEHAVIOURS`, both scripts write `5`.
+    qualified write. It may store through a variable of the scopes around it the same way, since a
+    bare name reads the caller's variable. Measured on 5.1 in `corpus.BEHAVIOURS`, the first two
+    scripts write `5` and the other two `9 2 3`.
 
-    Such code is read as writing the scope it runs in and nothing else, so the read is folded to
-    `a`.
+    Such code is read as writing the scope it runs in and nothing else, so the reads are folded to
+    `a` and to `1 2 3`.
     """
 
     @unittest.expectedFailure
@@ -2917,6 +2917,26 @@ class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
             'x',
             [[5]],
             [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_called_function_stores_through_the_callers_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
+            'function f { iex $c }; f; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_created_block_stores_through_the_callers_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
+            '& ([scriptblock]::Create($c)); Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
         )
 
 

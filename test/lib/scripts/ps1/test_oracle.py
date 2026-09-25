@@ -182,6 +182,15 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: asks whether a store survived in the tree and what the reads below it can still print. That is
 #: not evidence for what is written here, because this reaches its verdict by running both scripts.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
+    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x':
+        'The read is folded to `1 2 3` where the snippet writes `9 2 3`. The payload runs in the '
+        'body of the function that calls it and stores through `$x`, which a bare name there reads '
+        'from the caller; code nobody can read is taken to write only the scope it runs in.',
+    "$x = 1, 2, 3; $c = @('$x[0] = 9')[(Get-Random -Maximum 1)]; "
+    '& ([scriptblock]::Create($c)); Write-Output $x':
+        'The same, with the payload run as a block created from the string in a scope of its '
+        'own.',
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
         'read as the store the following read needs.',
@@ -278,12 +287,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
         'snippet writes `9 2 3`. The payload runs in the body of the function that calls it, '
         'and code nobody can read is counted only in the body that holds the hand-off.',
-    "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
-    'function f { iex $c }; f; Write-Output $x':
-        'The same through a second name, which is given a copy for the payload to store into.',
-    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
-    'function f { iex $c }; f; Write-Output $x':
-        'The same through the output of a block, which hands on the array itself.',
     "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
     'Write-Output $x':
         'The copy is spelled into the block, so the payload stores into it and the read writes '
