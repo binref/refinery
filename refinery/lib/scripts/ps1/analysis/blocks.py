@@ -73,6 +73,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1FunctionDefinition,
+    Ps1InvokeMember,
     Ps1ScopeModifier,
     Ps1Script,
     Ps1ScriptBlock,
@@ -199,9 +200,10 @@ def _handed_to_command(block: Ps1ScriptBlock) -> Ps1CommandInvocation | None:
     return None
 
 
-def _named_writes(cmd: Ps1CommandInvocation) -> Iterator[Occurrence]:
+def _named_writes(cmd: Node) -> Iterator[Occurrence]:
     """
-    The names *cmd* writes as strings into the scope it is written in.
+    The names *cmd*, a command or a call of the session state, writes as strings into the scope it
+    is written in.
 
     A read is not one of them: it changes no value, so it is no fact about what the block leaves
     behind. Neither is a write that names its target scope outright, whose landing place does not
@@ -477,7 +479,7 @@ class Ps1BlockModel:
                 and is_write_occurrence(node)
             ):
                 yield Occurrence(node=node, role=occurrence_role(node), key=binding_key(node))
-            elif isinstance(node, Ps1CommandInvocation):
+            elif isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
                 yield from _named_writes(node)
             stack.extend(node.children())
 

@@ -50,6 +50,7 @@ from refinery.lib.scripts.ps1.analysis.naming import (
     Ps1NameRole,
     Ps1NameTarget,
     named_references,
+    reads_unreadable_name,
     unreadable_name_target,
 )
 from refinery.lib.scripts.ps1.ast import (
@@ -813,6 +814,8 @@ class Ps1SemanticModel:
         self._node_scope[id(root)] = self.root_scope
         self._change_sites: tuple[Node, ...] | None = None
         self._one_object: dict[int, tuple[Binding, ...]] | None = None
+        self._reads_unreadable_names = False
+        self._handed_out: set[str] = set()
         self._populate(self.root_scope)
         self._build_def_use()
 
@@ -989,6 +992,29 @@ class Ps1SemanticModel:
         return False
 
     @property
+    def reads_unreadable_names(self) -> bool:
+        """
+        Whether anything here reads a variable whose name nobody can read — `Get-Variable` listing
+        every variable, a pattern over them, a name the script computes, or the session state
+        handed where its reads cannot be followed. Any name may then be read where no occurrence of
+        it stands, so no store is dead for want of a read of it. See
+        `refinery.lib.scripts.ps1.analysis.naming.reads_unreadable_name`.
+        """
+        return self._reads_unreadable_names
+
+    @property
+    def variables_handed_out(self) -> frozenset[str]:
+        """
+        The names whose variable itself is handed to something other than a read of one of its
+        properties where it is fetched — `$v = Get-Variable b` hands out `$b`. A store into its
+        `Value` rebinds the name from wherever the variable has gone, so every binding of such a
+        name may be written, and read, where no occurrence of it stands. Which binding the variable
+        is depends on the scopes standing around the command when it runs, so the name is doubted
+        in every scope.
+        """
+        return frozenset(self._handed_out)
+
+    @property
     def writes_unreadable_names(self) -> bool:
         """
         Whether any scope here carries a write whose name nobody can read — every scope's
@@ -1009,7 +1035,7 @@ class Ps1SemanticModel:
             self._node_scope[id(node)] = scope
             if isinstance(node, Ps1Variable) and declares_binding(node):
                 self._declare(node, scope)
-            elif isinstance(node, Ps1CommandInvocation):
+            elif isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember, Ps1Variable)):
                 self._declare_named(node, scope)
 
     @staticmethod
@@ -1026,10 +1052,10 @@ class Ps1SemanticModel:
         if key not in scope.bindings:
             scope.bindings[key] = Binding(name=key, scope=scope)
 
-    def _declare_named(self, cmd: Ps1CommandInvocation, current: Scope):
+    def _declare_named(self, node: Node, current: Scope):
         """
-        Create the bindings a command addresses by string, and record a name it addresses that
-        cannot be read.
+        Create the bindings a command or a call of the session state addresses by string, and record
+        a name it addresses that cannot be read, a read of one, and a variable it hands out.
 
         This is why the census is consulted while the model is built rather than applied to it
         afterwards: `Get-Process -OutVariable x` in a script that never writes `$x` any other way is
@@ -1043,10 +1069,14 @@ class Ps1SemanticModel:
         place against the reads it may reach — one aimed at the script scope, or at a scope the
         lexical chain cannot name — is a fact about the scope as a whole.
         """
-        unreadable = unreadable_name_target(cmd)
+        unreadable = unreadable_name_target(node)
         if unreadable is not None and unreadable is not Ps1NameTarget.LOCAL:
             self._doubt(unreadable, current)
-        for reference in named_references(cmd):
+        if reads_unreadable_name(node):
+            self._reads_unreadable_names = True
+        for reference in named_references(node):
+            if reference.hands_out:
+                self._handed_out.add(reference.key)
             if reference.role is Ps1NameRole.READS:
                 continue
             scope = self._named_scope(reference, current)
@@ -1118,7 +1148,7 @@ class Ps1SemanticModel:
             scope = self._node_scope.get(id(node))
             if scope is None:
                 continue
-            if isinstance(node, Ps1CommandInvocation):
+            if isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
                 self._attribute_named(node, scope)
                 continue
             if not isinstance(node, Ps1Variable) or _is_member_declaration(node):
@@ -1373,7 +1403,7 @@ class Ps1SemanticModel:
             if binding is not None:
                 yield binding
 
-    def _attribute_named(self, cmd: Ps1CommandInvocation, scope: Scope):
+    def _attribute_named(self, cmd: Node, scope: Scope):
         """
         File a command's string-addressed references against the bindings they name.
 

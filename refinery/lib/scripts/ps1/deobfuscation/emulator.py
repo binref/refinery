@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     _Value: TypeAlias = 'str | int | float | bool | list | None | _MatchTable'
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
     MATCH_OPERATORS,
@@ -138,6 +138,9 @@ from refinery.lib.scripts.ps1.model import (
 _MAX_INTERPRETER_ITERATIONS = 100_000
 _MAX_INTERPRETER_STRING_LEN = 1_000_000
 _MAX_INTERPRETER_DEPTH = 64
+
+#: What a script may read unseen before the cache of one run has said otherwise: nothing.
+_NOTHING_UNSEEN = Ps1UnseenReads(False, frozenset())
 
 #: The operators whose *left* operand a `Boolean` may not be. 5.1 dispatches an operator to a method
 #: on the left operand's type and `Boolean` carries none of these three, so `$true * 2` is
@@ -2389,6 +2392,7 @@ class Ps1SubExpressionEvaluator(Transformer):
         self._write_sites: dict[str, list[Node]] = {}
         self._doubts_names = False
         self._runs_data_code = False
+        self._unseen = _NOTHING_UNSEEN
         self._strict_v2 = True
         self._strict = False
 
@@ -2402,6 +2406,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             self._write_sites = cache.model.write_sites()
             self._doubts_names = cache.model.writes_unreadable_names
             self._runs_data_code = runs_code_supplied_as_data(cache.world_measurement)
+            self._unseen = cache.names_may_be_read_unseen
             self._strict_v2, self._strict = _strict_mode_flags(cache)
             return super().visit(node)
         finally:
@@ -2410,6 +2415,7 @@ class Ps1SubExpressionEvaluator(Transformer):
             self._write_sites = {}
             self._doubts_names = False
             self._runs_data_code = False
+            self._unseen = _NOTHING_UNSEEN
             self._strict_v2 = True
             self._strict = False
 
@@ -2615,17 +2621,20 @@ class Ps1SubExpressionEvaluator(Transformer):
         other written name is one a reader could observe for either of two reasons, and either one
         is answered by retention rather than refusal: the script spells a reader outside the body,
         which `_occurs_outside` answers through the semantic model — in both models, since a spelled
-        reader is not what the trusting model's contract excuses — or the run takes code from data,
-        which reads the scope with no occurrence in the tree at all. A name with neither reader is
-        one no fold needs to answer for and is dropped, as before.
+        reader is not what the trusting model's contract excuses — or the script may read it where
+        no occurrence of it stands, which
+        `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` answers:
+        code taken from data, a listing of every variable, a variable handed out. A name with
+        neither reader is one no fold needs to answer for and is dropped, as before.
         """
         if not written:
             return set()
         if written & PS1_ENGINE_VARIABLES:
             return None
-        if self._runs_data_code:
+        unseen = self._unseen
+        if unseen.every_name:
             return set(written)
-        return {name for name in written if self._occurs_outside(node, name)}
+        return {name for name in written if name in unseen or self._occurs_outside(node, name)}
 
     def _occurs_outside(self, node: Ps1SubExpression, name: str) -> bool:
         """

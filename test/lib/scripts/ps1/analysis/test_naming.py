@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import Node
 from refinery.lib.scripts.ps1.analysis.naming import (
     Ps1NameRole,
     Ps1NameTarget,
     addresses_unreadable_name,
     named_references,
+    reads_unreadable_name,
+    unreadable_name_target,
 )
-from refinery.lib.scripts.ps1.model import Ps1CommandInvocation
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1InvokeMember, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -205,14 +208,179 @@ class TestPs1UnreadableNames(TestBase):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
 
-    def test_a_computed_name_on_a_read_costs_nothing(self):
+    def test_a_computed_name_on_a_read_of_values_writes_nothing(self):
         """
-        Not knowing which name was read loses nothing: a read changes no value, so no later fold
-        depends on having identified it.
+        Not knowing which value was read changes no value, so no later fold depends on having
+        identified it — where only values are read and no variable is handed out.
         """
-        self.assertFalse(addresses_unreadable_name(self._command('Get-Variable $n')))
+        for source in ('Get-Variable $n -ValueOnly', 'Write-Host (Get-Variable $n).Value'):
+            with self.subTest(source):
+                self.assertFalse(addresses_unreadable_name(self._command(source)))
+
+    def test_a_pattern_on_a_variable_write_is_unreadable(self):
+        for source in ('Remove-Variable x*', "Set-Variable -Name x? -Value 'v'"):
+            with self.subTest(source):
+                self.assertTrue(addresses_unreadable_name(self._command(source)))
+                self.assertEqual(named_references(self._command(source)), [])
+
+    def test_a_variable_of_a_name_nobody_can_read_handed_out_is_written_anywhere(self):
+        """
+        Measured: a store into the `Value` of a variable picked out of `Get-Variable` rebinds it,
+        and which scope it belongs to is whichever scope the command could see.
+        """
+        for source in (
+            '$v = Get-Variable',
+            '$v = Get-Variable $n',
+            '$v = Get-ChildItem variable:',
+        ):
+            with self.subTest(source):
+                self.assertIs(
+                    unreadable_name_target(self._command(source)), Ps1NameTarget.UNREADABLE)
 
     def test_a_command_that_addresses_no_variable_is_not_unreadable(self):
         for source in ('Write-Host $n', 'Get-Process', "Set-Item $path 'v'"):
             with self.subTest(source):
                 self.assertFalse(addresses_unreadable_name(self._command(source)))
+
+
+def _first(source: str, kind: type, name: str | None = None) -> Node:
+    """
+    The first node of *kind* in *source*, in source order; a variable is picked by its *name*.
+    """
+    for node in Ps1Parser(source).parse().walk_in_order():
+        if isinstance(node, kind) and (name is None or getattr(node, 'name', None) == name):
+            return node
+    raise AssertionError(F'no {kind.__name__} in {source!r}')
+
+
+class TestPs1AVariableHandedOut(TestBase):
+    """
+    Which commands hand out the variable itself rather than its value. A store into the `Value` of
+    one rebinds the name from wherever the variable has gone: each script measured on 5.1 in
+    `corpus.BEHAVIOURS` writes the value stored through the variable.
+    """
+
+    @staticmethod
+    def _handed_out(source: str, kind: type = Ps1CommandInvocation) -> list[tuple[str, bool]]:
+        return [(ref.key, ref.hands_out) for ref in named_references(_first(source, kind))]
+
+    def test_a_variable_a_command_writes_out_is_handed_out(self):
+        for source in (
+            "$v = Get-Variable b; $v.Value = 'b'",
+            "Get-Variable b | ForEach-Object { $_.Value = 'b' }",
+            "(Get-Variable b).set_Value('b')",
+            "(Get-Variable b).Value = 'b'",
+            "$v = Get-ChildItem variable:b; $v.Value = 'b'",
+            '$v = New-Variable b 1 -PassThru; $v.Value = 5',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._handed_out(source), [('b', True)])
+
+    def test_a_value_read_where_it_stands_hands_out_nothing(self):
+        for source in (
+            '$v = Get-Variable b -ValueOnly',
+            '$x = (Get-Variable b).Value',
+            '$x = $(Get-Variable b).Value',
+            'New-Variable b 1',
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._handed_out(source), [('b', False)])
+
+    def test_a_variable_the_session_state_writes_out_is_handed_out(self):
+        self.assertEqual(
+            self._handed_out(
+                "$ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'", Ps1InvokeMember),
+            [('b', True)],
+        )
+
+
+class TestPs1TheSessionStateAddressesVariablesByName(TestBase):
+    """
+    The session state's `PSVariable` reads, writes and removes a variable by the name it is
+    handed. Measured on 5.1 in `corpus.BEHAVIOURS`: `GetValue('x')` writes the value of `$x`,
+    `Set('b', 'b')` leaves `$b` holding `b`, and `Remove('b')` leaves it holding nothing.
+    """
+
+    @staticmethod
+    def _refs(source: str) -> list[tuple[str, str, str]]:
+        return [
+            (ref.key, ref.role.name, ref.target.name)
+            for ref in named_references(_first(source, Ps1InvokeMember))
+        ]
+
+    def test_each_method_addresses_the_name_it_is_handed(self):
+        for source, role in (
+            ("$ExecutionContext.SessionState.PSVariable.GetValue('x')", 'READS'),
+            ("$ExecutionContext.SessionState.PSVariable.Set('x', 'b')", 'WRITES'),
+            ("$ExecutionContext.SessionState.PSVariable.Remove('x')", 'UNBINDS'),
+            ("$PSCmdlet.SessionState.PSVariable.Set('x', 'b')", 'WRITES'),
+            ("$PSCmdlet.GetVariableValue('x')", 'READS'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._refs(source), [('x', role, 'LOCAL')])
+
+    def test_a_qualified_name_is_resolved_against_its_scope(self):
+        self.assertEqual(
+            self._refs("$ExecutionContext.SessionState.PSVariable.Set('script:x', 'b')"),
+            [('x', 'WRITES', 'SCRIPT')],
+        )
+
+    def test_a_computed_name_is_unreadable_where_the_call_runs(self):
+        call = _first("$ExecutionContext.SessionState.PSVariable.Set($n, 'b')", Ps1InvokeMember)
+        self.assertIs(unreadable_name_target(call), Ps1NameTarget.LOCAL)
+        self.assertEqual(named_references(call), [])
+
+    def test_the_session_state_kept_reads_and_writes_every_name(self):
+        """
+        Measured: `$p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b')` leaves `$b`
+        holding `b`, and nothing at the call says which variable the kept table is asked for.
+        """
+        for source in (
+            '$p = $ExecutionContext.SessionState.PSVariable',
+            '$s = $ExecutionContext.SessionState',
+            '$e = $ExecutionContext',
+            "$ExecutionContext.SessionState.InvokeProvider.Item.Set('variable:b', 'b')",
+        ):
+            with self.subTest(source):
+                holder = _first(source, Ps1Variable, 'ExecutionContext')
+                self.assertTrue(reads_unreadable_name(holder))
+                self.assertIs(unreadable_name_target(holder), Ps1NameTarget.UNREADABLE)
+
+    def test_a_member_that_reaches_no_variable_leaks_nothing(self):
+        for source in (
+            "$ExecutionContext.InvokeCommand.GetCommand('x', 'Cmdlet')",
+            '$ExecutionContext.SessionState.LanguageMode',
+            "$ExecutionContext.SessionState.PSVariable.GetValue('x')",
+        ):
+            with self.subTest(source):
+                holder = _first(source, Ps1Variable, 'ExecutionContext')
+                self.assertFalse(reads_unreadable_name(holder))
+                self.assertIsNone(unreadable_name_target(holder))
+
+
+class TestPs1AReadOfNamesNobodyCanRead(TestBase):
+    """
+    A read that may observe every variable. Measured on 5.1 in `corpus.BEHAVIOURS`: a store into
+    the variable picked out of `Get-Variable` by its name reaches it, and a pattern reads each
+    variable it matches.
+    """
+
+    def test_every_variable_a_command_lists_is_read(self):
+        for source in (
+            '$v = Get-Variable',
+            'Get-Variable x* | ForEach-Object Value',
+            'Get-Variable $n -ValueOnly',
+            'Get-ChildItem variable:',
+            'dir variable:x*',
+        ):
+            with self.subTest(source):
+                self.assertTrue(reads_unreadable_name(_first(source, Ps1CommandInvocation)))
+
+    def test_only_the_names_of_the_listed_variables_read_no_value(self):
+        self.assertFalse(reads_unreadable_name(
+            _first("(Get-Variable '*mdr*').Name[3, 11, 2] -join ''", Ps1CommandInvocation)))
+
+    def test_a_named_read_is_a_reference_and_not_every_name(self):
+        for source in ('Get-Variable x', 'Get-Item variable:x'):
+            with self.subTest(source):
+                self.assertFalse(reads_unreadable_name(_first(source, Ps1CommandInvocation)))

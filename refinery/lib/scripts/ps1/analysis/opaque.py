@@ -74,9 +74,8 @@ def writes_nobody_can_attribute(node: Node) -> bool:
     The two sources are one fact to a consumer, so they are answered together: a command addressing
     a name it computes, and a call running code this analysis never sees.
     """
-    if isinstance(node, Ps1CommandInvocation):
-        if unreadable_name_target(node) is Ps1NameTarget.LOCAL:
-            return True
+    if unreadable_name_target(node) is Ps1NameTarget.LOCAL:
+        return True
     return runs_unreadable_code(node)
 
 

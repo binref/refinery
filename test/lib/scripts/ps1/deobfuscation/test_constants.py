@@ -619,8 +619,8 @@ class TestPs1ConstantInliningAcrossControlFlow(TestPs1):
         """
         for source, expected in (
             (
-                "$x = 'a'; . { Get-Variable x }; Write-Host $x",
-                "$x = 'a'\n. {\n  Get-Variable x\n}\nWrite-Host 'a'",
+                "$x = 'a'; . { Get-Variable x -ValueOnly }; Write-Host $x",
+                "$x = 'a'\n. {\n  Get-Variable x -ValueOnly\n}\nWrite-Host 'a'",
             ),
             (
                 "$x = 'a'; . { Remove-Variable y }; Write-Host $x",

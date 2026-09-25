@@ -9,6 +9,8 @@ only declares the PowerShell model slot and its `build_*` wiring.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.cycles import CycleModel
@@ -35,9 +37,23 @@ from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     Ps1WorldMeasurement,
     measure_world,
+    runs_code_supplied_as_data,
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach, build_world_reach
 from refinery.lib.scripts.ps1.model import Ps1Script
+
+
+@dataclass(frozen=True)
+class Ps1UnseenReads:
+    """
+    The names a script may read where no occurrence of them stands: every name, or the ones in
+    `names`. Ask it with `in`.
+    """
+    every_name: bool
+    names: frozenset[str]
+
+    def __contains__(self, key: str) -> bool:
+        return self.every_name or key in self.names
 
 
 class Ps1ModelCache(ModelCacheBase):
@@ -69,6 +85,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_commands',
         '_error_state',
         '_used_before_defined',
+        '_unseen_reads',
     )
 
     root: Ps1Script
@@ -86,6 +103,7 @@ class Ps1ModelCache(ModelCacheBase):
     _commands: Ps1CommandModel | None
     _error_state: Ps1ErrorStateReach | None
     _used_before_defined: frozenset[str] | None
+    _unseen_reads: Ps1UnseenReads | None
 
     @property
     def model(self) -> Ps1SemanticModel:
@@ -278,6 +296,26 @@ class Ps1ModelCache(ModelCacheBase):
         """
         return self._lazy('_used_before_defined', lambda: names_used_before_defined(
             self.call_graph, self.dominance))
+
+    @property
+    def names_may_be_read_unseen(self) -> Ps1UnseenReads:
+        """
+        The names this script may read where no occurrence of them stands: the one question a pass
+        asks before it deletes a store for want of a reader.
+
+        Code supplied as data may read any name, which is what
+        `refinery.lib.scripts.ps1.analysis.world.runs_code_supplied_as_data` says and what the
+        trusting model lifts. A read of a name nobody can read — `Get-Variable` listing every
+        variable — is written in plain sight, so no option lifts it; see
+        `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.reads_unreadable_names`. And a
+        variable handed out may be read through its `Value` from wherever it has gone; see
+        `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.variables_handed_out`.
+        """
+        return self._lazy('_unseen_reads', lambda: Ps1UnseenReads(
+            runs_code_supplied_as_data(self.world_measurement)
+            or self.model.reads_unreadable_names,
+            self.model.variables_handed_out,
+        ))
 
 
 def model_cache(transformer: Transformer, root: Node) -> Ps1ModelCache:

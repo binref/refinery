@@ -12,7 +12,7 @@ from refinery.lib.scripts import (
     Transformer,
     _clone_node,
 )
-from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.cache import Ps1UnseenReads, model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
@@ -74,7 +74,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1ClassDefinition,
-    Ps1CommandInvocation,
     Ps1DoLoop,
     Ps1EnumDefinition,
     Ps1ExpandableHereString,
@@ -847,9 +846,11 @@ class Ps1ConstantInlining(Transformer):
         table = _ConstantTable(node)
         if not table:
             return None
+        unseen = cache.names_may_be_read_unseen
+        error_state = cache.error_state
         state = _Inlining(table, flow, self._blocked_by_expansion(node, table))
         self._substitute(node, state)
-        self._remove_dead_assignments(table, state, faults, cache.error_state)
+        self._remove_dead_assignments(table, state, faults, error_state, unseen)
         return None
 
     def _blocked_by_expansion(self, root: Node, table: _ConstantTable) -> set[str]:
@@ -1024,6 +1025,7 @@ class Ps1ConstantInlining(Transformer):
         state: _Inlining,
         faults: Ps1FaultReach,
         error_state: Ps1ErrorStateReach,
+        unseen: Ps1UnseenReads,
     ):
         """
         Delete the constant writes of every binding whose value nothing observes any more.
@@ -1047,9 +1049,16 @@ class Ps1ConstantInlining(Transformer):
         it — where the readers are other bindings entirely, and `_block_kills` already honours the
         same fact on the read side. Deleting such a write leaves the caller reading the value from
         before the body.
+
+        A name the script may read where no occurrence of it stands has readers no count of its
+        reads holds — see
+        `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` — so its
+        writes stay: measured, `$x = 'a'; Write-Host $x; iex $c` runs a payload that reads `$x`.
         """
         plans = Ps1RemovalPlans(faults, error_state=error_state)
         for binding, replacements in state.record:
+            if binding.name in unseen:
+                continue
             if len(replacements) < len(binding.reads):
                 continue
             if self._writes_leave_the_body(state.flow, binding):
@@ -1145,8 +1154,7 @@ class Ps1NullVariableInlining(Transformer):
             return
         model = cache.model
         if model.writes_unreadable_names or any(
-            unreadable_name_target(command) is not None
-            for command in node.walk() if isinstance(command, Ps1CommandInvocation)
+            unreadable_name_target(command) is not None for command in node.walk()
         ):
             return
         mutated = _collect_mutated_variables(node) | set(model.write_sites())

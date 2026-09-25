@@ -389,6 +389,24 @@ class TestPs1FlowUnknowns(TestBase):
             with self.subTest(source):
                 self.assertIn(Ps1FlowUnknown.HIDDEN_FROM_A_READER, self._unknowns(source))
 
+    def test_a_variable_handed_out_is_written_through_it_in_every_scope(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: a function storing into the `Value` of
+        `Get-Variable b -Scope 1` rebinds its caller's `$b`. Which scope's variable a command hands
+        out depends on what stands around it when it runs, so the name is doubted wherever it is
+        bound.
+        """
+        for source in (
+            "$x = 'a'; $v = Get-Variable x",
+            "$x = 'a'; function g { $v = Get-Variable x }",
+        ):
+            with self.subTest(source):
+                self.assertIn(Ps1FlowUnknown.WRITTEN_THROUGH_ITS_VARIABLE, self._unknowns(source))
+
+    def test_a_value_read_where_the_variable_is_fetched_hands_nothing_out(self):
+        self.assertIs(
+            self._unknowns("$x = 'a'; Write-Host (Get-Variable x).Value"), Ps1FlowUnknown.NONE)
+
     def test_a_command_giving_other_options_hides_nothing(self):
         self.assertNotIn(
             Ps1FlowUnknown.HIDDEN_FROM_A_READER,

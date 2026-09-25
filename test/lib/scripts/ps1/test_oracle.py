@@ -212,9 +212,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; . { $local:x = 'b' }; Write-Output $x":
         'The same through a dot, written rather than read: the read is folded to `a` where the '
         'snippet writes `b`.',
-    "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x":
-        'The read is folded to `a`. The call assigns `$x` by name, so the snippet writes `b`; it '
-        'is read as a method of the automatic variable it is called on and as nothing else.',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
     'Write-Output $x':
         'The array is spelled into the hash literal, so the payload stores into a copy and the '
@@ -225,12 +222,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     'Write-Output (dec 5)':
         'The call is folded to `(5, 1)`, which writes two Int32 values where the snippet writes '
         'two Bytes: the values are right and the type they are spelled as is not.',
-    "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
-        'The store is removed and the read prints nothing. The pattern reads a whole set of '
-        'variables without naming any one of them.',
-    "$x = 'a'; Get-Variable x; $x = 'c'":
-        'The store is removed, so the read that follows it fails with VariableNotFound rather '
-        'than emitting the variable.',
     "$x = 'a'; $c = '$script:x = \"b\"'; function f { iex $c }; f; Write-Host $x":
         'The read is folded to `a` across a call that rewrites it: the string carries a write to '
         '`$x`, so the snippet prints `b`.',
@@ -282,38 +273,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'metadata proves inert: `Length` is re-pointed to a script property and the read is '
         'folded to the number the metadata carries, so the output prints a value 5.1 never '
         'produces.',
-    "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b":
-        'The read is folded to `a`. `Get-Variable` hands out the variable itself, so the store '
-        'into its `Value` rebinds `$b` and the snippet writes `b`; the command is read as a '
-        'plain read of the name.',
-    "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b":
-        'The same store, made by calling the setter of the variable `Get-Variable` hands out.',
-    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; Write-Output $b":
-        'The same store through the variable the session state\'s `PSVariable.Get` hands out. '
-        'The call is not read as naming `$b` at all, so the store `$b = \'a\'` is removed as '
-        'well and the output raises PropertyNotFound before it writes `a`.',
-    "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b":
-        'The same store, made by a called function through `-Scope 1`, which names its '
-        'caller\'s variable.',
-    "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b":
-        'The same store through the variable `Get-ChildItem variable:` hands out. The command '
-        'is not read as naming `$b` at all, so the store `$b = \'a\'` is removed as well and the '
-        'output raises PathNotFound and PropertyNotFound before it writes `a`.',
-    "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b":
-        'The same store, made by the block the variable is piped into.',
-    "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b":
-        'The same store through a variable picked out of all of them. `Get-Variable` with no '
-        'name reads every variable and is read as reading none, so the store `$b = \'a\'` is '
-        'removed as well and the output raises PropertyNotFound before it writes `a`.',
-    "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')":
-        'The store is removed and the read writes `$null` where the snippet writes `a`: '
-        '`PSVariable.GetValue` reads `$x` by name and is not read as a read of it.',
-    "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); Write-Output $b":
-        'The read is folded to `a`. The session state\'s `PSVariable`, kept in a variable of '
-        'its own, assigns `$b` by name, so the snippet writes `b`.',
-    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b":
-        'The read is folded to `a`. `PSVariable.Remove` removes `$b` by name, so the snippet '
-        'writes `$null`.',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     'function f { iex $c }; f; Write-Output $x':
         'The array is spelled into the hash literal and the read folded to `1 2 3` where the '

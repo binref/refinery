@@ -503,6 +503,7 @@ class TestPs1TheSeparatorOfACollectionIsWrittenByTheScript(TestPs1):
         """)
         expected = inspect.cleandoc("""
             Invoke-Expression $env:X
+            $t = '1'
             Write-Output '1'
         """)
         self.assertEqual(self._deobfuscate(source), expected)
@@ -559,6 +560,7 @@ class TestPs1TheSeparatorOfACollectionIsWrittenByTheScript(TestPs1):
         """)
         expected = inspect.cleandoc("""
             Invoke-Expression $env:X
+            $t = '1:2'
             Write-Output '1:2'
         """)
         self.assertEqual(self._deobfuscate(source), expected)

@@ -563,6 +563,7 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
             } catch {}
             Invoke-Expression $zzqc
         """, """
+            $zzqc = '$Error.Count'
             try {
               zzqq0 =5
             } catch {}
@@ -608,6 +609,7 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
             try {
               zzqq0 =5
             } catch {}
+            $zzqc = '$Error.Count'
             $Error.Count
         """)
 

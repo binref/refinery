@@ -41,22 +41,15 @@ FOLDS: dict[str, str] = {
         "$t = if (@(0)) {\n  'yes'\n} else {\n  'no'\n}\nWrite-Output (,$t)\nWrite-Output $t",
     "$a = @(0, 0); $t = if ($a) { 'yes' } else { 'no' }; Write-Output (,$t); Write-Output $t":
         "$t = if ((0, 0)) {\n  'yes'\n} else {\n  'no'\n}\nWrite-Output (,$t)\nWrite-Output $t",
-    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; Write-Output $b":
-        "$ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'\nWrite-Output 'a'",
-    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b":
-        "$ExecutionContext.SessionState.PSVariable.Remove('b')\nWrite-Output 'a'",
-    "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); Write-Output $b":
-        "$p = $ExecutionContext.SessionState.PSVariable\n$p.Set('b', 'b')\nWrite-Output 'a'",
-    "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b":
-        "$v = Get-ChildItem variable:b\n$v.Value = 'b'\nWrite-Output 'a'",
-    "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b":
-        "$b = 'a'\n$v = Get-Variable b\n$v.Value = 'b'\nWrite-Output 'a'",
+    "$b = 'a'; $v = Get-Variable b -ValueOnly; $v = 'x'; Write-Output $b":
+        "Write-Output 'a'",
     "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b":
-        "$v = Get-Variable\n($v | Where-Object Name -EQ 'b').Value = 'b'\nWrite-Output 'a'",
-    "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b":
-        "$b = 'a'\n(Get-Variable b).set_Value('b')\nWrite-Output 'a'",
-    "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b":
-        "$b = 'a'\nGet-Variable b | ForEach-Object {\n  $_.Value = 'b'\n}\nWrite-Output 'a'",
+        "$b = 'a'\n"
+        '$v = Get-Variable\n'
+        "($v | Where-Object Name -EQ 'b').Value = 'b'\n"
+        'Write-Output $b',
+    "$b = 'a'; (Get-Variable b).Value = 'b'; Write-Output $b":
+        "Write-Output 'b'",
     '$b = 0, 0; $p = [Runtime.InteropServices.Marshal]::AllocHGlobal(2); [Runtime.InteropServices.Marshal]::WriteByte($p, 0, 7); [Runtime.InteropServices.Marshal]::Copy($p, $b, 0, 2); [Runtime.InteropServices.Marshal]::FreeHGlobal($p); Write-Output $b[0]':
         '$p = [Runtime.InteropServices.Marshal]::AllocHGlobal(2)\n[Runtime.InteropServices.Marshal]::WriteByte($p, 0, 7)\n[Runtime.InteropServices.Marshal]::Copy($p, (0, 0), 0, 2)\n[Runtime.InteropServices.Marshal]::FreeHGlobal($p)\nWrite-Output 0',
     "$c = 'Write-Out'; $c += 'put 5'; Invoke-Expression $c":
@@ -67,6 +60,7 @@ FOLDS: dict[str, str] = {
     "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x":
         "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]\n"
         'Invoke-Expression $c\n'
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1216,19 +1210,36 @@ FOLDS: dict[str, str] = {
         'Write-Output ($True)',
     "$x = $($w = 'a'; 'v'); Write-Output $w":
         "Write-Output 'a'",
+    "$x = $($y = 'a'; 'v'); Write-Output $x; Write-Output ((Get-Variable | Where-Object Name -eq 'y').Value)":
+        "$y = 'a'\n"
+        "$x = 'v'\n"
+        'Write-Output $x\n'
+        "Write-Output ((Get-Variable | Where-Object Name -EQ 'y').Value)",
     "$x = 'a'; $ExecutionContext.InvokeCommand.InvokeScript('Write-Host $x'); $x = 'c'":
         "Write-Host 'a'",
-    "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x":
-        "$ExecutionContext.SessionState.PSVariable.Set('x', 'b')\nWrite-Output 'a'",
     '$x = \'a\'; $c = \'$script:x = "b"\'; function f { iex $c }; f; Write-Host $x':
-        '$c = \'$script:x = "b"\'\nfunction f {\n  Invoke-Expression $c\n}\nf\nWrite-Host \'a\'',
+        "$x = 'a'\n"
+        '$c = \'$script:x = "b"\'\n'
+        'function f {\n'
+        '  Invoke-Expression $c\n'
+        '}\n'
+        'f\n'
+        "Write-Host 'a'",
     "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'":
         "$x = 'a'\n$c = 'Write-Host $x'\nfunction f {\n  Invoke-Expression $c\n}\nf\n$x = 'c'",
     "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); Write-Output $x":
-        "$c = @('$script:x = 5')[(Get-Random -Maximum 1)]\n& ([scriptblock]::Create($c))\nWrite-Output 'a'",
+        "$x = 'a'\n"
+        "$c = @('$script:x = 5')[(Get-Random -Maximum 1)]\n"
+        '& ([scriptblock]::Create($c))\n'
+        "Write-Output 'a'",
     "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; iex $c; "
     "$x = 'b'; Write-Host 'hi'; Write-Output $x":
-        "$c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]\nInvoke-Expression $c\nWrite-Host 'hi'\nWrite-Output 'b'",
+        "$x = 'a'\n"
+        "$c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]\n"
+        'Invoke-Expression $c\n'
+        "$x = 'b'\n"
+        "Write-Host 'hi'\n"
+        "Write-Output 'b'",
     "$x = 'a'; $false -and ($x = 'b'); Write-Host $x":
         "$False -and ($x = 'b')\nWrite-Host 'b'",
     "$x = 'a'; $true -or ($x = 'b'); Write-Host $x":
@@ -1247,14 +1258,13 @@ FOLDS: dict[str, str] = {
         '1 | ForEach-Object {\n  Write-Output $local:x\n}',
     "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'":
         "1, 2 | ForEach-Object {\n  Write-Host 'a'\n}",
-    "$x = 'a'; Get-Variable x; $x = 'c'":
-        "Get-Variable x\n$x = 'c'",
     "$x = 'a'; Invoke-Command -ScriptBlock { Write-Host $x }; $x = 'c'":
         "Write-Host 'a'",
-    "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
-        'Write-Host (Get-Variable x* | ForEach-Object Value)',
-    "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')":
-        "Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')",
+    "$x = 'a'; Write-Host $x; $c = @('Write-Host $x')[(Get-Random -Maximum 1)]; iex $c":
+        "$x = 'a'\n"
+        "Write-Host 'a'\n"
+        "$c = @('Write-Host $x')[(Get-Random -Maximum 1)]\n"
+        'Invoke-Expression $c',
     "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
         "$x = 'a'\nfunction f {\n  Write-Host $script:x\n}\nf",
     "$x = 'a'; function f { Write-Host $x }; f; $x = 'c'":
@@ -1268,7 +1278,13 @@ FOLDS: dict[str, str] = {
     "$x = 'a'; function f { Write-Host (variable x -ValueOnly) }; f; $x = 'c'":
         "$x = 'a'\nfunction f {\n  Write-Host ($x)\n}\nf",
     "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; Write-Output $x":
-        "function f {\n  Invoke-Expression $c\n}\n$c = @('$script:x = 5')[(Get-Random -Maximum 1)]\nf\nWrite-Output 'a'",
+        "$x = 'a'\n"
+        'function f {\n'
+        '  Invoke-Expression $c\n'
+        '}\n'
+        "$c = @('$script:x = 5')[(Get-Random -Maximum 1)]\n"
+        'f\n'
+        "Write-Output 'a'",
     "$x = 'a'; if ($true) { trap { Write-Output $local:x; continue }; throw 'e' }":
         "if ($True) {\n  trap {\n    Write-Output $local:x\n    continue\n  }\n  throw 'e'\n}",
     "$x = 'hello'; $x":
@@ -1293,6 +1309,7 @@ FOLDS: dict[str, str] = {
         '$x = 7, 8, 9\n[Array]::Reverse($x)\nWrite-Output (9, 8, 7)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x':
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1300,6 +1317,7 @@ FOLDS: dict[str, str] = {
         '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null\n'
         'Write-Output (1, 2, 3)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; $s = [scriptblock]::Create($c); & $s; Write-Output $x":
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1309,6 +1327,7 @@ FOLDS: dict[str, str] = {
         'Write-Output (1, 2, 3)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x':
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1317,6 +1336,7 @@ FOLDS: dict[str, str] = {
         'Invoke-Command -ScriptBlock $s\n'
         'Write-Output (1, 2, 3)',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1332,6 +1352,7 @@ FOLDS: dict[str, str] = {
         '$h = @{\n  k = (1, 2, 3)\n}\nWrite-Output $h.k',
     "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
     "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x":
+        '$x = 1, 2, 3\n'
         '$h = @{\n'
         '  k = (1, 2, 3)\n'
         '}\n'
@@ -1385,7 +1406,14 @@ FOLDS: dict[str, str] = {
     '$x = 1, 2, 3; $y = $x -as [array]; $y[0] = 9; Write-Output $x':
         '$x = 1, 2, 3\n$y = $x -As [array]\n$y[0] = 9\nWrite-Output $x',
     "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
-        "$y = (1, 2, 3)\n$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]\nfunction f {\n  Invoke-Expression $c\n}\nf\nWrite-Output (1, 2, 3)",
+        '$x = 1, 2, 3\n'
+        '$y = (1, 2, 3)\n'
+        "$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]\n"
+        'function f {\n'
+        '  Invoke-Expression $c\n'
+        '}\n'
+        'f\n'
+        'Write-Output (1, 2, 3)',
     '$x = 1, 2, 3; $y = $x; $x = 9, 9, 9; Write-Output $y':
         'Write-Output (1, 2, 3)',
     '$x = 1, 2, 3; $y = $x; $x | Set-Variable z; $y[0] = 9; Write-Output $z':
@@ -1397,6 +1425,7 @@ FOLDS: dict[str, str] = {
     '$x = 1, 2, 3; $y = $x; Write-Output $y[0]; [Array]::Reverse($x); Write-Output $y[0]':
         '$x = 1, 2, 3\n$y = $x\nWrite-Output $y[0]\n[Array]::Reverse($x)\nWrite-Output 3',
     "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x":
+        '$x = 1, 2, 3\n'
         '$y = & {\n'
         '  ,(1, 2, 3)\n'
         '}\n'
@@ -1716,8 +1745,6 @@ FOLDS: dict[str, str] = {
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
     "function f { try { 'tail' } catch {} }; Write-Host (f)":
         "Write-Host 'tail'",
-    "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b":
-        "function g {\n  (Get-Variable b -Scope 1).Value = 'b'\n}\n$b = 'a'\ng\nWrite-Output 'a'",
     'function g { ,(1, 2) }; $t = @(g); Write-Output $t.Count; Write-Output (,$t[0])':
         'Write-Output 2\nWrite-Output (,1)',
     "function q { $Null = 1 }; ${function:q} = { Write-Host 'P' }; q":

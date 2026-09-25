@@ -618,6 +618,13 @@ BEHAVIOURS: tuple[str, ...] = (
     '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
     '$x = 1, 2, 3; $b, $c = $x, 5; $b[0] = 9; Write-Output $x',
     "$h = @{}; $a, $h['k'] = 1, 2; Write-Output $a; Write-Output $h['k']",
+    '$v = New-Variable q 1 -PassThru; $v.Value = 5; Write-Output $q',
+    "$b = 'a'; (Get-Variable b).Value = 'b'; Write-Output $b",
+    "$b = 'a'; $v = Get-Variable b -ValueOnly; $v = 'x'; Write-Output $b",
+    "$x = 'a'; Remove-Variable x*; Write-Output $x",
+    "$x = 'a'; Write-Host $x; $c = @('Write-Host $x')[(Get-Random -Maximum 1)]; iex $c",
+    "$x = $($y = 'a'; 'v'); Write-Output $x; "
+    "Write-Output ((Get-Variable | Where-Object Name -eq 'y').Value)",
     '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
     '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
     'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f',

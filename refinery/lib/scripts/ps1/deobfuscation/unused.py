@@ -22,7 +22,6 @@ from refinery.lib.scripts.ps1.analysis.effects import (
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import Binding, Ps1SemanticModel, Scope
-from refinery.lib.scripts.ps1.analysis.world import runs_code_supplied_as_data
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
@@ -111,9 +110,10 @@ class Ps1UnusedVariableRemoval(Transformer):
     can prove it dead, because every child process reads the environment, so
     `refinery.lib.scripts.ps1.options.env_stores_are_preserved` is what keeps it.
 
-    A script that runs code supplied as data — an `Invoke-Expression`, a dispatched scriptblock, a
-    dot-sourced file — reads names this walk cannot see, so no script-scope store is provably dead
-    and the pass makes no removals. The trusting model —
+    A store of a name the script may read where no occurrence of it stands is never dead — see
+    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen`. A script that
+    runs code supplied as data — an `Invoke-Expression`, a dispatched scriptblock, a dot-sourced
+    file — may read every name, so the pass makes no removals there. The trusting model —
     `refinery.lib.scripts.ps1.options.eval_is_trusted` — closes that world and restores full removal.
     """
 
@@ -132,13 +132,16 @@ class Ps1UnusedVariableRemoval(Transformer):
         written.
         """
         cache = model_cache(self, node)
-        if runs_code_supplied_as_data(cache.world_measurement):
+        unseen = cache.names_may_be_read_unseen
+        if unseen.every_name:
             return None
         model = cache.model
         world = cache.world_reach
         candidates: dict[Binding, list[Node]] = {}
         for binding in model.script_scope.bindings.values():
             if binding.read_through_using or binding.name in _PS1_SKIP_VARIABLES:
+                continue
+            if binding.name in unseen:
                 continue
             mutations = self._removable_mutations(binding)
             if mutations:
@@ -701,15 +704,18 @@ class Ps1DeadStoreElimination(Transformer):
     come from the shared `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel`, so a store read
     only through a nested scriptblock is correctly seen as live rather than skipped.
 
-    A leak that runs code supplied as data can read a store between it and the overwrite this pass
-    treats as a kill, so when the script runs such code the pass eliminates nothing. The trusting
+    A name the script may read where no occurrence of it stands can be read between a store and
+    the overwrite this pass treats as a kill — see
+    `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache.names_may_be_read_unseen` — so no store
+    of one is eliminated, and where code supplied as data runs that is every name. The trusting
     model — `refinery.lib.scripts.ps1.options.eval_is_trusted` — closes that world and restores
     full elimination.
     """
 
     def visit(self, node: Node):
         cache = model_cache(self, node)
-        if runs_code_supplied_as_data(cache.world_measurement):
+        unseen = cache.names_may_be_read_unseen
+        if unseen.every_name:
             self.generic_visit(node)
             return None
         model = cache.model
@@ -737,6 +743,8 @@ class Ps1DeadStoreElimination(Transformer):
                 pending.pop(var, None)
                 has_read.add(var)
             for var, store in writes:
+                if var in unseen:
+                    continue
                 if var in pending:
                     dead.extend(pending[var])
                 pending[var] = [store]

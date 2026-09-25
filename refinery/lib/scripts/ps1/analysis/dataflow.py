@@ -166,6 +166,12 @@ class Ps1FlowUnknown(enum.Flag):
     #: invisible: such a read resolves past it to an outer binding or to nothing — see
     #: `_hidden_from_a_reader`.
     HIDDEN_FROM_A_READER = enum.auto()
+    #: The variable of this name is handed out itself — `$v = Get-Variable b` — and a store into its
+    #: `Value` rebinds the name from wherever the variable has gone, at a time nothing here places.
+    #: Which scope's variable was handed out depends on what stood around the command when it ran,
+    #: so every binding of the name is in doubt. See
+    #: `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.variables_handed_out`.
+    WRITTEN_THROUGH_ITS_VARIABLE = enum.auto()
 
 
 class Ps1ObservedWrite(enum.Enum):
@@ -808,6 +814,8 @@ class Ps1VariableFlow:
             found |= Ps1FlowUnknown.SHADOWS_A_WIDER_SCOPE
         if self._hidden_from_a_reader(binding):
             found |= Ps1FlowUnknown.HIDDEN_FROM_A_READER
+        if binding.name in self.semantic.variables_handed_out:
+            found |= Ps1FlowUnknown.WRITTEN_THROUGH_ITS_VARIABLE
         graphs: set[int] = set()
         for write in binding.writes:
             placed = self.flow.locate(write.node)

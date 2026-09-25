@@ -9,6 +9,7 @@ from refinery.lib.scripts.ps1.analysis import dataflow
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
 from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
 from refinery.lib.scripts.ps1.model import Ps1IfStatement, Ps1Variable
+from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -17,6 +18,38 @@ class TestPs1ModelCache(TestBase):
     @staticmethod
     def _script(source: str):
         return Ps1Parser(source).parse()
+
+    def test_code_supplied_as_data_may_read_every_name(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: a payload `Invoke-Expression` runs reads `$x`.
+        """
+        unseen = Ps1ModelCache(self._script("$x = 'a'; iex $c")).names_may_be_read_unseen
+        self.assertIn('x', unseen)
+        self.assertIn('y', unseen)
+
+    def test_trusting_code_supplied_as_data_lifts_what_it_may_read(self):
+        cache = Ps1ModelCache(
+            self._script("$x = 'a'; iex $c"), Ps1DeobfuscationOptions(trust_eval=True))
+        self.assertNotIn('x', cache.names_may_be_read_unseen)
+
+    def test_a_listing_of_every_variable_reads_every_name_whatever_the_options(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: a store into a variable picked out of
+        `Get-Variable` by its name reaches it. The read is written in plain sight, so trusting code
+        supplied as data does not lift it.
+        """
+        cache = Ps1ModelCache(
+            self._script('$v = Get-Variable'), Ps1DeobfuscationOptions(trust_eval=True))
+        self.assertIn('x', cache.names_may_be_read_unseen)
+
+    def test_a_variable_handed_out_may_be_read_through_it(self):
+        unseen = Ps1ModelCache(self._script('$v = Get-Variable b')).names_may_be_read_unseen
+        self.assertIn('b', unseen)
+        self.assertNotIn('x', unseen)
+
+    def test_a_script_that_reads_every_name_where_it_spells_it_reads_none_unseen(self):
+        unseen = Ps1ModelCache(self._script("$x = 'a'; Write-Host $x")).names_may_be_read_unseen
+        self.assertNotIn('x', unseen)
 
     def test_model_is_memoized_while_the_tree_is_unchanged(self):
         cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))

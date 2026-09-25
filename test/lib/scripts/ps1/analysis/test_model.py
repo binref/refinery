@@ -563,6 +563,39 @@ class TestPs1NamedReferenceAttribution(TestBase):
         model = self._model("function f { Set-Variable x 'b' -Scope 1 }")
         self.assertTrue(model.script_scope.writes_unreadable_names)
 
+    def test_a_named_session_state_call_is_filed_on_the_binding_it_names(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: `GetValue('x')` writes what `$x` holds and
+        `Set('x', 'b')` leaves `$x` holding `b`.
+        """
+        model = self._model(
+            "$x = 'a'\n"
+            "Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')\n"
+            "$ExecutionContext.SessionState.PSVariable.Set('x', 'b')")
+        binding = model.script_scope.bindings['x']
+        self.assertEqual(len(binding.reads), 1)
+        self.assertEqual(len(binding.writes), 2)
+
+    def test_a_listing_of_every_variable_reads_names_nobody_can_read(self):
+        for source in ('$v = Get-Variable', "$p = $ExecutionContext.SessionState.PSVariable"):
+            with self.subTest(source):
+                self.assertTrue(self._model(source).reads_unreadable_names)
+        self.assertFalse(
+            self._model("$n = (Get-Variable '*mdr*').Name").reads_unreadable_names)
+
+    def test_a_variable_handed_out_is_recorded_by_its_name(self):
+        """
+        Measured on 5.1 in `corpus.BEHAVIOURS`: a store into the `Value` of the variable
+        `Get-Variable b` hands out rebinds `$b`.
+        """
+        self.assertEqual(
+            self._model("$b = 'a'\n$v = Get-Variable b").variables_handed_out, {'b'})
+        self.assertEqual(
+            self._model("$b = 'a'\n$v = (Get-Variable b).Value").variables_handed_out, set())
+
+    def test_a_variable_of_any_name_handed_out_puts_the_script_in_doubt(self):
+        self.assertTrue(self._model('$v = Get-Variable').script_scope.writes_unreadable_names)
+
 
 class TestPs1AConversionBetweenTwoNamesIsAnAliasThisCannotBeSureOf(TestBase):
     """

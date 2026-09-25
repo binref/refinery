@@ -1265,7 +1265,6 @@ class TestPs1Corruptions(_Ps1Ledger):
             "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'")
         self._assertPrints(tree, 'x', 'a', 'c')
 
-    @unittest.expectedFailure
     def test_get_variable_wildcard_reads_without_naming_the_variable(self):
         """
         `$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'` prints `a` under
@@ -1275,7 +1274,6 @@ class TestPs1Corruptions(_Ps1Ledger):
             "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'")
         self._assertPrints(tree, 'x', 'a', 'c')
 
-    @unittest.expectedFailure
     def test_get_variable_call_is_a_read_of_the_preceding_store(self):
         """
         In `$x = 'a'; Get-Variable x; $x = 'c'` the middle statement emits the variable, so 5.1
@@ -2512,12 +2510,8 @@ class TestPs1AVariableTheSessionStateWritesByNameIsWritten(_Ps1Ledger):
     """
     `$ExecutionContext.SessionState.PSVariable.Set('x', 'b')` assigns `$x` by name. Measured on 5.1
     in `corpus.BEHAVIOURS`, the script writes `b`.
-
-    The call is read as a method of the automatic variable it is called on and as nothing else, so
-    the read below it is folded to the store before it.
     """
 
-    @unittest.expectedFailure
     def test_a_read_after_the_session_state_wrote_the_name_is_not_the_store_before_it(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; $ExecutionContext.SessionState.PSVariable.Set('x', 'b'); Write-Output $x")
@@ -2565,16 +2559,13 @@ class TestPs1ABodyWritingAByteArrayWritesBytes(_Ps1Ledger):
 
 class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
     """
-    `Get-Variable` without `-ValueOnly`, `Get-ChildItem variable:` and the session state's
-    `PSVariable.Get` hand out the variable itself, and a store into its `Value` rebinds the name
-    wherever the variable has been handed. Measured on 5.1 in `corpus.BEHAVIOURS`, each script
-    writes `b`.
-
-    Each command is read as a plain read of the name, or not as naming it at all, so the read below
-    the store is folded to the value before it.
+    `Get-Variable` without `-ValueOnly`, `Get-ChildItem variable:`, `New-Variable -PassThru` and the
+    session state's `PSVariable.Get` hand out the variable itself, and a store into its `Value`
+    rebinds the name wherever the variable has been handed; `-ValueOnly` hands out the value alone.
+    Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes the value stored through the
+    variable, and the one given `-ValueOnly` writes `a`.
     """
 
-    @unittest.expectedFailure
     def test_a_store_through_the_variable_get_variable_hands_out(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b",
@@ -2583,7 +2574,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_call_of_the_setter_of_the_variable_get_variable_hands_out(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b",
@@ -2592,7 +2582,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_store_through_the_variable_the_session_state_hands_out(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; "
@@ -2602,7 +2591,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_store_a_called_function_makes_through_its_callers_variable(self):
         self._assertTheStoreReachesTheName(
             "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b",
@@ -2611,7 +2599,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_store_through_the_variable_get_child_item_hands_out(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b",
@@ -2620,7 +2607,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_store_by_the_block_the_variable_is_piped_into(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b",
@@ -2629,7 +2615,6 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_store_through_a_variable_picked_out_of_every_variable(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; "
@@ -2639,25 +2624,79 @@ class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
             [['a']],
         )
 
+    def test_a_store_through_the_variable_new_variable_passes_through(self):
+        self._assertTheStoreReachesTheName(
+            '$v = New-Variable q 1 -PassThru; $v.Value = 5; Write-Output $q',
+            'q',
+            [[5]],
+            [[1]],
+        )
+
+    def test_a_store_through_the_variable_where_it_is_fetched(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; (Get-Variable b).Value = 'b'; Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    def test_a_value_handed_out_alone_is_not_the_variable(self):
+        tree = self._deobfuscated_tree(
+            "$b = 'a'; $v = Get-Variable b -ValueOnly; $v = 'x'; Write-Output $b")
+        self._assertWrites(tree, [['a']], [['x']], _stores_value(tree, 'b', 'a'))
+
+
+class TestPs1APatternAddressesEveryVariableItMatches(_Ps1Ledger):
+    """
+    `Remove-Variable x*` removes every variable whose name the pattern matches, `$x` among them.
+    Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes `$null`.
+    """
+
+    def test_a_variable_a_removal_pattern_matches_is_removed(self):
+        tree = self._deobfuscated_tree("$x = 'a'; Remove-Variable x*; Write-Output $x")
+        self._assertWrites(tree, [[None]], [['a']], bool(_occurrences(tree, 'x')))
+
+
+class TestPs1AStoreAListingOfEveryVariableReadsIsKept(_Ps1Ledger):
+    """
+    `Get-Variable` with no name lists every variable of the scopes it sees, and a variable picked
+    out of the listing by its name holds what was stored under that name. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, the script writes `v` and then `a`.
+    """
+
+    def test_a_store_a_folded_subexpression_makes_survives_a_listing_that_reads_it(self):
+        tree = self._deobfuscated_tree(
+            "$x = $($y = 'a'; 'v'); Write-Output $x; "
+            "Write-Output ((Get-Variable | Where-Object Name -eq 'y').Value)")
+        self.assertTrue(_stores_value(tree, 'y', 'a'), 'the store the listing reads was removed')
+
+
+class TestPs1AStoreCodeNobodyCanReadMayReadIsKept(_Ps1Ledger):
+    """
+    Code nobody can read may read any name, so a store it may read is not dead because every read
+    the source spells has been replaced. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes
+    `a` twice: the payload is `Write-Host $x`, picked by an index no reading of the source settles.
+    """
+
+    def test_a_store_the_payload_reads_survives_the_reads_the_source_spells(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; Write-Host $x; $c = @('Write-Host $x')[(Get-Random -Maximum 1)]; iex $c")
+        self.assertTrue(_stores_value(tree, 'x', 'a'), 'the store the payload reads was removed')
+
 
 class TestPs1TheSessionStateReadsWritesAndRemovesAVariableByName(_Ps1Ledger):
     """
     The session state's `PSVariable` reads a variable by name with `GetValue`, assigns one with
     `Set` from wherever it has been kept, and removes one with `Remove`. Measured on 5.1 in
     `corpus.BEHAVIOURS`, the scripts write `a`, `b` and `$null`.
-
-    None of the three calls is read as naming the variable, so the store the first one reads is
-    removed and the reads below the other two are folded to the value before them.
     """
 
-    @unittest.expectedFailure
     def test_the_store_a_read_by_name_observes_is_kept(self):
         tree = self._deobfuscated_tree(
             "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')")
         self.assertTrue(
             _stores_value(tree, 'x', 'a'), 'the store the session state reads by name was removed')
 
-    @unittest.expectedFailure
     def test_a_store_by_name_through_the_kept_session_state_is_seen(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); "
@@ -2667,7 +2706,6 @@ class TestPs1TheSessionStateReadsWritesAndRemovesAVariableByName(_Ps1Ledger):
             [['a']],
         )
 
-    @unittest.expectedFailure
     def test_a_removal_by_name_is_seen(self):
         self._assertTheStoreReachesTheName(
             "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b",
