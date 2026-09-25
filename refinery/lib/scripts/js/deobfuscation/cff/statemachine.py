@@ -7,11 +7,12 @@ discriminant. Each case updates the state via relative `+=` assignments.
 """
 from __future__ import annotations
 
+import enum
 import math
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator, NamedTuple
+from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     Expression,
@@ -27,6 +28,7 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_var_home,
     is_member_write_target,
+    is_simple_assignment_target,
     is_use_position,
     lexically_declared_names,
     references_own_arguments,
@@ -41,7 +43,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_valid_identifier,
     make_numeric_literal,
     make_undefined_expression,
-    member_key,
+    property_absent_from_written_chain,
     property_key,
     sanitize_inlined_body,
     substitute_use_position,
@@ -111,10 +113,24 @@ from refinery.lib.scripts.js.strict import (
     strict_mode_at,
 )
 
+
+class _Undefined(enum.Enum):
+    """
+    The value `undefined`, which a case test reads from a routing slot no store has filled yet.
+    """
+    VALUE = 'undefined'
+
+
+_UNDEFINED = _Undefined.VALUE
+
+
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 
-    _StateEnv = dict[str, int | float]
+    _StateEnv = dict[str, float]
+    _SlotPath = tuple[str, ...]
+    _Value = float | bool | _Undefined
+    _Slots = dict[_SlotPath, _Value]
 
 _MAX_STEPS = 2000
 
@@ -179,11 +195,12 @@ if TYPE_CHECKING:
 @dataclass
 class _SMBlock:
     """
-    A single state in the machine: payload statements plus a transition.
+    A single state in the machine: payload statements plus a transition, and the constants the
+    payload stores in routing slots before anything else runs (`_routing_stores`).
     """
-    state_id: int | float
     payload: list[Statement]
     transition: _SMTransition
+    routing_stores: list[tuple[_SlotPath, _Value]] = field(default_factory=list)
 
 
 @dataclass
@@ -219,39 +236,75 @@ class _GeneratorCFFMatch:
         return self.with_redirect_var is not None and len(self.scope_default_props) == 1
 
 
-def _eval_expr(node: Expression, env: _StateEnv) -> float | None:
+@dataclass
+class _Env:
     """
-    Recursively evaluate an arithmetic expression against a variable environment. Returns `None`
-    when the expression cannot be resolved.
+    What a run of the machine reads when it picks the next case: the value of every state variable,
+    and that of each routing slot (`_routing_paths`) whose value is known.
+    """
+    states: _StateEnv
+    slots: _Slots = field(default_factory=dict)
+
+
+def _to_number(value: _Value) -> float:
+    if isinstance(value, _Undefined):
+        return math.nan
+    return float(value)
+
+
+def _is_truthy(value: _Value) -> bool:
+    if isinstance(value, _Undefined):
+        return False
+    if isinstance(value, bool):
+        return value
+    return not (value == 0 or math.isnan(value))
+
+
+def _strictly_equal(a: _Value, b: _Value) -> bool:
+    """
+    JavaScript's `===` on the values a case test can make: a boolean is never a number.
+    """
+    if isinstance(a, (bool, _Undefined)) or isinstance(b, (bool, _Undefined)):
+        return a is b
+    return a == b
+
+
+def _loosely_equal(a: _Value, b: _Value) -> bool:
+    """
+    JavaScript's `==` on the values a case test can make: `undefined` equals only itself here, and a
+    boolean compares as the number it converts to.
+    """
+    if isinstance(a, _Undefined) or isinstance(b, _Undefined):
+        return a is b
+    return _to_number(a) == _to_number(b)
+
+
+def _eval_expr(node: Expression, env: _Env) -> _Value | None:
+    """
+    Evaluate an expression of numbers, state variables and routing slots the way JavaScript does,
+    or give `None` where it reads anything else or applies an operator this does not know. A
+    comparison makes a boolean, which stays one, and arithmetic on `undefined` makes `NaN`.
     """
     if isinstance(node, JsNumericLiteral):
         return node.value
     if isinstance(node, JsIdentifier):
-        return env.get(node.name)
+        return env.states.get(node.name)
     if isinstance(node, JsMemberExpression):
-        key = member_key(node)
-        if key is not None:
-            return env.get(key)
-        return None
+        path = _slot_path(node)
+        return None if path is None else env.slots.get(path)
     if isinstance(node, JsUnaryExpression) and node.prefix and node.operand is not None:
-        if node.operator == '-':
-            inner = _eval_expr(node.operand, env)
-            return -inner if inner is not None else None
-        if node.operator == '+':
-            return _eval_expr(node.operand, env)
+        if node.operator in ('-', '+'):
+            operand = _eval_expr(node.operand, env)
+            if operand is None:
+                return None
+            number = _to_number(operand)
+            return -number if node.operator == '-' else number
     if isinstance(node, JsLogicalExpression) and node.left is not None and node.right is not None:
-        if node.operator == '&&':
+        if node.operator in ('&&', '||'):
             lhs = _eval_expr(node.left, env)
             if lhs is None:
                 return None
-            if not lhs:
-                return lhs
-            return _eval_expr(node.right, env)
-        if node.operator == '||':
-            lhs = _eval_expr(node.left, env)
-            if lhs is None:
-                return None
-            if lhs:
+            if _is_truthy(lhs) == (node.operator == '||'):
                 return lhs
             return _eval_expr(node.right, env)
     if isinstance(node, JsBinaryExpression) and node.left is not None and node.right is not None:
@@ -259,14 +312,41 @@ def _eval_expr(node: Expression, env: _StateEnv) -> float | None:
         rhs = _eval_expr(node.right, env)
         if lhs is None or rhs is None:
             return None
-        result = eval_binary_op(node.operator, lhs, rhs)
-        if result is None:
-            return None
-        state = float(result)
-        if not math.isfinite(state):
-            return None
-        return state
+        if node.operator in ('===', '!=='):
+            return _strictly_equal(lhs, rhs) == (node.operator == '===')
+        if node.operator in ('==', '!='):
+            return _loosely_equal(lhs, rhs) == (node.operator == '==')
+        return eval_binary_op(node.operator, _to_number(lhs), _to_number(rhs))
     return None
+
+
+def _eval_number(node: Expression) -> float | None:
+    """
+    The finite number *node* spells without reading anything, or `None`.
+    """
+    value = _eval_expr(node, _Env({}))
+    if isinstance(value, (bool, _Undefined)) or value is None or not math.isfinite(value):
+        return None
+    return value
+
+
+def _slot_path(node: Expression) -> _SlotPath | None:
+    """
+    The names along a chain of property accesses under static keys, starting with the variable it
+    starts from: `scope.M["p"]` gives `('scope', 'M', 'p')`. Any other expression gives `None`.
+    """
+    parts: list[str] = []
+    cursor: Expression | None = node
+    while isinstance(cursor, JsMemberExpression):
+        if (key := access_key(cursor)) is None:
+            return None
+        parts.append(key)
+        cursor = cursor.object
+    if not parts or not isinstance(cursor, JsIdentifier):
+        return None
+    parts.append(cursor.name)
+    parts.reverse()
+    return tuple(parts)
 
 
 def _is_discriminant_sum(node: Expression, var_names: list[str]) -> bool:
@@ -638,9 +718,9 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         return None
     end_state: int | float | None = None
     if _is_discriminant_sum(lhs, state_var_names):
-        end_state = _eval_expr(rhs, {})
+        end_state = _eval_number(rhs)
     elif _is_discriminant_sum(rhs, state_var_names):
-        end_state = _eval_expr(lhs, {})
+        end_state = _eval_number(lhs)
     if end_state is None:
         return None
     inner: Statement | None = while_stmt.body
@@ -850,7 +930,7 @@ def _find_generator_call_site(
     call_node, result_var = call_expr
     initial_state: list[int | float] = []
     for arg in call_node.arguments:
-        val = _eval_expr(arg, {})
+        val = _eval_number(arg)
         if val is None:
             return None
         initial_state.append(val)
@@ -985,7 +1065,7 @@ def _detect_wrapper_function(
         return None
     initial_state: list[int | float] = []
     for arg in args[:num_state_vars]:
-        val = _eval_expr(arg, {})
+        val = _eval_number(arg)
         if val is None:
             return None
         initial_state.append(val)
@@ -1007,72 +1087,197 @@ def _detect_wrapper_function(
 
 
 @dataclass
+class _SMCase:
+    """
+    A label of the switch: its test, or `None` for `default`, and the block a match runs, which is
+    that of the first body at or behind the label. The block is `None` where that body is not one
+    the recovery reads, or where no body follows and a match would leave the switch unchanged.
+    """
+    test: Expression | None
+    block: _SMBlock | None
+
+
+@dataclass
 class _StateMachine:
     """
-    Complete parsed state machine with both statically-resolved and predicate-gated cases.
+    The labels of the switch in source order, and the routing slots their tests read.
     """
-    blocks: dict[int | float, _SMBlock]
-    predicate_cases: list[tuple[Expression, _SMBlock]]
-    default_block: _SMBlock | None = None
+    cases: list[_SMCase]
+    routing: frozenset[_SlotPath]
 
 
-def _extract_state_blocks(
-    match: _GeneratorCFFMatch,
-) -> _StateMachine | None:
+def _extract_state_blocks(match: _GeneratorCFFMatch) -> _StateMachine | None:
     """
-    Parse the switch cases into a state machine. Cases with statically resolvable tests go into
-    `blocks`; those with predicate tests (referencing state vars) go into `predicate_cases` for
-    runtime resolution. A `default:` case becomes the fallback block.
+    Read the labels of the switch in source order, each with the block it runs (`_read_block`).
     """
-    var_names = match.state_var_names
-    label = match.switch_label
-    end_state = match.end_state
-    blocks: dict[int | float, _SMBlock] = {}
-    predicate_cases: list[tuple[Expression, _SMBlock]] = []
-    default_block: _SMBlock | None = None
-    pending_tests: list[JsSwitchCase] = []
-    cases = match.switch_stmt.cases
-    last_body = max(
-        (i for i, case in enumerate(cases) if isinstance(case, JsSwitchCase) and case.body),
-        default=-1,
-    )
-    for index, case in enumerate(cases):
+    cases: list[JsSwitchCase] = []
+    for case in match.switch_stmt.cases:
         if not isinstance(case, JsSwitchCase):
             return None
+        cases.append(case)
+    routing = _routing_paths(cases)
+    last_body = max((i for i, case in enumerate(cases) if case.body), default=-1)
+    labels: list[_SMCase] = []
+    pending: list[Expression | None] = []
+    for index, case in enumerate(cases):
+        pending.append(case.test)
         if not case.body:
-            pending_tests.append(case)
             continue
-        all_cases = list(pending_tests) + [case]
-        pending_tests.clear()
-        stmts = list(case.body)
-        parsed = _parse_case_body(stmts, var_names, label, index == last_body)
-        if parsed is None:
+        block = _read_block(case.body, match, routing, index == last_body)
+        labels.extend(_SMCase(test, block) for test in pending)
+        pending.clear()
+    labels.extend(_SMCase(test, None) for test in pending)
+    return _StateMachine(labels, routing)
+
+
+def _routing_paths(cases: list[JsSwitchCase]) -> frozenset[_SlotPath]:
+    """
+    The routing slots of a switch: every property a case test reads along a chain of static keys
+    (`_slot_path`).
+    """
+    paths: set[_SlotPath] = set()
+    for case in cases:
+        if case.test is None:
             continue
-        payload, transition = parsed
-        has_default = any(c.test is None for c in all_cases)
-        resolved = False
-        block_obj = _SMBlock(state_id=0, payload=payload, transition=transition)
-        for c in all_cases:
-            if c.test is None:
+        for node in case.test.walk():
+            if not isinstance(node, JsMemberExpression):
                 continue
-            val = _eval_expr(c.test, {})
-            if val is not None:
-                if val != end_state and val not in blocks:
-                    if block_obj.state_id == 0:
-                        block_obj.state_id = val
-                    blocks[val] = block_obj
-                resolved = True
-            else:
-                predicate_cases.append((c.test, block_obj))
-        if has_default:
-            default_block = block_obj
-        if not resolved and not has_default and not any(
-            c.test is not None and _eval_expr(c.test, {}) is None for c in all_cases
-        ):
-            continue
-    if not blocks and not predicate_cases and default_block is None:
+            if isinstance(node.parent, JsMemberExpression) and node.parent.object is node:
+                continue
+            if (path := _slot_path(node)) is not None:
+                paths.add(path)
+    return frozenset(paths)
+
+
+def _read_block(
+    stmts: list[Statement],
+    match: _GeneratorCFFMatch,
+    routing: frozenset[_SlotPath],
+    last: bool,
+) -> _SMBlock | None:
+    """
+    The block a case body makes (`_parse_case_body`) with the stores it makes to routing slots
+    (`_routing_stores`), or `None` where the recovery cannot read either.
+    """
+    parsed = _parse_case_body(stmts, match.state_var_names, match.switch_label, last)
+    if parsed is None:
         return None
-    return _StateMachine(blocks=blocks, predicate_cases=predicate_cases, default_block=default_block)
+    stores = _routing_stores(stmts, match.scope_param_name, routing)
+    if stores is None:
+        return None
+    payload, transition = parsed
+    return _SMBlock(payload, transition, stores)
+
+
+def _data_stores(
+    stmt: Statement,
+    scope_param_name: str | None,
+) -> list[tuple[Expression, Expression]] | None:
+    """
+    The pairs of target and value where *stmt* does nothing but store values that hold data
+    (`_is_inert`) under static keys of the scope object, as in
+
+        scope.M = {}, [scope.M.p, scope.M.q] = [85, -3];
+
+    Any other statement gives `None`. The destructuring runs the array iterator, which is trusted
+    the way `_unpack_argument_stores` trusts it.
+    """
+    if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
+        return None
+    expr = stmt.expression
+    pairs: list[tuple[Expression, Expression]] = []
+    for part in expr.expressions if isinstance(expr, JsSequenceExpression) else [expr]:
+        if (
+            not isinstance(part, JsAssignmentExpression)
+            or part.operator != '='
+            or part.left is None
+            or part.right is None
+        ):
+            return None
+        if isinstance(part.left, JsArrayPattern):
+            if not isinstance(part.right, JsArrayExpression):
+                return None
+            targets = list(part.left.elements)
+            values = list(part.right.elements)
+            if len(targets) != len(values):
+                return None
+        else:
+            targets = [part.left]
+            values = [part.right]
+        for target, value in zip(targets, values):
+            if (
+                target is None
+                or value is None
+                or not isinstance(target, JsMemberExpression)
+                or (path := _slot_path(target)) is None
+                or path[0] != scope_param_name
+                or not _is_inert(value)
+            ):
+                return None
+            pairs.append((target, value))
+    return pairs
+
+
+def _routing_stores(
+    stmts: list[Statement],
+    scope_param_name: str | None,
+    routing: frozenset[_SlotPath],
+) -> list[tuple[_SlotPath, _Value]] | None:
+    """
+    The constants a case body stores in routing slots, in the order it stores them, or `None`
+    where it stores them in a way the obfuscator does not. The obfuscator puts one store of all
+    routing slots, `[scope.M.p, scope.M.q] = [85, -3]`, in front of the block the machine starts
+    in, so every store to a routing slot has to stand among the statements that open the body and
+    do nothing but store data (`_data_stores`), and has to store a number. Any other write of a
+    routing slot gives `None`, and so does a write of any name a routing slot ends in, which the
+    `with` statement may resolve to the slot.
+    """
+    if not routing:
+        return []
+    stores: list[tuple[_SlotPath, _Value]] = []
+    leading = 0
+    for stmt in stmts:
+        if (pairs := _data_stores(stmt, scope_param_name)) is None:
+            break
+        leading += 1
+        for target, value in pairs:
+            if (path := _slot_path(target)) not in routing:
+                continue
+            if (number := _eval_number(value)) is None:
+                return None
+            stores.append((path, number))
+    if _writes_a_routing_slot(stmts[leading:], routing):
+        return None
+    return stores
+
+
+def _writes_a_routing_slot(stmts: list[Statement], routing: frozenset[_SlotPath]) -> bool:
+    """
+    Whether *stmts* write a routing slot, a property under a key a routing slot ends in, or a
+    variable of that name, or declare one.
+    """
+    names = {path[-1] for path in routing}
+    for stmt in stmts:
+        for node in stmt.walk():
+            if isinstance(node, JsMemberExpression):
+                if is_member_write_target(node) and (
+                    _slot_path(node) in routing or access_key(node) in names
+                ):
+                    return True
+            elif isinstance(node, JsVariableDeclarator):
+                declared: set[str] = set()
+                _collect_binding_names(node.id, declared)
+                if not names.isdisjoint(declared):
+                    return True
+            elif isinstance(node, JsIdentifier) and node.name in names and is_use_position(node):
+                if is_member_write_target(node):
+                    return True
+                if (
+                    isinstance(parent := node.parent, (JsFunctionDeclaration, JsClassDeclaration))
+                    and parent.id is node
+                ):
+                    return True
+    return False
 
 
 def _parse_case_body(
@@ -1213,22 +1418,24 @@ def _writes_a_state_variable(stmts: list[Statement], var_names: list[str]) -> bo
 
 def _apply_raw_transition(
     assignments: list[_SMRawAssignment],
-    current: _StateEnv,
-) -> _StateEnv | None:
+    current: _Env,
+) -> _Env | None:
     """
-    Evaluate raw assignments against the current state to produce the new state.
-    Left-to-right sequential semantics: each assignment sees the results of prior ones.
+    Evaluate the assignments of a transition in order, each seeing the results of those before it,
+    and give what the machine reads after them, or `None` where a state variable would not hold a
+    finite number.
     """
-    env: _StateEnv = dict(current)
+    states = dict(current.states)
     for assign in assignments:
-        val = _eval_expr(assign.rhs, env)
-        if val is None:
+        value = _eval_expr(assign.rhs, _Env(states, current.slots))
+        if value is None:
             return None
         if assign.operator == '+=':
-            env[assign.name] = env.get(assign.name, 0) + val
-        else:
-            env[assign.name] = val
-    return env
+            value = eval_binary_op('+', states[assign.name], _to_number(value))
+        if isinstance(value, (bool, _Undefined)) or value is None or not math.isfinite(value):
+            return None
+        states[assign.name] = value
+    return _Env(states, current.slots)
 
 
 def _block_stmts(node: Statement) -> list[Statement]:
@@ -1274,25 +1481,75 @@ def _parse_conditional_transition(
 
 
 def _compute_discriminant(state: _StateEnv, var_names: list[str]) -> int | float:
-    return sum(state.get(n, 0) for n in var_names)
+    return sum(state[n] for n in var_names)
 
 
-def _lookup_block(machine: _StateMachine, disc: int | float, state: _StateEnv) -> _SMBlock | None:
+def _dispatch(machine: _StateMachine, env: _Env, var_names: list[str]) -> _SMBlock | None:
     """
-    Find the block matching the given discriminant. Tries static blocks first, then evaluates
-    predicate tests against the current state, then falls back to the default block.
+    The block the switch runs for what the machine reads: it compares the discriminant with the
+    case tests in source order and with `===`, and runs the `default` label where none matches.
+    Where a test ahead of the match cannot be evaluated, or the matched label runs no block the
+    recovery reads (`_SMCase`), this gives `None`.
     """
-    if disc in machine.blocks:
-        return machine.blocks[disc]
-    for test_expr, block in machine.predicate_cases:
-        val = _eval_expr(test_expr, state)
-        if val is not None and val == disc:
-            return block
-    return machine.default_block
+    discriminant = _compute_discriminant(env.states, var_names)
+    for case in machine.cases:
+        if case.test is None:
+            continue
+        if (value := _eval_expr(case.test, env)) is None:
+            return None
+        if _strictly_equal(value, discriminant):
+            return case.block
+    for case in machine.cases:
+        if case.test is None:
+            return case.block
+    return None
 
 
 def _apply_initial_state(var_names: list[str], values: list[int | float]) -> _StateEnv:
     return dict(zip(var_names, values))
+
+
+def _initial_slots(
+    routing: frozenset[_SlotPath],
+    scope_param_name: str | None,
+    created: dict[str, Expression],
+    handed_on: set[str],
+    creator: _Slots,
+    absent: Callable[[str], bool],
+) -> _Slots:
+    """
+    The values the routing slots hold when a run starts on a scope object that an object literal
+    makes: *created* maps the keys of its own properties to their values, and *handed_on* names the
+    keys under which it holds the objects of the run that calls it, whose routing slots hold
+    *creator*. A slot of a namespace the literal makes holds what that namespace's own literal gives
+    it (`_scope_object_properties`), and a slot neither literal holds reads `undefined` where
+    *absent* proves that no prototype supplies its key. Every other slot is left unknown.
+    """
+    slots: _Slots = {}
+    for path in routing:
+        value: _Value | None = None
+        if scope_param_name is None or path[0] != scope_param_name:
+            continue
+        if len(path) == 2 and (key := path[1]) not in handed_on:
+            if key in created:
+                value = _eval_number(created[key])
+            elif absent(key):
+                value = _UNDEFINED
+        elif len(path) == 3:
+            home, key = path[1:]
+            if home in handed_on:
+                value = creator.get(path)
+            elif (
+                isinstance(namespace := created.get(home), JsObjectExpression)
+                and (properties := _scope_object_properties(namespace)) is not None
+            ):
+                if key in properties:
+                    value = _eval_number(properties[key])
+                elif absent(key):
+                    value = _UNDEFINED
+        if value is not None:
+            slots[path] = value
+    return slots
 
 
 def _process_branch_prefix(
@@ -1357,40 +1614,59 @@ class _NaturalLoop:
 
 def _build_cfg(
     machine: _StateMachine,
-    initial_state: _StateEnv,
+    entry: _Env,
     var_names: list[str],
     end_state: int | float,
     match: _GeneratorCFFMatch,
-) -> tuple[_CFG, _StateEnv] | None:
+    main: bool,
+) -> tuple[_CFG, _Slots] | None:
     """
-    Build a control flow graph by BFS from the initial state. Nodes are keyed by the identity
-    of the `_SMBlock` object they correspond to, so the same block reached with different
-    discriminants (as happens in loops with relative `+=` transitions) creates a single node
-    with a back-edge. Returns the CFG and the accumulated state (including scope routing values).
+    Build a control flow graph by BFS from the block a run enters, where the machine reads *entry*.
+    Nodes are keyed by the identity of the `_SMBlock` they correspond to, so a block reached twice
+    is one node and a loop is a back-edge. The obfuscator gives every block one state, so every
+    arrival at a block has to find what the machine reads there as the first one did; where it
+    does not, or where the next block cannot be told (`_dispatch`), this gives `None`. Only the
+    *main* run may store routing slots, and only in the block it enters (`_routing_stores`), so
+    they hold what that block leaves in them from before any wrapper exists. Returns the CFG and
+    those values.
     """
-    entry_state = dict(initial_state)
-    entry_disc = _compute_discriminant(entry_state, var_names)
-    entry_block = _lookup_block(machine, entry_disc, entry_state)
+    entry_block = _dispatch(machine, entry, var_names)
     if entry_block is None:
         return None
-
+    entry_id = id(entry_block)
     nodes: dict[int, _CFGNode] = {}
-    routing_state: _StateEnv = dict(initial_state)
-    queue: deque[tuple[_SMBlock, _StateEnv]] = deque()
-    queue.append((entry_block, entry_state))
+    arrivals: dict[int, _Env] = {entry_id: entry}
+    queue: deque[_SMBlock] = deque([entry_block])
+    settled = entry.slots
     steps = 0
+
+    def arrive(env: _Env | None) -> int | None:
+        if env is None:
+            return None
+        if _compute_discriminant(env.states, var_names) == end_state:
+            return _VIRTUAL_EXIT
+        if (block := _dispatch(machine, env, var_names)) is None:
+            return None
+        node_id = id(block)
+        if node_id not in arrivals:
+            arrivals[node_id] = env
+            queue.append(block)
+        elif arrivals[node_id] != env:
+            return None
+        return node_id
 
     while queue and steps < _MAX_STEPS:
         steps += 1
-        block, state = queue.popleft()
+        block = queue.popleft()
         node_id = id(block)
+        env = arrivals[node_id]
+        if block.routing_stores:
+            if not main or node_id != entry_id:
+                return None
+            settled = {**env.slots, **dict(block.routing_stores)}
+            env = _Env(env.states, settled)
 
-        if node_id in nodes:
-            continue
-
-        payload = _substitute_state_vars(block.payload, state)
-        _track_scope_routing(payload, state)
-        _track_scope_routing(payload, routing_state)
+        payload = _substitute_state_vars(block.payload, env.states)
         _collect_scope_props(payload, match)
         payload = _strip_scope_param_prefix(payload, match.scope_param_name)
         payload = _qualify_with_identifiers(payload, match)
@@ -1405,53 +1681,22 @@ def _build_cfg(
         if isinstance(transition, _SMExitTransition):
             successors = [_VIRTUAL_EXIT]
         elif isinstance(transition, _SMLinearTransition):
-            new_env = _apply_raw_transition(transition.assignments, state)
-            if new_env is None:
+            if (target := arrive(_apply_raw_transition(transition.assignments, env))) is None:
                 return None
-            next_disc = _compute_discriminant(new_env, var_names)
-            if next_disc == end_state:
-                successors = [_VIRTUAL_EXIT]
-            else:
-                next_block = _lookup_block(machine, next_disc, new_env)
-                if next_block is None:
-                    return None
-                next_id = id(next_block)
-                successors = [next_id]
-                if next_id not in nodes:
-                    queue.append((next_block, new_env))
+            successors = [target]
         elif isinstance(transition, _SMConditionalTransition):
-            condition = transition.condition
-            true_env = _apply_raw_transition(transition.true_assignments, state)
-            false_env = _apply_raw_transition(transition.false_assignments, state)
-            if true_env is None or false_env is None:
+            true_id = arrive(_apply_raw_transition(transition.true_assignments, env))
+            false_id = arrive(_apply_raw_transition(transition.false_assignments, env))
+            if true_id is None or false_id is None:
                 return None
-            true_disc = _compute_discriminant(true_env, var_names)
-            false_disc = _compute_discriminant(false_env, var_names)
-
-            if true_disc == end_state:
-                true_id = _VIRTUAL_EXIT
-            else:
-                true_block = _lookup_block(machine, true_disc, true_env)
-                if true_block is None:
-                    return None
-                true_id = id(true_block)
-                if true_id not in nodes:
-                    queue.append((true_block, true_env))
-
-            if false_disc == end_state:
-                false_id = _VIRTUAL_EXIT
-            else:
-                false_block = _lookup_block(machine, false_disc, false_env)
-                if false_block is None:
-                    return None
-                false_id = id(false_block)
-                if false_id not in nodes:
-                    queue.append((false_block, false_env))
-
             successors = [true_id, false_id]
-            true_prefix_payload = _process_branch_prefix(transition.true_prefix, state, match)
-            false_prefix_payload = _process_branch_prefix(transition.false_prefix, state, match)
-            condition = _qualify_condition(condition, state, match)
+            true_prefix_payload = _process_branch_prefix(
+                transition.true_prefix, env.states, match
+            )
+            false_prefix_payload = _process_branch_prefix(
+                transition.false_prefix, env.states, match
+            )
+            condition = _qualify_condition(transition.condition, env.states, match)
 
         node = _CFGNode(
             node_id=node_id,
@@ -1463,7 +1708,6 @@ def _build_cfg(
         )
         nodes[node_id] = node
 
-    entry_id = id(entry_block)
     if entry_id not in nodes:
         return None
 
@@ -1475,7 +1719,7 @@ def _build_cfg(
             if succ_id in nodes:
                 nodes[succ_id].predecessors.append(n.node_id)
 
-    return (_CFG(nodes=nodes, entry=entry_id, exit=_VIRTUAL_EXIT), routing_state)
+    return (_CFG(nodes=nodes, entry=entry_id, exit=_VIRTUAL_EXIT), settled)
 
 
 def _compute_idom(cfg: _CFG) -> dict[int, int | None]:
@@ -2685,61 +2929,31 @@ def _filter_redirect_var_assignments(
     return result
 
 
-def _track_scope_routing(payload: list[Statement], state: _StateEnv) -> None:
-    """
-    Scan payload for assignments to scope member expressions with evaluable RHS values and record
-    them in the state environment. This captures routing variables stored on scope objects.
-    """
-    for stmt in payload:
-        if not isinstance(stmt, JsExpressionStatement):
-            continue
-        expr = stmt.expression
-        if isinstance(expr, JsSequenceExpression):
-            exprs = expr.expressions
-        else:
-            exprs = [expr]
-        for e in exprs:
-            if not isinstance(e, JsAssignmentExpression):
-                continue
-            if not isinstance(e.left, JsMemberExpression):
-                continue
-            if e.operator != '=':
-                continue
-            key = member_key(e.left)
-            if key is None or e.right is None:
-                continue
-            val = _eval_expr(e.right, state)
-            if val is not None:
-                state[key] = val
-
-
 def _execute_machine(
     machine: _StateMachine,
     match: _GeneratorCFFMatch,
-    inherited_state: _StateEnv | None = None,
-) -> tuple[list[Statement], _StateEnv] | None:
+    slots: _Slots,
+    main: bool,
+) -> tuple[list[Statement], _Slots] | None:
     """
-    Recover structured code from the state machine using CFG-based structural analysis.
-    Builds a control flow graph, identifies loops via dominator analysis, and emits
-    structured control flow (while, if/else, break).
+    Recover structured code for a run of the machine whose routing slots start out holding *slots*,
+    using CFG-based structural analysis: builds a control flow graph, identifies loops via dominator
+    analysis, and emits structured control flow (while, if/else, break). Returns the code and what
+    the routing slots hold once the run has entered the machine (`_build_cfg`), for the *main* run
+    or a wrapper's.
     """
     var_names = match.state_var_names
-    state = _apply_initial_state(var_names, match.initial_state)
-    if inherited_state:
-        for k, v in inherited_state.items():
-            if k not in var_names:
-                state[k] = v
-
-    cfg_result = _build_cfg(machine, state, var_names, match.end_state, match)
+    entry = _Env(_apply_initial_state(var_names, match.initial_state), slots)
+    cfg_result = _build_cfg(machine, entry, var_names, match.end_state, match, main)
     if cfg_result is None:
         return None
 
-    cfg, final_state = cfg_result
+    cfg, settled = cfg_result
     idom = _compute_idom(cfg)
     loops = _find_loops(cfg, idom)
     stmts = _structural_analysis(cfg, idom, loops)
     recovered = _recover_returns(stmts, match.did_return_var)
-    return (recovered, final_state)
+    return (recovered, settled)
 
 
 def _build_js_if(
@@ -2784,6 +2998,7 @@ class _Activation:
     namespaces: dict[str, Expression]
     inherited: set[str] = field(default_factory=set)
     props: set[str] = field(default_factory=set)
+    routing: _Slots = field(default_factory=dict)
 
     def holds(self, name: str) -> bool:
         return name in self.namespaces or name in self.inherited or name in self.props
@@ -2872,15 +3087,17 @@ def _resolve_shared_wrappers(
     stmts: list[Statement],
     machine: _StateMachine,
     match: _GeneratorCFFMatch,
-    outer_state: _StateEnv,
     main: _Activation,
+    absent: Callable[[str], bool],
 ) -> list[_Activation] | None:
     """
     Walk recovered statements looking for function expressions that are wrappers around the same
     shared generator. For each wrapper found, execute the state machine from its entry point and
-    replace the wrapper with a proper function containing the recovered body. The *outer_state*
-    carries scope routing values from the primary execution so that predicate-gated cases in
-    wrapper paths can resolve. Iterates until no more wrappers are resolved (handles nesting).
+    replace the wrapper with a proper function containing the recovered body. The run of a wrapper
+    reads the routing slots of the scope object it hands the generator (`_initial_slots`, with
+    *absent* for keys no literal holds): where it hands on the scope object or namespaces of the
+    run that creates it, they hold what that run filled them with before any wrapper existed.
+    Iterates until no more wrappers are resolved (handles nesting).
 
     Returns the activations of the resolved wrappers, each one once and *main* among them where a
     wrapper shares its scope object, or `None` where a wrapper cannot be resolved: it would be left
@@ -2904,7 +3121,7 @@ def _resolve_shared_wrappers(
             if node_id in activations:
                 continue
             wrapper_info = _detect_wrapper_function(node, gen_name, num_vars)
-            if wrapper_info is None:
+            if wrapper_info is None or node.body is None:
                 continue
             if _reenters(node, wrapper_info.initial_state, entries):
                 return None
@@ -2912,6 +3129,15 @@ def _resolve_shared_wrappers(
             activation = _wrapper_activation(node, wrapper_info.scope_arg, creator, match)
             if activation is None:
                 return None
+            if activation is not creator:
+                activation.routing = _initial_slots(
+                    machine.routing,
+                    match.scope_param_name,
+                    activation.namespaces,
+                    activation.inherited,
+                    creator.routing,
+                    absent,
+                )
             synthetic = _GeneratorCFFMatch(
                 generator_name=gen_name,
                 state_var_names=match.state_var_names,
@@ -2930,7 +3156,7 @@ def _resolve_shared_wrappers(
                 namespaces=match.namespaces,
                 namespace_homes=match.namespace_homes,
             )
-            result = _execute_machine(machine, synthetic, inherited_state=outer_state)
+            result = _execute_machine(machine, synthetic, activation.routing, main=False)
             if result is None:
                 return None
             activation.props |= synthetic.scope_prop_names
@@ -3308,47 +3534,107 @@ def _is_pure_rhs(node: Node, known: set[str]) -> bool:
     return True
 
 
+def _namespace_keys_read(
+    stmts: list[Statement],
+    namespaces: set[str],
+    names: set[str],
+) -> dict[str, set[str] | None]:
+    """
+    For each namespace in *namespaces*, the keys *stmts* read from it where nothing between the
+    statement and the read binds the namespace's name anew, or `None` where they read it under a
+    key only known at runtime. Everything but the target of a plain `=` reads the key. The names
+    *stmts* read bare count as keys read from every namespace, since a `with` statement may have
+    resolved one to a member. A read of a key through any other reference to the namespace is not
+    seen: the recovery trusts that only the code the obfuscator spells with the namespace's name
+    reads its members.
+    """
+    watched = frozenset(namespaces)
+    keys: dict[str, set[str] | None] = {name: set(names) for name in namespaces}
+    for stmt in stmts:
+        for node, shadowed in _walk_scoped(stmt, watched):
+            if (
+                not isinstance(node, JsMemberExpression)
+                or not isinstance(node.object, JsIdentifier)
+                or (name := node.object.name) not in watched
+                or name in shadowed
+                or is_simple_assignment_target(node)
+                or (read := keys[name]) is None
+            ):
+                continue
+            if (key := access_key(node)) is None:
+                keys[name] = None
+            else:
+                read.add(key)
+    return keys
+
+
 def _remove_dead_scope_writes(
     stmts: list[Statement],
     dead: set[str],
+    keys_read: dict[str, set[str] | None],
     known: set[str],
 ) -> list[Statement]:
     """
-    Remove pure `name = value` writes (and such sub-expressions of sequences) where *name* is a
-    write-only scope slot, i.e. routing bookkeeping that is never read. Writes with side-effecting
-    right-hand sides are preserved (`_is_pure_rhs`, with the names *known* to be declared).
+    Remove the stores the statements *stmts* of a body make at their top level to scope slots
+    nothing reads: a write-only scope variable in *dead*, and a member of a namespace under a key
+    *keys_read* does not list for it (`_namespace_keys_read`). The obfuscator's routing values are
+    such members: the recovery removes the case tests that were their only readers. A store goes as
+    a whole statement, as one expression of a comma sequence, or as one pair of target and value in
+    a destructuring of an array literal, and only where its value has no effect (`_is_pure_rhs`,
+    with the names *known* to be declared).
     """
-    if not dead:
-        return stmts
-
-    def is_dead_write(e: Expression) -> bool:
+    def is_dead_target(target: Expression | None) -> bool:
+        if isinstance(target, JsIdentifier):
+            return target.name in dead
         return (
-            isinstance(e, JsAssignmentExpression)
-            and e.operator == '='
-            and isinstance(e.left, JsIdentifier)
-            and e.left.name in dead
-            and e.right is not None
-            and _is_pure_rhs(e.right, known)
+            isinstance(target, JsMemberExpression)
+            and isinstance(target.object, JsIdentifier)
+            and (read := keys_read.get(target.object.name, None)) is not None
+            and (key := access_key(target)) is not None
+            and key not in read
         )
+
+    def is_dead(target: Expression | None, value: Expression | None) -> bool:
+        return is_dead_target(target) and value is not None and _is_pure_rhs(value, known)
+
+    def live_part(e: Expression) -> Expression | None:
+        if not isinstance(e, JsAssignmentExpression) or e.operator != '=':
+            return e
+        if isinstance(e.left, JsArrayPattern) and isinstance(e.right, JsArrayExpression):
+            targets = list(e.left.elements)
+            values = list(e.right.elements)
+            if len(targets) != len(values) or any(isinstance(v, JsSpreadElement) for v in values):
+                return e
+            pairs = [(t, v) for t, v in zip(targets, values) if not is_dead(t, v)]
+            if not pairs:
+                return None
+            if len(pairs) == len(targets):
+                return e
+            if len(pairs) == 1 and (target := pairs[0][0]) is not None:
+                return JsAssignmentExpression(operator='=', left=target, right=pairs[0][1])
+            return JsAssignmentExpression(
+                operator='=',
+                left=JsArrayPattern(elements=[t for t, _ in pairs]),
+                right=JsArrayExpression(elements=[v for _, v in pairs]),
+            )
+        return None if is_dead(e.left, e.right) else e
 
     result: list[Statement] = []
     for stmt in stmts:
-        if isinstance(stmt, JsExpressionStatement) and stmt.expression is not None:
-            expr = stmt.expression
-            if isinstance(expr, JsSequenceExpression):
-                remaining = [e for e in expr.expressions if not is_dead_write(e)]
-                if not remaining:
-                    continue
-                if len(remaining) == 1:
-                    result.append(JsExpressionStatement(expression=remaining[0]))
-                else:
-                    result.append(JsExpressionStatement(
-                        expression=JsSequenceExpression(expressions=remaining),
-                    ))
-                continue
-            if is_dead_write(expr):
-                continue
-        result.append(stmt)
+        if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
+            result.append(stmt)
+            continue
+        expr = stmt.expression
+        parts = expr.expressions if isinstance(expr, JsSequenceExpression) else [expr]
+        remaining = [live for part in parts if (live := live_part(part)) is not None]
+        if remaining == parts:
+            result.append(stmt)
+        elif len(remaining) == 1:
+            result.append(JsExpressionStatement(expression=remaining[0]))
+        elif remaining:
+            result.append(JsExpressionStatement(
+                expression=JsSequenceExpression(expressions=remaining),
+            ))
     return result
 
 
@@ -3370,23 +3656,24 @@ def _declare_recovered_scope_vars(
     Declare what the scope object of *activation* holds at the head of the body *recovered*
     recovers for it. Hoisted scope variables survive recovery as bare identifiers: the ones that are
     read are declared as locals, and the writes of slots that are pure routing bookkeeping (written
-    but never read) are dropped. Slots already declared and the namespaces the object is created
+    but never read), members of the namespaces the object is created with among them, are dropped
+    (`_remove_dead_scope_writes`). Slots already declared and the namespaces the object is created
     with or hands on are left to their own declarations; an in-body namespace (created by a
     `scope.X = {}` write) is a slot like any other, so it is declared here.
     """
     props = activation.props
-    if props:
-        reads: set[str] = set()
-        for stmt in recovered:
-            _collect_read_names(stmt, reads)
-        dead = {p for p in props if p not in reads}
-        known = (
-            props
-            | activation.inherited
-            | set(activation.namespaces)
-            | _declared_names_in_stmts(recovered)
-        )
-        recovered = _remove_dead_scope_writes(recovered, dead, known)
+    reads: set[str] = set()
+    for stmt in recovered:
+        _collect_read_names(stmt, reads)
+    dead = {p for p in props if p not in reads}
+    keys_read = _namespace_keys_read(recovered, set(activation.namespaces), reads)
+    known = (
+        props
+        | activation.inherited
+        | set(activation.namespaces)
+        | _declared_names_in_stmts(recovered)
+    )
+    recovered = _remove_dead_scope_writes(recovered, dead, keys_read, known)
     present: set[str] = set()
     for stmt in recovered:
         for node in stmt.walk():
@@ -3628,6 +3915,14 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
         self._root = node
         return super().visit_JsScript(node)
 
+    def _provably_absent(self, key: str) -> bool:
+        """
+        Whether a plain object that does not own *key* reads `undefined` under it.
+        """
+        assert self._root is not None
+        effects = model_cache(self, self._root).effects
+        return property_absent_from_written_chain(effects, dict, key)
+
     def _process_body(self, parent: Node, body: list[Statement]) -> None:
         if not _is_a_function_body(parent):
             return
@@ -3646,13 +3941,28 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
             if machine is None:
                 i += 1
                 continue
-            result = _execute_machine(machine, match)
+            slots = _initial_slots(
+                machine.routing,
+                match.scope_param_name,
+                match.scope_default_inits,
+                set(),
+                {},
+                self._provably_absent,
+            )
+            result = _execute_machine(machine, match, slots, main=True)
             if result is None:
                 i += 1
                 continue
-            recovered, outer_state = result
-            main = _Activation(None, match.scope_default_inits, props=match.scope_prop_names)
-            wrappers = _resolve_shared_wrappers(recovered, machine, match, outer_state, main)
+            recovered, settled = result
+            main = _Activation(
+                None,
+                match.scope_default_inits,
+                props=match.scope_prop_names,
+                routing=settled,
+            )
+            wrappers = _resolve_shared_wrappers(
+                recovered, machine, match, main, self._provably_absent
+            )
             if wrappers is None or not _bind_main_arguments(recovered, match):
                 i += 1
                 continue

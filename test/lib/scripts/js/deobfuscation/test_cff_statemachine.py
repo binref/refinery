@@ -2977,8 +2977,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
               with (scope.RV || scope) {
                 switch (a + b) {
                   case 10:
-                    scope.RV = scope.NS;
                     scope.NS.k = 25;
+                    scope.RV = scope.NS;
                     scope.NS.put = function (key, value) {
                       this[key] = value;
                     };
@@ -3251,6 +3251,456 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                     self._run_transformer(source, JsGeneratorCFFUnflattening),
                 )
 
+    FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 5, b = -5;
+                    break;
+                  case a != 5 && a - 10:
+                    return done = true, "the guarded case";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_case_test_making_false_does_not_match_a_zero(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return "default";
+                }
+                """
+            ),
+            self._run_transformer(
+                self.FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    PREDICATE_CASE_BEFORE_A_LITERAL_CASE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 20, b = 15;
+                    break;
+                  case a + 15:
+                    return done = true, "the first match";
+                  case 35:
+                    return done = true, "the literal match";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_first_matching_case_in_source_order_runs(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return "the first match";
+                }
+                """
+            ),
+            self._run_transformer(
+                self.PREDICATE_CASE_BEFORE_A_LITERAL_CASE_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    ROUTING_SLOT_GIVEN_BY_THE_NAMESPACE_LITERAL_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {k: 25}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the literal value";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_routing_slot_holds_what_its_namespace_literal_gives_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return "the literal value";
+                }
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_SLOT_GIVEN_BY_THE_NAMESPACE_LITERAL_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    ROUTING_SLOTS_STORED_BY_DESTRUCTURING_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.p + 20:
+                    return done = true, "routed by p";
+                  case 10:
+                    [scope.NS.p, scope.NS.q] = [15, -40];
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.q + 75:
+                    return done = true, "routed by q";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_routing_slots_stored_by_destructuring_route_and_are_dropped(self):
+        """
+        The first case test reads `p` before the entry block stores it, which makes `NaN` and does
+        not match; afterwards `p` is `15` and routes to its case. Only case tests read `p` and `q`,
+        so their store goes with them.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return "routed by p";
+                }
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_SLOTS_STORED_BY_DESTRUCTURING_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    ROUTING_SLOT_READ_UNDER_A_COMPUTED_KEY_CFF = inspect.cleandoc(
+        """
+        function outer(name) {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.k = 25;
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, scope.NS[name];
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_routing_store_stays_for_a_read_under_a_computed_key(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(name) {
+                  var NS = {};
+                  NS.k = 25;
+                  return NS[name];
+                }
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_SLOT_READ_UNDER_A_COMPUTED_KEY_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    MATCHED_CASE_THE_RECOVERY_CANNOT_READ_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    console.log("runs on");
+                  case 36:
+                    return done = true, "after running on";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_READ_OF_A_NAME_NO_SLOT_HOLDS_YET_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          var k = 5;
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case k + 30:
+                    scope.NS.k = 1;
+                    return done = true, "the outer k";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_STORED_IN_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 3;
+                    scope.j = 3;
+                    for (var t = 0; t < 2; t++) {
+                      scope.j = scope.i;
+                      scope.i = 7;
+                    }
+                    a = 20, b = 15;
+                    break;
+                  case scope.j + 28:
+                    return done = true, "the value of the last iteration";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    WRAPPER_CALLED_BEFORE_THE_ROUTING_STORE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.early = function(...rest) {
+                      return gen(20, 15, {NS: scope.NS}, rest)["next"]()["value"];
+                    };
+                    scope.v = early();
+                    a = 20, b = 10;
+                    break;
+                  case 30:
+                    scope.NS.k = 25;
+                    a = 40, b = 10;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the stored value";
+                  case 50:
+                    return done = true, v;
+                  default:
+                    return done = true, "not stored yet";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.k = 25;
+                    scope.RV = scope.NS;
+                    a = 20, b = 10;
+                    break;
+                  case 30:
+                    k = 7;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the entry value";
+                  default:
+                    return done = true, "the bare store";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BLOCK_REACHED_WITH_TWO_STATES_CFF = inspect.cleandoc(
+        """
+        function outer(flag) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (flag) {
+                      a = 1, b = 2;
+                    } else {
+                      a = 2, b = 1;
+                    }
+                    break;
+                  case 3:
+                    a += b;
+                    break;
+                  case 5:
+                    return done = true, "five";
+                  case 4:
+                    return done = true, "four";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.k = 25;
+                    scope.RV = scope.NS;
+                    scope.NS.get = function (key) {
+                      return this[key];
+                    };
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, get("k");
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_routing_the_obfuscator_does_not_write_is_declined(self):
+        """
+        The obfuscator stores constants in its routing slots once, before anything else in the
+        block the machine starts in, reads them only in case tests, and gives every block one
+        state. Each generator here breaks that, and is left as it is: the matched case runs on into
+        the next, a case test ahead of the match reads a name the machine does not know or a slot
+        stored from an expression it cannot evaluate, a routing slot is stored in a loop, stored
+        again after a wrapper ran, stored after a wrapper was called, or written bare through the
+        `with` statement, and a block is reached with two states.
+        """
+        for source in (
+            self.MATCHED_CASE_THE_RECOVERY_CANNOT_READ_CFF,
+            self.ROUTING_READ_OF_A_NAME_NO_SLOT_HOLDS_YET_CFF,
+            self.CASE_TEST_THE_MACHINE_CANNOT_READ_CFF,
+            self.ROUTING_SLOT_STORED_IN_A_LOOP_CFF,
+            self.ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF,
+            self.WRAPPER_CALLED_BEFORE_THE_ROUTING_STORE_CFF,
+            self.ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF,
+            self.BLOCK_REACHED_WITH_TWO_STATES_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
         """
         A body that runs on into the next case, a state variable stored and read before the
@@ -3502,15 +3952,26 @@ ENTRY_POINTS = {
     'LAST_BODY_WITHOUT_A_BREAK_CFF': 'console.log(outer());',
     'NAMESPACE_WITH_A_SETTER_CFF': 'console.log(outer());',
     'NAMESPACE_WITH_A_PROTOTYPE_CFF': 'console.log(outer());',
+    'FALSE_BESIDE_A_ZERO_DISCRIMINANT_CFF': 'console.log(outer());',
+    'PREDICATE_CASE_BEFORE_A_LITERAL_CASE_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_GIVEN_BY_THE_NAMESPACE_LITERAL_CFF': 'console.log(outer());',
+    'ROUTING_SLOTS_STORED_BY_DESTRUCTURING_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_READ_UNDER_A_COMPUTED_KEY_CFF': 'console.log(outer("k"), outer("get"));',
+    'MATCHED_CASE_THE_RECOVERY_CANNOT_READ_CFF': 'console.log(outer());',
+    'ROUTING_READ_OF_A_NAME_NO_SLOT_HOLDS_YET_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_STORED_IN_A_LOOP_CFF': 'console.log(outer());',
+    'WRAPPER_CALLED_BEFORE_THE_ROUTING_STORE_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF': 'console.log(outer());',
+    'BLOCK_REACHED_WITH_TWO_STATES_CFF': 'console.log(outer(true), outer(false));',
+    'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
 #: of its own below.
 DIVERGING_FIXTURES = {
     'REDIRECT_QUALIFY_CFF',
-    'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF',
-    'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF',
     'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF',
+    'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF',
     'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF',
 }
 
@@ -3549,30 +4010,6 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         self.assertEqual(behavior(program), behavior(recovered))
 
     @unittest.expectedFailure
-    def test_a_wrapper_picks_its_case_with_the_routing_values_of_its_call(self):
-        """
-        In `ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF` the wrapper runs while `R.k` is `-10`, so its
-        entry state matches `case scope.R.k + 45` and it returns `"predicate"`; the main run sets
-        `R.k` to `100` afterwards. The recovery runs every wrapper with the routing values the main
-        run ends with, finds no case, and recovers the `default` body instead.
-        """
-        program = self._program('ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_case_test_the_machine_cannot_read_is_not_skipped(self):
-        """
-        In `CASE_TEST_THE_MACHINE_CANNOT_READ_CFF` the routing value `u` is stored from an
-        expression the machine cannot evaluate, and at runtime it matches `case scope.u`. The
-        recovery skips a case test it cannot read and falls back to the `default` body, where the
-        switch would have taken the case, or thrown where reading the test throws.
-        """
-        program = self._program('CASE_TEST_THE_MACHINE_CANNOT_READ_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
     def test_a_routing_value_a_function_stores_through_its_receiver_picks_the_case(self):
         """
         In `ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF` the namespace function `put`, called bare
@@ -3583,6 +4020,19 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         value, which the obfuscator never breaks.
         """
         program = self._program('ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_routing_value_a_function_reads_through_its_receiver_keeps_its_store(self):
+        """
+        In `ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF` the namespace function `get`, called bare
+        under the `with` redirect, receives the namespace as `this` and returns `this.k`, which is
+        `25`. Nothing but a case test reads `k` under the namespace's name, so the recovery drops
+        the store with the tests, and `get` returns `undefined`. The recovery trusts that only the
+        case tests read a routing value, which the obfuscator never breaks.
+        """
+        program = self._program('ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF')
         recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
         self.assertEqual(behavior(program), behavior(recovered))
 
