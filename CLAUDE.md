@@ -112,9 +112,10 @@ Plan in detail only the phase about to be built; later phases get one line each 
 - **Falsify your own claims first.** Label every load-bearing claim measured (probe and output) or argued (file:line).
   If a ten-line probe could break a claim, run it before any critic does. State confidence the same way, per phase.
 
-Whenever you make or substantially change a plan, run a general purpose adversarial critic on it, plus any of the following, selected from a prompt:
+Whenever you make or substantially change a plan, run a general purpose adversarial critic on it, 
+plus any of the following, selected from a prompt:
  **architectural** ("Architecture is P0"),
- **research** (state of the art algorithmic solution), and
+ **research** (state of the art algorithmic solution), or
  **safety** (prevent dangerous behavior or incorrect outputs).
 
 - **Reviewer independence.** Do **not** give the agents specific instructions for what to investigate,
