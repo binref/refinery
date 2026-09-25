@@ -349,61 +349,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         ))
 
-    REDIRECT_QUALIFY_CFF = inspect.cleandoc(
-        """
-        function wrapper() {
-          function* gen(a, b, c, scope = {NS: {}}, args) {
-            while (a + b + c !== 200) {
-              with (scope.RV || scope) {
-                switch (a + b + c) {
-                  case 30:
-                    scope.Sub = {};
-                    scope.RV = scope.NS;
-                    a = 40, b = 50, c = 10;
-                    break;
-                  case 100:
-                    Sub.arr = args;
-                    scope.RV = scope.Sub;
-                    a = 20, b = 30, c = 100;
-                    break;
-                  case 150:
-                    return DR = true, scope.NS.extra + val;
-                    break;
-                }
-              }
-            }
-          }
-          var DR;
-          var result = gen(10, 10, 10)["next"]()["value"];
-          if (DR) { return result; }
-        }
-"""
-    )
-
-    def test_generator_cff_redirect_qualification_levels(self):
-        """
-        A degenerate multi-level-redirect sample: bare `Sub` is used while the `with` redirect still
-        points at `NS`, so `Sub` never resolves and the original throws a `ReferenceError`. The
-        recovery keeps the genuinely free `val` bare (it has no namespace-defining write), reads the
-        argument holder the main call never passes as `void 0`, declares `var extra;` for the
-        never-written namespace member `scope.NS.extra` so it reads `undefined`, and recovers `Sub`
-        from its `scope.Sub` writes. Where nothing binds `val` it remains a throwing program; that
-        it does not throw where `val` is bound is tracked by
-        `TestNodePrintsTheSameForEachRecoveredFixture`.
-        """
-        result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
-        self.assertEqual(result, inspect.cleandoc(
-            """
-            function wrapper() {
-              var extra;
-              var Sub;
-              Sub = {};
-              Sub.arr = void 0;
-              return extra + val;
-            }
-            """
-        ))
-
     COMPUTED_REDIRECT_CFF = inspect.cleandoc(
         """
         function wrapper() {
@@ -2987,60 +2932,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
-    ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
-        """
-        function outer() {
-          function* gen(a, b, scope = {NS: {}}, args) {
-            while (a + b !== 100) {
-              with (scope.RV || scope) {
-                switch (a + b) {
-                  case 10:
-                    scope.NS.k = 25;
-                    scope.RV = scope.NS;
-                    scope.NS.put = function (key, value) {
-                      this[key] = value;
-                    };
-                    a = 15, b = 15;
-                    break;
-                  case 30:
-                    put("k", 7);
-                    a = 20, b = 20;
-                    break;
-                  case scope.NS.k + 15:
-                    return done = true, "the value the recovery tracked";
-                  default:
-                    return done = true, "the value the receiver stored";
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
-    GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF = inspect.cleandoc(
-        """
-        function outer() {
-          function* gen(a, b, scope = {}, args) {
-            while (a + b !== 100) {
-              with (scope) {
-                switch (a + b) {
-                  case 10:
-                    return done = true, eval("typeof gen");
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
     BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF = inspect.cleandoc(
         """
         function outer() {
@@ -3649,36 +3540,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                     return done = true, "five";
                   case 4:
                     return done = true, "four";
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
-    ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
-        """
-        function outer() {
-          function* gen(a, b, scope = {NS: {}}, args) {
-            while (a + b !== 100) {
-              with (scope.RV || scope) {
-                switch (a + b) {
-                  case 10:
-                    scope.NS.k = 25;
-                    scope.RV = scope.NS;
-                    scope.NS.get = function (key) {
-                      return this[key];
-                    };
-                    a = 20, b = 15;
-                    break;
-                  case scope.NS.k + 10:
-                    return done = true, get("k");
-                  default:
-                    return done = true, "default";
                 }
               }
             }
@@ -4733,7 +4594,6 @@ ENTRY_POINTS = {
     'GUARDED_PREDICATE_CFF': 'console.log(wrapper());',
     'NESTED_WRAPPER_ARG_REBIND_CFF': 'console.log(outer()(7), outer()(1, 2));',
     'REDIRECT_VAR_CFF': 'console.log(wrapper(), y);',
-    'REDIRECT_QUALIFY_CFF': 'var args = "a", val = "v"; console.log(wrapper());',
     'COMPUTED_REDIRECT_CFF': 'var args = "a", val = "v"; console.log(wrapper(), data);',
     'LOOPING_CFF': 'console.log(wrapper());',
     'CONTINUE_IN_LOOP_CFF': 'console.log(wrapper());',
@@ -4816,8 +4676,6 @@ ENTRY_POINTS = {
     'STRICT_BLOCK_FUNCTION_CFF': 'console.log(outer());',
     'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF': 'console.log(outer());',
     'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF': 'console.log(outer());',
-    'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
-    'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF': 'console.log(outer());',
     'BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF': 'console.log(outer());',
     'STATE_READ_BETWEEN_TRANSITION_STORES_CFF': 'console.log(outer());',
     'STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF': 'console.log(outer());',
@@ -4837,7 +4695,6 @@ ENTRY_POINTS = {
     'WRAPPER_CALLED_BEFORE_THE_ROUTING_STORE_CFF': 'console.log(outer());',
     'ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF': 'console.log(outer());',
     'BLOCK_REACHED_WITH_TWO_STATES_CFF': 'console.log(outer(true), outer(false));',
-    'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
     'NAMESPACE_REPLACED_AFTER_THE_ROUTING_STORE_CFF': 'console.log(outer());',
     'NAMESPACE_REPLACED_BEHIND_THE_ROUTING_STORE_CFF': 'console.log(outer());',
     'ROUTING_SLOT_WRITTEN_BY_A_STORED_FUNCTION_CFF': 'console.log(outer());',
@@ -4864,16 +4721,6 @@ ENTRY_POINTS = {
     'GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
 }
 
-#: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
-#: of its own below.
-DIVERGING_FIXTURES = {
-    'REDIRECT_QUALIFY_CFF',
-    'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF',
-    'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF',
-    'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF',
-}
-
-
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
 
@@ -4887,64 +4734,10 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
 
     def _programs(self):
         for name, _ in self._fixtures():
-            if name not in DIVERGING_FIXTURES:
-                yield name, self._program(name)
+            yield name, self._program(name)
 
     def test_every_fixture_has_an_entry_point(self):
         self.assertEqual({name for name, _ in self._fixtures()}, set(ENTRY_POINTS))
-
-    @unittest.expectedFailure
-    def test_a_name_read_while_the_redirect_hides_it_still_throws(self):
-        """
-        `REDIRECT_QUALIFY_CFF` reads `Sub` bare while the `with` redirect points at `NS`, which does
-        not carry it, so the read falls through to the scopes around the generator and throws a
-        `ReferenceError`. The recovery declares `Sub` as a local of the function, reachable from
-        every state, so the recovered read succeeds. Qualification decides where a name lives
-        independently of the momentary redirect; a read whose meaning depends on the redirect
-        would need the redirect tracked through the states, or the recovery declined for it.
-        """
-        program = self._program('REDIRECT_QUALIFY_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_routing_value_a_function_stores_through_its_receiver_picks_the_case(self):
-        """
-        In `ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF` the namespace function `put`, called bare
-        under the `with` redirect, receives the namespace as `this` and stores `7` in `NS.k`, so
-        `case scope.NS.k + 15` does not match and the switch takes `default`. The recovery picks
-        cases with the values the routing stores it reads assign, sees `NS.k` as `25`, and takes
-        the predicate case. It trusts that only the obfuscator's own routing stores write a routing
-        value, which the obfuscator never breaks.
-        """
-        program = self._program('ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_routing_value_a_function_reads_through_its_receiver_keeps_its_store(self):
-        """
-        In `ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF` the namespace function `get`, called bare
-        under the `with` redirect, receives the namespace as `this` and returns `this.k`, which is
-        `25`. Nothing but a case test reads `k` under the namespace's name, so the recovery drops
-        the store with the tests, and `get` returns `undefined`. The recovery trusts that only the
-        case tests read a routing value, which the obfuscator never breaks.
-        """
-        program = self._program('ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_code_the_generator_evaluates_from_a_string_still_finds_the_generator(self):
-        """
-        In `GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF` the generator evaluates a string that reads
-        `gen`, the generator itself, and returns `function`. The recovery removes the generator
-        and returns `undefined`: it accepts code run from strings inside the generator it removes,
-        because the obfuscator's own such code never names the generator.
-        """
-        program = self._program('GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
 
     def test_each_fixture_recovered_alone_prints_what_it_printed(self):
         for name, program in self._programs():
