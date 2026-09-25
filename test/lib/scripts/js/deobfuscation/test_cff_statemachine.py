@@ -3182,6 +3182,75 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    NAMESPACE_WITH_A_SETTER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {set k(value) { console.log("set", value); }}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.k = 25;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the stored value";
+                  default:
+                    return done = true, "the setter kept nothing";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_WITH_A_PROTOTYPE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {__proto__: {k: 25}}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.k + 10:
+                    return done = true, "the inherited value";
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_namespace_holding_more_than_data_is_declined(self):
+        """
+        A namespace whose literal defines a setter, and one whose literal gives it a prototype: a
+        store to a member runs code, and a read finds what the prototype holds, so neither member
+        holds what the stores the recovery reads put there. Each generator is left as it is.
+        """
+        for source in (
+            self.NAMESPACE_WITH_A_SETTER_CFF,
+            self.NAMESPACE_WITH_A_PROTOTYPE_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
         """
         A body that runs on into the next case, a state variable stored and read before the
@@ -3431,6 +3500,8 @@ ENTRY_POINTS = {
     'BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF': 'console.log(outer(true), outer(false));',
     'BRANCH_READING_A_STATE_IT_STORED_CFF': 'console.log(outer(true), outer(false));',
     'LAST_BODY_WITHOUT_A_BREAK_CFF': 'console.log(outer());',
+    'NAMESPACE_WITH_A_SETTER_CFF': 'console.log(outer());',
+    'NAMESPACE_WITH_A_PROTOTYPE_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test

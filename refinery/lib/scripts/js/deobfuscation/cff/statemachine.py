@@ -346,13 +346,20 @@ def _scope_object_properties(scope: JsObjectExpression) -> dict[str, Expression]
 
 def _is_inert(node: Node | None) -> bool:
     """
-    Whether evaluating *node* does nothing but make its value: a literal, a function, or an object
-    or array literal of such values. The recovery declares a namespace only where the recovered code
-    still refers to it, which drops the evaluation of an initializer nothing refers to.
+    Whether evaluating *node* does nothing but make its value, and the value holds nothing but data:
+    a literal, a function, or an object or array literal of such values. The recovery declares a
+    namespace only where the recovered code still refers to it, which drops the evaluation of an
+    initializer nothing refers to, and it reads a store to a member of a namespace as a store of
+    data: a getter or setter would run code on a later access instead, and a `__proto__` key gives
+    the object a prototype rather than a property.
     """
     if isinstance(node, JsObjectExpression):
         return all(
-            isinstance(prop, JsProperty) and not prop.computed and _is_inert(prop.value)
+            isinstance(prop, JsProperty)
+            and not prop.computed
+            and prop.kind is JsPropertyKind.INIT
+            and (prop.shorthand or property_key(prop) != '__proto__')
+            and _is_inert(prop.value)
             for prop in node.properties
         )
     if isinstance(node, JsArrayExpression):
