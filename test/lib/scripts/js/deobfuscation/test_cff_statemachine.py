@@ -3023,6 +3023,230 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log("first");
+                    a = 20, b = 10;
+                  case 20:
+                    console.log("runs on");
+                    a = 50, b = 50;
+                    break;
+                  case 30:
+                    return done = true, "second";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    STATE_READ_BETWEEN_TRANSITION_STORES_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 20, console.log(a), b = 15;
+                    break;
+                  case 35:
+                    return done = true, "end";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 20;
+                    console.log(a);
+                    b = 15;
+                    break;
+                  case 35:
+                    return done = true, "end";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF = inspect.cleandoc(
+        """
+        function outer(flag) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (flag) {
+                      a = Date.now() > 0 ? 30 : 0;
+                      b += 5;
+                    } else {
+                      b += 20;
+                    }
+                    break;
+                  case 15:
+                    return done = true, "the entry value of a";
+                  case 40:
+                    return done = true, "the stored value of a";
+                  case 30:
+                    return done = true, "the other branch";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BRANCH_READING_A_STATE_IT_STORED_CFF = inspect.cleandoc(
+        """
+        function outer(flag) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (flag) {
+                      a = 20;
+                      console.log(a);
+                      b += 5;
+                    } else {
+                      b += 20;
+                    }
+                    break;
+                  case 30:
+                    return done = true, "end";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    LAST_BODY_WITHOUT_A_BREAK_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 30:
+                    return done = true, "last";
+                  case 10:
+                    console.log("first");
+                    a = 20, b = 10;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
+        """
+        A body that runs on into the next case, a state variable stored and read before the
+        transition that ends the body, and a branch storing a state variable before its transition,
+        from an expression the machine cannot evaluate or where the branch reads it back: the
+        obfuscator ends every body in one transition, and each generator is left as it is.
+        """
+        for source in (
+            self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
+            self.STATE_READ_BETWEEN_TRANSITION_STORES_CFF,
+            self.STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF,
+            self.BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF,
+            self.BRANCH_READING_A_STATE_IT_STORED_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
+    def test_generator_cff_last_body_needs_no_break(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  console.log("first");
+                  return "last";
+                }
+                """
+            ),
+            self._run_transformer(self.LAST_BODY_WITHOUT_A_BREAK_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_body_that_leaves_the_state_as_it_is_is_declined(self):
+        """
+        The first body stores no state and leaves the switch, so the machine dispatches the same
+        state again, forever; the generator never returns and is left as it is.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              function* gen(a, b, scope = {}, args) {
+                while (a + b !== 100) {
+                  with (scope) {
+                    switch (a + b) {
+                      case 10:
+                        console.log("again");
+                        break;
+                      case 20:
+                        return done = true, "never";
+                    }
+                  }
+                }
+              }
+              var done;
+              var result = gen(5, 5)["next"]()["value"];
+              if (done) { return result; }
+            }
+            """
+        )
+        self.assertEqual(
+            self._run_transformers(source),
+            self._run_transformer(source, JsGeneratorCFFUnflattening),
+        )
+
     def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
         """
         A flag and a result some other function reads, a generator called from outside its
@@ -3201,6 +3425,12 @@ ENTRY_POINTS = {
     'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF': 'console.log(outer());',
     'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
     'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF': 'console.log(outer());',
+    'BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF': 'console.log(outer());',
+    'STATE_READ_BETWEEN_TRANSITION_STORES_CFF': 'console.log(outer());',
+    'STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF': 'console.log(outer());',
+    'BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF': 'console.log(outer(true), outer(false));',
+    'BRANCH_READING_A_STATE_IT_STORED_CFF': 'console.log(outer(true), outer(false));',
+    'LAST_BODY_WITHOUT_A_BREAK_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test

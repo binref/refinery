@@ -92,6 +92,7 @@ from refinery.lib.scripts.js.model import (
     JsSwitchStatement,
     JsTaggedTemplateExpression,
     JsThisExpression,
+    JsThrowStatement,
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
@@ -1023,7 +1024,12 @@ def _extract_state_blocks(
     predicate_cases: list[tuple[Expression, _SMBlock]] = []
     default_block: _SMBlock | None = None
     pending_tests: list[JsSwitchCase] = []
-    for case in match.switch_stmt.cases:
+    cases = match.switch_stmt.cases
+    last_body = max(
+        (i for i, case in enumerate(cases) if isinstance(case, JsSwitchCase) and case.body),
+        default=-1,
+    )
+    for index, case in enumerate(cases):
         if not isinstance(case, JsSwitchCase):
             return None
         if not case.body:
@@ -1032,7 +1038,7 @@ def _extract_state_blocks(
         all_cases = list(pending_tests) + [case]
         pending_tests.clear()
         stmts = list(case.body)
-        parsed = _parse_case_body(stmts, var_names, label)
+        parsed = _parse_case_body(stmts, var_names, label, index == last_body)
         if parsed is None:
             continue
         payload, transition = parsed
@@ -1066,147 +1072,136 @@ def _parse_case_body(
     stmts: list[Statement],
     var_names: list[str],
     switch_label: str | None,
+    last: bool,
 ) -> tuple[list[Statement], _SMTransition] | None:
     """
-    Separate a case body into payload statements and a state transition.
+    Separate a case body into payload statements and the state transition the obfuscator ends it
+    with. A `return` or `throw` at the top level ends the block, and nothing behind it runs. Any
+    other body ends in the assignments of its transition, directly or in both branches of a final
+    `if` statement, and then in a `break` of the switch, which only the *last* body may leave out:
+    every other body runs on into the next one without it. A body with no transition, which would
+    dispatch the same state again forever, or one that writes a state variable anywhere but in its
+    transition gives `None`.
     """
-    if not stmts:
+    for index, stmt in enumerate(stmts):
+        if isinstance(stmt, (JsReturnStatement, JsThrowStatement)):
+            payload = stmts[:index + 1]
+            if _writes_a_state_variable(payload, var_names):
+                return None
+            return (payload, _SMExitTransition())
+    stmts, terminated = _strip_trailing_break(stmts, switch_label)
+    transition: _SMTransition
+    if stmts and isinstance(final := stmts[-1], JsIfStatement) and final.alternate is not None:
+        if (conditional := _parse_conditional_transition(final, var_names, switch_label)) is None:
+            return None
+        transition, branches_terminated = conditional
+        terminated = terminated or branches_terminated
+        payload = stmts[:-1]
+    elif (split := _split_transition(stmts, var_names)) is not None:
+        payload, assignments = split
+        transition = _SMLinearTransition(assignments=assignments)
+    else:
         return None
-    stmts = _strip_trailing_labeled_break(stmts, switch_label)
-    if not stmts:
-        return ([], _SMExitTransition())
-    last = stmts[-1]
-    if isinstance(last, JsExpressionStatement) and isinstance(last.expression, JsSequenceExpression):
-        assignments = _extract_state_assignments(last.expression, var_names)
-        if assignments is not None:
-            non_state = _extract_non_state_expressions(last.expression, var_names)
-            payload = list(stmts[:-1])
-            if non_state:
-                payload.append(JsExpressionStatement(expression=non_state))
-            return (payload, _SMLinearTransition(assignments=assignments))
-    trailing = _collect_trailing_state_assignments(stmts, var_names)
-    if trailing is not None:
-        assignments, split_idx = trailing
-        return (stmts[:split_idx], _SMLinearTransition(assignments=assignments))
-    if isinstance(last, JsIfStatement) and last.consequent is not None and last.alternate is not None:
-        cond_result = _parse_conditional_transition(last, var_names, switch_label)
-        if cond_result is not None:
-            payload = stmts[:-1]
-            return (payload, cond_result)
-    if isinstance(last, JsReturnStatement):
-        return (stmts, _SMExitTransition())
+    if not terminated and not last:
+        return None
+    if _writes_a_state_variable(payload, var_names):
+        return None
+    return (payload, transition)
+
+
+def _strip_trailing_break(
+    stmts: list[Statement],
+    label: str | None,
+) -> tuple[list[Statement], bool]:
+    """
+    Remove a trailing `break` that leaves the switch, unlabeled or naming the switch *label*, and
+    tell whether there was one.
+    """
+    if stmts and isinstance(last := stmts[-1], JsBreakStatement):
+        if last.label is None or (label is not None and last.label.name == label):
+            return stmts[:-1], True
+    return stmts, False
+
+
+def _state_assignment(expr: Expression, var_names: list[str]) -> _SMRawAssignment | None:
+    """
+    The assignment *expr* makes to a state variable with `=` or `+=`, or `None`.
+    """
+    if (
+        isinstance(expr, JsAssignmentExpression)
+        and isinstance(expr.left, JsIdentifier)
+        and expr.left.name in var_names
+        and expr.operator in ('=', '+=')
+        and expr.right is not None
+    ):
+        return _SMRawAssignment(name=expr.left.name, operator=expr.operator, rhs=expr.right)
     return None
 
 
-def _strip_trailing_labeled_break(stmts: list[Statement], label: str | None) -> list[Statement]:
-    """
-    Remove a trailing `break label;` that targets the switch label.
-    """
-    if not stmts:
-        return stmts
-    last = stmts[-1]
-    if isinstance(last, JsBreakStatement):
-        if last.label is None or (label is not None and last.label.name == label):
-            return stmts[:-1]
-    return stmts
-
-
-def _extract_state_assignments(
-    seq: JsSequenceExpression,
-    var_names: list[str],
-) -> list[_SMRawAssignment] | None:
-    """
-    Extract state variable assignments from a sequence expression without evaluating them.
-    Non-state assignments (scope/with updates) are skipped.
-    """
-    result: list[_SMRawAssignment] = []
-    for expr in seq.expressions:
-        if not isinstance(expr, JsAssignmentExpression):
-            continue
-        if not isinstance(expr.left, JsIdentifier):
-            continue
-        name = expr.left.name
-        if name not in var_names:
-            continue
-        if expr.right is None:
-            return None
-        if expr.operator not in ('=', '+='):
-            return None
-        result.append(_SMRawAssignment(name=name, operator=expr.operator, rhs=expr.right))
-    if not result:
-        return None
-    return result
-
-
-def _extract_non_state_expressions(
-    seq: JsSequenceExpression,
-    var_names: list[str],
-) -> Expression | None:
-    """
-    Collect non-state-variable expressions from a sequence. Returns a single expression (or
-    sequence expression) for the payload, or None if all expressions are state assignments.
-    """
-    remaining: list[Expression] = []
-    for expr in seq.expressions:
-        if isinstance(expr, JsAssignmentExpression) and isinstance(expr.left, JsIdentifier):
-            if expr.left.name in var_names:
-                continue
-        remaining.append(expr)
-    if not remaining:
-        return None
-    if len(remaining) == 1:
-        return remaining[0]
-    return JsSequenceExpression(expressions=remaining)
-
-
-def _collect_trailing_state_assignments(
+def _split_transition(
     stmts: list[Statement],
     var_names: list[str],
-) -> tuple[list[_SMRawAssignment], int] | None:
+) -> tuple[list[Statement], list[_SMRawAssignment]] | None:
     """
-    Scan backwards from the end of the statement list to collect all consecutive state-variable
-    assignment statements. Returns the collected assignments and the split index (where payload
-    ends), or None if no trailing state assignments found.
+    Split statements that end in the assignments of a transition into the statements before them
+    and those assignments, in the order they run. The transition is the longest run of state
+    variable assignments at the end, as statements of their own or as the last expressions of a
+    comma sequence, like the redirect store and state updates in
+
+        scope.W = scope.NS, a += 5, b += -3;
+
+    whose leading expressions stay behind as a statement of their own. Returns `None` where the
+    statements do not end in such an assignment.
     """
     assignments: list[_SMRawAssignment] = []
-    i = len(stmts) - 1
-    while i >= 0:
-        stmt = stmts[i]
-        if not isinstance(stmt, JsExpressionStatement):
-            break
-        if not isinstance(stmt.expression, JsAssignmentExpression):
+    index = len(stmts)
+    while index > 0:
+        stmt = stmts[index - 1]
+        if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             break
         expr = stmt.expression
-        if not isinstance(expr.left, JsIdentifier):
+        parts = list(expr.expressions) if isinstance(expr, JsSequenceExpression) else [expr]
+        split = len(parts)
+        run: list[_SMRawAssignment] = []
+        while split > 0 and (assignment := _state_assignment(parts[split - 1], var_names)):
+            run.append(assignment)
+            split -= 1
+        if not run:
             break
-        if expr.left.name not in var_names:
-            break
-        if expr.right is None:
-            break
-        if expr.operator not in ('=', '+='):
-            break
-        assignments.append(_SMRawAssignment(name=expr.left.name, operator=expr.operator, rhs=expr.right))
-        i -= 1
+        run.reverse()
+        assignments[:0] = run
+        index -= 1
+        if split > 0:
+            head = parts[0] if split == 1 else JsSequenceExpression(expressions=parts[:split])
+            return [*stmts[:index], JsExpressionStatement(expression=head)], assignments
     if not assignments:
         return None
-    assignments.reverse()
-    return (assignments, i + 1)
+    return stmts[:index], assignments
 
 
-def _extract_single_assignment(
-    expr: JsAssignmentExpression,
-    var_names: list[str],
-) -> list[_SMRawAssignment] | None:
-    if not isinstance(expr.left, JsIdentifier):
-        return None
-    name = expr.left.name
-    if name not in var_names:
-        return None
-    if expr.right is None:
-        return None
-    if expr.operator not in ('=', '+='):
-        return None
-    return [_SMRawAssignment(name=name, operator=expr.operator, rhs=expr.right)]
+def _writes_a_state_variable(stmts: list[Statement], var_names: list[str]) -> bool:
+    """
+    Whether *stmts* store to or declare a state variable where nothing between them and the store
+    binds its name anew. The recovery reads the state only from the transition that ends a block,
+    and puts each state variable's value at entry in place of its every read.
+    """
+    watched = frozenset(var_names)
+    for stmt in stmts:
+        for node, shadowed in _walk_scoped(stmt, watched):
+            if isinstance(node, JsVariableDeclarator):
+                declared: set[str] = set()
+                _collect_binding_names(node.id, declared)
+                if declared & watched - shadowed:
+                    return True
+            elif isinstance(node, JsIdentifier) and node.name in watched - shadowed:
+                if is_member_write_target(node):
+                    return True
+                if (
+                    isinstance(parent := node.parent, (JsFunctionDeclaration, JsClassDeclaration))
+                    and parent.id is node
+                ):
+                    return True
+    return False
 
 
 def _apply_raw_transition(
@@ -1229,73 +1224,46 @@ def _apply_raw_transition(
     return env
 
 
-def _block_stmts(node: Statement) -> list[Statement] | None:
+def _block_stmts(node: Statement) -> list[Statement]:
     if isinstance(node, JsBlockStatement):
         return list(node.body)
     return [node]
-
-
-def _extract_trailing_assignments(
-    stmts: list[Statement],
-    var_names: list[str],
-) -> tuple[list[_SMRawAssignment], list[Statement]] | None:
-    """
-    Extract the trailing state assignment from a list of statements and return
-    (raw_assignments, prefix_statements). For mixed sequence expressions, non-state expressions
-    are preserved in the prefix.
-    """
-    if not stmts:
-        return None
-    last = stmts[-1]
-    if isinstance(last, JsExpressionStatement):
-        if isinstance(last.expression, JsSequenceExpression):
-            assigns = _extract_state_assignments(last.expression, var_names)
-            if assigns is not None:
-                non_state = _extract_non_state_expressions(last.expression, var_names)
-                prefix = list(stmts[:-1])
-                if non_state:
-                    prefix.append(JsExpressionStatement(expression=non_state))
-                return (assigns, prefix)
-        elif isinstance(last.expression, JsAssignmentExpression):
-            assigns = _extract_single_assignment(last.expression, var_names)
-            if assigns is not None:
-                return (assigns, stmts[:-1])
-    return None
 
 
 def _parse_conditional_transition(
     if_stmt: JsIfStatement,
     var_names: list[str],
     switch_label: str | None,
-) -> _SMConditionalTransition | None:
+) -> tuple[_SMConditionalTransition, bool] | None:
     """
-    Parse an if/else whose branches both perform state transitions.
+    Parse an if/else whose branches both end in the assignments of a transition, and tell whether
+    both branches then leave the switch with a `break`. The statements a branch runs before its
+    transition may not write a state variable (`_writes_a_state_variable`).
     """
-    if if_stmt.test is None:
+    if if_stmt.test is None or if_stmt.consequent is None or if_stmt.alternate is None:
         return None
-    true_block = if_stmt.consequent
-    false_block = if_stmt.alternate
-    if true_block is None or false_block is None:
+    true_stmts, true_terminated = _strip_trailing_break(
+        _block_stmts(if_stmt.consequent), switch_label
+    )
+    false_stmts, false_terminated = _strip_trailing_break(
+        _block_stmts(if_stmt.alternate), switch_label
+    )
+    true_split = _split_transition(true_stmts, var_names)
+    false_split = _split_transition(false_stmts, var_names)
+    if true_split is None or false_split is None:
         return None
-    true_stmts = _block_stmts(true_block)
-    false_stmts = _block_stmts(false_block)
-    if true_stmts is None or false_stmts is None:
+    true_prefix, true_assigns = true_split
+    false_prefix, false_assigns = false_split
+    if _writes_a_state_variable(true_prefix + false_prefix, var_names):
         return None
-    true_stmts = _strip_trailing_labeled_break(true_stmts, switch_label)
-    false_stmts = _strip_trailing_labeled_break(false_stmts, switch_label)
-    true_state = _extract_trailing_assignments(true_stmts, var_names)
-    false_state = _extract_trailing_assignments(false_stmts, var_names)
-    if true_state is None or false_state is None:
-        return None
-    true_assigns, true_prefix = true_state
-    false_assigns, false_prefix = false_state
-    return _SMConditionalTransition(
+    transition = _SMConditionalTransition(
         condition=if_stmt.test,
         true_assignments=true_assigns,
         false_assignments=false_assigns,
         true_prefix=true_prefix,
         false_prefix=false_prefix,
     )
+    return transition, true_terminated and false_terminated
 
 
 def _compute_discriminant(state: _StateEnv, var_names: list[str]) -> int | float:
@@ -1320,101 +1288,19 @@ def _apply_initial_state(var_names: list[str], values: list[int | float]) -> _St
     return dict(zip(var_names, values))
 
 
-def _is_state_var_assignment(expr: Expression, var_set: set[str]) -> bool:
-    return (
-        isinstance(expr, JsAssignmentExpression)
-        and isinstance(expr.left, JsIdentifier)
-        and expr.left.name in var_set
-    )
-
-
-def _apply_prefix_state_changes(
-    prefix: list[Statement],
-    var_names: list[str],
-    env: _StateEnv,
-) -> _StateEnv:
-    """
-    Scan prefix statements for assignments to state variables and apply them sequentially. This
-    handles cases where a conditional's prefix modifies state variables before the trailing
-    transition assignment.
-    """
-    result = dict(env)
-    var_set = set(var_names)
-    for stmt in prefix:
-        if not isinstance(stmt, JsExpressionStatement):
-            continue
-        expr = stmt.expression
-        exprs = expr.expressions if isinstance(expr, JsSequenceExpression) else [expr]
-        for e in exprs:
-            if not isinstance(e, JsAssignmentExpression):
-                continue
-            if not isinstance(e.left, JsIdentifier):
-                continue
-            if e.left.name not in var_set:
-                continue
-            if e.right is None:
-                continue
-            rhs_val = _eval_expr(e.right, result)
-            if rhs_val is None:
-                continue
-            name = e.left.name
-            if e.operator == '=':
-                result[name] = rhs_val
-            elif e.operator == '+=':
-                result[name] = result.get(name, 0) + rhs_val
-            elif e.operator == '-=':
-                result[name] = result.get(name, 0) - rhs_val
-    return result
-
-
-def _strip_state_var_assignments(stmts: list[Statement], var_names: list[str]) -> list[Statement]:
-    """
-    Remove statements that are pure assignments to state variables. These are routing bookkeeping
-    that should not appear in the recovered output. For sequence expressions, state var assignments
-    are removed while preserving remaining payload expressions.
-    """
-    var_set = set(var_names)
-    result: list[Statement] = []
-    for stmt in stmts:
-        if not isinstance(stmt, JsExpressionStatement):
-            result.append(stmt)
-            continue
-        expr = stmt.expression
-        if expr is None:
-            result.append(stmt)
-            continue
-        if isinstance(expr, JsSequenceExpression):
-            remaining = [e for e in expr.expressions if not _is_state_var_assignment(e, var_set)]
-            if not remaining:
-                continue
-            if len(remaining) == 1:
-                result.append(JsExpressionStatement(expression=remaining[0]))
-            else:
-                result.append(JsExpressionStatement(
-                    expression=JsSequenceExpression(expressions=remaining),
-                ))
-        elif _is_state_var_assignment(expr, var_set):
-            continue
-        else:
-            result.append(stmt)
-    return result
-
-
 def _process_branch_prefix(
     prefix: list[Statement],
-    var_names: list[str],
     state: _StateEnv,
     match: _GeneratorCFFMatch,
 ) -> list[Statement]:
     """
-    Process a conditional transition's branch prefix through the standard pipeline (strip state
-    vars, substitute, filter bookkeeping, strip scope, qualify). Returns the processed statements
-    ready for emission as branch-specific payload.
+    Process a conditional transition's branch prefix through the standard pipeline (substitute,
+    filter bookkeeping, strip scope, qualify). Returns the processed statements ready for emission
+    as branch-specific payload.
     """
-    result = _strip_state_var_assignments(prefix, var_names)
-    if not result:
+    if not prefix:
         return []
-    result = _substitute_state_vars(result, state)
+    result = _substitute_state_vars(prefix, state)
     _collect_scope_props(result, match)
     result = _strip_scope_param_prefix(result, match.scope_param_name)
     result = _qualify_with_identifiers(result, match)
@@ -1528,10 +1414,8 @@ def _build_cfg(
                     queue.append((next_block, new_env))
         elif isinstance(transition, _SMConditionalTransition):
             condition = transition.condition
-            true_base = _apply_prefix_state_changes(transition.true_prefix, var_names, state)
-            false_base = _apply_prefix_state_changes(transition.false_prefix, var_names, state)
-            true_env = _apply_raw_transition(transition.true_assignments, true_base)
-            false_env = _apply_raw_transition(transition.false_assignments, false_base)
+            true_env = _apply_raw_transition(transition.true_assignments, state)
+            false_env = _apply_raw_transition(transition.false_assignments, state)
             if true_env is None or false_env is None:
                 return None
             true_disc = _compute_discriminant(true_env, var_names)
@@ -1558,12 +1442,8 @@ def _build_cfg(
                     queue.append((false_block, false_env))
 
             successors = [true_id, false_id]
-            true_prefix_payload = _process_branch_prefix(
-                transition.true_prefix, var_names, state, match,
-            )
-            false_prefix_payload = _process_branch_prefix(
-                transition.false_prefix, var_names, state, match,
-            )
+            true_prefix_payload = _process_branch_prefix(transition.true_prefix, state, match)
+            false_prefix_payload = _process_branch_prefix(transition.false_prefix, state, match)
             condition = _qualify_condition(condition, state, match)
 
         node = _CFGNode(
