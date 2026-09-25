@@ -594,6 +594,105 @@ BEHAVIOURS: tuple[str, ...] = (
     "$o = [pscustomobject]@{}; Add-Member -ty NoteProperty k v -InputObject $o; $o.k",
     "Get-Date -c; Write-Output 'ran'",
     "Write-Output (Get-Date -Y 2020 -Month 1 -Day 1).Year",
+
+    #: What a variable written through the object that holds it is asked to preserve the behaviour
+    #: of. `Get-Variable` without `-ValueOnly`, `Get-ChildItem variable:` and the session state's
+    #: `PSVariable.Get` hand out the variable itself, and a store into its `Value` rebinds the name
+    #: wherever the object has gone; the session state's `PSVariable` also reads and removes a
+    #: variable by name.
+    "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b",
+    "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b",
+    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; Write-Output $b",
+    "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b",
+    "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b",
+    "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b",
+    "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b",
+    "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')",
+    "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); Write-Output $b",
+    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b",
+
+    #: What an expression that gives back the very array it is handed is asked to preserve the
+    #: behaviour of: a multi-assignment slot holds the element opposite it and not the whole value,
+    #: `@( )` around a cast to an array type or around a typed local returns that array unwrapped,
+    #: and `*` by a count of one returns its left operand.
+    '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
+    '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
+    '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
+    'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f',
+    '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y',
+    '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x',
+    '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x',
+
+    #: What code nobody can read, run somewhere other than the statement that holds the array, is
+    #: asked to preserve the behaviour of: in a called function, in a block `&` or `Invoke-Command`
+    #: runs, and through `InvokeScript`. Each payload is picked by an index no reading of the source
+    #: settles. Such code reaches every array a container or a second name holds, sets a `$script:`
+    #: variable, and may define a function under a command's name that a later call then runs.
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x',
+    "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x',
+    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x',
+    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$s = [scriptblock]::Create($c); & $s; Write-Output $x',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x',
+    "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
+    "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x",
+    "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; "
+    'Write-Output $x',
+    "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
+    'Write-Output $x',
+    "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; iex $c; "
+    "$x = 'b'; Write-Host 'hi'; Write-Output $x",
+    "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]; iex $c; "
+    "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x",
+
+    #: What an object that keeps the array it is handed is asked to preserve the behaviour of: a
+    #: note property, a property bag, a list, a list adapter, the application domain's data, and a
+    #: sorted copy that is the array itself. Code nobody can read may store through each, and so
+    #: may a method of the keeper that the script calls itself.
+    "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
+    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x',
+    "$o = New-Object PSObject; $x = 1, 2, 3; Add-Member -InputObject $o -NotePropertyName k "
+    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x',
+    "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
+    "$c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
+    ",$l | ForEach-Object -MemberName Add -ArgumentList (,$x) | Out-Null; "
+    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
+    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+    "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
+    "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+    "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
+    "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x',
+    "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'iex $c; Write-Output $x',
+    '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); Write-Output $x',
+
+    #: What compares the identity of an array is asked to preserve the behaviour of: nothing stores
+    #: into the array, and a copy put in place of one read is still told apart from the array the
+    #: other read names, by the same read twice, a sorted copy, the application domain's data, `*`
+    #: by a count of one, `@( )` around a cast, a multi-assignment slot and `+=` onto `$null`.
+    '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))',
+    '$x = 1, 2; $y = Sort-Object -InputObject $x; Write-Output ([object]::ReferenceEquals($x, $y))',
+    "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
+    "Write-Output ([object]::ReferenceEquals($x, [AppDomain]::CurrentDomain.GetData('k')))",
+    '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))',
+    '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))',
+    '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))',
+    '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))',
+    '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))',
+    '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
 )
 
 

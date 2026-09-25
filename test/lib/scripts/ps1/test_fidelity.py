@@ -79,12 +79,47 @@ MINIMUM_HARVEST = 400
 #: Inputs for which fidelity is known not to hold, each with the reason it does not. The mapping is
 #: checked in both directions — every entry must still fail and everything absent must pass — so a
 #: fix cannot land without removing its entry, and a regression cannot hide behind one. An entry
-#: names a deliberate normalization the model makes; work that has not been done yet is not a
-#: reason, because the law would then be satisfied by writing it down.
+#: names a deliberate normalization the model makes, or a defect an `expectedFailure` test of its
+#: own tracks; work that has not been done yet and that no such test tracks is not a reason,
+#: because the law would then be satisfied by writing it down.
 KNOWN_VIOLATIONS: dict[str, str] = {}
 
+#: Tracked by `test_synth.py::TestPs1SlotsThatSwallowASpelling`: a static member read off a type,
+#: standing as a command argument or behind `&`, is written without the bracket it needs there.
+_TYPE_MEMBER_AS_A_WORD = 'a static member of a type is written into a command argument bare'
+
 #: The same, for the paren-stripped tier.
-KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {}
+KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
+    'Write-Output ([Math]::Max(2, 1))':
+        _TYPE_MEMBER_AS_A_WORD,
+    "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
+    "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x":
+        _TYPE_MEMBER_AS_A_WORD,
+    "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
+    'Write-Output $x':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$x = 1, 2; $y = Sort-Object -InputObject $x; '
+    'Write-Output ([object]::ReferenceEquals($x, $y))':
+        _TYPE_MEMBER_AS_A_WORD,
+    "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
+    "Write-Output ([object]::ReferenceEquals($x, [AppDomain]::CurrentDomain.GetData('k')))":
+        _TYPE_MEMBER_AS_A_WORD,
+    '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$x = 1, 2, 3; $b = @(([object[]]$x)); '
+    'Write-Output ([object]::ReferenceEquals($x, $b))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))':
+        _TYPE_MEMBER_AS_A_WORD,
+    '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))':
+        _TYPE_MEMBER_AS_A_WORD,
+}
 
 
 def _harvested() -> list[str]:

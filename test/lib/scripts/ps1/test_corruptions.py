@@ -739,6 +739,19 @@ class _Ps1Ledger(TestPs1):
             Ps1Parser(source).parse(), key)
         self._assertWrites(tree, written, corrupt, kept)
 
+    def _assertNoOccurrenceIsReplaced(self, source: str, key: str) -> None:
+        """
+        The output must still spell every occurrence of the name under `key` that the source
+        spells. Where a script compares the identity of the array the name holds, a copy spelled in
+        place of any one read is a different array, and nothing the output writes shows it.
+        """
+        tree = self._deobfuscated_tree(source)
+        self.assertGreaterEqual(
+            len(_occurrences(tree, key)),
+            len(_occurrences(Ps1Parser(source).parse(), key)),
+            F'an occurrence of ${key} was replaced by a copy of the array it holds',
+        )
+
 
 class TestPs1Corruptions(_Ps1Ledger):
     """
@@ -2548,3 +2561,541 @@ class TestPs1ABodyWritingAByteArrayWritesBytes(_Ps1Ledger):
             'function dec($d) { $o = New-Object byte[] 2; $o[0] = $d; $o[1] = 1; $o }; '
             'Write-Output (dec 5)')
         self.assertNotEqual(_output_writes(tree), [[5, 1]])
+
+
+class TestPs1AVariableWrittenThroughTheVariableItselfIsWritten(_Ps1Ledger):
+    """
+    `Get-Variable` without `-ValueOnly`, `Get-ChildItem variable:` and the session state's
+    `PSVariable.Get` hand out the variable itself, and a store into its `Value` rebinds the name
+    wherever the variable has been handed. Measured on 5.1 in `corpus.BEHAVIOURS`, each script
+    writes `b`.
+
+    Each command is read as a plain read of the name, or not as naming it at all, so the read below
+    the store is folded to the value before it.
+    """
+
+    @unittest.expectedFailure
+    def test_a_store_through_the_variable_get_variable_hands_out(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_call_of_the_setter_of_the_variable_get_variable_hands_out(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_store_through_the_variable_the_session_state_hands_out(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; "
+            'Write-Output $b',
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_store_a_called_function_makes_through_its_callers_variable(self):
+        self._assertTheStoreReachesTheName(
+            "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_store_through_the_variable_get_child_item_hands_out(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_store_by_the_block_the_variable_is_piped_into(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b",
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_store_through_a_variable_picked_out_of_every_variable(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; "
+            'Write-Output $b',
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+
+class TestPs1TheSessionStateReadsWritesAndRemovesAVariableByName(_Ps1Ledger):
+    """
+    The session state's `PSVariable` reads a variable by name with `GetValue`, assigns one with
+    `Set` from wherever it has been kept, and removes one with `Remove`. Measured on 5.1 in
+    `corpus.BEHAVIOURS`, the scripts write `a`, `b` and `$null`.
+
+    None of the three calls is read as naming the variable, so the store the first one reads is
+    removed and the reads below the other two are folded to the value before them.
+    """
+
+    @unittest.expectedFailure
+    def test_the_store_a_read_by_name_observes_is_kept(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')")
+        self.assertTrue(
+            _stores_value(tree, 'x', 'a'), 'the store the session state reads by name was removed')
+
+    @unittest.expectedFailure
+    def test_a_store_by_name_through_the_kept_session_state_is_seen(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); "
+            'Write-Output $b',
+            'b',
+            [['b']],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_removal_by_name_is_seen(self):
+        self._assertTheStoreReachesTheName(
+            "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b",
+            'b',
+            [[None]],
+            [['a']],
+        )
+
+
+class TestPs1AMultiAssignmentSlotHoldsTheElementOppositeIt(_Ps1Ledger):
+    """
+    A multi-assignment of a value not written as a list gives its first name the first element of
+    that value and not the value itself. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes
+    `1`.
+
+    The slot is linked to the whole value as if `$b = $x` had been written, so the reversal of `$x`
+    is filed against `$b` and its read is folded to `3 2 1`.
+    """
+
+    @unittest.expectedFailure
+    def test_a_slot_given_an_element_is_not_a_second_name_for_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b',
+            'b',
+            [[1]],
+            [[3, 2, 1]],
+        )
+
+
+class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
+    """
+    `@( )` around a cast to an array type returns that array unwrapped, and so does `@( )` around a
+    local a function body constrains to an array type; `*` by a count of one returns its left
+    operand. Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes what the store or the call
+    did to the array.
+
+    Each is read as a new array nothing else holds, so a store through it is filed against nothing
+    and a call writing through it is removed as having no effect.
+    """
+
+    @unittest.expectedFailure
+    def test_an_array_subexpression_around_a_cast_hands_on_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_reversing_an_array_subexpression_around_a_cast_reverses_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_reversing_an_array_subexpression_around_a_typed_local_is_kept(self):
+        tree = self._deobfuscated_tree(
+            'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f')
+        self._assertWrites(tree, [[2, 1]], [[1, 2]], bool(_static_calls(tree, 'array', 'reverse')))
+
+    @unittest.expectedFailure
+    def test_a_product_by_one_hands_on_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y',
+            'y',
+            [[9, 2]],
+            [[1, 2]],
+        )
+
+    @unittest.expectedFailure
+    def test_reversing_a_product_by_one_reverses_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_reversing_a_product_by_one_of_a_value_read_at_run_time_is_kept(self):
+        tree = self._deobfuscated_tree(
+            '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x')
+        self._assertWrites(
+            tree, [[3, 2, 0]], [[0, 2, 3]], bool(_static_calls(tree, 'array', 'reverse')))
+
+
+class TestPs1CodeNobodyCanReadRunElsewhereStillReachesTheArray(_Ps1Ledger):
+    """
+    Code nobody can read reaches every array a container or a second name holds, wherever it runs:
+    in a called function, in a block `&` or `Invoke-Command` runs, through `InvokeScript`, and after
+    a hand-off that stands in a block of its own. Measured on 5.1 in `corpus.BEHAVIOURS`, each
+    script writes `9 2 3`: the payload stores through the place that holds the array, picked by an
+    index no reading of the source settles.
+
+    Such code is counted only where it runs in the scope and the body that hold the hand-off, so
+    each place is handed a copy.
+    """
+
+    @unittest.expectedFailure
+    def test_a_called_function_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+            'function f { iex $c }; f; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_called_function_reaches_the_second_name(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+            'function f { iex $c }; f; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_called_function_reaches_the_array_a_block_wrote_out(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+            'function f { iex $c }; f; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_code_after_a_block_reaches_the_array_the_block_wrote_out(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+            'Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_created_block_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+            '$s = [scriptblock]::Create($c); & $s; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_invoke_script_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+            '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_invoke_command_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+            '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_block_created_in_a_called_function_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
+            "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1CodeNobodyCanReadRunElsewhereMaySetAScriptVariable(_Ps1Ledger):
+    """
+    Code nobody can read may set a `$script:` variable from wherever it runs: from the body of a
+    called function, and from a block created from a string, whose scope of its own does not stop a
+    qualified write. Measured on 5.1 in `corpus.BEHAVIOURS`, both scripts write `5`.
+
+    Such code is read as writing the scope it runs in and nothing else, so the read is folded to
+    `a`.
+    """
+
+    @unittest.expectedFailure
+    def test_a_called_function_sets_the_script_variable(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; "
+            'Write-Output $x',
+            'x',
+            [[5]],
+            [['a']],
+        )
+
+    @unittest.expectedFailure
+    def test_a_created_block_sets_the_script_variable(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; "
+            '& ([scriptblock]::Create($c)); Write-Output $x',
+            'x',
+            [[5]],
+            [['a']],
+        )
+
+
+class TestPs1ACommandCodeNobodyCanReadRedefinedRunsThatCode(_Ps1Ledger):
+    """
+    Code nobody can read may define a function under the name of a command, and a later call of
+    that name runs it. Measured on 5.1 in `corpus.BEHAVIOURS`, the first script writes `5` and the
+    second `9 2 3`: the payload's `Write-Host` sets `$script:x` in one and stores through the table
+    that holds the array in the other.
+
+    The later call is read as the command its name had before, so the store below the payload and
+    the hand-off into the table are read as the last things to touch `$x`.
+    """
+
+    @unittest.expectedFailure
+    def test_a_redefined_command_sets_the_script_variable(self):
+        tree = self._deobfuscated_tree(
+            "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; "
+            "iex $c; $x = 'b'; Write-Host 'hi'; Write-Output $x")
+        self._assertWrites(tree, [[5]], [['b']], _stores_value(tree, 'x', 'b'))
+
+    @unittest.expectedFailure
+    def test_a_redefined_command_reaches_the_container(self):
+        self._assertTheStoreReachesTheName(
+            "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]; iex $c; "
+            "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1AKeeperOfTheArrayIsReachedByCodeNobodyCanRead(_Ps1Ledger):
+    """
+    An object that keeps the array it is handed is a place code nobody can read may store through:
+    a note property, a property bag, a list, a list adapter, the application domain's data, and the
+    array `Sort-Object -InputObject` hands back. Measured on 5.1 in `corpus.BEHAVIOURS`, each script
+    writes `9 2 3`.
+
+    A script that spells no store in place lets every hand-off but the one to a second name through,
+    although code nobody can read runs after it, so each keeper is handed a copy.
+    """
+
+    @unittest.expectedFailure
+    def test_a_note_property_added_through_the_pipeline_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
+            "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+            'Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_note_property_added_to_an_argument_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$o = New-Object PSObject; $x = 1, 2, 3; "
+            'Add-Member -InputObject $o -NotePropertyName k '
+            "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+            'Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_property_bag_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
+            "$c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_list_filled_through_for_each_object_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
+            ",$l | ForEach-Object -MemberName Add -ArgumentList (,$x) | Out-Null; "
+            "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_list_filled_by_its_add_method_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
+            "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_a_list_adapter_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
+            "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_the_application_domain_keeps_the_array(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
+            "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; "
+            'iex $c; Write-Output $x',
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+    @unittest.expectedFailure
+    def test_sort_object_handed_the_array_as_input_hands_it_back(self):
+        self._assertTheStoreReachesTheName(
+            "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; "
+            "$c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
+            'x',
+            [[9, 2, 3]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1AMethodOfAKeeperChangesTheArrayItKeeps(_Ps1Ledger):
+    """
+    `ArrayList.Adapter` wraps the array it is handed rather than copying it, and the wrapper's
+    `Reverse` turns that array around. Measured on 5.1 in `corpus.BEHAVIOURS`, the script writes
+    `3 2 1`.
+
+    A method of an object is read as changing nothing unless the written-slot table names it, so the
+    adapter is handed a copy and the read is folded to `1 2 3`.
+    """
+
+    @unittest.expectedFailure
+    def test_reversing_the_adapter_reverses_the_array(self):
+        self._assertTheStoreReachesTheName(
+            '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); '
+            'Write-Output $x',
+            'x',
+            [[3, 2, 1]],
+            [[1, 2, 3]],
+        )
+
+
+class TestPs1ACopyIsToldApartFromTheArrayByItsIdentity(_Ps1Ledger):
+    """
+    `[object]::ReferenceEquals` tells two arrays apart by identity, so a copy put in place of one
+    read compares unequal to the array another read names, with no store anywhere. Measured on 5.1
+    in `corpus.BEHAVIOURS`, each script writes `True`: the second array is the first read again, the
+    one `Sort-Object -InputObject` or the application domain's data hands back, the result of `*` by
+    a count that is one, `@( )` around a cast, a multi-assignment's one element, or `+=` onto
+    `$null`.
+
+    A read whose value is never changed in place is replaced by a copy of it, so each script writes
+    `False`.
+    """
+
+    @unittest.expectedFailure
+    def test_the_same_read_twice_is_the_same_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))', 'x')
+
+    @unittest.expectedFailure
+    def test_sort_object_hands_back_the_array_it_is_given_as_input(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$x = 1, 2; $y = Sort-Object -InputObject $x; '
+            'Write-Output ([object]::ReferenceEquals($x, $y))',
+            'x',
+        )
+
+    @unittest.expectedFailure
+    def test_the_application_domain_hands_back_the_array_it_keeps(self):
+        self._assertNoOccurrenceIsReplaced(
+            "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
+            "Write-Output ([object]::ReferenceEquals($x, [AppDomain]::CurrentDomain.GetData('k')))",
+            'x',
+        )
+
+    @unittest.expectedFailure
+    def test_a_product_by_one_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))', 'y')
+
+    @unittest.expectedFailure
+    def test_a_product_by_a_count_that_is_one_at_run_time_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))',
+            'y',
+        )
+
+    @unittest.expectedFailure
+    def test_a_product_by_a_count_that_converts_to_one_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))', 'y')
+
+    @unittest.expectedFailure
+    def test_an_array_subexpression_around_a_cast_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$x = 1, 2, 3; $b = @(([object[]]$x)); '
+            'Write-Output ([object]::ReferenceEquals($x, $b))',
+            'x',
+        )
+
+    @unittest.expectedFailure
+    def test_the_one_element_of_a_multi_assignment_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))', 'x')
+
+    @unittest.expectedFailure
+    def test_adding_the_array_onto_null_is_the_array(self):
+        self._assertNoOccurrenceIsReplaced(
+            '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))',
+            'x',
+        )

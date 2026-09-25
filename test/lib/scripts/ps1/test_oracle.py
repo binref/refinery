@@ -282,6 +282,173 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'metadata proves inert: `Length` is re-pointed to a script property and the read is '
         'folded to the number the metadata carries, so the output prints a value 5.1 never '
         'produces.',
+    "$b = 'a'; $v = Get-Variable b; $v.Value = 'b'; Write-Output $b":
+        'The read is folded to `a`. `Get-Variable` hands out the variable itself, so the store '
+        'into its `Value` rebinds `$b` and the snippet writes `b`; the command is read as a '
+        'plain read of the name.',
+    "$b = 'a'; (Get-Variable b).set_Value('b'); Write-Output $b":
+        'The same store, made by calling the setter of the variable `Get-Variable` hands out.',
+    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Get('b').Value = 'b'; Write-Output $b":
+        'The same store through the variable the session state\'s `PSVariable.Get` hands out. '
+        'The call is not read as naming `$b` at all, so the store `$b = \'a\'` is removed as '
+        'well and the output raises PropertyNotFound before it writes `a`.',
+    "function g { (Get-Variable b -Scope 1).Value = 'b' }; $b = 'a'; g; Write-Output $b":
+        'The same store, made by a called function through `-Scope 1`, which names its '
+        'caller\'s variable.',
+    "$b = 'a'; $v = Get-ChildItem variable:b; $v.Value = 'b'; Write-Output $b":
+        'The same store through the variable `Get-ChildItem variable:` hands out. The command '
+        'is not read as naming `$b` at all, so the store `$b = \'a\'` is removed as well and the '
+        'output raises PathNotFound and PropertyNotFound before it writes `a`.',
+    "$b = 'a'; Get-Variable b | ForEach-Object { $_.Value = 'b' }; Write-Output $b":
+        'The same store, made by the block the variable is piped into.',
+    "$b = 'a'; $v = Get-Variable; ($v | Where-Object Name -eq 'b').Value = 'b'; Write-Output $b":
+        'The same store through a variable picked out of all of them. `Get-Variable` with no '
+        'name reads every variable and is read as reading none, so the store `$b = \'a\'` is '
+        'removed as well and the output raises PropertyNotFound before it writes `a`.',
+    "$x = 'a'; Write-Output $ExecutionContext.SessionState.PSVariable.GetValue('x')":
+        'The store is removed and the read writes `$null` where the snippet writes `a`: '
+        '`PSVariable.GetValue` reads `$x` by name and is not read as a read of it.',
+    "$b = 'a'; $p = $ExecutionContext.SessionState.PSVariable; $p.Set('b', 'b'); Write-Output $b":
+        'The read is folded to `a`. The session state\'s `PSVariable`, kept in a variable of '
+        'its own, assigns `$b` by name, so the snippet writes `b`.',
+    "$b = 'a'; $ExecutionContext.SessionState.PSVariable.Remove('b'); Write-Output $b":
+        'The read is folded to `a`. `PSVariable.Remove` removes `$b` by name, so the snippet '
+        'writes `$null`.',
+    '$x = 1, 2, 3; $b, $c = $x; [Array]::Reverse($x); Write-Output $b':
+        'The read is folded to the reversal `3 2 1`. A multi-assignment gives `$b` the first '
+        'element of `$x` and not the array, so the snippet writes `1`; the two names are '
+        'linked as if `$b = $x` had been written.',
+    '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x':
+        'The read is folded to `1 2 3` where the snippet writes `9 2 3`. `@( )` around a cast '
+        'to an array type returns that array unwrapped, so `$y` holds the array `$x` holds; '
+        'the hand-off is read as a copy.',
+    '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x':
+        'The call is removed and the read folded to `1 2 3` where the snippet writes `3 2 1`: '
+        'the call reverses the array `$x` holds, for the same reason.',
+    'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f':
+        'The call is removed, so the function writes `1 2` where the snippet writes `2 1`. In '
+        'a function body a local constrained to an array type is compiled as one, and `@( )` '
+        'returns it unwrapped.',
+    '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y':
+        'The read is folded to `1 2` where the snippet writes `9 2`. `*` by a count of one '
+        'returns its left operand, so `$z` holds the array `$y` holds; the product is read as '
+        'a copy.',
+    '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
+        'The call is removed and the read folded to `1 2 3` where the snippet writes `3 2 1`, '
+        'for the same reason.',
+    '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
+        'The call is removed as a statement with no effect, so the output writes `0 2 3` where '
+        'the snippet writes `3 2 0`: the product is read as a new array nothing else holds.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x':
+        'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
+        'snippet writes `9 2 3`. The payload runs in the body of the function that calls it, '
+        'and code nobody can read is counted only in the body that holds the hand-off.',
+    "$x = 1, 2, 3; $y = $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x':
+        'The same through a second name, which is given a copy for the payload to store into.',
+    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'function f { iex $c }; f; Write-Output $x':
+        'The same through the output of a block, which hands on the array itself.',
+    "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x':
+        'The copy is spelled into the block, so the payload stores into it and the read writes '
+        '`1 2 3` where the snippet writes `9 2 3`. The hand-off stands in the block and the '
+        '`iex` in the script around it, and only the block\'s own statements are asked what '
+        'follows the hand-off.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$s = [scriptblock]::Create($c); & $s; Write-Output $x':
+        'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
+        'snippet writes `9 2 3`. A block created from a string runs in a scope of its own, and '
+        'that is read as reaching nothing of its caller\'s; it still reaches the table.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$ExecutionContext.InvokeCommand.InvokeScript($c) | Out-Null; Write-Output $x':
+        'The same, with the payload run by `InvokeScript`.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
+    '$s = [scriptblock]::Create($c); Invoke-Command -ScriptBlock $s; Write-Output $x':
+        'The same, with the payload run by `Invoke-Command`.',
+    "$x = 1, 2, 3; $h = @{ k = $x }; function f { & ([scriptblock]::Create($c)) }; "
+    "$c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; f; Write-Output $x":
+        'The same, with the created block run inside a called function.',
+    "$x = 'a'; function f { iex $c }; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; f; "
+    'Write-Output $x':
+        'The read is folded to `a` where the snippet writes `5`: the payload the called '
+        'function runs sets `$script:x`, and code nobody can read in another body is read as '
+        'writing nothing here.',
+    "$x = 'a'; $c = @('$script:x = 5')[(Get-Random -Maximum 1)]; & ([scriptblock]::Create($c)); "
+    'Write-Output $x':
+        'The same, with the payload run as a created block, whose scope of its own does not '
+        'stop a `$script:` write.',
+    "$x = 'a'; $c = @('function Write-Host { $script:x = 5 }')[(Get-Random -Maximum 1)]; iex $c; "
+    "$x = 'b'; Write-Host 'hi'; Write-Output $x":
+        'The read is folded to `b` where the snippet writes `5`: the payload defines a '
+        'function `Write-Host` that sets `$script:x`, and the later `Write-Host` runs it. Once '
+        'code nobody can read has run, a call of any name may run code nobody can read.',
+    "$c = @('function Write-Host { $h.k[0] = 9 }')[(Get-Random -Maximum 1)]; iex $c; "
+    "$x = 1, 2, 3; $h = @{ k = $x }; Write-Host 'hi'; Write-Output $x":
+        'The same, with the redefined command storing through the table that holds the array: '
+        'the read is folded to `1 2 3` where the snippet writes `9 2 3`.',
+    "$o = New-Object PSObject; $x = 1, 2, 3; $o | Add-Member -NotePropertyName k "
+    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x':
+        'The array is spelled into the note property, so the payload stores into a copy and '
+        'the read writes `1 2 3` where the snippet writes `9 2 3`. A script that spells no '
+        'store in place lets every hand-off but the one to a second name through, although '
+        'code nobody can read runs after it.',
+    "$o = New-Object PSObject; $x = 1, 2, 3; Add-Member -InputObject $o -NotePropertyName k "
+    "-NotePropertyValue $x; $c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x':
+        'The same, with the object handed to `Add-Member` as an argument.',
+    "$x = 1, 2, 3; $o = New-Object PSObject -Property @{ k = $x }; "
+    "$c = @('$o.k[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
+        'The same, with the array handed to the new object as a property.',
+    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; "
+    ",$l | ForEach-Object -MemberName Add -ArgumentList (,$x) | Out-Null; "
+    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
+        'The same, with the array added to a list by `ForEach-Object -MemberName`.',
+    "$x = 1, 2, 3; $l = New-Object Collections.ArrayList; [void]$l.Add($x); "
+    "$c = @('$l[0][0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
+        'The same, with the array added to a list by its `Add` method.',
+    "$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); "
+    "$c = @('$w[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
+        'The same, with the array wrapped by `ArrayList.Adapter`, whose elements are the '
+        'array\'s own.',
+    "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
+    "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
+    'Write-Output $x':
+        'The same, with the array kept in the application domain\'s data.',
+    "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; "
+    'iex $c; Write-Output $x':
+        'The same, with the array handed to `Sort-Object -InputObject`, which hands back that '
+        'very array.',
+    '$x = 1, 2, 3; $w = [Collections.ArrayList]::Adapter($x); $w.Reverse(); Write-Output $x':
+        'The read is folded to `1 2 3` where the snippet writes `3 2 1`. The adapter\'s '
+        '`Reverse` turns around the array it wraps, and a method of an object is read as '
+        'changing nothing unless the written-slot table names it.',
+    '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))':
+        'Both reads are replaced by copies, so the call compares two arrays and writes `False` '
+        'where the snippet writes `True`. Nothing stores into the array, and a copy is still '
+        'told apart from it by its identity.',
+    '$x = 1, 2; $y = Sort-Object -InputObject $x; Write-Output ([object]::ReferenceEquals($x, $y))':
+        'The same, with the second array handed back by `Sort-Object -InputObject`.',
+    "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
+    "Write-Output ([object]::ReferenceEquals($x, [AppDomain]::CurrentDomain.GetData('k')))":
+        'The same, with the second array read back from the application domain\'s data.',
+    '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))':
+        'The same, with the second array made by `*` by a count of one, which returns its left '
+        'operand.',
+    '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))':
+        'The same, with a count that is one only at run time.',
+    '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))':
+        'The same, with a count that converts to one.',
+    '$x = 1, 2, 3; $b = @(([object[]]$x)); Write-Output ([object]::ReferenceEquals($x, $b))':
+        'The same, with the second array made by `@( )` around a cast to an array type.',
+    '$x = 1, 2, 3; $a, $b = ,$x; Write-Output ([object]::ReferenceEquals($x, $a))':
+        'The same, with the second array the one element a multi-assignment gives its first '
+        'name.',
+    '$x = 1, 2, 3; $b = $null; $b += $x; Write-Output ([object]::ReferenceEquals($x, $b))':
+        'The same, with the second array made by `+=` onto `$null`, which gives back its right '
+        'operand.',
 }
 
 

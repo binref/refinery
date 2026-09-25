@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from test import TestBase
 
 from refinery.lib.scripts import Node, UnspellableNode
@@ -501,6 +503,22 @@ class TestPs1SlotsThatSwallowASpelling(TestBase):
         self.assertEqual(_written(_write_output(cast)), 'Write-Output ([byte]5)')
         self.assertEqual(
             _written(_write_output(Ps1TypeExpression(name='byte'))), 'Write-Output ([byte])')
+
+    @unittest.expectedFailure
+    def test_a_static_member_of_a_type_in_a_command_argument_is_bracketed(self):
+        """
+        A type name opens a word in a command argument however much is written behind it, so the
+        bracket a cast gets there is needed as much by a static member read off a type. It is
+        written only for a cast or a type standing alone, and `Write-Output [Math]::Max(2, 1)` is
+        what comes out.
+        """
+        call = Ps1InvokeMember(
+            object=Ps1TypeExpression(name='Math'),
+            member='Max',
+            access=Ps1AccessKind.STATIC,
+            arguments=[Ps1IntegerLiteral(raw='2'), Ps1IntegerLiteral(raw='1')],
+        )
+        self.assertEqual(_written(_write_output(call)), 'Write-Output ([Math]::Max(2, 1))')
 
     def test_a_receiver_inside_a_command_argument_is_still_read_in_command_mode(self):
         """
