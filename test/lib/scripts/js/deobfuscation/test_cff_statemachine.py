@@ -11,6 +11,8 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
 from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening, statemachine
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.tools import RecursionDepth
 
 
@@ -3257,10 +3259,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         store to a member runs code, and a read finds what the prototype holds, so neither member
         holds what the stores the recovery reads put there. Each generator is left as it is.
         """
-        for source in (
-            self.NAMESPACE_WITH_A_SETTER_CFF,
-            self.NAMESPACE_WITH_A_PROTOTYPE_CFF,
-        ):
+        for source in (self.NAMESPACE_WITH_A_SETTER_CFF, self.NAMESPACE_WITH_A_PROTOTYPE_CFF):
             with self.subTest(source):
                 self.assertEqual(
                     self._run_transformers(source),
@@ -3698,8 +3697,11 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         state. Each generator here breaks that, and is left as it is: the matched case runs on into
         the next, a case test ahead of the match reads a name the machine does not know or a slot
         stored from an expression it cannot evaluate, a routing slot is stored in a loop, stored
-        again after a wrapper ran, stored after a wrapper was called, or written bare through the
-        `with` statement, and a block is reached with two states.
+        again after a wrapper ran, stored after a wrapper was called, written bare through the
+        `with` statement, written by a function the leading stores store, or written under a key
+        only known at runtime, the object holding it is replaced behind its store or in a later
+        block or given another prototype, its store runs a setter a prototype holds, and a block is
+        reached with two states, one pair of them told apart only by the sign of a zero.
         """
         for source in (
             self.MATCHED_CASE_THE_RECOVERY_CANNOT_READ_CFF,
@@ -3709,7 +3711,14 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF,
             self.WRAPPER_CALLED_BEFORE_THE_ROUTING_STORE_CFF,
             self.ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF,
+            self.ROUTING_SLOT_WRITTEN_BY_A_STORED_FUNCTION_CFF,
+            self.ROUTING_SLOT_WRITTEN_UNDER_A_COMPUTED_KEY_CFF,
+            self.NAMESPACE_REPLACED_BEHIND_THE_ROUTING_STORE_CFF,
+            self.NAMESPACE_REPLACED_AFTER_THE_ROUTING_STORE_CFF,
+            self.NAMESPACE_PROTOTYPE_REPLACED_CFF,
+            self.ROUTING_STORE_THROUGH_AN_INHERITED_SETTER_CFF,
             self.BLOCK_REACHED_WITH_TWO_STATES_CFF,
+            self.NEGATIVE_ZERO_STATE_CFF,
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -3720,9 +3729,12 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
         """
         A body that runs on into the next case, a state variable stored and read before the
-        transition that ends the body, and a branch storing a state variable before its transition,
-        from an expression the machine cannot evaluate or where the branch reads it back: the
-        obfuscator ends every body in one transition, and each generator is left as it is.
+        transition that ends the body, a branch storing a state variable before its transition,
+        from an expression the machine cannot evaluate or where the branch reads it back, a
+        condition storing a state variable, a class taking a state variable's name, a payload
+        leaving the switch by a `break` of its own, a function declared behind a `return`, and a
+        variable declared in a body no run reaches: the obfuscator ends every body in one
+        transition and declares nothing in it, and each generator is left as it is.
         """
         for source in (
             self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
@@ -3730,6 +3742,11 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF,
             self.BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF,
             self.BRANCH_READING_A_STATE_IT_STORED_CFF,
+            self.CONDITION_STORING_A_STATE_VARIABLE_CFF,
+            self.CLASS_NAMED_LIKE_A_STATE_VARIABLE_CFF,
+            self.BREAK_OUT_OF_A_PAYLOAD_CFF,
+            self.HELPER_DECLARED_BEHIND_THE_RETURN_CFF,
+            self.VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF,
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -3787,7 +3804,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         A flag and a result some other function reads, a generator called from outside its
         scaffolding, a result stored on an object, a returned call inside a block, a call inside a
         loop, a key a wrapper copies from its creator that the creator then changes, a namespace a
-        wrapper hands on and rebinds, a flag a wrapper raises before code behind the guard, a
+        wrapper hands on and rebinds, a namespace a wrapper hands on under a name a parameter binds
+        between it and its creator, a flag a wrapper raises before code behind the guard, a
         generator reading its own receiver and arguments or suspending, a slot named like a
         parameter the function around the call reads, a slot under a key no declaration can bind,
         and a block function in strict code: the recovered code would mean something else where it
@@ -3801,6 +3819,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.CALL_IN_A_LOOP_CFF,
             self.COPIED_SLOT_CHANGED_BY_THE_CREATOR_CFF,
             self.HANDED_ON_NAMESPACE_REBOUND_CFF,
+            self.HANDED_ON_NAMESPACE_BOUND_BY_A_PARAMETER_CFF,
             self.FLAG_RAISED_BY_A_WRAPPER_CFF,
             self.RECEIVER_AND_ARGUMENTS_OF_THE_GENERATOR_CFF,
             self.YIELD_IN_A_CASE_CFF,
@@ -3862,6 +3881,911 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         with RecursionDepth(TREE_RECURSION_DEPTH):
             result = self._run_transformer(source, JsGeneratorCFFUnflattening)
         self.assertNotIn('function*', result)
+
+    NAMESPACE_REPLACED_AFTER_THE_ROUTING_STORE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.k] = [25];
+                    scope.RV = scope.NS;
+                    a = 20, b = 10;
+                    break;
+                  case 30:
+                    scope.NS = {k: 7};
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the value of the routing store";
+                  default:
+                    return done = true, "the value of the new namespace";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_REPLACED_BEHIND_THE_ROUTING_STORE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.k] = [25];
+                    scope.NS = {};
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the value of the routing store";
+                  default:
+                    return done = true, "no value";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_WRITTEN_BY_A_STORED_FUNCTION_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.bump = function () { scope.NS.k = 99; };
+                    [scope.NS.k] = [25];
+                    a = 20, b = 10;
+                    break;
+                  case 30:
+                    scope.NS.bump();
+                    a = 40, b = 10;
+                    break;
+                  case scope.NS.k + 25:
+                    return done = true, "the value of the routing store";
+                  default:
+                    return done = true, "the value the function stored";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_WRITTEN_UNDER_A_COMPUTED_KEY_CFF = inspect.cleandoc(
+        """
+        function outer(key) {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.k] = [25];
+                    scope.NS[key] = 7;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.k + 10:
+                    return done = true, "the value of the routing store";
+                  default:
+                    return done = true, "the value stored under the key";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_PROTOTYPE_REPLACED_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.k + 20:
+                    return done = true, "the value of the prototype";
+                  case 10:
+                    scope.NS.__proto__ = {k: 15};
+                    a = 20, b = 15;
+                    break;
+                  default:
+                    return done = true, "no value";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_STORE_THROUGH_AN_INHERITED_SETTER_CFF = inspect.cleandoc(
+        """
+        Object.defineProperty(Object.prototype, "p", {
+          set: function (value) {},
+          get: function () { return 99; },
+          configurable: true,
+        });
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.p] = [15];
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.p + 20:
+                    return done = true, "the value of the store";
+                  default:
+                    return done = true, "the value of the getter";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NEGATIVE_ZERO_STATE_CFF = inspect.cleandoc(
+        """
+        function outer(flag) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (flag) {
+                      a = -0, b = 7;
+                    } else {
+                      a = 0, b = 7;
+                    }
+                    break;
+                  case 7:
+                    return done = true, 1 / a;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    CONDITION_STORING_A_STATE_VARIABLE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if ((a = 7) > 3) {
+                      b += 1;
+                    } else {
+                      b += 2;
+                    }
+                    break;
+                  case 11:
+                    return done = true, "a is still 5";
+                  case 13:
+                    return done = true, "a became 7";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    CLASS_NAMED_LIKE_A_STATE_VARIABLE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    class a {}
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, "the state variable changed";
+                  case 20:
+                    return done = true, "the class took the store";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BREAK_OUT_OF_A_PAYLOAD_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          var count = 0;
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log("ten");
+                    if (count++ === 0) break;
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, count;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    HANDED_ON_NAMESPACE_BOUND_BY_A_PARAMETER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {MAIN: {}}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.MAIN.p] = [5];
+                    scope.MAIN.mk = function (MAIN) {
+                      return function (...r) {
+                        return gen(40, 0, {MAIN: MAIN}, r)["next"]()["value"];
+                      };
+                    };
+                    a = 20, b = 30;
+                    break;
+                  case scope.MAIN.p + 35:
+                    return done = true, "p is five";
+                  case 40:
+                    return done = true, "p is not five";
+                  case 50:
+                    return done = true, scope.MAIN.mk({p: 100})();
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ENTRY_STATE_AT_THE_END_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 100:
+                    return done = true, "the loop ran";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(50, 50)["next"]()["value"];
+          if (done) { return result; }
+          return "the loop never ran";
+        }
+        """
+    )
+
+    NAMESPACE_READ_AS_A_WHOLE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.k + 10:
+                    return done = true, JSON.stringify(scope.NS);
+                  case 10:
+                    [scope.NS.k] = [25];
+                    a = 20, b = 15;
+                    break;
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    DESTRUCTURING_INTO_A_REST_ELEMENT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    [scope.NS.p, ...scope.NS.r] = [1, 2];
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, scope.NS.r;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    FRACTIONAL_STATES_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, c, scope = {}, args) {
+            while (a + b + c !== 100) {
+              with (scope) {
+                switch (a + b + c) {
+                  case 0.6:
+                    return done = true, "the sum rounded once";
+                  case 0.6000000000000001:
+                    return done = true, "the sum rounded at every step";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(0.1, 0.2, 0.3)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF = inspect.cleandoc(
+        """
+        Object.assign = Object.assign || function (target) { return target; };
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.p + 20:
+                    return done = true, "routed by p";
+                  case 10:
+                    [scope.NS.p] = [15];
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {q: 9}}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.w1 = function (x = scope.NS.w2 = function (...r) {
+                      return gen(30, 0, {NS: scope.NS}, r)["next"]()["value"];
+                    }, ...rest) {
+                      return gen(20, 0, {NS: {q: 3}}, rest)["next"]()["value"];
+                    };
+                    a = 40, b = 10;
+                    break;
+                  case 20:
+                    return done = true, "w1 ran";
+                  case scope.NS.q + 21:
+                    return done = true, "q is nine";
+                  case 30:
+                    return done = true, "q is not nine";
+                  case 50:
+                    return done = true, [scope.NS.w1(), scope.NS.w2()];
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_WITH_A_PROTO_METHOD_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {__proto__() { return "an own method"; }}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, scope.NS.__proto__();
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.k = 25;
+                    scope.RV = scope.NS;
+                    scope.NS.get = function (key) {
+                      return this[key];
+                    };
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, get("k");
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF = inspect.cleandoc(
+        """
+        ({}).__proto__.p = 15;
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.p || 35:
+                    return done = true, "p reads undefined";
+                  default:
+                    return done = true, "p reads the prototype";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF = inspect.cleandoc(
+        """
+        function outer(list) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (list.shift()) {
+                      a = 20, b = 15;
+                    } else {
+                      a = 20, b = 15;
+                    }
+                    break;
+                  case 35:
+                    return done = true, list.length;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_machine_starting_at_its_end_state_is_left_as_it_is(self):
+        source = self.ENTRY_STATE_AT_THE_END_CFF
+        self.assertEqual(
+            self._run_transformers(source),
+            self._run_transformer(source, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_namespace_used_whole_keeps_its_routing_store(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  var NS = {};
+                  [NS.k] = [25];
+                  return JSON.stringify(NS);
+                }
+                """
+            ),
+            self._run_transformer(self.NAMESPACE_READ_AS_A_WHOLE_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_destructuring_into_a_rest_element_stays_whole(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  var NS = {};
+                  [NS.p, ...NS.r] = [1, 2];
+                  return NS.r;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.DESTRUCTURING_INTO_A_REST_ELEMENT_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_state_variables_add_up_the_way_the_switch_adds_them(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return "the sum rounded at every step";
+                }
+                """
+            ),
+            self._run_transformer(self.FRACTIONAL_STATES_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_routing_beside_a_patch_of_another_object_key_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Object.assign = Object.assign || function(target) {
+                  return target;
+                };
+                function outer() {
+                  return "routed by p";
+                }
+                """
+            ),
+            self._run_transformer(
+                self.ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_wrapper_made_in_a_wrapper_parameter_reads_the_run_around_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  var NS = { q: 9 };
+                  NS.w1 = function(x = NS.w2 = function(...r) {
+                    return "q is nine";
+                  }, ...rest) {
+                    return "w1 ran";
+                  };
+                  return [NS.w1(), NS.w2()];
+                }
+                """
+            ),
+            self._run_transformer(
+                self.WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_namespace_method_named_proto_holds_data(self):
+        self.assertNotIn(
+            'function*',
+            self._run_transformer(
+                self.NAMESPACE_WITH_A_PROTO_METHOD_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_condition_of_branches_to_one_block_is_still_evaluated(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(list) {
+                  list.shift();
+                  return list.length;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    HELPER_DECLARED_BEHIND_THE_RETURN_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log("start");
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, helper(n);
+                    function helper(k) { return k * 2; }
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    y = 3;
+                    return done = true, typeof globalThis.y;
+                  case 99:
+                    var y;
+                    a = 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer(list) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.i < 3) {
+                      a = 20, b = 10;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    if (list.shift()) {
+                      a = 20, b = 20;
+                    } else {
+                      a = 20, b = 20;
+                    }
+                    break;
+                  case 40:
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    return done = true, list.length;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {a: 50}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    return done = true, "the parameter a";
+                  default:
+                    return done = true, "the member a";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          var toString = function () { return "outer"; };
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, toString();
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    STORE_THROUGH_THE_REDIRECT_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case 35:
+                    scope.RV.z = 7;
+                    return done = true, scope.NS.z;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_condition_of_branches_to_one_block_in_a_loop_runs_each_turn(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(list) {
+                  var i;
+                  i = 0;
+                  while (i < 3) {
+                    list.shift();
+                    i = i + 1;
+                  }
+                  return list.length;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_declined_recovery_leaves_every_node_under_its_parent(self):
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              function* gen(a, b, scope = {}, args) {
+                while (a + b !== 100) {
+                  with (scope) {
+                    switch (a + b) {
+                      case 10:
+                        console.log("head"), a = 20, b = 15;
+                        break;
+                      case 35:
+                        return done = true, function () { return a; };
+                    }
+                  }
+                }
+              }
+              var done;
+              var result = gen(5, 5)["next"]()["value"];
+              if (done) { return result; }
+            }
+            """
+        )
+        ast = JsParser(source).parse()
+        JsGeneratorCFFUnflattening().visit(ast)
+        detached = [
+            child for node in ast.walk() for child in node.children() if child.parent is not node
+        ]
+        self.assertIn('function*', JsSynthesizer().convert(ast))
+        self.assertEqual([], detached)
 
 
 #: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
@@ -3980,6 +4904,33 @@ ENTRY_POINTS = {
     'ROUTING_SLOT_WRITTEN_BARE_UNDER_THE_REDIRECT_CFF': 'console.log(outer());',
     'BLOCK_REACHED_WITH_TWO_STATES_CFF': 'console.log(outer(true), outer(false));',
     'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
+    'NAMESPACE_REPLACED_AFTER_THE_ROUTING_STORE_CFF': 'console.log(outer());',
+    'NAMESPACE_REPLACED_BEHIND_THE_ROUTING_STORE_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_WRITTEN_BY_A_STORED_FUNCTION_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_WRITTEN_UNDER_A_COMPUTED_KEY_CFF': 'console.log(outer("k"), outer("x"));',
+    'NAMESPACE_PROTOTYPE_REPLACED_CFF': 'console.log(outer());',
+    'ROUTING_STORE_THROUGH_AN_INHERITED_SETTER_CFF': 'console.log(outer());',
+    'NEGATIVE_ZERO_STATE_CFF': 'console.log(outer(true), outer(false));',
+    'CONDITION_STORING_A_STATE_VARIABLE_CFF': 'console.log(outer());',
+    'CLASS_NAMED_LIKE_A_STATE_VARIABLE_CFF': 'console.log(outer());',
+    'BREAK_OUT_OF_A_PAYLOAD_CFF': 'console.log(outer());',
+    'HANDED_ON_NAMESPACE_BOUND_BY_A_PARAMETER_CFF': 'console.log(outer());',
+    'ENTRY_STATE_AT_THE_END_CFF': 'console.log(outer());',
+    'NAMESPACE_READ_AS_A_WHOLE_CFF': 'console.log(outer());',
+    'DESTRUCTURING_INTO_A_REST_ELEMENT_CFF': 'console.log(outer());',
+    'FRACTIONAL_STATES_CFF': 'console.log(outer());',
+    'ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF': 'console.log(outer());',
+    'WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF': 'console.log(outer());',
+    'NAMESPACE_WITH_A_PROTO_METHOD_CFF': 'console.log(outer());',
+    'PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF': 'console.log(outer());',
+    'CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF': 'console.log(outer([1, 2, 3]));',
+    'HELPER_DECLARED_BEHIND_THE_RETURN_CFF': 'console.log(outer(4));',
+    'VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF': 'console.log(outer());',
+    'CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF': 'console.log(outer([1, 0, 1, 1]));',
+    'NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF': 'console.log(outer());',
+    'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
+    'STORE_THROUGH_THE_REDIRECT_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
@@ -3989,6 +4940,11 @@ DIVERGING_FIXTURES = {
     'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF',
     'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF',
     'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF',
+    'PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF',
+    'ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF',
+    'NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF',
+    'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF',
+    'STORE_THROUGH_THE_REDIRECT_CFF',
 }
 
 
@@ -4061,6 +5017,72 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         because the obfuscator's own such code never names the generator.
         """
         program = self._program('GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_number_a_namespace_holds_for_its_receiver_keeps_its_store(self):
+        """
+        In `PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF` the namespace function `get`, called bare
+        under the `with` redirect, receives the namespace as `this` and returns `this.k`, which is
+        `25`. No code reads `k` under the namespace's name, and a number stored in a namespace
+        member is what a routing value looks like, so the recovery drops the store and `get`
+        returns `undefined`. It trusts that the obfuscator never calls a function of a namespace on
+        the namespace; it calls one as `(1, f)()`.
+        """
+        program = self._program('PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_prototype_written_through_an_object_literal_supplies_an_unset_slot(self):
+        """
+        In `ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF` the program writes `p` on the
+        prototype of every object through `({}).__proto__`, so the unset routing slot `NS.p` reads
+        `15` and the switch takes `default`. The effect model records a prototype write only
+        through a chain that starts at a name, so the recovery reads the slot as `undefined` and
+        takes the case `NS.p || 35`. The fix belongs in the effect model's scan of global writes.
+        """
+        program = self._program('ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_state_variable_a_namespace_key_hides_is_read_from_the_namespace(self):
+        """
+        In `NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF` the namespace the `with` redirect points
+        at holds a key `a`, so once the redirect is set, the switch reads `NS.a`, which is `50`, and
+        takes `default`. The recovery reads the parameter `a` wherever the generator spells it and
+        takes the case `35`. It trusts that no object the `with` statement reads has a key named
+        like a state variable, which the obfuscator's generated names never are.
+        """
+        program = self._program('NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_name_the_scope_object_inherits_still_reads_the_inherited_member(self):
+        """
+        In `PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF` the payload calls `toString` bare inside
+        `with (scope)`, which finds `Object.prototype.toString` on the scope object and returns
+        `[object Object]`. The recovery dissolves the `with`, and the call reaches the function
+        `toString` of the code around it instead. It trusts that the code the obfuscator flattens
+        calls no member every object inherits by its bare name.
+        """
+        program = self._program('PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_store_through_the_redirect_reaches_the_namespace_it_points_at(self):
+        """
+        In `STORE_THROUGH_THE_REDIRECT_CFF` the payload stores `z` through `scope.RV`, which the
+        entry block pointed at `NS`, so the case returns `7`. The recovery drops the store to the
+        redirect as bookkeeping and keeps `RV` as a local that is never assigned, so the recovered
+        `RV.z = 7` throws a `TypeError`. The fix is to read a member of the redirect as a member of
+        the namespace it holds, or to decline where the payload spells the redirect.
+        """
+        program = self._program('STORE_THROUGH_THE_REDIRECT_CFF')
         recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
         self.assertEqual(behavior(program), behavior(recovered))
 
