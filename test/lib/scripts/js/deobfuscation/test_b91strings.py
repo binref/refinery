@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import inspect
 import lzma
+import unittest
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
@@ -101,6 +102,36 @@ class TestStringConcealing(TestJsDeobfuscator):
             'var k = 10;',
             'var results = [];',
             'results[accessor(k)]("hello");',
+            'console[accessor(12)](results);',
+        ])
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
+    @unittest.expectedFailure
+    def test_accessor_recognizable_once_its_unused_declarations_are_removed_is_resolved(self):
+        """
+        The accessor declares two variables it never uses, so it has four statements and does not
+        match the accessor pattern until unused-code removal drops them. That removal runs after
+        string decoding and does not make it run again, so the calls stay undecoded.
+        """
+        accessor = self._access_js('accessor', 'cache', 'decode')
+        accessor[1:1] = ['    var unused;', '    var other;']
+        source = '\n'.join([
+            'var cache = {};',
+            'var table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","lrCD^","#ZlH"];',
+            *self._decode_js('decode', self._ESCAPED_ALPHABET),
+            *accessor,
+            'var results = [];',
+            'results[accessor(10)]("hello");',
             'console[accessor(12)](results);',
         ])
         self.assertEqual(

@@ -2969,6 +2969,60 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.k = 25;
+                    scope.NS.put = function (key, value) {
+                      this[key] = value;
+                    };
+                    a = 15, b = 15;
+                    break;
+                  case 30:
+                    put("k", 7);
+                    a = 20, b = 20;
+                    break;
+                  case scope.NS.k + 15:
+                    return done = true, "the value the recovery tracked";
+                  default:
+                    return done = true, "the value the receiver stored";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    return done = true, eval("typeof gen");
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
     def test_generator_cff_recovery_declines_what_its_new_home_would_change(self):
         """
         A flag and a result some other function reads, a generator called from outside its
@@ -3145,6 +3199,8 @@ ENTRY_POINTS = {
     'STRICT_BLOCK_FUNCTION_CFF': 'console.log(outer());',
     'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF': 'console.log(outer());',
     'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF': 'console.log(outer());',
+    'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
+    'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
@@ -3153,6 +3209,8 @@ DIVERGING_FIXTURES = {
     'REDIRECT_QUALIFY_CFF',
     'ROUTING_CHANGED_AFTER_THE_WRAPPER_RAN_CFF',
     'CASE_TEST_THE_MACHINE_CANNOT_READ_CFF',
+    'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF',
+    'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF',
 }
 
 
@@ -3210,6 +3268,32 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         switch would have taken the case, or thrown where reading the test throws.
         """
         program = self._program('CASE_TEST_THE_MACHINE_CANNOT_READ_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_a_routing_value_a_function_stores_through_its_receiver_picks_the_case(self):
+        """
+        In `ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF` the namespace function `put`, called bare
+        under the `with` redirect, receives the namespace as `this` and stores `7` in `NS.k`, so
+        `case scope.NS.k + 15` does not match and the switch takes `default`. The recovery picks
+        cases with the values the routing stores it reads assign, sees `NS.k` as `25`, and takes
+        the predicate case. It trusts that only the obfuscator's own routing stores write a routing
+        value, which the obfuscator never breaks.
+        """
+        program = self._program('ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF')
+        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
+        self.assertEqual(behavior(program), behavior(recovered))
+
+    @unittest.expectedFailure
+    def test_code_the_generator_evaluates_from_a_string_still_finds_the_generator(self):
+        """
+        In `GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF` the generator evaluates a string that reads
+        `gen`, the generator itself, and returns `function`. The recovery removes the generator
+        and returns `undefined`: it accepts code run from strings inside the generator it removes,
+        because the obfuscator's own such code never names the generator.
+        """
+        program = self._program('GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF')
         recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
         self.assertEqual(behavior(program), behavior(recovered))
 
