@@ -104,31 +104,28 @@ The following rules contradict common Python conventions. Check them explicitly:
 
 # Planning
 
-Whenever you make or substantially change a plan:
-Offer a prompt to me where they can select any number of the following agents to challenge the plan:
+Plan in detail only the phase about to be built; later phases get one line each and their own plan when they start.
 
-1. architectural: enforces "Architecture is P0"
-2. testability: design is testable
-3. research: design implements state of the art methodology
-4. safety: design has no obvious safety flaws
-
-Run these plus a separate general purpose adversarial critic in parallel and revise the plan according to their feedback.
-
-- **Reviewer independence.** Do **not** give the agents specific instructions for what to investigate,
-  only specify their expertise and focus area.
 - **Census before design.** For every question the plan touches,
   find the mechanism that already answers it and every guard on the code paths the plan alters.
   Most designs are placement problems: A new mechanism needs evidence that no existing one already owns the question.
-- **Falsify your own claims first.** Label every load-bearing claim in the plan measured
-  (probe and output) or argued (file:line). If a ten-line probe could break a claim, run it before any critic does.
-- **A fix drafted from panel feedback is new, unreviewed design.**
-  It gets the same census and probes before it re-enters the plan.
-- **A substantial panel finding means the pre-work was skipped.**
-  Stop and re-derive instead of scheduling another round; rounds run only when I ask for one.
+- **Falsify your own claims first.** Label every load-bearing claim measured (probe and output) or argued (file:line).
+  If a ten-line probe could break a claim, run it before any critic does. State confidence the same way, per phase.
+
+Whenever you make or substantially change a plan, run a general purpose adversarial critic on it, plus any of the following, selected from a prompt:
+ **architectural** ("Architecture is P0"),
+ **research** (state of the art algorithmic solution), and
+ **safety** (prevent dangerous behavior or incorrect outputs).
+
+- **Reviewer independence.** Do **not** give the agents specific instructions for what to investigate,
+  only specify their expertise and focus area.
+  Ask them to back each finding with an input, probe, or file:line that breaks the plan.
+- **Answer findings with probes, not more design.** A fix drafted from a finding gets the same census and probes.
+  A substantial finding means the pre-work was skipped: re-derive; rounds run only when I ask for one.
 
 After a plan is approved by me, pause to compact before implementation.
 
-- When I do no approve a plan and ask a question, do not show it again. Answer what I asked and wait.
+- When I do not approve a plan and ask a question, do not show it again. Answer what I asked and wait.
 - If a decision cannot be explained in plain words with a concrete example, do not ask me.
   Decide it under "Architecture is P0" and tell me what you decided and why.
 

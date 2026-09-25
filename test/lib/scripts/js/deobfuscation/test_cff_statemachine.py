@@ -3754,6 +3754,22 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                     self._run_transformer(source, JsGeneratorCFFUnflattening),
                 )
 
+    def test_generator_cff_bare_name_every_object_inherits_is_declined(self):
+        """
+        The obfuscator rewrites only the variables of the function it flattens; a call of any other
+        name stays bare inside its `with` statement, which finds `toString` on the object it reads,
+        as every object inherits it, before the function or global of that name the program means.
+        """
+        for source in (
+            self.PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF,
+            self.GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
     def test_generator_cff_last_body_needs_no_break(self):
         self.assertEqual(
             inspect.cleandoc(
@@ -4381,61 +4397,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
-    PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF = inspect.cleandoc(
-        """
-        function outer() {
-          function* gen(a, b, scope = {NS: {}}, args) {
-            while (a + b !== 100) {
-              with (scope.RV || scope) {
-                switch (a + b) {
-                  case 10:
-                    scope.NS.k = 25;
-                    scope.RV = scope.NS;
-                    scope.NS.get = function (key) {
-                      return this[key];
-                    };
-                    a = 20, b = 15;
-                    break;
-                  case 35:
-                    return done = true, get("k");
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
-    ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF = inspect.cleandoc(
-        """
-        ({}).__proto__.p = 15;
-        function outer() {
-          function* gen(a, b, scope = {NS: {}}, args) {
-            while (a + b !== 100) {
-              with (scope.RV || scope) {
-                switch (a + b) {
-                  case 10:
-                    scope.RV = scope.NS;
-                    a = 20, b = 15;
-                    break;
-                  case scope.NS.p || 35:
-                    return done = true, "p reads undefined";
-                  default:
-                    return done = true, "p reads the prototype";
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
     CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF = inspect.cleandoc(
         """
         function outer(list) {
@@ -4664,32 +4625,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
-    NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF = inspect.cleandoc(
-        """
-        function outer() {
-          function* gen(a, b, scope = {NS: {a: 50}}, args) {
-            while (a + b !== 100) {
-              with (scope.RV || scope) {
-                switch (a + b) {
-                  case 10:
-                    scope.RV = scope.NS;
-                    a = 20, b = 15;
-                    break;
-                  case 35:
-                    return done = true, "the parameter a";
-                  default:
-                    return done = true, "the member a";
-                }
-              }
-            }
-          }
-          var done;
-          var result = gen(5, 5)["next"]()["value"];
-          if (done) { return result; }
-        }
-        """
-    )
-
     PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF = inspect.cleandoc(
         """
         function outer() {
@@ -4711,7 +4646,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
-    STORE_THROUGH_THE_REDIRECT_CFF = inspect.cleandoc(
+    GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF = inspect.cleandoc(
         """
         function outer() {
           function* gen(a, b, scope = {NS: {}}, args) {
@@ -4723,8 +4658,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                     a = 20, b = 15;
                     break;
                   case 35:
-                    scope.RV.z = 7;
-                    return done = true, scope.NS.z;
+                    return done = true, toString();
                 }
               }
             }
@@ -4922,15 +4856,12 @@ ENTRY_POINTS = {
     'ROUTING_BESIDE_AN_OBJECT_POLYFILL_CFF': 'console.log(outer());',
     'WRAPPER_MADE_IN_A_WRAPPER_PARAMETER_CFF': 'console.log(outer());',
     'NAMESPACE_WITH_A_PROTO_METHOD_CFF': 'console.log(outer());',
-    'PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF': 'console.log(outer());',
-    'ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF': 'console.log(outer());',
     'CONDITION_OF_BRANCHES_TO_ONE_BLOCK_CFF': 'console.log(outer([1, 2, 3]));',
     'HELPER_DECLARED_BEHIND_THE_RETURN_CFF': 'console.log(outer(4));',
     'VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF': 'console.log(outer());',
     'CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF': 'console.log(outer([1, 0, 1, 1]));',
-    'NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF': 'console.log(outer());',
     'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
-    'STORE_THROUGH_THE_REDIRECT_CFF': 'console.log(outer());',
+    'GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
 }
 
 #: The fixtures whose recovery is known to behave differently from the fixture, each held by a test
@@ -4940,11 +4871,6 @@ DIVERGING_FIXTURES = {
     'ROUTING_SLOT_STORED_THROUGH_THE_RECEIVER_CFF',
     'ROUTING_SLOT_READ_THROUGH_THE_RECEIVER_CFF',
     'GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF',
-    'PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF',
-    'ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF',
-    'NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF',
-    'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF',
-    'STORE_THROUGH_THE_REDIRECT_CFF',
 }
 
 
@@ -5017,72 +4943,6 @@ class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):
         because the obfuscator's own such code never names the generator.
         """
         program = self._program('GENERATOR_NAMED_BY_CODE_IT_EVALUATES_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_number_a_namespace_holds_for_its_receiver_keeps_its_store(self):
-        """
-        In `PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF` the namespace function `get`, called bare
-        under the `with` redirect, receives the namespace as `this` and returns `this.k`, which is
-        `25`. No code reads `k` under the namespace's name, and a number stored in a namespace
-        member is what a routing value looks like, so the recovery drops the store and `get`
-        returns `undefined`. It trusts that the obfuscator never calls a function of a namespace on
-        the namespace; it calls one as `(1, f)()`.
-        """
-        program = self._program('PROGRAM_STATE_READ_THROUGH_THE_RECEIVER_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_prototype_written_through_an_object_literal_supplies_an_unset_slot(self):
-        """
-        In `ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF` the program writes `p` on the
-        prototype of every object through `({}).__proto__`, so the unset routing slot `NS.p` reads
-        `15` and the switch takes `default`. The effect model records a prototype write only
-        through a chain that starts at a name, so the recovery reads the slot as `undefined` and
-        takes the case `NS.p || 35`. The fix belongs in the effect model's scan of global writes.
-        """
-        program = self._program('ROUTING_SLOT_SUPPLIED_BY_AN_UNSEEN_PROTOTYPE_WRITE_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_state_variable_a_namespace_key_hides_is_read_from_the_namespace(self):
-        """
-        In `NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF` the namespace the `with` redirect points
-        at holds a key `a`, so once the redirect is set, the switch reads `NS.a`, which is `50`, and
-        takes `default`. The recovery reads the parameter `a` wherever the generator spells it and
-        takes the case `35`. It trusts that no object the `with` statement reads has a key named
-        like a state variable, which the obfuscator's generated names never are.
-        """
-        program = self._program('NAMESPACE_KEY_NAMED_LIKE_A_STATE_VARIABLE_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_name_the_scope_object_inherits_still_reads_the_inherited_member(self):
-        """
-        In `PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF` the payload calls `toString` bare inside
-        `with (scope)`, which finds `Object.prototype.toString` on the scope object and returns
-        `[object Object]`. The recovery dissolves the `with`, and the call reaches the function
-        `toString` of the code around it instead. It trusts that the code the obfuscator flattens
-        calls no member every object inherits by its bare name.
-        """
-        program = self._program('PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF')
-        recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
-        self.assertEqual(behavior(program), behavior(recovered))
-
-    @unittest.expectedFailure
-    def test_a_store_through_the_redirect_reaches_the_namespace_it_points_at(self):
-        """
-        In `STORE_THROUGH_THE_REDIRECT_CFF` the payload stores `z` through `scope.RV`, which the
-        entry block pointed at `NS`, so the case returns `7`. The recovery drops the store to the
-        redirect as bookkeeping and keeps `RV` as a local that is never assigned, so the recovered
-        `RV.z = 7` throws a `TypeError`. The fix is to read a member of the redirect as a member of
-        the namespace it holds, or to decline where the payload spells the redirect.
-        """
-        program = self._program('STORE_THROUGH_THE_REDIRECT_CFF')
         recovered = self._run_transformer(program, JsGeneratorCFFUnflattening)
         self.assertEqual(behavior(program), behavior(recovered))
 

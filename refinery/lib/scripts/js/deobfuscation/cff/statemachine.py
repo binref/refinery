@@ -226,6 +226,7 @@ class _GeneratorCFFMatch:
     gen_decl_index: int
     scaffolding_end: int
     with_redirect_var: str | None = None
+    routed: bool = False
     returns_value: bool = False
     guarded: bool = False
     scope_default_props: list[str] = field(default_factory=list)
@@ -820,6 +821,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         gen_decl_index=idx,
         scaffolding_end=call_info.scaffolding_end,
         with_redirect_var=with_redirect_var,
+        routed=routed,
         returns_value=call_info.returns_value,
         guarded=call_info.guarded,
         scope_default_props=scope_default_props,
@@ -866,6 +868,30 @@ def _spells_a_slot_bare(
     return any(
         isinstance(node, JsIdentifier) and node.name in slots and is_use_position(node)
         for node in switch_stmt.walk()
+    )
+
+
+def _spells_an_inherited_name_bare(
+    switch_stmt: JsSwitchStatement,
+    absent: Callable[[str], bool],
+) -> bool:
+    """
+    Whether the code of a generator that reads its scope object through a `with` body spells bare a
+    name that *absent* cannot prove missing from a plain object, such as `toString`, which every
+    object inherits. The `with` statement finds that name on its object before the binding of the
+    code around it, and the recovery removes the `with` statement.
+    """
+    names = {
+        node.name for node in switch_stmt.walk()
+        if isinstance(node, JsIdentifier) and is_use_position(node)
+    }
+    inherited = frozenset(name for name in names if not absent(name))
+    return bool(inherited) and any(
+        isinstance(node, JsIdentifier)
+        and node.name in inherited
+        and node.name not in shadowed
+        and is_use_position(node)
+        for node, shadowed in _walk_scoped(switch_stmt, inherited)
     )
 
 
@@ -4142,6 +4168,12 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
             assert self._root is not None
             model = model_cache(self, self._root).model
             if not _scaffolding_is_private(model, body, match):
+                i += 1
+                continue
+            if (
+                match.routed
+                and _spells_an_inherited_name_bare(match.switch_stmt, self._provably_absent)
+            ):
                 i += 1
                 continue
             machine = _extract_state_blocks(match, self._provably_absent)
