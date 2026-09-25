@@ -132,7 +132,10 @@ if TYPE_CHECKING:
     _Value = float | bool | _Undefined
     _Slots = dict[_SlotPath, _Value]
 
-_MAX_STEPS = 2000
+_MAX_BLOCKS = 2000
+"""
+The most blocks the recovery reads for one run of a machine; it leaves a larger machine as it is.
+"""
 
 
 class _CallSiteInfo(NamedTuple):
@@ -1625,10 +1628,10 @@ def _build_cfg(
     Nodes are keyed by the identity of the `_SMBlock` they correspond to, so a block reached twice
     is one node and a loop is a back-edge. The obfuscator gives every block one state, so every
     arrival at a block has to find what the machine reads there as the first one did; where it
-    does not, or where the next block cannot be told (`_dispatch`), this gives `None`. Only the
-    *main* run may store routing slots, and only in the block it enters (`_routing_stores`), so
-    they hold what that block leaves in them from before any wrapper exists. Returns the CFG and
-    those values.
+    does not, where the next block cannot be told (`_dispatch`), or where the run reaches more than
+    `_MAX_BLOCKS` blocks, this gives `None`. Only the *main* run may store routing slots, and only
+    in the block it enters (`_routing_stores`), so they hold what that block leaves in them from
+    before any wrapper exists. Returns the CFG and those values.
     """
     entry_block = _dispatch(machine, entry, var_names)
     if entry_block is None:
@@ -1638,7 +1641,6 @@ def _build_cfg(
     arrivals: dict[int, _Env] = {entry_id: entry}
     queue: deque[_SMBlock] = deque([entry_block])
     settled = entry.slots
-    steps = 0
 
     def arrive(env: _Env | None) -> int | None:
         if env is None:
@@ -1649,14 +1651,15 @@ def _build_cfg(
             return None
         node_id = id(block)
         if node_id not in arrivals:
+            if len(arrivals) >= _MAX_BLOCKS:
+                return None
             arrivals[node_id] = env
             queue.append(block)
         elif arrivals[node_id] != env:
             return None
         return node_id
 
-    while queue and steps < _MAX_STEPS:
-        steps += 1
+    while queue:
         block = queue.popleft()
         node_id = id(block)
         env = arrivals[node_id]
@@ -1707,9 +1710,6 @@ def _build_cfg(
             false_prefix_payload=false_prefix_payload,
         )
         nodes[node_id] = node
-
-    if entry_id not in nodes:
-        return None
 
     exit_node = _CFGNode(node_id=_VIRTUAL_EXIT, payload=[], condition=None)
     nodes[_VIRTUAL_EXIT] = exit_node

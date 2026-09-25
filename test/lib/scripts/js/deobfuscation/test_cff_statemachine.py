@@ -4,11 +4,13 @@ import inspect
 import threading
 import unittest
 
+from unittest import mock
+
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
-from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
+from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening, statemachine
 from refinery.lib.tools import RecursionDepth
 
 
@@ -495,6 +497,20 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             ),
             result,
         )
+
+    def test_generator_cff_machine_with_more_blocks_than_the_limit_is_declined(self):
+        """
+        `LOOPING_CFF` runs four blocks. Under a limit of three the recovery leaves the generator as
+        it is rather than recover the blocks it read; under a limit of four it recovers it.
+        """
+        source = self.LOOPING_CFF
+        with mock.patch.object(statemachine, '_MAX_BLOCKS', 3):
+            self.assertEqual(
+                self._run_transformers(source),
+                self._run_transformer(source, JsGeneratorCFFUnflattening),
+            )
+        with mock.patch.object(statemachine, '_MAX_BLOCKS', 4):
+            self.assertNotIn('function*', self._run_transformer(source, JsGeneratorCFFUnflattening))
 
     CONTINUE_IN_LOOP_CFF = inspect.cleandoc(
         """
