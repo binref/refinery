@@ -717,6 +717,7 @@ CLAIMS: tuple[str, ...] = (
     '$key = 1, 2, 3; Write-Output (dec (4, 5, 6) $key)',
     '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; '
     '$buf = 0, 0; $buf[0] = 7',
+    '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y',
     "$x = 'a'; . { Remove-Variable x }; Write-Host $x",
     "$x = 'a'; . { New-Variable x 'b' -Force }; Write-Host $x",
     "$x = 'a'; . { Write-Output 'b' -OutVariable x }; Write-Host $x",

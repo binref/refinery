@@ -10,10 +10,12 @@ none of them is an occurrence of the name. `object_handoff` classifies a read by
 reaches; `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow` orders the stores against it.
 
 The climb follows the object outwards and counts how deep inside the value at the cursor it sits.
-Building a container around it puts it one level deeper; unrolling a value — a pipeline, `@( )`, an
-operator, the output of a body — takes the elements out of their container, so the object itself
-survives only if it was inside one, and otherwise only its elements go on. Taking an index or a
-member hands on a part of the value and no more. Where the climb ends, a place that keeps what it
+An expression that may give back the very object it was handed passes it on at the same depth;
+which expressions those are is `refinery.lib.scripts.ps1.analysis.identity.passage_out_of`'s to
+say. Building a container around it puts it one level deeper; unrolling a value — a pipeline,
+`@( )`, an operator, the output of a body — takes the elements out of their container, so the object
+itself survives only if it was inside one, and otherwise only its elements go on. Taking an index or
+a member hands on a part of the value and no more. Where the climb ends, a place that keeps what it
 is handed keeps the object itself if the depth is not negative and only objects inside it if it is.
 
 Objects a command writes are collected when a value is made of them, and the collection is a
@@ -29,6 +31,7 @@ from typing import Callable
 
 from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.ps1.analysis.arguments import RECEIVER
+from refinery.lib.scripts.ps1.analysis.identity import passage_out_of
 from refinery.lib.scripts.ps1.analysis.model import written_slots_of
 from refinery.lib.scripts.ps1.analysis.naming import Ps1NameRole, named_references
 from refinery.lib.scripts.ps1.analysis.values import UNKNOWN, read
@@ -97,16 +100,6 @@ class Ps1Handoff(enum.Enum):
         """
         return self if self.value >= other.value else other
 
-
-#: Members whose value is the object they are read from rather than a part of it, lowercased: an
-#: array's `SyncRoot` is the array, `PSObject` wraps the very object it is read from, and the
-#: `BaseObject` and `ImmediateBaseObject` of that wrapper are the object again.
-_IDENTITY_MEMBERS = frozenset({
-    'baseobject',
-    'immediatebaseobject',
-    'psobject',
-    'syncroot',
-})
 
 #: Commands that consume what they are handed and keep nothing of it: each writes a rendering of it
 #: somewhere that is not a value of the script. `Write-Information` is not one of them, because the
@@ -221,27 +214,15 @@ def _kept(depth: int) -> Ps1Handoff:
     return Ps1Handoff.OBJECT if depth >= 0 else Ps1Handoff.PARTS
 
 
-def _converted_operand(node: Node) -> Node | None:
-    """
-    The operand a cast or an `-as` hands on unchanged where it already is what it names, or `None`
-    where *node* converts nothing.
-    """
-    if isinstance(node, Ps1CastExpression):
-        return node.operand
-    if isinstance(node, Ps1BinaryExpression) and node.operator.lower() == '-as':
-        return node.left
-    return None
-
-
 def _takes_a_part(node: Ps1IndexExpression | Ps1MemberAccess | Ps1InvokeMember) -> bool:
     """
     Whether reading *node* off its object yields something inside that object rather than the
-    object itself. A member whose name the source does not spell may be one that is the object.
+    object itself. A member that may be the object is a passage and never reaches this; a method
+    whose name the source does not spell may be one that gives back its receiver.
     """
-    if isinstance(node, Ps1IndexExpression):
-        return True
-    name = get_member_name(node.member)
-    return name is not None and name.lower() not in _IDENTITY_MEMBERS
+    if isinstance(node, Ps1InvokeMember):
+        return get_member_name(node.member) is not None
+    return True
 
 
 def _is_no_enumerate(cmd: Ps1CommandInvocation) -> bool:
@@ -328,24 +309,19 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
         if streamed and not isinstance(parent, _STREAMING_PARENTS):
             depth = _wrapped(depth)
             streamed = False
-        if isinstance(parent, Ps1ParenExpression):
-            cursor = parent
-            continue
-        if (
-            isinstance(parent, Ps1CastExpression)
-            or isinstance(parent, Ps1BinaryExpression) and parent.operator.lower() == '-as'
-        ):
-            if _converted_operand(parent) is not cursor:
-                return Ps1Handoff.NOWHERE
-            cursor = parent
-            continue
         if isinstance(parent, Ps1AssignmentExpression):
             if parent.value is not cursor:
                 return Ps1Handoff.NOWHERE
             kept = _assigned(parent, _Position(depth, direct, streamed))
             if not _yields_its_value(parent):
                 return kept
-            return kept.widest(_climb(parent, _Position(depth, False, False), trusts))
+            return kept.widest(_climb(parent, _Position(depth, direct, False), trusts))
+        passage = passage_out_of(cursor)
+        if passage is not None:
+            cursor = passage.expression
+            continue
+        if isinstance(parent, Ps1BinaryExpression) and parent.operator.lower() == '-as':
+            return Ps1Handoff.NOWHERE
         direct = False
         if isinstance(parent, (Ps1ArrayLiteral, Ps1HashLiteral)):
             depth = _wrapped(depth)
@@ -361,9 +337,6 @@ def _climb(start: Node, at: _Position, trusts: Callable[[str], bool]) -> Ps1Hand
             if isinstance(parent, Ps1InvokeMember) and _hands_its_receiver_on(parent):
                 return _kept(_unrolled(depth))
             if _takes_a_part(parent):
-                depth = _unrolled(depth)
-        elif isinstance(parent, Ps1BinaryExpression) and parent.operator == '+':
-            if parent.right is not cursor and depth <= 0:
                 depth = _unrolled(depth)
         elif isinstance(parent, (Ps1BinaryExpression, Ps1UnaryExpression)):
             if depth <= 0:

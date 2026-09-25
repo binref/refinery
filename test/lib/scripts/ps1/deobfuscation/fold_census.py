@@ -1413,7 +1413,7 @@ FOLDS: dict[str, str] = {
     '$x = 1, 2, 3; $y = 0, 0, 0; [Array]::Copy($x, $y, 3); Write-Output $y':
         '$y = 0, 0, 0\n[Array]::Copy((1, 2, 3), $y, 3)\nWrite-Output $y',
     '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x':
-        '$y = @([Object[]](1, 2, 3))\n$y[0] = 9\nWrite-Output (1, 2, 3)',
+        '$x = 1, 2, 3\n$y = @([Object[]]$x)\n$y[0] = 9\nWrite-Output $x',
     "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x":
         '$x = 1, 2, 3\n'
         '$y = Sort-Object -InputObject (1, 2, 3)\n'
@@ -1438,8 +1438,6 @@ FOLDS: dict[str, str] = {
         '$x = 1, 2, 3\n[Array]::Clear($x, 0, 1)\nWrite-Output ($Null, 2, 3)',
     '$x = 1, 2, 3; [Array]::Reverse($script:x); Write-Output $x':
         '$x = 1, 2, 3\n[Array]::Reverse($script:x)\nWrite-Output (3, 2, 1)',
-    '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
-        'Write-Output (1, 2, 3)',
     '$x = 1, 2, 3; [Array]::Reverse($x -as [array]); Write-Output $x':
         '$x = 1, 2, 3\n[Array]::Reverse($x -As [array])\nWrite-Output $x',
     '$x = 1, 2, 3; [Array]::Reverse($x, 0, 2); Write-Output $x':
@@ -1447,7 +1445,7 @@ FOLDS: dict[str, str] = {
     '$x = 1, 2, 3; [Array]::Reverse(($x)); Write-Output $x':
         '$x = 1, 2, 3\n[Array]::Reverse(($x))\nWrite-Output (3, 2, 1)',
     '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x':
-        'Write-Output (1, 2, 3)',
+        '$x = 1, 2, 3\n[Array]::Reverse(@([Object[]]$x))\nWrite-Output $x',
     '$x = 1, 2, 3; class C { static [object] M() { return $script:x } }; $y = [C]::M(); $y[0] = 9; Write-Output $x[0]':
         '$x = 1, 2, 3\nclass C {\n  static [Object] M() {\n    return $script:x\n  }\n}\n$y = [C]::M()\n$y[0] = 9\nWrite-Output $x[0]',
     '$x = 1, 2, 3; for ($i = 0; $i -lt 2; $i++) { Write-Output $x[0]; [Array]::Reverse($x) }':
@@ -1466,18 +1464,16 @@ FOLDS: dict[str, str] = {
         '$x = 3, 4, 5',
     "$x = @('a', 'b'); $x[1]":
         "'b'",
-    '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
-        '$x = @(Get-Random -Maximum 1), 2, 3\nWrite-Output $x',
     '$x = Get-Random -Maximum 1; Write-Output $script:x; $x = 5; Write-Output $x':
         '$x = Get-Random -Maximum 1\nWrite-Output $script:x\nWrite-Output 5',
     '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))':
         'Write-Output ([Object]::ReferenceEquals((1, 2), (1, 2)))',
     '$y = 1, 2; $z = $y * 1.4; Write-Output ([object]::ReferenceEquals($y, $z))':
         '$z = (1, 2) * 1.4\nWrite-Output ([Object]::ReferenceEquals((1, 2), $z))',
-    '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y':
-        '$z = 1, 2\n$z[0] = 9\nWrite-Output (1, 2)',
     '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))':
         'Write-Output ([Object]::ReferenceEquals((1, 2), (1, 2)))',
+    '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y':
+        '$z = 1, 2, 1, 2\n$z[0] = 9\nWrite-Output (1, 2)',
     "$z = 1.000d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t":
         "Write-Output (,'x1.000')\nWrite-Output 'x1.000'",
     "$z = 1.00d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t":
@@ -1715,7 +1711,7 @@ FOLDS: dict[str, str] = {
     "function f { Write-Host $x }; $x = 'a'; f; $x = 'b'; f":
         'function f {\n  Write-Host $x\n}\nf\nf',
     'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f':
-        'function f {\n  [Object[]]$a = 1, 2\n  Write-Output $a\n}\nf',
+        'function f {\n  [Object[]]$a = 1, 2\n  [Array]::Reverse(@($a))\n  Write-Output $a\n}\nf',
     'function f { [void]$input; $input | ForEach-Object { Write-Host "seen:$_" } }; 1, 2 | f':
         'function f {\n  [void]$Input\n  $Input | ForEach-Object {\n    Write-Host "seen:${_}"\n  }\n}\n1, 2 | f',
     "function f { try { 'tail' } catch {} }; Write-Host (f)":

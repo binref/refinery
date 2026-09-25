@@ -43,6 +43,7 @@ from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, Ps1SoftStepOver
+from refinery.lib.scripts.ps1.analysis.identity import object_sources
 from refinery.lib.scripts.ps1.analysis.model import occurrence_role
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
@@ -414,23 +415,20 @@ def _denotes_shared_storage(node) -> bool:
     This is what separates `[Array]::Reverse('ab'.ToCharArray())`, a junk statement whose result
     nothing can read, from `[Array]::Reverse($buffer)`, which rewrites a live variable.
 
-    **A conversion is looked through rather than trusted to allocate**, and `-as` is the reason it
-    has to be. A cast may hand the callee a fresh array built out of what the name holds, and `-as`
-    over a value already of the target type converts by nothing at all: measured on 5.1,
+    **An expression that may give back the object it was handed is looked through rather than
+    trusted to allocate**, as `refinery.lib.scripts.ps1.analysis.identity.object_sources` names
+    them. A cast may hand the callee a fresh array built out of what the name holds, and `-as` over
+    a value already of the target type converts by nothing at all: measured on 5.1,
     `$x = 1, 2, 3; [Array]::Reverse($x -as [array]); Write-Output $x` writes `3 2 1`, so the call
-    turned `$x` itself around. Which of the two a conversion performs is decided by the operand's
-    runtime type and not by its spelling, so both spellings are read as the storage underneath.
+    turned `$x` itself around, and so does `[Array]::Reverse($x * 1)`. Which of the two such an
+    expression does is decided by the operand's runtime type and not by its spelling, so every one
+    of them is read as the storage underneath.
     """
-    while True:
-        if isinstance(node, Ps1ParenExpression):
-            node = node.expression
-        elif isinstance(node, Ps1CastExpression):
-            node = node.operand
-        elif isinstance(node, Ps1BinaryExpression) and node.operator.lower() == '-as':
-            node = node.left
-        else:
-            break
-    return isinstance(node, (Ps1Variable, Ps1MemberAccess, Ps1IndexExpression))
+    while node is not None:
+        if isinstance(node, (Ps1Variable, Ps1MemberAccess, Ps1IndexExpression)):
+            return True
+        node = object_sources(node).operand
+    return False
 
 
 def _writes_shared_storage(written: Ps1WrittenSlots, arguments: Sequence[Expression]) -> bool:

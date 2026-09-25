@@ -44,6 +44,7 @@ from refinery.lib.scripts.ps1.analysis.arguments import (
     Ps1WrittenSlots,
     written_slots,
 )
+from refinery.lib.scripts.ps1.analysis.identity import object_sources, passage_out_of
 from refinery.lib.scripts.ps1.analysis.naming import (
     Ps1NamedReference,
     Ps1NameRole,
@@ -55,6 +56,7 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     binding_key,
     is_reference_cast,
+    target_constraint,
     unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
@@ -62,8 +64,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
-    Ps1BinaryExpression,
-    Ps1CastExpression,
     Ps1CommandInvocation,
     Ps1ForEachLoop,
     Ps1FunctionDefinition,
@@ -294,25 +294,28 @@ def _stores_through(var: Ps1Variable) -> bool:
     The receiver-chain climb behind `Ps1OccurrenceRole.WRITE_THROUGH`.
 
     The whole chain counts, not just its innermost step. A target is only a target once the index
-    and member accesses, the parentheses, the casts and the multi-assignment slots between it and
-    the assignment have been climbed, and stopping at the first of them answers `$x[0] = 'z'` while
-    missing `$x[0][1] = 'z'`.
+    and member accesses, the expressions that may give back the object they were handed, and the
+    multi-assignment slots between it and the assignment have been climbed, and stopping at the
+    first of them answers `$x[0] = 'z'` while missing `$x[0][1] = 'z'` and `($x * 1)[0] = 'z'`.
+    Which expressions give back that object is `refinery.lib.scripts.ps1.analysis.identity`'s to
+    say.
 
     An increment is a store as much as an assignment is: `$x[0]++` writes the element it reads, so
     the `$x` it is rooted at is stored through and no value may stand in its place.
     """
     cursor: Node = var
-    parent = cursor.parent
     through = False
-    while parent is not None:
+    while True:
+        passage = passage_out_of(cursor)
+        if passage is not None:
+            cursor = passage.expression
+            continue
+        parent = cursor.parent
         if isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess)):
             if parent.object is not cursor:
                 return False
             through = True
-        elif isinstance(parent, Ps1CastExpression):
-            if parent.operand is not cursor:
-                return False
-        elif isinstance(parent, (Ps1ParenExpression, Ps1ArrayLiteral)):
+        elif isinstance(parent, Ps1ArrayLiteral):
             pass
         elif isinstance(parent, Ps1AssignmentExpression):
             return through and parent.target is cursor
@@ -321,8 +324,6 @@ def _stores_through(var: Ps1Variable) -> bool:
         else:
             return False
         cursor = parent
-        parent = cursor.parent
-    return False
 
 
 class Ps1CallSlot(typing.NamedTuple):
@@ -339,14 +340,14 @@ class Ps1CallSlot(typing.NamedTuple):
     #: leaves under it is the outer value with one element changed, which is a different question
     #: from what it leaves in the slot.
     through_a_part: bool
-    #: Whether a cast stands between the name and the slot, so that what the callee writes may be a
-    #: conversion of the value rather than the value. `[Array]::Reverse([array]$x)` hands over the
-    #: very array `$x` holds and `[Array]::Reverse([int[]]$x)` hands over a fresh one built from it;
-    #: which of the two a cast is depends on the operand's runtime type, which nothing here has. The
-    #: name is refused a substitution either way, and a rule computing what the call left
-    #: behind must refuse the pair outright — measured, `[Array]::Reverse([int[]]$x)` leaves
-    #: `$x` in its original order.
-    through_a_conversion: bool
+    #: Whether a step between the name and the slot may make a new object out of the value, so that
+    #: what the callee writes may be that object rather than the value.
+    #: `[Array]::Reverse([array]$x)` hands over the very array `$x` holds and
+    #: `[Array]::Reverse([int[]]$x)` hands over a fresh one built from it; which of the two a cast
+    #: is depends on the operand's runtime type, which nothing here has. The name is refused a
+    #: substitution either way, and a rule computing what the call left behind must refuse the pair
+    #: outright — measured, `[Array]::Reverse([int[]]$x)` leaves `$x` in its original order.
+    may_be_a_copy: bool
 
 
 def _stores_through_a_call_slot(found: _CallSlotPosition | None) -> bool:
@@ -416,15 +417,14 @@ def written_call_slot(var: Ps1Variable) -> Ps1CallSlot | None:
     written = written_slots_of(found.call, member)
     if found.slot not in written.slots:
         return None
-    return Ps1CallSlot(
-        found.call, found.slot, written, found.through_a_part, found.through_a_conversion)
+    return Ps1CallSlot(found.call, found.slot, written, found.through_a_part, found.may_be_a_copy)
 
 
 class _CallSlotPosition(typing.NamedTuple):
     call: Ps1InvokeMember
     slot: int
     through_a_part: bool
-    through_a_conversion: bool
+    may_be_a_copy: bool
 
 
 def _enclosing_call_slot(var: Ps1Variable) -> _CallSlotPosition | None:
@@ -432,82 +432,36 @@ def _enclosing_call_slot(var: Ps1Variable) -> _CallSlotPosition | None:
     Which slot of which call *var* fills, whatever the callee does with it, and what stands between
     the name and the slot. `None` where the occurrence fills none.
 
-    Four kinds of wrapper are climbed on the way out, and each for its own reason. A parenthesis is
-    transparent to PowerShell's binding — measured, `[Array]::Reverse(($x))` reverses the array `$x`
-    holds. A conversion, written `[array]$x` or `$x -as [array]`, is climbed because whether it
-    allocates is a question about the operand's type: `[Array]::Reverse([char[]]$s)` converts a
-    String and never reaches `$s`, while `[Array]::Reverse([array]$x)` hands over the very array,
-    and climbing costs the first a substitution rather than making the second a wrong answer. An
-    index and a member access are climbed because what they fetch out of the name is still part of
-    what the name holds: `[Array]::Reverse($p[0])` turns around the inner array `$p`'s first element
-    *is*, so a value written where `$p` stands loses it.
+    Two kinds of step are climbed on the way out. One is an expression that may give back the very
+    object it was handed, which `refinery.lib.scripts.ps1.analysis.identity.passage_out_of` names: a
+    parenthesis is transparent to PowerShell's binding — measured, `[Array]::Reverse(($x))` reverses
+    the array `$x` holds — and a conversion such as `[array]$x` hands over the very array where it
+    converts nothing, as `$x * 1` does. Whether such a step makes a new object is a question about
+    the operand's runtime type, so climbing it costs `[Array]::Reverse([char[]]$s)` a substitution
+    rather than making `[Array]::Reverse([array]$x)` a wrong answer. The other is an index or a
+    member access, climbed because what it fetches out of the name is still part of what the name
+    holds: `[Array]::Reverse($p[0])` turns around the inner array `$p`'s first element *is*, so a
+    value written where `$p` stands loses it.
     """
     cursor: Node = var
-    parent: Node | None = cursor.parent
     part = False
-    converted = False
-    while parent is not None:
-        conversion = isinstance(parent, Ps1CastExpression) or is_conversion_operator(parent)
-        reaching = isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess))
-        grouping = isinstance(parent, Ps1ParenExpression)
-        if not conversion and not reaching and not grouping:
-            break
-        if not grouping and _climbed_operand(parent) is not cursor:
-            return None
-        part = part or reaching
-        converted = converted or conversion
-        cursor = parent
+    copied = False
+    while True:
+        passage = passage_out_of(cursor)
+        if passage is not None:
+            copied = copied or not passage.certain
+            cursor = passage.expression
+            continue
         parent = cursor.parent
+        if isinstance(parent, (Ps1IndexExpression, Ps1MemberAccess)) and parent.object is cursor:
+            part = True
+            cursor = parent
+            continue
+        break
     if not isinstance(parent, Ps1InvokeMember):
         return None
     slot = _call_slot_of(parent, cursor)
-    return None if slot is None else _CallSlotPosition(parent, slot, part, converted)
-
-
-def _constraint_on(var: Ps1Variable) -> str | None:
-    """
-    The type a constrained assignment target names for *var* — the `string` of `[string]$q = 5` and
-    of `$a, [string]$q = 1, 5` — or `None` where the occurrence is not one.
-
-    Only a cast between the occurrence and the assignment counts, so `$q = [string]5` is not a
-    constraint: it converts what is stored once and leaves the variable free.
-    """
-    assignment = assignment_of(var)
-    if assignment is None:
-        return None
-    cursor: Node = var
-    parent = cursor.parent
-    while parent is not None and parent is not assignment:
-        if isinstance(parent, Ps1CastExpression):
-            return parent.type_name
-        cursor = parent
-        parent = cursor.parent
-    return None
-
-
-def _climbed_operand(node: Node) -> Node | None:
-    """
-    The part of *node* a store reaching through it has to have come from: what a cast or an `-as`
-    converts, and what an index or a member access is taken out of. An occurrence anywhere else
-    under one of these — the `$i` of `$p[$i]`, the `[array]` of `$x -as [array]` — is read and not
-    reached through.
-    """
-    if isinstance(node, Ps1CastExpression):
-        return node.operand
-    if isinstance(node, (Ps1IndexExpression, Ps1MemberAccess)):
-        return node.object
-    if is_conversion_operator(node):
-        return node.left
-    return None
-
-
-def is_conversion_operator(node: Node | None) -> typing.TypeGuard[Ps1BinaryExpression]:
-    """
-    Whether *node* is `-as`, which converts its left operand the way a cast does and hands over the
-    very object where nothing needs converting: measured, `$x -as [array]` over an `Object[]` is the
-    array `$x` holds, so `[Array]::Reverse($x -as [array])` reverses it.
-    """
-    return isinstance(node, Ps1BinaryExpression) and node.operator.lower() == '-as'
+    return None if slot is None else _CallSlotPosition(parent, slot, part, copied)
 
 
 def _call_slot_of(call: Ps1InvokeMember, node: Node) -> int | None:
@@ -1193,7 +1147,7 @@ class Ps1SemanticModel:
             for write in binding.writes:
                 if write.may_define or not isinstance(write.node, Ps1Variable):
                     continue
-                named = _constraint_on(write.node)
+                named = target_constraint(write.node)
                 if named is not None:
                     binding.constraints.add(data.resolve_type(named))
 
@@ -1292,12 +1246,14 @@ class Ps1SemanticModel:
         Each definition that hands one object to a second name, as the link between the two
         bindings it joins.
 
-        A conversion on either side of the `=` is passed through and makes the link uncertain: it is
-        the same object where nothing needed converting and a fresh one where something did, and
-        which of the two ran is a question about the operand's runtime type. Both spellings count —
-        `$y = [array]$x` and `$y = $x -as [array]` convert the value, `[int[]]$y = $x` constrains
-        the variable — because the object either name ends up holding is the same question in all
-        three. Measured: `$x = 1, 2, 3; $y = [array]$x; $y[0] = 9` leaves `$x` reading `9 2 3`.
+        The value is followed down through every expression that may give back the very object of
+        one of its parts, as `refinery.lib.scripts.ps1.analysis.identity.object_sources` names them,
+        to the variable it may have been read from. A step that may make a new object instead makes
+        the link uncertain: a conversion is the same object where nothing needed converting and a
+        fresh one where something did, and `$y * $n` is the array `$y` holds only where the count
+        is one. Measured: `$x = 1, 2, 3; $y = [array]$x; $y[0] = 9` leaves `$x` reading `9 2 3`,
+        and so does `$y = @([object[]]$x)`. A constraint on the target is the same question —
+        `[int[]]$y = $x` converts what it stores.
 
         A constraint the *target* binding carries counts as much as one this occurrence spells,
         because PowerShell stores it on the variable and converts every later write through it.
@@ -1320,14 +1276,9 @@ class Ps1SemanticModel:
             certain = True
             source: Node | None = assignment.value
             while source is not None and not isinstance(source, Ps1Variable):
-                if isinstance(source, Ps1ParenExpression):
-                    source = source.expression
-                    continue
-                if isinstance(source, Ps1CastExpression) or is_conversion_operator(source):
-                    certain = False
-                    source = _climbed_operand(source)
-                    continue
-                break
+                sources = object_sources(source)
+                certain = certain and sources.certain
+                source = sources.operand
             if not isinstance(source, Ps1Variable):
                 continue
             target = self._binding_of.get(id(write.node))

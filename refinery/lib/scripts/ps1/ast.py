@@ -912,3 +912,24 @@ def assignment_of(var: Ps1Variable) -> Ps1AssignmentExpression | None:
     if isinstance(parent, Ps1AssignmentExpression) and parent.target is cursor:
         return parent
     return None
+
+
+def target_constraint(var: Ps1Variable) -> str | None:
+    """
+    The type a constrained assignment target names for *var* — the `string` of `[string]$q = 5` and
+    of `$a, [string]$q = 1, 5` — or `None` where the occurrence is not one.
+
+    Only a cast between the occurrence and the assignment counts, so `$q = [string]5` is not a
+    constraint: it converts what is stored once and leaves the variable free.
+    """
+    assignment = assignment_of(var)
+    if assignment is None:
+        return None
+    cursor: Node = var
+    parent = cursor.parent
+    while parent is not None and parent is not assignment:
+        if isinstance(parent, Ps1CastExpression):
+            return parent.type_name
+        cursor = parent
+        parent = cursor.parent
+    return None

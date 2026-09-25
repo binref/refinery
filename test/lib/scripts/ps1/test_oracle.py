@@ -318,27 +318,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'The read is folded to the reversal `3 2 1`. A multi-assignment gives `$b` the first '
         'element of `$x` and not the array, so the snippet writes `1`; the two names are '
         'linked as if `$b = $x` had been written.',
-    '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x':
-        'The read is folded to `1 2 3` where the snippet writes `9 2 3`. `@( )` around a cast '
-        'to an array type returns that array unwrapped, so `$y` holds the array `$x` holds; '
-        'the hand-off is read as a copy.',
-    '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x':
-        'The call is removed and the read folded to `1 2 3` where the snippet writes `3 2 1`: '
-        'the call reverses the array `$x` holds, for the same reason.',
-    'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f':
-        'The call is removed, so the function writes `1 2` where the snippet writes `2 1`. In '
-        'a function body a local constrained to an array type is compiled as one, and `@( )` '
-        'returns it unwrapped.',
-    '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y':
-        'The read is folded to `1 2` where the snippet writes `9 2`. `*` by a count of one '
-        'returns its left operand, so `$z` holds the array `$y` holds; the product is read as '
-        'a copy.',
-    '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
-        'The call is removed and the read folded to `1 2 3` where the snippet writes `3 2 1`, '
-        'for the same reason.',
-    '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x':
-        'The call is removed as a statement with no effect, so the output writes `0 2 3` where '
-        'the snippet writes `3 2 0`: the product is read as a new array nothing else holds.',
     "$x = 1, 2, 3; $h = @{ k = $x }; $c = @('$h.k[0] = 9')[(Get-Random -Maximum 1)]; "
     'function f { iex $c }; f; Write-Output $x':
         'The array is spelled into the hash literal and the read folded to `1 2 3` where the '
@@ -466,6 +445,8 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
     '$bytes = 72, 105; $s = [Text.Encoding]::ASCII.GetString($bytes); Write-Output $s; '
     '$buf = 0, 0; $buf[0] = 7':
         ('OUT\tSystem.String\tHi',),
+    '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y':
+        ('OUT\tSystem.Int32\t1', 'OUT\tSystem.Int32\t2'),
     "trap { continue }; 1/0; Write-Host 'after'":
         ('INFO\tafter',),
     "trap { continue }; $x = \"$(1/0)$(Set-Alias zzq Write-Output)\"; zzq 'hi'":

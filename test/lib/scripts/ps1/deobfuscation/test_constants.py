@@ -1161,6 +1161,19 @@ class TestPs1AStoreThatCannotReachAHandedOnArrayDoesNotHoldItBack(TestPs1):
         )
 
 
+class TestPs1AProductByACountOtherThanOneIsANewArray(TestPs1):
+    """
+    `*` by a count of two builds a new array out of the elements, so a store into the product leaves
+    the operand alone. Measured on 5.1 in `corpus.CLAIMS`, the script writes `1 2`.
+    """
+
+    def test_a_store_into_the_product_does_not_hold_back_the_operand(self):
+        self.assertIn(
+            'Write-Output (1, 2)',
+            self._deobfuscate_iterative('$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y'),
+        )
+
+
 class TestPs1ASecondNameIsNotACopyWhereUnreadableCodeRunsAfterIt(TestPs1):
     """
     Code nobody can read may store through any name, so `$y = $x` before an `Invoke-Expression`

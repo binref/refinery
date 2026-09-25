@@ -80,7 +80,7 @@ def value_after(occurrence: Ps1Variable, previous: Expression) -> Expression | N
         # unshared; until it is built, answering the *slot* here would report the inner array's new
         # order as the outer array's.
         return None
-    if found.through_a_conversion:
+    if found.may_be_a_copy:
         # A cast between the name and the slot may hand the callee a fresh value built from what the
         # name holds rather than the value itself — measured, `[Array]::Reverse([int[]]$x)` over an
         # `Object[]` reverses a temporary and leaves `$x` in its original order. Which of the two a

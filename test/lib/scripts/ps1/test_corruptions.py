@@ -2703,12 +2703,8 @@ class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
     local a function body constrains to an array type; `*` by a count of one returns its left
     operand. Measured on 5.1 in `corpus.BEHAVIOURS`, each script writes what the store or the call
     did to the array.
-
-    Each is read as a new array nothing else holds, so a store through it is filed against nothing
-    and a call writing through it is removed as having no effect.
     """
 
-    @unittest.expectedFailure
     def test_an_array_subexpression_around_a_cast_hands_on_the_array(self):
         self._assertTheStoreReachesTheName(
             '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
@@ -2717,7 +2713,6 @@ class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_reversing_an_array_subexpression_around_a_cast_reverses_the_array(self):
         self._assertTheStoreReachesTheName(
             '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
@@ -2726,13 +2721,11 @@ class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_reversing_an_array_subexpression_around_a_typed_local_is_kept(self):
         tree = self._deobfuscated_tree(
             'function f { [object[]]$a = 1, 2; [Array]::Reverse(@($a)); Write-Output $a }; f')
         self._assertWrites(tree, [[2, 1]], [[1, 2]], bool(_static_calls(tree, 'array', 'reverse')))
 
-    @unittest.expectedFailure
     def test_a_product_by_one_hands_on_the_array(self):
         self._assertTheStoreReachesTheName(
             '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y',
@@ -2741,7 +2734,6 @@ class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
             [[1, 2]],
         )
 
-    @unittest.expectedFailure
     def test_reversing_a_product_by_one_reverses_the_array(self):
         self._assertTheStoreReachesTheName(
             '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x',
@@ -2750,7 +2742,6 @@ class TestPs1AnExpressionThatGivesBackItsOperandHandsOnTheArray(_Ps1Ledger):
             [[1, 2, 3]],
         )
 
-    @unittest.expectedFailure
     def test_reversing_a_product_by_one_of_a_value_read_at_run_time_is_kept(self):
         tree = self._deobfuscated_tree(
             '$x = @(Get-Random -Maximum 1), 2, 3; [Array]::Reverse($x * 1); Write-Output $x')

@@ -4,7 +4,7 @@ Inline constant variable references in PowerShell scripts.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterator, TypeGuard
+from typing import Iterator
 
 from refinery.lib.scripts import (
     Expression,
@@ -17,13 +17,13 @@ from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
 from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.handoff import Ps1Handoff
+from refinery.lib.scripts.ps1.analysis.identity import passage_out_of
 from refinery.lib.scripts.ps1.analysis.model import (
     NARROWER_QUALIFIERS,
     VARIABLE_QUALIFIERS,
     Binding,
     binding_key,
     is_assignment_write_target,
-    is_conversion_operator,
     is_mutated_in_place,
     is_substitutable_position,
     is_write_occurrence,
@@ -388,14 +388,23 @@ def _assignment_target(occurrence: Ps1Variable) -> Ps1Variable | None:
     rooted at, because that is the name every later store through the same place is spelled on and
     so the name a caller has to watch. `None` is every position whose destination this cannot name
     that way, and a caller reads it as such: a hash literal's entry, one slot of a multi-assignment,
-    an argument of a call or of a command. Parentheses, array literals and conversions are climbed,
-    because each hands its operand on unchanged.
+    an argument of a call or of a command.
+
+    What is climbed on the way to the assignment is every expression that may give back the object
+    it was handed, as `refinery.lib.scripts.ps1.analysis.identity.passage_out_of` names them, and
+    an array literal: the `$a = ,$x` that builds a fresh outer array whose one element is the array
+    `$x` names still stores that array under `$a`, one level down.
     """
     cursor: Node = occurrence
+    while True:
+        passage = passage_out_of(cursor)
+        if passage is not None and not isinstance(passage.expression, Ps1AssignmentExpression):
+            cursor = passage.expression
+        elif isinstance(cursor.parent, Ps1ArrayLiteral):
+            cursor = cursor.parent
+        else:
+            break
     parent = cursor.parent
-    while _is_transparent_to_the_object(parent, cursor):
-        cursor = parent
-        parent = cursor.parent
     if not isinstance(parent, Ps1AssignmentExpression) or parent.operator != '=':
         return None
     if parent.value is not cursor:
@@ -404,20 +413,6 @@ def _assignment_target(occurrence: Ps1Variable) -> Ps1Variable | None:
     while isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
         target = unwrap_assignment_target(target.object)
     return target if isinstance(target, Ps1Variable) else None
-
-
-def _is_transparent_to_the_object(node: Node | None, under: Node) -> TypeGuard[Node]:
-    """
-    Whether *node* hands the value at *under* on unchanged: a parenthesis, an array literal — the
-    `$a = ,$x` that builds a fresh outer array whose one element is the array `$x` names — and a
-    conversion, which converts nothing when the operand already is what it names.
-
-    `-as` names its type on the right and hands on only its left, so which side the climb came up
-    is asked: the `$t` of `$x -as $t` stands for the type and reaches nowhere the value reaches.
-    """
-    if isinstance(node, (Ps1ParenExpression, Ps1ArrayLiteral, Ps1CastExpression)):
-        return True
-    return is_conversion_operator(node) and node.left is under
 
 
 def _ancestor_past_parens(node: Node) -> Node | None:

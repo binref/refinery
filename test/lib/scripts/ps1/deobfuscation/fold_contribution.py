@@ -417,8 +417,8 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = \'a\'; &(\'i\' + \'ex\') \'$x = "b"\'; Write-Host $x',
             "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'",
             '$y = 1, 2; $n = 1; $z = $y * $n; Write-Output ([object]::ReferenceEquals($y, $z))',
-            '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y',
             '$y = 1, 2; $z = $y * 1; Write-Output ([object]::ReferenceEquals($y, $z))',
+            '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y',
             '$z = 1.100d; $t = $z + 0d; Write-Output (,$t); Write-Output $t',
             "$z = 1.100d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t",
             "$z = 1.10d; $t = 'x' + $z; Write-Output (,$t); Write-Output $t",
@@ -604,7 +604,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = 1, 2, 3; [Array]::Reverse(($x)); Write-Output $x',
             "$x = @('a', 'b'); $x[1]",
             '$x = Get-Random -Maximum 1; Write-Output $script:x; $x = 5; Write-Output $x',
-            '$y = 1, 2; $z = $y * 1; $z[0] = 9; Write-Output $y',
+            '$y = 1, 2; $z = $y * 2; $z[0] = 9; Write-Output $y',
             '$z = 1.100d; $t = $z + 0d; Write-Output (,$t); Write-Output $t',
             '$z = 1.50d; $t = $z + 1.50d; Write-Output (,$t); Write-Output $t',
             "Set-Alias zzq Write-Host; $c = 'Set-Alias'; & $c zzq Write-Output; zzq 'x'",
@@ -1092,13 +1092,10 @@ CONTRIBUTION: dict[str, Contribution] = {
             '$x = 1, 2, 3; $y = $x; $y = 9, 9, 9; [Array]::Reverse($x); Write-Output $y',
             "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; function f { iex $c }; f; Write-Output $x",
             "$x = 1, 2, 3; $y = & { ,$x }; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
-            '$x = 1, 2, 3; $y = @([object[]]$x); $y[0] = 9; Write-Output $x',
             "$x = 1, 2, 3; $y = Sort-Object -InputObject $x; $c = @('$y[0] = 9')[(Get-Random -Maximum 1)]; iex $c; Write-Output $x",
             "$x = 1, 2, 3; [AppDomain]::CurrentDomain.SetData('k', $x); "
             "$c = @('[AppDomain]::CurrentDomain.GetData(''k'')[0] = 9')[(Get-Random -Maximum 1)]; iex $c; "
             'Write-Output $x',
-            '$x = 1, 2, 3; [Array]::Reverse($x * 1); Write-Output $x',
-            '$x = 1, 2, 3; [Array]::Reverse(@([object[]]$x)); Write-Output $x',
             '$x = 1, 2; $y = Sort-Object -InputObject $x; Write-Output ([object]::ReferenceEquals($x, $y))',
             '$x = 1, 2; Write-Output ([object]::ReferenceEquals($x, $x))',
             "$x = 1, 2; [AppDomain]::CurrentDomain.SetData('k', $x); "
