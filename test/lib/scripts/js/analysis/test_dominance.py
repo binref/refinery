@@ -142,10 +142,52 @@ class TestDominance(TestBase):
         ast, dom = self._dominance('const c = 5; function f(){ return c; }')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
-    def test_mutually_recursive_calls_are_refused(self):
+    def test_mutual_recursion_entered_after_the_definition_is_ordered(self):
+        """
+        `f` and `g` call each other, so neither can be invoked before one of them is read from
+        outside the pair; the one such read, `f()`, runs after the definition.
+        """
         ast, dom = self._dominance(
             'const c = 5; function f(){ return g(); } function g(){ return f(); } f();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_mutual_recursion_entered_before_the_definition_is_refused(self):
+        ast, dom = self._dominance(
+            'function f(){ return g(); } function g(){ return f(); } f(); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_a_function_called_only_from_a_recursive_one_is_ordered_by_its_entry(self):
+        ast, dom = self._dominance(
+            'const c = 5; function g(){ return c; } function f(n){ return n ? f(n - 1) : g(); } f(2);')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'g')))
+
+    def test_a_reader_only_its_own_recursion_calls_is_not_entered(self):
+        """
+        A recursive function nothing else calls is invoked by nothing in the file: every one of its
+        invocations follows the definition vacuously, but none is entered from it.
+        """
+        ast, dom = self._dominance('var c = 5; function f(n){ return n ? f(n - 1) : c; }')
+        definition, function = self._def(ast, 'c'), self._func(ast, 'f')
+        self.assertTrue(dom.runs_before_function(definition, function))
+        self.assertFalse(dom.runs_before_every_invocation(definition, function))
+
+    def test_a_reader_only_an_uncalled_function_calls_is_not_entered(self):
+        ast, dom = self._dominance('var c = 5; function f(){ return c; } function g(){ return f(); }')
+        self.assertFalse(dom.runs_before_every_invocation(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_a_recursive_reader_called_after_the_definition_is_entered(self):
+        ast, dom = self._dominance('var c = 5; function f(n){ return n ? f(n - 1) : c; } f(1);')
+        self.assertTrue(dom.runs_before_every_invocation(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_a_long_chain_of_callers_is_ordered(self):
+        """
+        The walk up the callers of `f0` passes three thousand functions, more than the interpreter
+        would let a recursive walk nest.
+        """
+        count = 3000
+        functions = ' '.join(F'function f{k}(){{ return f{k + 1}(); }}' for k in range(count))
+        ast, dom = self._dominance(F'const c = 5; function f{count}(){{ return c; }} {functions} f0();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, F'f{count}')))
 
     @staticmethod
     def _func_expr(ast) -> JsFunctionExpression:

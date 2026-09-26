@@ -25,12 +25,15 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    GLOBAL_VALUE_NAMES,
     BatchedScopeTransformer,
     a_host_reaches_the_binding,
     collect_identifier_names,
     is_literal,
+    names_global_value,
     remove_declarator,
     substitute_use_position,
+    value_to_node,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
@@ -195,22 +198,38 @@ def _count_scope_references(
     return counts
 
 
-def _is_literal_array(node: Node) -> bool:
+def _constant_node(node: Node | None, model: SemanticModel) -> Node | None:
     """
-    Return whether *node* is a `refinery.lib.scripts.js.model.JsArrayExpression` where every element
-    is a literal.
+    The node a read of a constant holding *node* is replaced with, or `None` where *node* is no
+    constant. A literal writes itself. A name that still denotes `undefined`, `NaN` or `Infinity`
+    where it stands (`refinery.lib.scripts.js.deobfuscation.helpers.names_global_value`) writes the
+    value it denotes, never the name, which may mean another binding at the read.
+    """
+    if node is None:
+        return None
+    if is_literal(node):
+        return node
+    if isinstance(node, JsIdentifier) and names_global_value(node, model):
+        return value_to_node(GLOBAL_VALUE_NAMES[node.name])
+    return None
+
+
+def _is_constant_array(node: Node, model: SemanticModel) -> bool:
+    """
+    Whether *node* is a `refinery.lib.scripts.js.model.JsArrayExpression` every element of which is
+    a constant (`_constant_node`).
     """
     if not isinstance(node, JsArrayExpression):
         return False
-    return all(el is not None and is_literal(el) for el in node.elements)
+    return all(_constant_node(el, model) is not None for el in node.elements)
 
 
-def _is_constant_value(node: Node) -> bool:
+def _is_constant_value(node: Node, model: SemanticModel) -> bool:
     """
-    Return whether *node* is a constant value eligible for multi-use inlining: a scalar literal or
-    an all-literal array.
+    Whether *node* is a constant value eligible for multi-use inlining: a scalar constant or an
+    array of them.
     """
-    return is_literal(node) or _is_literal_array(node)
+    return _constant_node(node, model) is not None or _is_constant_array(node, model)
 
 
 def _is_intrinsic_alias_value(effects: EffectModel, node: Node) -> bool:
@@ -534,12 +553,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         only where the definition's value provably reaches it unchanged
         (`ReachingModel.value_preserved`), covering both scalar references and computed index access
         into all-literal arrays. The value each decision records is the entry snapshot's own node,
-        which `_process_scope` copies into the plan.
+        which `_process_scope` copies into the plan, or the node `_constant_node` writes for a name
+        denoting a global value. A string too long to paste is inlined only where it is read once in
+        the whole scope, the functions nested in it included.
         """
         bloat_blocked: set[str] = set()
 
         ref_counts = _count_scope_references(
-            scope, set(candidates), decl_ids, count_member_access=True,
+            scope, set(candidates), decl_ids, walk_full=True, count_member_access=True,
         )
 
         for name, entries in candidates.items():
@@ -559,7 +580,10 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
 
         constant_names = {
             name for name, entries in candidates.items()
-            if any(_is_constant_value(e.value) or _is_intrinsic_alias_value(effects, e.value) for e in entries)
+            if any(
+                _is_constant_value(e.value, model) or _is_intrinsic_alias_value(effects, e.value)
+                for e in entries
+            )
         }
         if not constant_names:
             return []
@@ -578,7 +602,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                     entry = candidates[obj.name][0]
                     binding = self._candidate_binding(entry, model)
                     if binding is not None and reaching.value_preserved(binding, entry.value, node):
-                        element = self._index_access_element(node, entry)
+                        element = self._index_access_element(node, entry, model)
                         if element is not None:
                             substitutions.append(_Substitution(node, element, obj.name))
                     continue
@@ -595,14 +619,15 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
             entry = candidates[name][0]
-            if not is_literal(entry.value):
+            value = _constant_node(entry.value, model)
+            if value is None:
                 continue
             binding = self._candidate_binding(entry, model)
             if binding is None or model.resolve(node) is not binding:
                 continue
             if not reaching.value_preserved(binding, entry.value, node):
                 continue
-            substitutions.append(_Substitution(node, entry.value, name))
+            substitutions.append(_Substitution(node, value, name))
 
         substitutions.extend(self._decide_const_across_functions(
             scope, candidates, decl_ids, bloat_blocked, cache,
@@ -631,10 +656,14 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             binding, direct_eval_ordered=direct_eval_ordered)
 
     @staticmethod
-    def _index_access_element(member: JsMemberExpression, entry: _CandidateEntry) -> Node | None:
+    def _index_access_element(
+        member: JsMemberExpression,
+        entry: _CandidateEntry,
+        model: SemanticModel,
+    ) -> Node | None:
         """
-        The literal element an index access into a candidate's all-literal array resolves to, or
-        `None` when the access names no in-bounds literal element.
+        The node an index access into a candidate's array of constants is replaced with
+        (`_constant_node`), or `None` when the access names no in-bounds constant element.
         """
         prop = member.property
         if not isinstance(prop, JsNumericLiteral):
@@ -647,10 +676,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             return None
         if not (0 <= idx < len(value.elements)):
             return None
-        element = value.elements[idx]
-        if element is None or not is_literal(element):
-            return None
-        return element
+        return _constant_node(value.elements[idx], model)
 
     def _decide_const_across_functions(
         self,
@@ -701,7 +727,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             if entry.declarator is None or not isinstance(entry.declarator.id, JsIdentifier):
                 continue
             intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
-            if not (_is_constant_value(entry.value) or intrinsic_alias):
+            if not (_is_constant_value(entry.value, model) or intrinsic_alias):
                 continue
             binding = model.binding_of(entry.declarator.id)
             if binding is None:
@@ -760,7 +786,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                         continue
                     if model.is_shadowed(name, obj, outer):
                         continue
-                    element = self._index_access_element(node, cross_candidates[name][0])
+                    element = self._index_access_element(node, cross_candidates[name][0], model)
                     if element is not None:
                         substitutions.append(_Substitution(node, element, name))
                     continue
@@ -782,7 +808,8 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 continue
             entry = cross_candidates[name][0]
             intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
-            if not (is_literal(entry.value) or intrinsic_alias):
+            value = entry.value if intrinsic_alias else _constant_node(entry.value, model)
+            if value is None:
                 continue
             enclosing = enclosing_function(node)
             if enclosing is None or enclosing is owner:
@@ -804,7 +831,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
                 and model.lookup(entry.value.name, model.scope_of(node)) is not None
             ):
                 continue
-            substitutions.append(_Substitution(node, entry.value, name))
+            substitutions.append(_Substitution(node, value, name))
         return substitutions
 
     def _decide_expressions(
@@ -830,6 +857,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         dynamic scope and the reaching query orders that hazard against the relocated read.
         """
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
+        model = cache.effects.model
 
         to_inline: dict[str, _CandidateEntry] = {}
         for name, entries in candidates.items():
@@ -838,7 +866,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             entry = entries[0]
             init = entry.value
             count = ref_counts.get(name, 0)
-            if is_literal(init) or _is_literal_array(init) or count != 1:
+            if _is_constant_value(init, model) or count != 1:
                 continue
             if not _is_primitive_and_pure(init):
                 continue
@@ -850,7 +878,6 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
             return []
 
         reaching = cache.reaching
-        model = cache.effects.model
 
         substitutions: list[_Substitution] = []
         for node in walk_scope(scope, include_root_body=True):

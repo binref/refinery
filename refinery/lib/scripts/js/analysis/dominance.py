@@ -31,7 +31,7 @@ observe it.
 """
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
@@ -64,6 +64,33 @@ from refinery.lib.scripts.js.model import (
 )
 
 
+class _InvocationOrder(NamedTuple):
+    """
+    How every invocation of one function stands to one definition: *ordered* when each of them
+    follows the definition, and *entered* when one of them is reachable from the definition's own
+    activation rather than only from code nothing in the file runs.
+    """
+    ordered: bool
+    entered: bool
+
+
+class _Gathered:
+    """
+    What the walk of `DominanceModel._solve_invocation_orders` has gathered for one function whose
+    component is still open: whether every point seen so far is ordered, and whether one of them
+    enters the function.
+    """
+    __slots__ = 'ordered', 'entered'
+
+    def __init__(self, ordered: bool):
+        self.ordered = ordered
+        self.entered = False
+
+    def absorb(self, order: _InvocationOrder):
+        self.ordered = self.ordered and order.ordered
+        self.entered = self.entered or order.entered
+
+
 class DominanceModel(DominatorModel):
     """
     Dominator relations for the per-function control-flow graphs of one script, built over a
@@ -94,6 +121,7 @@ class DominanceModel(DominatorModel):
         self._module_scope = module_scope
         self._host_entrypoint = host_entrypoint
         self._reference_points_cache: dict[int, list[Node] | None] = {}
+        self._invocation_orders: dict[int, dict[int, _InvocationOrder]] = {}
 
     def completes_before(self, definition: Node, point: Node) -> bool:
         """
@@ -135,32 +163,30 @@ class DominanceModel(DominatorModel):
         declarator or sequence operand evaluated before it — is not accepted, since statement-granularity
         dominance is reflexive and cannot order within one statement. A reference's function is its
         nearest enclosing function (its `_activation_of`), so a use in a function's parameter defaults is
-        attributed to that function's invocation, not to the statement that declares it. This is the
-        interprocedural counterpart of `dominates`, and the sound replacement for ordering a
-        cross-function inline by statement position.
+        attributed to that function's invocation, not to the statement that declares it. Functions that
+        reach each other's invocations — a recursive function, mutually recursive ones — are answered
+        together (`_solve_invocation_orders`). This is the interprocedural counterpart of `dominates`,
+        and the sound replacement for ordering a cross-function inline by statement position.
 
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named binding
         is reassigned or redeclared (its references no longer pin one function), code outside the file
-        can call the function, a reference lies in a function that itself runs too late or escapes, or
-        the walk meets a call cycle it cannot bottom out. A function neither referenced nor within
-        reflection's reach is vacuously safe.
+        can call the function, or a reference lies in a function that itself runs too late or escapes.
+        A function neither referenced nor within reflection's reach is vacuously safe.
         """
-        definition_owner = self._activation_of(definition)
-        return self._runs_before_function(definition, definition_owner, function, set(), {})
+        return self._invocation_order(definition, function).ordered
 
     def runs_before_every_invocation(self, definition: Node, function: Node) -> bool:
         """
         Whether *definition* is guaranteed to run before every invocation of *function*, and
-        *function* holds at least one point an invocation cannot precede — `runs_before_function`
-        with the vacuity refused. A reader nothing invokes enumerates no reference points at all,
-        so the ordering question answers an empty set and passes vacuously; a value established
-        against no invocation is established for no read, so such a reader does not qualify. An
-        anonymous function expression is never vacuous: its own creation is the one point no
-        invocation can precede, so the closure cannot run before the expression that builds it.
+        *function* is entered from the activation that runs *definition* — `runs_before_function`
+        with the vacuity refused. A reader nothing in the file invokes, or one only code nothing
+        invokes calls, answers the ordering question over no invocation at all and passes
+        vacuously; a value established against no invocation is established for no read, so such a
+        reader does not qualify. An anonymous function expression created in that activation is
+        entered by its own creation, the one point no invocation can precede.
         """
-        if not self._reference_points(function):
-            return False
-        return self.runs_before_function(definition, function)
+        order = self._invocation_order(definition, function)
+        return order.ordered and order.entered
 
     def runs_before(self, definition: Node, reference: Node) -> bool:
         """
@@ -175,7 +201,7 @@ class DominanceModel(DominatorModel):
         or a reference point that cannot be enumerated — so a caller may treat `True` as a guarantee.
         """
         definition_owner = self._activation_of(definition)
-        return self._runs_after(definition, definition_owner, reference, set(), {})
+        return self._runs_after(definition, definition_owner, reference)
 
     def runs_before_all(self, definition: Node, references: Iterable[Node]) -> bool:
         """
@@ -185,7 +211,7 @@ class DominanceModel(DominatorModel):
         """
         definition_owner = self._activation_of(definition)
         return all(
-            self._runs_after(definition, definition_owner, reference, set(), {})
+            self._runs_after(definition, definition_owner, reference)
             for reference in references
         )
 
@@ -229,31 +255,92 @@ class DominanceModel(DominatorModel):
             self.runs_before(site, reference) for site in binding.declarations
         )
 
-    def _runs_before_function(
+    def _invocation_order(self, definition: Node, function: Node) -> _InvocationOrder:
+        """
+        How every invocation of *function* stands to *definition*. Answers are kept per definition
+        and every one kept is final, so each query of the same definition shares the functions an
+        earlier one solved.
+        """
+        orders = self._invocation_orders.setdefault(id(definition), {})
+        order = orders.get(id(function))
+        if order is None:
+            self._solve_invocation_orders(definition, function, orders)
+            order = orders[id(function)]
+        return order
+
+    def _solve_invocation_orders(
         self,
         definition: Node,
-        definition_owner: Node,
         function: Node,
-        visiting: set[int],
-        memo: dict[int, bool],
-    ) -> bool:
-        function_id = id(function)
-        if function_id in visiting:
-            return False
-        cached = memo.get(function_id)
-        if cached is not None:
-            return cached
-        points = self._reference_points(function)
-        if points is None:
-            memo[function_id] = False
-            return False
-        visiting = visiting | {function_id}
-        result = all(
-            self._runs_after(definition, definition_owner, point, visiting, memo)
-            for point in points
-        )
-        memo[function_id] = result
-        return result
+        orders: dict[int, _InvocationOrder],
+    ):
+        """
+        Solve `_invocation_order` for *function* and for every function a reference point of it
+        lies in, one strongly connected component of that graph at a time: Tarjan's algorithm, kept
+        on an explicit stack so a long chain of calls cannot exhaust the interpreter's. The
+        functions of one component reach each other's invocations and get one answer. They are
+        ordered when every point outside the component is: one in the definition's activation by
+        `completes_before`, one in another function by that function's answer. They are entered
+        when one of those points lies in the definition's activation or in an entered function.
+
+        This is sound because the earliest invocation of any function in a component follows a
+        reference to it that nothing in the component can have evaluated yet, so that reference is
+        one of the points outside it. A component is stored only once every component it reaches
+        is, which is what makes each stored answer final.
+        """
+        owner = self._activation_of(definition)
+        index: dict[int, int] = {}
+        lowlink: dict[int, int] = {}
+        gathered: dict[int, _Gathered] = {}
+        stack: list[Node] = []
+        frames: list[tuple[Node, Iterator[Node]]] = []
+
+        def open_frame(opened: Node):
+            key = id(opened)
+            index[key] = lowlink[key] = len(index)
+            stack.append(opened)
+            points = self._reference_points(opened)
+            gathered[key] = _Gathered(points is not None)
+            frames.append((opened, iter(points or ())))
+
+        open_frame(function)
+        while frames:
+            current, points = frames[-1]
+            key = id(current)
+            state = gathered[key]
+            for point in points:
+                activation = self._activation_of(point)
+                if activation is owner:
+                    state.entered = True
+                    if not self.completes_before(definition, point):
+                        state.ordered = False
+                elif not isinstance(activation, FUNCTION_NODES):
+                    state.ordered = False
+                elif (order := orders.get(id(activation))) is not None:
+                    state.absorb(order)
+                elif id(activation) not in index:
+                    open_frame(activation)
+                    break
+                else:
+                    lowlink[key] = min(lowlink[key], index[id(activation)])
+            else:
+                frames.pop()
+                if lowlink[key] == index[key]:
+                    members: list[Node] = []
+                    while not members or members[-1] is not current:
+                        members.append(stack.pop())
+                    order = _InvocationOrder(
+                        all(gathered[id(member)].ordered for member in members),
+                        any(gathered[id(member)].entered for member in members),
+                    )
+                    for member in members:
+                        orders[id(member)] = order
+                if frames:
+                    parent = id(frames[-1][0])
+                    if key in orders:
+                        gathered[parent].absorb(orders[key])
+                    else:
+                        lowlink[parent] = min(lowlink[parent], lowlink[key])
 
     def _reference_points(self, function: Node) -> list[Node] | None:
         """
@@ -425,19 +512,12 @@ class DominanceModel(DominatorModel):
         )
         return points
 
-    def _runs_after(
-        self,
-        definition: Node,
-        definition_owner: Node,
-        point: Node,
-        visiting: set[int],
-        memo: dict[int, bool],
-    ) -> bool:
+    def _runs_after(self, definition: Node, definition_owner: Node, point: Node) -> bool:
         owner = self._activation_of(point)
         if owner is definition_owner:
             return self.completes_before(definition, point)
         if isinstance(owner, FUNCTION_NODES):
-            return self._runs_before_function(definition, definition_owner, owner, visiting, memo)
+            return self._invocation_order(definition, owner).ordered
         return False
 
     def _activation_of(self, element: Node) -> Node:
