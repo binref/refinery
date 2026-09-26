@@ -4,7 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.model import build_semantic_model, member_property_name
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsFunctionDeclaration,
@@ -301,8 +301,8 @@ class TestDominance(TestBase):
     def test_a_method_call_on_the_object_hands_it_to_the_callee(self):
         """
         A method call on `NS` runs its callee with `NS` as `this`, and the callee can call `NS.g`
-        through it without spelling `NS.g` anywhere. Every call form that passes the receiver is such
-        a point, so a call before the definition refuses and the same call after it does not.
+        through it without spelling `NS.g` anywhere. Every call form that passes the receiver is
+        such a point, so a call before the definition refuses and the same call after it does not.
         """
         forms = [
             'NS.f()',
@@ -310,7 +310,7 @@ class TestDominance(TestBase):
             'NS.f``',
             'NS.f?.()',
             'NS?.f()',
-            "NS['f']()",
+            'NS["f"]()',
             'NS[k]()',
         ]
         for form in forms:
@@ -356,22 +356,22 @@ class TestDominance(TestBase):
 
     def test_every_access_hands_the_object_over_where_the_program_writes_the_object_prototype(self):
         ast, dom = self._dominance(
-            "Object.defineProperty(Object.prototype, 'k', { get: function(){ return this.g(); } });"
+            'Object.defineProperty(Object.prototype, "k", { get: function(){ return this.g(); } });'
             ' var NS = {}; NS.g = function(){ return c; }; NS.k; var c = 5; NS.g();')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
 
     def test_the_establishing_write_is_a_point_where_a_setter_may_run(self):
         """
-        A setter installed on `Object.prototype` receives the function the write stores, and may call
-        it right there; the write itself precedes the definition, so nothing orders the call.
+        A setter installed on `Object.prototype` receives the function the write stores, and may
+        call it right there; the write itself precedes the definition, so nothing orders the call.
         """
         ast, dom = self._dominance(
-            "Object.defineProperty(Object.prototype, 'g', { set: function(v){ v(); } });"
+            'Object.defineProperty(Object.prototype, "g", { set: function(v){ v(); } });'
             ' var NS = {}; NS.g = function(){ return c; }; var c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
 
     def test_a_prototype_written_through_the_object_hands_it_over(self):
-        for write in ('NS.__proto__ = P', "NS['__proto__'] = P", 'NS[key] = P'):
+        for write in ('NS.__proto__ = P', 'NS["__proto__"] = P', 'NS[key] = P'):
             with self.subTest(write=write):
                 ast, dom = self._dominance(
                     F'var NS = {{}}; NS.g = function(){{ return c; }}; {write}; var c = 5; NS.k;')
@@ -404,10 +404,10 @@ class TestDominance(TestBase):
         an importer waits for it to finish.
         """
         cases = {
-            "import './b.mjs'; export function f(){ return c; } const c = 5;": False,
-            "export * from './b.mjs'; export function f(){ return c; } const c = 5;": False,
-            "export { g } from './b.mjs'; export function f(){ return c; } const c = 5;": False,
-            "import './b.mjs'; function f(){ return c; } export { f }; const c = 5;": False,
+            'import "./b.mjs"; export function f(){ return c; } const c = 5;': False,
+            'export * from "./b.mjs"; export function f(){ return c; } const c = 5;': False,
+            'export { g } from "./b.mjs"; export function f(){ return c; } const c = 5;': False,
+            'import "./b.mjs"; function f(){ return c; } export { f }; const c = 5;': False,
             'export function f(){ return c; } const c = 5;': True,
             'export function f(){ return c; } for await (const x of []) {} const c = 5;': True,
         }
@@ -419,7 +419,7 @@ class TestDominance(TestBase):
 
     def test_an_anonymous_default_export_of_a_module_in_an_import_cycle_is_unordered(self):
         cases = {
-            "import './b.mjs'; export default function (){ return c; } const c = 5;": False,
+            'import "./b.mjs"; export default function (){ return c; } const c = 5;': False,
             'const c = 5; export default function (){ return c; }': True,
         }
         for source, expected in cases.items():
@@ -427,6 +427,199 @@ class TestDominance(TestBase):
                 ast, dom = self._dominance(source)
                 function = next(n for n in ast.walk() if isinstance(n, JsFunctionDeclaration))
                 self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), function), expected)
+
+    def test_a_method_the_value_of_its_install_hands_on_is_ordered_by_its_creation(self):
+        """
+        `f = NS.g = function(){}` stores the method in `f` as well as in `NS.g`, so the call
+        through `f` reads no member of `NS`; the function is invoked no earlier than it is created.
+        """
+        cases = {
+            'var NS = {}; var f = NS.g = function(){ return c; }; f(); var c = 5; NS.g();': False,
+            'var NS = {}; (NS.g = function(){ return c; })(); var c = 5; NS.g();': False,
+            'var NS = {}; run(NS.g = function(){ return c; }); var c = 5; NS.g();': False,
+            'var c = 5; var NS = {}; var f = NS.g = function(){ return c; }; f();': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                method = self._method(ast, 'NS', 'g')
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+
+    def test_a_recursive_method_called_through_the_value_of_its_install_is_refused(self):
+        ast, dom = self._dominance(
+            'var o = {}; var f = o.key = function(n){ return n > 0 ? o.key(n - 1) : c; };'
+            ' f(1); var c = 1;'
+        )
+        method = self._method(ast, 'o', 'key')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), method))
+
+    def test_a_function_the_value_of_its_install_hands_on_is_ordered_by_its_creation(self):
+        ast, dom = self._dominance(
+            'var f; var h = f = function(){ return c; }; h(); var c = 5; f();'
+        )
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
+
+    def test_code_this_file_cannot_read_gives_every_access_an_accessor(self):
+        """
+        The surface may install a getter on `Object.prototype` that calls `NS.g` through `this`,
+        and the read of `NS.k` before `c` exists would run it. A surface in the global scope cannot
+        name the local `NS`, so it is no point of the object's own.
+        """
+        cases = {
+            'function main(code){ var NS = {}; NS.g = function(){ return c; };'
+            ' (0, eval)(code); NS.k; const c = 5; }': False,
+            'function main(code){ const c = 5; var NS = {}; NS.g = function(){ return c; };'
+            ' (0, eval)(code); NS.k; }': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                method = self._method(ast, 'NS', 'g')
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+
+    def test_an_access_reaching_the_prototype_gives_every_access_an_accessor(self):
+        """
+        What the access yields leads to `Object.prototype`, so a getter installed through it runs
+        on every later access of any plain object: here one read before `c` exists.
+        """
+        reaches = [
+            'NS.constructor.prototype',
+            'NS["constructor"].prototype',
+            'NS.__proto__',
+            'NS[key]',
+        ]
+        for reach in reaches:
+            source = (
+                'var NS = {}; NS.g = function(){ return c; };'
+                F' {reach}.__defineGetter__("k", function(){{ return this.g(); }});'
+                ' NS.k; var c = 5;'
+            )
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                method = self._method(ast, 'NS', 'g')
+                self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), method))
+
+    def test_an_accessor_an_earlier_call_installed_is_ordered_against_the_next_call(self):
+        """
+        The getter lands on `Object.prototype`, which the object of the second call inherits, so
+        the read of `NS.k` in that call runs it before its own `c` exists, although every access
+        of the first call that installs it comes after `c`.
+        """
+        ast, dom = self._dominance(
+            'function main(){ var NS = {}; NS.g = function(){ return c; }; NS.k; const c = 5;'
+            ' NS.__proto__.__defineGetter__("k", function(){ return this.g(); }); }'
+            ' main(); main();'
+        )
+        method = self._method(ast, 'NS', 'g')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), method))
+
+    def test_a_method_of_an_object_a_host_reaches_is_ordered_by_its_creation(self):
+        """
+        A host holding the declared object may call its method whenever the script hands it
+        control, as it may during `fire()`. Under the module model the declaration is no property
+        of the global object, and no host reaches it by name.
+        """
+        source = 'var handlers = {}; handlers.onload = function(){ return c; }; fire(); var c = 5;'
+        for module_scope, expected in ((False, False), (True, True)):
+            with self.subTest(module_scope=module_scope):
+                ast = JsParser(source).parse()
+                dom = build_dominance(
+                    build_semantic_model(ast),
+                    module_scope=module_scope,
+                    host_entrypoint=lambda name: name == 'handlers',
+                )
+                method = self._method(ast, 'handlers', 'onload')
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+
+    def test_a_function_installed_as_the_prototype_is_ordered_by_its_creation(self):
+        """
+        A function stored at `o.__proto__` becomes the prototype of `o`, so the inherited read
+        `o.prototype.constructor` hands it out without reading `o.__proto__`.
+        """
+        ast, dom = self._dominance(
+            'var o = {}; o.__proto__ = function(){ return c; };'
+            ' o.prototype.constructor(); var c = 5;'
+        )
+        function = self._method(ast, 'o', '__proto__')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), function))
+
+    def test_an_export_of_a_module_that_imports_nothing_is_ordered_against_its_end(self):
+        """
+        An importer outside every cycle calls the export once the module has finished, on every
+        run that finishes it, including the runs that skip the definition.
+        """
+        cases = {
+            'export function f(){ return y; } if (c) { var y = 5; f(); }': False,
+            'export function f(){ return y; } var y = 5; if (c) { f(); }': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                ordered = dom.runs_before_function(self._def(ast, 'y'), self._func(ast, 'f'))
+                self.assertEqual(ordered, expected)
+
+    def test_a_method_stored_after_the_definition_is_ordered_whatever_hands_its_object_over(self):
+        """
+        The call of `NS.f` hands `NS` to its callee before `c` exists, but `NS.g` is created only
+        after `c`, so no call can reach it earlier. A function declaration exists from the start of
+        the script and has no such bound.
+        """
+        cases = {
+            'var NS = {}; NS.f = function(){}; NS.f();'
+            ' const c = 5; NS.g = function(){ return c; };': True,
+            'var NS = {}; NS.f = function(){}; NS.f();'
+            ' NS.g = function(){ return c; }; const c = 5;': False,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                method = self._method(ast, 'NS', 'g')
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+        ast, dom = self._dominance('g(); const c = 5; function g(){ return c; }')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'g')))
+
+    def test_a_method_no_code_obtains_is_not_entered_through_its_object(self):
+        """
+        Every access of `NS` may run the getter, and a call of `NS.f` hands `NS` over, but nothing
+        in the file reads `NS.g`: its object reaching code enters it no more than a function
+        declaration nothing calls is entered.
+        """
+        sources = [
+            'var c = 5; var NS = { get k(){ return 1; } }; NS.g = function(){ return c; }; NS.k;',
+            'var c = 5; var NS = {}; NS.f = function(){}; NS.g = function(){ return c; }; NS.f();',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                method = self._method(ast, 'NS', 'g')
+                self.assertFalse(dom.runs_before_every_invocation(self._def(ast, 'c'), method))
+        ast, dom = self._dominance(
+            'var c = 5; var NS = {}; NS.g = function(){ return c; }; NS.g();'
+        )
+        method = self._method(ast, 'NS', 'g')
+        self.assertTrue(dom.runs_before_every_invocation(self._def(ast, 'c'), method))
+
+    def test_the_methods_of_a_namespace_calling_each_other_are_ordered_by_their_installs(self):
+        """
+        Each method calls the next one through `NS`, which hands `NS` to every method; the calls
+        at the top run after every install, so each install runs before every read of its key.
+        """
+        count = 300
+        methods = [
+            F'NS.f{k} = function(a){{ return NS.f{(k + 1) % count}(a) + {k}; }};'
+            for k in range(count)
+        ]
+        calls = [F'NS.f{k}(1);' for k in range(count)]
+        ast, dom = self._dominance(' '.join(['var NS = {};', *methods, *calls]))
+        accesses = [node for node in ast.walk() if isinstance(node, JsMemberExpression)]
+        ordered = [
+            dom.runs_before_all(install, [
+                access for access in accesses
+                if member_property_name(access) == F'f{k}' and not access.is_descendant_of(install)
+            ])
+            for k, install in enumerate(ast.body[1:count + 1])
+        ]
+        self.assertEqual(ordered, [True] * count)
 
     def test_dominates_node_reflexive_and_ordered(self):
         ast, dom = self._dominance('var a = 1; var b = 2;')

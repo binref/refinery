@@ -1,9 +1,9 @@
 """
 What a JavaScript program writes on the intrinsics, computed once per
-`refinery.lib.scripts.js.analysis.model.SemanticModel`. `build_intrinsic_writes` scans the program for
-every global name it binds, assigns, writes a property on, installs a descriptor on, or hands to code
-this analysis cannot read, and for the property keys it writes on the names whose keys are watched;
-`IntrinsicWrites` holds the answer and asks the prototype-chain questions of it.
+`refinery.lib.scripts.js.analysis.model.SemanticModel`. `build_intrinsic_writes` scans the program
+for every global name it binds, assigns, writes a property on, installs a descriptor on, or hands to
+code this analysis cannot read, and for the property keys it writes on the names whose keys are
+watched; `IntrinsicWrites` holds the answer and asks the prototype-chain questions of it.
 
 The scan reads only the semantic model, so it sits beside it rather than above any layer that orders
 or summarizes code: the `refinery.lib.scripts.js.analysis.effects.EffectModel` and the
@@ -84,24 +84,25 @@ PURE_GLOBAL_FUNCTIONS = frozenset({
 
 SPECIES_KEYS = frozenset({'constructor', '__proto__'})
 """
-The two property names that decide what an allocating `Array.prototype` method returns. ArraySpeciesCreate
-reads `constructor[Symbol.species]` off the receiver, and `__proto__` replaces the prototype that `constructor`
-lookup walks, so writing either can make the "newly created" array be a shared object — or make the call throw,
-by leaving a primitive where a constructor is expected.
+The two property names that decide what an allocating `Array.prototype` method returns.
+ArraySpeciesCreate reads `constructor[Symbol.species]` off the receiver, and `__proto__` replaces
+the prototype that `constructor` lookup walks, so writing either can make the "newly created" array
+be a shared object — or make the call throw, by leaving a primitive where a constructor is expected.
 """
 
 _SURFACE_KEYS = SPECIES_KEYS | frozenset({'prototype'})
 """
-The property names whose value shares the mutable surface of the intrinsic it was read from, so handing that
-value to unanalysable code is as dangerous as handing over the intrinsic itself. `SPECIES_KEYS` reach the
-prototype chain and `prototype` is the chain. Every other key yields something whose properties nobody consults
-when the intrinsic is used: patching a property of the number `Math.PI` or of the function `Math.floor` cannot
-change what `Math.floor(1.7)` returns, while patching one of `Array.prototype` decides what `[1, 2].join()`
-means.
+The property names whose value shares the mutable surface of the intrinsic it was read from, so
+handing that value to unanalysable code is as dangerous as handing over the intrinsic itself.
+`SPECIES_KEYS` reach the prototype chain and `prototype` is the chain. Every other key yields
+something whose properties nobody consults when the intrinsic is used: patching a property of the
+number `Math.PI` or of the function `Math.floor` cannot change what `Math.floor(1.7)` returns, while
+patching one of `Array.prototype` decides what `[1, 2].join()` means.
 
-`refinery.lib.scripts.js.deobfuscation.helpers.PROTOTYPE_CHAIN_PROPERTIES` holds the same two species keys for
-the same reason, but importing it here would invert the layering this module rests on — the interpreter imports
-from the analysis layer, never the reverse, as `PROTOTYPE_OWNERS` also records.
+`refinery.lib.scripts.js.deobfuscation.helpers.PROTOTYPE_CHAIN_PROPERTIES` holds the same two
+species keys for the same reason, but importing it here would invert the layering this module rests
+on — the interpreter imports from the analysis layer, never the reverse, as `PROTOTYPE_OWNERS` also
+records.
 """
 
 PURE_INTRINSIC_ROOTS = (
@@ -112,10 +113,10 @@ _DENOTED_ROOT_DEPTH_LIMIT = 16
 
 _CALLEE_DEPTH_LIMIT = 4
 """
-How far `_callee_is_write_free` follows an intrinsic through nested calls before refusing. A chain longer than
-this is not proven safe, merely unproven, so exhausting the limit records the write. Four was enough for every
-shape measured; the limit exists because the recursion is over call *edges*, which a mutually-recursive pair
-makes unbounded.
+How far `_callee_is_write_free` follows an intrinsic through nested calls before refusing. A chain
+longer than this is not proven safe, merely unproven, so exhausting the limit records the write.
+Four was enough for every shape measured; the limit exists because the recursion is over call
+*edges*, which a mutually-recursive pair makes unbounded.
 """
 
 _VALUE_FORWARDING_NODES = (
@@ -126,10 +127,11 @@ _VALUE_FORWARDING_NODES = (
     JsSpreadElement,
 )
 """
-The forms that hand an operand's value onward unchanged, so an intrinsic inside one escapes wherever the form
-itself does. These are the outward counterpart of the arms `_denoted_roots` looks *into*, and the pairing is not
-incidental: a fold that collapses `Math || 0` to `Math` must not change this analysis's answer, which the
-pinning contract in `refinery.lib.scripts.js.analysis.cache.ModelCache` requires.
+The forms that hand an operand's value onward unchanged, so an intrinsic inside one escapes wherever
+the form itself does. These are the outward counterpart of the arms `_denoted_roots` looks *into*,
+and the pairing is not incidental: a fold that collapses `Math || 0` to `Math` must not change this
+analysis's answer, which the pinning contract in `refinery.lib.scripts.js.analysis.cache.ModelCache`
+requires.
 """
 
 PROTOTYPE_OWNERS: dict[str, str] = {
@@ -145,25 +147,27 @@ PROTOTYPE_OWNERS: dict[str, str] = {
     'JsArrowFunctionExpression': 'Function',
 }
 """
-The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type name so
-this module needs no import from the interpreter that depends on it. A method call on a literal receiver
-names no global at the call site, so trusting it means asking whether *this* prototype is intact:
-`String.prototype.toUpperCase = f` is a write to `String`, and it changes what `'ab'.toUpperCase()` means
-even though the expression mentions no identifier at all.
+The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type
+name so this module needs no import from the interpreter that depends on it. A method call on a
+literal receiver names no global at the call site, so trusting it means asking whether *this*
+prototype is intact: `String.prototype.toUpperCase = f` is a write to `String`, and it changes what
+`'ab'.toUpperCase()` means even though the expression mentions no identifier at all.
 
-Every type in the interpreter's value domain is named here directly, including `JsBuffer`, whose methods
-come from `Buffer.prototype` rather than the `Array.prototype` its `list` base would suggest. A function
-value is represented as its own AST node, so the two function node names appear here as value types rather
-than as syntax; both inherit from `Function.prototype`. Lookup is exact rather than a walk up the Python
-MRO, which would silently answer `Array` for any future `list` subclass instead of refusing. A type with no
+Every type in the interpreter's value domain is named here directly, including
+`refinery.lib.scripts.js.deobfuscation.helpers.JsBuffer`, whose methods come from `Buffer.prototype`
+rather than the `Array.prototype` its `list` base would suggest. A function value is represented as
+its own AST node, so the two function node names appear here as value types rather than as syntax;
+both inherit from `Function.prototype`. Lookup is exact rather than a walk up the Python MRO, which
+would silently answer `Array` for any future `list` subclass instead of refusing. A type with no
 entry is never trusted through this route.
 """
 
 INHERITED_CHAIN_ROOTS = frozenset({'Object'})
 """
-The prototypes every value inherits from beyond the one that owns its own methods. `Object.prototype` roots
-every chain, so a getter installed there is reached by a plain read on an array literal and on `Math`
-alike — which is why reading a property is a strictly stronger requirement than calling a method.
+The prototypes every value inherits from beyond the one that owns its own methods.
+`Object.prototype` roots every chain, so a getter installed there is reached by a plain read on an
+array literal and on `Math` alike — which is why reading a property is a strictly stronger
+requirement than calling a method.
 """
 
 KEYED_WRITE_ROOTS = (
@@ -173,8 +177,8 @@ KEYED_WRITE_ROOTS = (
 )
 """
 The global names whose written property keys
-`refinery.lib.scripts.js.analysis.effects.EffectModel.global_key_written` bounds. A name outside this
-set is one the scan records no key for, so answering `False` about it would read an absence of
+`refinery.lib.scripts.js.analysis.effects.EffectModel.global_key_written` bounds. A name outside
+this set is one the scan records no key for, so answering `False` about it would read an absence of
 evidence as evidence of absence; that predicate answers `True` for every key of such a name instead.
 
 The set is the union of the names this module already watches for a reason: the intrinsics whose
@@ -231,24 +235,26 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     `Math.PI++`), installing a descriptor on it with `Object.defineProperty`, or handing it to
     code whose writes this analysis cannot enumerate.
 
-    This is the per-name counterpart of `_intrinsics_pristine`, which answers the same question for a
-    fixed root set but collapses it to one program-wide flag. Keeping the answer per name is what lets a
-    program that patches `Object.prototype` still have its `Math.floor` calls folded; the flag cannot
-    express that, because one disturbed root disables every other one.
+    This is the per-name counterpart of
+    `refinery.lib.scripts.js.analysis.effects._intrinsics_pristine`, which answers the same question
+    for a fixed root set but collapses it to one program-wide flag. Keeping the answer per name is
+    what lets a program that patches `Object.prototype` still have its `Math.floor` calls folded;
+    the flag cannot express that, because one disturbed root disables every other one.
 
-    Bindings cover every *assignment* form too, so no separate scan of write-role identifiers is needed:
-    a bare `Math = 1` introduces an implicit-global binding for `Math`, as do the destructuring and
-    `for`-target forms. Only property writes, deletes, and descriptor installs — which leave the name
-    itself a plain read — need the explicit branches below.
+    Bindings cover every *assignment* form too, so no separate scan of write-role identifiers is
+    needed: a bare `Math = 1` introduces an implicit-global binding for `Math`, as do the
+    destructuring and `for`-target forms. Only property writes, deletes, and descriptor installs —
+    which leave the name itself a plain read — need the explicit branches below.
 
-    A write target names the intrinsic it patches only when the program spells it out. `var m = Math;
-    m.floor = f` patches `Math` while mentioning it nowhere in the assignment, so the chain root is
-    resolved through the values its binding may hold rather than taken as the name it is spelled with.
+    A write target names the intrinsic it patches only when the program spells it out.
+    `var m = Math; m.floor = f` patches `Math` while mentioning it nowhere in the assignment, so the
+    chain root is resolved through the values its binding may hold rather than taken as the name it
+    is spelled with.
 
-    A write need not be *anywhere* in the program for a name to belong here. Handing an intrinsic to code
-    whose writes this analysis cannot enumerate — `patch(Math)` for a `patch` it cannot resolve — leaves
-    the name looking untouched while its properties are replaced, so an intrinsic that escapes is recorded
-    as written. `_value_escapes` decides which uses hand the value over.
+    A write need not be *anywhere* in the program for a name to belong here. Handing an intrinsic to
+    code whose writes this analysis cannot enumerate — `patch(Math)` for a `patch` it cannot resolve
+    — leaves the name looking untouched while its properties are replaced, so an intrinsic that
+    escapes is recorded as written. `_value_escapes` decides which uses hand the value over.
 
     The keyed answer is the same scan read for the property a write names rather than only for the
     name it is rooted at, and it exists because the per-name question is too coarse for a caller
@@ -346,9 +352,9 @@ def _installed_key(call: JsCallExpression) -> str | None:
     none this analysis can read. `Object.defineProperty(o, 'k', d)` and `o.__defineGetter__('k', f)`
     both name it in the argument before the descriptor; `defineProperties` names a whole object of
     them, which is not one key and is reported as unbounded. The method is read through
-    `accessor_install_method`, so a computed key a fold will collapse — `Object['define' +
-    'Property']` — already names the install here, which keeps the answer from changing as the
-    pipeline respells the call.
+    `refinery.lib.scripts.js.model.accessor_install_method`, so a computed key a fold will collapse
+    — `Object['define' + 'Property']` — already names the install here, which keeps the answer from
+    changing as the pipeline respells the call.
     """
     callee = strip_parens(call.callee)
     if not isinstance(callee, JsMemberExpression):
@@ -365,10 +371,12 @@ def _install_reaches_the_global_object(model: SemanticModel, call: JsCallExpress
     """
     Whether the descriptor install *call* installs on the global object: its receiver form
     (`globalThis.__defineGetter__`) or its argument form (`Object.defineProperty(globalThis, …)`)
-    names the object the installed key then becomes a global under. `may_be_the_global_object` is
-    the reading, so a local holding the object installs on it too; a receiver that is any other
-    object installs on that object and records nothing here. The method is read through
-    `accessor_install_method` for the same reason `_installed_key` reads it there.
+    names the object the installed key then becomes a global under.
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.may_be_the_global_object` is the reading,
+    so a local holding the object installs on it too; a receiver that is any other object installs
+    on that object and records nothing here. The method is read through
+    `refinery.lib.scripts.js.model.accessor_install_method` for the same reason `_installed_key`
+    reads it there.
     """
     callee = strip_parens(call.callee)
     if not isinstance(callee, JsMemberExpression):
@@ -389,30 +397,32 @@ def _value_escapes(
     depth: int = 0,
 ) -> bool:
     """
-    Whether the value read at *node* — which may denote the intrinsics *names* — reaches code that could
-    write a property on it without this analysis seeing the write.
+    Whether the value read at *node* — which may denote the intrinsics *names* — reaches code that
+    could write a property on it without this analysis seeing the write.
 
-    The question is deliberately inverted. Tracking where an intrinsic *flows to* would need a binder from
-    each argument to its parameter, and that binder reaches none of the routes an obfuscator actually uses:
-    a callback that receives the value, a function that returns it, `arguments`, spread, rest, or a method
-    on an object literal. Asking instead whether the value leaves a position whose effect is *known* covers
-    all of them at once, and fails in the safe direction by construction — an unrecognized position counts
-    as an escape, which costs an unfolded call rather than a wrong value.
+    The question is deliberately inverted. Tracking where an intrinsic *flows to* would need a
+    binder from each argument to its parameter, and that binder reaches none of the routes an
+    obfuscator actually uses: a callback that receives the value, a function that returns it,
+    `arguments`, spread, rest, or a method on an object literal. Asking instead whether the value
+    leaves a position whose effect is *known* covers all of them at once, and fails in the safe
+    direction by construction — an unrecognized position counts as an escape, which costs an
+    unfolded call rather than a wrong value.
 
     The positions that hand nothing over, and so must stay free or every fold collapses:
 
-    - a member base, when the key cannot yield the intrinsic's own mutable surface (`Math.floor(1.7)`)
+    - a member base, when the key cannot yield the intrinsic's own mutable surface
+      (`Math.floor(1.7)`)
     - a callee, which the call consumes (`parseInt(x)`)
     - an operator operand, which reads a value without capturing the object (`typeof Math`)
     - a rebinding whose target the alias analysis still resolves to the same names (`var m = Math`)
 
-    That last arm is what makes one predicate serve both this scan and the parameter-escape question inside
-    `_callee_is_write_free`, rather than two walks differing by a flag. A rebinding is safe precisely when a
-    later write through the new name is still attributed back, which is a question `_IntrinsicAliases`
-    already answers: `var m = Math` is spared because `m` denotes `Math`, while `save = o` inside a callee
-    is not, because a parameter denotes nothing and the attribution chain dies there. The *names* being
-    non-empty is therefore load-bearing — an empty set is a subset of everything, and would spare the very
-    case the arm exists to catch.
+    That last arm is what makes one predicate serve both this scan and the parameter-escape question
+    inside `_callee_is_write_free`, rather than two walks differing by a flag. A rebinding is safe
+    precisely when a later write through the new name is still attributed back, which is a question
+    `_IntrinsicAliases` already answers: `var m = Math` is spared because `m` denotes `Math`, while
+    `save = o` inside a callee is not, because a parameter denotes nothing and the attribution chain
+    dies there. The *names* being non-empty is therefore load-bearing — an empty set is a subset of
+    everything, and would spare the very case the arm exists to catch.
     """
     value = _forwarded_value(node)
     if value is None:
@@ -437,15 +447,16 @@ def _value_escapes(
 
 def _forwarded_value(node: JsIdentifier) -> Node | None:
     """
-    The outermost expression still carrying *node*'s value, or `None` when no enclosing form can hand that
-    value on. The walk looks through the forms that forward a value unchanged — parentheses, the operands
-    of `||`/`&&`/`??`, the branches of a conditional, the last expression of a sequence, and a spread — and
-    through a member access only when its key reaches the intrinsic's own surface, since `p(Array.prototype)`
-    hands over an object whose properties decide what `[1, 2].join()` means while `p(Math.PI)` hands over a
-    number nobody consults.
+    The outermost expression still carrying *node*'s value, or `None` when no enclosing form can
+    hand that value on. The walk looks through the forms that forward a value unchanged —
+    parentheses, the operands of `||`/`&&`/`??`, the branches of a conditional, the last expression
+    of a sequence, and a spread — and through a member access only when its key reaches the
+    intrinsic's own surface, since `p(Array.prototype)` hands over an object whose properties decide
+    what `[1, 2].join()` means while `p(Math.PI)` hands over a number nobody consults.
 
-    Strictly outward through `parent`, so unlike `_denoted_roots` — which recurses *into* an expression and
-    needs `_DENOTED_ROOT_DEPTH_LIMIT` — this terminates on the finite path to the root without a limit.
+    Strictly outward through `parent`, so unlike `_denoted_roots` — which recurses *into* an
+    expression and needs `_DENOTED_ROOT_DEPTH_LIMIT` — this terminates on the finite path to the
+    root without a limit.
     """
     cursor: Node = node
     while True:
@@ -469,10 +480,11 @@ def _reaches_intrinsic_surface(member: JsMemberExpression) -> bool:
     mutable surface. A computed key whose string value is not statically known may be any of them,
     so it counts.
 
-    This is a *may* analysis, opposite in direction to the use `accessor_install_method` makes of
-    `static_string`: there an unknown key names no method, because only a key a fold can collapse
-    can reveal an install mid-pass; here an unknown key reaches everything, because a missed reach
-    is a name that keeps its trust while the program patches it.
+    This is a *may* analysis, opposite in direction to the use
+    `refinery.lib.scripts.js.model.accessor_install_method` makes of
+    `refinery.lib.scripts.js.model.static_string`: there an unknown key names no method, because
+    only a key a fold can collapse can reveal an install mid-pass; here an unknown key reaches
+    everything, because a missed reach is a name that keeps its trust while the program patches it.
     """
     prop = member.property
     if member.computed:
@@ -485,12 +497,13 @@ def _names_bound_to(
     model: SemanticModel, aliases: _IntrinsicAliases, target: Node | None
 ) -> frozenset[str]:
     """
-    The intrinsic names a value stored into *target* may still be found under, so a rebinding that keeps the
-    value reachable by name is not an escape. A destructuring or member target yields nothing, since neither
-    leaves a name this analysis resolves writes through.
+    The intrinsic names a value stored into *target* may still be found under, so a rebinding that
+    keeps the value reachable by name is not an escape. A destructuring or member target yields
+    nothing, since neither leaves a name this analysis resolves writes through.
 
-    Both binding lookups are needed. A declarator id is not a *reference*, so `resolve` finds nothing for it
-    and only `binding_of` answers; an assignment target is a reference and only `resolve` does.
+    Both binding lookups are needed. A declarator id is not a *reference*, so `resolve` finds
+    nothing for it and only `refinery.lib.scripts.js.analysis.model.SemanticModel.binding_of`
+    answers; an assignment target is a reference and only `resolve` does.
     """
     if not isinstance(target, JsIdentifier):
         return frozenset()
@@ -507,21 +520,22 @@ def _callee_is_write_free(
     depth: int,
 ) -> bool:
     """
-    Whether a call to *func* provably writes no property reachable from one of its parameters, and lets no
-    parameter escape further. This is what keeps the escape rule from refusing every call: `log(Math)` for a
-    `log` that only reads `o.PI` hands the intrinsic to code whose writes are fully enumerable, so `Math`
-    keeps its trust.
+    Whether a call to *func* provably writes no property reachable from one of its parameters, and
+    lets no parameter escape further. This is what keeps the escape rule from refusing every call:
+    `log(Math)` for a `log` that only reads `o.PI` hands the intrinsic to code whose writes are
+    fully enumerable, so `Math` keeps its trust.
 
-    Fails closed on every way the enumeration could be incomplete — an unresolvable callee, a rest or
-    destructured parameter whose contents no name tracks, a reachable `arguments` object, or recursion past
-    `_CALLEE_DEPTH_LIMIT`. Each of those means a parameter's value could be written through somewhere this
-    scan does not look.
+    Fails closed on every way the enumeration could be incomplete — an unresolvable callee, a rest
+    or destructured parameter whose contents no name tracks, a reachable `arguments` object, or
+    recursion past `_CALLEE_DEPTH_LIMIT`. Each of those means a parameter's value could be written
+    through somewhere this scan does not look.
 
-    The parameter-escape question routes back through `_value_escapes` rather than scanning for identifiers,
-    so a callee that merely *reads* through its parameter (`return o.PI`) stays write-free while one that
-    passes it on (`g(o)`) does not. That reuse also subsumes the return case without a branch of its own: a
-    parameter in a return position matches no sparing arm, so it escapes — and by the same rule so do
-    `return [o]`, `return { m: o }`, and an arrow's concise body, which an explicit return check missed.
+    The parameter-escape question routes back through `_value_escapes` rather than scanning for
+    identifiers, so a callee that merely *reads* through its parameter (`return o.PI`) stays
+    write-free while one that passes it on (`g(o)`) does not. That reuse also subsumes the return
+    case without a branch of its own: a parameter in a return position matches no sparing arm, so it
+    escapes — and by the same rule so do `return [o]`, `return { m: o }`, and an arrow's concise
+    body, which an explicit return check missed.
     """
     if func is None or depth > _CALLEE_DEPTH_LIMIT:
         return False
@@ -564,11 +578,11 @@ def unambiguous_callee(
     model: SemanticModel, call: JsCallExpression
 ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
     """
-    The function *call* certainly invokes for a consumer that cannot order the call against a reassignment
-    of the callee's name, or `None`. The module-scope form of
-    `refinery.lib.scripts.js.analysis.effects.EffectModel.unambiguous_callee`, which delegates here: the
-    answer needs only the model, so `build_intrinsic_writes`, which runs before any effect model exists,
-    can still ask it.
+    The function *call* certainly invokes for a consumer that cannot order the call against a
+    reassignment of the callee's name, or `None`. The module-scope form of
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.unambiguous_callee`, which delegates here:
+    the answer needs only the model, so `build_intrinsic_writes`, which runs before any effect model
+    exists, can still ask it.
     """
     callee = call.callee
     if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
@@ -582,8 +596,9 @@ def unambiguous_function(
     model: SemanticModel, binding: Binding | None
 ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
     """
-    The module-scope form of `refinery.lib.scripts.js.analysis.effects.EffectModel.unambiguous_function`,
-    which delegates here. See that method for which bindings qualify.
+    The module-scope form of
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.unambiguous_function`, which delegates
+    here. See that method for which bindings qualify.
     """
     value = model.singular_value(binding)
     return value if isinstance(value, FUNCTION_NODES) else None
@@ -591,24 +606,25 @@ def unambiguous_function(
 
 class _IntrinsicAliases:
     """
-    Resolves the identifier at the root of a write target to every name it may denote, so that a property
-    write reaching an intrinsic through a local is attributed to the intrinsic rather than to the local.
-    `var m = Math; m.floor = f` must record `Math`, or the write stays invisible to every consumer of
-    `IntrinsicWrites.names` and `Math.floor(1.7)` goes on folding to the built-in.
+    Resolves the identifier at the root of a write target to every name it may denote, so that a
+    property write reaching an intrinsic through a local is attributed to the intrinsic rather than
+    to the local. `var m = Math; m.floor = f` must record `Math`, or the write stays invisible to
+    every consumer of `IntrinsicWrites.names` and `Math.floor(1.7)` goes on folding to the built-in.
 
-    A *may* analysis on purpose: every value a binding can hold contributes, so one branch assigning an
-    intrinsic is enough to poison the name. The direction is forced — missing an alias yields a wrong
-    value, while an extra name yields an unfolded call — and it matches how the accessor-install targets
-    are already over-approximated, `Object.defineProperty(0 || Math, …)` among them.
+    A *may* analysis on purpose: every value a binding can hold contributes, so one branch assigning
+    an intrinsic is enough to poison the name. The direction is forced — missing an alias yields a
+    wrong value, while an extra name yields an unfolded call — and it matches how the
+    accessor-install targets are already over-approximated, `Object.defineProperty(0 || Math, …)`
+    among them.
 
-    The backward step is `_denoted_roots`, the same value-preserving walk the install-target scan uses,
-    reused rather than reimplemented for two reasons. It already looks through exactly the forms a fold
-    collapses (`||`, `&&`, `??`, conditional, sequence-last, assignment-RHS, parens), which is what keeps
-    this answer stable while passes run — the pinning contract in
-    `refinery.lib.scripts.js.analysis.cache.ModelCache` requires that this set never *grow* across a pass.
-    And it stops at a call, so `var s = String.fromCharCode(x)` does not alias `String`: the local holds
-    the *result*. Its member-chain arm over-approximates in the one remaining direction —
-    `var n = Array.length` reports `Array` — which is sound and costs nothing.
+    The backward step is `_denoted_roots`, the same value-preserving walk the install-target scan
+    uses, reused rather than reimplemented for two reasons. It already looks through exactly the
+    forms a fold collapses (`||`, `&&`, `??`, conditional, sequence-last, assignment-RHS, parens),
+    which is what keeps this answer stable while passes run — the pinning contract in
+    `refinery.lib.scripts.js.analysis.cache.ModelCache` requires that this set never *grow* across a
+    pass. And it stops at a call, so `var s = String.fromCharCode(x)` does not alias `String`: the
+    local holds the *result*. Its member-chain arm over-approximates in the one remaining direction
+    — `var n = Array.length` reports `Array` — which is sound and costs nothing.
     """
 
     def __init__(self, model: SemanticModel):
@@ -617,8 +633,8 @@ class _IntrinsicAliases:
 
     def names_denoted_by(self, node: JsIdentifier) -> frozenset[str]:
         """
-        Every intrinsic-root name *node* may denote, including its own when it names one directly. A name
-        that resolves to no binding is a free global and denotes itself.
+        Every intrinsic-root name *node* may denote, including its own when it names one directly. A
+        name that resolves to no binding is a free global and denotes itself.
         """
         if node.name in PURE_INTRINSIC_ROOTS:
             return frozenset({node.name})
@@ -629,17 +645,18 @@ class _IntrinsicAliases:
 
     def names_of(self, binding: Binding) -> frozenset[str]:
         """
-        Every name a value of *binding* may denote. The binding-level entry point, for a caller holding a
-        binding rather than a reference to it — resolving a *write* target, whose declaration id is not a
-        reference at all.
+        Every name a value of *binding* may denote. The binding-level entry point, for a caller
+        holding a binding rather than a reference to it — resolving a *write* target, whose
+        declaration id is not a reference at all.
         """
         return self._names_of(binding, set())
 
     def _names_of(self, binding: Binding, visiting: set[int]) -> frozenset[str]:
         """
-        Every name a value of *binding* may denote, memoized per binding. The *visiting* set breaks the
-        cycle a mutually-assigning pair (`a = b; b = a`) would otherwise spin on; a binding still on the
-        stack contributes nothing further, since whatever it reaches is already being collected.
+        Every name a value of *binding* may denote, memoized per binding. The *visiting* set breaks
+        the cycle a mutually-assigning pair (`a = b; b = a`) would otherwise spin on; a binding
+        still on the stack contributes nothing further, since whatever it reaches is already being
+        collected.
         """
         key = id(binding)
         cached = self._cache.get(key)
@@ -666,22 +683,23 @@ class _IntrinsicAliases:
 
 def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
     """
-    Every name a value of *binding* may denote, over its declarations' initializers and the right side of
-    every plain assignment to it. Both are needed: a binding declared empty and assigned later
-    (`var m; m = Math`) holds the intrinsic just as one initialized with it does.
+    Every name a value of *binding* may denote, over its declarations' initializers and the right
+    side of every plain assignment to it. Both are needed: a binding declared empty and assigned
+    later (`var m; m = Math`) holds the intrinsic just as one initialized with it does.
 
-    A write the model cannot pin to a value (`indefinite_writes`) contributes as well. This is a
-    *may* analysis, and `arguments[k] = Math` stores the intrinsic under a parameter's name whether
-    or not the text says which parameter or whether the call supplied it; leaving it out is exactly
-    the missed alias the caller's docstring names as a wrong answer.
+    A write the model cannot pin to a value
+    (`refinery.lib.scripts.js.analysis.model.Binding.indefinite_writes`) contributes as well. This
+    is a *may* analysis, and `arguments[k] = Math` stores the intrinsic under a parameter's name
+    whether or not the text says which parameter or whether the call supplied it; leaving it out is
+    exactly the missed alias the caller's docstring names as a wrong answer.
 
-    The may-side sibling of `SemanticModel.binding_values`, deliberately wider than its readable
-    channels: a compound assignment's right side contributes here where the must-query refuses the
-    whole binding, because `_value_escapes`'s rebinding arm spares a target only while the names it
-    may denote are still attributed back, and narrowing this walk would turn those rebindings into
-    escapes. A channel neither walk reads — an intrinsic stored through a pattern, a parameter fed at
-    a call site — is covered at its source instead: the intrinsic *read* that fed it escapes, which
-    withdraws the key trust there.
+    The may-side sibling of `refinery.lib.scripts.js.analysis.model.SemanticModel.binding_values`,
+    deliberately wider than its readable channels: a compound assignment's right side contributes
+    here where the must-query refuses the whole binding, because `_value_escapes`'s rebinding arm
+    spares a target only while the names it may denote are still attributed back, and narrowing this
+    walk would turn those rebindings into escapes. A channel neither walk reads — an intrinsic
+    stored through a pattern, a parameter fed at a call site — is covered at its source instead: the
+    intrinsic *read* that fed it escapes, which withdraws the key trust there.
     """
     for declaration in binding.declarations:
         parent = getattr(declaration, 'parent', None)
@@ -697,14 +715,15 @@ def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
 def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
     """
     The names whose properties *call* may install an accessor or data descriptor on. An
-    `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically, so a
-    scan for assignments alone would leave the name looking untouched. The receiver form
+    `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically,
+    so a scan for assignments alone would leave the name looking untouched. The receiver form
     (`o.__defineGetter__(...)`) attributes to the receiver instead of an argument.
 
     Every name the target *may* denote is yielded, because a caller collecting writes needs an
-    over-approximation: a missed name is a name that keeps its trust while the program patches it. That is
-    the opposite of `intrinsic_of`, which must certify what a node *does* denote and so takes only the left
-    of `A || B`; here both operands are yielded, since either may survive.
+    over-approximation: a missed name is a name that keeps its trust while the program patches it.
+    That is the opposite of `refinery.lib.scripts.js.analysis.effects.EffectModel.intrinsic_of`,
+    which must certify what a node *does* denote and so takes only the left of `A || B`; here both
+    operands are yielded, since either may survive.
     """
     callee = strip_parens(call.callee)
     if not isinstance(callee, JsMemberExpression):
@@ -720,13 +739,13 @@ def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
 
 def _denoted_roots(node: Node | None, depth: int = 0) -> Iterator[JsIdentifier]:
     """
-    Every name *node* may denote, looking through the value-preserving forms a constant fold collapses:
-    parentheses, the operands of `||`/`&&`/`??` and the branches of a conditional (either side may be the
-    value), the last expression of a sequence, and the right side of an assignment.
+    Every name *node* may denote, looking through the value-preserving forms a constant fold
+    collapses: parentheses, the operands of `||`/`&&`/`??` and the branches of a conditional (either
+    side may be the value), the last expression of a sequence, and the right side of an assignment.
 
     Resolving only the syntactic form would make this analysis change its answer as folds fire —
-    `Math || 0` names nothing until it collapses to `Math` — which is precisely what a consumer holding the
-    answer across a pass cannot tolerate.
+    `Math || 0` names nothing until it collapses to `Math` — which is precisely what a consumer
+    holding the answer across a pass cannot tolerate.
     """
     if depth > _DENOTED_ROOT_DEPTH_LIMIT:
         return
@@ -752,9 +771,10 @@ def _denoted_roots(node: Node | None, depth: int = 0) -> Iterator[JsIdentifier]:
 
 def _member_chain_root(node: Node | None) -> JsIdentifier | None:
     """
-    The identifier at the foot of a member-access chain, or `None` when the chain does not start at a
-    plain name. `Math.prototype.x` roots at `Math`, so a write anywhere along the chain is attributed to
-    the name that owns it; testing only the immediate `.object` would miss every nested write.
+    The identifier at the foot of a member-access chain, or `None` when the chain does not start at
+    a plain name. `Math.prototype.x` roots at `Math`, so a write anywhere along the chain is
+    attributed to the name that owns it; testing only the immediate `.object` would miss every
+    nested write.
     """
     cursor = strip_parens(node)
     if not isinstance(cursor, JsMemberExpression):

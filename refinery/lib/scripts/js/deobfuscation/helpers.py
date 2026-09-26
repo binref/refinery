@@ -1597,25 +1597,6 @@ def is_nullish(node: Node, model: SemanticModel) -> bool | None:
     return value is None or value is JS_NULL
 
 
-def value_is_discarded(node: Node) -> bool:
-    """
-    Whether the context governing `node` throws its value away, so removing `node` changes no value
-    the program goes on to read: an expression statement, or a sequence operand other than the last,
-    whose value the sequence yields. Parentheses are looked through. A node whose value is consumed
-    — a declarator initializer, a call argument, a `return` — is not discardable, and removing it
-    would strand its consumer.
-    """
-    cur = node
-    parent = cur.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        cur, parent = parent, parent.parent
-    if isinstance(parent, JsExpressionStatement):
-        return True
-    if isinstance(parent, JsSequenceExpression):
-        return bool(parent.expressions) and parent.expressions[-1] is not cur
-    return False
-
-
 def definitely_answers_the_completion(stmt: Statement) -> bool:
     """
     Whether evaluating *stmt* certainly supplies a value — the value the statement list it stands

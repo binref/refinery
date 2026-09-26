@@ -38,6 +38,7 @@ from test.lib.scripts.js.analysis.differential import (
     behavior,
     completion_values,
     deobfuscate_source,
+    module_graph_behavior,
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
@@ -2689,8 +2690,31 @@ A_GETTER_INSTALLED_THROUGH_A_PARAMETER = a_program("""
     const a = [7, 8];
     """)
 
+#: The program of `A_GETTER_INSTALLED_THROUGH_A_PARAMETER` with the getter installed on
+#: `Object.prototype` through a path that starts elsewhere than at `Object`, keyed by that start
+#: and mapped to the behavior an engine gives it.
+A_GETTER_INSTALLED_THROUGH_ANOTHER_OBJECT = {
+    start: Program(
+        a_program(F"""
+            var NS = {{h: 1}};
+            NS.g = function () {{ return a[0]; }};
+            var other = {{}};
+            {path}.__defineGetter__('k', function () {{ return this.g(); }});
+            console.log(NS.k);
+            const a = [7, 8];
+            """),
+        ('', 'ReferenceError'),
+    )
+    for start, path in {
+        'the prototype of another object': 'other.__proto__',
+        'the constructor of another object': 'other.constructor.prototype',
+        'the prototype of the prototype of an array': '[].__proto__.__proto__',
+    }.items()
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_GETTER_INSTALLED_THROUGH_ANOTHER_OBJECT)
 class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
     """
     The scan of what a program writes on the intrinsics sees a write whose target spells the
@@ -2700,6 +2724,9 @@ class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
     reports the prototype unwritten. The `in` fold then answers from the object alone, and the
     ordering of a namespace method misses the getter that calls it. Writing `Object.prototype`
     through a helper is something packed malware does, but pairing it with either fold is rare.
+    The scan also credits a prototype write only to the name the written chain starts at, so a
+    getter installed through another object, its constructor, or an array is missed the same
+    way; each of those routes is pinned by a test of its own.
     """
 
     @unittest.expectedFailure
@@ -2778,4 +2805,135 @@ class TestANamespaceAnUnreadableEvalReachesStaysWhole(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+#: A script whose recursive global function is called through the global object held under a name
+#: the analysis does not take for it, before the value the function reads exists, mapped to the
+#: behavior a host gives it.
+A_RECURSIVE_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT_UNDER_ANOTHER_NAME = Program(
+    a_program("""
+        function f(n) { return n > 0 ? f(n - 1) : c; }
+        var w = (function () { return this; })();
+        console.log(w.f(1));
+        var c;
+        c = 1;
+        """),
+    prints('undefined'),
+    Reading.SCRIPT,
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestARecursiveFunctionCalledThroughTheGlobalObjectReadsTheValueUnset(TestBase):
+    """
+    A global function is called through `w.f`, where `w` is the global object a bare call's `this`
+    hands out. The analysis does not take `w` for the global object, so it lists no call of `f`
+    from outside `f` and orders the recursive function as though nothing called it before `c = 1`.
+    The call reads `c` unset, and the deobfuscation writes `1` into `f`. Calling one's own
+    recursive function through a global object the program fetched this way is rare.
+    """
+
+    @unittest.expectedFailure
+    def test_the_value_is_read_unset(self):
+        row = A_RECURSIVE_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT_UNDER_ANOTHER_NAME
+        self.assertEqual(row.read(), row.required())
+
+
+class TestAValueNameWrittenThroughTheThisOfAFunctionStopsTheFold(TestBase):
+    """
+    JScript lets a program write `undefined`, and a function called bare runs with the global object
+    as `this`, so `this.undefined = 5` inside one rewrites the name for the whole script. The write
+    is seen where the top level of the script spells it
+    (`test.lib.scripts.js.analysis.test_differential.TestValueNameClobberedThroughTheGlobalObject`)
+    but not inside a function, so a constant holding `undefined` is written as `void 0` and
+    `typeof undefined` as a string. Nothing here runs a JScript engine, so the entry asserts that
+    the name stays standing. Rewriting `undefined` at all is rare, and through a function's `this`
+    rarer still.
+    """
+
+    @unittest.expectedFailure
+    def test_the_name_stays(self):
+        output = deobfuscate_source(a_program("""
+            (function () { this.undefined = 5; })();
+            var u = undefined;
+            WScript.Echo(u);
+            WScript.Echo(u);
+            WScript.Echo(typeof undefined);
+            """))
+        self.assertEqual(
+            (output.count('void 0'), output.count('typeof undefined')),
+            (0, 1),
+        )
+
+
+#: A module in an import cycle whose exported function reads a global the module creates only after
+#: the other module of the cycle has called the function, mapped to that other module.
+A_GLOBAL_AN_IMPORTER_IN_A_CYCLE_READS_BEFORE_IT_EXISTS = (
+    a_program("""
+        import { g } from './b.mjs';
+        export function f() { x; return 1; }
+        globalThis.x = 1;
+        console.log(f());
+        g();
+        """),
+    a_program("""
+        import { f } from './main.mjs';
+        export function g() {}
+        console.log(f());
+        """),
+)
+
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAGlobalAnImporterInACycleReadsEarlyMayNotExistYet(TestBase):
+    """
+    A module in an import cycle with the exporter can call an exported function before the
+    exporter's body has finished. The analysis deciding whether a global exists at a read takes the
+    calls the file spells for all the calls there are, so it vouches for `x` inside `f` and the
+    read that throws when the importer calls `f` early is removed. Import cycles that meet a global
+    created late are rare in the scripts this tool reads.
+    """
+
+    @unittest.expectedFailure
+    def test_the_global_is_read_before_it_exists(self):
+        exporter, importer = A_GLOBAL_AN_IMPORTER_IN_A_CYCLE_READS_BEFORE_IT_EXISTS
+        rewritten = deobfuscate_source(exporter, module=True)
+        self.assertEqual(
+            (
+                module_graph_behavior({'main.mjs': exporter, 'b.mjs': importer}, 'main.mjs'),
+                module_graph_behavior({'main.mjs': rewritten, 'b.mjs': importer}, 'main.mjs'),
+            ),
+            (('', 'ReferenceError'), ('', 'ReferenceError')),
+        )
+
+
+#: A script whose declared entry point reads a constant the script defines before it first hands
+#: the host control.
+A_CONSTANT_DEFINED_BEFORE_THE_HOST_GETS_CONTROL = a_program("""
+    const K = ['x'];
+    function onload() { console.log(K[0]); }
+    fire();
+    """)
+
+
+class TestAConstantDefinedBeforeTheHostGetsControlIsFoldedIntoAnEntryPoint(TestBase):
+    """
+    A host calls a declared entry point only while it holds control: during a call into code
+    outside the file, such as `fire`, or once the script has finished. `K` is defined before
+    either, so every call of `onload` reads it, but the ordering gives an entry point no reference
+    points at all and keeps `K[0]`. Scripts declared with entry points are the analyst's choice,
+    and a handler reading a table the script builds first is a common shape among them.
+    """
+
+    @unittest.expectedFailure
+    def test_the_constant_is_folded(self):
+        output = deobfuscate_source(
+            A_CONSTANT_DEFINED_BEFORE_THE_HOST_GETS_CONTROL,
+            entrypoints=('onload',),
+        )
+        self.assertEqual(
+            ('function onload' in output, 'K[0]' in output),
+            (True, False),
         )

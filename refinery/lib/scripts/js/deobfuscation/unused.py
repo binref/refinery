@@ -72,7 +72,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_binding_site,
     reaches_script_completion,
     remove_declarator,
-    value_is_discarded,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
@@ -112,6 +111,7 @@ from refinery.lib.scripts.js.model import (
     Statement,
     object_member_access_runs_accessor,
     strip_parens,
+    value_is_discarded,
 )
 from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import is_bare_string_statement, is_use_strict_directive

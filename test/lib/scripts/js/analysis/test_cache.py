@@ -282,9 +282,9 @@ class TestPinnedModels(TestBase):
     def test_a_pure_derived_model_first_built_after_an_edit_is_not_refused(self):
         """
         A model that builds purely from held base models — `dominance`, from the held `model`,
-        `control_flow` and `intrinsic_writes` — reads those bases, not the tree, so building it after
-        the tree has moved under a pin yields the entry-version answer and is no inconsistency, and
-        is not refused.
+        `control_flow` and `intrinsic_writes` — reads those bases, not the tree, so building it
+        after the tree has moved under a pin yields the entry-version answer and is no
+        inconsistency, and is not refused.
         """
         script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
         cache = ModelCache(script)

@@ -138,11 +138,12 @@ half; the interpreter additionally refuses to model a named property write on an
 _PURE_CONSTRUCTOR_ROOTS = frozenset({'Array'})
 """
 Intrinsic roots whose `new`-construction has no observable effect when its arguments are safe. Only
-`Array` here: it is already guarded against reassignment/shadowing by `_intrinsics_pristine` (it is a
-`PURE_INTRINSIC_ROOTS` member via `Array.isArray`), and its sole throw is a bad single numeric length.
-Adding a root not already in `PURE_INTRINSIC_ROOTS` (e.g. `Object`) requires first extending the
-`_intrinsics_pristine` guard to it, or trusting `new Object()` while `Object` was monkeypatched would be
-unsound.
+`Array` here: it is already guarded against reassignment/shadowing by `_intrinsics_pristine` (it is
+a `refinery.lib.scripts.js.analysis.intrinsics.PURE_INTRINSIC_ROOTS` member via `Array.isArray`),
+and its sole throw is a bad single numeric length. Adding a root not already in
+`refinery.lib.scripts.js.analysis.intrinsics.PURE_INTRINSIC_ROOTS` (e.g. `Object`) requires first
+extending the `_intrinsics_pristine` guard to it, or trusting `new Object()` while `Object` was
+monkeypatched would be unsound.
 """
 
 _SPEC_GLOBAL_INTRINSICS = frozenset({
@@ -241,10 +242,11 @@ _LITERAL_RECEIVER_TYPES: dict[type, type] = {
     JsObjectExpression: dict,
 }
 """
-The runtime type of a receiver whose literal syntax fixes it, mapping an AST node type to the value type
-`PROTOTYPE_OWNERS` is keyed on. A literal is the one receiver form whose prototype is knowable from the
-expression alone: `[1, 2].join('-')` has an array receiver whatever the surrounding program does, whereas
-`a.join('-')` depends on what `a` holds and on whether anything mutated it in between.
+The runtime type of a receiver whose literal syntax fixes it, mapping an AST node type to the value
+type `refinery.lib.scripts.js.analysis.intrinsics.PROTOTYPE_OWNERS` is keyed on. A literal is the
+one receiver form whose prototype is knowable from the expression alone: `[1, 2].join('-')` has an
+array receiver whatever the surrounding program does, whereas `a.join('-')` depends on what `a`
+holds and on whether anything mutated it in between.
 
 Deciding this here rather than at each caller is what lets a fold ask about a whole chain without walking
 it: the recursive case above resolves an inner link, and this resolves the literal the chain starts from.
@@ -262,11 +264,12 @@ _LITERAL_READ_TYPES[JsFunctionExpression] = JsFunctionExpression
 _LITERAL_READ_TYPES[JsArrowFunctionExpression] = JsArrowFunctionExpression
 """
 The value type of a literal whose *property read* must consult a prototype, extending
-`_LITERAL_RECEIVER_TYPES` with the two function forms. Reading `f.name` walks `Function.prototype`, which a
-program can patch, so the read needs an answer where the method call above must refuse outright: the call
-is unsound to fold because the interpreter cannot guard its dispatch, while the read is merely a question
-about one named intrinsic. A function node maps to itself, since the interpreter represents a function
-value as its own AST node and `PROTOTYPE_OWNERS` is keyed on that type's name.
+`_LITERAL_RECEIVER_TYPES` with the two function forms. Reading `f.name` walks `Function.prototype`,
+which a program can patch, so the read needs an answer where the method call above must refuse
+outright: the call is unsound to fold because the interpreter cannot guard its dispatch, while the
+read is merely a question about one named intrinsic. A function node maps to itself, since the
+interpreter represents a function value as its own AST node and
+`refinery.lib.scripts.js.analysis.intrinsics.PROTOTYPE_OWNERS` is keyed on that type's name.
 """
 
 
@@ -2003,14 +2006,15 @@ class EffectModel:
 
     def intrinsic_of(self, node: Node | None) -> str | _GlobalObject | None:
         """
-        The pristine intrinsic value *node* provably denotes: `GLOBAL_OBJECT` for the global object, an
-        intrinsic root name (`'Array'`, `'String'`, …) for a named intrinsic, or `None`. A name is
-        returned only under `intrinsics_pristine` and where the identifier is unshadowed at this use site,
-        so the result may be *value-trusted* — used to construct, to clear a getter-free static read, or
-        to fold `A || B`. Every value it can return — `globalThis` and every `PURE_INTRINSIC_ROOTS`
-        member — is truthy, so `A || B` evaluates to `A` whenever `intrinsic_of(A)` is not `None`; a
-        contributor extending this must preserve that truthiness invariant and never return a falsy name
-        such as `NaN`/`undefined`.
+        The pristine intrinsic value *node* provably denotes: `GLOBAL_OBJECT` for the global object,
+        an intrinsic root name (`'Array'`, `'String'`, …) for a named intrinsic, or `None`. A name
+        is returned only under `intrinsics_pristine` and where the identifier is unshadowed at this
+        use site, so the result may be *value-trusted* — used to construct, to clear a getter-free
+        static read, or to fold `A || B`. Every value it can return — `globalThis` and every
+        `refinery.lib.scripts.js.analysis.intrinsics.PURE_INTRINSIC_ROOTS` member — is truthy, so
+        `A || B` evaluates to `A` whenever `intrinsic_of(A)` is not `None`; a contributor extending
+        this must preserve that truthiness invariant and never return a falsy name such as
+        `NaN`/`undefined`.
 
         It deliberately does NOT follow a local alias through its value — `intrinsic_of` of an identifier
         bound to `var x = Array` is `None` — because a local's value holds only where it is established, a
@@ -2122,8 +2126,9 @@ class EffectModel:
         analysis names, while the chain it is written through is rooted in one that is. A name whose
         written keys cannot be bounded — one the program binds, hands to code this analysis cannot
         read, writes a computed key on, or installs a descriptor on from a value it cannot read —
-        answers `True` for every key, and so does a name outside `KEYED_WRITE_ROOTS`, which the
-        scan records nothing about at all.
+        answers `True` for every key, and so does a name outside
+        `refinery.lib.scripts.js.analysis.intrinsics.KEYED_WRITE_ROOTS`, which the scan records
+        nothing about at all.
         """
         if name not in KEYED_WRITE_ROOTS:
             return True

@@ -35,7 +35,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     binding_has_references,
     remove_declarator,
-    value_is_discarded,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -56,6 +55,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclaration,
     JsVariableDeclarator,
     strip_parens,
+    value_is_discarded,
 )
 
 _REDOS_SIGNATURE = '(((.+)+)+)+$'

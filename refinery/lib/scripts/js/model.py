@@ -1001,9 +1001,9 @@ def accessor_install_method(node: JsMemberExpression) -> str | None:
 def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
     """
     Whether the object literal *obj* declares an own getter or setter (`{ get k(){...} }`,
-    `{ set k(v){...} }`). A read of such a property runs the getter and a write to it runs the setter,
-    so a member access on an otherwise fresh literal that has one carries a hidden effect rather than a
-    plain field read or store.
+    `{ set k(v){...} }`). A read of such a property runs the getter and a write to it runs the
+    setter, so a member access on an otherwise fresh literal that has one carries a hidden effect
+    rather than a plain field read or store.
     """
     return any(
         isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
@@ -1018,8 +1018,8 @@ def object_sets_prototype(obj: JsObjectExpression) -> bool:
     whose key is `__proto__`. Such an object no longer inherits from `Object.prototype` alone, so a
     plain-looking member read or write on it may run a getter or setter the installed prototype
     carries rather than touch a data slot. A computed key (`{ ['__proto__']: p }`), a shorthand
-    (`{ __proto__ }`), a method, or an own `__proto__` accessor define an ordinary own property and do
-    not set the prototype.
+    (`{ __proto__ }`), a method, or an own `__proto__` accessor define an ordinary own property and
+    do not set the prototype.
     """
     for prop in obj.properties:
         if not isinstance(prop, JsProperty):
@@ -1039,10 +1039,29 @@ def object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
     Whether a plain member read or write on the object literal *obj* may run a user-defined accessor
     instead of touching a data slot: it declares its own getter or setter, or it installs a custom
     prototype through the `__proto__:` literal form that may carry an inherited one. A fresh literal
-    with neither behaves as a plain field container, so an access on it is observable only as the field
-    it names.
+    with neither behaves as a plain field container, so an access on it is observable only as the
+    field it names.
     """
     return _object_has_own_accessor(obj) or object_sets_prototype(obj)
+
+
+def value_is_discarded(node: Node) -> bool:
+    """
+    Whether the context governing `node` throws its value away, so removing `node` changes no value
+    the program goes on to read: an expression statement, or a sequence operand other than the last,
+    whose value the sequence yields. Parentheses are looked through. A node whose value is consumed
+    — a declarator initializer, a call argument, a `return` — is not discardable, and removing it
+    would strand its consumer.
+    """
+    cur = node
+    parent = cur.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        cur, parent = parent, parent.parent
+    if isinstance(parent, JsExpressionStatement):
+        return True
+    if isinstance(parent, JsSequenceExpression):
+        return bool(parent.expressions) and parent.expressions[-1] is not cur
+    return False
 
 
 Closable = (

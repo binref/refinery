@@ -3,7 +3,8 @@ Programs that read a constant inside recursive code: a function that calls itsel
 each other, and a function only such code calls. A function on a call cycle is invoked first
 through a read of it from outside the cycle, so the constant reaches every invocation exactly when
 it is defined before every such read. Also the three names `undefined`, `NaN` and `Infinity` as
-constant values, and a long string read many times inside recursive code.
+constant values, a long string read many times inside recursive code, and one read once beside a
+nested function that binds the same name.
 """
 from __future__ import annotations
 
@@ -65,8 +66,8 @@ AN_ARRAY_DEFINED_AFTER_RECURSIVE_CODE_RUNS = {
         """): 'ReferenceError',
 }
 
-#: Programs holding `undefined`, `NaN` and `Infinity` in constants and reading them inside a function
-#: whose own parameters carry those names, mapped to what Node prints for them.
+#: Programs holding `undefined`, `NaN` and `Infinity` in constants and reading them inside a
+#: function whose own parameters carry those names, mapped to what Node prints for them.
 A_GLOBAL_VALUE_READ_WHERE_ITS_NAME_MEANS_A_PARAMETER = {
     a_program("""
         const u = [undefined, NaN, Infinity];
@@ -105,6 +106,20 @@ A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE = {
         """): 'bb6625acc6625a\n',
 }
 
+#: A program reading a string longer than the inliner pastes once, beside a nested function whose
+#: parameter carries the same name, mapped to what Node prints for it.
+A_LONG_STRING_READ_ONCE_BESIDE_A_PARAMETER_OF_ITS_NAME = {
+    a_program("""
+        function main(x) {
+          var s = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=_';
+          console.log(s);
+          function f(s) { return s + s + s; }
+          return f(x);
+        }
+        console.log(main(process.argv[2] || 'y'));
+        """): 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=_\nyyy\n',
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAConstantReadInRecursiveCode(TestBase):
@@ -134,7 +149,10 @@ class TestNodePrintsTheSameAboutAConstantReadInRecursiveCode(TestBase):
         )
 
     def test_a_long_string_still_prints_the_same(self):
-        rows = A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE
+        rows = {
+            **A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE,
+            **A_LONG_STRING_READ_ONCE_BESIDE_A_PARAMETER_OF_ITS_NAME,
+        }
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
@@ -172,3 +190,11 @@ class TestAConstantReadInRecursiveCodeIsFolded(TestBase):
     def test_a_long_string_is_written_once(self):
         source, = A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE
         self.assertEqual(deobfuscate_source(source, module=True).count('abcdefghijklmnop'), 1)
+
+    def test_a_long_string_read_once_is_written_where_it_is_read(self):
+        source, = A_LONG_STRING_READ_ONCE_BESIDE_A_PARAMETER_OF_ITS_NAME
+        output = deobfuscate_source(source, module=True)
+        self.assertEqual(
+            (output.count('abcdefghijklmnop'), 'var s' in output),
+            (1, False),
+        )

@@ -26,7 +26,65 @@ installed by `test.lib.scripts.js.ledger.one_expected_failure_per_program` and n
 shape that program holds: a fix that reaches some of the shapes and not the others is then
 reported as a fix rather than as nothing at all, which one test over the whole family cannot do.
 
-No entry stands here now. The last, that converting a function to a string answers the source it
-was written with, was fixed by recording each parsed function's source span; its law lives in
+No entry stood here after converting a function to a string was made to answer the source it was
+written with, by recording each parsed function's source span; its law lives in
 `test.lib.scripts.js.deobfuscation.test_function_to_string`.
 """
+from __future__ import annotations
+
+import unittest
+
+from test import TestBase
+from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.ledger import (
+    Program,
+    a_program,
+    one_expected_failure_per_program,
+    prints,
+)
+
+
+#: A program whose one write of `c` may be skipped on a run that completes the statement holding
+#: it, and whose function reads `c` after that statement, mapped to the behavior an engine gives it.
+A_WRITE_ITS_STATEMENT_MAY_SKIP = {
+    'a write below and': Program(
+        a_program("""
+            var c;
+            Math.random() > 2 && (c = 5);
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+    'a write in a class field initializer': Program(
+        a_program("""
+            var c;
+            class A { x = (c = 5); }
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+    'a write in a branch of a static block': Program(
+        a_program("""
+            var c;
+            class A { static { if (Math.random() > 2) { c = 5; } } }
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_WRITE_ITS_STATEMENT_MAY_SKIP)
+class TestAWriteItsStatementMaySkipHasNotRunWhenTheStatementCompletes(TestBase):
+    """
+    A constant is written into a function when its definition runs before every call of that
+    function, and the ordering takes the statement holding the definition having completed for the
+    definition having run. A write below `&&`, in a class field initializer, or in a branch of a
+    static block is skipped on runs that complete its statement, so `g` reads `c` unset while the
+    deobfuscation writes `5` into it. Minifiers spell `if (x) c = 5;` as `x && (c = 5)`, which puts
+    the first shape in real input.
+    """

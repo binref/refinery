@@ -159,7 +159,6 @@ def _count_scope_references(
     decl_ids: set[int],
     *,
     walk_full: bool = False,
-    count_member_access: bool = False,
 ) -> dict[str, int]:
     """
     Count identifier references within *scope* for each name in *names*, excluding declaration
@@ -167,18 +166,10 @@ def _count_scope_references(
     `x <<= e`) reads its target, so its left side is counted as a reference and the variable stays
     live. When *walk_full* is True, the entire subtree
     is traversed (including nested function bodies); otherwise only the current scope is walked.
-    When *count_member_access* is True, computed member accesses like `name[idx]` are counted
-    separately (the identifier inside the member is counted and the walk continues so the member
-    node itself is not double-counted).
     """
     walker = scope.walk() if walk_full else walk_scope(scope, include_root_body=True)
     counts: dict[str, int] = {}
     for node in walker:
-        if count_member_access and isinstance(node, JsMemberExpression) and node.computed:
-            obj = node.object
-            if isinstance(obj, JsIdentifier) and id(obj) not in decl_ids and obj.name in names:
-                counts[obj.name] = counts.get(obj.name, 0) + 1
-                continue
         if not isinstance(node, JsIdentifier):
             continue
         if id(node) in decl_ids:
@@ -191,9 +182,6 @@ def _count_scope_references(
             continue
         if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
             continue
-        if count_member_access:
-            if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
-                continue
         counts[name] = counts.get(name, 0) + 1
     return counts
 
@@ -554,29 +542,27 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         (`ReachingModel.value_preserved`), covering both scalar references and computed index access
         into all-literal arrays. The value each decision records is the entry snapshot's own node,
         which `_process_scope` copies into the plan, or the node `_constant_node` writes for a name
-        denoting a global value. A string too long to paste is inlined only where it is read once in
-        the whole scope, the functions nested in it included.
+        denoting a global value. A string too long to paste is inlined only where its binding is
+        read once, wherever that read stands: the reads counted are the binding's own, in a `with`
+        body too, so a name a nested function binds for itself never counts against it.
         """
-        bloat_blocked: set[str] = set()
-
-        ref_counts = _count_scope_references(
-            scope, set(candidates), decl_ids, walk_full=True, count_member_access=True,
-        )
-
-        for name, entries in candidates.items():
-            if len(entries) != 1:
-                continue
-            value = entries[0].value
-            count = ref_counts.get(name, 0)
-            if count <= 1:
-                continue
-            if isinstance(value, JsStringLiteral) and value.value is not None:
-                if len(value.value) > self.max_inline_length:
-                    bloat_blocked.add(name)
-
         effects = cache.effects
         reaching = cache.reaching
         model = effects.model
+
+        bloat_blocked: set[str] = set()
+        for name, entries in candidates.items():
+            if len(entries) != 1:
+                continue
+            entry = entries[0]
+            value = entry.value
+            if not isinstance(value, JsStringLiteral) or value.value is None:
+                continue
+            if len(value.value) <= self.max_inline_length:
+                continue
+            binding = self._candidate_binding(entry, model)
+            if binding is not None and len(binding.reads) + len(binding.dynamic_refs) > 1:
+                bloat_blocked.add(name)
 
         constant_names = {
             name for name, entries in candidates.items()
@@ -701,9 +687,9 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         earlier escape and statement-position heuristics: a function cannot be invoked before a
         reference to it has been evaluated, so it orders the value against every point the function
         is referenced — recursing up the call graph for a reference that lies inside another
-        function — and inlines only when the value dominates all of them, refusing whenever a
-        reference cannot be ordered (its binding is reassigned or redeclared, or it lies on a call
-        cycle).
+        function, and ordering functions that call each other by the references from outside
+        their cycle — and inlines only when the value dominates all of them, refusing whenever a
+        reference cannot be ordered (its binding is reassigned or redeclared).
 
         A candidate a dynamic scope could rewrite is refused here
         (`binding_maybe_reassigned_dynamically`): this consumer's ordering runs the value before an
