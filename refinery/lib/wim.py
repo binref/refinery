@@ -79,6 +79,20 @@ class WimHashMismatch(ValueError):
         return F'The data of the blob {self.blob.hash.hex()} does not match its SHA-1 hash.'
 
 
+class WimDecompressionError(ValueError):
+    """
+    Raised when a chunk of a resource cannot be decompressed. The error of the decompressor is
+    available as the attribute `error` of the exception.
+    """
+    def __init__(self, offset: int, chunk: int, error: Exception):
+        self.offset = offset
+        self.chunk = chunk
+        self.error = error
+
+    def __str__(self):
+        return F'Chunk {self.chunk} of the resource at {self.offset:#x} is corrupt: {self.error}'
+
+
 class WimPartMissing(LookupError):
     """
     Raised when the data of a blob is stored in another part of a split WIM.
@@ -310,7 +324,11 @@ class WimResource:
         if not self.offset <= start <= end <= min(self.offset + self.stored_size, len(self._view)):
             raise ValueError(F'Chunk {index} of the resource at {self.offset:#x} exceeds it.')
         size = min(self.chunk_size, self.size - index * self.chunk_size)
-        chunk = self._chunks[index] = decoder.decode(self._view[start:end], size)
+        try:
+            chunk = decoder.decode(self._view[start:end], size)
+        except Exception as error:
+            raise WimDecompressionError(self.offset, index, error) from error
+        self._chunks[index] = chunk
         return chunk
 
     def read(self, offset: int, size: int) -> buf:
@@ -366,7 +384,8 @@ class WimBlob:
     def data(self) -> buf:
         """
         Return the data of the blob. Raises `WimHashMismatch` when the data does not match the hash
-        of the blob, and `WimPartMissing` when the blob is stored in another part of a split WIM.
+        of the blob, `WimDecompressionError` when the data cannot be decompressed, and
+        `WimPartMissing` when the blob is stored in another part of a split WIM.
         """
         if (resource := self.resource) is None:
             raise WimPartMissing(self.part)
