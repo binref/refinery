@@ -43,7 +43,7 @@ from typing import Iterator
 
 from refinery.lib.scripts import Node, _remove_from_parent, owning_list, set_child
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
-from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
@@ -110,6 +110,7 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     JsWhileStatement,
     Statement,
+    object_member_access_runs_accessor,
     strip_parens,
 )
 from refinery.lib.scripts.js.options import preserves_script_return

@@ -988,30 +988,6 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('function f(){ var x; } globalThis[k] = 2;')
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
 
-    def test_a_destructuring_write_to_an_installed_property_is_not_a_read_of_it(self):
-        """
-        The reference points of a function installed as `BASE.key = function` are the reads of that
-        property. A destructuring target writes `BASE.key` without reading it, so it is not one —
-        the case the shared `is_simple_assignment_target` climb added when it replaced the
-        parent-only write-target check.
-        """
-        source = (
-            'var o = {};'
-            ' o.f = function () {};'
-            ' [o.f] = [1];'
-            ' console.log(o.f);'
-        )
-        ast, model = self._model(source)
-        function = next(n for n in ast.walk() if isinstance(n, JsFunctionExpression))
-        read = next(
-            node for node in ast.walk()
-            if isinstance(node, JsMemberExpression)
-            and node.object.name == 'o'
-            and isinstance(node.parent, JsCallExpression)
-        )
-        points = model.object_property_reference_points(function)
-        self.assertEqual(points, [read])
-
     def test_opaque_reflection_reaches_global_through_eval(self):
         ast, model = self._model('var x; eval(payload);')
         self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))

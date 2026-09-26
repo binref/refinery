@@ -18,6 +18,7 @@ from refinery.lib.scripts.js.analysis.assignment import (
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
@@ -35,7 +36,8 @@ from refinery.lib.scripts.modelcache import ModelCacheBase
 class ModelCache(ModelCacheBase):
     """
     Lazily builds and memoizes the `refinery.lib.scripts.js.analysis.model.SemanticModel`, the
-    `refinery.lib.scripts.js.analysis.effects.EffectModel`, the
+    `refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites` scan the effect and dominance
+    models both read, the `refinery.lib.scripts.js.analysis.effects.EffectModel`, the
     `refinery.lib.scripts.js.analysis.cfg.ControlFlowModel` shared by the
     `refinery.lib.scripts.js.analysis.liveness.LivenessModel` and
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, the
@@ -60,6 +62,7 @@ class ModelCache(ModelCacheBase):
 
     _SLOTS = (
         '_model',
+        '_intrinsic_writes',
         '_control_flow',
         '_effects',
         '_liveness',
@@ -70,14 +73,16 @@ class ModelCache(ModelCacheBase):
     )
 
     # The slots whose build walks the live tree — the guard refuses any of these built late over a
-    # moved tree: `model`/`control_flow` from `root`, `effects`/`assignment` which re-walk
-    # `model.root` at build, and `liveness` which walks each graph's element subtrees at build.
+    # moved tree: `model`/`control_flow` from `root`, `intrinsic_writes`/`effects`/`assignment`
+    # which re-walk `model.root` at build, and `liveness` which walks each graph's element subtrees
+    # at build.
     # `dominance` and `reaching` build purely from held base models — the former is built by
     # warming `effects` all the same, as the ordering base its summary computation reads.
     # Query-time tree reads — `tampering`'s site enumeration, `reaching`'s call walk — no warming
     # can force; a pass reading them across its edits owns that.
     _ROOT_SLOTS = (
         '_model',
+        '_intrinsic_writes',
         '_control_flow',
         '_effects',
         '_assignment',
@@ -89,6 +94,7 @@ class ModelCache(ModelCacheBase):
     # out of the warm build — warming it would solve liveness in pinned blocks that never ask.
     _WARM_SLOTS = (
         '_model',
+        '_intrinsic_writes',
         '_control_flow',
         '_effects',
         '_assignment',
@@ -96,6 +102,7 @@ class ModelCache(ModelCacheBase):
 
     root: JsScript
     _model: SemanticModel | None
+    _intrinsic_writes: IntrinsicWrites | None
     _control_flow: ControlFlowModel | None
     _effects: EffectModel | None
     _liveness: LivenessModel | None
@@ -113,8 +120,16 @@ class ModelCache(ModelCacheBase):
         ))
 
     @property
+    def intrinsic_writes(self) -> IntrinsicWrites:
+        return self._lazy('_intrinsic_writes', lambda: build_intrinsic_writes(self.model))
+
+    @property
     def effects(self) -> EffectModel:
-        return self._lazy('_effects', lambda: build_effects(self.model, self.dominance))
+        return self._lazy('_effects', lambda: build_effects(
+            self.model,
+            self.dominance,
+            self.intrinsic_writes,
+        ))
 
     @property
     def control_flow(self) -> ControlFlowModel:
@@ -126,7 +141,18 @@ class ModelCache(ModelCacheBase):
 
     @property
     def dominance(self) -> DominanceModel:
-        return self._lazy('_dominance', lambda: build_dominance(self.model, self.control_flow))
+        """
+        The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root, built under
+        the execution model and the host entrypoints the run's options select, since a function a
+        host or an importer calls has no call-site list the file can order.
+        """
+        return self._lazy('_dominance', lambda: build_dominance(
+            self.model,
+            self.control_flow,
+            intrinsic_writes=self.intrinsic_writes,
+            module_scope=runs_as_module(self.options, self.root),
+            host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
+        ))
 
     @property
     def reaching(self) -> ReachingModel:

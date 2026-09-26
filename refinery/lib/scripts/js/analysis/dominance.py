@@ -31,7 +31,7 @@ observe it.
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Callable, Iterable
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
@@ -43,7 +43,25 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_control_flow_model,
 )
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, enclosing_function
+from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    SemanticModel,
+    enclosing_function,
+    is_invocation_target,
+    is_simple_assignment_target,
+    member_property_name,
+)
+from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
+    JsExportDefaultDeclaration,
+    JsIdentifier,
+    JsMemberExpression,
+    JsObjectExpression,
+    JsParenthesizedExpression,
+    object_member_access_runs_accessor,
+    strip_parens,
+)
 
 
 class DominanceModel(DominatorModel):
@@ -51,12 +69,30 @@ class DominanceModel(DominatorModel):
     Dominator relations for the per-function control-flow graphs of one script, built over a
     `refinery.lib.scripts.js.analysis.model.SemanticModel`. Ask whether one AST node is guaranteed to
     execute before another with `dominates`. Build through `build_dominance`.
+
+    The ordering across calls reads three facts about what lies outside the text: *intrinsic_writes*
+    says whether the program writes the prototype chain a plain object reads through, *module_scope*
+    is the run's execution model, and *host_entrypoint* names the top-level functions the analyst
+    declared a host invokes by name.
     """
 
-    def __init__(self, model: SemanticModel, control_flow: ControlFlowModel | None = None):
+    def __init__(
+        self,
+        model: SemanticModel,
+        control_flow: ControlFlowModel | None = None,
+        *,
+        intrinsic_writes: IntrinsicWrites | None = None,
+        module_scope: bool = False,
+        host_entrypoint: Callable[[str], bool] | None = None,
+    ):
         flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         super().__init__(flow)
         self.model = model
+        if intrinsic_writes is None:
+            intrinsic_writes = build_intrinsic_writes(model)
+        self.intrinsic_writes = intrinsic_writes
+        self._module_scope = module_scope
+        self._host_entrypoint = host_entrypoint
         self._reference_points_cache: dict[int, list[Node] | None] = {}
 
     def completes_before(self, definition: Node, point: Node) -> bool:
@@ -104,9 +140,10 @@ class DominanceModel(DominatorModel):
         cross-function inline by statement position.
 
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named binding
-        is reassigned or redeclared (its references no longer pin one function), a reference lies in a
-        function that itself runs too late or escapes, or the walk meets a call cycle it cannot bottom
-        out. A function neither referenced nor within reflection's reach is vacuously safe.
+        is reassigned or redeclared (its references no longer pin one function), code outside the file
+        can call the function, a reference lies in a function that itself runs too late or escapes, or
+        the walk meets a call cycle it cannot bottom out. A function neither referenced nor within
+        reflection's reach is vacuously safe.
         """
         definition_owner = self._activation_of(definition)
         return self._runs_before_function(definition, definition_owner, function, set(), {})
@@ -233,11 +270,12 @@ class DominanceModel(DominatorModel):
         `EffectModel.function_escapes` draws from the same fact. A surface lexically inside *function* is
         dropped: it cannot trigger the function's first invocation, only a re-entrant one, so it never
         bounds the ordering. A function pinned to no name but installed as a property of a non-escaping
-        local object (`SemanticModel.object_property_reference_points`) is enumerated instead by the read
-        sites of that property, the only way its callable can be obtained; this is consulted first, so a
-        namespace method ordered by its call sites is not mistaken for an anonymous closure ordered by its
-        creation. For a function bound to no name and matching neither pattern, the single point is the
-        function expression itself: the closure cannot be invoked before it is created.
+        local object (`_member_reference_points`) is enumerated instead by the accesses of that object
+        through which its callable can be obtained; this is consulted first, so a namespace method
+        ordered by its call sites is not mistaken for an anonymous closure ordered by its creation. For
+        a function bound to no name and matching neither pattern, the single point is the function
+        expression itself: the closure cannot be invoked before it is created. A function code outside
+        the file can call (`_callable_from_outside_the_file`) has no enumeration at all.
 
         Memoized by function identity: the enumeration is a pure function of *function* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree version
@@ -251,7 +289,9 @@ class DominanceModel(DominatorModel):
         return cache[key]
 
     def _compute_reference_points(self, function: Node) -> list[Node] | None:
-        member_points = self.model.object_property_reference_points(function)
+        if self._callable_from_outside_the_file(function):
+            return None
+        member_points = self._member_reference_points(function)
         if member_points is not None:
             return member_points
         binding = self.model.invocation_binding(function)
@@ -264,6 +304,120 @@ class DominanceModel(DominatorModel):
         ):
             return None
         points: list[Node] = [*binding.reads]
+        points.extend(
+            site
+            for site in self.model.reflection_surface_sites(binding)
+            if not site.is_descendant_of(function)
+        )
+        return points
+
+    def _callable_from_outside_the_file(self, function: Node) -> bool:
+        """
+        Whether code outside the file can call *function* at a point the file's text does not order.
+        A host calls a declared entry point (*host_entrypoint*) by name once it is a property of the
+        global object, which `SemanticModel.reaches_global_object` answers under *module_scope*. An
+        importer calls an exported function — one exported by name, or an anonymous `export default
+        function` — and it can do so before this module's body has finished exactly where
+        `SemanticModel.module_may_be_reentered` holds; elsewhere every importer calls in after the
+        last statement, so an export keeps the ordering the file gives it.
+        """
+        binding = self.model.invocation_binding(function)
+        if self._importer_may_run_first(binding):
+            return True
+        if (
+            isinstance(function.parent, JsExportDefaultDeclaration)
+            and self.model.module_may_be_reentered()
+        ):
+            return True
+        return (
+            binding is not None
+            and self._host_entrypoint is not None
+            and self._host_entrypoint(binding.name)
+            and self.model.reaches_global_object(binding, module_scope=self._module_scope)
+        )
+
+    def _importer_may_run_first(self, binding: Binding | None) -> bool:
+        """
+        Whether *binding* is exported from a module an importer can run in before its body has
+        finished, so the importer can read it at a point the file's text does not order.
+        """
+        return binding is not None and binding.exported and self.model.module_may_be_reentered()
+
+    def _member_reference_points(self, function: Node) -> list[Node] | None:
+        """
+        The points no invocation of *function* can precede when it is installed as a property of a
+        non-escaping local object, or `None` where that pattern does not hold. *function* is the value
+        of a `BASE.key = function` assignment whose `BASE` resolves to a local binding holding one
+        object literal (`SemanticModel.singular_value`) that never escapes as a bare value: every
+        reference to it is the object of a member access. The callable can then be obtained in two
+        ways only, by reading `BASE.key`, or by code that runs with the object in hand and reads the
+        key there, and the points are every access through which either can happen.
+
+        An access may read the property when it reads `key` or a key that is not statically known.
+        An access hands the object to code when it is a method call in any form, whose callee
+        receives the object as `this`; when it accesses `__proto__` or a key that is not statically
+        known, which may give the object a prototype carrying accessors; and in every case, the
+        establishing write included, when the literal declares an accessor or a prototype
+        (`refinery.lib.scripts.js.model.object_member_access_runs_accessor`) or the program writes
+        the prototype chain of a plain object
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.chain_roots_unwritten`), since
+        any access may then run an accessor with the object as `this`. Nothing can call the function
+        through the object before the access that hands the object over has run, so such an access
+        is a point rather than a reason to refuse, for the reason a reflective surface is one. An
+        access of a different key that runs no code, and a write of `key`, never obtain the value and
+        are not points.
+
+        The opaque reflective surfaces that could name the binding are added as points exactly as
+        the name-based enumeration adds them. A `with` that could rename the base (a `dynamic_refs`
+        entry), and an exported base an importer can reach before the body has finished, make the
+        ordering unknowable and yield `None`, as does any shape the recognition does not match, so
+        the caller falls through to its name-based ordering.
+        """
+        parent = function.parent
+        if not (
+            isinstance(parent, JsAssignmentExpression)
+            and parent.operator == '='
+            and parent.right is function
+        ):
+            return None
+        target = strip_parens(parent.left)
+        if not isinstance(target, JsMemberExpression) or not isinstance(target.object, JsIdentifier):
+            return None
+        key = member_property_name(target)
+        if key is None:
+            return None
+        binding = self.model.resolve(target.object)
+        if binding is None:
+            return None
+        literal = self.model.singular_value(binding)
+        if not isinstance(literal, JsObjectExpression):
+            return None
+        if binding.dynamic_refs or self._importer_may_run_first(binding):
+            return None
+        every_access_runs_code = (
+            object_member_access_runs_accessor(literal)
+            or not self.intrinsic_writes.chain_roots_unwritten(dict)
+        )
+        points: list[Node] = [target] if every_access_runs_code else []
+        for read in binding.reads:
+            node = read
+            access = node.parent
+            while isinstance(access, JsParenthesizedExpression):
+                node, access = access, access.parent
+            if not isinstance(access, JsMemberExpression) or access.object is not node:
+                return None
+            if access is target:
+                continue
+            name = member_property_name(access)
+            if (
+                every_access_runs_code
+                or name is None
+                or name == '__proto__'
+                or is_invocation_target(access)
+            ):
+                points.append(access)
+            elif name == key and not is_simple_assignment_target(access):
+                points.append(access)
         points.extend(
             site
             for site in self.model.reflection_surface_sites(binding)
@@ -299,10 +453,23 @@ class DominanceModel(DominatorModel):
 
 
 def build_dominance(
-    model: SemanticModel, control_flow: ControlFlowModel | None = None,
+    model: SemanticModel,
+    control_flow: ControlFlowModel | None = None,
+    *,
+    intrinsic_writes: IntrinsicWrites | None = None,
+    module_scope: bool = False,
+    host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DominanceModel:
     """
     Build the `DominanceModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
-    reusing *control_flow* when the caller has one to share, or building a fresh one when it is `None`.
+    reusing *control_flow* and *intrinsic_writes* when the caller has them to share, or building
+    fresh ones when they are `None`. *module_scope* and *host_entrypoint* are the run's execution
+    model and declared host entry points; the defaults describe a script no host calls into.
     """
-    return DominanceModel(model, control_flow)
+    return DominanceModel(
+        model,
+        control_flow,
+        intrinsic_writes=intrinsic_writes,
+        module_scope=module_scope,
+        host_entrypoint=host_entrypoint,
+    )

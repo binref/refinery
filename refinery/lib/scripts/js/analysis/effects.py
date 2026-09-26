@@ -44,10 +44,23 @@ import enum
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, NamedTuple, Sequence
+from typing import Callable, Iterator, Sequence
 
 from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
+from refinery.lib.scripts.js.analysis.intrinsics import (
+    INHERITED_CHAIN_ROOTS,
+    KEYED_WRITE_ROOTS,
+    PROTOTYPE_OWNERS,
+    PURE_GLOBAL_FUNCTIONS,
+    PURE_INTRINSIC_METHODS,
+    PURE_INTRINSIC_ROOTS,
+    SPECIES_KEYS,
+    IntrinsicWrites,
+    build_intrinsic_writes,
+    unambiguous_callee,
+    unambiguous_function,
+)
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -70,8 +83,6 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
-    JsForInStatement,
-    JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -84,7 +95,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsParenthesizedExpression,
     JsProperty,
-    JsPropertyKind,
     JsRestElement,
     JsReturnStatement,
     JsScript,
@@ -99,44 +109,11 @@ from refinery.lib.scripts.js.model import (
     JsYieldExpression,
     accessor_install_method,
     is_generator_function,
+    object_member_access_runs_accessor,
     static_property_key,
-    static_string,
     strip_parens,
     wraps_return,
 )
-
-_PURE_INTRINSIC_METHODS = frozenset({
-    'String.fromCharCode',
-    'Array.isArray',
-    'Math.abs',
-    'Math.ceil',
-    'Math.floor',
-    'Math.round',
-    'Math.trunc',
-    'Math.sign',
-    'Math.max',
-    'Math.min',
-    'Math.pow',
-    'Math.sqrt',
-    'Math.cbrt',
-    'Math.log',
-    'Math.log2',
-    'Math.log10',
-    'Math.exp',
-    'Number.isNaN',
-    'Number.isFinite',
-    'Number.isInteger',
-    'Number.isSafeInteger',
-    'Number.parseInt',
-    'Number.parseFloat',
-})
-
-_PURE_GLOBAL_FUNCTIONS = frozenset({
-    'parseInt',
-    'parseFloat',
-    'isNaN',
-    'isFinite',
-})
 
 _FRESH_ARRAY_RESULT_METHODS = frozenset({
     'slice',
@@ -158,38 +135,12 @@ the guarantee holds only for a receiver whose prototype and `constructor` the pr
 half; the interpreter additionally refuses to model a named property write on an array at all.
 """
 
-_SPECIES_KEYS = frozenset({'constructor', '__proto__'})
-"""
-The two property names that decide what an allocating `Array.prototype` method returns. ArraySpeciesCreate
-reads `constructor[Symbol.species]` off the receiver, and `__proto__` replaces the prototype that `constructor`
-lookup walks, so writing either can make the "newly created" array be a shared object — or make the call throw,
-by leaving a primitive where a constructor is expected.
-"""
-
-_SURFACE_KEYS = _SPECIES_KEYS | frozenset({'prototype'})
-"""
-The property names whose value shares the mutable surface of the intrinsic it was read from, so handing that
-value to unanalysable code is as dangerous as handing over the intrinsic itself. `_SPECIES_KEYS` reach the
-prototype chain and `prototype` is the chain. Every other key yields something whose properties nobody consults
-when the intrinsic is used: patching a property of the number `Math.PI` or of the function `Math.floor` cannot
-change what `Math.floor(1.7)` returns, while patching one of `Array.prototype` decides what `[1, 2].join()`
-means.
-
-`refinery.lib.scripts.js.deobfuscation.helpers.PROTOTYPE_CHAIN_PROPERTIES` holds the same two species keys for
-the same reason, but importing it here would invert the layering this module rests on — the interpreter imports
-from `effects`, never the reverse, as `_PROTOTYPE_OWNERS` also records.
-"""
-
-_PURE_INTRINSIC_ROOTS = (
-    frozenset(name.split('.', 1)[0] for name in _PURE_INTRINSIC_METHODS) | _PURE_GLOBAL_FUNCTIONS
-)
-
 _PURE_CONSTRUCTOR_ROOTS = frozenset({'Array'})
 """
 Intrinsic roots whose `new`-construction has no observable effect when its arguments are safe. Only
 `Array` here: it is already guarded against reassignment/shadowing by `_intrinsics_pristine` (it is a
-`_PURE_INTRINSIC_ROOTS` member via `Array.isArray`), and its sole throw is a bad single numeric length.
-Adding a root not already in `_PURE_INTRINSIC_ROOTS` (e.g. `Object`) requires first extending the
+`PURE_INTRINSIC_ROOTS` member via `Array.isArray`), and its sole throw is a bad single numeric length.
+Adding a root not already in `PURE_INTRINSIC_ROOTS` (e.g. `Object`) requires first extending the
 `_intrinsics_pristine` guard to it, or trusting `new Object()` while `Object` was monkeypatched would be
 unsound.
 """
@@ -275,80 +226,6 @@ def _is_poison_pill_property(member: JsMemberExpression) -> bool:
     return isinstance(prop, JsIdentifier) and prop.name in _POISON_PILL_PROPERTIES
 
 
-_DENOTED_ROOT_DEPTH_LIMIT = 16
-
-_CALLEE_DEPTH_LIMIT = 4
-"""
-How far `_callee_is_write_free` follows an intrinsic through nested calls before refusing. A chain longer than
-this is not proven safe, merely unproven, so exhausting the limit records the write. Four was enough for every
-shape measured; the limit exists because the recursion is over call *edges*, which a mutually-recursive pair
-makes unbounded.
-"""
-
-_VALUE_FORWARDING_NODES = (
-    JsParenthesizedExpression,
-    JsLogicalExpression,
-    JsConditionalExpression,
-    JsSequenceExpression,
-    JsSpreadElement,
-)
-"""
-The forms that hand an operand's value onward unchanged, so an intrinsic inside one escapes wherever the form
-itself does. These are the outward counterpart of the arms `_denoted_roots` looks *into*, and the pairing is not
-incidental: a fold that collapses `Math || 0` to `Math` must not change this analysis's answer, which the
-pinning contract in `refinery.lib.scripts.js.analysis.cache.ModelCache` requires.
-"""
-
-_PROTOTYPE_OWNERS: dict[str, str] = {
-    'str': 'String',
-    'list': 'Array',
-    'JsBuffer': 'Buffer',
-    'dict': 'Object',
-    'bool': 'Boolean',
-    'int': 'Number',
-    'float': 'Number',
-    'JsFunctionDeclaration': 'Function',
-    'JsFunctionExpression': 'Function',
-    'JsArrowFunctionExpression': 'Function',
-}
-"""
-The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type name so
-this module needs no import from the interpreter that depends on it. A method call on a literal receiver
-names no global at the call site, so trusting it means asking whether *this* prototype is intact:
-`String.prototype.toUpperCase = f` is a write to `String`, and it changes what `'ab'.toUpperCase()` means
-even though the expression mentions no identifier at all.
-
-Every type in the interpreter's value domain is named here directly, including `JsBuffer`, whose methods
-come from `Buffer.prototype` rather than the `Array.prototype` its `list` base would suggest. A function
-value is represented as its own AST node, so the two function node names appear here as value types rather
-than as syntax; both inherit from `Function.prototype`. Lookup is exact rather than a walk up the Python
-MRO, which would silently answer `Array` for any future `list` subclass instead of refusing. A type with no
-entry is never trusted through this route.
-"""
-
-_INHERITED_CHAIN_ROOTS = frozenset({'Object'})
-"""
-The prototypes every value inherits from beyond the one that owns its own methods. `Object.prototype` roots
-every chain, so a getter installed there is reached by a plain read on an array literal and on `Math`
-alike — which is why reading a property is a strictly stronger requirement than calling a method.
-"""
-
-_KEYED_WRITE_ROOTS = (
-    _PURE_INTRINSIC_ROOTS
-    | _INHERITED_CHAIN_ROOTS
-    | frozenset(_PROTOTYPE_OWNERS.values())
-)
-"""
-The global names whose written property keys `EffectModel.global_key_written` bounds. A name outside
-this set is one the scan records no key for, so answering `False` about it would read an absence of
-evidence as evidence of absence; that predicate answers `True` for every key of such a name instead.
-
-The set is the union of the names this module already watches for a reason: the intrinsics whose
-methods are trusted, the roots a plain property read walks through, and the owners of the prototypes
-that supply each value type's members. A caller asking about a name outside it is asking a question
-this scan was not built to answer, and is told so.
-"""
-
 _INTRINSIC_CHAIN_ROOTS = frozenset({'Object', 'Function'})
 """
 The prototypes an intrinsic root's own chain can contain. `Math` is a plain object and inherits from
@@ -365,7 +242,7 @@ _LITERAL_RECEIVER_TYPES: dict[type, type] = {
 }
 """
 The runtime type of a receiver whose literal syntax fixes it, mapping an AST node type to the value type
-`_PROTOTYPE_OWNERS` is keyed on. A literal is the one receiver form whose prototype is knowable from the
+`PROTOTYPE_OWNERS` is keyed on. A literal is the one receiver form whose prototype is knowable from the
 expression alone: `[1, 2].join('-')` has an array receiver whatever the surrounding program does, whereas
 `a.join('-')` depends on what `a` holds and on whether anything mutated it in between.
 
@@ -389,7 +266,7 @@ The value type of a literal whose *property read* must consult a prototype, exte
 program can patch, so the read needs an answer where the method call above must refuse outright: the call
 is unsound to fold because the interpreter cannot guard its dispatch, while the read is merely a question
 about one named intrinsic. A function node maps to itself, since the interpreter represents a function
-value as its own AST node and `_PROTOTYPE_OWNERS` is keyed on that type's name.
+value as its own AST node and `PROTOTYPE_OWNERS` is keyed on that type's name.
 """
 
 
@@ -1011,13 +888,21 @@ class EffectModel:
     `summary_of` and a call expression's purity with `is_pure_call`. Build through `build_effects`.
     """
 
-    def __init__(self, model: SemanticModel, dominance: DominanceModel | None = None):
+    def __init__(
+        self,
+        model: SemanticModel,
+        dominance: DominanceModel | None = None,
+        intrinsic_writes: IntrinsicWrites | None = None,
+    ):
         self.model = model
         self._dominance = dominance
         self._dead_zone_safe_cache: dict[int, bool] = {}
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
-        self._globals_written, self._global_keys_written = _global_writes_by_name(model)
+        if intrinsic_writes is None:
+            intrinsic_writes = build_intrinsic_writes(model)
+        self.intrinsic_writes = intrinsic_writes
+        self._globals_written, self._global_keys_written = intrinsic_writes
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
@@ -1555,7 +1440,7 @@ class EffectModel:
         depends on the call's position relative to the reassignment — yields `None` rather than the
         post-reassignment value.
         """
-        return _unambiguous_callee(self.model, call)
+        return unambiguous_callee(self.model, call)
 
     def _alias_target(self, ref: JsIdentifier) -> Binding | None:
         parent = ref.parent
@@ -1677,7 +1562,7 @@ class EffectModel:
         if cached is not None:
             return cached
         if self._dominance is None:
-            self._dominance = build_dominance(self.model)
+            self._dominance = build_dominance(self.model, intrinsic_writes=self.intrinsic_writes)
         cached = all(
             self._dominance.past_dead_zone(binding, read)
             for read in binding.reads
@@ -1892,10 +1777,10 @@ class EffectModel:
                 continue
             prop = parent.property
             if not parent.computed:
-                if isinstance(prop, JsIdentifier) and prop.name in _SPECIES_KEYS:
+                if isinstance(prop, JsIdentifier) and prop.name in SPECIES_KEYS:
                     return True
             elif isinstance(prop, JsStringLiteral):
-                if prop.value in _SPECIES_KEYS:
+                if prop.value in SPECIES_KEYS:
                     return True
             elif not isinstance(prop, JsNumericLiteral):
                 return True
@@ -2050,11 +1935,11 @@ class EffectModel:
         if isinstance(callee, JsMemberExpression) and not callee.computed:
             base, prop = callee.object, callee.property
             if isinstance(base, JsIdentifier) and isinstance(prop, JsIdentifier):
-                if F'{base.name}.{prop.name}' in _PURE_INTRINSIC_METHODS and self._is_global_intrinsic(base):
+                if F'{base.name}.{prop.name}' in PURE_INTRINSIC_METHODS and self._is_global_intrinsic(base):
                     return _PURE
             return None
         if isinstance(callee, JsIdentifier):
-            if callee.name in _PURE_GLOBAL_FUNCTIONS and self._is_global_intrinsic(callee):
+            if callee.name in PURE_GLOBAL_FUNCTIONS and self._is_global_intrinsic(callee):
                 return _PURE
             return self.unambiguous_function(self.model.resolve(callee))
         return None
@@ -2105,7 +1990,7 @@ class EffectModel:
         view the evaluator's visible-functions map applied before interpretation routed resolution
         through the model.
         """
-        return _unambiguous_function(self.model, binding)
+        return unambiguous_function(self.model, binding)
 
     def _is_global_intrinsic(self, name: JsIdentifier) -> bool:
         """
@@ -2122,7 +2007,7 @@ class EffectModel:
         intrinsic root name (`'Array'`, `'String'`, …) for a named intrinsic, or `None`. A name is
         returned only under `intrinsics_pristine` and where the identifier is unshadowed at this use site,
         so the result may be *value-trusted* — used to construct, to clear a getter-free static read, or
-        to fold `A || B`. Every value it can return — `globalThis` and every `_PURE_INTRINSIC_ROOTS`
+        to fold `A || B`. Every value it can return — `globalThis` and every `PURE_INTRINSIC_ROOTS`
         member — is truthy, so `A || B` evaluates to `A` whenever `intrinsic_of(A)` is not `None`; a
         contributor extending this must preserve that truthiness invariant and never return a falsy name
         such as `NaN`/`undefined`.
@@ -2138,7 +2023,7 @@ class EffectModel:
         if isinstance(node, JsIdentifier):
             if node.name == 'globalThis' and self.model.lookup(node.name, self.model.scope_of(node)) is None:
                 return GLOBAL_OBJECT
-            if node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node):
+            if node.name in PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node):
                 return node.name
             return None
         if isinstance(node, JsLogicalExpression) and node.operator == '||':
@@ -2200,7 +2085,7 @@ class EffectModel:
         composes with it; a consumer without one takes `trusted_prototype`, which is this plus its
         reflection term.
         """
-        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        owner = PROTOTYPE_OWNERS.get(value_type.__name__)
         return owner is not None and owner not in self._globals_written
 
     def trusted_prototype(self, value_type: type) -> bool:
@@ -2213,9 +2098,10 @@ class EffectModel:
         The owning intrinsic is looked up rather than assumed, and then asked the same per-name question a
         named callee gets — `String.prototype.toUpperCase = f` and
         `Object.defineProperty(Array.prototype, ...)` are both already recorded as writes to `String` and
-        `Array` by `_global_writes_by_name`. A type with no known owner is never trusted.
+        `Array` by `refinery.lib.scripts.js.analysis.intrinsics.build_intrinsic_writes`. A type with
+        no known owner is never trusted.
         """
-        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        owner = PROTOTYPE_OWNERS.get(value_type.__name__)
         if owner is None:
             return False
         if self.model.has_reflection_surface():
@@ -2236,28 +2122,20 @@ class EffectModel:
         analysis names, while the chain it is written through is rooted in one that is. A name whose
         written keys cannot be bounded — one the program binds, hands to code this analysis cannot
         read, writes a computed key on, or installs a descriptor on from a value it cannot read —
-        answers `True` for every key, and so does a name outside `_KEYED_WRITE_ROOTS`, which the
+        answers `True` for every key, and so does a name outside `KEYED_WRITE_ROOTS`, which the
         scan records nothing about at all.
         """
-        if name not in _KEYED_WRITE_ROOTS:
+        if name not in KEYED_WRITE_ROOTS:
             return True
         keys = self._global_keys_written.get(name, frozenset())
         return keys is None or key in keys
 
-    def _roots_unwritten(self, owner: str, roots: frozenset[str]) -> bool:
-        """
-        Whether the program writes neither *owner* nor any prototype in *roots*. A property read
-        resolves against the whole prototype chain rather than one prototype, so each name the chain
-        passes through has to answer the same question `trusted_prototype` asks of the owner alone.
-        """
-        return all(name not in self._globals_written for name in (owner, *roots))
-
     def _prototypes_intact(self, owner: str, roots: frozenset[str], region: list[Node] | None = None) -> bool:
         """
-        `_roots_unwritten` with the reflection term, which is what separates the two questions
-        `read_chain_intact` and `chain_roots_unwritten` ask. Neither is spelled out twice, so a
-        term added to one chain question reaches both arms rather than only the one it was
-        written into.
+        `refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.roots_unwritten` with the
+        reflection term, which is what separates the two questions `read_chain_intact` and
+        `chain_roots_unwritten` ask. Neither is spelled out twice, so a term added to one chain
+        question reaches both arms rather than only the one it was written into.
 
         With *region*, the reflection term is asked of the opaque surfaces the nodes of *region*
         leave standing rather than of the whole program — the tree an edit that deletes them
@@ -2271,7 +2149,7 @@ class EffectModel:
             for site in self.model.opaque_reflection_sites()
         ):
             return False
-        return self._roots_unwritten(owner, roots)
+        return self.intrinsic_writes.roots_unwritten(owner, roots)
 
     def read_chain_intact(self, value_type: type, region: list[Node] | None = None) -> bool:
         """
@@ -2292,10 +2170,10 @@ class EffectModel:
         saying so. A caller for which the second costs more than it buys takes the first alone — see
         the note there for what that trade is and where it is made.
         """
-        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        owner = PROTOTYPE_OWNERS.get(value_type.__name__)
         if owner is None:
             return False
-        return self._prototypes_intact(owner, _INHERITED_CHAIN_ROOTS, region)
+        return self._prototypes_intact(owner, INHERITED_CHAIN_ROOTS, region)
 
     def chain_roots_unwritten(self, value_type: type) -> bool:
         """
@@ -2317,10 +2195,7 @@ class EffectModel:
         unresolvable `eval` could in principle have written a prototype, which is no worse than the
         nothing they asked before.
         """
-        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
-        if owner is None:
-            return False
-        return self._roots_unwritten(owner, _INHERITED_CHAIN_ROOTS)
+        return self.intrinsic_writes.chain_roots_unwritten(value_type)
 
     def call_is_foldable(
         self,
@@ -2740,53 +2615,6 @@ class EffectModel:
         return self._getter_free_read(member, region)
 
 
-def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
-    """
-    Whether the object literal *obj* declares an own getter or setter (`{ get k(){...} }`,
-    `{ set k(v){...} }`). A read of such a property runs the getter and a write to it runs the setter,
-    so a member access on an otherwise fresh literal that has one carries a hidden effect rather than a
-    plain field read or store.
-    """
-    return any(
-        isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
-        for prop in obj.properties
-    )
-
-
-def object_sets_prototype(obj: JsObjectExpression) -> bool:
-    """
-    Whether the object literal *obj* installs a custom prototype through the special `__proto__:`
-    property form (`{ __proto__: p }`, `{ '__proto__': p }`) — a plain, non-computed data property
-    whose key is `__proto__`. Such an object no longer inherits from `Object.prototype` alone, so a
-    plain-looking member read or write on it may run a getter or setter the installed prototype
-    carries rather than touch a data slot. A computed key (`{ ['__proto__']: p }`), a shorthand
-    (`{ __proto__ }`), a method, or an own `__proto__` accessor define an ordinary own property and do
-    not set the prototype.
-    """
-    for prop in obj.properties:
-        if not isinstance(prop, JsProperty):
-            continue
-        if prop.kind is not JsPropertyKind.INIT or prop.computed or prop.shorthand or prop.method:
-            continue
-        key = prop.key
-        if isinstance(key, JsIdentifier) and key.name == '__proto__':
-            return True
-        if isinstance(key, JsStringLiteral) and key.value == '__proto__':
-            return True
-    return False
-
-
-def object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
-    """
-    Whether a plain member read or write on the object literal *obj* may run a user-defined accessor
-    instead of touching a data slot: it declares its own getter or setter, or it installs a custom
-    prototype through the `__proto__:` literal form that may carry an inherited one. A fresh literal
-    with neither behaves as a plain field container, so an access on it is observable only as the field
-    it names.
-    """
-    return _object_has_own_accessor(obj) or object_sets_prototype(obj)
-
-
 def _weakest(left: _FreshKind, right: _FreshKind) -> _FreshKind:
     """
     The kind that holds for both operands — the weaker of the two, since a consumer may rely only on what is
@@ -2838,562 +2666,6 @@ def _body_nodes(func: Node) -> Iterator[Node]:
         stack.extend(reversed(node.children()))
 
 
-class _GlobalWrites(NamedTuple):
-    """
-    What one scan of a program says about the globals it writes: *names*, the set a caller asks
-    about a whole name with, and *keys*, the properties each of the watched names was written at —
-    or `None` for a name whose written keys this scan cannot bound.
-
-    The two are produced together because they are read off the same nodes and must not disagree:
-    a name recorded in one for a reason the other cannot express is a name one caller refuses and
-    the other clears. Where a write cannot be pinned to a key, *keys* records the name unbounded
-    rather than omitting it, so `keys` never reports less about a name than `names` does.
-    """
-    names: frozenset[str]
-    keys: dict[str, frozenset[str] | None]
-
-
-def _global_writes_by_name(model: SemanticModel) -> _GlobalWrites:
-    """
-    The set of global names the program does anything with beyond reading them, and the property
-    keys it writes on each of the names whose keys are watched.
-
-    A name belongs to the first for binding it in any scope, assigning to it, writing or updating or
-    deleting a property anywhere along a chain rooted at it (`Object.prototype.x = 1`,
-    `Math.PI++`), installing a descriptor on it with `Object.defineProperty`, or handing it to
-    code whose writes this analysis cannot enumerate.
-
-    This is the per-name counterpart of `_intrinsics_pristine`, which answers the same question for a
-    fixed root set but collapses it to one program-wide flag. Keeping the answer per name is what lets a
-    program that patches `Object.prototype` still have its `Math.floor` calls folded; the flag cannot
-    express that, because one disturbed root disables every other one.
-
-    Bindings cover every *assignment* form too, so no separate scan of write-role identifiers is needed:
-    a bare `Math = 1` introduces an implicit-global binding for `Math`, as do the destructuring and
-    `for`-target forms. Only property writes, deletes, and descriptor installs — which leave the name
-    itself a plain read — need the explicit branches below.
-
-    A write target names the intrinsic it patches only when the program spells it out. `var m = Math;
-    m.floor = f` patches `Math` while mentioning it nowhere in the assignment, so the chain root is
-    resolved through the values its binding may hold rather than taken as the name it is spelled with.
-
-    A write need not be *anywhere* in the program for a name to belong here. Handing an intrinsic to code
-    whose writes this analysis cannot enumerate — `patch(Math)` for a `patch` it cannot resolve — leaves
-    the name looking untouched while its properties are replaced, so an intrinsic that escapes is recorded
-    as written. `_value_escapes` decides which uses hand the value over.
-
-    The keyed answer is the same scan read for the property a write names rather than only for the
-    name it is rooted at, and it exists because the per-name question is too coarse for a caller
-    that cares which property was replaced — a file patching `Object.prototype.z` has written
-    `Object`, and refusing everything about `Object` on that basis refuses the very files the
-    question is asked about.
-
-    Only the *final* key of a chain is recorded, which is the one a write replaces:
-    `Object.prototype.z = 9` replaces `z` and leaves `prototype` and `constructor` alone, so
-    recording the keys it passes through would report a file as having patched the mechanism a
-    caller is asking about when it did nothing of the kind. Every other route by which a name's
-    properties can change — a binding that shadows it, a value that escapes, a computed key, a
-    descriptor read from a value this analysis cannot read — bounds no key at all and is recorded
-    as unbounded.
-    """
-    names: set[str] = set()
-    keys: dict[str, set[str] | None] = {}
-
-    def record_keys(found: frozenset[str], key: str | None) -> None:
-        for name in found & _KEYED_WRITE_ROOTS:
-            if key is None:
-                keys[name] = None
-                continue
-            known = keys.setdefault(name, set())
-            if known is not None:
-                known.add(key)
-
-    def record(found: frozenset[str], key: str | None) -> None:
-        names.update(found)
-        record_keys(found, key)
-
-    pending = [model.root_scope]
-    while pending:
-        scope = pending.pop()
-        record(frozenset(scope.bindings), None)
-        pending.extend(scope.children)
-    aliases = _IntrinsicAliases(model)
-    for node in model.root.walk():
-        if isinstance(node, JsIdentifier):
-            if reference_role(node) is Role.READ:
-                watched = aliases.names_denoted_by(node) & _KEYED_WRITE_ROOTS
-                if watched and _value_escapes(model, aliases, node, watched):
-                    record_keys(watched, None)
-                    names.update(watched & _PURE_INTRINSIC_ROOTS)
-            continue
-        if isinstance(node, JsCallExpression):
-            for base in _accessor_install_targets(node):
-                record(aliases.names_denoted_by(base), _installed_key(node))
-            install_key = _installed_key(node)
-            if install_key is not None and _install_reaches_the_global_object(model, node):
-                record(frozenset({install_key}), None)
-            continue
-        target = None
-        if isinstance(node, JsAssignmentExpression):
-            target = node.left
-        elif isinstance(node, JsUpdateExpression):
-            target = node.argument
-        elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
-            target = node.operand
-        elif isinstance(node, (JsForInStatement, JsForOfStatement)):
-            target = node.left
-        for member in _written_members(target):
-            base = _member_chain_root(member)
-            if base is not None:
-                record(aliases.names_denoted_by(base), static_property_key(member))
-            written_global = model.may_name_a_global(member)
-            if written_global is not None:
-                record(frozenset({written_global}), None)
-    return _GlobalWrites(
-        frozenset(names),
-        {name: None if written is None else frozenset(written) for name, written in keys.items()},
-    )
-
-
-def _written_members(target: Node | None) -> Iterator[JsMemberExpression]:
-    """
-    Every member access a write to *target* may store through. A plain member target is that one
-    access; a pattern holds one per position it assigns into, which `[Object.prototype.z] = [9]` and
-    `({k: Object.prototype.z} = o)` both write a property through while naming no member target at
-    the top. A pattern is read by walking it, so a member standing in a computed key inside one is
-    yielded too — which over-reports a write and is the direction this whole scan fails in.
-    """
-    cursor = strip_parens(target)
-    if isinstance(cursor, JsMemberExpression):
-        yield cursor
-    elif cursor is not None and not isinstance(cursor, JsIdentifier):
-        for node in cursor.walk():
-            if isinstance(node, JsMemberExpression):
-                yield node
-
-
-def _installed_key(call: JsCallExpression) -> str | None:
-    """
-    The property name the descriptor install *call* names, or `None` where it names more than one or
-    none this analysis can read. `Object.defineProperty(o, 'k', d)` and `o.__defineGetter__('k', f)`
-    both name it in the argument before the descriptor; `defineProperties` names a whole object of
-    them, which is not one key and is reported as unbounded. The method is read through
-    `accessor_install_method`, so a computed key a fold will collapse — `Object['define' +
-    'Property']` — already names the install here, which keeps the answer from changing as the
-    pipeline respells the call.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return None
-    method = accessor_install_method(callee)
-    if method == 'defineProperty':
-        return static_string(call.arguments[1]) if len(call.arguments) > 1 else None
-    if method in ('__defineGetter__', '__defineSetter__'):
-        return static_string(call.arguments[0]) if call.arguments else None
-    return None
-
-
-def _install_reaches_the_global_object(model: SemanticModel, call: JsCallExpression) -> bool:
-    """
-    Whether the descriptor install *call* installs on the global object: its receiver form
-    (`globalThis.__defineGetter__`) or its argument form (`Object.defineProperty(globalThis, …)`)
-    names the object the installed key then becomes a global under. `may_be_the_global_object` is
-    the reading, so a local holding the object installs on it too; a receiver that is any other
-    object installs on that object and records nothing here. The method is read through
-    `accessor_install_method` for the same reason `_installed_key` reads it there.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return False
-    method = accessor_install_method(callee)
-    if method in ('__defineGetter__', '__defineSetter__'):
-        return model.may_be_the_global_object(callee.object)
-    if method == 'defineProperty' and call.arguments:
-        return model.may_be_the_global_object(call.arguments[0])
-    return False
-
-
-def _value_escapes(
-    model: SemanticModel,
-    aliases: _IntrinsicAliases,
-    node: JsIdentifier,
-    names: frozenset[str],
-    depth: int = 0,
-) -> bool:
-    """
-    Whether the value read at *node* — which may denote the intrinsics *names* — reaches code that could
-    write a property on it without this analysis seeing the write.
-
-    The question is deliberately inverted. Tracking where an intrinsic *flows to* would need a binder from
-    each argument to its parameter, and that binder reaches none of the routes an obfuscator actually uses:
-    a callback that receives the value, a function that returns it, `arguments`, spread, rest, or a method
-    on an object literal. Asking instead whether the value leaves a position whose effect is *known* covers
-    all of them at once, and fails in the safe direction by construction — an unrecognized position counts
-    as an escape, which costs an unfolded call rather than a wrong value.
-
-    The positions that hand nothing over, and so must stay free or every fold collapses:
-
-    - a member base, when the key cannot yield the intrinsic's own mutable surface (`Math.floor(1.7)`)
-    - a callee, which the call consumes (`parseInt(x)`)
-    - an operator operand, which reads a value without capturing the object (`typeof Math`)
-    - a rebinding whose target the alias analysis still resolves to the same names (`var m = Math`)
-
-    That last arm is what makes one predicate serve both this scan and the parameter-escape question inside
-    `_callee_is_write_free`, rather than two walks differing by a flag. A rebinding is safe precisely when a
-    later write through the new name is still attributed back, which is a question `_IntrinsicAliases`
-    already answers: `var m = Math` is spared because `m` denotes `Math`, while `save = o` inside a callee
-    is not, because a parameter denotes nothing and the attribution chain dies there. The *names* being
-    non-empty is therefore load-bearing — an empty set is a subset of everything, and would spare the very
-    case the arm exists to catch.
-    """
-    value = _forwarded_value(node)
-    if value is None:
-        return False
-    parent = value.parent
-    if isinstance(parent, JsCallExpression):
-        if parent.callee is value:
-            return False
-        callee = _unambiguous_callee(model, parent)
-        return not _callee_is_write_free(model, aliases, callee, depth + 1)
-    if isinstance(parent, (JsUnaryExpression, JsBinaryExpression, JsTemplateLiteral)):
-        return False
-    target = None
-    if isinstance(parent, JsVariableDeclarator) and parent.init is value:
-        target = parent.id
-    elif isinstance(parent, JsAssignmentExpression) and parent.right is value:
-        target = parent.left
-    if target is not None:
-        return not (names and names <= _names_bound_to(model, aliases, target))
-    return True
-
-
-def _forwarded_value(node: JsIdentifier) -> Node | None:
-    """
-    The outermost expression still carrying *node*'s value, or `None` when no enclosing form can hand that
-    value on. The walk looks through the forms that forward a value unchanged — parentheses, the operands
-    of `||`/`&&`/`??`, the branches of a conditional, the last expression of a sequence, and a spread — and
-    through a member access only when its key reaches the intrinsic's own surface, since `p(Array.prototype)`
-    hands over an object whose properties decide what `[1, 2].join()` means while `p(Math.PI)` hands over a
-    number nobody consults.
-
-    Strictly outward through `parent`, so unlike `_denoted_roots` — which recurses *into* an expression and
-    needs `_DENOTED_ROOT_DEPTH_LIMIT` — this terminates on the finite path to the root without a limit.
-    """
-    cursor: Node = node
-    while True:
-        parent = cursor.parent
-        if parent is None:
-            return None
-        if isinstance(parent, JsMemberExpression) and parent.object is cursor:
-            if not _reaches_intrinsic_surface(parent):
-                return None
-            cursor = parent
-            continue
-        if isinstance(parent, _VALUE_FORWARDING_NODES):
-            cursor = parent
-            continue
-        return cursor
-
-
-def _reaches_intrinsic_surface(member: JsMemberExpression) -> bool:
-    """
-    Whether reading *member*'s key off an intrinsic can yield an object sharing that intrinsic's
-    mutable surface. A computed key whose string value is not statically known may be any of them,
-    so it counts.
-
-    This is a *may* analysis, opposite in direction to the use `accessor_install_method` makes of
-    `static_string`: there an unknown key names no method, because only a key a fold can collapse
-    can reveal an install mid-pass; here an unknown key reaches everything, because a missed reach
-    is a name that keeps its trust while the program patches it.
-    """
-    prop = member.property
-    if member.computed:
-        value = static_string(prop)
-        return value is None or value in _SURFACE_KEYS
-    return isinstance(prop, JsIdentifier) and prop.name in _SURFACE_KEYS
-
-
-def _names_bound_to(
-    model: SemanticModel, aliases: _IntrinsicAliases, target: Node | None
-) -> frozenset[str]:
-    """
-    The intrinsic names a value stored into *target* may still be found under, so a rebinding that keeps the
-    value reachable by name is not an escape. A destructuring or member target yields nothing, since neither
-    leaves a name this analysis resolves writes through.
-
-    Both binding lookups are needed. A declarator id is not a *reference*, so `resolve` finds nothing for it
-    and only `binding_of` answers; an assignment target is a reference and only `resolve` does.
-    """
-    if not isinstance(target, JsIdentifier):
-        return frozenset()
-    binding = model.binding_of(target) or model.resolve(target)
-    if binding is None:
-        return frozenset({target.name})
-    return aliases.names_of(binding)
-
-
-def _callee_is_write_free(
-    model: SemanticModel,
-    aliases: _IntrinsicAliases,
-    func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None,
-    depth: int,
-) -> bool:
-    """
-    Whether a call to *func* provably writes no property reachable from one of its parameters, and lets no
-    parameter escape further. This is what keeps the escape rule from refusing every call: `log(Math)` for a
-    `log` that only reads `o.PI` hands the intrinsic to code whose writes are fully enumerable, so `Math`
-    keeps its trust.
-
-    Fails closed on every way the enumeration could be incomplete — an unresolvable callee, a rest or
-    destructured parameter whose contents no name tracks, a reachable `arguments` object, or recursion past
-    `_CALLEE_DEPTH_LIMIT`. Each of those means a parameter's value could be written through somewhere this
-    scan does not look.
-
-    The parameter-escape question routes back through `_value_escapes` rather than scanning for identifiers,
-    so a callee that merely *reads* through its parameter (`return o.PI`) stays write-free while one that
-    passes it on (`g(o)`) does not. That reuse also subsumes the return case without a branch of its own: a
-    parameter in a return position matches no sparing arm, so it escapes — and by the same rule so do
-    `return [o]`, `return { m: o }`, and an arrow's concise body, which an explicit return check missed.
-    """
-    if func is None or depth > _CALLEE_DEPTH_LIMIT:
-        return False
-    scope = model.parameter_scope(func)
-    if scope is None:
-        return False
-    if not isinstance(func, JsArrowFunctionExpression):
-        binding = scope.bindings.get('arguments')
-        if binding is not None and (model.references(binding) or model.reflection_can_reach(binding)):
-            return False
-    if any(not isinstance(param, JsIdentifier) for param in func.params):
-        return False
-    params = frozenset(param.name for param in func.params)
-    if not params:
-        return True
-    body = getattr(func, 'body', None)
-    if body is None:
-        return False
-    for node in body.walk():
-        target = None
-        if isinstance(node, JsAssignmentExpression):
-            target = node.left
-        elif isinstance(node, JsUpdateExpression):
-            target = node.argument
-        elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
-            target = node.operand
-        base = _member_chain_root(target)
-        if base is not None and base.name in params:
-            return False
-        if isinstance(node, JsIdentifier) and node.name in params:
-            if reference_role(node) is Role.READ:
-                names = aliases.names_denoted_by(node)
-                if _value_escapes(model, aliases, node, names, depth):
-                    return False
-    return True
-
-
-def _unambiguous_callee(
-    model: SemanticModel, call: JsCallExpression
-) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
-    """
-    The function *call* certainly invokes for a consumer that cannot order the call against a reassignment
-    of the callee's name, or `None`. The module-scope form of `EffectModel.unambiguous_callee`, which
-    delegates here: the answer needs only the model, so a caller that runs before an `EffectModel`'s caches
-    exist — `_global_writes_by_name` is computed during construction — can still ask it.
-    """
-    callee = call.callee
-    if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
-        return callee
-    if not isinstance(callee, JsIdentifier):
-        return None
-    return _unambiguous_function(model, model.resolve(callee))
-
-
-def _unambiguous_function(
-    model: SemanticModel, binding: Binding | None
-) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
-    """
-    The module-scope form of `EffectModel.unambiguous_function`, which delegates here. See that method for
-    which bindings qualify.
-    """
-    value = model.singular_value(binding)
-    return value if isinstance(value, FUNCTION_NODES) else None
-
-
-class _IntrinsicAliases:
-    """
-    Resolves the identifier at the root of a write target to every name it may denote, so that a property
-    write reaching an intrinsic through a local is attributed to the intrinsic rather than to the local.
-    `var m = Math; m.floor = f` must record `Math`, or the write stays invisible to every consumer of
-    `_globals_written` and `Math.floor(1.7)` goes on folding to the built-in.
-
-    A *may* analysis on purpose: every value a binding can hold contributes, so one branch assigning an
-    intrinsic is enough to poison the name. The direction is forced — missing an alias yields a wrong
-    value, while an extra name yields an unfolded call — and it matches how the accessor-install targets
-    are already over-approximated, `Object.defineProperty(0 || Math, …)` among them.
-
-    The backward step is `_denoted_roots`, the same value-preserving walk the install-target scan uses,
-    reused rather than reimplemented for two reasons. It already looks through exactly the forms a fold
-    collapses (`||`, `&&`, `??`, conditional, sequence-last, assignment-RHS, parens), which is what keeps
-    this answer stable while passes run — the pinning contract in
-    `refinery.lib.scripts.js.analysis.cache.ModelCache` requires that this set never *grow* across a pass.
-    And it stops at a call, so `var s = String.fromCharCode(x)` does not alias `String`: the local holds
-    the *result*. Its member-chain arm over-approximates in the one remaining direction —
-    `var n = Array.length` reports `Array` — which is sound and costs nothing.
-    """
-
-    def __init__(self, model: SemanticModel):
-        self.model = model
-        self._cache: dict[int, frozenset[str]] = {}
-
-    def names_denoted_by(self, node: JsIdentifier) -> frozenset[str]:
-        """
-        Every intrinsic-root name *node* may denote, including its own when it names one directly. A name
-        that resolves to no binding is a free global and denotes itself.
-        """
-        if node.name in _PURE_INTRINSIC_ROOTS:
-            return frozenset({node.name})
-        binding = self.model.resolve(node)
-        if binding is None:
-            return frozenset({node.name})
-        return self.names_of(binding)
-
-    def names_of(self, binding: Binding) -> frozenset[str]:
-        """
-        Every name a value of *binding* may denote. The binding-level entry point, for a caller holding a
-        binding rather than a reference to it — resolving a *write* target, whose declaration id is not a
-        reference at all.
-        """
-        return self._names_of(binding, set())
-
-    def _names_of(self, binding: Binding, visiting: set[int]) -> frozenset[str]:
-        """
-        Every name a value of *binding* may denote, memoized per binding. The *visiting* set breaks the
-        cycle a mutually-assigning pair (`a = b; b = a`) would otherwise spin on; a binding still on the
-        stack contributes nothing further, since whatever it reaches is already being collected.
-        """
-        key = id(binding)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return cached
-        if key in visiting:
-            return frozenset()
-        visiting.add(key)
-        found: set[str] = set()
-        for root in _binding_value_roots(binding):
-            if root.name in _PURE_INTRINSIC_ROOTS:
-                found.add(root.name)
-                continue
-            inner = self.model.resolve(root)
-            if inner is None:
-                found.add(root.name)
-                continue
-            found |= self._names_of(inner, visiting)
-        visiting.discard(key)
-        result = frozenset(found)
-        self._cache[key] = result
-        return result
-
-
-def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
-    """
-    Every name a value of *binding* may denote, over its declarations' initializers and the right side of
-    every plain assignment to it. Both are needed: a binding declared empty and assigned later
-    (`var m; m = Math`) holds the intrinsic just as one initialized with it does.
-
-    A write the model cannot pin to a value (`indefinite_writes`) contributes as well. This is a
-    *may* analysis, and `arguments[k] = Math` stores the intrinsic under a parameter's name whether
-    or not the text says which parameter or whether the call supplied it; leaving it out is exactly
-    the missed alias the caller's docstring names as a wrong answer.
-
-    The may-side sibling of `SemanticModel.binding_values`, deliberately wider than its readable
-    channels: a compound assignment's right side contributes here where the must-query refuses the
-    whole binding, because `_value_escapes`'s rebinding arm spares a target only while the names it
-    may denote are still attributed back, and narrowing this walk would turn those rebindings into
-    escapes. A channel neither walk reads — an intrinsic stored through a pattern, a parameter fed at
-    a call site — is covered at its source instead: the intrinsic *read* that fed it escapes, which
-    withdraws the key trust there.
-    """
-    for declaration in binding.declarations:
-        parent = getattr(declaration, 'parent', None)
-        initializer = getattr(parent, 'init', None)
-        if initializer is not None:
-            yield from _denoted_roots(initializer)
-    for reference in (*binding.writes, *binding.indefinite_writes):
-        parent = getattr(reference, 'parent', None)
-        if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
-            yield from _denoted_roots(parent.right)
-
-
-def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
-    """
-    The names whose properties *call* may install an accessor or data descriptor on. An
-    `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically, so a
-    scan for assignments alone would leave the name looking untouched. The receiver form
-    (`o.__defineGetter__(...)`) attributes to the receiver instead of an argument.
-
-    Every name the target *may* denote is yielded, because a caller collecting writes needs an
-    over-approximation: a missed name is a name that keeps its trust while the program patches it. That is
-    the opposite of `intrinsic_of`, which must certify what a node *does* denote and so takes only the left
-    of `A || B`; here both operands are yielded, since either may survive.
-    """
-    callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression):
-        return
-    method = accessor_install_method(callee)
-    if method is None:
-        return
-    if method.startswith('__define'):
-        yield from _denoted_roots(callee.object)
-    elif call.arguments:
-        yield from _denoted_roots(call.arguments[0])
-
-
-def _denoted_roots(node: Node | None, depth: int = 0) -> Iterator[JsIdentifier]:
-    """
-    Every name *node* may denote, looking through the value-preserving forms a constant fold collapses:
-    parentheses, the operands of `||`/`&&`/`??` and the branches of a conditional (either side may be the
-    value), the last expression of a sequence, and the right side of an assignment.
-
-    Resolving only the syntactic form would make this analysis change its answer as folds fire —
-    `Math || 0` names nothing until it collapses to `Math` — which is precisely what a consumer holding the
-    answer across a pass cannot tolerate.
-    """
-    if depth > _DENOTED_ROOT_DEPTH_LIMIT:
-        return
-    cursor = strip_parens(node)
-    if isinstance(cursor, JsIdentifier):
-        yield cursor
-    elif isinstance(cursor, JsMemberExpression):
-        root = _member_chain_root(cursor)
-        if root is not None:
-            yield root
-    elif isinstance(cursor, JsLogicalExpression):
-        yield from _denoted_roots(cursor.left, depth + 1)
-        yield from _denoted_roots(cursor.right, depth + 1)
-    elif isinstance(cursor, JsConditionalExpression):
-        yield from _denoted_roots(cursor.consequent, depth + 1)
-        yield from _denoted_roots(cursor.alternate, depth + 1)
-    elif isinstance(cursor, JsSequenceExpression):
-        if cursor.expressions:
-            yield from _denoted_roots(cursor.expressions[-1], depth + 1)
-    elif isinstance(cursor, JsAssignmentExpression):
-        yield from _denoted_roots(cursor.right, depth + 1)
-
-
-def _member_chain_root(node: Node | None) -> JsIdentifier | None:
-    """
-    The identifier at the foot of a member-access chain, or `None` when the chain does not start at a
-    plain name. `Math.prototype.x` roots at `Math`, so a write anywhere along the chain is attributed to
-    the name that owns it; testing only the immediate `.object` would miss every nested write.
-    """
-    cursor = strip_parens(node)
-    if not isinstance(cursor, JsMemberExpression):
-        return None
-    while isinstance(cursor, JsMemberExpression):
-        cursor = strip_parens(cursor.object)
-    return cursor if isinstance(cursor, JsIdentifier) else None
-
-
 def _intrinsics_pristine(model: SemanticModel) -> bool:
     """
     Whether the program leaves every trusted intrinsic untouched: it neither reassigns an intrinsic
@@ -3404,10 +2676,10 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
-    if any(name in model.root_scope.bindings for name in _PURE_INTRINSIC_ROOTS):
+    if any(name in model.root_scope.bindings for name in PURE_INTRINSIC_ROOTS):
         return False
     for node in model.root.walk():
-        if isinstance(node, JsIdentifier) and node.name in _PURE_INTRINSIC_ROOTS:
+        if isinstance(node, JsIdentifier) and node.name in PURE_INTRINSIC_ROOTS:
             if reference_role(node) is not Role.READ:
                 return False
         elif isinstance(node, JsAssignmentExpression):
@@ -3415,7 +2687,7 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
             if (
                 isinstance(left, JsMemberExpression)
                 and isinstance(left.object, JsIdentifier)
-                and left.object.name in _PURE_INTRINSIC_ROOTS
+                and left.object.name in PURE_INTRINSIC_ROOTS
             ):
                 return False
         elif isinstance(node, JsUpdateExpression):
@@ -3423,7 +2695,7 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
             if (
                 isinstance(target, JsMemberExpression)
                 and isinstance(target.object, JsIdentifier)
-                and target.object.name in _PURE_INTRINSIC_ROOTS
+                and target.object.name in PURE_INTRINSIC_ROOTS
             ):
                 return False
     return True
@@ -3477,12 +2749,16 @@ def _global_pristine(model: SemanticModel) -> bool:
 
 
 def build_effects(
-    model: SemanticModel, dominance: DominanceModel | None = None,
+    model: SemanticModel,
+    dominance: DominanceModel | None = None,
+    intrinsic_writes: IntrinsicWrites | None = None,
 ) -> EffectModel:
     """
     Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
     sharing *dominance* when the caller holds one so the two models order the same tree through one
     control-flow layer. A `None` is not a refusal: the model builds its own the first time a summary
-    must order a binding's temporal dead zone.
+    must order a binding's temporal dead zone. *intrinsic_writes* is shared the same way, so the
+    effect and ordering layers read one scan of what the program writes on the intrinsics; a `None`
+    builds it here.
     """
-    return EffectModel(model, dominance)
+    return EffectModel(model, dominance, intrinsic_writes)

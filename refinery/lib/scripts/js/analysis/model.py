@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.model import (
     JsContinueStatement,
     JsDoWhileStatement,
     JsErrorNode,
+    JsExportAllDeclaration,
     JsExportDefaultDeclaration,
     JsExportNamedDeclaration,
     JsExpressionStatement,
@@ -1200,6 +1201,21 @@ def enclosing_function(node: Node) -> Node | None:
     return None
 
 
+def _lets_another_module_run(node: Node) -> bool:
+    """
+    Whether *node* lets code of another module run after this module is linked and before its body
+    has finished: an `import` or an `export … from` declaration, whose module the linker evaluates
+    first and which, in an import cycle, can call back into this module's hoisted exports. An
+    `await` at the top level is not one: every importer waits for the awaiting module to finish,
+    and a module importing none can be in no cycle.
+    """
+    if isinstance(node, (JsImportDeclaration, JsExportAllDeclaration)):
+        return True
+    if isinstance(node, JsExportNamedDeclaration):
+        return node.source is not None
+    return False
+
+
 def walk_receiver_scope(root: Node) -> Iterator[Node]:
     """
     Yield every node in the subtree at *root* that shares *root*'s `this`/`super` receiver, without
@@ -1910,6 +1926,7 @@ class SemanticModel:
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
+        self._module_may_be_reentered = False
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
         self._deleted_host_globals: frozenset[str] = self._scan_deleted_host_globals()
@@ -2353,67 +2370,6 @@ class SemanticModel:
         if binding.has_indefinite_write:
             return False
         return all(write is establishing for write in binding.writes)
-
-    def object_property_reference_points(self, function: Node) -> list[Node] | None:
-        """
-        The reference points that no invocation of *function* can precede when it is installed as a
-        property of a non-escaping local object — the read sites of that property. Returns them when
-        *function* is the value of a `BASE.key = function` assignment whose `BASE` identifier resolves to
-        a local binding that holds one object value (`singular_value` is a `JsObjectExpression`) and never
-        escapes as a bare value — every reference to it is the object of a member access, so the object
-        identity is pinned to that binding and the only way to obtain the callable is to read `BASE.key`.
-        Every such read is a point the invocation follows, including one whose value is stored and called
-        later; the establishing write installs the value without reading it and is excluded, as is an
-        access of a statically different property, which never reads the value. A computed access whose
-        key is not statically known (`BASE[expr]`) may read the property and is kept. The opaque reflective
-        surfaces that could name the binding are added as points exactly as the name-based enumeration adds
-        them, and a `with` that could rename the base (a `dynamic_refs` entry) makes the ordering
-        unknowable and yields `None`, as does any pattern the recognition does not match, so a caller falls
-        through to its name-based ordering.
-
-        This is a bounded points-to fact: a method reached only through property reads on an object that
-        never leaks is ordered by those reads, not by its creation site, which a member assignment target
-        gives no name to order by. It answers, at the binding level, the ordering `invocation_binding`
-        cannot when the callable is pinned to a member rather than a name.
-        """
-        parent = function.parent
-        if not (
-            isinstance(parent, JsAssignmentExpression)
-            and parent.operator == '='
-            and parent.right is function
-        ):
-            return None
-        target = strip_parens(parent.left)
-        if not isinstance(target, JsMemberExpression) or not isinstance(target.object, JsIdentifier):
-            return None
-        key = member_property_name(target)
-        if key is None:
-            return None
-        binding = self.resolve(target.object)
-        if binding is None or not isinstance(self.singular_value(binding), JsObjectExpression):
-            return None
-        if binding.dynamic_refs:
-            return None
-        points: list[Node] = []
-        for read in binding.reads:
-            node = read
-            access = node.parent
-            while isinstance(access, JsParenthesizedExpression):
-                node, access = access, access.parent
-            if not isinstance(access, JsMemberExpression) or access.object is not node:
-                return None
-            name = member_property_name(access)
-            if name is not None and name != key:
-                continue
-            if is_simple_assignment_target(access):
-                continue
-            points.append(access)
-        points.extend(
-            site
-            for site in self.reflection_surface_sites(binding)
-            if not site.is_descendant_of(function)
-        )
-        return points
 
     def binding_values(
         self, binding: Binding | None, *, ignore_dynamic_rebinds: bool = False,
@@ -3019,6 +2975,16 @@ class SemanticModel:
             and binding.is_hoisted
         )
 
+    def module_may_be_reentered(self) -> bool:
+        """
+        Whether code of another module can run after this module is linked and before its body has
+        finished (`_lets_another_module_run`). A module in an import cycle with this one can then
+        call an exported function before the declarations after its definition have run. A module
+        that imports nothing is in no cycle and runs its whole body before any importer does, so
+        every importer calls into it after its last statement.
+        """
+        return self._module_may_be_reentered
+
     def _direct_eval_sites(self, function: Node) -> list[Node]:
         """
         The direct `eval` call sites within *function* — every call whose callee, once parentheses are
@@ -3287,12 +3253,15 @@ class SemanticModel:
         one identifier of `{ a }` or of `export { a };` fills two, so without the dedup a read's
         multiplicity would follow its spelling rather than the program. The export-marking rider
         shares the walk: it consults only scope-builder state, so riding along changes nothing the
-        remaining construction walks observe.
+        remaining construction walks observe. So does the rider answering
+        `module_may_be_reentered`, which consults nothing but the node.
         """
         seen: set[int] = set()
         for node in self.root.walk():
             if isinstance(node, (JsExportNamedDeclaration, JsExportDefaultDeclaration)):
                 self._mark_export_declaration(node)
+            if _lets_another_module_run(node):
+                self._module_may_be_reentered = True
             if isinstance(node, JsMemberExpression):
                 self._record_global_alias_member_reference(node)
                 continue

@@ -19,7 +19,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
-from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
@@ -57,6 +57,7 @@ from refinery.lib.scripts.js.model import (
     JsTaggedTemplateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    object_sets_prototype,
     strip_parens,
 )
 

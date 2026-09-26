@@ -25,7 +25,6 @@ from refinery.lib.scripts import (
     set_child_list,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.effects import object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_var_home,
     is_member_write_target,
@@ -107,6 +106,7 @@ from refinery.lib.scripts.js.model import (
     JsYieldExpression,
     is_async_function,
     is_generator_function,
+    object_member_access_runs_accessor,
     static_string,
 )
 from refinery.lib.scripts.js.numbers import is_negative_zero

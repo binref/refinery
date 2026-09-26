@@ -247,6 +247,145 @@ class TestDominance(TestBase):
             'var NS = {}; NS.f = function(){ return c; }; sink(NS); var c = 5; NS.f();')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
+    def test_a_destructuring_write_to_a_namespace_method_does_not_obtain_it(self):
+        """
+        A destructuring target writes `NS.f` without reading it, so the write before the definition
+        hands the method to nothing, and the one read that does obtain it runs after.
+        """
+        ast, dom = self._dominance(
+            'var NS = {}; NS.f = function(){ return c; }; [NS.f] = [1]; var c = 5; console.log(NS.f);')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
+
+    def test_a_method_call_on_the_object_hands_it_to_the_callee(self):
+        """
+        A method call on `NS` runs its callee with `NS` as `this`, and the callee can call `NS.g`
+        through it without spelling `NS.g` anywhere. Every call form that passes the receiver is such
+        a point, so a call before the definition refuses and the same call after it does not.
+        """
+        forms = [
+            'NS.f()',
+            '(NS.f)()',
+            'NS.f``',
+            'NS.f?.()',
+            'NS?.f()',
+            "NS['f']()",
+            'NS[k]()',
+        ]
+        for form in forms:
+            for call_first, expected in ((True, False), (False, True)):
+                statements = [
+                    'var NS = {}',
+                    'NS.g = function(){ return c; }',
+                    'NS.f = function(){ return this.g(); }',
+                    'var c = 5',
+                ]
+                statements.insert(3 if call_first else 4, form)
+                source = '; '.join(statements) + ';'
+                with self.subTest(source=source):
+                    ast, dom = self._dominance(source)
+                    method = self._method(ast, 'NS', 'g')
+                    self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), method), expected)
+
+    def test_a_call_detaching_the_receiver_hands_the_object_to_nothing(self):
+        """
+        `(0, NS.f)()` calls `f` with no receiver, so `f` cannot reach `NS.g` through `this` and the
+        call before the definition orders nothing about `NS.g`.
+        """
+        ast, dom = self._dominance(
+            'var NS = {}; NS.g = function(){ return c; }; NS.f = function(){ return 1; };'
+            ' (0, NS.f)(); var c = 5; NS.g();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_every_access_hands_the_object_over_where_the_literal_has_an_accessor(self):
+        ast, dom = self._dominance(
+            'var NS = { get k() { return this.g(); } }; NS.g = function(){ return c; };'
+            ' NS.k; var c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_every_access_hands_the_object_over_where_the_literal_sets_a_prototype(self):
+        ast, dom = self._dominance(
+            'var NS = { __proto__: P }; NS.g = function(){ return c; }; NS.k; var c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_a_plain_read_of_another_key_hands_a_plain_object_to_nothing(self):
+        ast, dom = self._dominance(
+            'var NS = {}; NS.g = function(){ return c; }; NS.k; var c = 5; NS.g();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_every_access_hands_the_object_over_where_the_program_writes_the_object_prototype(self):
+        ast, dom = self._dominance(
+            "Object.defineProperty(Object.prototype, 'k', { get: function(){ return this.g(); } });"
+            ' var NS = {}; NS.g = function(){ return c; }; NS.k; var c = 5; NS.g();')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_the_establishing_write_is_a_point_where_a_setter_may_run(self):
+        """
+        A setter installed on `Object.prototype` receives the function the write stores, and may call
+        it right there; the write itself precedes the definition, so nothing orders the call.
+        """
+        ast, dom = self._dominance(
+            "Object.defineProperty(Object.prototype, 'g', { set: function(v){ v(); } });"
+            ' var NS = {}; NS.g = function(){ return c; }; var c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'g')))
+
+    def test_a_prototype_written_through_the_object_hands_it_over(self):
+        for write in ('NS.__proto__ = P', "NS['__proto__'] = P", 'NS[key] = P'):
+            with self.subTest(write=write):
+                ast, dom = self._dominance(
+                    F'var NS = {{}}; NS.g = function(){{ return c; }}; {write}; var c = 5; NS.k;')
+                method = self._method(ast, 'NS', 'g')
+                self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), method))
+
+    def test_a_declared_host_entrypoint_has_no_orderable_invocations(self):
+        """
+        A host calls an entry point by name whenever the script hands it control, which the call to
+        `fire` may do before the definition runs. Under the module model the declaration never
+        becomes a property of the global object, so the host cannot reach it by name.
+        """
+        source = 'function OnEvent(){ return c; } fire(); var c = 5;'
+        for module_scope, expected in ((False, False), (True, True)):
+            with self.subTest(module_scope=module_scope):
+                ast = JsParser(source).parse()
+                dom = build_dominance(
+                    build_semantic_model(ast),
+                    module_scope=module_scope,
+                    host_entrypoint=lambda name: name == 'OnEvent',
+                )
+                ordered = dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'OnEvent'))
+                self.assertEqual(ordered, expected)
+
+    def test_an_export_of_a_module_in_an_import_cycle_has_no_orderable_invocations(self):
+        """
+        A module that imports another can be in a cycle with it, and the other module can then call
+        an exported declaration before the body that defines `c` has run. A module that imports
+        nothing runs its whole body before any importer calls into it, and so does one that awaits:
+        an importer waits for it to finish.
+        """
+        cases = {
+            "import './b.mjs'; export function f(){ return c; } const c = 5;": False,
+            "export * from './b.mjs'; export function f(){ return c; } const c = 5;": False,
+            "export { g } from './b.mjs'; export function f(){ return c; } const c = 5;": False,
+            "import './b.mjs'; function f(){ return c; } export { f }; const c = 5;": False,
+            'export function f(){ return c; } const c = 5;': True,
+            'export function f(){ return c; } for await (const x of []) {} const c = 5;': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                ordered = dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f'))
+                self.assertEqual(ordered, expected)
+
+    def test_an_anonymous_default_export_of_a_module_in_an_import_cycle_is_unordered(self):
+        cases = {
+            "import './b.mjs'; export default function (){ return c; } const c = 5;": False,
+            'const c = 5; export default function (){ return c; }': True,
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                ast, dom = self._dominance(source)
+                function = next(n for n in ast.walk() if isinstance(n, JsFunctionDeclaration))
+                self.assertEqual(dom.runs_before_function(self._def(ast, 'c'), function), expected)
+
     def test_dominates_node_reflexive_and_ordered(self):
         ast, dom = self._dominance('var a = 1; var b = 2;')
         a = self._idents(ast, 'a')[0]

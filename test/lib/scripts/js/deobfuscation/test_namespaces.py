@@ -315,18 +315,19 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             self._flatten('var NS = {}; NS.x = 1; delete NS.x;'),
         )
 
-    def test_this_method_receiver_called_kept_on_namespace(self):
+    @unittest.expectedFailure
+    def test_a_namespace_whose_method_reads_it_through_this_stays_whole(self):
         """
-        `NS.f()` binds `this === NS`; flattening to `f()` would rebind `this` to the global object, so
-        a `this`-observing method that is receiver-called stays on the namespace. Sibling data
-        properties still flatten around it.
+        `NS.f()` binds `this === NS`, and the method reads `NS.x` through it as `this.x`. Moving
+        `NS.x` into a variable `x` leaves `this.x` reading a key the object no longer has, so the
+        output logs `undefined` where the input logs `5`; a method that reads its receiver keeps
+        every key of the namespace in place. Flattening keeps only the method itself on the object.
         """
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var x;
                 var NS = {};
-                x = 5;
+                NS.x = 5;
                 NS.f = function() {
                   return this.x;
                 };

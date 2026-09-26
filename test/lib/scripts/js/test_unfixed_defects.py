@@ -38,7 +38,6 @@ from test.lib.scripts.js.analysis.differential import (
     behavior,
     completion_values,
     deobfuscate_source,
-    module_graph_behavior,
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
@@ -585,51 +584,6 @@ class TestAWriteOnlyStrictCodeRefusesIsNotADeadStore(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},
-        )
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAConstAModuleExportsIsDeadUntilTheModuleRuns(TestBase):
-    """
-    A function declaration crosses a module boundary at link time: an importer in a cycle with its
-    exporter can call the function before the exporter's body has run, and a `const` the function
-    reads is then still in its dead zone, so the input throws `ReferenceError`. The model takes the
-    export read to stand at the list's statement position, so the fold that puts the constant into
-    the function proves its ordering over a walk the cycle never takes, and the deobfuscation
-    returns the value where the input threw.
-
-    Kept off the release gate for likelihood: the shape needs an import cycle whose second module
-    calls back into the first at its own top level, which a single-file payload — the
-    overwhelming shape of obfuscated malware — cannot spell at all. The fix is a link-time
-    invocation point in `refinery.lib.scripts.js.analysis.dominance`, priced against every module
-    fold there is.
-    """
-
-    @unittest.expectedFailure
-    def test_the_cycle_still_throws_after_the_fold(self):
-        exporter = inspect.cleandoc(
-            """
-            import { g } from './b.mjs';
-            const x = 1;
-            export { f };
-            function f() { return x; }
-            g();
-            """
-        )
-        caller = inspect.cleandoc(
-            """
-            export function g() {}
-            import { f } from './main.mjs';
-            console.log(f());
-            """
-        )
-        rewritten = deobfuscate_source(exporter, module=True)
-        self.assertEqual(
-            (
-                module_graph_behavior({'b.mjs': caller, 'main.mjs': exporter}, 'main.mjs'),
-                module_graph_behavior({'b.mjs': caller, 'main.mjs': rewritten}, 'main.mjs'),
-            ),
-            (('', 'ReferenceError'), ('', 'ReferenceError')),
         )
 
 
@@ -2596,3 +2550,232 @@ class TestAScriptLevelVarSharingAReadOnlyGlobalHoldsNoStoredValue(TestBase):
             console.log(top);
             """)
         self.assertIn('console.log(top)', folded(source))
+
+
+#: Programs that give a local object the key `k` by a write the `in` fold does not count, mapped to
+#: what Node prints: every one of them prints `true`.
+A_KEY_WRITTEN_WHERE_THE_IN_FOLD_DOES_NOT_LOOK = {
+    a_program("""
+        function t() { var X = {}; var Y = X; Y.k = 1; return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+    a_program("""
+        function t() { var X = {}; [X.k] = [1]; return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+    a_program("""
+        function t() { var X = {}; for (X.k in {p: 1}); return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+    a_program("""
+        function t() { var X = {}; X.__defineGetter__('k', function () { return 1; }); return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+    a_program("""
+        function t() { var X = {}; X.valueOf().k = 1; return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAKeyWrittenThroughAnotherFormIsInTheObject(TestBase):
+    """
+    The fold of `'k' in X` over a local object literal reads the keys `X` holds off the plain
+    assignments `X.k = v` and nothing else, so a key written through another name for the object,
+    through a destructuring or `for-in` target, through an accessor install, or through a method
+    that returns the object itself, is answered absent. Each shape is written to defeat the fold
+    rather than found in obfuscated input, so its reach over real files is slim.
+    """
+
+    @unittest.expectedFailure
+    def test_the_key_is_found(self):
+        rows = A_KEY_WRITTEN_WHERE_THE_IN_FOLD_DOES_NOT_LOOK
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs that take the prototype away from a local object before asking for a key only the
+#: prototype supplies, mapped to what Node prints: `false` for both.
+A_BUILT_IN_KEY_ASKED_OF_AN_OBJECT_WITHOUT_A_PROTOTYPE = {
+    a_program("""
+        function t() { var X = {}; var Y = X; Y.__proto__ = null; return 'hasOwnProperty' in X; }
+        console.log(t());
+        """): 'false\n',
+    a_program("""
+        function t() { var X = {}; Object.setPrototypeOf(X, null); return 'hasOwnProperty' in X; }
+        console.log(t());
+        """): 'false\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInKeyIsMissingFromAnObjectWithoutAPrototype(TestBase):
+    """
+    The fold of `'k' in X` answers `true` for a key `Object.prototype` supplies before it asks
+    whether `X` still inherits from it, and a prototype replaced through another name or through
+    `Object.setPrototypeOf` is not seen. A file clearing a local object's prototype and then asking
+    for an inherited key is a shape written for the fold, not one obfuscators emit.
+    """
+
+    @unittest.expectedFailure
+    def test_the_key_is_missing(self):
+        rows = A_BUILT_IN_KEY_ASKED_OF_AN_OBJECT_WITHOUT_A_PROTOTYPE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs asking a function that has no `prototype` property for one, mapped to what Node prints:
+#: an arrow function and an async function have none.
+A_FUNCTION_WITHOUT_A_PROTOTYPE_PROPERTY = {
+    a_program("""
+        function t() { const X = () => {}; return 'prototype' in X; }
+        console.log(t());
+        """): 'false\n',
+    a_program("""
+        function t() { const X = async function () {}; return 'prototype' in X; }
+        console.log(t());
+        """): 'false\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnArrowOrAsyncFunctionHasNoPrototypeProperty(TestBase):
+    """
+    The fold of `'prototype' in f` answers `true` for every function, while an arrow function and an
+    async function carry no `prototype` property at all. Asking a function for its prototype by
+    `in` is rare in real input.
+    """
+
+    @unittest.expectedFailure
+    def test_the_property_is_missing(self):
+        rows = A_FUNCTION_WITHOUT_A_PROTOTYPE_PROPERTY
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs that write `Object.prototype` through a route the scan of written intrinsics does not
+#: see, mapped to what Node prints. The last one installs a getter there through a function
+#: parameter and then reads a key of a namespace object, which runs the getter with the namespace
+#: as `this` before `a` exists.
+AN_OBJECT_PROTOTYPE_WRITTEN_INDIRECTLY = {
+    a_program("""
+        Object.assign(Object.prototype, {k: 1});
+        function t() { var X = {}; return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+    a_program("""
+        Reflect.set(Object.prototype, 'k', 1);
+        function t() { var X = {}; return 'k' in X; }
+        console.log(t());
+        """): 'true\n',
+}
+
+#: The program of `AN_OBJECT_PROTOTYPE_WRITTEN_INDIRECTLY` whose getter calls a method before `a`
+#: exists, which throws `ReferenceError`.
+A_GETTER_INSTALLED_THROUGH_A_PARAMETER = a_program("""
+    var P = Object.prototype;
+    function install(o) { o.__defineGetter__('k', function () { return this.g(); }); }
+    install(P);
+    var NS = {h: 1};
+    NS.g = function () { return a[0]; };
+    console.log(NS.k);
+    const a = [7, 8];
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
+    """
+    The scan of what a program writes on the intrinsics sees a write whose target spells the
+    prototype, or a local the prototype was stored in, and a descriptor install named by its
+    method. `Object.assign` and `Reflect.set` write `Object.prototype` through an argument, and a
+    method call on a parameter holding it installs a getter no assignment spells, so the scan
+    reports the prototype unwritten. The `in` fold then answers from the object alone, and the
+    ordering of a namespace method misses the getter that calls it. Writing `Object.prototype`
+    through a helper is something packed malware does, but pairing it with either fold is rare.
+    """
+
+    @unittest.expectedFailure
+    def test_the_key_is_found(self):
+        rows = AN_OBJECT_PROTOTYPE_WRITTEN_INDIRECTLY
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @unittest.expectedFailure
+    def test_a_getter_installed_through_a_parameter_still_throws(self):
+        self.assertEqual(
+            before_and_after(A_GETTER_INSTALLED_THROUGH_A_PARAMETER),
+            (('', 'ReferenceError'), ('', 'ReferenceError')),
+        )
+
+
+#: Programs that mutate a local object through a built-in method called on it, mapped to what Node
+#: prints: `valueOf` returns the object itself, and `__defineGetter__` replaces the property.
+AN_OBJECT_A_BUILT_IN_METHOD_MUTATES = {
+    a_program("""
+        function t() { var X = {a: 1}; X.valueOf().a = 2; return X.a; }
+        console.log(t());
+        """): '2\n',
+    a_program("""
+        function t() { var o = {k: 1}; o.__defineGetter__('k', function () { return 2; }); return o.k; }
+        console.log(t());
+        """): '2\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestABuiltInMethodCalledOnAnObjectMayChangeIt(TestBase):
+    """
+    Object folding reads a property of a local object literal off the literal, treating a method
+    call on the object as unable to change it. `valueOf` hands the object itself back, and
+    `__defineGetter__` replaces the property with an accessor, so the value read later is not the
+    literal's. Obfuscators build such objects as lookup tables and never call these methods on them.
+    """
+
+    @unittest.expectedFailure
+    def test_the_property_is_read_after_the_change(self):
+        rows = AN_OBJECT_A_BUILT_IN_METHOD_MUTATES
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program whose namespace object loses a key to code only an `eval` can read, mapped to what Node
+#: prints for it.
+A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES = {
+    a_program("""
+        var X = {};
+        X.k = 1;
+        eval(process.argv[2] || 'delete X.k');
+        console.log('k' in X);
+        """): 'false\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANamespaceAnUnreadableEvalReachesStaysWhole(TestBase):
+    """
+    Namespace flattening turns `X.k` into a variable `k` while a direct `eval` whose text the
+    analysis cannot read still names `X`, and the `in` fold answers from the keys the text writes.
+    The evaluated code deletes the key, so the input prints `false`, and the flattened output runs
+    the same text against a name that no longer exists. An `eval` beside a namespace is a shape
+    packers do emit, but one whose text reaches back into the namespace is rare.
+    """
+
+    @unittest.expectedFailure
+    def test_the_deleted_key_is_missing(self):
+        rows = A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

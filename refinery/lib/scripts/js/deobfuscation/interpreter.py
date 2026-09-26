@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.helpers import Value
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
@@ -108,6 +107,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     JsVarKind,
     JsWhileStatement,
+    object_sets_prototype,
     wraps_return,
 )
 from refinery.lib.scripts.js.numbers import (
