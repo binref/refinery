@@ -444,6 +444,64 @@ class LzmsRangeDecoder:
             return 1
 
 
+def _lzms_code_lengths(freqs: list[int]) -> bytearray:
+    """
+    Compute the codeword lengths of the canonical Huffman code that LZMS derives from the given
+    symbol frequencies. The compressor and the decompressor have to derive the same code, so the
+    construction is fixed: Symbols are ordered by frequency and then by value, a leaf is merged
+    before an inner node of equal weight, and a node deeper than `LZMS_MAX_CODEWORD_LENGTH` takes
+    the longest shorter length that still has a free codeword.
+    """
+    leaves = sorted(range(len(freqs)), key=lambda s: (freqs[s], s))
+    leaf_weights = [freqs[s] for s in leaves]
+    num_leaves = len(leaves)
+    num_nodes = num_leaves - 1
+    node_weights = [0] * num_nodes
+    node_parents = [0] * num_nodes
+    next_leaf = next_node = 0
+
+    for new in range(num_nodes):
+        if next_leaf + 1 < num_leaves and (
+            next_node == new or leaf_weights[next_leaf + 1] <= node_weights[next_node]
+        ):
+            weight = leaf_weights[next_leaf] + leaf_weights[next_leaf + 1]
+            next_leaf += 2
+        elif next_node + 2 <= new and (
+            next_leaf >= num_leaves or node_weights[next_node + 1] < leaf_weights[next_leaf]
+        ):
+            weight = node_weights[next_node] + node_weights[next_node + 1]
+            node_parents[next_node] = new
+            node_parents[next_node + 1] = new
+            next_node += 2
+        else:
+            weight = leaf_weights[next_leaf] + node_weights[next_node]
+            node_parents[next_node] = new
+            next_leaf += 1
+            next_node += 1
+        node_weights[new] = weight
+
+    length_counts = [0] * (LZMS_MAX_CODEWORD_LENGTH + 1)
+    length_counts[1] = 2
+    node_depths = [0] * num_nodes
+
+    for node in range(num_nodes - 2, -1, -1):
+        node_depths[node] = length = node_depths[node_parents[node]] + 1
+        if length >= LZMS_MAX_CODEWORD_LENGTH:
+            length = LZMS_MAX_CODEWORD_LENGTH - 1
+            while not length_counts[length]:
+                length -= 1
+        length_counts[length] -= 1
+        length_counts[length + 1] += 2
+
+    lengths = bytearray(num_leaves)
+    next_leaf = 0
+    for length in range(LZMS_MAX_CODEWORD_LENGTH, 0, -1):
+        for _ in range(length_counts[length]):
+            lengths[leaves[next_leaf]] = length
+            next_leaf += 1
+    return lengths
+
+
 class LzmsHuffmanDecoder:
     __slots__ = (
         '_bitstream',
@@ -472,101 +530,26 @@ class LzmsHuffmanDecoder:
         self._build()
 
     def _build(self):
-        lengths = self._compute_lengths()
-        try:
+        if self._num_syms >= 2:
             self._decode_table = make_huffman_decode_table(
-                lengths, self._table_bits, LZMS_MAX_CODEWORD_LENGTH)
-        except Exception:
-            self._decode_table = None
+                _lzms_code_lengths(self._freqs), self._table_bits, LZMS_MAX_CODEWORD_LENGTH)
         self._syms_until_rebuild = self._rebuild_freq
 
-    def _compute_lengths(self) -> bytearray:
-        n = self._num_syms
-        freq = self._freqs
-        lengths = bytearray(n)
-
-        if n <= 1:
-            if n == 1:
-                lengths[0] = 1
-            return lengths
-
-        symbols = sorted(range(n), key=lambda s: (freq[s], s))
-        leaf_freqs = [freq[s] for s in symbols]
-        q1_head = 0
-        q2: list[tuple[int, int]] = []
-        q2_head = 0
-        parent = [0] * (2 * n)
-        is_leaf = [False] * (2 * n)
-        node_count = n
-
-        for i in range(n):
-            is_leaf[i] = True
-
-        def _pick_min():
-            nonlocal q1_head, q2_head
-            q1_avail = q1_head < n
-            q2_avail = q2_head < len(q2)
-            if q1_avail and q2_avail:
-                f1 = leaf_freqs[q1_head]
-                f2 = q2[q2_head][0]
-                if f1 <= f2:
-                    idx = q1_head
-                    q1_head += 1
-                    return f1, idx
-                else:
-                    f, idx = q2[q2_head]
-                    q2_head += 1
-                    return f, idx
-            elif q1_avail:
-                idx = q1_head
-                q1_head += 1
-                return leaf_freqs[idx], idx
-            else:
-                f, idx = q2[q2_head]
-                q2_head += 1
-                return f, idx
-
-        for _ in range(n - 1):
-            f1, i1 = _pick_min()
-            f2, i2 = _pick_min()
-            parent[i1] = node_count
-            parent[i2] = node_count
-            q2.append((f1 + f2, node_count))
-            node_count += 1
-
-        depth = [0] * node_count
-        for nd in range(node_count - 2, -1, -1):
-            depth[nd] = depth[parent[nd]] + 1
-
-        for i, sym in enumerate(symbols):
-            lengths[sym] = min(depth[i], LZMS_MAX_CODEWORD_LENGTH)
-
-        return lengths
-
     def decode(self) -> int:
+        sym = self._read_symbol()
+        self._freqs[sym] += 1
+        self._syms_until_rebuild -= 1
         if self._syms_until_rebuild == 0:
             self._build()
-
-        self._syms_until_rebuild -= 1
-
-        if self._decode_table is None:
-            sym = 0
-        else:
-            sym = self._read_symbol()
-
-        self._freqs[sym] += 1
-
-        if self._syms_until_rebuild == 0:
             for i in range(self._num_syms):
                 self._freqs[i] = (self._freqs[i] >> 1) + 1
-
         return sym
 
     def _read_symbol(self) -> int:
         bs = self._bitstream
         tb = self._table_bits
-        table = self._decode_table
-        assert table
+        if (table := self._decode_table) is None:
+            raise RuntimeError(F'LZMS: cannot decode a symbol from an alphabet of size {self._num_syms}')
 
         bs.ensure(LZMS_MAX_CODEWORD_LENGTH)
         idx = bs.peek(tb)
@@ -642,13 +625,13 @@ def lzms_x86_filter(data: bytearray, size: int):
         if i + 4 > size:
             break
 
-        target16 = pos + int.from_bytes(data[i:i + 2], 'little')
-        target16 &= 0xFFFF
-
         if pos - last_x86_pos <= max_trans_off:
             n = int.from_bytes(data[i:i + 4], 'little')
             n = (n - pos) & 0xFFFFFFFF
             data[i:i + 4] = n.to_bytes(4, 'little')
+
+        target16 = pos + int.from_bytes(data[i:i + 2], 'little')
+        target16 &= 0xFFFF
 
         check_pos = pos + opcode_nbytes + 3
 
