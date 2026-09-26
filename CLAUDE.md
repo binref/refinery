@@ -104,29 +104,38 @@ The following rules contradict common Python conventions. Check them explicitly:
 
 # Planning
 
-Plan in detail only the phase about to be built; later phases get one line each and their own plan when they start.
+Plan in detail only the phase about to be built; 
+later phases get one line each and their own plan when they start.
 
-- **Census before design.** For every question the plan touches,
-  find the mechanism that already answers it and every guard on the code paths the plan alters.
-  Most designs are placement problems: A new mechanism needs evidence that no existing one already owns the question.
-- **Falsify your own claims first.** Label every load-bearing claim measured (probe and output) or argued (file:line).
-  If a ten-line probe could break a claim, run it before any critic does. State confidence the same way, per phase.
+**Census before design.** For every question the plan touches,
+find the mechanism that already answers it and every guard on the code paths the plan alters.
+Most designs are placement problems:
+A new mechanism needs evidence that no existing one already owns the question.
 
-Whenever you make or substantially change a plan, run a general purpose adversarial critic on it, 
-plus any of the following, selected from a prompt:
- **architectural** ("Architecture is P0"),
- **research** (state of the art algorithmic solution), or
- **safety** (prevent dangerous behavior or incorrect outputs).
+**Falsify claims.** For each claim that can be falsified by a short script, run that script.
 
-- **Reviewer independence.** Do **not** give the agents specific instructions for what to investigate,
-  only specify their expertise and focus area.
-  Ask them to back each finding with an input, probe, or file:line that breaks the plan.
-- **Answer findings with probes, not more design.** A fix drafted from a finding gets the same census and probes.
-  A substantial finding means the pre-work was skipped: re-derive; rounds run only when I ask for one.
+When you are about to present your plan, first ask yourself:
+- Are you confident in this plan?
+- Have you done all due diligence? 
+- Did you challenge all claims that can be falsified?
 
-After a plan is approved by me, pause to compact before implementation.
+If the answer to any of these is negative, you are **not** done.
 
-- When I do not approve a plan and ask a question, do not show it again. Answer what I asked and wait.
+Otherwise ask the user whether they want to run a panel of adversarial critics to challenge your plan. This includes any of the following; present the user with a prompt to select:
+- **general purpose** (a separate engineer does a peer review)
+- **architectural** (maintainability, scalability, separation of concerns, avoiding tech debt)
+- **research** (state of the art algorithmic solutions)
+- **performance** (most efficient both in terms of approach and implementation)
+- **safety** (prevent dangerous behavior or incorrect outputs)
+
+Do **not** give the agents specific instructions for what to investigate,
+only specify their expertise and focus area.
+Ask them to back each finding with an input, probe, or file:line that breaks the plan.
+
+After a plan is finalized, ask for approval:
+- When approved, pause to compact before implementation.
+- When I do not approve a plan and ask a question, do not show it again.
+  Answer what I asked and wait.
 - If a decision cannot be explained in plain words with a concrete example, do not ask me.
   Decide it under "Architecture is P0" and tell me what you decided and why.
 
