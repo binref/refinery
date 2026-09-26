@@ -190,6 +190,7 @@ UNITS = {
     'xtsql'                                      : 'refinery.units.formats.archive.xtsql',
     'xttar'                                      : 'refinery.units.formats.archive.xttar',
     'xtvhd'                                      : 'refinery.units.formats.archive.xtvhd',
+    'xtwim'                                      : 'refinery.units.formats.archive.xtwim',
     'xtzip'                                      : 'refinery.units.formats.archive.xtzip',
     'xtzpaq'                                     : 'refinery.units.formats.archive.xtzpaq',
     'asn1'                                       : 'refinery.units.formats.asn1',

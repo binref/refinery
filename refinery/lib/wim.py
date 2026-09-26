@@ -90,7 +90,6 @@ class WimPartMissing(LookupError):
         return F'The data is stored in part {self.part} of the split WIM.'
 
 
-_WIM_MAGIC = B'MSWIM\0\0\0'
 _WIM_HEADER_SIZE = 208
 _WIM_DEFAULT_CHUNK_SIZE = 0x8000
 _SOLID_RESOURCE_MAGIC = 0x100000000
@@ -136,8 +135,10 @@ class WimResourceHeader(Struct[memoryview]):
 
 
 class WimHeader(Struct[memoryview]):
+    MAGIC = B'MSWIM\0\0\0'
+
     def __init__(self, reader: StructReader[memoryview]):
-        if (magic := bytes(reader.read_exactly(8))) != _WIM_MAGIC:
+        if (magic := bytes(reader.read_exactly(8))) != self.MAGIC:
             raise ValueError(F'Invalid WIM signature: {magic.hex()}')
         if (header_size := reader.u32()) != _WIM_HEADER_SIZE:
             raise ValueError(F'Unsupported WIM header size {header_size}.')
