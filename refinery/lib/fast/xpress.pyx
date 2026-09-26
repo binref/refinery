@@ -435,8 +435,6 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                                 | (<int>src[pos + 3] << 24)
                             )
                             pos += 4
-                    bit_buf = 0
-                    bit_cnt = 0
                 match_length += XPRESS_MIN_MATCH_LEN
 
                 if <uint32_t>offset > out_len:
