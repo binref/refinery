@@ -56,6 +56,20 @@ def date_from_timestamp(ts: int | float):
     return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
 
 
+def filetime(value: int) -> datetime | None:
+    """
+    Convert a Windows `FILETIME` value, which counts 100-nanosecond intervals since January 1st of
+    1601 in UTC, to a naive `datetime` object in UTC. The value zero marks an unset time, and it
+    converts to `None` like every value that no `datetime` object can represent.
+    """
+    if value <= 0:
+        return None
+    try:
+        return datetime(1601, 1, 1) + timedelta(microseconds=value // 10)
+    except OverflowError:
+        return None
+
+
 def dostime(stamp: int) -> datetime:
     """
     Parses a given DOS timestamp into a datetime object.

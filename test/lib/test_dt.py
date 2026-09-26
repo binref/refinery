@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from .. import TestBase
 
-from refinery.lib.dt import pdfdate
+from refinery.lib.dt import filetime, pdfdate
 
 
 class TestPdfDate(TestBase):
@@ -42,3 +42,24 @@ class TestPdfDate(TestBase):
 
     def test_rejects_invalid_month(self):
         self.assertIsNone(pdfdate('D:20191320050347'))
+
+
+class TestFileTime(TestBase):
+
+    def test_unix_epoch(self):
+        self.assertEqual(filetime(116444736000000000), datetime(1970, 1, 1))
+
+    def test_digits_below_one_microsecond_are_dropped(self):
+        self.assertEqual(filetime(133702837621234567), datetime(2024, 9, 8, 15, 42, 42, 123456))
+
+    def test_zero_is_unset(self):
+        self.assertIsNone(filetime(0))
+
+    def test_last_time_in_year_9999(self):
+        self.assertEqual(filetime(2650467743999999999), datetime(9999, 12, 31, 23, 59, 59, 999999))
+
+    def test_beyond_year_9999(self):
+        self.assertIsNone(filetime(2650467744000000000))
+
+    def test_largest_value(self):
+        self.assertIsNone(filetime(0xFFFFFFFFFFFFFFFF))
