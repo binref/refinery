@@ -20,18 +20,15 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files and NTFS alternate data streams from Windows Imaging Format (WIM) files.
 
-    WIM is the file-based disk image format of Windows setup media such as `install.wim` and
-    `boot.wim`, which is written by DISM, ImageX, and wimlib. ESD files use the same format with
-    solid LZMS compression. Uncompressed images and images compressed with XPRESS, LZX, or LZMS
-    are supported, both with and without solid resources. An alternate data stream (ADS) of a file
-    or directory is extracted as a separate item, whose path is the path of the file followed by a
-    colon and the name of the stream: The stream `secret` of `a.txt` has the path `a.txt:secret`.
+    WIM is the file-based disk image format of Windows setup media written by DISM, ImageX, and
+    wimlib. ESD files use the same format with solid LZMS compression. An alternate data stream
+    (ADS) of a file or directory is extracted as a separate item, whose path is the path of the
+    file followed by a colon and the name of the stream: The stream `secret` of `a.txt` has the
+    path `a.txt:secret`.
+
     When a WIM file contains more than one image, each path begins with the index of its image.
     Reparse data, such as the target of a symbolic link or a junction, is not extracted, and links
     without data yield no items. Encrypted files are extracted in the raw EFS format.
-    The data of every item is checked against the SHA-1 hash that the WIM file stores for it; the
-    data of an item that fails this check is only extracted in lenient mode. Only the first part
-    of a split WIM lists files, and the data of files that are stored in other parts is missing.
     """
     def unpack(self, data: Chunk):
         wim = WimArchive(data)
