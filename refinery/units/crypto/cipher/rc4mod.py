@@ -9,21 +9,31 @@ from refinery.units.crypto.cipher import Arg, StreamCipherUnit
 
 class rc4mod(StreamCipherUnit):
     """
-    Implements a modified version of the RC4 stream cipher where the size of the RC4 SBox can be altered.
+    Implements a modified version of the RC4 stream cipher where several aspects can be altered.
     """
 
     def __init__(
         self, key, stateful=False, discard=0, *,
         size: Param[int, Arg.Number('-t', bound=(1, None), help='Table size, {default} by default.')] = 0x100,
+        step: Param[int, Arg.Number('-i', bound=(1, None), help=(
+            'Increment the counter by N during the cipher loop. The default is {default}.'))] = 1,
         body: Param[str, Arg.String('-K', help=(
             'Optional expression involving the table T and the two indices A and B. This expression is used '
             'to compute the actual key stream byte during each RC4 round. The default is {default}.'
         ))] = 'T[T[A]+T[B]]'
     ):
-        super().__init__(key=key, stateful=stateful, discard=discard, body=body, size=size)
+        super().__init__(
+            key=key,
+            stateful=stateful,
+            discard=discard,
+            body=body,
+            size=size,
+            step=step,
+        )
 
     def keystream(self):
         size = self.args.size
+        step = self.args.step
         body = PythonExpression(self.args.body, *'TAB', modulus=size)
         tablerange = range(max(size, 0x100))
         b, table = 0, bytearray(k & 0xFF for k in tablerange)
@@ -35,7 +45,7 @@ class rc4mod(StreamCipherUnit):
         self.log_debug(lambda: F'SBOX = {table.hex(" ").upper()}', clip=True)
         b, a = 0, 0
         while True:
-            a = (a + 1) % size
+            a = (a + step) % size
             t = table[a]
             b = (b + t) % size
             table[a] = table[b]
