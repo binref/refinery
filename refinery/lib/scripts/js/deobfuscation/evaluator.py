@@ -17,14 +17,12 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     SemanticModel,
     call_supplies_an_arguments_object,
-    is_invocation_target,
     pattern_identifiers,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
-    access_key,
     binding_constant,
     binding_has_references,
     extract_literal_value,
@@ -51,8 +49,6 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsCatchClause,
-    JsForInStatement,
-    JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -63,44 +59,12 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
-    JsUnaryExpression,
-    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
-    JsVarKind,
     strip_parens,
 )
 
 _FuncNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
-
-_MUTATING_ARRAY_METHODS = frozenset({
-    'push', 'pop', 'shift', 'unshift', 'splice', 'reverse', 'sort', 'fill', 'copyWithin',
-})
-
-
-def _is_inplace_mutation(node: JsIdentifier) -> bool:
-    """
-    Return whether the reference *node* mutates the value bound to its name in place: a member-target
-    write (`x[i] = v`, `x.p = v`, `x[i]++`, `delete x.p`) or a call to a known mutating array method
-    (`x.push(...)`, `x.reverse()`, ...). Such mutations are invisible to closure / const-argument
-    capture, which snapshots only the declared initializer value.
-    """
-    parent = node.parent
-    if not isinstance(parent, JsMemberExpression) or parent.object is not node:
-        return False
-    grand = parent.parent
-    if isinstance(grand, JsAssignmentExpression) and grand.left is parent:
-        return True
-    if isinstance(grand, JsUpdateExpression) and grand.argument is parent:
-        return True
-    if isinstance(grand, JsUnaryExpression) and grand.operator == 'delete' and grand.operand is parent:
-        return True
-    if isinstance(grand, (JsForOfStatement, JsForInStatement)) and grand.left is parent:
-        return True
-    if is_invocation_target(parent):
-        return access_key(parent) in _MUTATING_ARRAY_METHODS
-    return False
-
 
 def _is_value_closed(
     func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
@@ -279,7 +243,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self._effects: EffectModel | None = None
         self._functions: list[_FuncNode] = []
         self._pure_nodes: set[int] = set()
-        self._closure_env: dict[int, dict[str, Value]] = {}
         self._binding_constants: dict[Binding, tuple[bool, Value]] = {}
         self._call_counts: dict[int, int] = {}
         self._resolved_counts: dict[int, int] = {}
@@ -309,7 +272,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self._effects = None
         self._functions = []
         self._pure_nodes.clear()
-        self._closure_env.clear()
         self._binding_constants.clear()
         self._call_counts.clear()
         self._resolved_counts.clear()
@@ -408,155 +370,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return False, None
         return True, value
 
-    def _value_safe_to_capture(self, name: str, value: Value, owner: Node) -> bool:
-        """
-        Return whether a `const`-bound *value* can be safely inlined for *name*. A `const` binding is
-        immutable, so primitive values are always safe. Arrays and objects, however, are mutated in
-        place even when const-bound, and capture snapshots only the declared initializer — so they
-        are unsafe if *name* is mutated in place anywhere except inside *owner*. The interpreter
-        models *owner*'s own mutations (per-call deep copy plus cross-call writeback); mutations by
-        any other code (a sibling statement, or a different capturing function) are not.
-        """
-        if not isinstance(value, (list, dict)):
-            return True
-        script = self._script
-        if script is None:
-            return False
-        for node in script.walk():
-            if not isinstance(node, JsIdentifier) or node.name != name:
-                continue
-            if not is_reference(node) or not _is_inplace_mutation(node):
-                continue
-            if node.is_descendant_of(owner):
-                continue
-            return False
-        return True
-
-    def _collect_closure_constants(self, func: _FuncNode) -> dict[str, Value]:
-        child: Node | None
-        own_declarator: JsVariableDeclarator | None = None
-        scope_node: Node | None
-        if isinstance(func, (JsFunctionExpression, JsArrowFunctionExpression)):
-            declarator = func.parent
-            if isinstance(declarator, JsVariableDeclarator):
-                declaration = declarator.parent
-                if isinstance(declaration, JsVariableDeclaration):
-                    scope_node = declaration.parent
-                    child = declaration
-                    own_declarator = declarator
-                else:
-                    scope_node = func.parent
-                    child = func
-            else:
-                scope_node = func.parent
-                child = func
-        else:
-            scope_node = func.parent
-            child = func
-        result: dict[str, Value] = {}
-        shadowed: set[str] = set()
-        while scope_node is not None:
-            if isinstance(scope_node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-                for p in scope_node.params:
-                    if isinstance(p, JsIdentifier):
-                        shadowed.add(p.name)
-            if isinstance(scope_node, JsCatchClause) and isinstance(scope_node.param, JsIdentifier):
-                shadowed.add(scope_node.param.name)
-            if isinstance(scope_node, (JsScript, JsBlockStatement)):
-                self._collect_hoisted_vars(scope_node, shadowed)
-                found_child = False
-                for stmt in scope_node.body:
-                    if stmt is child:
-                        found_child = True
-                        if own_declarator is not None and isinstance(stmt, JsVariableDeclaration):
-                            if stmt.kind == JsVarKind.CONST:
-                                for decl in stmt.declarations:
-                                    if decl is own_declarator:
-                                        break
-                                    if (
-                                        not isinstance(decl, JsVariableDeclarator)
-                                        or not isinstance(decl.id, JsIdentifier)
-                                    ):
-                                        continue
-                                    name = decl.id.name
-                                    if name in result or name in shadowed:
-                                        continue
-                                    init = decl.init
-                                    if init is None:
-                                        shadowed.add(name)
-                                        continue
-                                    if isinstance(init, (JsFunctionExpression, JsArrowFunctionExpression)):
-                                        result[name] = init
-                                    else:
-                                        ok, val = extract_literal_value(init)
-                                        if ok and self._value_safe_to_capture(name, val, func):
-                                            result[name] = val
-                                        else:
-                                            shadowed.add(name)
-                            own_declarator = None
-                        continue
-                    if not found_child:
-                        if isinstance(stmt, JsVariableDeclaration):
-                            if stmt.kind == JsVarKind.CONST:
-                                for decl in stmt.declarations:
-                                    if (
-                                        not isinstance(decl, JsVariableDeclarator)
-                                        or not isinstance(decl.id, JsIdentifier)
-                                    ):
-                                        continue
-                                    name = decl.id.name
-                                    if name in result or name in shadowed:
-                                        continue
-                                    init = decl.init
-                                    if init is None:
-                                        shadowed.add(name)
-                                        continue
-                                    if isinstance(init, (JsFunctionExpression, JsArrowFunctionExpression)):
-                                        result[name] = init
-                                    else:
-                                        ok, val = extract_literal_value(init)
-                                        if ok and self._value_safe_to_capture(name, val, func):
-                                            result[name] = val
-                                        else:
-                                            shadowed.add(name)
-                            elif stmt.kind == JsVarKind.LET:
-                                for decl in stmt.declarations:
-                                    if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                                        shadowed.add(decl.id.name)
-                        elif isinstance(stmt, JsFunctionDeclaration):
-                            if isinstance(stmt.id, JsIdentifier):
-                                shadowed.add(stmt.id.name)
-                    else:
-                        if isinstance(stmt, JsVariableDeclaration) and stmt.kind != JsVarKind.VAR:
-                            for decl in stmt.declarations:
-                                if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                                    shadowed.add(decl.id.name)
-            child = scope_node
-            scope_node = scope_node.parent
-        return result
-
-    @staticmethod
-    def _collect_hoisted_vars(scope_node: Node, shadowed: set[str]) -> None:
-        """
-        Recursively scan a block for `var` declarations and add their names to *shadowed*.
-        In JavaScript, `var` is hoisted to the enclosing function scope regardless of textual
-        position or block nesting, so a `var x` anywhere (including inside if/for/while/try)
-        shadows an outer `const x`.
-        """
-        for node in walk_scope(scope_node):
-            if isinstance(node, JsVariableDeclaration) and node.kind == JsVarKind.VAR:
-                for decl in node.declarations:
-                    if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                        shadowed.add(decl.id.name)
-
     def _analyze_purity(self, script: JsScript) -> None:
         self._effects = model_cache(self, script).effects
         self._functions = self._collect_named_functions(script)
-        closure_cache: dict[int, dict[str, Value]] = {
-            id(func): self._collect_closure_constants(func)
-            for func in self._functions
-            if not isinstance(func, JsFunctionDeclaration)
-        }
         changed = True
         while changed:
             changed = False
@@ -574,17 +390,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     not isinstance(func, JsFunctionDeclaration)
                     and func.body is not None
                     and not references_receiver_this(func.body)
+                    and not _unresolved_names(func, known, self._effects.model)
                 ):
-                    unresolved = _unresolved_names(func, known, self._effects.model)
-                    if not unresolved:
-                        self._pure_nodes.add(id(func))
-                        changed = True
-                        continue
-                    closure = closure_cache.get(id(func), {})
-                    if unresolved <= closure.keys():
-                        self._pure_nodes.add(id(func))
-                        self._closure_env[id(func)] = {n: closure[n] for n in unresolved}
-                        changed = True
+                    self._pure_nodes.add(id(func))
+                    changed = True
 
     def _evaluate_calls(self, script: JsScript) -> None:
         for node in list(script.walk_in_order()):
@@ -705,24 +514,15 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if self._effects is None or not self._effects.summary_of(func).is_literal_replaceable:
             return
         known = self._known_names(self._effects.model.scope_of(node), func)
-        if _is_value_closed(func, known, self._effects.model):
-            args = self._extract_constant_args(node.arguments, node)
-            if args is None:
+        if not _is_value_closed(func, known, self._effects.model):
+            if func.body is None or references_receiver_this(func.body):
                 return
-            self._evaluate_and_replace(node, func, args, gate_unresolved=False)
+            if _unresolved_names(func, known, self._effects.model):
+                return
+        args = self._extract_constant_args(node.arguments, node)
+        if args is None:
             return
-        if (
-            func.body is not None
-            and not references_receiver_this(func.body)
-        ):
-            unresolved = _unresolved_names(func, known, self._effects.model)
-            closure = self._collect_closure_constants(func)
-            if unresolved <= closure.keys():
-                args = self._extract_constant_args(node.arguments, node)
-                if args is None:
-                    return
-                closure_env = {n: closure[n] for n in unresolved}
-                self._evaluate_and_replace(node, func, args, gate_unresolved=False, closure_override=closure_env)
+        self._evaluate_and_replace(node, func, args, gate_unresolved=False)
 
     def _evaluate_and_replace(
         self,
@@ -730,7 +530,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
         args: list,
         gate_unresolved: bool,
-        closure_override: dict | None = None,
     ) -> bool:
         """
         Run the interpreter on *func* with *args* and, on success, replace *node* with the result.
@@ -739,16 +538,15 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         The interpreter is anchored at *node* and handed the tampering oracle, so the trust
         questions its arms ask are answered for the moment this call runs rather than the whole
         program — the decoder a file carries before the call it blocks still refuses it, the one
-        guaranteed to run after does not.
+        guaranteed to run after does not. A name the body reads that is declared outside *func* is
+        known to the interpreter only as the constant `_constant_at` finds it holding when this call
+        runs.
         """
-        closure = closure_override if closure_override is not None else self._closure_env.get(id(func))
         cache = self._cache_for(node)
         interpreter = JsInterpreter(
             effects=self._effects,
             anchor=node,
             tampering=cache.tampering if cache is not None else None,
-            closure=closure,
-            closure_env=self._closure_env,
             established=lambda callee: self._established_before(callee, node),
             constant=lambda binding: self._constant_at(binding, node),
         )
@@ -776,10 +574,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if not replace_with_value(node, result):
             return False
         self.mark_changed()
-        if closure is not None and closure_override is None:
-            for name in closure:
-                if name in interpreter._env:
-                    closure[name] = interpreter._env[name]
         return True
 
     def _function_is_removable(self, model: SemanticModel, func: _FuncNode) -> bool:
@@ -860,7 +654,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     self.mark_changed()
             if len(removed) == before:
                 break
-        self._remove_orphaned_closure_constants(script, removed)
 
     @staticmethod
     def _function_name(func: _FuncNode) -> str | None:
@@ -889,32 +682,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 remove_declarator(declarator)
             else:
                 _remove_from_parent(func)
-
-    def _remove_orphaned_closure_constants(
-        self, script: JsScript, removed: set[int],
-    ) -> None:
-        closure_names: set[str] = set()
-        for func_id in removed:
-            env = self._closure_env.get(func_id)
-            if env:
-                closure_names.update(env.keys())
-        if not closure_names:
-            return
-        model = model_cache(self, script).model
-        for node in list(script.walk()):
-            if not isinstance(node, JsVariableDeclaration) or node.kind != JsVarKind.CONST:
-                continue
-            for decl in list(node.declarations):
-                if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
-                    continue
-                if decl.id.name not in closure_names:
-                    continue
-                binding = model.binding_of(decl.id)
-                if binding is not None and binding.exported:
-                    continue
-                if not binding_has_references(model, binding, exclude=decl):
-                    remove_declarator(decl)
-                    self.mark_changed()
 
     def _extract_constant_args(
         self,

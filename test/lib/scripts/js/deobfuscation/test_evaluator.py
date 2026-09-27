@@ -1080,23 +1080,19 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
-    def test_shared_mutable_closure_array_isolated(self):
+    def test_a_call_reversing_a_captured_array_stays(self):
         source = inspect.cleandoc(
             """
             const key = [1, 2, 3];
-            const dec = (s) => { key.reverse(); return s + key[0]; };
+            const dec = s => {
+              key.reverse();
+              return s + key[0];
+            };
             var a = dec('A');
             var b = dec('B');
             """
         )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            var a = 'A3';
-            var b = 'B1';
-            """
-        )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_write_only_temp_does_not_block_evaluation(self):
         source = inspect.cleandoc(
@@ -2215,7 +2211,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         with self.assertRaises(Exception):
             JsInterpreter().execute(func, [])
 
-    def test_closure_writeback_only_on_successful_replacement(self):
+    def test_a_call_shifting_a_captured_array_stays(self):
         source = inspect.cleandoc(
             """
             const data = ['first', 'second', 'third'];
@@ -2224,13 +2220,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var b = f();
             """
         )
-        result = self._evaluate(source)
-        self.assertEqual(result, inspect.cleandoc(
-            """
-            var a = 'first';
-            var b = 'second';
-            """
-        ))
+        self.assertEqual(source, self._evaluate(source))
 
     def test_multi_declarator_const_sibling_captured(self):
         source = inspect.cleandoc(

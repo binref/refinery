@@ -13,7 +13,7 @@ import urllib.parse
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Callable, Mapping
+    from typing import Callable
 
     from refinery.lib.scripts.js.analysis.effects import EffectModel
     from refinery.lib.scripts.js.analysis.tampering import TamperingModel
@@ -1261,8 +1261,6 @@ class JsInterpreter:
         model: SemanticModel | None = None,
         anchor: Node | None = None,
         tampering: TamperingModel | None = None,
-        closure: Mapping[str, Value] | None = None,
-        closure_env: Mapping[int, Mapping[str, Value]] | None = None,
         established: Callable[[JsFunctionNode], bool] | None = None,
         constant: Callable[[Binding], tuple[bool, Value]] | None = None,
         callers: tuple[JsFunctionNode, ...] = (),
@@ -1282,8 +1280,6 @@ class JsInterpreter:
         question about bindings alone, so a caller that has only the semantic model — reflection builds
         one and would pay for an effect model it never consults — can answer it by passing *model*.
         """
-        self._closure: Mapping[str, Value] = closure or {}
-        self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
         self._established = established
         self._constant = constant
         self._callers = callers
@@ -1340,9 +1336,6 @@ class JsInterpreter:
         arguments_object = self._arguments_object(func, arguments)
         if arguments_object is not None:
             self._env['arguments'] = arguments_object
-        for name, value in self._closure.items():
-            if name not in self._env:
-                self._env[name] = _deep_copy_value(value)
         self._iterations = 0
         if isinstance(body, JsBlockStatement):
             try:
@@ -1843,9 +1836,10 @@ class JsInterpreter:
     def _resolves_to_a_binding(self, node: JsIdentifier) -> bool:
         """
         Whether *node* resolves to any binding at all. A name the model binds but `_env` does not hold
-        has a value this interpreter does not know — it may belong to an enclosing scope that is not in
-        the closure, or to a `let` whose declarator has not run, which is a read in its temporal dead
-        zone that throws — so the well-known-global `typeof` fallback must not answer for it.
+        has a value this interpreter does not know — it may belong to an enclosing scope and hold no
+        constant the caller knows, or to a `let` whose declarator has not run, which is a read in its
+        temporal dead zone that throws — so the well-known-global `typeof` fallback must not answer
+        for it.
         """
         model = self._model
         return model is not None and model.resolve(node) is not None
@@ -2406,8 +2400,8 @@ class JsInterpreter:
         """
         Whether *func* assigns to a name that the calling environment binds but that *func* does not
         declare locally — a write through a closure into a captured outer variable. A nested call runs
-        in an isolated child interpreter with only a snapshot of captured values and no write-back, so
-        the mutation would be silently lost. Refusing to evaluate leaves the call in place for a real
+        in an isolated child interpreter with an environment of its own and no write-back, so the
+        mutation would be silently lost. Refusing to evaluate leaves the call in place for a real
         engine to run and keeps the fold sound rather than producing a wrong constant.
         """
         body = func.body
@@ -2444,7 +2438,6 @@ class JsInterpreter:
             raise InterpreterError
         if self._mutates_captured_binding(func):
             raise InterpreterError
-        callee_closure = self._closure_env.get(id(func)) or {}
         child = JsInterpreter(
             max_iterations=max(1, self.max_iterations - self._iterations),
             max_string_len=self.max_string_len,
@@ -2454,8 +2447,6 @@ class JsInterpreter:
             model=self._model,
             anchor=self._anchor,
             tampering=self._tampering,
-            closure=callee_closure,
-            closure_env=self._closure_env,
             established=self._established,
             constant=self._constant,
             callers=self._frames,

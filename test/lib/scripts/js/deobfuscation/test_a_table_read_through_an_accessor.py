@@ -2,7 +2,9 @@
 Programs that read a table through an accessor, a function like `function A(i) { return T[i]; }`
 over an array `var T = [...]`, and programs whose functions read other names declared outside
 them. A call folds to the value it reads where that name holds one value nothing changes and that
-value is in place before the call runs. Every other call stays, or becomes the read it makes.
+value is in place before the call runs. Every other call stays, or becomes the read it makes. A
+function that changes an array it reads, or hands the array out, keeps every call, since what a
+call answers then depends on every call made before it.
 """
 from __future__ import annotations
 
@@ -177,6 +179,37 @@ A_CALL_WHOSE_TABLE_MAY_CHANGE = {
         """): '2 2\n',
 }
 
+#: Programs calling a function that changes or hands out an array it reads, mapped to what Node
+#: prints for them.
+A_CALL_CHANGING_THE_ARRAY_IT_READS = {
+    a_program("""
+        const data = ['first', 'second', 'third'];
+        const f = () => data.shift();
+        var a = f();
+        function g() { return f(); }
+        var b = f();
+        console.log(a, b, g());
+        """): 'first second third\n',
+    a_program("""
+        const data = ['first', 'second', 'third'];
+        const f = () => data.shift();
+        for (var i = 0; i < 2; i++) console.log(f());
+        console.log(f());
+        """): 'first\nsecond\nthird\n',
+    a_program("""
+        const data = ['first', 'second', 'third'];
+        const f = () => data.shift();
+        if (Math.random() > 2) console.log(f());
+        console.log(f());
+        """): 'first\n',
+    a_program("""
+        const T = [1, 2];
+        const g = () => T;
+        g().push(3);
+        console.log(T.length);
+        """): '3\n',
+}
+
 #: A script whose table a host reads by name, and so may have rewritten before the call runs.
 A_TABLE_A_HOST_READS = a_program("""
     function A(i) { return T[i]; }
@@ -235,6 +268,13 @@ class TestATableReadThroughAnAccessorStillPrintsTheSame(TestBase):
             each_program_still_prints(rows),
         )
 
+    def test_a_call_changing_the_array_it_reads(self):
+        rows = A_CALL_CHANGING_THE_ARRAY_IT_READS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
     def test_a_recursive_call_reading_a_local_before_its_declaration(self):
         rows = A_RECURSIVE_CALL_READING_A_LOCAL_BEFORE_ITS_DECLARATION
         self.assertEqual(
@@ -261,6 +301,13 @@ class TestATableReadThroughAnAccessorIsFolded(TestBase):
 
     def test_a_call_whose_table_may_change_is_left_as_it_is(self):
         rows = A_CALL_WHOSE_TABLE_MAY_CHANGE
+        self.assertEqual(
+            {source: deobfuscate_source(source, module=True) for source in rows},
+            {source: printed(source) for source in rows},
+        )
+
+    def test_a_call_changing_the_array_it_reads_is_left_as_it_is(self):
+        rows = A_CALL_CHANGING_THE_ARRAY_IT_READS
         self.assertEqual(
             {source: deobfuscate_source(source, module=True) for source in rows},
             {source: printed(source) for source in rows},
