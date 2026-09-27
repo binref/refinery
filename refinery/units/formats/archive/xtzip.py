@@ -8,6 +8,7 @@ from refinery.lib.zip import (
     InvalidChecksum,
     InvalidPassword,
     PasswordRequired,
+    UnsupportedCompressionMethod,
     Zip,
     ZipDirEntry,
     ZipEndOfCentralDirectory,
@@ -78,6 +79,9 @@ class xtzip(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         raise
                     msg = 'invalid password; use -L to extract raw encrypted data'
                     raise RefineryPartialResult(msg, record.data)
+                except UnsupportedCompressionMethod as error:
+                    msg = F'{error} Use -L to extract the compressed data.'
+                    raise RefineryPartialResult(msg, error.data) from error
             if entry.is_dir():
                 continue
             yield self._pack(entry.name, entry.date, xt)

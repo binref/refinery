@@ -4,7 +4,8 @@ import codecs
 import base64
 import pytest
 
-from refinery.lib.zip import Zip, InvalidPassword
+from refinery.lib.zip import Zip, InvalidPassword, UnsupportedCompressionMethod, ZipCompressionMethod
+from refinery.lib.zip.legacy import explode, unreduce, unshrink
 from test.units.compression import KADATH1, KADATH2
 
 
@@ -181,6 +182,46 @@ class TestZIP(TestBase):
             self.assertFalse(record.is_password_ok('pw'))
             with self.assertRaises(InvalidPassword):
                 record.unpack('pw')
+
+    def test_truncated_shrink_stream(self):
+        data = self.download_sample('4e5967b2314677e10990ea64e4ef2b2a0050d884af4ca729db38a3497eac419c')
+        record = Zip(data).read('STAR14.EXE')
+        with self.assertRaises(EOFError):
+            unshrink(record.data[:len(record.data) // 2], record.usize)
+
+    def test_truncated_reduce_stream(self):
+        data = self.download_sample('4e5967b2314677e10990ea64e4ef2b2a0050d884af4ca729db38a3497eac419c')
+        record = Zip(data).read('STAR14.DOC')
+        with self.assertRaises(EOFError):
+            unreduce(record.data[:len(record.data) // 2], record.usize, 4)
+
+    def test_truncated_implode_stream(self):
+        data = self.download_sample('fae6599231c61f16f063d7ea93d6861decf2335f00ad1dd61b97295bb1c3412b')
+        record = Zip(data).read('PAS3.DOC')
+        with self.assertRaises(EOFError):
+            explode(record.data[:len(record.data) // 2], record.usize, True, True)
+
+    def test_implode_rejects_incomplete_tree(self):
+        data = self.download_sample('fae6599231c61f16f063d7ea93d6861decf2335f00ad1dd61b97295bb1c3412b')
+        record = Zip(data).read('PAS3.DOC')
+        data = bytearray(record.data)
+        # the low nibble of the first record in the literal tree is its code length minus one
+        data[1] ^= 1
+        with self.assertRaises(ValueError):
+            explode(data, record.usize, True, True)
+
+    def test_unsupported_method_carries_method_and_decrypted_data(self):
+        data = self.download_sample('2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb')
+        data = bytearray(data | self.ldu('lzma') | self.ldu('carve_zip') | bytes)
+        for method in (ZipCompressionMethod.TOKENIZE, 0x4242):
+            for signature, offset in ((B'PK\x03\x04', 8), (B'PK\x01\x02', 10)):
+                position = data.find(signature) + offset
+                data[position:position + 2] = method.to_bytes(2, 'little')
+            with self.assertRaises(UnsupportedCompressionMethod) as context:
+                Zip(data).read('flag.txt').unpack('infected')
+            self.assertEqual(context.exception.method, method)
+            # 256 empty follower sets take 6 zero bits each, followed by the 18 plain bytes
+            self.assertEqual(context.exception.data, bytes(192) + B'reduce_not_deflate')
 
     PKZIP = base64.b85decode(
         'P)h>@G5|vW2msHnb2;>}{jOFG008zY000;O004Ata4#+{P)k&0cyumMOH)QzE@f_CRZ|cEkLZdL3P+*F4WYga3Tm$Y7y$qP0{{bN'

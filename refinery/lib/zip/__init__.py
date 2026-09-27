@@ -7,11 +7,12 @@ from __future__ import annotations
 import bisect
 import codecs
 import enum
+import functools
 import re
 import zlib
 
 from datetime import datetime
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Callable, NamedTuple
 
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.dt import dostime
@@ -49,6 +50,18 @@ class InvalidChecksum(ValueError):
 
 class DataIntegrityError(ValueError):
     pass
+
+
+class UnsupportedCompressionMethod(NotImplementedError):
+    """
+    Raised for an entry whose compression method has no decompressor. The attribute `method` is the
+    method, or its numeric value if it is unknown, and `data` is the decrypted, compressed data.
+    """
+    def __init__(self, method: ZipCompressionMethod | int, data: buf):
+        self.method = method
+        self.data = data
+        name = method.name if isinstance(method, ZipCompressionMethod) else method
+        super().__init__(F'Compression method {name} is not implemented.')
 
 
 class ZipAnomalies(enum.IntFlag):
@@ -656,6 +669,17 @@ class ZipFileRecord(Struct):
     def is_password_ok(self, password: str | None = None):
         return self.encryption.checkpwd(password)
 
+    def crc_matches(self, data: buf) -> bool:
+        """
+        Return whether the CRC-32 of the given data matches the checksum from the local header or
+        from the central directory. This is also true when neither of them is set.
+        """
+        crc32loc = self.crc32
+        crc32dir = 0 if (dir := self.dir) is None else dir.crc32
+        if crc32loc == 0 and crc32dir == 0:
+            return True
+        return zlib.crc32(data) in (crc32loc, crc32dir)
+
     def unpack(self, password: str | None = None, check: bool = True):
         if not check or self.crc32_ignored:
             def _nocheck(x):
@@ -663,14 +687,10 @@ class ZipFileRecord(Struct):
             _checked = _nocheck
         else:
             def _checker(unpacked: buf):
-                crc32loc = self.crc32
+                if self.crc_matches(unpacked):
+                    return unpacked
                 crc32dir = 0 if (dir := self.dir) is None else dir.crc32
-                if crc32loc == 0 and crc32dir == 0:
-                    return unpacked
-                crc32 = zlib.crc32(unpacked)
-                if crc32 == crc32loc or crc32 == crc32dir:
-                    return unpacked
-                raise InvalidChecksum(self, unpacked, crc32dir or crc32loc, crc32)
+                raise InvalidChecksum(self, unpacked, crc32dir or self.crc32, zlib.crc32(unpacked))
             _checked = _checker
 
         if (d := self.data) is None:
@@ -685,53 +705,114 @@ class ZipFileRecord(Struct):
         else:
             compressed = d
 
-        if (m := self.method) == ZipCompressionMethod.STORE:
-            u = compressed
-        elif m == ZipCompressionMethod.DEFLATE:
-            u = zlib.decompress(compressed, -15)
-        elif m == ZipCompressionMethod.DEFLATE64:
-            from refinery.lib.seven.deflate import Deflate
-            u = bytearray()
-            deflate = Deflate(u, StructReader(memoryview(compressed)), df64=True)
-            deflate.decode()
-        elif m == ZipCompressionMethod.BZIP2:
-            import bz2
-            u = bz2.decompress(compressed)
-        elif m == ZipCompressionMethod.LZMA:
-            import lzma
-            cv = memoryview(compressed)
-            cr = StructReader(cv)
-            _ = cr.u8() # major version
-            _ = cr.u8() # minor version
-            n = cr.u16()
-            properties_data = cr.read_exactly(n)
-            compressed_data = cr.read()
-            decompressor = lzma.LZMADecompressor(
-                lzma.FORMAT_RAW, filters=[parse_lzma_properties(properties_data, 1)])
-            u = decompressor.decompress(compressed_data)
-        elif m == ZipCompressionMethod.PPMD:
-            from refinery.lib.shared.pyppmd import pyppmd
-            cv = memoryview(compressed)
-            cr = StructReaderBits(cv)
-            order = 1 + cr.read_nibble()
-            msize = 1 + cr.read_byte() << 20
-            rm = cr.read_nibble()
-            ppmd = pyppmd.PpmdDecompressor(order, msize, restore_method=rm)
-            u = ppmd.decompress(bytes(cr.read()))
-        elif m == ZipCompressionMethod.ZSTD:
-            from refinery.lib.shared.pyzstd import pyzstd
-            dctx = pyzstd.ZstdDecompressor()
-            u = dctx.decompress(compressed)
-        elif m == ZipCompressionMethod.XZ:
-            import lzma
-            u = lzma.decompress(compressed, format=lzma.FORMAT_XZ)
-        else:
-            if m is not None:
-                m = m.name
-            raise NotImplementedError(F'Compression method {m} is not implemented.')
+        if (m := self.method) is None:
+            raise UnsupportedCompressionMethod(self.ae.method_value if self.ae else self.method_value, compressed)
+        if (decompress := _DECOMPRESSORS.get(m)) is None:
+            raise UnsupportedCompressionMethod(m, compressed)
 
-        self._unpacked = u
+        self._unpacked = u = decompress(self, compressed)
         return _checked(u)
+
+
+def _store(record: ZipFileRecord, data: buf) -> buf:
+    return data
+
+
+def _deflate(record: ZipFileRecord, data: buf) -> buf:
+    return zlib.decompress(data, -15)
+
+
+def _deflate64(record: ZipFileRecord, data: buf) -> buf:
+    from refinery.lib.seven.deflate import Deflate
+    output = bytearray()
+    Deflate(output, StructReader(memoryview(data)), df64=True).decode()
+    return output
+
+
+def _bzip2(record: ZipFileRecord, data: buf) -> buf:
+    import bz2
+    return bz2.decompress(data)
+
+
+def _lzma(record: ZipFileRecord, data: buf) -> buf:
+    import lzma
+    reader = StructReader(memoryview(data))
+    _ = reader.u8() # major version
+    _ = reader.u8() # minor version
+    n = reader.u16()
+    properties_data = reader.read_exactly(n)
+    compressed_data = reader.read()
+    decompressor = lzma.LZMADecompressor(
+        lzma.FORMAT_RAW, filters=[parse_lzma_properties(properties_data, 1)])
+    return decompressor.decompress(compressed_data)
+
+
+def _ppmd(record: ZipFileRecord, data: buf) -> buf:
+    from refinery.lib.shared.pyppmd import pyppmd
+    reader = StructReaderBits(memoryview(data))
+    order = 1 + reader.read_nibble()
+    msize = 1 + reader.read_byte() << 20
+    rm = reader.read_nibble()
+    ppmd = pyppmd.PpmdDecompressor(order, msize, restore_method=rm)
+    return ppmd.decompress(bytes(reader.read()))
+
+
+def _zstd(record: ZipFileRecord, data: buf) -> buf:
+    from refinery.lib.shared.pyzstd import pyzstd
+    return pyzstd.ZstdDecompressor().decompress(data)
+
+
+def _xz(record: ZipFileRecord, data: buf) -> buf:
+    import lzma
+    return lzma.decompress(data, format=lzma.FORMAT_XZ)
+
+
+def _shrink(record: ZipFileRecord, data: buf) -> buf:
+    from refinery.lib.zip.legacy import unshrink
+    return unshrink(data, record.usize)
+
+
+def _reduce(record: ZipFileRecord, data: buf, factor: int) -> buf:
+    from refinery.lib.zip.legacy import unreduce
+    return unreduce(data, record.usize, factor)
+
+
+def _implode(record: ZipFileRecord, data: buf) -> buf:
+    from refinery.lib.zip.legacy import explode
+    large_window = bool(record.flags.CompressOption1)
+    literal_tree = bool(record.flags.CompressOption2)
+    decode = functools.partial(explode, data, record.usize, large_window, literal_tree)
+    if large_window == literal_tree:
+        return decode()
+    try:
+        output = decode()
+    except EOFError:
+        return decode(pkzip101=True)
+    if record.crc_matches(output):
+        return output
+    try:
+        pkzip101 = decode(pkzip101=True)
+    except EOFError:
+        return output
+    return pkzip101 if record.crc_matches(pkzip101) else output
+
+
+_DECOMPRESSORS: dict[ZipCompressionMethod, Callable[[ZipFileRecord, buf], buf]] = {
+    ZipCompressionMethod.STORE     : _store,
+    ZipCompressionMethod.SHRINK    : _shrink,
+    ZipCompressionMethod.REDUCED1  : functools.partial(_reduce, factor=1),
+    ZipCompressionMethod.REDUCED2  : functools.partial(_reduce, factor=2),
+    ZipCompressionMethod.REDUCED3  : functools.partial(_reduce, factor=3),
+    ZipCompressionMethod.REDUCED4  : functools.partial(_reduce, factor=4),
+    ZipCompressionMethod.IMPLODE   : _implode,
+    ZipCompressionMethod.DEFLATE   : _deflate,
+    ZipCompressionMethod.DEFLATE64 : _deflate64,
+    ZipCompressionMethod.BZIP2     : _bzip2,
+    ZipCompressionMethod.LZMA      : _lzma,
+    ZipCompressionMethod.PPMD      : _ppmd,
+    ZipCompressionMethod.ZSTD      : _zstd,
+    ZipCompressionMethod.XZ        : _xz,
+}
 
 
 class ZipEndOfCentralDirectory(Struct):
