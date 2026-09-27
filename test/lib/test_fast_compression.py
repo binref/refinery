@@ -2,9 +2,41 @@ import inspect
 import pytest
 import unittest
 
+from refinery.lib.exceptions import RefineryPartialResult
 from refinery.lib.fast.lzjb import lzjb_compress, lzjb_decompress
 from refinery.lib.fast.blz import blz_decompress_chunk
-from refinery.lib.fast.xpress import xpress_huffman_decompress
+from refinery.lib.fast.xpress import xpress_decompress, xpress_huffman_decompress
+
+from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS_HUFFMAN_CHUNK
+
+TWINKLE_RUNS = (
+    B'Twinkle, twinkle, little star, ' * 2097
+    + bytes(3000)
+    + B'How I wonder what you are! ' * 2350
+    + B'Up above the world so high, like a diamond in the sky.'
+)
+
+TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER = bytes.fromhex(
+    '0500000000000000000000000000000003000000000004000000000000000000'
+    '0000000000000000000004000000000050004000405003050055035000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '0000000000000050000000000000000000000000000000000000400000000000'
+    '0000000000000040000000000000000000000000000000000000000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '4E7F61F4A2822365AB03603CF8F700F8FFCCFD0000FFB40B0000000000000000'
+    '0000000000000000630000000000060600000000000000000000000066000000'
+    '0000600000000000400645604450654506556556500000000000000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '0000000000000000000000000000000000000000000000000600000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000060'
+    '0505000000000000000000000000000000000000000000000000000000000000'
+    '0000000000000000000000000000000000000000000000000000000000000000'
+    '000000000000000000000000000000000000000000000000AAD51536B8682AE4'
+    '4185F0668F14FD21D8EFFFBCF71B2E14D3B84307A5B009E54510339857E520AF'
+    '2EB1B066C169FB00F00000'
+)
 
 
 @pytest.mark.cythonized
@@ -110,32 +142,88 @@ class TestXpressHuffmanFast(unittest.TestCase):
         Windows ends a Huffman block only between two matches or literals, so the run of zero
         bytes that crosses the 64 KiB mark moves the start of the second block past that mark.
         """
-        plaintext = (
-            B'Twinkle, twinkle, little star, ' * 2097
-            + bytes(3000)
-            + B'How I wonder what you are! ' * 2350
-            + B'Up above the world so high, like a diamond in the sky.'
+        result = xpress_huffman_decompress(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER, len(TWINKLE_RUNS))
+        self.assertEqual(result, TWINKLE_RUNS)
+
+    def test_windows_stream_of_unknown_size_ends_at_its_end_marker(self):
+        result = xpress_huffman_decompress(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER, None)
+        self.assertEqual(result, TWINKLE_RUNS)
+
+    def test_zero_bytes_after_the_end_marker_are_ignored(self):
+        for count in (1, 2, 3, 300):
+            with self.subTest(count=count):
+                result = xpress_huffman_decompress(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER + bytes(count), None)
+                self.assertEqual(result, TWINKLE_RUNS)
+
+    def test_stream_that_ends_before_its_end_marker_is_a_partial_result(self):
+        with self.assertRaises(RefineryPartialResult) as context:
+            xpress_huffman_decompress(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER[:-4], None)
+        partial = bytes(context.exception.partial)
+        self.assertLess(len(partial), len(TWINKLE_RUNS))
+        self.assertTrue(TWINKLE_RUNS.startswith(partial))
+
+    def test_end_marker_right_after_a_full_block(self):
+        plaintext = inspect.cleandoc("""
+            Twinkle, twinkle, little star,
+            How I wonder what you are!
+            Up above the world so high,
+            Like a diamond in the sky.
+            Twinkle, twinkle, little star,
+            How I wonder what you are!
+        """).encode() * 400
+        compressed_by_wimlib = bytes.fromhex(
+            '0000000000050000000000000000000073000000000005070000000000000000'
+            '0000000077000700000075000000000040074570455075450755645660000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0600000000000000000000000000000000000000000000000000600000000000'
+            '0000000000000000060600000000000000000000000000600000000000000060'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '1286A1B336BC88C643CD6217DDB370E18C3C622D1876309172D16305EFECC17F'
+            '5C7C34CC718F915A5117FB24BB274CD208C17EA161DFC12B3D6FBA3BE31C950E'
+            '26006AFF52FF0000'
         )
-        compressed_by_rtl_compress_buffer = bytes.fromhex(
-            '0500000000000000000000000000000003000000000004000000000000000000'
-            '0000000000000000000004000000000050004000405003050055035000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '0000000000000050000000000000000000000000000000000000400000000000'
-            '0000000000000040000000000000000000000000000000000000000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '4E7F61F4A2822365AB03603CF8F700F8FFCCFD0000FFB40B0000000000000000'
-            '0000000000000000630000000000060600000000000000000000000066000000'
-            '0000600000000000400645604450654506556556500000000000000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '0000000000000000000000000000000000000000000000000600000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000060'
-            '0505000000000000000000000000000000000000000000000000000000000000'
-            '0000000000000000000000000000000000000000000000000000000000000000'
-            '000000000000000000000000000000000000000000000000AAD51536B8682AE4'
-            '4185F0668F14FD21D8EFFFBCF71B2E14D3B84307A5B009E54510339857E520AF'
-            '2EB1B066C169FB00F00000'
-        )
-        result = xpress_huffman_decompress(compressed_by_rtl_compress_buffer, len(plaintext))
-        self.assertEqual(result, plaintext)
+        result = xpress_huffman_decompress(compressed_by_wimlib, None)
+        self.assertEqual(result, plaintext[:0x10000])
+
+    def test_block_with_an_empty_code_is_rejected(self):
+        stream = bytearray(KADATH1_XPRESS_HUFFMAN_CHUNK)
+        stream[:256] = bytes(256)
+        for size in (None, len(KADATH1)):
+            with self.subTest(size=size):
+                with self.assertRaises(ValueError) as context:
+                    xpress_huffman_decompress(stream, size)
+                self.assertNotIsInstance(context.exception, RefineryPartialResult)
+
+    def test_output_never_exceeds_a_known_size(self):
+        plaintext = KADATH1.encode('utf8')
+        for size in range(len(plaintext)):
+            with self.subTest(size=size):
+                try:
+                    result = xpress_huffman_decompress(KADATH1_XPRESS_HUFFMAN_CHUNK, size)
+                except RuntimeError:
+                    continue
+                self.assertEqual(result, plaintext[:size])
+
+    def test_match_of_four_gib_is_rejected_for_a_known_size(self):
+        stream = bytearray(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER)
+        # The first match with a 16-bit length stores it at offset 273. When these 16 bits are
+        # zero, the length is read from the 32 bits that follow.
+        stream[273:275] = bytes(2) + (0xFFFFFFF0).to_bytes(4, 'little')
+        with self.assertRaises(RuntimeError):
+            xpress_huffman_decompress(stream, len(TWINKLE_RUNS))
+
+
+@pytest.mark.cythonized
+class TestXpressFast(unittest.TestCase):
+
+    def test_output_never_exceeds_a_known_size(self):
+        plaintext = KADATH1.encode('utf8')
+        for size in range(len(plaintext)):
+            with self.subTest(size=size):
+                try:
+                    result = xpress_decompress(KADATH1_XPRESS_CHUNK, size)
+                except RuntimeError:
+                    continue
+                self.assertEqual(result, plaintext[:size])

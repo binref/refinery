@@ -4,29 +4,38 @@
 # cython: cdivision=True
 cimport cython
 
-from libc.stdint cimport int32_t, uint8_t, uint16_t, uint32_t, uint64_t
+from libc.stdint cimport int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t
 from libc.stdlib cimport free, malloc, realloc
 from libc.string cimport memcpy, memset
+
+from refinery.lib.exceptions import RefineryPartialResult
+
+cdef extern from 'Python.h':
+    const Py_ssize_t PY_SSIZE_T_MAX
 
 DEF XPRESS_NUM_CHARS = 256
 DEF XPRESS_NUM_SYMBOLS = 512
 DEF XPRESS_MAX_CODEWORD_LEN = 15
 DEF XPRESS_MIN_MATCH_LEN = 3
 DEF XPRESS_TABLEBITS = 11
+DEF XPRESS_END_OF_DATA = 256
 
 DEF _SHIFT = 4
 DEF _MASK = (1 << _SHIFT) - 1
 
 
-cdef int _ensure(uint8_t **buf, uint32_t *cap, uint32_t needed) except -1 nogil:
-    cdef uint32_t nc
+cdef int _ensure(uint8_t **buf, Py_ssize_t *cap, Py_ssize_t needed) except -1 nogil:
+    cdef Py_ssize_t nc
     cdef uint8_t *tmp
     if needed <= cap[0]:
         return 0
     nc = cap[0]
     while nc < needed:
+        if nc > PY_SSIZE_T_MAX // 2:
+            nc = needed
+            break
         nc = nc * 2
-    tmp = <uint8_t *>realloc(buf[0], nc)
+    tmp = <uint8_t *>realloc(buf[0], <size_t>nc)
     if tmp == NULL:
         with gil:
             raise MemoryError
@@ -36,7 +45,7 @@ cdef int _ensure(uint8_t **buf, uint32_t *cap, uint32_t needed) except -1 nogil:
 
 
 cdef inline int _out_byte(
-    uint8_t **buf, uint32_t *cap, uint32_t *length, uint8_t b
+    uint8_t **buf, Py_ssize_t *cap, Py_ssize_t *length, uint8_t b
 ) except -1 nogil:
     _ensure(buf, cap, length[0] + 1)
     buf[0][length[0]] = b
@@ -45,24 +54,28 @@ cdef inline int _out_byte(
 
 
 cdef int _replay(
-    uint8_t **buf, uint32_t *cap, uint32_t *length,
-    uint32_t offset, uint32_t match_len
+    uint8_t **buf, Py_ssize_t *cap, Py_ssize_t *length,
+    Py_ssize_t offset, int64_t match_len
 ) except -1 nogil:
-    cdef uint32_t start, chunk_len, pos
-    _ensure(buf, cap, length[0] + match_len)
+    cdef Py_ssize_t start, chunk_len, pos, remaining
+    if match_len > PY_SSIZE_T_MAX - length[0]:
+        with gil:
+            raise MemoryError
+    remaining = <Py_ssize_t>match_len
+    _ensure(buf, cap, length[0] + remaining)
     start = length[0] - offset
     pos = length[0]
-    while match_len > 0:
+    while remaining > 0:
         chunk_len = pos - start
-        if chunk_len > match_len:
-            chunk_len = match_len
+        if chunk_len > remaining:
+            chunk_len = remaining
         if chunk_len == 0:
             with gil:
                 raise ValueError('zero-length replay')
-        memcpy(&buf[0][pos], &buf[0][start], chunk_len)
+        memcpy(&buf[0][pos], &buf[0][start], <size_t>chunk_len)
         pos += chunk_len
         start += chunk_len
-        match_len -= chunk_len
+        remaining -= chunk_len
     length[0] = pos
     return 0
 
@@ -172,11 +185,13 @@ cdef int _make_decode_table(
     return 0
 
 
-def xpress_decompress(data, int target) -> bytearray:
+def xpress_decompress(data, object target) -> bytearray:
     """
     XPRESS (plain) decompression. The format interleaves 32-bit flag words with data bytes: each
     flag word provides 32 single-bit flags, and between flag words the data bytes (literals, match
-    descriptors, extended lengths) are read sequentially.
+    descriptors, extended lengths) are read sequentially. The `target` is the exact output size; a
+    match that runs past it raises a `RuntimeError`. When it is `None`, decompression continues
+    until the input ends.
     """
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
@@ -186,22 +201,28 @@ def xpress_decompress(data, int target) -> bytearray:
         uint32_t flags = 0
         int flag_cnt = 0
         uint8_t *out_buf
-        uint32_t out_cap, out_len
+        Py_ssize_t out_cap, out_len
+        bint size_known = target is not None
+        Py_ssize_t size = -1
         int nibble_cache = -1
         uint16_t val
-        int moffset, length, length_pair
+        int moffset, length_pair
+        int64_t length
 
-    out_cap = <uint32_t>(end * 4) if end < 0x10000000 else <uint32_t>end
+    if size_known:
+        size = target
+
+    out_cap = end * 4 if end < 0x10000000 else end
     if out_cap < 256:
         out_cap = 256
-    out_buf = <uint8_t *>malloc(out_cap)
+    out_buf = <uint8_t *>malloc(<size_t>out_cap)
     if out_buf == NULL:
         raise MemoryError
     out_len = 0
 
     try:
         while pos < end or flag_cnt > 0:
-            if target > 0 and <int>out_len >= target:
+            if out_len == size:
                 break
 
             if flag_cnt == 0:
@@ -253,16 +274,16 @@ def xpress_decompress(data, int target) -> bytearray:
                     if length == 0xFF:
                         if pos + 1 >= end:
                             break
-                        length = <int>src[pos] | (<int>src[pos + 1] << 8)
+                        length = <int64_t>src[pos] | (<int64_t>src[pos + 1] << 8)
                         pos += 2
                         if length == 0:
                             if pos + 3 >= end:
                                 break
                             length = (
-                                <int>src[pos]
-                                | (<int>src[pos + 1] << 8)
-                                | (<int>src[pos + 2] << 16)
-                                | (<int>src[pos + 3] << 24)
+                                <int64_t>src[pos]
+                                | (<int64_t>src[pos + 1] << 8)
+                                | (<int64_t>src[pos + 2] << 16)
+                                | (<int64_t>src[pos + 3] << 24)
                             )
                             pos += 4
                         length -= 22
@@ -272,48 +293,67 @@ def xpress_decompress(data, int target) -> bytearray:
                 length += 7
             length += 3
 
-            if <uint32_t>moffset > out_len:
+            if size_known and length > size - out_len:
+                raise RuntimeError(F'A match of length {length} runs past the output size {size}.')
+            if moffset > out_len:
                 raise ValueError('offset exceeds output')
-            _replay(&out_buf, &out_cap, &out_len, <uint32_t>moffset, <uint32_t>length)
+            _replay(&out_buf, &out_cap, &out_len, moffset, length)
 
         return bytearray(out_buf[:out_len])
     finally:
         free(out_buf)
 
 
-def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> bytearray:
+def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -> bytearray:
     """
     XPRESS with Huffman decompression. Uses MSB-first bit ordering matching BitBufferedReader
     semantics. Bits are consumed from the top of the buffer. The byte stream position (pos) is
     always right after the last 16-bit word loaded into the bit buffer; extended-length bytes are
     read from pos. Each Huffman block decodes 64 KiB of output, counted from the position where
     the previous block ended; that position can lie beyond a multiple of 64 KiB because a match
-    may cross the block boundary.
+    may cross the block boundary. A block whose code has no codewords raises a `ValueError`.
+
+    The `target` is the exact output size; a match that runs past it raises a `RuntimeError`. When
+    it is `None`, the stream ends with the end-of-data symbol 256, after which the input holds only
+    zero bits. A block that reaches 64 KiB when no further block fits into the input continues
+    until that symbol. Input that ends before it raises a `RefineryPartialResult`.
     """
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
         const uint8_t *src = &src_view[0]
         int end = len(src_view)
+        int data_end = end
         int pos = 0
+        int next_block
         uint8_t *out_buf
-        uint32_t out_cap, out_len
-        int limit = 0
+        Py_ssize_t out_cap, out_len
+        Py_ssize_t limit = 0
+        bint size_known = target is not None
+        bint last_block
+        Py_ssize_t size = -1
         uint16_t decode_table[1 << (XPRESS_TABLEBITS + 1)]
         uint8_t tbl_data[XPRESS_NUM_SYMBOLS]
         uint64_t bit_buf
         int bit_cnt
         uint16_t entry
-        int sym, length, match_length, offsetlog
+        int sym, length, offsetlog
+        int64_t match_length
         int offset
         int nudge
-        int i, remainder, skip
+        int i
         uint64_t top_bits
         int need
 
-    out_cap = <uint32_t>(end * 4) if end < 0x10000000 else <uint32_t>end
+    if size_known:
+        size = target
+    else:
+        while data_end > 0 and not src[data_end - 1]:
+            data_end -= 1
+
+    out_cap = end * 4 if end < 0x10000000 else end
     if out_cap < 256:
         out_cap = 256
-    out_buf = <uint8_t *>malloc(out_cap)
+    out_buf = <uint8_t *>malloc(<size_t>out_cap)
     if out_buf == NULL:
         raise MemoryError
     out_len = 0
@@ -321,35 +361,41 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
     try:
         while pos < end:
             if XPRESS_NUM_SYMBOLS // 2 > end - pos:
+                if not size_known:
+                    break
                 raise IndexError(
                     F'There are only {end - pos} bytes remaining, '
                     F'but at least {XPRESS_NUM_SYMBOLS // 2} are required for a Huffman table.')
 
             for i in range(XPRESS_NUM_SYMBOLS):
                 tbl_data[i] = (src[pos + i // 2] >> (4 * (i & 1))) & 0xF
+            for i in range(XPRESS_NUM_SYMBOLS):
+                if tbl_data[i]:
+                    break
+            else:
+                raise ValueError('The Huffman code of a block has no codewords.')
             pos += XPRESS_NUM_SYMBOLS // 2
 
             _make_decode_table(decode_table, tbl_data, XPRESS_NUM_SYMBOLS, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
 
-            limit = <int>out_len + max_chunk_size
+            limit = out_len + max_chunk_size
+            last_block = False
             bit_buf = 0
             bit_cnt = 0
 
             while True:
-                if <int>out_len == target:
+                if out_len == size:
                     return bytearray(out_buf[:out_len])
-                if <int>out_len >= limit:
-                    need = 16 - bit_cnt
-                    if need > 0:
-                        need = ((need + 15) // 16) * 16
-                        if pos + (need // 8) <= end:
-                            for i in range(need // 16):
-                                bit_buf = (bit_buf << 16) | <uint64_t>src[pos] | (<uint64_t>src[pos + 1] << 8)
-                                bit_cnt += 16
-                                pos += 2
-                    bit_buf = 0
-                    bit_cnt = 0
-                    break
+                if out_len >= limit and not last_block:
+                    next_block = pos + 2 if bit_cnt < 16 and pos + 1 < end else pos
+                    if (
+                        not size_known
+                        and (next_block >= data_end or end - next_block < XPRESS_NUM_SYMBOLS // 2)
+                    ):
+                        last_block = True
+                    else:
+                        pos = next_block
+                        break
 
                 need = XPRESS_MAX_CODEWORD_LEN - bit_cnt
                 if need > 0:
@@ -380,7 +426,7 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                             bit_cnt += 16
                             pos += 2
                     if bit_cnt < length:
-                        raise ValueError('negative shift count')
+                        break
                     top_bits = bit_buf >> (bit_cnt - length)
                     entry = decode_table[sym + <int>(top_bits & ((<uint64_t>1 << length) - 1))]
                     sym = entry >> _SHIFT
@@ -392,10 +438,17 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                     _out_byte(&out_buf, &out_cap, &out_len, <uint8_t>sym)
                     continue
 
+                if (
+                    sym == XPRESS_END_OF_DATA
+                    and not size_known
+                    and pos >= data_end
+                    and not (bit_buf & ((<uint64_t>1 << bit_cnt) - 1))
+                ):
+                    return bytearray(out_buf[:out_len])
+
                 match_length = sym & 0xF
                 offsetlog = (sym >> 4) & 0xF
 
-                # BitBufferedReader.collect() equivalent: ensure at least 16 bits before offset read
                 need = 16 - bit_cnt
                 if need > 0:
                     need = ((need + 15) // 16) * 16
@@ -405,10 +458,10 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                         bit_buf = (bit_buf << 16) | <uint64_t>src[pos] | (<uint64_t>src[pos + 1] << 8)
                         bit_cnt += 16
                         pos += 2
+                if bit_cnt < offsetlog:
+                    break
 
                 if offsetlog > 0:
-                    if bit_cnt < offsetlog:
-                        raise ValueError('negative shift count')
                     top_bits = bit_buf >> (bit_cnt - offsetlog)
                     offset = (1 << offsetlog) | <int>(top_bits & ((<uint64_t>1 << offsetlog) - 1))
                     bit_cnt -= offsetlog
@@ -425,24 +478,29 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                     else:
                         if pos + 1 >= end:
                             break
-                        match_length = <int>src[pos] | (<int>src[pos + 1] << 8)
+                        match_length = <int64_t>src[pos] | (<int64_t>src[pos + 1] << 8)
                         pos += 2
                         if match_length == 0:
                             if pos + 3 >= end:
                                 break
                             match_length = (
-                                <int>src[pos]
-                                | (<int>src[pos + 1] << 8)
-                                | (<int>src[pos + 2] << 16)
-                                | (<int>src[pos + 3] << 24)
+                                <int64_t>src[pos]
+                                | (<int64_t>src[pos + 1] << 8)
+                                | (<int64_t>src[pos + 2] << 16)
+                                | (<int64_t>src[pos + 3] << 24)
                             )
                             pos += 4
                 match_length += XPRESS_MIN_MATCH_LEN
 
-                if <uint32_t>offset > out_len:
+                if size_known and match_length > size - out_len:
+                    raise RuntimeError(F'A match of length {match_length} runs past the output size {size}.')
+                if offset > out_len:
                     raise ValueError('offset exceeds output')
-                _replay(&out_buf, &out_cap, &out_len, <uint32_t>offset, <uint32_t>match_length)
+                _replay(&out_buf, &out_cap, &out_len, offset, match_length)
 
+        if not size_known:
+            raise RefineryPartialResult(
+                'The input ended before the end-of-data symbol.', bytearray(out_buf[:out_len]))
         return bytearray(out_buf[:out_len])
     finally:
         free(out_buf)

@@ -3,7 +3,7 @@ import time
 import pytest
 
 from .. import TestUnitBase
-from . import KADATH1, KADATH2
+from . import KADATH1, KADATH1_XPRESS_HUFFMAN_CHUNK, KADATH2
 
 
 @pytest.mark.cythonized_only
@@ -20,6 +20,11 @@ class TestAutoDecompressor(TestUnitBase):
         test = next(data | self.load())
         self.assertEqual(test, B'BINARY/REFINERY')
         self.assertEqual(test.meta['method'], 'zl')
+
+    def test_xpress_huffman_chunk_without_header(self):
+        test, = KADATH1_XPRESS_HUFFMAN_CHUNK | self.load() | [...]
+        self.assertEqual(test, KADATH1.encode('utf8'))
+        self.assertEqual(test.meta['method'], 'mscf[xpress-huff]')
 
     def setUp(self):
         super().setUp()

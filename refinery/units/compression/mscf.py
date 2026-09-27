@@ -167,15 +167,13 @@ class mscf(Unit):
     ) -> None:
         from refinery.lib.fast.xpress import xpress_huffman_decompress
         raw = bytes(reader.read())
-        actual_target = target if target is not None else 0
-        result = xpress_huffman_decompress(raw, actual_target, max_chunk_size)
+        result = xpress_huffman_decompress(raw, target, max_chunk_size)
         writer.write(result)
 
     def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> None:
         from refinery.lib.fast.xpress import xpress_decompress
         raw = bytes(reader.read())
-        actual_target = target if target is not None else 0
-        result = xpress_decompress(raw, actual_target)
+        result = xpress_decompress(raw, target)
         writer.write(result)
 
     @classmethod
