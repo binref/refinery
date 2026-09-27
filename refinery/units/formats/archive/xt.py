@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Iterable
+
 from refinery.units import RefineryException
 from refinery.units.formats.archive import ArchiveUnit, MultipleArchives, PathExtractorUnit
 
@@ -12,7 +14,11 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     def handles(cls, data) -> bool | None:
         out = False
         for engine in cls._handlers():
-            engine_verdict = engine.handles(data)
+            try:
+                engine_verdict = engine.handles(data)
+            except Exception as error:
+                cls.log_info(F'format check of {engine.name} failed:', error)
+                continue
             if engine_verdict is True:
                 return True
             if engine_verdict is None:
@@ -103,7 +109,14 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 if self.fallback:
                     verdict = True
                 else:
-                    verdict = handler.handles(data)
+                    try:
+                        verdict = handler.handles(data)
+                    except Exception as error:
+                        errors[handler.name] = error
+                        if self.unit.log_debug():
+                            raise
+                        self.unit.log_info(F'format check of {handler.name} failed:', error)
+                        return
                 if verdict is False:
                     self.unit.log_debug(F'rejected: {handler.name}')
                 elif verdict is True:
@@ -140,29 +153,26 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 elif verdict is None:
                     fallback.append(handler)
 
-        extracted = 0
-
-        for handler in self._handlers():
-            self.CustomPathSeparator = handler.CustomPathSeparator
-            self.CustomJoinBehaviour = handler.CustomJoinBehaviour
-            it = unpacker(handler, fallback=False)
-            yield from it
-            if it.success:
-                extracted += it.count
-                if extracted != 0:
-                    break
+        def attempt(handlers: Iterable[type[PathExtractorUnit]], is_fallback: bool):
+            for handler in handlers:
+                self.CustomPathSeparator = handler.CustomPathSeparator
+                self.CustomJoinBehaviour = handler.CustomJoinBehaviour
+                it = unpacker(handler, is_fallback)
+                yield from it
+                if not it.success:
+                    continue
+                if it.count > 0:
+                    return True
                 self.log_debug('handler extracted zero items, continuing')
+            return False
 
-        if extracted > 0:
+        if (yield from attempt(self._handlers(), False)):
             return
 
         self.log_debug('fallback order:', lambda: ', '.join(h.name for h in fallback))
 
-        for handler in fallback:
-            it = unpacker(handler, fallback=True)
-            yield from it
-            if it.success:
-                return
+        if (yield from attempt(fallback, True)):
+            return
 
         if not errors:
             raise ValueError('input data did not match any known archive format')

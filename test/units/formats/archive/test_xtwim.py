@@ -6,7 +6,7 @@ import pytest
 
 from refinery.lib.lnk.flags import FileAttributeFlags
 from refinery.lib.wim import WimArchive
-from refinery.units import Chunk
+from refinery.units import Chunk, RefineryException
 from refinery.units.formats.archive.xtwim import xtwim
 
 from ... import TestUnitBase
@@ -92,7 +92,7 @@ class TestWimExtractor(TestUnitBase):
 
     @pytest.mark.xfail(
         strict=True,
-        raises=AssertionError,
+        raises=RefineryException,
         reason='xt drops a handler whose first item fails to extract',
     )
     def test_xt_extracts_the_other_files_when_the_first_file_has_no_data(self):
