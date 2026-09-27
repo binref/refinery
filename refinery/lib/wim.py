@@ -217,6 +217,12 @@ class _WimChunkDecoder:
         return output
 
 
+class _WimChunkDecoders(dict[tuple[WimCompression, int], _WimChunkDecoder]):
+    def __missing__(self, key: tuple[WimCompression, int]) -> _WimChunkDecoder:
+        decoder = self[key] = _WimChunkDecoder(*key)
+        return decoder
+
+
 class WimResourceLayout(IntEnum):
     """
     The way in which a resource stores its data. A raw resource stores the data as is. The other
@@ -242,6 +248,7 @@ class WimResource:
         size: int,
         method: WimCompression,
         chunk_size: int,
+        decoders: _WimChunkDecoders,
     ):
         self._view = view
         self.offset = header.offset
@@ -252,16 +259,19 @@ class WimResource:
         self.chunk_size = chunk_size
         self._chunk_bounds: list[tuple[int, int]] | None = None
         self._chunks: dict[int, buf] = {}
-        self._decoder: _WimChunkDecoder | None = None
+        self._errors: dict[int, Exception] = {}
+        self._decoders = decoders
 
     @classmethod
-    def Raw(cls, view: memoryview, header: WimResourceHeader):
+    def Raw(cls, view: memoryview, header: WimResourceHeader, decoders: _WimChunkDecoders):
         if header.stored_size != header.size:
             raise ValueError(
                 F'The uncompressed resource at {header.offset:#x} has size {header.size:#x}, but '
                 F'occupies {header.stored_size:#x} bytes.'
             )
-        return cls(view, header, WimResourceLayout.RAW, header.size, WimCompression.NONE, 0)
+        return cls(
+            view, header, WimResourceLayout.RAW, header.size, WimCompression.NONE, 0, decoders
+        )
 
     @classmethod
     def Chunked(
@@ -270,11 +280,14 @@ class WimResource:
         header: WimResourceHeader,
         method: WimCompression,
         chunk_size: int,
+        decoders: _WimChunkDecoders,
     ):
-        return cls(view, header, WimResourceLayout.CHUNKED, header.size, method, chunk_size)
+        return cls(
+            view, header, WimResourceLayout.CHUNKED, header.size, method, chunk_size, decoders
+        )
 
     @classmethod
-    def Solid(cls, view: memoryview, header: WimResourceHeader):
+    def Solid(cls, view: memoryview, header: WimResourceHeader, decoders: _WimChunkDecoders):
         reader = StructReader(view[header.offset:header.offset + header.stored_size])
         size = reader.u64()
         chunk_size = reader.u32()
@@ -286,7 +299,7 @@ class WimResource:
                 F'Unknown compression method {method} in the solid resource at {header.offset:#x}.'
             ) from None
         chunk_size = _check_chunk_size(method, chunk_size)
-        return cls(view, header, WimResourceLayout.SOLID, size, method, chunk_size)
+        return cls(view, header, WimResourceLayout.SOLID, size, method, chunk_size, decoders)
 
     def _compute_chunk_bounds(self) -> list[tuple[int, int]]:
         count = -(-self.size // self.chunk_size)
@@ -316,25 +329,31 @@ class WimResource:
     def _chunk(self, index: int) -> buf:
         if (chunk := self._chunks.get(index)) is not None:
             return chunk
+        if (error := self._errors.get(index)) is not None:
+            raise WimDecompressionError(self.offset, index, error) from error
         if (bounds := self._chunk_bounds) is None:
             bounds = self._chunk_bounds = self._compute_chunk_bounds()
-        if (decoder := self._decoder) is None:
-            decoder = self._decoder = _WimChunkDecoder(self.method, self.chunk_size)
+        decoder = self._decoders[self.method, self.chunk_size]
         start, end = bounds[index]
         if not self.offset <= start <= end <= min(self.offset + self.stored_size, len(self._view)):
             raise ValueError(F'Chunk {index} of the resource at {self.offset:#x} exceeds it.')
         size = min(self.chunk_size, self.size - index * self.chunk_size)
         try:
             chunk = decoder.decode(self._view[start:end], size)
+        except MemoryError:
+            raise
         except Exception as error:
+            self._errors[index] = error
             raise WimDecompressionError(self.offset, index, error) from error
-        self._chunks[index] = chunk
+        if self.layout == WimResourceLayout.SOLID:
+            self._chunks[index] = chunk
         return chunk
 
     def read(self, offset: int, size: int) -> buf:
         """
         Read the given range of the decompressed resource. Chunks are decompressed only when a read
-        covers them, and each decompressed chunk is kept for later reads.
+        covers them. The chunks of a solid resource are kept for later reads because they hold the
+        data of several blobs; any other resource holds the data of a single blob.
         """
         if offset < 0 or size < 0 or offset + size > self.size:
             raise ValueError(
@@ -353,10 +372,11 @@ class WimResource:
         skip = offset - first * chunk_size
         if first == last:
             return memoryview(self._chunk(first))[skip:skip + size]
-        output = bytearray()
-        for index in range(first, last + 1):
+        output = bytearray(memoryview(self._chunk(first))[skip:])
+        for index in range(first + 1, last):
             output.extend(self._chunk(index))
-        return memoryview(output)[skip:skip + size]
+        output.extend(memoryview(self._chunk(last))[:offset + size - last * chunk_size])
+        return output
 
 
 class WimBlob:
@@ -380,18 +400,22 @@ class WimBlob:
         self.references = references
         self.resource = resource
         self.offset = offset
+        self._data: buf | None = None
 
     def data(self) -> buf:
         """
-        Return the data of the blob. Raises `WimHashMismatch` when the data does not match the hash
-        of the blob, `WimDecompressionError` when the data cannot be decompressed, and
-        `WimPartMissing` when the blob is stored in another part of a split WIM.
+        Return the data of the blob and keep it for later calls. Raises `WimHashMismatch` when the
+        data does not match the hash of the blob, `WimDecompressionError` when the data cannot be
+        decompressed, and `WimPartMissing` when the blob is stored in another part of a split WIM.
         """
+        if (data := self._data) is not None:
+            return data
         if (resource := self.resource) is None:
             raise WimPartMissing(self.part)
         data = resource.read(self.offset, self.size)
         if hashlib.sha1(data).digest() != self.hash:
             raise WimHashMismatch(self, data)
+        self._data = data
         return data
 
 
@@ -412,6 +436,7 @@ class WimArchive:
         view = memoryview(data)
         self._view = view
         self.header = header = WimHeader.Parse(view)
+        self._decoders = _WimChunkDecoders()
         self.blobs: dict[bytes, WimBlob] = {}
         self.images: list[WimBlob] = []
         table_header = header.blob_table
@@ -435,9 +460,9 @@ class WimArchive:
 
     def _resource(self, header: WimResourceHeader) -> WimResource:
         if not header.flags & WimResourceFlags.COMPRESSED:
-            return WimResource.Raw(self._view, header)
+            return WimResource.Raw(self._view, header, self._decoders)
         return WimResource.Chunked(
-            self._view, header, self.header.compression, self.header.chunk_size
+            self._view, header, self.header.compression, self.header.chunk_size, self._decoders
         )
 
     def _register_solid_run(self, run: list[_WimTableEntry]):
@@ -447,7 +472,7 @@ class WimArchive:
                 continue
             if entry.part != self.header.part_number:
                 raise ValueError(F'A solid resource is stored in part {entry.part} of a split WIM.')
-            resources.append(WimResource.Solid(self._view, entry.header))
+            resources.append(WimResource.Solid(self._view, entry.header, self._decoders))
         for entry in run:
             if entry.header.size == _SOLID_RESOURCE_MAGIC:
                 continue
@@ -613,8 +638,8 @@ def walk_image(metadata: buf) -> Iterator[WimDirectoryEntry]:
     Parse the directory tree from the metadata of a WIM image and generate its entries in
     depth-first order, starting with the root. Entries that have no name, are named `.` or `..`,
     or whose name contains a null character are skipped with their subtree. The children of an
-    entry that is not a directory are ignored. A directory tree in which two directories share
-    the same list of children is rejected.
+    entry that is not a directory are ignored. A directory tree that reaches the same entry along
+    more than one path is rejected.
     """
     reader = StructReader(memoryview(metadata))
     security_size = _align8(reader.u32()) or 8
@@ -624,22 +649,21 @@ def walk_image(metadata: buf) -> Iterator[WimDirectoryEntry]:
     if not root.is_directory:
         raise ValueError('The root of the WIM image is not a directory.')
     yield root
-    visited: set[int] = set()
+    visited = {security_size}
     pending: list[tuple[int, tuple[str, ...]]] = []
 
     def descend(entry: WimDirectoryEntry):
-        if not entry.is_directory or not (offset := entry.child_list):
-            return
-        if offset in visited:
-            raise ValueError(F'The directory tree lists the children at offset {offset:#x} twice.')
-        visited.add(offset)
-        pending.append((offset, entry.path))
+        if entry.is_directory and (offset := entry.child_list):
+            pending.append((offset, entry.path))
 
     descend(root)
     while pending:
         offset, parent = pending.pop()
+        if offset in visited:
+            raise ValueError(F'The directory tree reaches the entry at offset {offset:#x} twice.')
         if (entry := _read_entry(reader, offset, parent)) is None:
             continue
+        visited.add(offset)
         pending.append((reader.tell(), parent))
         if not entry.has_valid_name:
             continue

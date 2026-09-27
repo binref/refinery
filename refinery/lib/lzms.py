@@ -461,13 +461,15 @@ def _lzms_code_lengths(freqs: list[int]) -> bytearray:
     next_leaf = next_node = 0
 
     for new in range(num_nodes):
-        if next_leaf + 1 < num_leaves and (
-            next_node == new or leaf_weights[next_leaf + 1] <= node_weights[next_node]
+        if (
+            next_leaf + 1 < num_leaves
+            and (next_node == new or leaf_weights[next_leaf + 1] <= node_weights[next_node])
         ):
             weight = leaf_weights[next_leaf] + leaf_weights[next_leaf + 1]
             next_leaf += 2
-        elif next_node + 2 <= new and (
-            next_leaf >= num_leaves or node_weights[next_node + 1] < leaf_weights[next_leaf]
+        elif (
+            next_node + 2 <= new
+            and (next_leaf >= num_leaves or node_weights[next_node + 1] < leaf_weights[next_leaf])
         ):
             weight = node_weights[next_node] + node_weights[next_node + 1]
             node_parents[next_node] = new
@@ -549,7 +551,9 @@ class LzmsHuffmanDecoder:
         bs = self._bitstream
         tb = self._table_bits
         if (table := self._decode_table) is None:
-            raise RuntimeError(F'LZMS: cannot decode a symbol from an alphabet of size {self._num_syms}')
+            raise RuntimeError(
+                F'LZMS: cannot decode a symbol from an alphabet of size {self._num_syms}'
+            )
 
         bs.ensure(LZMS_MAX_CODEWORD_LENGTH)
         idx = bs.peek(tb)
@@ -723,6 +727,8 @@ def lzms_decompress(src_data: buf, target: int) -> bytes:
             pos = len(output)
             if offset > pos:
                 raise RuntimeError(F'LZMS: LZ offset {offset} exceeds position {pos}')
+            if length > target - pos:
+                raise RuntimeError(F'LZMS: LZ length {length} exceeds remaining {target - pos}')
             for k in range(length):
                 output.append(output[pos - offset + k])
 
@@ -762,13 +768,12 @@ def lzms_decompress(src_data: buf, target: int) -> bytes:
             pos = len(output)
             if offset + span > pos:
                 raise RuntimeError('LZMS: delta offset+span exceeds position')
+            if length > target - pos:
+                raise RuntimeError(F'LZMS: delta length {length} exceeds remaining {target - pos}')
             for k in range(length):
                 output.append(
                     (output[pos + k - offset] + output[pos + k - span] - output[pos + k - span - offset]) & 0xFF
                 )
-
-    if len(output) > target:
-        output = output[:target]
 
     lzms_x86_filter(output, target)
     return bytes(output)

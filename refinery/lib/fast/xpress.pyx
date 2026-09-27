@@ -286,7 +286,9 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
     XPRESS with Huffman decompression. Uses MSB-first bit ordering matching BitBufferedReader
     semantics. Bits are consumed from the top of the buffer. The byte stream position (pos) is
     always right after the last 16-bit word loaded into the bit buffer; extended-length bytes are
-    read from pos.
+    read from pos. Each Huffman block decodes 64 KiB of output, counted from the position where
+    the previous block ended; that position can lie beyond a multiple of 64 KiB because a match
+    may cross the block boundary.
     """
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
@@ -329,7 +331,7 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
 
             _make_decode_table(decode_table, tbl_data, XPRESS_NUM_SYMBOLS, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
 
-            limit += max_chunk_size
+            limit = <int>out_len + max_chunk_size
             bit_buf = 0
             bit_cnt = 0
 

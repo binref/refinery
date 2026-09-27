@@ -1,3 +1,4 @@
+import inspect
 import lzma
 
 import pytest
@@ -149,3 +150,33 @@ class TestMicrosoftCompressionFormat(TestUnitBase):
         )
         decompressed = str(compressed | self.load())
         self.assertIn(KADATH1, decompressed)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='the XPRESS Huffman decoder returns nothing when the output size is unknown',
+    )
+    def test_xpress_huffman_stream_without_header(self):
+        plaintext = inspect.cleandoc("""
+            Twinkle, twinkle, little star,
+            How I wonder what you are!
+            Up above the world so high,
+            Like a diamond in the sky.
+            Twinkle, twinkle, little star,
+            How I wonder what you are!
+        """).encode()
+        compressed_by_rtl_compress_buffer = bytes.fromhex(
+            '0000000000050000000000000000000073000000000005070000000000000000'
+            '0000000077000700000076000000000040064560455065450655645660000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0600000000000000000000000000000000000000000000000000600000000000'
+            '0000000000000000060600000000000000000000000000600000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            '0000000000000000000000000000000000000000000000000000000000000000'
+            'E9C24C491BDE34939966318BEE55B7F8451F90D68B3A98C4BA6EA98277FA01FD'
+            'BB626818429FE0ACA22C9429EF5E23C920049F85095BCB4E6F69D8ED8F790000'
+            '260000'
+        )
+        decompressed = compressed_by_rtl_compress_buffer | self.load(mode='xpress-huff') | bytes
+        self.assertEqual(decompressed, plaintext)

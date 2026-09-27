@@ -1,9 +1,16 @@
+import gc
 import hashlib
+import tracemalloc
 
 from datetime import datetime
+from unittest import mock
+
+import pytest
 
 from .. import TestBase
 
+from refinery.lib.lnk.flags import FileAttributeFlags
+from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.wim import (
     WimArchive,
     WimCompression,
@@ -16,6 +23,10 @@ from refinery.lib.wim import (
 
 DATA = WimStreamKind.DATA
 REPARSE = WimStreamKind.REPARSE
+
+DIRECTORY_ENTRY_ATTRIBUTES = 0x08
+DIRECTORY_ENTRY_CHILDREN = 0x10
+DIRECTORY_ENTRY_NAME = 0x66
 
 TIMES_TABLE = '\n'.join(F'{a} x {b} = {a * b}' for a in range(1, 61) for b in range(1, 61)).encode()
 
@@ -52,6 +63,16 @@ def entries(wim: WimArchive, image: int = 0):
     return list(walk_image(wim.images[image].data()))
 
 
+def directory_entry(metadata: bytes | bytearray, name: str) -> int:
+    return metadata.find(name.encode('utf-16le') + bytes(2)) - DIRECTORY_ENTRY_NAME
+
+
+def live_lzx_decoders() -> int:
+    gc.collect()
+    return sum(isinstance(obj, LzxDecoder) for obj in gc.get_objects())
+
+
+@pytest.mark.cythonized
 class TestWimCapturesOfOneFolder(TestBase):
     """
     Each WIM file of these tests was captured with wimlib from the folder that `FOLDER` describes;
@@ -109,7 +130,54 @@ class TestWimCapturesOfOneFolder(TestBase):
         write_time = hello.write_time or datetime.min
         self.assertEqual(write_time.replace(microsecond=0), datetime(2026, 9, 26, 21, 25, 30))
 
+    def test_lzx_resources_share_one_decoder(self):
+        before = live_lzx_decoders()
+        wim = WimArchive(self.download_sample('4da6303a0a61a24d2ca12ae7348fc6de5573505aa451c7ca49cac9f964c3174f'))
+        for blob in [*wim.images, *wim.blobs.values()]:
+            blob.data()
+        self.assertEqual(live_lzx_decoders() - before, 1)
 
+    def test_read_across_a_chunk_boundary_keeps_only_the_requested_bytes(self):
+        wim = WimArchive(self.download_sample('f57be775dffdd6758cf90065a83902a7c0ae1aefe6acbb94fe7810314a9611af'))
+        resource = wim.blobs[hashlib.sha1(TIMES_TABLE).digest()].resource
+        assert resource is not None
+        data = resource.read(4000, 200)
+        self.assertEqual(bytes(data), TIMES_TABLE[4000:4200])
+        self.assertEqual(memoryview(memoryview(data).obj).nbytes, 200)
+
+    def test_reading_a_file_of_many_chunks_keeps_one_copy_of_its_data(self):
+        wim = WimArchive(self.download_sample('f57be775dffdd6758cf90065a83902a7c0ae1aefe6acbb94fe7810314a9611af'))
+        blob = wim.blobs[hashlib.sha1(TIMES_TABLE).digest()]
+        tracemalloc.start()
+        try:
+            data = blob.data()
+            retained, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(bytes(data), TIMES_TABLE)
+        self.assertLess(retained, 1.5 * len(TIMES_TABLE))
+
+    def test_out_of_memory_is_not_reported_as_a_corrupt_chunk(self):
+        wim = WimArchive(self.download_sample('81cf3d5732adfa64d48d2d87fbfa7e37abaa7b18a3c93cda980ee22b253026b3'))
+        blob = wim.blobs[hashlib.sha1(TIMES_TABLE).digest()]
+        with mock.patch('refinery.lib.wim.lzms_decompress', side_effect=MemoryError):
+            with self.assertRaises(MemoryError):
+                blob.data()
+        self.assertEqual(bytes(blob.data()), TIMES_TABLE)
+
+    def test_entry_reachable_from_two_directories_is_rejected(self):
+        wim = WimArchive(self.download_sample('f589d49d144f08cf8bbca6dd1026e4e3b57692a3f55d37f7140b30f13b3d5029'))
+        metadata = bytearray(wim.images[0].data())
+        empty = directory_entry(metadata, 'empty.bin')
+        unicode = directory_entry(metadata, 'ünïcødé.txt')
+        children = empty + DIRECTORY_ENTRY_CHILDREN
+        metadata[empty + DIRECTORY_ENTRY_ATTRIBUTES] |= FileAttributeFlags.Directory
+        metadata[children:children + 8] = unicode.to_bytes(8, 'little')
+        with self.assertRaises(ValueError):
+            list(walk_image(metadata))
+
+
+@pytest.mark.cythonized
 class TestWimSplitIntoTwoParts(TestBase):
     """
     The WIM file of `TestWimCapturesOfOneFolder.test_xpress_in_chunks_of_4k` was split with wimlib
@@ -133,6 +201,7 @@ class TestWimSplitIntoTwoParts(TestBase):
         self.assertEqual(bytes(wim.blobs[hashlib.sha1(TIMES_TABLE).digest()].data()), TIMES_TABLE)
 
 
+@pytest.mark.cythonized
 class TestWimlibTestSuiteFiles(TestBase):
     """
     The WIM files of these tests are part of the test suite of wimlib, which is licensed under the
@@ -154,6 +223,17 @@ class TestWimlibTestSuiteFiles(TestBase):
         stream, = file.streams
         with self.assertRaises(WimDecompressionError):
             wim.blobs[stream.hash].data()
+
+    def test_chunk_that_fails_to_decompress_is_not_decompressed_again(self):
+        wim = WimArchive(self.download_sample('f90e6d6c45d96b294e6f5b673d97948b7cf65dc0f8a49f0cb7efb3442686b334'))
+        _, file = entries(wim)
+        stream, = file.streams
+        blob = wim.blobs[stream.hash]
+        with self.assertRaises(WimDecompressionError) as first:
+            blob.data()
+        with self.assertRaises(WimDecompressionError) as second:
+            blob.data()
+        self.assertIs(second.exception.error, first.exception.error)
 
     def test_cyclic_directory_tree_is_rejected(self):
         wim = WimArchive(self.download_sample('4ce27c8422b4b1f32a3d02ae35fb87504ae71e640f2a812ab02c27bd8ba4d54b'))
@@ -199,3 +279,11 @@ class TestWimlibTestSuiteFiles(TestBase):
         for link in links:
             stream, = link.streams
             self.assertEqual(bytes(wim.blobs[stream.hash].data()), B'5\n')
+
+
+    def test_data_of_hard_linked_files_is_read_once(self):
+        wim = WimArchive(self.download_sample('5b07128c6fc36c1e19746b9feba8d54f7dd34ae954e3c55e1468c41fd9db276a'))
+        link, = (entry for entry in entries(wim) if entry.path == ('link',))
+        stream, = link.streams
+        blob = wim.blobs[stream.hash]
+        self.assertIs(blob.data(), blob.data())

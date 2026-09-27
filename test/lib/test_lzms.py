@@ -3,6 +3,22 @@ import unittest
 from refinery.lib.lzms import lzms_decompress
 
 
+def x86_calls_to_one_function() -> tuple[bytearray, bytes]:
+    plaintext = bytearray.fromhex('8D0409C3')
+    for k in range(60):
+        plaintext.extend(B'\xB9' + k.to_bytes(4, 'little'))
+        plaintext.extend(B'\xE8' + (-len(plaintext) - 5).to_bytes(4, 'little', signed=True))
+    plaintext.append(0xC3)
+    compressed_by_wimlib = bytes.fromhex(
+        '3129D337B66FE3D6A17041F8E71D5E8102AA37928802A39552330000000C5BA4'
+        'D78ED5EF7AE970391C0E77C3D970351C0D37C3C970311C0CF7C2B9702D1C0BB7'
+        'C2A970291C0A77C29970251C0937C28970211C08F7C179701D1C07B7C1697019'
+        '1C0677C15970151C0537C14970111C04F7C039700D1C03B7C02970091C0277C0'
+        '1970051C013770ED5F0217FA951B905BFDCBA35B00B9C309048D'
+    )
+    return plaintext, compressed_by_wimlib
+
+
 class TestLzmsDecompress(unittest.TestCase):
 
     def test_wimlib_chunk_spanning_huffman_code_rebuilds(self):
@@ -55,16 +71,13 @@ class TestLzmsDecompress(unittest.TestCase):
         The input is x86 code that calls the function at offset zero sixty times. LZMS rewrites the
         relative call targets to absolute ones and the decompressor has to undo this.
         """
-        plaintext = bytearray.fromhex('8D0409C3')
-        for k in range(60):
-            plaintext.extend(B'\xB9' + k.to_bytes(4, 'little'))
-            plaintext.extend(B'\xE8' + (-len(plaintext) - 5).to_bytes(4, 'little', signed=True))
-        plaintext.append(0xC3)
-        compressed_by_wimlib = bytes.fromhex(
-            '3129D337B66FE3D6A17041F8E71D5E8102AA37928802A39552330000000C5BA4'
-            'D78ED5EF7AE970391C0E77C3D970351C0D37C3C970311C0CF7C2B9702D1C0BB7'
-            'C2A970291C0A77C29970251C0937C28970211C08F7C179701D1C07B7C1697019'
-            '1C0677C15970151C0537C14970111C04F7C039700D1C03B7C02970091C0277C0'
-            '1970051C013770ED5F0217FA951B905BFDCBA35B00B9C309048D'
-        )
+        plaintext, compressed_by_wimlib = x86_calls_to_one_function()
         self.assertEqual(lzms_decompress(compressed_by_wimlib, len(plaintext)), plaintext)
+
+    def test_match_running_past_the_end_of_the_output_is_rejected(self):
+        plaintext, compressed_by_wimlib = x86_calls_to_one_function()
+        corrupted = bytearray(compressed_by_wimlib)
+        # the flipped bit turns the match at output position 12 into one of 58667 bytes; 593 remain
+        corrupted[143] ^= 0x40
+        with self.assertRaises(RuntimeError):
+            lzms_decompress(corrupted, len(plaintext))

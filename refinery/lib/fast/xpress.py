@@ -110,10 +110,10 @@ def xpress_decompress(src: bytes | bytearray | memoryview, target: int) -> bytea
 def _fill_bits(src, pos, end, bit_buf, bit_cnt, need):
     """
     Fill the MSB-first bit buffer with enough 16-bit LE words to have at least `need` bits.
-    Returns (bit_buf, bit_cnt, pos).
+    Consumed bits are discarded before each word is appended. Returns (bit_buf, bit_cnt, pos).
     """
     while bit_cnt < need and pos + 1 < end:
-        bit_buf = (bit_buf << 16) | src[pos] | (src[pos + 1] << 8)
+        bit_buf = ((bit_buf & ((1 << bit_cnt) - 1)) << 16) | src[pos] | (src[pos + 1] << 8)
         bit_cnt += 16
         pos += 2
     return bit_buf, bit_cnt, pos
@@ -127,7 +127,9 @@ def xpress_huffman_decompress(
     """
     XPRESS with Huffman decompression. Uses MSB-first bit ordering matching BitBufferedReader
     semantics: new 16-bit words are appended at the low end (bit_buf = (bit_buf << 16) | word),
-    and bits are consumed from the top (bit_buf >> (bit_cnt - N)).
+    and bits are consumed from the top (bit_buf >> (bit_cnt - N)). Each Huffman block decodes
+    64 KiB of output, counted from the position where the previous block ended; that position can
+    lie beyond a multiple of 64 KiB because a match may cross the block boundary.
     """
     src = memoryview(src)
     out = bytearray()
@@ -148,7 +150,7 @@ def xpress_huffman_decompress(
         pos += XPRESS_NUM_SYMBOLS // 2
         decode_table = make_huffman_decode_table(table_data, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
 
-        limit += max_chunk_size
+        limit = len(out) + max_chunk_size
         bit_buf = 0
         bit_cnt = 0
 
