@@ -1171,6 +1171,13 @@ AN_IMPORTER_READING_THE_EXPORTED_WRITE = inspect.cleandoc(
     console.log(a);
     """
 )
+A_MODULE_WHOSE_FUNCTION_WRITES_THE_EXPORT = inspect.cleandoc(
+    """
+    export var a;
+    var f = function () { a = 2; return a; };
+    console.log(f());
+    """
+)
 
 
 class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
@@ -1238,6 +1245,25 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
         module = A_MODULE_WHOSE_EXPORTED_WRITE_AN_IMPORTER_READS
         importer = AN_IMPORTER_READING_THE_EXPORTED_WRITE
         agreed = ('1\n1\n', None)
+        self.assertEqual(
+            (
+                module_graph_behavior({'main.mjs': importer, 'lib.mjs': module}, 'main.mjs'),
+                module_graph_behavior(
+                    {
+                        'main.mjs': importer,
+                        'lib.mjs': deobfuscate_source(module, module=True),
+                    },
+                    'main.mjs',
+                ),
+            ),
+            (agreed, agreed),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_function_writing_the_export_keeps_the_write_an_importer_reads(self):
+        module = A_MODULE_WHOSE_FUNCTION_WRITES_THE_EXPORT
+        importer = AN_IMPORTER_READING_THE_EXPORTED_WRITE
+        agreed = ('2\n2\n', None)
         self.assertEqual(
             (
                 module_graph_behavior({'main.mjs': importer, 'lib.mjs': module}, 'main.mjs'),

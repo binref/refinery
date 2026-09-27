@@ -1594,8 +1594,9 @@ class EffectModel:
         Whether assigning *binding* within *func* has no observable consumer, so the assignment
         is not counted as a write. The program must be `global_pristine`: it exposes no reflection
         surface through which the name could be read and installs no accessor that an assignment to
-        a global property could trigger as a setter. Then the write is unobservable when either the
-        value is read nowhere (`Binding.is_read` is false), or every reference to it is
+        a global property could trigger as a setter. An exported binding is always observed, since
+        an importer reads it across the module boundary. Otherwise the write is unobservable when
+        either the value is read nowhere (`Binding.is_read` is false), or every reference to it is
         `_confined_to` *func* so no outside code can see it. This ports the evaluator's sound
         permissiveness for an obfuscator's scratch binding — whether a write-only global or an
         accumulator local to a single function.
@@ -1606,7 +1607,7 @@ class EffectModel:
         the creating assignment in front of it; the summary then carries `throws` with
         `writes_global` clear.
         """
-        if not self.global_pristine:
+        if not self.global_pristine or binding.exported:
             return False
         return not binding.is_read or self._confined_to(binding, func)
 
