@@ -549,9 +549,6 @@ def _decode_lzfse_payload(
                 for j in range(m_value):
                     output.append(output[match_start + j])
 
-    if lit_pos < n_literals:
-        output.extend(literals[lit_pos:n_literals])
-
 
 def _decode_lzvn_block(
     buf: bytes | bytearray | memoryview,

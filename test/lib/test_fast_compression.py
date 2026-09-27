@@ -5,8 +5,10 @@ import unittest
 from refinery.lib.exceptions import RefineryPartialResult
 from refinery.lib.fast.lzjb import lzjb_compress, lzjb_decompress
 from refinery.lib.fast.blz import blz_decompress_chunk
+from refinery.lib.fast.lzfse import lzfse_decompress
 from refinery.lib.fast.xpress import xpress_decompress, xpress_huffman_decompress
 
+from test import TestBase
 from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS_HUFFMAN_CHUNK, KADATH2
 
 TWINKLE_RUNS = (
@@ -241,3 +243,17 @@ class TestXpressFast(unittest.TestCase):
                 except RuntimeError:
                     continue
                 self.assertEqual(result, plaintext[:size])
+
+
+@pytest.mark.cythonized
+class TestLzfseFast(TestBase):
+
+    def test_block_decodes_to_the_size_in_its_header(self):
+        dmg = self.download_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+        start = dmg.find(B'bvx2')
+        end = dmg.find(B'bvx$', start) + 4
+        stream = dmg[start:end]
+        # The first stream of this disk image holds a single block, and the four bytes after the
+        # block magic are the size of its output.
+        size_in_header = int.from_bytes(stream[4:8], 'little')
+        self.assertEqual(len(lzfse_decompress(stream)), size_in_header)

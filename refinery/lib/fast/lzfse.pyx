@@ -528,14 +528,6 @@ cdef int _decode_lzfse_payload(
                     output[out_pos + written + j] = output[match_start + j]
             written += m_value
 
-    # Remaining literals
-    if lit_pos < n_literals:
-        if out_pos + written + (n_literals - lit_pos) > out_cap:
-            free(literals)
-            return -1
-        memcpy(&output[out_pos + written], &literals[lit_pos], n_literals - lit_pos)
-        written += n_literals - lit_pos
-
     free(literals)
     return written
 
