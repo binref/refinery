@@ -3,9 +3,6 @@ import lzma
 import functools
 import uuid
 
-from refinery.lib.vhd import VirtualDisk
-from refinery.lib.vhd.disk import partitions
-
 from ... import TestUnitBase
 
 _DISK_HASHES = {
@@ -180,15 +177,43 @@ class TestVHDExtractor(TestUnitBase):
 
     def test_gpt_partition_without_file_system_is_extracted_as_raw_image(self):
         data = bytearray(self._sample('malware.vhd'))
-        disk = VirtualDisk(data)
-        part, = partitions(disk)
-        boot = data.find(disk.read(part.offset, 512))
+        boot = data.find(B'\xEB\x3C\x90MSDOS5.0')
+        self.assertGreater(boot, 0)
+        size = int.from_bytes(data[boot + 0x13:boot + 0x15], 'little') * 512
         data[boot + 0x1FE:boot + 0x200] = bytes(2)
         chunks = data | self.load() | {'path': ...}
         self.assertEqual(set(chunks), {'Basic data partition.img'})
         image = chunks['Basic data partition.img']
-        self.assertEqual(len(image), part.size)
+        self.assertEqual(len(image), size)
         self.assertEqual(image[:512], data[boot:boot + 512])
+
+    def test_raw_image_of_unreadable_partition_follows_files_of_readable_partition(self):
+        data = bytearray(self._sample('fixed.vhd'))
+        start = int.from_bytes(data[0x1C6:0x1CA], 'little')
+        entry = 0x1BE + 16
+        data[entry + 4] = 0x83
+        data[entry + 8:entry + 12] = (1).to_bytes(4, 'little')
+        data[entry + 12:entry + 16] = (start - 1).to_bytes(4, 'little')
+        chunks = data | self.load() | []
+        paths = [str(chunk['path']) for chunk in chunks]
+        self.assertEqual(paths[-1], 'partition1.img')
+        self.assertTrue(set(_FILE_HASHES) <= set(paths[:-1]))
+        self.assertEqual(chunks[-1], data[512:start * 512])
+
+    def test_dynamic_vhd_partition_without_stored_sectors_yields_nothing(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
+        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
+        count = int.from_bytes(data[header + 0x1C:header + 0x20], 'big')
+        block_size = int.from_bytes(data[header + 0x20:header + 0x24], 'big')
+        bitmap_size = (block_size // 512 // 8 + 511) // 512 * 512
+        data[table + 4:table + 4 * count] = B'\xFF' * (4 * (count - 1))
+        block = int.from_bytes(data[table:table + 4], 'big') * 512
+        mbr = block + bitmap_size
+        start = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little')
+        self.assertEqual(start % 8, 0)
+        data[block + start // 8:block + bitmap_size] = bytes(bitmap_size - start // 8)
+        self.assertEqual(set(data | self.load() | {'path': ...}), set())
 
     def test_dynamic_vhd_without_stored_blocks_yields_nothing(self):
         data = bytearray(self._sample('ntfs.vhd'))
@@ -196,7 +221,7 @@ class TestVHDExtractor(TestUnitBase):
         table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
         count = int.from_bytes(data[header + 0x1C:header + 0x20], 'big')
         data[table:table + 4 * count] = B'\xFF' * (4 * count)
-        self.assertEqual(data | self.load() | [], [])
+        self.assertEqual(set(data | self.load() | {'path': ...}), set())
 
     def test_vhdx_without_stored_blocks_yields_nothing(self):
         data = bytearray(self._sample('vhdx.vhdx'))
@@ -205,4 +230,4 @@ class TestVHDExtractor(TestUnitBase):
         length = int.from_bytes(data[entry + 24:entry + 28], 'little')
         for position in range(offset, offset + length, 8):
             data[position] &= 0xF8
-        self.assertEqual(data | self.load() | [], [])
+        self.assertEqual(set(data | self.load() | {'path': ...}), set())

@@ -18,6 +18,8 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Iterator, Protocol
 
+from refinery.lib.types import buf
+
 _FILE_MAGIC = B'FILE'
 
 _ATTR_STANDARD_INFO = 0x10
@@ -48,7 +50,7 @@ _EMPTY_EXTENT = -1
 
 
 class VolumeSource(Protocol):
-    def read(self, offset: int, length: int) -> bytearray:
+    def read(self, offset: int, length: int) -> buf:
         ...
 
 
@@ -171,7 +173,7 @@ class NtfsVolume:
         self._records: list[_Record | None] = []
         self._load_mft()
 
-    def _read_clusters(self, cluster: int, count: int) -> bytearray:
+    def _read_clusters(self, cluster: int, count: int) -> buf:
         return self._source.read(cluster << self.cluster_size_log, count << self.cluster_size_log)
 
     def _load_mft(self) -> None:
@@ -205,7 +207,7 @@ class NtfsVolume:
             record[tail:tail + 2] = record[source:source + 2]
         return True
 
-    def _parse_record(self, raw: bytearray, index: int) -> _Record | None:
+    def _parse_record(self, raw: buf, index: int) -> _Record | None:
         record = bytearray(raw)
         if len(record) < self.record_size or record[:4] != _FILE_MAGIC:
             return None
@@ -624,7 +626,7 @@ def _lznt1_block(block: bytearray, already: int) -> bytearray:
     return out
 
 
-def is_ntfs(data: bytearray) -> bool:
+def is_ntfs(data: buf) -> bool:
     """
     Check whether the start of a volume looks like an NTFS boot sector by testing for the `NTFS`
     OEM identifier and the boot signature.

@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Protocol
 
+from refinery.lib.types import buf
+
 _SECTOR = 512
 
 _MBR_SIGNATURE = 0xAA55
@@ -26,7 +28,7 @@ class DiskSource(Protocol):
     def size(self) -> int:
         ...
 
-    def read(self, offset: int, length: int) -> bytearray:
+    def read(self, offset: int, length: int) -> buf:
         ...
 
 
@@ -55,7 +57,7 @@ class VolumeView:
         self._offset = partition.offset
         self.size = partition.size
 
-    def read(self, offset: int, length: int) -> bytearray:
+    def read(self, offset: int, length: int) -> buf:
         return self._disk.read(self._offset + offset, length)
 
 

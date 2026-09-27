@@ -15,6 +15,8 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Iterator, Protocol
 
+from refinery.lib.types import buf
+
 _DIR_ENTRY_SIZE = 32
 
 _ATTR_READ_ONLY = 0x01
@@ -30,7 +32,7 @@ _FLAG_EXT_LOWER = 0x10
 
 
 class VolumeSource(Protocol):
-    def read(self, offset: int, length: int) -> bytearray:
+    def read(self, offset: int, length: int) -> buf:
         ...
 
 
@@ -63,7 +65,7 @@ class FatFile:
     def ctime(self):
         return self.mtime
 
-    def extract(self) -> bytearray:
+    def extract(self) -> buf:
         if self.deleted:
             return self._volume._read_contiguous(self.cluster, self.size)
         return self._volume._read_chain(self.cluster, self.size)
@@ -176,13 +178,10 @@ class FatVolume:
             del out[size:]
         return out
 
-    def _read_contiguous(self, cluster: int, size: int) -> bytearray:
+    def _read_contiguous(self, cluster: int, size: int) -> buf:
         if cluster < 2 or size <= 0:
             return bytearray()
-        count = (size + self.cluster_size - 1) // self.cluster_size
-        out = self._source.read(self._cluster_offset(cluster), count * self.cluster_size)
-        del out[size:]
-        return out
+        return self._source.read(self._cluster_offset(cluster), size)
 
     def files(self, recover: bool = False) -> Iterator[FatFile]:
         if self.bits == 32:
@@ -194,7 +193,7 @@ class FatVolume:
 
     def _walk(
         self,
-        table: bytearray,
+        table: buf,
         prefix: str,
         seen: set[int],
         recover: bool,
@@ -260,13 +259,13 @@ class FatVolume:
                 table_data = self._read_chain(cluster)
                 yield from self._walk(table_data, F'{path}/', seen, recover)
 
-    def _entry_cluster(self, entry: bytearray) -> int:
+    def _entry_cluster(self, entry: buf) -> int:
         cluster = int.from_bytes(entry[0x1A:0x1C], 'little')
         if self.bits > 16:
             cluster |= int.from_bytes(entry[0x14:0x16], 'little') << 16
         return cluster
 
-    def _recover_entry(self, entry: bytearray, prefix: str) -> FatFile | None:
+    def _recover_entry(self, entry: buf, prefix: str) -> FatFile | None:
         attrib = entry[0x0B]
         if (attrib & 0x3F) == _ATTR_LONG_NAME or attrib & _ATTR_VOLUME_ID:
             return None
@@ -299,7 +298,7 @@ class FatVolume:
 
     def _assemble_name(
         self,
-        entry: bytearray,
+        entry: buf,
         lfn_parts: dict[int, bytes],
         expected: int,
         checksum: int,
@@ -322,7 +321,7 @@ class FatVolume:
         return self._short_name(entry)
 
     @staticmethod
-    def _short_checksum(entry: bytearray) -> int:
+    def _short_checksum(entry: buf) -> int:
         checksum = 0
         for index in range(11):
             checksum = ((checksum >> 1) | ((checksum & 1) << 7)) + entry[index]
@@ -330,7 +329,7 @@ class FatVolume:
         return checksum
 
     @staticmethod
-    def _short_name(entry: bytearray) -> str:
+    def _short_name(entry: buf) -> str:
         flags = entry[0x0C]
         raw = bytes(entry[:11])
         if raw[0] == 0x05:
@@ -346,7 +345,7 @@ class FatVolume:
         return base
 
 
-def is_fat(data: bytearray) -> bool:
+def is_fat(data: buf) -> bool:
     """
     Check whether the start of a volume looks like a FAT boot sector. The check validates the boot
     signature and the presence of a plausible bytes-per-sector value.
