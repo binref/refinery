@@ -107,3 +107,8 @@ class TestZipFileExtractor(TestUnitBase):
         self.assertEqual(chunks['README.DOC'], 'dcfed6f11652fe234c7c6228f0cc22990758e37b6bc4b09fae9f63a1788fae85')
         self.assertEqual(chunks['ORDER.DOC'], 'e68d15db0ea53209cfb4707accf1cff9f18ed8912974e009a39e77b45e130c9f')
         self.assertEqual(chunks['OMBUDSMN.ASP'], '890f95b60c8e93e6cfd468c7e42a246c6fb6adfb7f62fe3c79841cce2f432222')
+
+    def test_xt_extracts_dos_self_extracting_archive(self):
+        data = self.download_sample('f36d9551c1917a7990db2b4582191656d748179ea2bd15499294388e9c4fa458')
+        chunks = {chunk['path']: repr(chunk['sha256']) for chunk in data | self.ldu('xt')}
+        self.assertEqual(chunks['DEDICATE.DOC'], 'edc82bf30189cccb2c5ab3a18d212149ba82e3c14c700ea58433389a3d1e8f7e')

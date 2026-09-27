@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from refinery.lib.id import is_likely_pe
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -42,7 +43,7 @@ class xtnuitka(PathExtractorUnit):
             def compressed(self):
                 return self.compression_flag == b'Y'
 
-        if data.startswith(b'MZ'):
+        if is_likely_pe(data):
             arcs = list(self._pe_candidates(data))
         else:
             arcs = [data]
@@ -57,14 +58,10 @@ class xtnuitka(PathExtractorUnit):
                 yield UnpackResult(path, data)
 
     @classmethod
-    def handles(cls, data: buf) -> bool | None:
-        if data[:2] == b'MZ':
-            try:
-                next(cls._pe_candidates(data))
-            except StopIteration:
-                return False
-        else:
-            return data[:2] == cls._MAGIC
+    def handles(cls, data: buf) -> bool:
+        if is_likely_pe(data):
+            return next(cls._pe_candidates(data), None) is not None
+        return data[:2] == cls._MAGIC
 
     @classmethod
     def _pe_candidates(cls, data: buf):
