@@ -158,6 +158,7 @@ class xtpdf(ArchiveUnit):
         meta = {}
         path = ''.join(keys)
         done = set()
+        meta_path = F'{path}.json'
 
         if isinstance(blob, pike.Dictionary):
             nested = {}
@@ -173,7 +174,7 @@ class xtpdf(ArchiveUnit):
             for key, value in nested.items():
                 yield from self._walk_pike(value, memo, *keys, key)
             if meta:
-                yield UnpackResult(path, blob.to_json(dereference=True))
+                yield UnpackResult(meta_path, blob.to_json(dereference=True))
                 return
         elif isinstance(blob, pike.Array):
             for key, value in enumerate(iter(blob)):
@@ -188,12 +189,12 @@ class xtpdf(ArchiveUnit):
                 buffer = blob.get_raw_stream_buffer()
             except Exception:
                 buffer = None
-        if buffer or buffer:
+        if buffer is not None:
             yield UnpackResult(path, bytearray(buffer))
         elif isinstance(blob, pike.String):
             yield UnpackResult(path, bytes(blob))
         elif isinstance(blob, pike.Object):
-            yield UnpackResult(path, blob.to_json())
+            yield UnpackResult(meta_path, blob.to_json())
 
     def unpack(self, data):
         if not (password := self.args.pwd):
