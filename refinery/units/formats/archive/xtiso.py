@@ -26,8 +26,8 @@ class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         iso = ISOArchive(data)
         if (layout := iso.sector_layout).raw:
             self.log_info(F'reading raw sectors of {layout.sector_size} bytes')
-        if (fs := self.args.fs) != FileSystemType.AUTO:
-            iso.select_filesystem(fs)
+        if (fs := self.args.fs) != FileSystemType.AUTO and not iso.select_filesystem(fs):
+            self.log_warn(F'The image has no {fs.value} file system; using {iso.filesystem_type} instead.')
         self.log_info(F'using format: {iso.filesystem_type}')
         for entry in iso.entries():
             def extract(e=entry):

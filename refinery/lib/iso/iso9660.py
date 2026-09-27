@@ -643,18 +643,25 @@ class ISO9660Archive:
             return base
         return name
 
-    def select_filesystem(self, fs: FileSystemType) -> None:
+    def select_filesystem(self, fs: FileSystemType) -> bool:
+        """
+        Read the directory tree of the given file system and return whether the image contains it.
+        The directory tree remains unchanged when the image has no volume descriptor for it, and
+        Rock Ridge falls back to plain ISO 9660 names when the primary volume lacks its extensions.
+        """
+        vd = self._joliet_vd if fs is FileSystemType.JOLIET else self._primary_vd
+        if vd is None:
+            return False
         if fs is self.filesystem_type:
-            return
-        if fs is FileSystemType.JOLIET and self._joliet_vd:
-            self._read_directory_tree(self._joliet_vd, is_joliet=True)
-        elif fs is FileSystemType.RR and self._primary_vd:
-            self._read_directory_tree(self._primary_vd, is_joliet=False)
-            if not self._has_rr:
-                self.filesystem_type = FileSystemType.ISO
-        elif fs is FileSystemType.ISO and self._primary_vd:
+            return True
+        if fs is FileSystemType.JOLIET:
+            self._read_directory_tree(vd, is_joliet=True)
+        elif fs is FileSystemType.RR:
+            self._read_directory_tree(vd, is_joliet=False)
+        elif fs is FileSystemType.ISO:
             self._has_rr = False
-            self._read_directory_tree_plain(self._primary_vd)
+            self._read_directory_tree_plain(vd)
+        return fs is self.filesystem_type
 
     def _read_directory_tree_plain(self, vd: VolumeDescriptor) -> None:
         root = vd.root_dir_record

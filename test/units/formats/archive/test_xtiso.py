@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from ... import TestUnitBase
 
 
@@ -49,6 +51,22 @@ class TestISOFileExtractor(TestUnitBase):
         data = self.download_sample('2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb')
         data = self.ldu('lzma')(data)
         self.assertTrue(self.load().handles(data))
+
+    def test_missing_iso9660_file_system_falls_back_to_udf(self):
+        data = self.download_sample('2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb')
+        unit = self.load(fs='iso')
+        with patch.object(unit, 'log_warn') as log_warn:
+            paths = [chunk['path'] for chunk in data | self.ldu('lzma') | unit]
+        log_warn.assert_called_once_with('The image has no iso file system; using udf instead.')
+        self.assertEqual(['click_me', 'README.TXT'], paths)
+
+    def test_missing_udf_file_system_falls_back_to_joliet(self):
+        data = self.download_sample('d4bd4131c785b46d7557be3a94015db09e8e183eaafc6af366e849b0175da681')
+        unit = self.load(fs='udf')
+        with patch.object(unit, 'log_warn') as log_warn:
+            unpacked = unit(data)
+        log_warn.assert_called_once_with('The image has no udf file system; using joliet instead.')
+        self.assertTrue(unpacked.startswith(b'{\\rtf1'), 'unpacked file is not an RTF document')
 
     def _test_coverage_sample(self, sha256):
         expected = _COVERAGE_SAMPLES[sha256]

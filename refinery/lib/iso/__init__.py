@@ -124,27 +124,35 @@ class ISOArchive:
     def filesystem_type(self) -> str:
         return self._type.value
 
-    def select_filesystem(self, fs: FileSystemType) -> None:
+    def select_filesystem(self, fs: FileSystemType) -> bool:
+        """
+        Select the given file system and return whether the image contains it. Otherwise, the
+        previous selection remains, except that requesting Rock Ridge while ISO 9660 is selected
+        yields the plain ISO 9660 names when the primary volume lacks these extensions.
+        """
         if fs is FileSystemType.UDF:
-            if self._udf is not None:
-                self._type = FileSystemType.UDF
-                return
-            from refinery.lib.iso.udf import UDFArchive
-            udf = UDFArchive()
-            try:
-                udf.open(self._data)
-            except Exception:
-                return
-            if udf.refs:
+            if self._udf is None:
+                from refinery.lib.iso.udf import UDFArchive
+                udf = UDFArchive()
+                try:
+                    udf.open(self._data)
+                except Exception:
+                    return False
+                if not udf.refs:
+                    return False
                 self._udf = udf
-                self._type = FileSystemType.UDF
-        elif fs in (FileSystemType.JOLIET, FileSystemType.RR, FileSystemType.ISO):
-            if self._iso is None:
-                from refinery.lib.iso.iso9660 import ISO9660Archive
-                self._iso = ISO9660Archive()
-                self._iso.open(self._data)
-            self._iso.select_filesystem(fs)
-            self._type = self._iso.filesystem_type
+            self._type = FileSystemType.UDF
+            return True
+        if fs not in (FileSystemType.JOLIET, FileSystemType.RR, FileSystemType.ISO):
+            return False
+        if (iso := self._iso) is None:
+            from refinery.lib.iso.iso9660 import ISO9660Archive
+            self._iso = iso = ISO9660Archive()
+            iso.open(self._data)
+        selected = iso.select_filesystem(fs)
+        if selected or self._type is not FileSystemType.UDF:
+            self._type = iso.filesystem_type
+        return selected
 
     def entries(self):
         if self._type is FileSystemType.UDF and self._udf is not None:
