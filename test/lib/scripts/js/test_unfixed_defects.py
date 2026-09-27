@@ -19,6 +19,11 @@ carries companion tests that are not marked — guards pinning the behavior a de
 to, and engine-anchors checking that a pinned behavior is what an engine really does — and those
 pass in the ordinary way.
 
+An entry marked `test.lib.scripts.js.ledger.wontfix` instead is a defect that will not be fixed.
+Only a shape made up for the defect reaches it: no obfuscator emits it and no program is written
+that way. It is recorded to acknowledge the defect, it never runs, and nobody is to fix it or bend a
+design around it; the marker says why no real input reaches the shape.
+
 Where the question is one about JavaScript rather than about this project, the answer was
 established with Node.js and is quoted in the docstring of the test that pins it.
 
@@ -66,6 +71,7 @@ from test.lib.scripts.js.ledger import (
     printed,
     prints,
     well_formed,
+    wontfix,
 )
 from test.lib.scripts.js.test_parameter_grammar import (
     A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
@@ -2714,7 +2720,6 @@ A_GETTER_INSTALLED_THROUGH_ANOTHER_OBJECT = {
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_GETTER_INSTALLED_THROUGH_ANOTHER_OBJECT)
 class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
     """
     The scan of what a program writes on the intrinsics sees a write whose target spells the
@@ -2724,9 +2729,6 @@ class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
     reports the prototype unwritten. The `in` fold then answers from the object alone, and the
     ordering of a namespace method misses the getter that calls it. Writing `Object.prototype`
     through a helper is something packed malware does, but pairing it with either fold is rare.
-    The scan also credits a prototype write only to the name the written chain starts at, so a
-    getter installed through another object, its constructor, or an array is missed the same
-    way; each of those routes is pinned by a test of its own.
     """
 
     @unittest.expectedFailure
@@ -2742,6 +2744,27 @@ class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
         self.assertEqual(
             before_and_after(A_GETTER_INSTALLED_THROUGH_A_PARAMETER),
             (('', 'ReferenceError'), ('', 'ReferenceError')),
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAGetterInstalledThroughAnotherObjectIsSeen(TestBase):
+    """
+    The scan of what a program writes on the intrinsics credits a prototype write only to the name
+    the written chain starts at, so a getter installed on `Object.prototype` through another
+    object, its constructor, or an array is missed. The ordering of a namespace method then misses
+    the getter that calls it before `a` exists, and the deobfuscation writes `7` into `NS.g`.
+    """
+
+    @wontfix(
+        'no obfuscated file writes to Object.prototype (none of 2,074 checked), and a getter '
+        'there that calls a method of whatever object reads it is made up for the defect'
+    )
+    def test_the_getter_still_throws(self):
+        rows = A_GETTER_INSTALLED_THROUGH_ANOTHER_OBJECT
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
         )
 
 
@@ -2830,11 +2853,13 @@ class TestARecursiveFunctionCalledThroughTheGlobalObjectReadsTheValueUnset(TestB
     A global function is called through `w.f`, where `w` is the global object a bare call's `this`
     hands out. The analysis does not take `w` for the global object, so it lists no call of `f`
     from outside `f` and orders the recursive function as though nothing called it before `c = 1`.
-    The call reads `c` unset, and the deobfuscation writes `1` into `f`. Calling one's own
-    recursive function through a global object the program fetched this way is rare.
+    The call reads `c` unset, and the deobfuscation writes `1` into `f`.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'obfuscators route only names a program never declares through the global object, and '
+        'a program calls its own functions by name'
+    )
     def test_the_value_is_read_unset(self):
         row = A_RECURSIVE_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT_UNDER_ANOTHER_NAME
         self.assertEqual(row.read(), row.required())
@@ -2848,11 +2873,13 @@ class TestAValueNameWrittenThroughTheThisOfAFunctionStopsTheFold(TestBase):
     (`test.lib.scripts.js.analysis.test_differential.TestValueNameClobberedThroughTheGlobalObject`)
     but not inside a function, so a constant holding `undefined` is written as `void 0` and
     `typeof undefined` as a string. Nothing here runs a JScript engine, so the entry asserts that
-    the name stays standing. Rewriting `undefined` at all is rare, and through a function's `this`
-    rarer still.
+    the name stays standing.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file writes undefined (none of 2,074 checked), and a program writing it '
+        'through the this of a function is made up for the defect'
+    )
     def test_the_name_stays(self):
         output = deobfuscate_source(a_program("""
             (function () { this.undefined = 5; })();
@@ -2885,18 +2912,19 @@ A_GLOBAL_AN_IMPORTER_IN_A_CYCLE_READS_BEFORE_IT_EXISTS = (
 )
 
 
-
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAGlobalAnImporterInACycleReadsEarlyMayNotExistYet(TestBase):
     """
     A module in an import cycle with the exporter can call an exported function before the
     exporter's body has finished. The analysis deciding whether a global exists at a read takes the
     calls the file spells for all the calls there are, so it vouches for `x` inside `f` and the
-    read that throws when the importer calls `f` early is removed. Import cycles that meet a global
-    created late are rare in the scripts this tool reads.
+    read that throws when the importer calls `f` early is removed.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file holds an import or export (none of 2,074 checked), and an import '
+        'cycle creating a global after the other module read it is made up for the defect'
+    )
     def test_the_global_is_read_before_it_exists(self):
         exporter, importer = A_GLOBAL_AN_IMPORTER_IN_A_CYCLE_READS_BEFORE_IT_EXISTS
         rewritten = deobfuscate_source(exporter, module=True)
@@ -2937,3 +2965,50 @@ class TestAConstantDefinedBeforeTheHostGetsControlIsFoldedIntoAnEntryPoint(TestB
             ('function onload' in output, 'K[0]' in output),
             (True, False),
         )
+
+
+#: A program whose one write of `c` may be skipped on a run that completes the statement holding
+#: it, and whose function reads `c` after that statement, mapped to the behavior an engine gives it.
+A_WRITE_ITS_STATEMENT_MAY_SKIP = {
+    'a write below and': Program(
+        a_program("""
+            var c;
+            Math.random() > 2 && (c = 5);
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+    'a write in a class field initializer': Program(
+        a_program("""
+            var c;
+            class A { x = (c = 5); }
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+    'a write in a branch of a static block': Program(
+        a_program("""
+            var c;
+            class A { static { if (Math.random() > 2) { c = 5; } } }
+            function g() { return c; }
+            console.log(g());
+            """),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_WRITE_ITS_STATEMENT_MAY_SKIP)
+class TestAWriteItsStatementMaySkipHasNotRunWhenTheStatementCompletes(TestBase):
+    """
+    A constant is written into a function when its definition runs before every call of that
+    function, and the ordering takes the statement holding the definition having completed for the
+    definition having run. A write below `&&`, in a class field initializer, or in a branch of a
+    static block is skipped on runs that complete its statement, so `g` reads `c` unset while the
+    deobfuscation writes `5` into it. Minifiers spell `if (x) c = 5;` as `x && (c = 5)`, so the
+    first shape is possible in real code, but only where the variable is declared without a value
+    and written nowhere else, which none of the real samples holds.
+    """

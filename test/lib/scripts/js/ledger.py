@@ -17,7 +17,7 @@ import unittest
 
 from collections import Counter
 from enum import Enum, auto
-from typing import Callable, Iterable, Iterator, Mapping, NamedTuple
+from typing import Any, Callable, Iterable, Iterator, Mapping, NamedTuple, TypeVar
 
 from test.lib.scripts.js.analysis.differential import (
     behavior,
@@ -356,3 +356,21 @@ def one_expected_failure_per_program(
             setattr(entry, anchored.__name__, anchored)
         return entry
     return install
+
+
+_Entry = TypeVar('_Entry', bound=Callable[..., Any])
+
+
+def wontfix(reason: str) -> Callable[[_Entry], _Entry]:
+    """
+    Mark a ledger entry whose defect will not be fixed. The entry pins a real defect, but only a
+    shape made up for that defect reaches it: no obfuscator emits it and no program is written
+    that way. Fixing it would spend development time on a bug no input holds and could bend the
+    design around it, so the entry is kept only to acknowledge that the defect exists. It never
+    runs, no fix is to be written for it, and no design decision is to be made on its account.
+    *reason* says why no real input reaches the shape; it is printed wherever the entry is reported
+    as skipped.
+    """
+    if not reason.strip():
+        raise ValueError('an entry is marked as not to be fixed only for a stated reason')
+    return unittest.skip(F'will not be fixed: {reason}')
