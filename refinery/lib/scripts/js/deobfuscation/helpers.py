@@ -2618,9 +2618,8 @@ def rewrite_receiver_this_to_global(root: Node) -> list[JsIdentifier]:
     """
     Replace every `this` in `receiver_this_expressions` of *root* with a `globalThis` identifier,
     returning the identifiers it synthesized. A caller uses this where *root* is invoked with no
-    receiver, so its `this` is the global object: a `Function`-constructed body, or a recognized
-    global-object finder whose `… || this` fallback yields the global. Each landing has to be one
-    where a bare `globalThis` reaches the global object
+    receiver, so its `this` is the global object, as for a `Function`-constructed body. Each landing
+    has to be one where a bare `globalThis` reaches the global object
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.bare_name_reaches_the_host`): a binding
     of that name inside *root*, or a `with` body resolving it at runtime, captures the synthesized
     read where the `this` it replaced read the receiver. A caller holding a model of the tree

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import unittest
 
+from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import before_and_after
 
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
@@ -176,12 +179,8 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
-    def test_namespace_method_finder_receiver_is_materialized(self):
-        source = (
-            'var NS = {}; NS.f = function() { var r; try { r = window; } catch (e) {}'
-            ' return r || this; }; NS.f();'
-        )
-        self.assertEqual(self._find(source), inspect.cleandoc(
+    def test_a_finder_called_as_a_method_is_left_as_written(self):
+        source = inspect.cleandoc(
             '''
             var NS = {};
             NS.f = function() {
@@ -189,11 +188,27 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
               try {
                 r = window;
               } catch (e) {}
-              return r || globalThis;
+              return r || this;
             };
             NS.f();
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_method_called_finder_whose_primary_lookup_threw_returns_its_receiver(self):
+        """
+        Node prints `true`: reading `window` throws, `r` stays `undefined`, and the fallback `this`
+        of a method call is the namespace.
+        """
+        source = inspect.cleandoc(
+            '''
+            var NS = {};
+            NS.f = function () { var r; try { r = window; } catch (e) {} return r || this; };
+            console.log(NS.f() === NS);
+            '''
+        )
+        self.assertEqual(before_and_after(source), (('true\n', None), ('true\n', None)))
 
     def test_non_finder_returning_constant_is_unchanged(self):
         source = inspect.cleandoc(

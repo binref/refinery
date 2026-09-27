@@ -1,10 +1,9 @@
 """
 A `globalThis` the deobfuscation writes has to reach the global object where it lands.
 
-Two rewrites write the name where the program did not: the finder fold replaces a call of a
-recognized global-object finder with `globalThis`, and the finder's receiver rewrite replaces the
-`this` of a namespace method with it. A catch parameter, a block binding or a `var` a direct `eval`
-declares takes the name over at the spot it lands, where the call or the `this` read something else.
+The finder fold writes the name where the program did not: it replaces a call of a recognized
+global-object finder with `globalThis`. A catch parameter, a block binding or a `var` a direct `eval`
+declares takes the name over at the spot it lands, where the call read something else.
 
 SECURITY: every program here is hand-authored in this file and benign. No sample and no stored
 obfuscator fixture may be fed to this.

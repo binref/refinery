@@ -779,15 +779,6 @@ A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS = inspect.cleandoc("""
     console.log(typeof x);
 """)
 
-#: A finder installed as a namespace method whose primary lookup reads `window` in a `try` block and
-#: falls back to `this`. Called as a method, its `this` is the namespace, so where the host lacks
-#: `window` it returns the namespace rather than a global object.
-A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW = inspect.cleandoc("""
-    var NS = {};
-    NS.f = function () { var r; try { r = window; } catch (e) {} return r || this; };
-    console.log(NS.f() === NS);
-""")
-
 #: A finder whose one global-valued store to the name it returns reads `window` in a `try` block, so
 #: where the host lacks `window` the store never happens and the finder returns `undefined`.
 A_FINDER_RETURNING_A_NAME_WHOSE_GLOBAL_STORE_THREW = inspect.cleandoc("""
@@ -806,9 +797,7 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
     divergence, not a dropped throw. Recognition would have to see that a global-valued return the
     finder relies on is not guaranteed to run. The same holds for a name the finder returns: one
     global-valued store to it marks it global everywhere, although a store that threw left it
-    `undefined`. And the recognition reads a fallback `this` as the global object, which it is only
-    for a call with no receiver: a finder called as a method whose primary lookup threw returns its
-    receiver.
+    `undefined`.
     """
 
     @unittest.expectedFailure
@@ -819,16 +808,6 @@ class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
         """
         source = A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS
         self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
-
-    @unittest.expectedFailure
-    def test_a_method_called_finder_whose_primary_lookup_threw_returns_its_receiver(self):
-        """
-        Node prints `true`: reading `window` throws, `r` stays `undefined`, and the fallback `this`
-        of a method call is the namespace. A correct deobfuscation keeps the call and prints the
-        same.
-        """
-        source = A_METHOD_CALLED_FINDER_WHOSE_PRIMARY_LOOKUP_THREW
-        self.assertEqual(before_and_after(source), (('true\n', None), ('true\n', None)))
 
     @unittest.expectedFailure
     def test_a_finder_returning_a_name_whose_global_store_threw_is_kept(self):
