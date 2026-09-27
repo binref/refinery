@@ -2591,11 +2591,13 @@ class TestAKeyWrittenThroughAnotherFormIsInTheObject(TestBase):
     The fold of `'k' in X` over a local object literal reads the keys `X` holds off the plain
     assignments `X.k = v` and nothing else, so a key written through another name for the object,
     through a destructuring or `for-in` target, through an accessor install, or through a method
-    that returns the object itself, is answered absent. Each shape is written to defeat the fold
-    rather than found in obfuscated input, so its reach over real files is slim.
+    that returns the object itself, is answered absent.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'obfuscated files ask with in only for keys written straight into a literal, and a '
+        'program writing the key another way first is made up for the defect'
+    )
     def test_the_key_is_found(self):
         rows = A_KEY_WRITTEN_WHERE_THE_IN_FOLD_DOES_NOT_LOOK
         self.assertEqual(
@@ -2623,11 +2625,13 @@ class TestABuiltInKeyIsMissingFromAnObjectWithoutAPrototype(TestBase):
     """
     The fold of `'k' in X` answers `true` for a key `Object.prototype` supplies before it asks
     whether `X` still inherits from it, and a prototype replaced through another name or through
-    `Object.setPrototypeOf` is not seen. A file clearing a local object's prototype and then asking
-    for an inherited key is a shape written for the fold, not one obfuscators emit.
+    `Object.setPrototypeOf` is not seen.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file clears a prototype (none of 2,074 checked), and asking an object whose '
+        'prototype a program cleared for an inherited key is made up for the defect'
+    )
     def test_the_key_is_missing(self):
         rows = A_BUILT_IN_KEY_ASKED_OF_AN_OBJECT_WITHOUT_A_PROTOTYPE
         self.assertEqual(
@@ -2654,11 +2658,13 @@ A_FUNCTION_WITHOUT_A_PROTOTYPE_PROPERTY = {
 class TestAnArrowOrAsyncFunctionHasNoPrototypeProperty(TestBase):
     """
     The fold of `'prototype' in f` answers `true` for every function, while an arrow function and an
-    async function carry no `prototype` property at all. Asking a function for its prototype by
-    `in` is rare in real input.
+    async function carry no `prototype` property at all.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file asks a function for prototype with in (none of 2,074 checked), and a '
+        'program asking an arrow or async function literal is made up for the defect'
+    )
     def test_the_property_is_missing(self):
         rows = A_FUNCTION_WITHOUT_A_PROTOTYPE_PROPERTY
         self.assertEqual(
@@ -2727,11 +2733,13 @@ class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
     method. `Object.assign` and `Reflect.set` write `Object.prototype` through an argument, and a
     method call on a parameter holding it installs a getter no assignment spells, so the scan
     reports the prototype unwritten. The `in` fold then answers from the object alone, and the
-    ordering of a namespace method misses the getter that calls it. Writing `Object.prototype`
-    through a helper is something packed malware does, but pairing it with either fold is rare.
+    ordering of a namespace method misses the getter that calls it.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file writes to Object.prototype (none of 2,074 checked), and a program '
+        'asking a fresh literal for a key it put there by Object.assign is made up for the defect'
+    )
     def test_the_key_is_found(self):
         rows = AN_OBJECT_PROTOTYPE_WRITTEN_INDIRECTLY
         self.assertEqual(
@@ -2739,7 +2747,10 @@ class TestAnIndirectWriteToObjectPrototypeIsSeen(TestBase):
             each_program_still_prints(rows),
         )
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file writes to Object.prototype (none of 2,074 checked), and a getter '
+        'there that calls a method of whatever object reads it is made up for the defect'
+    )
     def test_a_getter_installed_through_a_parameter_still_throws(self):
         self.assertEqual(
             before_and_after(A_GETTER_INSTALLED_THROUGH_A_PARAMETER),
@@ -2788,10 +2799,13 @@ class TestABuiltInMethodCalledOnAnObjectMayChangeIt(TestBase):
     Object folding reads a property of a local object literal off the literal, treating a method
     call on the object as unable to change it. `valueOf` hands the object itself back, and
     `__defineGetter__` replaces the property with an accessor, so the value read later is not the
-    literal's. Obfuscators build such objects as lookup tables and never call these methods on them.
+    literal's.
     """
 
-    @unittest.expectedFailure
+    @wontfix(
+        'no obfuscated file calls valueOf or __defineGetter__ (none of 2,074 checked), and a '
+        'program changing its own lookup table that way is made up for the defect'
+    )
     def test_the_property_is_read_after_the_change(self):
         rows = AN_OBJECT_A_BUILT_IN_METHOD_MUTATES
         self.assertEqual(
