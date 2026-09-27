@@ -2678,6 +2678,34 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     return model.reaches_global_object(binding, module_scope=runs_as_module(options, model.root))
 
 
+def binding_constant(effects: EffectModel, binding: Binding, options: object) -> tuple[bool, Value]:
+    """
+    The value *binding* holds wherever it has been established, as `(True, value)`, or
+    `(False, None)` where it holds no constant a read may be answered with. That is the one value
+    the text gives it, `refinery.lib.scripts.js.analysis.model.SemanticModel.singular_value`, when
+    that value denotes a primitive or an array of primitives. An array must also be a container
+    nothing changes or hands out, which is
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`,
+    and a binding a host may rewrite (`a_host_reaches_the_binding`) holds nothing the file decides.
+    An array holding an array or an object is refused: an element read out of it is a container the
+    program shares between reads, where a folded read hands out a fresh copy of it.
+
+    Whether the value is in place when a given read runs is an ordering question this does not ask.
+    """
+    model = effects.model
+    known, value = denoted_value(model.singular_value(binding), model)
+    if not known or isinstance(value, dict):
+        return False, None
+    if isinstance(value, list):
+        if any(isinstance(item, (list, dict)) for item in value):
+            return False, None
+        if not effects.binding_is_immutable_container(binding):
+            return False, None
+    if a_host_reaches_the_binding(model, binding, options):
+        return False, None
+    return True, value
+
+
 def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
     """
     Whether deleting the nodes of *removed* would leave nothing naming what it takes away. A binding

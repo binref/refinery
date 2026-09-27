@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
+    Binding,
     SemanticModel,
     call_supplies_an_arguments_object,
     statement_list_holding,
@@ -1263,6 +1264,9 @@ class JsInterpreter:
         closure: Mapping[str, Value] | None = None,
         closure_env: Mapping[int, Mapping[str, Value]] | None = None,
         established: Callable[[JsFunctionNode], bool] | None = None,
+        constant: Callable[[Binding], tuple[bool, Value]] | None = None,
+        callers: tuple[JsFunctionNode, ...] = (),
+        constants: dict[Binding, tuple[bool, Value]] | None = None,
         depth: int = 0,
     ):
         self.max_iterations = max_iterations
@@ -1281,6 +1285,10 @@ class JsInterpreter:
         self._closure: Mapping[str, Value] = closure or {}
         self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
         self._established = established
+        self._constant = constant
+        self._callers = callers
+        self._frames = callers
+        self._constants: dict[Binding, tuple[bool, Value]] = {} if constants is None else constants
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -1310,6 +1318,7 @@ class JsInterpreter:
             raise InterpreterError
         if _declares_a_function_inside_a_block(func):
             raise InterpreterError
+        self._frames = (*self._callers, func)
         params = func.params
         param_names: list[str] = []
         for p in params:
@@ -1743,16 +1752,59 @@ class JsInterpreter:
         — a bare-assignment or initializer function reached before its establishing node has run reads a
         temporal dead zone or a hoisted `undefined` at runtime, so resolving it here would replace that
         throw with a value. A hoisted function declaration is always established and passes unconditionally.
+        A function declared inside a function this interpreter is running is never resolved here
+        (`_bound_in_a_running_frame`): the environment holds it once the run it belongs to has put
+        it in place, and the ordering the predicate answers is not that run's.
         """
         effects = self._effects
         if effects is None:
             return None
-        func = effects.unambiguous_function(effects.model.resolve(node))
+        binding = effects.model.resolve(node)
+        func = effects.unambiguous_function(binding)
         if func is None:
+            return None
+        if binding is not None and self._bound_in_a_running_frame(binding):
             return None
         if self._established is not None and not self._established(func):
             return None
         return func
+
+    def _bound_in_a_running_frame(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is declared inside one of the functions this interpreter is running, its
+        own or one a caller in the same fold is running. Such a name holds whatever the run it
+        belongs to has put into it: the interpreter's environment holds exactly that for its own
+        run, and a name the environment does not hold is not yet in place in it, or belongs to
+        another run of the same function whose state no environment here holds. The ordering
+        questions the caller answers are asked against the call being folded, which stands outside
+        every such run, so they cannot answer for this name.
+        """
+        owner = binding.scope.node
+        return any(owner is frame or owner.is_descendant_of(frame) for frame in self._frames)
+
+    def _resolve_constant(self, node: JsIdentifier) -> tuple[bool, Value]:
+        """
+        The value the free name *node* holds while the call being folded runs, as `(True, value)`,
+        or `(False, None)` where this interpreter does not know it. The caller's *constant* callback
+        decides it for a binding, and is asked only for one declared outside every running function
+        (`_bound_in_a_running_frame`) and read outside any dynamic scope, since a `with` object or a
+        direct `eval` may answer the read with something else. The value is copied once and handed
+        to every nested call of the same fold, so two reads of one table are the same object, and a
+        change the fold makes to its copy never reaches the table the program holds.
+        """
+        model = self._model
+        if self._constant is None or model is None:
+            return False, None
+        if model.read_has_dynamic_effect(node):
+            return False, None
+        binding = model.resolve(node)
+        if binding is None or self._bound_in_a_running_frame(binding):
+            return False, None
+        cached = self._constants.get(binding)
+        if cached is None:
+            known, value = self._constant(binding)
+            cached = self._constants[binding] = known, _deep_copy_value(value)
+        return cached
 
     def _names_a_runtime_builtin(self, node: JsIdentifier) -> bool:
         """
@@ -1805,6 +1857,9 @@ class JsInterpreter:
         func = self._resolve_function_node(node)
         if func is not None:
             return func
+        known, value = self._resolve_constant(node)
+        if known:
+            return value
         if self._names_a_global_value(node):
             return GLOBAL_VALUE_NAMES[name]
         raise IrreducibleExpression(node)
@@ -1929,6 +1984,9 @@ class JsInterpreter:
                 return js_typeof(self._env[name])
             if self._resolve_function_node(operand) is not None:
                 return 'function'
+            known, value = self._resolve_constant(operand)
+            if known:
+                return js_typeof(value)
             if self._resolves_to_a_binding(operand):
                 raise IrreducibleExpression(node)
             environment = self._model.environment if self._model is not None else HostEnvironment.universal
@@ -2399,6 +2457,9 @@ class JsInterpreter:
             closure=callee_closure,
             closure_env=self._closure_env,
             established=self._established,
+            constant=self._constant,
+            callers=self._frames,
+            constants=self._constants,
             depth=self._depth + 1,
         )
         try:

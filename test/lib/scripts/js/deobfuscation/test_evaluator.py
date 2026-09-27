@@ -884,7 +884,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("var msg = 'Hello, World!';", result)
+        self.assertEqual("const prefix = 'Hello';\nvar msg = 'Hello, World!';", result)
 
     def test_const_function_expression_with_xor_loop(self):
         source = inspect.cleandoc(
@@ -901,7 +901,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("var msg = 'Hello';", result)
+        self.assertEqual("const key = [3, 3, 3, 3, 3];\nvar msg = 'Hello';", result)
 
     def test_closure_function_calls_sibling(self):
         source = inspect.cleandoc(
@@ -1007,7 +1007,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._deobfuscate_iterative(source)
         self.assertEqual("console.log('key123');", result)
 
-    def test_let_binding_not_captured(self):
+    def test_a_let_never_reassigned_is_read_by_the_call(self):
         source = inspect.cleandoc(
             """
             let prefix = 'Hello';
@@ -1015,7 +1015,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var msg = greet('World');
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                let prefix = 'Hello';
+                var msg = 'Hello, World';
+                """
+            ),
+            self._evaluate(source),
+        )
 
     def test_self_assigning_function_not_evaluated(self):
         source = inspect.cleandoc(
@@ -1398,7 +1406,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = 'Hello>';", result)
 
-    def test_closure_const_declared_after_function_not_captured(self):
+    def test_a_const_declared_after_the_function_is_read_by_a_call_after_it(self):
         source = inspect.cleandoc(
             """
             const fn = () => x;
@@ -1406,7 +1414,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             var r = fn();
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 5;
+                var r = 5;
+                """
+            ),
+            self._evaluate(source),
+        )
 
     def test_finally_runs_when_catch_body_throws(self):
         source = inspect.cleandoc(
@@ -1714,7 +1730,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var r = 1;', result)
 
-    def test_var_hoisting_shadows_outer_const_in_closure(self):
+    def test_a_hoisted_var_shadowing_the_outer_const_is_the_one_read(self):
         source = inspect.cleandoc(
             """
             const x = 'outer';
@@ -1725,8 +1741,18 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        result = self._evaluate(source)
-        self.assertEqual(source, result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 'outer';
+                function wrap() {
+                  var x = 'inner';
+                  return 'inner';
+                }
+                """
+            ),
+            self._evaluate(source),
+        )
 
     def test_var_hoisting_shadows_outer_const_in_arg_resolution(self):
         source = inspect.cleandoc(
@@ -1835,8 +1861,8 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
     def test_nested_var_hoisting_shadows_outer_const(self):
         """
         Inside `wrap`, the `var x` hoists to the function scope, so `g`'s `x` binds to it, not to the
-        outer `const x`. Once `f` is inlined and removed, nothing references the outer `const x`, so it
-        is dead and removed too — `wrap` keeps reading its own local `x`.
+        outer `const x`: the call to `f` becomes the outer value, and the call to `g` a read of the
+        local `x`.
         """
         source = inspect.cleandoc(
             """
@@ -1854,12 +1880,12 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
+                const x = 'outer';
                 function wrap() {
-                  const g = () => x;
                   if (true) {
                     var x = 'inner';
                   }
-                  return g();
+                  return x;
                 }
                 var a = 'outer';
                 """
@@ -1903,6 +1929,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual(result, inspect.cleandoc(
             """
+            const key = [1, 2, 3];
             var a = '@@@';
             var b = '@@@';
             """
@@ -1941,7 +1968,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("var r = 'outer';", result)
+        self.assertEqual("const x = 'outer';\nvar r = 'outer';", result)
 
     def test_let_in_nested_block_does_not_block_arg_resolution(self):
         source = inspect.cleandoc(
@@ -2070,7 +2097,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = 'Hello';", result)
 
-    def test_tdz_shadow_from_later_let_blocks_capture(self):
+    def test_a_later_let_shadowing_the_outer_const_is_the_one_read(self):
         source = inspect.cleandoc(
             """
             const x = 'outer';
@@ -2081,7 +2108,18 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(source, self._evaluate(source))
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 'outer';
+                function wrapper() {
+                  let x = 'inner';
+                  return 'inner';
+                }
+                """
+            ),
+            self._evaluate(source),
+        )
 
     def test_later_var_does_not_block_capture(self):
         source = inspect.cleandoc(
@@ -2096,6 +2134,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
+                const secret = 'captured';
                 var unrelated = 'something';
                 var r = 'captured';
                 """
@@ -2201,7 +2240,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual('var r = 50;', result)
+        self.assertEqual('const x = 42;\nvar r = 50;', result)
 
     def test_split_undefined_separator_negative_limit(self):
         source = inspect.cleandoc(

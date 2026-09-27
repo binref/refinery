@@ -992,11 +992,12 @@ class TestADeadZoneReadReachedThroughACallStillThrows(TestBase):
 #: Node ends it with. A fully dead assignment target orphans the callee `f` into the removal's
 #: `defunct` set, after which the model-free clearance drops a call to that name unconditionally
 #: — never consulting the `EffectSummary.dead_zone_reads` gate the declarator path checks.
-#: Reached directly, through an array right-hand side, and through a transitive callee.
+#: Reached directly, through an array right-hand side, and through a transitive callee. Each
+#: reader reads `this` first, which keeps the call from being evaluated before the removal sees it.
 A_DEAD_ASSIGNMENT_TO_A_DEAD_ZONE_READER = {
-    'function f() { return q; }\nvar x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function f() { return q; }\nvar x;\nx = [f()];\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
-    'function g() { return q; }\nfunction f() { return g(); }\n'
+    'function f() { return this && q; }\nvar x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return this && q; }\nvar x;\nx = [f()];\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function g() { return this && q; }\nfunction f() { return g(); }\n'
     'var x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
 }
 

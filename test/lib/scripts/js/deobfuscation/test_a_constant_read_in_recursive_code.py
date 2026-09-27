@@ -95,14 +95,14 @@ AN_ELEMENT_NAMING_A_PARAMETER_CALLED_UNDEFINED = {
 }
 
 #: A program reading a string longer than the inliner pastes five times inside a recursive
-#: function, mapped to what Node prints for it.
+#: function, called with an argument the file cannot know, mapped to what Node prints for it.
 A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE = {
     a_program("""
         const s = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/=_';
         function f(n) {
           return n > 0 ? f(n - 1) + s.charAt(n) + s[n] + s.length + s.indexOf('z') + s.slice(0, 1) : '';
         }
-        console.log(f(2));
+        console.log(f(process.argv[2] ? 1 : 2));
         """): 'bb6625acc6625a\n',
 }
 
