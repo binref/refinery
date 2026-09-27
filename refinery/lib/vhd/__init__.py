@@ -39,12 +39,17 @@ class DiskBackend(abc.ABC):
     """
     Common interface for the virtual disk produced by a container parser. The `size` property is
     the size of the reconstructed virtual disk in bytes; the `read` method provides random access
-    to its contents, returning zero bytes for sparse and unallocated regions.
+    to its contents, returning zero bytes for sparse and unallocated regions. The `allocated`
+    method reports whether the container stores data for any part of a byte range.
     """
     size: int
 
     @abc.abstractmethod
     def read(self, offset: int, length: int) -> bytearray:
+        ...
+
+    @abc.abstractmethod
+    def allocated(self, offset: int, length: int) -> bool:
         ...
 
 
@@ -72,6 +77,9 @@ class VirtualDisk(DiskBackend):
 
     def read(self, offset: int, length: int) -> bytearray:
         return self._backend.read(offset, length)
+
+    def allocated(self, offset: int, length: int) -> bool:
+        return self._backend.allocated(offset, length)
 
 
 def _phys(view: memoryview, offset: int, length: int) -> bytearray:
@@ -142,11 +150,10 @@ class VhdImage(DiskBackend):
             block = offset >> (block_size.bit_length() - 1)
             off_in_block = offset & (block_size - 1)
             count = min(block_size - off_in_block, end - offset)
-            sector = self._bat[block] if block < len(self._bat) else _VHD_UNUSED_BLOCK
-            if sector == _VHD_UNUSED_BLOCK:
+            base = self._block_offset(block)
+            if base is None:
                 out.extend(bytes(count))
             else:
-                base = sector * _SECTOR
                 bitmap = view[base:base + self._bitmap_size]
                 data_pos = base + self._bitmap_size + off_in_block
                 chunk = _phys(view, data_pos, count)
@@ -154,6 +161,25 @@ class VhdImage(DiskBackend):
                 out.extend(chunk)
             offset += count
         return out
+
+    def allocated(self, offset: int, length: int) -> bool:
+        end = min(offset + length, self.size)
+        if offset >= end:
+            return False
+        if self._type == _VHD_TYPE_FIXED:
+            return offset < len(self._view)
+        shift = self._block_size.bit_length() - 1
+        first = offset >> shift
+        last = min((end - 1) >> shift, len(self._bat) - 1)
+        return any(self._block_offset(block) is not None for block in range(first, last + 1))
+
+    def _block_offset(self, block: int) -> int | None:
+        if block >= len(self._bat):
+            return None
+        sector = self._bat[block]
+        if sector == _VHD_UNUSED_BLOCK:
+            return None
+        return sector * _SECTOR
 
     def _apply_bitmap(self, bitmap: memoryview, chunk: bytearray, off_in_block: int) -> None:
         position = 0
@@ -307,22 +333,37 @@ class VhdxImage(DiskBackend):
         end = min(offset + length, self.size)
         view = self._view
         block_size = 1 << self._block_size_log
-        chunk_ratio = 1 << self._chunk_ratio_log
         while offset < end:
-            block = offset >> self._block_size_log
-            chunk_index = block >> self._chunk_ratio_log
-            entry_index = chunk_index * (chunk_ratio + 1) + (block & (chunk_ratio - 1))
-            entry = int.from_bytes(self._bat[entry_index * 8:entry_index * 8 + 8], 'little')
-            state = entry & 7
-            block_offset = entry & ~0xFFFFF
+            block_offset = self._block_offset(offset >> self._block_size_log)
             off_in_block = offset & (block_size - 1)
             count = min(block_size - off_in_block, end - offset)
-            if state == _VHDX_PAYLOAD_BLOCK_FULLY_PRESENT:
+            if block_offset is not None:
                 out.extend(_phys(view, block_offset + off_in_block, count))
             else:
                 out.extend(bytes(count))
             offset += count
         return out
+
+    def allocated(self, offset: int, length: int) -> bool:
+        end = min(offset + length, self.size)
+        if offset >= end:
+            return False
+        chunk_ratio = 1 << self._chunk_ratio_log
+        chunks, rest = divmod(len(self._bat) // 8, chunk_ratio + 1)
+        blocks = chunks * chunk_ratio + min(rest, chunk_ratio)
+        shift = self._block_size_log
+        first = offset >> shift
+        last = min((end - 1) >> shift, blocks - 1)
+        return any(self._block_offset(block) is not None for block in range(first, last + 1))
+
+    def _block_offset(self, block: int) -> int | None:
+        chunk_ratio = 1 << self._chunk_ratio_log
+        chunk_index = block >> self._chunk_ratio_log
+        entry_index = chunk_index * (chunk_ratio + 1) + (block & (chunk_ratio - 1))
+        entry = int.from_bytes(self._bat[entry_index * 8:entry_index * 8 + 8], 'little')
+        if entry & 7 != _VHDX_PAYLOAD_BLOCK_FULLY_PRESENT:
+            return None
+        return entry & ~0xFFFFF
 
 
 def is_vhd(data: buf) -> bool:

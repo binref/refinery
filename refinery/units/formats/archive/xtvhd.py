@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import datetime
+import functools
 
 from refinery.lib.meta import MV
 from refinery.lib.types import Param
 from refinery.lib.vhd import VirtualDisk, is_vhd, is_vhdx
 from refinery.lib.vhd.disk import Partition, VolumeView, partitions
-from refinery.lib.vhd.fat import FatFile, FatVolume, is_fat
-from refinery.lib.vhd.ntfs import NtfsFile, NtfsVolume, is_ntfs
+from refinery.lib.vhd.fat import FatError, FatFile, FatVolume, is_fat
+from refinery.lib.vhd.ntfs import NtfsError, NtfsFile, NtfsVolume, is_ntfs
 from refinery.units import Arg, Chunk
 from refinery.units.formats.archive import ArchiveUnit
 
@@ -22,7 +23,8 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     relevant metadata such as the creation, access, and modification timestamps and the file
     attributes are attached to each extracted file. For NTFS volumes, the timestamps from the
     `$FILE_NAME` attribute are also exposed when they differ from those in `$STANDARD_INFORMATION`,
-    which is a common indicator of timestamp manipulation.
+    which is a common indicator of timestamp manipulation. A volume without a readable file system
+    is extracted as a raw image after all files, unless the container stores no data for it.
     """
     def __init__(
         self, *paths,
@@ -44,15 +46,15 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             self.log_warn(warning)
         recover = self.args.recover
         volumes: list[tuple[Partition, NtfsVolume | FatVolume]] = []
+        images: list[tuple[Partition, VolumeView]] = []
         for part in partitions(disk):
             view = VolumeView(disk, part)
-            boot = view.read(0, 512)
-            if is_ntfs(boot):
-                volumes.append((part, NtfsVolume(view)))
-            elif is_fat(boot):
-                volumes.append((part, FatVolume(view)))
+            if fs := self._volume(part, view):
+                volumes.append((part, fs))
+            elif disk.allocated(part.offset, part.size):
+                images.append((part, view))
             else:
-                self.log_info(F'partition {part.index}: unrecognized file system')
+                self.log_info(F'partition {part.index}: no data stored, skipped')
         multiple = len(volumes) > 1
         for part, fs in volumes:
             prefix = self._prefix(part) if multiple else ''
@@ -65,6 +67,22 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 if MV.MTIME in meta:
                     date = None
                 yield self._pack(path, date, file.extract, **meta)
+        for part, view in images:
+            path = 'disk.img' if part.whole_disk else F'{self._name(part)}.img'
+            yield self._pack(path, None, functools.partial(view.read, 0, part.size))
+
+    def _volume(self, part: Partition, view: VolumeView) -> NtfsVolume | FatVolume | None:
+        boot = view.read(0, 512)
+        try:
+            if is_ntfs(boot):
+                return NtfsVolume(view)
+            if is_fat(boot):
+                return FatVolume(view)
+        except (FatError, NtfsError) as error:
+            self.log_warn(F'partition {part.index}: {error!s}')
+            return None
+        self.log_info(F'partition {part.index}: unrecognized file system')
+        return None
 
     @staticmethod
     def _iso(value: datetime.datetime | None) -> str | None:
@@ -99,9 +117,12 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return meta
 
     @staticmethod
-    def _prefix(part: Partition) -> str:
-        label = part.label or F'partition{part.index}'
-        return F'{label}/'
+    def _name(part: Partition) -> str:
+        return part.label or F'partition{part.index}'
+
+    @classmethod
+    def _prefix(cls, part: Partition) -> str:
+        return F'{cls._name(part)}/'
 
     @classmethod
     def handles(cls, data) -> bool | None:

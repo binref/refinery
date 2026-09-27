@@ -1,6 +1,10 @@
 import datetime
 import lzma
 import functools
+import uuid
+
+from refinery.lib.vhd import VirtualDisk
+from refinery.lib.vhd.disk import partitions
 
 from ... import TestUnitBase
 
@@ -18,6 +22,9 @@ _FILE_HASHES = {
     'kadath2.txt': 'f33d62b175ffbb183cadee08873b03dca7aaf1dfc7035a32203996e309d9aed6',
     'small.txt'  : '3fcdaaca3594525c037d2f83d20d5e21d3f5b5264b7ab99351eed1d552ccac51',
 }
+
+_VHDX_REGION_TABLE = 0x30000
+_VHDX_REGION_BAT = uuid.UUID('2DC27766-F623-4200-9D64-115E9BFD4A08').bytes_le
 
 
 class TestVHDExtractor(TestUnitBase):
@@ -154,3 +161,48 @@ class TestVHDExtractor(TestUnitBase):
             '203426bbab2c9b5f73e894282c896802bd03e30a869aaa91c4a9c76ef2ced136')
         self.assertEqual(repr(recovered['$RECYCLE.BIN/_RK8OTOU.pdf']['sha256']),
             '796d1ae687ed252aaf129c7ad2361c4c6cfc1150ed05536921f3f7cd8196883c')
+
+    def test_disk_without_partition_table_or_file_system_is_extracted_as_raw_image(self):
+        data = lzma.decompress(self.download_sample(
+            '2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb'))
+        chunks = data | self.load() | {'path': ...}
+        self.assertEqual(set(chunks), {'disk.img'})
+        self.assertEqual(chunks['disk.img'], data[:-512])
+
+    def test_mbr_partition_with_invalid_fat_is_extracted_as_raw_image(self):
+        data = bytearray(self._sample('fixed.vhd'))
+        offset = int.from_bytes(data[0x1C6:0x1CA], 'little') * 512
+        size = int.from_bytes(data[0x1CA:0x1CE], 'little') * 512
+        data[offset + 0x10] = 0
+        chunks = data | self.load() | {'path': ...}
+        self.assertEqual(set(chunks), {'partition0.img'})
+        self.assertEqual(chunks['partition0.img'], data[offset:offset + size])
+
+    def test_gpt_partition_without_file_system_is_extracted_as_raw_image(self):
+        data = bytearray(self._sample('malware.vhd'))
+        disk = VirtualDisk(data)
+        part, = partitions(disk)
+        boot = data.find(disk.read(part.offset, 512))
+        data[boot + 0x1FE:boot + 0x200] = bytes(2)
+        chunks = data | self.load() | {'path': ...}
+        self.assertEqual(set(chunks), {'Basic data partition.img'})
+        image = chunks['Basic data partition.img']
+        self.assertEqual(len(image), part.size)
+        self.assertEqual(image[:512], data[boot:boot + 512])
+
+    def test_dynamic_vhd_without_stored_blocks_yields_nothing(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
+        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
+        count = int.from_bytes(data[header + 0x1C:header + 0x20], 'big')
+        data[table:table + 4 * count] = B'\xFF' * (4 * count)
+        self.assertEqual(data | self.load() | [], [])
+
+    def test_vhdx_without_stored_blocks_yields_nothing(self):
+        data = bytearray(self._sample('vhdx.vhdx'))
+        entry = data.find(_VHDX_REGION_BAT, _VHDX_REGION_TABLE)
+        offset = int.from_bytes(data[entry + 16:entry + 24], 'little')
+        length = int.from_bytes(data[entry + 24:entry + 28], 'little')
+        for position in range(offset, offset + length, 8):
+            data[position] &= 0xF8
+        self.assertEqual(data | self.load() | [], [])
