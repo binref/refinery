@@ -68,7 +68,8 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
     Replace `NS.prop` member accesses with bare identifiers when `NS` is declared as an empty
     object literal and is only ever used via property access. Emits `var` declarations for the
     flattened property names. A property whose name conflicts with an existing variable in the
-    scope, or that a plain object inherits, is left on the namespace object.
+    scope, or that a plain object inherits, is left on the namespace object. A namespace that a
+    method may read through `this` is left whole.
 
     The pass is batched: every scope's decisions read the models the invocation entered with, and
     the edits run once the traversal ends. The decisions read four kinds of model fact, and the
@@ -145,11 +146,11 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             return None
         conflicts = self._find_conflicting_names(model, scope, scope_obj, props, declarator)
         references_by_key = self._property_references_by_key(scope, name)
+        if self._a_method_may_observe_the_namespace(references_by_key):
+            return None
         captured = self._captured_keys(model, scope, scope_obj, references_by_key)
-        receiver_called = self._receiver_called_keys(references_by_key)
-        this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
         inherited = self._inherited_keys(props, cache.effects)
-        flattenable = props - conflicts - captured - this_unsafe - inherited
+        flattenable = props - conflicts - captured - inherited
         flattenable = {
             key for key in flattenable
             if is_valid_identifier(key) and not self.name_emitted_in(scope, key)
@@ -539,52 +540,31 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         return buckets
 
     @staticmethod
-    def _receiver_called_keys(references_by_key: dict[str, list[Node]]) -> set[str]:
+    def _a_method_may_observe_the_namespace(references_by_key: dict[str, list[Node]]) -> bool:
         """
-        Property keys accessed at least once in a receiver-binding call position (`NS.key(...)`,
-        `NS.key` as a template tag), where the call binds `this === NS`. Flattening such an access to a
-        bare `key` would rebind `this` to the global object, so a `this`-observing value on one of these
-        keys cannot be detached; keys reached only through detached uses are unaffected.
+        Whether some call binds `this` to the namespace object (`NS.key(...)`, `NS.key` as a template
+        tag) and invokes a value that may observe it. Such a value is handed the object itself, which
+        it can read any key of, return, store, or pass on, so no key can move off the object and the
+        namespace stays whole. A key's value is provably `this`-free only when every `NS.key = rhs`
+        assignment binds a function expression that does not observe its receiver, and at least one
+        such assignment exists. Anything else — a value observing `this`, an opaque or compound
+        assignment, an arrow (conservatively, though its `this` is lexical), or a key never assigned
+        a function — may observe it.
         """
-        return {
-            key
-            for key, nodes in references_by_key.items()
-            if any(is_receiver_binding_call(node) for node in nodes)
-        }
-
-    @staticmethod
-    def _this_unsafe_keys(scope: Node, name: str, receiver_called: set[str]) -> set[str]:
-        """
-        The receiver-called keys that cannot be proven to hold a `this`-free function, so flattening
-        `NS.key(...)` to `key(...)` might rebind `this` from `NS` to the global object. A key is provably
-        safe only when every `NS.key = rhs` assignment binds a function expression that does not observe
-        its receiver `this`, and at least one such assignment exists. Anything else — a value observing
-        `this`, an opaque or compound assignment, an arrow (conservatively, though its `this` is lexical),
-        or a key never assigned a function — is held back on the namespace object.
-        """
-        if not receiver_called:
-            return set()
-        assigned: dict[str, list[Expression | None]] = {key: [] for key in receiver_called}
-        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
-            if not isinstance(node, JsMemberExpression):
+        for nodes in references_by_key.values():
+            if not any(is_receiver_binding_call(node) for node in nodes):
                 continue
-            obj = node.object
-            if not isinstance(obj, JsIdentifier) or obj.name != name:
-                continue
-            key = access_key(node)
-            if key not in receiver_called:
-                continue
-            parent = node.parent
-            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
-                assigned[key].append(parent.right if parent.operator == '=' else None)
-        return {
-            key
-            for key, values in assigned.items()
+            values: list[Expression | None] = []
+            for node in nodes:
+                parent = node.parent
+                if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+                    values.append(parent.right if parent.operator == '=' else None)
             if not values or not all(
                 isinstance(rhs, JsFunctionExpression) and not references_receiver_this(rhs)
                 for rhs in values
-            )
-        }
+            ):
+                return True
+        return False
 
     @staticmethod
     def _emit_function_declarations(

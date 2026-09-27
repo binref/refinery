@@ -315,13 +315,11 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             self._flatten('var NS = {}; NS.x = 1; delete NS.x;'),
         )
 
-    @unittest.expectedFailure
     def test_a_namespace_whose_method_reads_it_through_this_stays_whole(self):
         """
         `NS.f()` binds `this === NS`, and the method reads `NS.x` through it as `this.x`. Moving
-        `NS.x` into a variable `x` leaves `this.x` reading a key the object no longer has, so the
-        output logs `undefined` where the input logs `5`; a method that reads its receiver keeps
-        every key of the namespace in place. Flattening keeps only the method itself on the object.
+        `NS.x` into a variable `x` leaves `this.x` reading a key the object no longer has, so a
+        method that reads its receiver keeps every key of the namespace in place.
         """
         self.assertEqual(
             inspect.cleandoc(
@@ -336,6 +334,18 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten('var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; log(NS.f());'),
         )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_method_reading_its_namespace_through_this_still_reads_it(self):
+        for source in [
+            'var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; console.log(NS.f());',
+            'var NS = {}; NS.x = 5; NS.f = function () { return (() => this.x)(); }; console.log(NS.f());',
+            'var NS = {}; NS.x = 5; NS.f = function () { return this; }; console.log(NS.f().x);',
+            'var NS = {}; NS.x = 5; NS.g = function () { return this.x; }; NS.f = NS.g; console.log(NS.f());',
+        ]:
+            with self.subTest(source):
+                self.assertEqual(behavior(self._flatten(source)), ('5\n', None))
+                self.assertEqual(before_and_after(source), (('5\n', None), ('5\n', None)))
 
     def test_this_method_called_through_sequence_is_flattened(self):
         """
