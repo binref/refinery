@@ -141,7 +141,8 @@ def xpress_huffman_decompress(
     The `target` is the exact output size; a match that runs past it raises a `RuntimeError`. When
     it is `None`, the stream ends with the end-of-data symbol 256, after which the input holds only
     zero bits. A block that reaches 64 KiB when no further block fits into the input continues
-    until that symbol. Input that ends before it raises a `RefineryPartialResult`.
+    until that symbol. Input that ends before it, or that cannot be decoded after some output,
+    raises a `RefineryPartialResult` with the output decoded so far.
     """
     src = memoryview(src)
     out = bytearray()
@@ -151,131 +152,145 @@ def xpress_huffman_decompress(
     limit = 0
 
     if target is None:
-        while data_end > 0 and not src[data_end - 1]:
-            data_end -= 1
+        data_end = len(bytes(src).rstrip(B'\0'))
 
-    while pos < end:
-        if XPRESS_NUM_SYMBOLS // 2 > end - pos:
-            if target is None:
-                break
-            raise IndexError(
-                F'There are only {end - pos} bytes remaining in the input buffer,'
-                F' but at least {XPRESS_NUM_SYMBOLS // 2} are required to read a Huffman table.')
-
-        table_data = bytearray(
-            src[pos + i // 2] >> (4 * (i & 1)) & 0xF
-            for i in range(XPRESS_NUM_SYMBOLS)
-        )
-        if not any(table_data):
-            raise ValueError('The Huffman code of a block has no codewords.')
-        pos += XPRESS_NUM_SYMBOLS // 2
-        decode_table = make_huffman_decode_table(table_data, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
-
-        limit = len(out) + max_chunk_size
-        last_block = False
-        bit_buf = 0
-        bit_cnt = 0
-
-        while True:
-            out_pos = len(out)
-            if out_pos == target:
-                return out
-            if out_pos >= limit and not last_block:
-                next_block = pos + 2 if bit_cnt < 16 and pos + 1 < end else pos
-                if (
-                    target is None
-                    and (next_block >= data_end or end - next_block < XPRESS_NUM_SYMBOLS // 2)
-                ):
-                    last_block = True
-                else:
-                    pos = next_block
+    try:
+        while pos < end:
+            if XPRESS_NUM_SYMBOLS // 2 > end - pos:
+                if target is None:
                     break
+                raise IndexError(
+                    F'There are only {end - pos} bytes remaining in the input buffer,'
+                    F' but at least {XPRESS_NUM_SYMBOLS // 2} are required to read a Huffman table.')
 
-            bit_buf, bit_cnt, pos = _fill_bits(
-                src, pos, end, bit_buf, bit_cnt, XPRESS_MAX_CODEWORD_LEN)
-            if bit_cnt < XPRESS_TABLEBITS:
-                break
+            table_data = bytearray(
+                src[pos + i // 2] >> (4 * (i & 1)) & 0xF
+                for i in range(XPRESS_NUM_SYMBOLS)
+            )
+            if not any(table_data):
+                raise ValueError('The Huffman code of a block has no codewords.')
+            pos += XPRESS_NUM_SYMBOLS // 2
+            decode_table = make_huffman_decode_table(table_data, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
 
-            top_bits = bit_buf >> (bit_cnt - XPRESS_TABLEBITS)
-            entry = decode_table[top_bits & ((1 << XPRESS_TABLEBITS) - 1)]
-            sym = entry >> DECODE_TABLE_SYMBOL_SHIFT
-            length = entry & DECODE_TABLE_LENGTH_MASK
+            limit = len(out) + max_chunk_size
+            last_block = False
+            bit_buf = 0
+            bit_cnt = 0
 
-            if entry >= (1 << (XPRESS_TABLEBITS + DECODE_TABLE_SYMBOL_SHIFT)):
-                bit_cnt -= XPRESS_TABLEBITS
+            while True:
+                out_pos = len(out)
+                if out_pos == target:
+                    return out
+                if out_pos >= limit and not last_block:
+                    next_block = pos + 2 if bit_cnt < 16 and pos + 1 < end else pos
+                    if (
+                        target is None
+                        and (next_block >= data_end or end - next_block < XPRESS_NUM_SYMBOLS // 2)
+                    ):
+                        last_block = True
+                    else:
+                        pos = next_block
+                        break
+
                 bit_buf, bit_cnt, pos = _fill_bits(
                     src, pos, end, bit_buf, bit_cnt, XPRESS_MAX_CODEWORD_LEN)
-                if bit_cnt < length:
+                if bit_cnt < XPRESS_TABLEBITS:
                     break
-                top_bits = bit_buf >> (bit_cnt - length)
-                entry = decode_table[sym + (top_bits & ((1 << length) - 1))]
+                only_zero_bits_remain = (
+                    target is None
+                    and pos >= data_end
+                    and not bit_buf & ((1 << bit_cnt) - 1)
+                )
+
+                top_bits = bit_buf >> (bit_cnt - XPRESS_TABLEBITS)
+                entry = decode_table[top_bits & ((1 << XPRESS_TABLEBITS) - 1)]
                 sym = entry >> DECODE_TABLE_SYMBOL_SHIFT
                 length = entry & DECODE_TABLE_LENGTH_MASK
 
-            bit_cnt -= length
-
-            if sym < XPRESS_NUM_CHARS:
-                out.append(sym)
-                continue
-
-            if (
-                sym == XPRESS_END_OF_DATA
-                and target is None
-                and pos >= data_end
-                and not bit_buf & ((1 << bit_cnt) - 1)
-            ):
-                return out
-
-            match_length = sym & 0xF
-            offsetlog = (sym >> 4) & 0xF
-
-            bit_buf, bit_cnt, pos = _fill_bits(
-                src, pos, end, bit_buf, bit_cnt, 16)
-            if bit_cnt < offsetlog:
-                break
-
-            if offsetlog > 0:
-                top_bits = bit_buf >> (bit_cnt - offsetlog)
-                offset = (1 << offsetlog) | (top_bits & ((1 << offsetlog) - 1))
-                bit_cnt -= offsetlog
-            else:
-                offset = 1
-
-            if match_length == 0xF:
-                if pos >= end:
-                    break
-                nudge = src[pos]
-                pos += 1
-                if nudge < 0xFF:
-                    match_length += nudge
-                else:
-                    if pos + 1 >= end:
+                if entry >= (1 << (XPRESS_TABLEBITS + DECODE_TABLE_SYMBOL_SHIFT)):
+                    bit_cnt -= XPRESS_TABLEBITS
+                    bit_buf, bit_cnt, pos = _fill_bits(
+                        src, pos, end, bit_buf, bit_cnt, XPRESS_MAX_CODEWORD_LEN)
+                    if bit_cnt < length:
                         break
-                    match_length = src[pos] | (src[pos + 1] << 8)
-                    pos += 2
-                    if match_length == 0:
-                        if pos + 3 >= end:
+                    top_bits = bit_buf >> (bit_cnt - length)
+                    entry = decode_table[sym + (top_bits & ((1 << length) - 1))]
+                    sym = entry >> DECODE_TABLE_SYMBOL_SHIFT
+                    length = entry & DECODE_TABLE_LENGTH_MASK
+
+                bit_cnt -= length
+
+                if only_zero_bits_remain and sym != XPRESS_END_OF_DATA:
+                    raise RefineryPartialResult('The input ended before the end-of-data symbol.', out)
+
+                if sym < XPRESS_NUM_CHARS:
+                    out.append(sym)
+                    continue
+
+                if (
+                    sym == XPRESS_END_OF_DATA
+                    and target is None
+                    and pos >= data_end
+                    and not bit_buf & ((1 << bit_cnt) - 1)
+                ):
+                    return out
+
+                match_length = sym & 0xF
+                offsetlog = (sym >> 4) & 0xF
+
+                bit_buf, bit_cnt, pos = _fill_bits(
+                    src, pos, end, bit_buf, bit_cnt, 16)
+                if bit_cnt < offsetlog:
+                    break
+
+                if offsetlog > 0:
+                    top_bits = bit_buf >> (bit_cnt - offsetlog)
+                    offset = (1 << offsetlog) | (top_bits & ((1 << offsetlog) - 1))
+                    bit_cnt -= offsetlog
+                else:
+                    offset = 1
+
+                if match_length == 0xF:
+                    if pos >= end:
+                        break
+                    nudge = src[pos]
+                    pos += 1
+                    if nudge < 0xFF:
+                        match_length += nudge
+                    else:
+                        if pos + 1 >= end:
                             break
-                        match_length = (
-                            src[pos]
-                            | (src[pos + 1] << 8)
-                            | (src[pos + 2] << 16)
-                            | (src[pos + 3] << 24)
-                        )
-                        pos += 4
-            match_length += XPRESS_MIN_MATCH_LEN
+                        match_length = src[pos] | (src[pos + 1] << 8)
+                        pos += 2
+                        if match_length == 0:
+                            if pos + 3 >= end:
+                                break
+                            match_length = (
+                                src[pos]
+                                | (src[pos + 1] << 8)
+                                | (src[pos + 2] << 16)
+                                | (src[pos + 3] << 24)
+                            )
+                            pos += 4
+                match_length += XPRESS_MIN_MATCH_LEN
 
-            if target is not None and match_length > target - len(out):
-                raise RuntimeError(F'A match of length {match_length} runs past the output size {target}.')
-            start = len(out) - offset
-            if start < 0:
-                raise ValueError(F'Offset {offset} exceeds output size {len(out)}')
-            while match_length > 0:
-                chunk = out[start:start + match_length]
-                out.extend(chunk)
-                start += len(chunk)
-                match_length -= len(chunk)
+                if target is not None and match_length > target - len(out):
+                    raise RuntimeError(F'A match of length {match_length} runs past the output size {target}.')
+                start = len(out) - offset
+                if start < 0:
+                    raise ValueError(F'Offset {offset} exceeds output size {len(out)}')
+                while match_length > 0:
+                    chunk = out[start:start + match_length]
+                    out.extend(chunk)
+                    start += len(chunk)
+                    match_length -= len(chunk)
 
-    if target is None:
-        raise RefineryPartialResult('The input ended before the end-of-data symbol.', out)
-    return out
+        if target is None:
+            raise RefineryPartialResult('The input ended before the end-of-data symbol.', out)
+        return out
+    except RefineryPartialResult:
+        raise
+    except (ValueError, IndexError, RuntimeError, OverflowError) as error:
+        if target is not None or not out:
+            raise
+        raise RefineryPartialResult(F'Decoding failed after {len(out)} bytes: {error!s}', out) from error

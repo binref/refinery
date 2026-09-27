@@ -316,7 +316,8 @@ def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -
     The `target` is the exact output size; a match that runs past it raises a `RuntimeError`. When
     it is `None`, the stream ends with the end-of-data symbol 256, after which the input holds only
     zero bits. A block that reaches 64 KiB when no further block fits into the input continues
-    until that symbol. Input that ends before it raises a `RefineryPartialResult`.
+    until that symbol. Input that ends before it, or that cannot be decoded after some output,
+    raises a `RefineryPartialResult` with the output decoded so far.
     """
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
@@ -330,6 +331,7 @@ def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -
         Py_ssize_t limit = 0
         bint size_known = target is not None
         bint last_block
+        bint only_zero_bits_remain
         Py_ssize_t size = -1
         uint16_t decode_table[1 << (XPRESS_TABLEBITS + 1)]
         uint8_t tbl_data[XPRESS_NUM_SYMBOLS]
@@ -408,6 +410,11 @@ def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -
                         pos += 2
                 if bit_cnt < XPRESS_TABLEBITS:
                     break
+                only_zero_bits_remain = (
+                    not size_known
+                    and pos >= data_end
+                    and not (bit_buf & ((<uint64_t>1 << bit_cnt) - 1))
+                )
 
                 top_bits = bit_buf >> (bit_cnt - XPRESS_TABLEBITS)
                 entry = decode_table[top_bits & ((1 << XPRESS_TABLEBITS) - 1)]
@@ -433,6 +440,10 @@ def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -
                     length = entry & _MASK
 
                 bit_cnt -= length
+
+                if only_zero_bits_remain and sym != XPRESS_END_OF_DATA:
+                    raise RefineryPartialResult(
+                        'The input ended before the end-of-data symbol.', bytearray(out_buf[:out_len]))
 
                 if sym < XPRESS_NUM_CHARS:
                     _out_byte(&out_buf, &out_cap, &out_len, <uint8_t>sym)
@@ -502,5 +513,12 @@ def xpress_huffman_decompress(data, object target, int max_chunk_size=0x10000) -
             raise RefineryPartialResult(
                 'The input ended before the end-of-data symbol.', bytearray(out_buf[:out_len]))
         return bytearray(out_buf[:out_len])
+    except RefineryPartialResult:
+        raise
+    except (ValueError, IndexError, RuntimeError, OverflowError) as error:
+        if size_known or not out_len:
+            raise
+        raise RefineryPartialResult(
+            F'Decoding failed after {out_len} bytes: {error!s}', bytearray(out_buf[:out_len])) from error
     finally:
         free(out_buf)

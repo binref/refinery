@@ -7,7 +7,7 @@ from refinery.lib.fast.lzjb import lzjb_compress, lzjb_decompress
 from refinery.lib.fast.blz import blz_decompress_chunk
 from refinery.lib.fast.xpress import xpress_decompress, xpress_huffman_decompress
 
-from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS_HUFFMAN_CHUNK
+from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS_HUFFMAN_CHUNK, KADATH2
 
 TWINKLE_RUNS = (
     B'Twinkle, twinkle, little star, ' * 2097
@@ -161,6 +161,20 @@ class TestXpressHuffmanFast(unittest.TestCase):
         partial = bytes(context.exception.partial)
         self.assertLess(len(partial), len(TWINKLE_RUNS))
         self.assertTrue(TWINKLE_RUNS.startswith(partial))
+
+    def test_zero_bytes_after_a_cut_stream_do_not_extend_its_partial_result(self):
+        partials = set()
+        for count in (16, 512, 4096):
+            with self.assertRaises(RefineryPartialResult) as context:
+                xpress_huffman_decompress(KADATH1_XPRESS_HUFFMAN_CHUNK[:-20] + bytes(count), None)
+            partials.add(bytes(context.exception.partial))
+        self.assertEqual(len(partials), 1)
+
+    def test_stream_followed_by_text_keeps_its_output_as_a_partial_result(self):
+        text = (KADATH1 + KADATH2).encode('utf8')
+        with self.assertRaises(RefineryPartialResult) as context:
+            xpress_huffman_decompress(TWINKLE_RUNS_BY_RTL_COMPRESS_BUFFER + text, None)
+        self.assertTrue(bytes(context.exception.partial).startswith(TWINKLE_RUNS))
 
     def test_end_marker_right_after_a_full_block(self):
         plaintext = inspect.cleandoc("""
