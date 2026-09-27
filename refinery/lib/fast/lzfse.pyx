@@ -5,8 +5,10 @@
 cimport cython
 
 from libc.stdint cimport int8_t, int32_t, uint8_t, uint16_t, uint32_t, uint64_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
+
+from refinery.lib.fast._buffer cimport reserve
 
 DEF ENCODE_L_SYMBOLS = 20
 DEF ENCODE_M_SYMBOLS = 20
@@ -352,7 +354,7 @@ cdef int _decode_v2_freq_table(
 # LZFSE payload decoder (core FSE + LZ77 loop)
 # ---------------------------------------------------------------------------
 
-cdef int _decode_lzfse_payload(
+cdef Py_ssize_t _decode_lzfse_payload(
     const uint8_t *buf,
     int buf_len,
     int payload_offset,
@@ -375,8 +377,8 @@ cdef int _decode_lzfse_payload(
     const uint16_t *d_freq,
     const uint16_t *literal_freq,
     uint8_t *output,
-    int out_pos,
-    int out_cap,
+    Py_ssize_t out_pos,
+    Py_ssize_t out_cap,
 ) noexcept nogil:
     """
     Decode the FSE-encoded literal and LMD payloads, apply LZ77.
@@ -450,7 +452,8 @@ cdef int _decode_lzfse_payload(
     cdef int total_bits, value_bits
     cdef int32_t lmd_delta
     cdef uint32_t vbase, bits
-    cdef int match_start, j, written = 0
+    cdef Py_ssize_t match_start, written = 0
+    cdef int j
     cdef int vidx
 
     for i in range(n_matches):
@@ -535,13 +538,13 @@ cdef int _decode_lzfse_payload(
 # LZFSE V2 block decoder
 # ---------------------------------------------------------------------------
 
-cdef int _decode_lzfse_v2_block(
+cdef Py_ssize_t _decode_lzfse_v2_block(
     const uint8_t *buf,
     int buf_len,
     int pos,
     uint8_t *output,
-    int out_pos,
-    int out_cap,
+    Py_ssize_t out_pos,
+    Py_ssize_t out_cap,
     int *new_pos,
 ) noexcept nogil:
     """
@@ -584,7 +587,7 @@ cdef int _decode_lzfse_v2_block(
         return -1
 
     cdef int payload_offset = block_start + <int>header_size
-    cdef int written
+    cdef Py_ssize_t written
 
     written = _decode_lzfse_payload(
         buf, buf_len, payload_offset,
@@ -607,13 +610,13 @@ cdef int _decode_lzfse_v2_block(
 # LZFSE V1 block decoder
 # ---------------------------------------------------------------------------
 
-cdef int _decode_lzfse_v1_block(
+cdef Py_ssize_t _decode_lzfse_v1_block(
     const uint8_t *buf,
     int buf_len,
     int pos,
     uint8_t *output,
-    int out_pos,
-    int out_cap,
+    Py_ssize_t out_pos,
+    Py_ssize_t out_cap,
     int *new_pos,
 ) noexcept nogil:
     """
@@ -663,7 +666,7 @@ cdef int _decode_lzfse_v1_block(
     pos += ENCODE_LITERAL_SYMBOLS * 2
 
     cdef int payload_offset = pos
-    cdef int written
+    cdef Py_ssize_t written
 
     written = _decode_lzfse_payload(
         buf, buf_len, payload_offset,
@@ -684,9 +687,9 @@ cdef int _decode_lzfse_v1_block(
 # ---------------------------------------------------------------------------
 
 cdef inline void _lzvn_copy_match(
-    uint8_t *output, int out_pos, int D, int M,
+    uint8_t *output, Py_ssize_t out_pos, int D, int M,
 ) noexcept nogil:
-    cdef int start = out_pos - D
+    cdef Py_ssize_t start = out_pos - D
     cdef int j
     if D >= M:
         memcpy(&output[out_pos], &output[start], M)
@@ -695,18 +698,18 @@ cdef inline void _lzvn_copy_match(
             output[out_pos + j] = output[start + j]
 
 
-cdef int _lzvn_decode(
+cdef Py_ssize_t _lzvn_decode(
     const uint8_t *src,
     int src_pos,
     int src_end,
-    int n_raw_bytes,
+    Py_ssize_t n_raw_bytes,
     uint8_t *output,
-    int out_pos,
+    Py_ssize_t out_pos,
 ) noexcept nogil:
     """
     Decode an LZVN byte stream. Returns number of bytes written.
     """
-    cdef int written = 0
+    cdef Py_ssize_t written = 0
     cdef int d_prev = 0
     cdef uint8_t opc
     cdef int kind, L, M, D
@@ -859,13 +862,13 @@ cdef int _lzvn_decode(
     return written
 
 
-cdef int _decode_lzvn_block(
+cdef Py_ssize_t _decode_lzvn_block(
     const uint8_t *buf,
     int buf_len,
     int pos,
     uint8_t *output,
-    int out_pos,
-    int out_cap,
+    Py_ssize_t out_pos,
+    Py_ssize_t out_cap,
     int *new_pos,
 ) noexcept nogil:
     """
@@ -879,7 +882,7 @@ cdef int _decode_lzvn_block(
 
     cdef int payload_start = pos
     cdef int payload_end = pos + <int>n_payload_bytes
-    cdef int written = _lzvn_decode(buf, payload_start, payload_end, <int>n_raw_bytes, output, out_pos)
+    cdef Py_ssize_t written = _lzvn_decode(buf, payload_start, payload_end, n_raw_bytes, output, out_pos)
 
     new_pos[0] = payload_end
     return written
@@ -898,10 +901,11 @@ def lzfse_decompress(data) -> bytearray:
         int pos = 0
         uint32_t magic
         uint32_t n_raw_bytes
-        int out_pos = 0
-        int out_cap = end * 4 if end > 64 else 256
+        Py_ssize_t out_pos = 0
+        Py_ssize_t out_cap = <Py_ssize_t>end * 4 if end > 64 else 256
         uint8_t *out_buf
-        int new_pos, written
+        int new_pos
+        Py_ssize_t written
         const uint8_t *buf_ptr = &src[0]
 
     if out_cap < 256:
@@ -922,24 +926,14 @@ def lzfse_decompress(data) -> bytearray:
                 pos += 4
                 n_raw_bytes = _read_le_u32(buf_ptr, pos)
                 pos += 4
-                # Ensure capacity
-                while out_pos + <int>n_raw_bytes > out_cap:
-                    out_cap = out_cap * 2
-                    out_buf = <uint8_t *>realloc(out_buf, out_cap)
-                    if out_buf == NULL:
-                        raise MemoryError
+                reserve(&out_buf, &out_cap, out_pos, n_raw_bytes)
                 memcpy(&out_buf[out_pos], &buf_ptr[pos], n_raw_bytes)
-                out_pos += <int>n_raw_bytes
+                out_pos += n_raw_bytes
                 pos += <int>n_raw_bytes
             elif magic == _LZFSE_V1_MAGIC or magic == _LZFSE_V2_MAGIC:
                 # Read n_raw_bytes from byte 4 of the block header
                 n_raw_bytes = _read_le_u32(buf_ptr, pos + 4)
-                # Ensure capacity
-                while out_pos + <int>n_raw_bytes > out_cap:
-                    out_cap = out_cap * 2
-                    out_buf = <uint8_t *>realloc(out_buf, out_cap)
-                    if out_buf == NULL:
-                        raise MemoryError
+                reserve(&out_buf, &out_cap, out_pos, n_raw_bytes)
                 if magic == _LZFSE_V2_MAGIC:
                     written = _decode_lzfse_v2_block(
                         buf_ptr, end, pos, out_buf, out_pos, out_cap, &new_pos)
@@ -953,12 +947,7 @@ def lzfse_decompress(data) -> bytearray:
             elif magic == _LZVN_MAGIC:
                 # Read n_raw_bytes from byte 4 of the block header
                 n_raw_bytes = _read_le_u32(buf_ptr, pos + 4)
-                # Ensure capacity
-                while out_pos + <int>n_raw_bytes > out_cap:
-                    out_cap = out_cap * 2
-                    out_buf = <uint8_t *>realloc(out_buf, out_cap)
-                    if out_buf == NULL:
-                        raise MemoryError
+                reserve(&out_buf, &out_cap, out_pos, n_raw_bytes)
                 written = _decode_lzvn_block(
                     buf_ptr, end, pos, out_buf, out_pos, out_cap, &new_pos)
                 out_pos += written

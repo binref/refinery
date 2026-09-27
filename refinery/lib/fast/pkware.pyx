@@ -5,8 +5,10 @@
 cimport cython
 
 from libc.stdint cimport uint8_t, uint32_t, uint64_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
+
+from refinery.lib.fast._buffer cimport reserve
 
 from refinery.lib.fast.pkware_tables import _COPY_LENGTHS, _COPY_OFFSETS, _LITERALS
 
@@ -74,9 +76,10 @@ def pkware_decompress(data) -> bytearray:
         uint32_t code, entry
         int bits
         uint32_t length, offset, more
-        uint32_t cursor = 0
-        uint32_t out_cap
-        uint32_t copy_src, copy_len
+        Py_ssize_t cursor = 0
+        Py_ssize_t out_cap
+        Py_ssize_t copy_src
+        uint32_t copy_len
         uint8_t *out_buf
 
     if end < 2:
@@ -90,7 +93,7 @@ def pkware_decompress(data) -> bytearray:
         raise ValueError(f'Invalid dictionary size {maxdict}.')
 
     # Initial output buffer allocation: decompressed data is always larger
-    out_cap = <uint32_t>((end - 2) * 4) if end > 2 else 256
+    out_cap = (<Py_ssize_t>end - 2) * 4 if end > 2 else 256
     if out_cap < 256:
         out_cap = 256
     out_buf = <uint8_t *>malloc(out_cap)
@@ -143,12 +146,7 @@ def pkware_decompress(data) -> bytearray:
                     bbits >>= 8
                     nbits -= 8
 
-                # Ensure output capacity
-                if cursor >= out_cap:
-                    out_cap = out_cap * 2
-                    out_buf = <uint8_t *>realloc(out_buf, out_cap)
-                    if out_buf == NULL:
-                        raise MemoryError
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = <uint8_t>code
                 cursor += 1
             else:
@@ -205,12 +203,7 @@ def pkware_decompress(data) -> bytearray:
                 nbits -= more
                 offset += 1
 
-                # Ensure output capacity for the back-reference copy
-                while cursor + length > out_cap:
-                    out_cap = out_cap * 2
-                    out_buf = <uint8_t *>realloc(out_buf, out_cap)
-                    if out_buf == NULL:
-                        raise MemoryError
+                reserve(&out_buf, &out_cap, cursor, length)
 
                 if offset > cursor:
                     raise ValueError(

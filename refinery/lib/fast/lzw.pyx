@@ -5,8 +5,10 @@
 cimport cython
 
 from libc.stdint cimport uint8_t, uint16_t, uint32_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memset
+
+from refinery.lib.fast._buffer cimport reserve
 
 DEF INIT_BITS = 9
 DEF BITS = 0x10
@@ -17,32 +19,13 @@ DEF WSIZE = 0x8000
 from refinery.lib.exceptions import RefineryPartialResult
 
 
-cdef int _ensure_capacity(
-    uint8_t **buf, uint32_t *cap, uint32_t needed
-) except -1 nogil:
-    cdef uint32_t new_cap
-    cdef uint8_t *tmp
-    if needed <= cap[0]:
-        return 0
-    new_cap = cap[0]
-    while new_cap < needed:
-        new_cap = new_cap * 2
-    tmp = <uint8_t *>realloc(buf[0], new_cap)
-    if tmp == NULL:
-        with gil:
-            raise MemoryError
-    buf[0] = tmp
-    cap[0] = new_cap
-    return 0
-
-
 def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
         const uint8_t *src
         int src_len
         uint8_t *out_buf
-        uint32_t out_cap, out_len
+        Py_ssize_t out_cap, out_len
         uint8_t tab_suffix[WSIZE * 2]
         uint16_t tab_prefix[1 << BITS]
         int n_bits, maxcode, bitmask, maxmaxcode
@@ -77,7 +60,7 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
 
     free_entry = FIRST if block_mode else 0x100
 
-    out_cap = <uint32_t>(src_len * 3) if src_len < 0x20000000 else <uint32_t>src_len
+    out_cap = src_len * 3 if src_len < 0x20000000 else src_len
     if out_cap < 256:
         out_cap = 256
     out_buf = <uint8_t *>malloc(out_cap)
@@ -132,7 +115,7 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
                         raise ValueError('corrupt input.')
                     oldcode = code
                     finchar = oldcode
-                    _ensure_capacity(&out_buf, &out_cap, out_len + 1)
+                    reserve(&out_buf, &out_cap, out_len, 1)
                     out_buf[out_len] = <uint8_t>finchar
                     out_len += 1
                     continue
@@ -167,7 +150,7 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
                 stack_buf[stack_len] = <uint8_t>finchar
                 stack_len += 1
 
-                _ensure_capacity(&out_buf, &out_cap, out_len + <uint32_t>stack_len)
+                reserve(&out_buf, &out_cap, out_len, stack_len)
                 for i in range(stack_len - 1, -1, -1):
                     out_buf[out_len] = stack_buf[i]
                     out_len += 1

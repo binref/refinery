@@ -5,33 +5,16 @@
 cimport cython
 
 from libc.stdint cimport uint8_t, uint16_t, uint32_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
+
+from refinery.lib.fast._buffer cimport reserve
 
 DEF MATCH_LEN = 6
 DEF MATCH_MIN = 3
 DEF MATCH_MAX = (1 << MATCH_LEN) + (MATCH_MIN - 1)
 DEF OFFSET_MASK = (1 << (16 - MATCH_LEN)) - 1
 DEF LEMPEL_SIZE = 0x1000
-
-
-cdef int _ensure_capacity(
-    uint8_t **buf, uint32_t *cap, uint32_t needed
-) except -1 nogil:
-    cdef uint32_t new_cap
-    cdef uint8_t *tmp
-    if needed <= cap[0]:
-        return 0
-    new_cap = cap[0]
-    while new_cap < needed:
-        new_cap = new_cap * 2
-    tmp = <uint8_t *>realloc(buf[0], new_cap)
-    if tmp == NULL:
-        with gil:
-            raise MemoryError
-    buf[0] = tmp
-    cap[0] = new_cap
-    return 0
 
 
 def lzjb_decompress(data) -> bytearray:
@@ -42,16 +25,16 @@ def lzjb_decompress(data) -> bytearray:
         uint8_t copy_byte
         uint8_t mask
         uint16_t pair
-        uint32_t match_len, match_pos, dst_len
-        uint32_t cursor = 0
-        uint32_t out_cap
+        uint32_t match_len, match_pos
+        Py_ssize_t cursor = 0
+        Py_ssize_t out_cap
         uint8_t *out_buf
-        uint32_t copy_src, copy_len
+        Py_ssize_t copy_src, copy_len, dst_len
 
     if end == 0:
         return bytearray()
 
-    out_cap = <uint32_t>(end * 3) if end < 0x20000000 else <uint32_t>end
+    out_cap = end * 3 if end < 0x20000000 else end
     if out_cap < 256:
         out_cap = 256
     out_buf = <uint8_t *>malloc(out_cap)
@@ -65,10 +48,10 @@ def lzjb_decompress(data) -> bytearray:
 
             if copy_byte == 0:
                 # Fast path: no back-references in this group, copy up to 8 literals
-                copy_len = <uint32_t>(end - pos)
+                copy_len = end - pos
                 if copy_len > 8:
                     copy_len = 8
-                _ensure_capacity(&out_buf, &out_cap, cursor + copy_len)
+                reserve(&out_buf, &out_cap, cursor, copy_len)
                 memcpy(&out_buf[cursor], &src[pos], copy_len)
                 cursor += copy_len
                 pos += copy_len
@@ -77,7 +60,7 @@ def lzjb_decompress(data) -> bytearray:
             mask = 0x01
             while mask != 0 and pos < end:
                 if not (copy_byte & mask):
-                    _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                    reserve(&out_buf, &out_cap, cursor, 1)
                     out_buf[cursor] = src[pos]
                     cursor += 1
                     pos += 1
@@ -93,7 +76,7 @@ def lzjb_decompress(data) -> bytearray:
                     if match_pos == 0 or match_pos > cursor:
                         raise RuntimeError('invalid match offset')
                     copy_src = cursor - match_pos
-                    _ensure_capacity(&out_buf, &out_cap, cursor + match_len)
+                    reserve(&out_buf, &out_cap, cursor, match_len)
                     copy_len = match_len
                     while copy_len > 0:
                         dst_len = cursor - copy_src
@@ -116,10 +99,10 @@ def lzjb_compress(data) -> bytearray:
         int length = len(data)
         int position = 0
         uint32_t copymask = 0x80
-        int copy_map = -1
+        Py_ssize_t copy_map = -1
         uint32_t hsh, offset, cpy, mlen, max_mlen
-        uint32_t cursor = 0
-        uint32_t out_cap
+        Py_ssize_t cursor = 0
+        Py_ssize_t out_cap
         uint8_t *out_buf
         uint32_t lempel[LEMPEL_SIZE]
         int i
@@ -127,7 +110,7 @@ def lzjb_compress(data) -> bytearray:
     if length == 0:
         return bytearray()
 
-    out_cap = <uint32_t>length if length > 256 else 256
+    out_cap = length if length > 256 else 256
     out_buf = <uint8_t *>malloc(out_cap)
     if out_buf == NULL:
         raise MemoryError
@@ -140,13 +123,13 @@ def lzjb_compress(data) -> bytearray:
             copymask <<= 1
             if copymask >= 0x100:
                 copymask = 1
-                copy_map = <int>cursor
-                _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                copy_map = cursor
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = 0
                 cursor += 1
 
             if position > length - MATCH_MAX:
-                _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = src[position]
                 cursor += 1
                 position += 1
@@ -177,14 +160,14 @@ def lzjb_compress(data) -> bytearray:
                     if src[position + mlen] != src[cpy + mlen]:
                         break
                     mlen += 1
-                _ensure_capacity(&out_buf, &out_cap, cursor + 2)
+                reserve(&out_buf, &out_cap, cursor, 2)
                 out_buf[cursor] = <uint8_t>(((mlen - MATCH_MIN) << (8 - MATCH_LEN)) | (offset >> 8))
                 cursor += 1
                 out_buf[cursor] = <uint8_t>(offset & 0xFF)
                 cursor += 1
                 position += mlen
             else:
-                _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = src[position]
                 cursor += 1
                 position += 1

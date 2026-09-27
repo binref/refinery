@@ -5,27 +5,10 @@
 cimport cython
 
 from libc.stdint cimport uint8_t, uint16_t, uint32_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
 
-
-cdef int _ensure_capacity(
-    uint8_t **buf, uint32_t *cap, uint32_t needed
-) except -1 nogil:
-    cdef uint32_t new_cap
-    cdef uint8_t *tmp
-    if needed <= cap[0]:
-        return 0
-    new_cap = cap[0]
-    while new_cap < needed:
-        new_cap = new_cap * 2
-    tmp = <uint8_t *>realloc(buf[0], new_cap)
-    if tmp == NULL:
-        with gil:
-            raise MemoryError
-    buf[0] = tmp
-    cap[0] = new_cap
-    return 0
+from refinery.lib.fast._buffer cimport reserve
 
 
 cdef inline uint32_t _readbit(
@@ -83,18 +66,18 @@ def blz_decompress_chunk(
         uint16_t bitstore = 0
         uint32_t bit
         uint32_t length, sector, offset, delta
-        uint32_t decompressed = 1
-        uint32_t cursor = 0
-        uint32_t out_cap
+        Py_ssize_t decompressed = 1
+        Py_ssize_t cursor = 0
+        Py_ssize_t out_cap
         uint8_t *out_buf
-        uint32_t prefix_len = 0
+        Py_ssize_t prefix_len = 0
         const uint8_t[::1] prefix_view
-        uint32_t available, quotient, remainder, copy_len
-        uint32_t global_pos, ref_start
+        uint32_t quotient, remainder, copy_len
+        Py_ssize_t available, global_pos, ref_start, chunk_avail
 
     if prefix is not None and len(prefix) > 0:
         prefix_view = memoryview(prefix)
-        prefix_len = <uint32_t>len(prefix)
+        prefix_len = len(prefix)
 
     out_cap = size if size > 256 else 256
     out_buf = <uint8_t *>malloc(out_cap)
@@ -121,7 +104,7 @@ def blz_decompress_chunk(
                         F'Requested rewind by 0x{delta:08X} bytes '
                         F'with only 0x{available:08X} bytes in output buffer.'
                     )
-                _ensure_capacity(&out_buf, &out_cap, cursor + length)
+                reserve(&out_buf, &out_cap, cursor, length)
                 # Perform the replay copy, potentially spanning prefix and output
                 global_pos = available - delta
                 copy_len = length
@@ -155,7 +138,7 @@ def blz_decompress_chunk(
             else:
                 if pos >= end:
                     raise EOFError('unexpected end of input reading literal')
-                _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = src[pos]
                 pos += 1
                 cursor += 1

@@ -5,13 +5,12 @@
 cimport cython
 
 from libc.stdint cimport int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy, memset
 
-from refinery.lib.exceptions import RefineryPartialResult
+from refinery.lib.fast._buffer cimport reserve
 
-cdef extern from 'Python.h':
-    const Py_ssize_t PY_SSIZE_T_MAX
+from refinery.lib.exceptions import RefineryPartialResult
 
 DEF XPRESS_NUM_CHARS = 256
 DEF XPRESS_NUM_SYMBOLS = 512
@@ -24,30 +23,10 @@ DEF _SHIFT = 4
 DEF _MASK = (1 << _SHIFT) - 1
 
 
-cdef int _ensure(uint8_t **buf, Py_ssize_t *cap, Py_ssize_t needed) except -1 nogil:
-    cdef Py_ssize_t nc
-    cdef uint8_t *tmp
-    if needed <= cap[0]:
-        return 0
-    nc = cap[0]
-    while nc < needed:
-        if nc > PY_SSIZE_T_MAX // 2:
-            nc = needed
-            break
-        nc = nc * 2
-    tmp = <uint8_t *>realloc(buf[0], <size_t>nc)
-    if tmp == NULL:
-        with gil:
-            raise MemoryError
-    buf[0] = tmp
-    cap[0] = nc
-    return 0
-
-
 cdef inline int _out_byte(
     uint8_t **buf, Py_ssize_t *cap, Py_ssize_t *length, uint8_t b
 ) except -1 nogil:
-    _ensure(buf, cap, length[0] + 1)
+    reserve(buf, cap, length[0], 1)
     buf[0][length[0]] = b
     length[0] += 1
     return 0
@@ -58,11 +37,8 @@ cdef int _replay(
     Py_ssize_t offset, int64_t match_len
 ) except -1 nogil:
     cdef Py_ssize_t start, chunk_len, pos, remaining
-    if match_len > PY_SSIZE_T_MAX - length[0]:
-        with gil:
-            raise MemoryError
+    reserve(buf, cap, length[0], <uint64_t>match_len)
     remaining = <Py_ssize_t>match_len
-    _ensure(buf, cap, length[0] + remaining)
     start = length[0] - offset
     pos = length[0]
     while remaining > 0:

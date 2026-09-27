@@ -5,8 +5,10 @@
 cimport cython
 
 from libc.stdint cimport uint8_t, uint32_t
-from libc.stdlib cimport free, malloc, realloc
+from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
+
+from refinery.lib.fast._buffer cimport reserve
 
 
 cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
@@ -14,25 +16,6 @@ cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
         return 2
     elif offset >= 0x500:
         return 1
-    return 0
-
-
-cdef int _ensure_capacity(
-    uint8_t **buf, uint32_t *cap, uint32_t needed
-) except -1 nogil:
-    cdef uint32_t new_cap
-    cdef uint8_t *tmp
-    if needed <= cap[0]:
-        return 0
-    new_cap = cap[0]
-    while new_cap < needed:
-        new_cap = new_cap * 2
-    tmp = <uint8_t *>realloc(buf[0], new_cap)
-    if tmp == NULL:
-        with gil:
-            raise MemoryError
-    buf[0] = tmp
-    cap[0] = new_cap
     return 0
 
 
@@ -45,16 +28,17 @@ def aplib_decompress(data) -> bytearray:
         uint32_t bitcount = 0
         uint32_t bit
         uint32_t offs, length, R0, LWM
-        uint32_t cursor = 0
-        uint32_t out_cap
+        Py_ssize_t cursor = 0
+        Py_ssize_t out_cap
         uint8_t *out_buf
         uint8_t b
-        int i, done
+        Py_ssize_t i
+        int done
 
     if end == 0:
         return bytearray()
 
-    out_cap = <uint32_t>(end * 4) if end < 0x10000000 else <uint32_t>end
+    out_cap = end * 4 if end < 0x10000000 else end
     if out_cap < 256:
         out_cap = 256
     out_buf = <uint8_t *>malloc(out_cap)
@@ -121,7 +105,7 @@ def aplib_decompress(data) -> bytearray:
                             offs = (offs << 1) | ((tag >> 7) & 1)
                             tag = (tag << 1) & 0xFF
 
-                        _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                        reserve(&out_buf, &out_cap, cursor, 1)
                         if offs:
                             if offs > cursor:
                                 raise IndexError
@@ -144,8 +128,8 @@ def aplib_decompress(data) -> bytearray:
                             offs = b >> 1
                             if offs > cursor:
                                 raise IndexError
-                            _ensure_capacity(&out_buf, &out_cap, cursor + length)
-                            for i in range(<int>length):
+                            reserve(&out_buf, &out_cap, cursor, length)
+                            for i in range(length):
                                 out_buf[cursor] = out_buf[cursor - offs]
                                 cursor += 1
                             R0 = offs
@@ -224,8 +208,8 @@ def aplib_decompress(data) -> bytearray:
 
                         if offs > cursor:
                             raise IndexError
-                        _ensure_capacity(&out_buf, &out_cap, cursor + length)
-                        for i in range(<int>length):
+                        reserve(&out_buf, &out_cap, cursor, length)
+                        for i in range(length):
                             out_buf[cursor] = out_buf[cursor - offs]
                             cursor += 1
                     else:
@@ -277,8 +261,8 @@ def aplib_decompress(data) -> bytearray:
 
                         if offs > cursor:
                             raise IndexError
-                        _ensure_capacity(&out_buf, &out_cap, cursor + length)
-                        for i in range(<int>length):
+                        reserve(&out_buf, &out_cap, cursor, length)
+                        for i in range(length):
                             out_buf[cursor] = out_buf[cursor - offs]
                             cursor += 1
                         R0 = offs
@@ -288,7 +272,7 @@ def aplib_decompress(data) -> bytearray:
                 # literal
                 if pos >= end:
                     break
-                _ensure_capacity(&out_buf, &out_cap, cursor + 1)
+                reserve(&out_buf, &out_cap, cursor, 1)
                 out_buf[cursor] = src[pos]
                 cursor += 1
                 pos += 1
@@ -303,11 +287,11 @@ cdef struct CompressorState:
     const uint8_t *src
     uint32_t length
     uint8_t *out_buf
-    uint32_t out_cap
-    uint32_t cursor
+    Py_ssize_t out_cap
+    Py_ssize_t cursor
     uint8_t bitbuffer
     uint32_t bitcount
-    uint32_t tagoffset
+    Py_ssize_t tagoffset
     int is_tagged
     uint32_t offset
     uint32_t lastoffset
@@ -326,7 +310,7 @@ cdef int _write_bit(CompressorState *st, int value) except -1 nogil:
             st.is_tagged = 1
         else:
             _flush_tag(st)
-        _ensure_capacity(&st.out_buf, &st.out_cap, st.cursor + 1)
+        reserve(&st.out_buf, &st.out_cap, st.cursor, 1)
         st.tagoffset = st.cursor
         st.out_buf[st.cursor] = 0
         st.cursor += 1
@@ -338,7 +322,7 @@ cdef int _write_bit(CompressorState *st, int value) except -1 nogil:
 
 
 cdef inline int _write_byte(CompressorState *st, uint8_t b) except -1 nogil:
-    _ensure_capacity(&st.out_buf, &st.out_cap, st.cursor + 1)
+    reserve(&st.out_buf, &st.out_cap, st.cursor, 1)
     st.out_buf[st.cursor] = b
     st.cursor += 1
     return 0

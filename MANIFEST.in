@@ -10,4 +10,5 @@ include refinery/data/pwsh-variables.json.xz
 include refinery/data/pwsh-wmi.json.xz
 include refinery/data/pwsh-operators.json.xz
 recursive-include refinery/lib/fast *.pyx
+recursive-include refinery/lib/fast *.pxd
 recursive-include refinery/lib/seven *.pyx
