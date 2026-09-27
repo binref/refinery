@@ -122,6 +122,7 @@ When you are about to present your plan, first ask yourself:
 If the answer to any of these is negative, you are **not** done.
 
 Otherwise ask the user whether they want to run a panel of adversarial critics to challenge your plan. This includes any of the following; present the user with a prompt to select:
+
 - **general purpose** (a separate engineer does a peer review)
 - **architectural** (maintainability, scalability, separation of concerns, avoiding tech debt)
 - **research** (state of the art algorithmic solutions)
@@ -131,6 +132,11 @@ Otherwise ask the user whether they want to run a panel of adversarial critics t
 Do **not** give the agents specific instructions for what to investigate,
 only specify their expertise and focus area.
 Ask them to back each finding with an input, probe, or file:line that breaks the plan.
+
+This panel only runs **once**.
+Do **not design** your plan expecting critic panels to catch your mistakes!
+Every flaw the panel finds is **your failure**:
+It is your job to produce a plan that is airtight.
 
 After a plan is finalized, ask for approval:
 - When approved, pause to compact before implementation.
