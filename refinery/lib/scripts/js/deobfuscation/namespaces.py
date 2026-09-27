@@ -16,7 +16,13 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, Scope, SemanticModel
+from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
+    Scope,
+    SemanticModel,
+    enclosing_operator,
+    is_member_write_target,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BatchedScopeTransformer,
     a_host_reaches_the_binding,
@@ -43,6 +49,7 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     is_async_function,
     is_generator_function,
+    strip_parens,
 )
 
 
@@ -545,20 +552,29 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         Whether some call binds `this` to the namespace object (`NS.key(...)`, `NS.key` as a template
         tag) and invokes a value that may observe it. Such a value is handed the object itself, which
         it can read any key of, return, store, or pass on, so no key can move off the object and the
-        namespace stays whole. A key's value is provably `this`-free only when every `NS.key = rhs`
-        assignment binds a function expression that does not observe its receiver, and at least one
-        such assignment exists. Anything else — a value observing `this`, an opaque or compound
-        assignment, an arrow (conservatively, though its `this` is lexical), or a key never assigned
-        a function — may observe it.
+        namespace stays whole. A key's value is provably `this`-free only when every write to `NS.key`
+        is a plain `NS.key = rhs` binding a function expression that does not observe its receiver,
+        and at least one such write exists. Anything else — a value observing `this`, a compound
+        assignment, a destructuring or `for-in`/`for-of` target whose value is not written beside
+        it, an arrow (conservatively, though its `this` is lexical), or a key never assigned a
+        function — may observe it.
         """
         for nodes in references_by_key.values():
             if not any(is_receiver_binding_call(node) for node in nodes):
                 continue
             values: list[Expression | None] = []
             for node in nodes:
-                parent = node.parent
-                if isinstance(parent, JsAssignmentExpression) and parent.left is node:
-                    values.append(parent.right if parent.operator == '=' else None)
+                if not is_member_write_target(node):
+                    continue
+                governor = enclosing_operator(node)
+                if (
+                    isinstance(governor, JsAssignmentExpression)
+                    and governor.operator == '='
+                    and strip_parens(governor.left) is node
+                ):
+                    values.append(governor.right)
+                else:
+                    values.append(None)
             if not values or not all(
                 isinstance(rhs, JsFunctionExpression) and not references_receiver_this(rhs)
                 for rhs in values

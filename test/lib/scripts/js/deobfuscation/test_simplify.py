@@ -1470,6 +1470,16 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
             self._simplify('with (o) { g(function () { (0, f)(); }); }'),
         )
 
+    def test_an_inlined_callee_in_a_with_body_is_reached_without_a_receiver(self):
+        """
+        The identity call answers the value of `f` and calls it with no receiver; a bare `f()` in
+        the `with` body would bind `this` to the statement's object.
+        """
+        self.assertEqual(
+            'with (o) {\n  (0, f)();\n}',
+            self._simplify('with (o) { (function (g) { return g; })(f)(); }'),
+        )
+
     def test_sequence_callee_collapsed_for_a_name_in_a_with_object(self):
         self.assertEqual('with (f()) {}', self._simplify('with ((0, f)()) {}'))
 
@@ -1480,6 +1490,7 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
             'var o = { f: function () { return this === o; } }; with (o) { console.log((1 ? f : 0)()); }',
             'var o = { f: function () { return this === o; } }; with (o) { console.log((0 || f)()); }',
             'var o = { f: function () { return this === o; } }; with (o) { console.log((0, f)`x`); }',
+            'var o = { f: function () { return this === o; } }; with (o) { console.log((function (g) { return g; })(f)()); }',
         ]:
             with self.subTest(source=source):
                 self.assertEqual(

@@ -347,6 +347,28 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
                 self.assertEqual(behavior(self._flatten(source)), ('5\n', None))
                 self.assertEqual(before_and_after(source), (('5\n', None), ('5\n', None)))
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_method_stored_other_than_by_a_plain_assignment_still_reads_its_namespace(self):
+        """
+        Each program first stores a `this`-free method and then overwrites it with one that reads
+        `this.x`, through a write that is not the left side of a plain `=`. Inside a function the
+        flattened `var x` is no property of the global object, so a detached call would log
+        `undefined`.
+        """
+        for store in [
+            '[NS.f] = [function () { return this.x; }];',
+            '({ a: NS.f } = { a: function () { return this.x; } });',
+            'for (NS.f of [function () { return this.x; }]);',
+            '(NS.f) = function () { return this.x; };',
+        ]:
+            source = (
+                '(function () { var NS = {}; NS.x = 5; NS.f = function () { return 1; };'
+                F' {store} console.log(NS.f()); }})();'
+            )
+            with self.subTest(store):
+                self.assertEqual(behavior(self._flatten(source)), ('5\n', None))
+                self.assertEqual(before_and_after(source), (('5\n', None), ('5\n', None)))
+
     def test_this_method_called_through_sequence_is_flattened(self):
         """
         `(0, NS.f)()` detaches the receiver, so `this` is the global object in both forms and the

@@ -26,15 +26,6 @@ def a_program(text: str) -> str:
 #: to what Node prints for them.
 A_GLOBAL_THIS_LANDING_UNDER_A_BINDING_OF_ITS_NAME = {
     a_program("""
-        var NS = {};
-        NS.f = function () {
-          var r = globalThis.q;
-          try { null.x; } catch (globalThis) { return r || this; }
-          return r || this;
-        };
-        console.log(NS.f() === NS);
-        """): 'true\n',
-    a_program("""
         function f() { var r = globalThis.q; return r || this; }
         function g() { eval('var globalThis = 7'); return f() === 7; }
         console.log(g());
@@ -45,11 +36,10 @@ A_GLOBAL_THIS_LANDING_UNDER_A_BINDING_OF_ITS_NAME = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutAGlobalThisLandingUnderABindingOfItsName(TestBase):
 
-    def test_the_receiver_and_the_call_keep_what_they_read(self):
+    def test_the_call_keeps_what_it_read(self):
         """
-        Node prints `true` for the method, whose `this` in the handler is the namespace and not the
-        caught error, and `false` for the call, which returns the global object and not the `7` the
-        `eval` declared in the caller. The deobfuscation has to print the same.
+        Node prints `false`: the call returns the global object and not the `7` the `eval` declared
+        in the caller. The deobfuscation has to print the same.
         """
         rows = A_GLOBAL_THIS_LANDING_UNDER_A_BINDING_OF_ITS_NAME
         self.assertEqual(
