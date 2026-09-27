@@ -38,6 +38,18 @@ class TestISOFileExtractor(TestUnitBase):
         chunks = {chunk['path']: repr(chunk['sha256']) for chunk in data | unit}
         self.assertEqual('187c69325af91afb8df501ba842fe993496f1e4e7914c437f26cdb365f1105dd', chunks['TL2064100007xls.exe'])
 
+    def test_raw_cd_image_with_2352_byte_sectors(self):
+        data = self.download_sample('2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb')
+        unit = self.load()
+        chunks = {chunk['path']: repr(chunk['sha256']) for chunk in data | self.ldu('lzma') | unit}
+        self.assertEqual('c1df0f6bfdc367097a8fc2f904da0bdc1576fc0744e2fbbad27e205635cc92f9', chunks['click_me'])
+        self.assertEqual('682aa9cca0ed2734960b03a662a0b8b0916e8d7f0626dcd9325e9130235d653a', chunks['README.TXT'])
+
+    def test_recognizes_udf_image_without_iso9660_descriptors(self):
+        data = self.download_sample('2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb')
+        data = self.ldu('lzma')(data)
+        self.assertTrue(self.load().handles(data))
+
     def _test_coverage_sample(self, sha256):
         expected = _COVERAGE_SAMPLES[sha256]
         data = self.download_sample(sha256)

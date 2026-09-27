@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from refinery.lib.iso import FileSystemType, ISOArchive
+from refinery.lib.iso import FileSystemType, ISOArchive, is_disc_image
 from refinery.lib.types import Param
 from refinery.units.formats.archive import ArchiveUnit, Arg
 
 
 class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from a ISO archive.
+    Extract files from ISO 9660 and UDF disc images. This includes raw CD images, often with the
+    extension `.bin` or `.img`, which store 2352 or 2448 bytes per sector: the 2048 bytes of user
+    data together with the sync pattern, sector header, and error correction data.
     """
     def __init__(
         self, *paths,
@@ -22,6 +24,8 @@ class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         if not self.handles(data):
             self.log_warn('The data does not look like an ISO file.')
         iso = ISOArchive(data)
+        if (layout := iso.sector_layout).raw:
+            self.log_info(F'reading raw sectors of {layout.sector_size} bytes')
         if (fs := self.args.fs) != FileSystemType.AUTO:
             iso.select_filesystem(fs)
         self.log_info(F'using format: {iso.filesystem_type}')
@@ -32,8 +36,4 @@ class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data) -> bool:
-        return any(data[k] == B'CD001' for k in (
-            slice(0x8001, 0x8006),
-            slice(0x8801, 0x8806),
-            slice(0x9001, 0x9006),
-        ))
+        return is_disc_image(data)
