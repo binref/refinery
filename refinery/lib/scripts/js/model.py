@@ -873,19 +873,39 @@ def strip_parens(node: Node | None) -> Node | None:
     return node
 
 
-def callee_form_sensitive(node: Node | None) -> bool:
+def _stands_in_a_with_body(node: Node) -> bool:
     """
-    Whether a call invoking *node* directly as its callee means something a call reaching the same
-    value through a neutral spelling does not. The language has two such forms: a member access
-    binds `this` to its object, and a bare `eval` performs a *direct* eval evaluated in the
-    caller's own scope. Any other callee — a plain identifier or a value — invokes with no
-    receiver and no direct-eval effect, exactly as the same value called behind `(0, ...)` does,
-    so only these two forms constrain what may stand in a callee position.
+    Whether *node* lies in the body of a `with` statement at any depth, function boundaries
+    included: a free name there, and in any closure written there, is looked up on the statement's
+    object before any binding.
     """
-    inner = strip_parens(node)
+    child, parent = node, node.parent
+    while parent is not None:
+        if isinstance(parent, JsWithStatement) and parent.body is child:
+            return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def callee_form_sensitive(callee: Node | None, position: Node) -> bool:
+    """
+    Whether a call invoking *callee* directly, written where *position* stands, means something a
+    call reaching the same value through a neutral spelling does not. The language has three such
+    forms: a member access binds `this` to its object, a bare `eval` performs a *direct* eval
+    evaluated in the caller's own scope, and a bare name in the body of a `with` statement binds
+    `this` to the statement's object when that object holds the name. Any other callee invokes with
+    no receiver and no direct-eval effect, exactly as the same value called behind `(0, ...)` does,
+    so only these three forms constrain what may stand in a callee position.
+
+    The `with` body is read off the tree as it stands rather than off the scopes of the semantic
+    model, because every caller asks while it edits, and a node a pass has just written has no scope.
+    """
+    inner = strip_parens(callee)
     if isinstance(inner, JsMemberExpression):
         return True
-    return isinstance(inner, JsIdentifier) and inner.name == 'eval'
+    if not isinstance(inner, JsIdentifier):
+        return False
+    return inner.name == 'eval' or _stands_in_a_with_body(position)
 
 
 def names_a_property(node: Node) -> bool:

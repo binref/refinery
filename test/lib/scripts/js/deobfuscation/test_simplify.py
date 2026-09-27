@@ -1459,6 +1459,34 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
     def test_sequence_callee_collapsed_for_plain_identifier(self):
         self.assertEqual('f(x);', self._simplify('(0, f)(x);'))
 
+    def test_sequence_callee_not_collapsed_for_a_name_in_a_with_body(self):
+        """
+        A bare `f()` in a `with` body binds `this` to the statement's object when that object holds
+        `f`; `(0, f)()` invokes with no receiver, so the sequence is kept, also in a closure there.
+        """
+        self.assertEqual('with (o) {\n  (0, f)();\n}', self._simplify('with (o) { (0, f)(); }'))
+        self.assertEqual(
+            'with (o) {\n  g(function() {\n    (0, f)();\n  });\n}',
+            self._simplify('with (o) { g(function () { (0, f)(); }); }'),
+        )
+
+    def test_sequence_callee_collapsed_for_a_name_in_a_with_object(self):
+        self.assertEqual('with (f()) {}', self._simplify('with ((0, f)()) {}'))
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_agrees_on_the_receiver_of_a_name_called_in_a_with_body(self):
+        for source in [
+            'var o = { f: function () { return this === o; } }; with (o) { console.log((0, f)()); }',
+            'var o = { f: function () { return this === o; } }; with (o) { console.log((1 ? f : 0)()); }',
+            'var o = { f: function () { return this === o; } }; with (o) { console.log((0 || f)()); }',
+            'var o = { f: function () { return this === o; } }; with (o) { console.log((0, f)`x`); }',
+        ]:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    (behavior(source), behavior(self._simplify(source))),
+                    (('false\n', None), ('false\n', None)),
+                )
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):

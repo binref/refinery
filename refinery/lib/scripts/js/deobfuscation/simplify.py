@@ -655,7 +655,7 @@ class JsSimplifications(Transformer):
         """
         if kept is None:
             return None
-        receiver_sensitive = is_invocation_target(node) and callee_form_sensitive(kept)
+        receiver_sensitive = is_invocation_target(node) and callee_form_sensitive(kept, node)
         if not receiver_sensitive and self.effects.is_side_effect_free(
             test, discarded=True, reads_may_throw=True, read_established=self._read_established
         ):
@@ -689,7 +689,7 @@ class JsSimplifications(Transformer):
         if len(filtered) == len(node.expressions):
             return None
         if len(filtered) == 1:
-            if is_invocation_target(node) and callee_form_sensitive(filtered[0]):
+            if is_invocation_target(node) and callee_form_sensitive(filtered[0], node):
                 return None
             return filtered[0]
         set_child_list(node, 'expressions', filtered)

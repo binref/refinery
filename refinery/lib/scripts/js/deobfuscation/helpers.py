@@ -2324,15 +2324,16 @@ def spelled_for_the_callee_position(position: Node, replacement: Node) -> Node:
     without changing the call it lands in. Where *position* is a call's callee (or a tagged
     template's tag) and *replacement*'s own spelling as a callee would mean something a neutral
     spelling does not — a member access binds `this` to its object, a bare `eval` runs its text in
-    the caller's own scope — the value is reached behind `(0, ...)`, which invokes it with no
-    receiver and no direct-eval effect, exactly as the name that stood there did. Anywhere else, and
-    for any other value, *replacement* is written as it is.
+    the caller's own scope, a bare name in a `with` body binds `this` to the statement's object —
+    the value is reached behind `(0, ...)`, which invokes it with no receiver and no direct-eval
+    effect, exactly as the name that stood there did. Anywhere else, and for any other value,
+    *replacement* is written as it is.
 
     Every pass that drops a value into a slot another node occupied shares this, so a member or a
     bare `eval` cannot become a receiver-bound or direct call at one substitution site while being
     neutralized at another.
     """
-    if is_invocation_target(position) and callee_form_sensitive(replacement):
+    if is_invocation_target(position) and callee_form_sensitive(replacement, position):
         assert isinstance(replacement, Expression)
         return JsSequenceExpression(expressions=[
             JsNumericLiteral(value=0, raw='0'),
