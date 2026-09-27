@@ -43,7 +43,9 @@ class rep(Unit):
 
         if label := self.args.label:
             meta = {}
-            for counter in self.args.count:
+            if isinstance(it := self.args.count, int):
+                it = range(it)
+            for counter in it:
                 meta[label] = counter
                 yield self.labelled(data, **meta)
         else:
