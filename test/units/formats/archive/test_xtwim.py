@@ -6,7 +6,7 @@ import pytest
 
 from refinery.lib.lnk.flags import FileAttributeFlags
 from refinery.lib.wim import WimArchive
-from refinery.units import Chunk, RefineryException
+from refinery.units import Chunk
 from refinery.units.formats.archive.xtwim import xtwim
 
 from ... import TestUnitBase
@@ -90,19 +90,15 @@ class TestWimExtractor(TestUnitBase):
         self.assertIn(F'sub{chr(0xFFFD)}x.bin', listed)
         self.assertNotIn('sub/x.bin', listed)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=RefineryException,
-        reason='xt drops a handler whose first item fails to extract',
-    )
     def test_xt_extracts_the_other_files_when_the_first_file_has_no_data(self):
         def lose_data_of_empty_file(metadata: bytearray):
             empty_hash = directory_entry(metadata, 'empty.bin') + DIRECTORY_ENTRY_HASH
             metadata[empty_hash:empty_hash + 20] = hashlib.sha1(B'not stored').digest()
         data = with_modified_metadata(bytearray(self.download_sample(UNCOMPRESSED)), lose_data_of_empty_file)
         secret = B'This text is hidden in an alternate data stream.\r\n'
-        self.assertIn(secret, data | self.load() | [bytes])
-        self.assertIn(secret, data | self.ldu('xt') | [bytes])
+        extracted = data | self.load() | [bytes]
+        self.assertIn(secret, extracted)
+        self.assertEqual(data | self.ldu('xt') | [bytes], extracted)
 
     def test_data_stored_in_another_part_of_a_split_wim(self):
         data = Chunk(self.download_sample(FIRST_OF_TWO_PARTS))

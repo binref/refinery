@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from refinery.units import RefineryException
+from refinery.units.formats import UnpackResult
 from refinery.units.formats.archive import ArchiveUnit, MultipleArchives, PathExtractorUnit
 
 
@@ -131,14 +132,25 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         self.unit.log_debug('handler construction failed:', error)
                         return
                     try:
-                        test_unpack = not self.unit.args.list
+                        verified = self.unit.args.list
+                        unverified: list[UnpackResult] = []
+                        first_failure: Exception | None = None
                         for filtered in unit.filter([data]):
                             for item in unit.unpack(filtered):
-                                if test_unpack:
-                                    item.get_data()
-                                    test_unpack = False
+                                if not verified:
+                                    try:
+                                        item.get_data()
+                                    except Exception as failure:
+                                        first_failure = first_failure or failure
+                                        unverified.append(item)
+                                        continue
+                                    verified = True
+                                    self.count += len(unverified)
+                                    yield from unverified
                                 self.count += 1
                                 yield item
+                        if first_failure is not None and not verified:
+                            raise first_failure
                     except Exception as error:
                         if not self.fallback:
                             errors[handler.name] = error
