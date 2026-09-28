@@ -884,7 +884,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("const prefix = 'Hello';\nvar msg = 'Hello, World!';", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const prefix = 'Hello';
+                var msg = 'Hello, World!';
+                """
+            ),
+            result,
+        )
 
     def test_const_function_expression_with_xor_loop(self):
         source = inspect.cleandoc(
@@ -901,7 +909,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("const key = [3, 3, 3, 3, 3];\nvar msg = 'Hello';", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const key = [3, 3, 3, 3, 3];
+                var msg = 'Hello';
+                """
+            ),
+            result,
+        )
 
     def test_closure_function_calls_sibling(self):
         source = inspect.cleandoc(
@@ -1907,7 +1923,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
-    def test_closure_env_not_corrupted_by_buffer_rejection(self):
+    def test_two_calls_reading_one_table_fold_alike(self):
         source = inspect.cleandoc(
             """
             const key = [1, 2, 3];
@@ -1951,7 +1967,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var r = false;', result)
 
-    def test_let_in_nested_block_does_not_block_closure_capture(self):
+    def test_a_let_in_a_block_of_the_caller_leaves_the_const_its_closure_reads(self):
         source = inspect.cleandoc(
             """
             const x = 'outer';
@@ -1964,7 +1980,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual("const x = 'outer';\nvar r = 'outer';", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 'outer';
+                var r = 'outer';
+                """
+            ),
+            result,
+        )
 
     def test_let_in_nested_block_does_not_block_arg_resolution(self):
         source = inspect.cleandoc(
@@ -2117,7 +2141,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             self._evaluate(source),
         )
 
-    def test_later_var_does_not_block_capture(self):
+    def test_a_later_var_does_not_block_the_read_of_a_const(self):
         source = inspect.cleandoc(
             """
             const secret = 'captured';
@@ -2222,7 +2246,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
-    def test_multi_declarator_const_sibling_captured(self):
+    def test_a_const_declared_beside_the_function_is_read_by_its_call(self):
         source = inspect.cleandoc(
             """
             const x = 42, fn = (a) => x + a;
@@ -2230,7 +2254,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertEqual('const x = 42;\nvar r = 50;', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 42;
+                var r = 50;
+                """
+            ),
+            result,
+        )
 
     def test_split_undefined_separator_negative_limit(self):
         source = inspect.cleandoc(

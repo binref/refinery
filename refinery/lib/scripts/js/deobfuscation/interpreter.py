@@ -23,6 +23,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment, typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    BindingKind,
     SemanticModel,
     call_supplies_an_arguments_object,
     statement_list_holding,
@@ -187,14 +188,6 @@ class _ReturnIrreducible(Exception):
     """
     def __init__(self, node: Node):
         self.node = node
-
-
-def _deep_copy_value(value):
-    if isinstance(value, list):
-        return type(value)(_deep_copy_value(item) for item in value)
-    if isinstance(value, dict):
-        return {k: _deep_copy_value(v) for k, v in value.items()}
-    return value
 
 
 def _to_index(value: Value) -> int:
@@ -1245,6 +1238,42 @@ def _declares_a_function_inside_a_block(
     )
 
 
+def _shadows_a_name_in_a_block(
+    func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
+    model: SemanticModel,
+) -> bool:
+    """
+    Whether a block of *func*'s body declares a name that the body also uses for another binding:
+    a `let`, `const` or `class` in a block, a loop head or a `switch` clause that shadows a
+    parameter, a name the function declares, or a name declared outside it. This interpreter has
+    one environment per call and none per block, so the value the block puts under the name stays
+    there when the block ends and answers the reads of the other binding. A `catch` parameter is
+    exempt, since `_exec_try` puts back what the name held when its clause ends, and so are two
+    blocks declaring the same name, since each of them writes the name before it reads it.
+    """
+    body = func.body
+    scope = model.function_scope(func)
+    if not isinstance(body, JsBlockStatement) or scope is None:
+        return False
+    in_a_block: set[str] = set()
+    elsewhere: set[str] = set()
+    for node in walk_scope(body):
+        if not isinstance(node, JsIdentifier):
+            continue
+        binding = model.binding_of(node)
+        if binding is None:
+            if not model.is_reference(node):
+                continue
+            binding = model.resolve(node)
+        if binding is not None and binding.kind is BindingKind.CATCH:
+            continue
+        if binding is not None and scope.contains(binding.scope, strict=True):
+            in_a_block.add(node.name)
+        else:
+            elsewhere.add(node.name)
+    return not in_a_block.isdisjoint(elsewhere)
+
+
 class JsInterpreter:
     """
     Execute a JavaScript function body with concrete argument values. Returns a Python value or
@@ -1261,9 +1290,9 @@ class JsInterpreter:
         model: SemanticModel | None = None,
         anchor: Node | None = None,
         tampering: TamperingModel | None = None,
-        established: Callable[[JsFunctionNode], bool] | None = None,
+        established: Callable[[JsFunctionNode, Node], bool] | None = None,
         constant: Callable[[Binding], tuple[bool, Value]] | None = None,
-        callers: tuple[JsFunctionNode, ...] = (),
+        entered: set[JsFunctionNode] | None = None,
         constants: dict[Binding, tuple[bool, Value]] | None = None,
         depth: int = 0,
     ):
@@ -1282,8 +1311,7 @@ class JsInterpreter:
         """
         self._established = established
         self._constant = constant
-        self._callers = callers
-        self._frames = callers
+        self._entered: set[JsFunctionNode] = set() if entered is None else entered
         self._constants: dict[Binding, tuple[bool, Value]] = {} if constants is None else constants
         self._env: dict[str, Value] = {}
         self._iterations = 0
@@ -1308,13 +1336,19 @@ class JsInterpreter:
         from the entry of the body, where the language holds it in the block it is written in and,
         in sloppy code, in the enclosing scope only from the point the declaration runs. A read
         before that point is the difference, and it is one this answers with the function where a
-        program answers `undefined`.
+        program answers `undefined`. For the same reason a body ends it where one of its blocks
+        declares a name the body also uses for another binding (`_shadows_a_name_in_a_block`).
+
+        The function joins the ones this fold has entered (`_bound_in_an_entered_function`) before
+        any statement of its body runs.
         """
         if wraps_return(func):
             raise InterpreterError
         if _declares_a_function_inside_a_block(func):
             raise InterpreterError
-        self._frames = (*self._callers, func)
+        if self._model is not None and _shadows_a_name_in_a_block(func, self._model):
+            raise InterpreterError
+        self._entered.add(func)
         params = func.params
         param_names: list[str] = []
         for p in params:
@@ -1738,52 +1772,74 @@ class JsInterpreter:
 
     def _resolve_function_node(self, node: JsIdentifier) -> JsFunctionNode | None:
         """
-        The single function *node* names, or `None`. Delegates to `EffectModel.unambiguous_function`: a
-        function declaration or a bare-assignment (`var f; f = function(){}`) resolves, but a name
-        reassigned away from a value it already held stays unresolved. When an *established* predicate was
-        supplied, a resolved function is returned only if it is in place before the call site folding began
-        — a bare-assignment or initializer function reached before its establishing node has run reads a
-        temporal dead zone or a hoisted `undefined` at runtime, so resolving it here would replace that
-        throw with a value. A hoisted function declaration is always established and passes unconditionally.
-        A function declared inside a function this interpreter is running is never resolved here
-        (`_bound_in_a_running_frame`): the environment holds it once the run it belongs to has put
-        it in place, and the ordering the predicate answers is not that run's.
+        The single function *node* names, or `None`. Delegates to
+        `EffectModel.unambiguous_function`: a function declaration or a bare-assignment
+        (`var f; f = function(){}`) resolves, but a name reassigned away from a value it already
+        held stays unresolved. When an *established* predicate was supplied, a resolved function is
+        returned only if it is in place at the point the predicate is asked for — a bare-assignment
+        or initializer function reached before its establishing node has run reads a temporal dead
+        zone or a hoisted `undefined` at runtime, so resolving it here would replace that throw with
+        a value. A hoisted function declaration is always established and passes unconditionally.
+
+        The point is the call being folded, which every read of the fold runs after, except for a
+        function declared inside a function the fold has entered (`_bound_in_an_entered_function`).
+        That name belongs to a run of the entered function, and the read itself is the one point
+        whose ordering answers for every such run: a helper declared after a `return` is in place
+        wherever it is read, and an arrow whose `const` the run reading it has not reached yet is
+        not. Without the predicate nothing orders such a name, so only a hoisted declaration
+        resolves.
         """
         effects = self._effects
         if effects is None:
             return None
         binding = effects.model.resolve(node)
         func = effects.unambiguous_function(binding)
-        if func is None:
+        if func is None or binding is None:
             return None
-        if binding is not None and self._bound_in_a_running_frame(binding):
-            return None
-        if self._established is not None and not self._established(func):
+        entered = self._bound_in_an_entered_function(binding)
+        if self._established is not None:
+            anchor = self._anchor
+            point = node if entered or anchor is None else anchor
+            return func if self._established(func, point) else None
+        if entered and effects.model.binding_establishment_sites(binding) != []:
             return None
         return func
 
-    def _bound_in_a_running_frame(self, binding: Binding) -> bool:
+    def _bound_in_an_entered_function(self, binding: Binding) -> bool:
         """
-        Whether *binding* is declared inside one of the functions this interpreter is running, its
-        own or one a caller in the same fold is running. Such a name holds whatever the run it
-        belongs to has put into it: the interpreter's environment holds exactly that for its own
-        run, and a name the environment does not hold is not yet in place in it, or belongs to
-        another run of the same function whose state no environment here holds. The ordering
-        questions the caller answers are asked against the call being folded, which stands outside
-        every such run, so they cannot answer for this name.
+        Whether *binding* is declared inside a function this fold has entered: one this interpreter
+        runs, one a caller in the same fold runs, or one a call the fold has already finished ran.
+        Such a name belongs to one run of that function, and a function value this interpreter holds
+        does not say which: the environment of the run that made it is not handed to the interpreter
+        that runs it, and a run the fold has finished may have handed it out before it put the name
+        in place. So an ordering asked against the call being folded, which stands outside every
+        such run, does not answer for the name.
         """
         owner = binding.scope.node
-        return any(owner is frame or owner.is_descendant_of(frame) for frame in self._frames)
+        return any(
+            owner is function or owner.is_descendant_of(function) for function in self._entered
+        )
+
+    def constant_of(self, node: JsIdentifier) -> tuple[bool, Value]:
+        """
+        The constant the name *node* holds while the call this interpreter is anchored at runs, as a
+        read of it in the folded body answers it (`_resolve_constant`), and so the same object that
+        read answers. A caller resolving the call's arguments asks this, so an argument naming a
+        table and the name read inside the body are one table, as they are in the program.
+        """
+        return self._resolve_constant(node)
 
     def _resolve_constant(self, node: JsIdentifier) -> tuple[bool, Value]:
         """
         The value the free name *node* holds while the call being folded runs, as `(True, value)`,
         or `(False, None)` where this interpreter does not know it. The caller's *constant* callback
-        decides it for a binding, and is asked only for one declared outside every running function
-        (`_bound_in_a_running_frame`) and read outside any dynamic scope, since a `with` object or a
-        direct `eval` may answer the read with something else. The value is copied once and handed
-        to every nested call of the same fold, so two reads of one table are the same object, and a
-        change the fold makes to its copy never reaches the table the program holds.
+        decides it for a binding, and is asked only for one declared outside every function the fold
+        has entered (`_bound_in_an_entered_function`) and read outside any `with` body, since the
+        `with` object may answer the read with something else; code that may rewrite the binding is
+        the callback's question. The value is copied once and handed to every nested call of the
+        same fold, so two reads of one table are the same object, and a change the fold makes to its
+        copy never reaches the table the program holds. The callback answers a primitive or an array
+        of primitives, so a copy of the array is a copy of everything it holds.
         """
         model = self._model
         if self._constant is None or model is None:
@@ -1791,13 +1847,25 @@ class JsInterpreter:
         if model.read_has_dynamic_effect(node):
             return False, None
         binding = model.resolve(node)
-        if binding is None or self._bound_in_a_running_frame(binding):
+        if binding is None or self._bound_in_an_entered_function(binding):
             return False, None
         cached = self._constants.get(binding)
         if cached is None:
             known, value = self._constant(binding)
-            cached = self._constants[binding] = known, _deep_copy_value(value)
+            if isinstance(value, list):
+                value = list(value)
+            cached = self._constants[binding] = known, value
         return cached
+
+    def _unknown_to_the_model(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* is a name the semantic model was not built over: a clone that an earlier fold
+        of the same pass spliced in, which the model the pass holds has never resolved. The model
+        answers such a name as unbound whatever it denotes where it stands, so no answer this
+        interpreter reads off the model may be given for it.
+        """
+        model = self._model
+        return model is not None and model.scope_of(node) is None
 
     def _names_a_runtime_builtin(self, node: JsIdentifier) -> bool:
         """
@@ -1805,7 +1873,11 @@ class JsInterpreter:
         `False` and the call becomes irreducible, for the same reason `_names_a_global_value` does.
         """
         model = self._model
-        return model is not None and names_runtime_builtin(node, model)
+        return (
+            model is not None
+            and not self._unknown_to_the_model(node)
+            and names_runtime_builtin(node, model)
+        )
 
     def _names_a_static_object(self, node: JsIdentifier) -> bool:
         """
@@ -1820,7 +1892,9 @@ class JsInterpreter:
         if node.name in self._env:
             return False
         model = self._model
-        return model is None or names_runtime_builtin(node, model)
+        if model is None:
+            return True
+        return not self._unknown_to_the_model(node) and names_runtime_builtin(node, model)
 
     def _names_a_global_value(self, node: JsIdentifier) -> bool:
         """
@@ -1831,18 +1905,25 @@ class JsInterpreter:
         folded to `NaN` instead of to its argument.
         """
         model = self._model
-        return model is not None and names_global_value(node, model)
+        return (
+            model is not None
+            and not self._unknown_to_the_model(node)
+            and names_global_value(node, model)
+        )
 
     def _resolves_to_a_binding(self, node: JsIdentifier) -> bool:
         """
-        Whether *node* resolves to any binding at all. A name the model binds but `_env` does not hold
-        has a value this interpreter does not know — it may belong to an enclosing scope and hold no
-        constant the caller knows, or to a `let` whose declarator has not run, which is a read in its
-        temporal dead zone that throws — so the well-known-global `typeof` fallback must not answer
-        for it.
+        Whether *node* may resolve to a binding at all. A name the model binds but `_env` does not
+        hold has a value this interpreter does not know — it may belong to an enclosing scope and
+        hold no constant the caller knows, or to a `let` whose declarator has not run, which is a
+        read in its temporal dead zone that throws — so the well-known-global `typeof` fallback must
+        not answer for it. Nor may it answer for a name the model does not know
+        (`_unknown_to_the_model`), which may be bound wherever it stands.
         """
         model = self._model
-        return model is not None and model.resolve(node) is not None
+        return model is not None and (
+            self._unknown_to_the_model(node) or model.resolve(node) is not None
+        )
 
     def _eval_identifier(self, node: JsIdentifier) -> Value:
         name = node.name
@@ -2449,7 +2530,7 @@ class JsInterpreter:
             tampering=self._tampering,
             established=self._established,
             constant=self._constant,
-            callers=self._frames,
+            entered=self._entered,
             constants=self._constants,
             depth=self._depth + 1,
         )

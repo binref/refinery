@@ -32,96 +32,23 @@ from typing import Iterator, NamedTuple
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
-from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
+from refinery.lib.scripts.js.analysis.cfg import (
+    CfgNode,
+    ControlFlowGraph,
+    evaluated_whenever_completed,
+)
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, Binding, annex_b_copies_into
+from refinery.lib.scripts.js.analysis.model import Binding, annex_b_copies_into
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
-    JsAssignmentPattern,
     JsCallExpression,
-    JsClassBody,
-    JsConditionalExpression,
-    JsForInStatement,
-    JsForOfStatement,
-    JsForStatement,
     JsFunctionDeclaration,
     JsIdentifier,
-    JsLogicalExpression,
     JsMemberExpression,
-    JsSwitchCase,
     JsVariableDeclarator,
     strip_parens,
 )
-
-_LOGICAL_ASSIGNMENT = frozenset({
-    '&&=',
-    '||=',
-    '??=',
-})
-
-
-def _optional_link_below(node: Node | None) -> bool:
-    """
-    Whether the member and call spine at *node* holds an optional link, past which evaluation stops
-    when the value before the link is nullish.
-    """
-    while isinstance(node, (JsMemberExpression, JsCallExpression)):
-        if node.optional:
-            return True
-        node = node.object if isinstance(node, JsMemberExpression) else node.callee
-    return False
-
-
-def evaluated_whenever_completed(node: Node, element: Node) -> bool:
-    """
-    Whether *node* is evaluated on every run on which the statement or loop head *element* holding
-    it completes. A node below the right operand of a short-circuit operator or of a logical
-    assignment, an arm of a conditional expression, the default of a destructuring pattern, a link
-    of an optional chain past where it can stop, a `case` test, the target of a `for-in` or
-    `for-of` head, the test or update of a `for` loop, or a function or class body is evaluated on
-    some runs of *element* only, or on none.
-    """
-    cursor = node
-    while cursor is not element:
-        parent = cursor.parent
-        if parent is None or isinstance(parent, (*FUNCTION_NODES, JsClassBody)):
-            return False
-        if isinstance(parent, JsLogicalExpression) and parent.right is cursor:
-            return False
-        if isinstance(parent, JsConditionalExpression) and parent.test is not cursor:
-            return False
-        if (
-            isinstance(parent, JsAssignmentExpression)
-            and parent.operator in _LOGICAL_ASSIGNMENT
-            and parent.right is cursor
-        ):
-            return False
-        if isinstance(parent, JsAssignmentPattern) and parent.right is cursor:
-            return False
-        if (
-            isinstance(parent, JsMemberExpression)
-            and parent.object is not cursor
-            and (parent.optional or _optional_link_below(parent.object))
-        ):
-            return False
-        if (
-            isinstance(parent, JsCallExpression)
-            and parent.callee is not cursor
-            and (parent.optional or _optional_link_below(parent.callee))
-        ):
-            return False
-        if isinstance(parent, JsSwitchCase) and parent.test is cursor:
-            return False
-        if isinstance(parent, (JsForInStatement, JsForOfStatement)) and parent.left is cursor:
-            return False
-        if (
-            isinstance(parent, JsForStatement)
-            and (parent.test is cursor or parent.update is cursor)
-        ):
-            return False
-        cursor = parent
-    return True
 
 
 class _Kills(NamedTuple):

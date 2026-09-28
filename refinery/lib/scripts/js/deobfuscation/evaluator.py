@@ -66,19 +66,21 @@ from refinery.lib.scripts.js.model import (
 
 _FuncNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
+
 def _is_value_closed(
     func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
-    known_pure: set[str],
+    known: set[str],
     model: SemanticModel,
 ) -> bool:
     """
-    Check whether a function's body is closed enough for the interpreter to evaluate a call to it: it
-    references only its own parameters, names declared within its body, functions in the known-pure
-    set, registry built-ins, and well-known globals. This is the *value* precondition — every name the
-    interpreter needs is resolvable — and is deliberately separate from the *effect* precondition that a
-    call writes no observable state, which `refinery.lib.scripts.js.analysis.effects.EffectModel`
-    decides. A body that is a single switch-return (globalConcealing shape) qualifies even when its
-    return expressions reference external names, because the irreducible fallback substitutes the
+    Check whether a function's body is closed enough for the interpreter to evaluate a call to
+    it: it references only its own parameters, names declared within its body, the names in
+    *known* (a function already proven pure or a binding holding a constant), registry built-ins,
+    and well-known globals. This is the *value* precondition — every name the interpreter needs is
+    resolvable — and is deliberately separate from the *effect* precondition that a call writes no
+    observable state, which `refinery.lib.scripts.js.analysis.effects.EffectModel` decides. A body
+    that is a single switch-return (globalConcealing shape) qualifies even when its return
+    expressions reference external names, because the irreducible fallback substitutes the
     parameters into them.
     """
     for param in func.params:
@@ -100,7 +102,7 @@ def _is_value_closed(
     for node in walk_scope(body):
         if isinstance(node, JsIdentifier) and is_reference(node) and node.name not in local_names:
             name = node.name
-            if name in known_pure:
+            if name in known:
                 continue
             if names_runtime_builtin(node, model) or names_global_value(node, model):
                 continue
@@ -175,12 +177,12 @@ def _collect_declared_names(body, names: set[str]) -> None:
 
 def _unresolved_names(
     func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
-    known_pure: set[str],
+    known: set[str],
     model: SemanticModel,
 ) -> set[str]:
     """
     Return the set of external names referenced by *func* that are not locally declared, not in
-    *known_pure*, and not well-known globals or runtime names. Names that are plain-assigned (`=`)
+    *known*, and not well-known globals or runtime names. Names that are plain-assigned (`=`)
     within the function body AND also read within the same body are treated as implicit locals
     (obfuscator temporaries like `rr = expr; ... use(rr)`) and excluded. Names that are only
     plain-assigned but never read are also excluded (write-only temps). Compound-assigned names
@@ -223,12 +225,33 @@ def _unresolved_names(
                 claimed.add(name)
     external_names: set[str] = set()
     for name in read - plain_assigned:
-        if name in known_pure:
+        if name in known:
             continue
         if name in host_supplied and name not in claimed:
             continue
         external_names.add(name)
     return external_names
+
+
+def _is_evaluable(
+    func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
+    known: set[str],
+    model: SemanticModel,
+) -> bool:
+    """
+    Whether every name a call to *func* reads has an answer, given the *known* names: its body is
+    value-closed (`_is_value_closed`), or it is a function expression or an arrow that reads no
+    receiver `this` and whose other free names are only temporaries it assigns before reading them
+    (`_unresolved_names`).
+    """
+    if _is_value_closed(func, known, model):
+        return True
+    return (
+        not isinstance(func, JsFunctionDeclaration)
+        and func.body is not None
+        and not references_receiver_this(func.body)
+        and not _unresolved_names(func, known, model)
+    )
 
 
 class JsFunctionEvaluator(ScriptLevelTransformer):
@@ -259,7 +282,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         know the callee's value is established before the call is a statement-order fact, which no
         expression replacement moves, and a spliced clone lands exactly where the call stood and
         carries only names `_substitution_would_break` has already bound identically at that spot,
-        so no held fact is revealed more permissive by the splice.
+        so no held fact is revealed more permissive by the splice. The held model has never
+        resolved the names of such a clone, so a later fold running the code that holds it reads
+        none of them off the model and declines instead.
 
         The removal of resolved definitions runs after the pin is released, against the model the
         cache rebuilds over the post-evaluation tree: whether anything still names a function is a
@@ -306,43 +331,50 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _known_names(self, scope: Scope | None, func: _FuncNode) -> set[str]:
         """
-        The names that resolve, from *scope* outward, to something a call to *func* can be evaluated
-        with: a function already proven pure, or a binding that holds a constant
-        (`_binding_constant`) no write inside *func* establishes. A nearer binding wins: a name
-        rebound below the scope that holds the pure function or the constant — a parameter or a
-        local — shadows it and is not known, matching how the name resolves inside the body being
-        analyzed. Whether the constant is in place when a call runs is asked for each call, by the
-        callback `_evaluate_and_replace` hands the interpreter.
+        The names *func*'s body reads that resolve, from *scope* outward, to something a call to
+        *func* can be evaluated with: a function already proven pure, or a binding that holds a
+        constant (`_binding_constant`) no write inside *func* establishes. A nearer binding wins: a
+        name rebound below the scope that holds the pure function or the constant — a parameter or
+        a local — shadows it and is not known, matching how the name resolves inside the body being
+        analyzed. Only the names the body reads are asked about: the question is asked for every
+        function on every round of `_analyze_purity`, and a scope may hold thousands of names that
+        no body reads. Whether the constant is in place when a call runs is asked for each call,
+        through the callback of the interpreter `_interpreter_at` builds.
         """
         effects = self._effects
-        if effects is None:
+        body = func.body
+        if effects is None or body is None:
             return set()
         model = effects.model
         names: set[str] = set()
-        seen: set[str] = set()
-        current = scope
-        while current is not None:
-            for name, binding in current.bindings.items():
-                if name in seen:
-                    continue
-                seen.add(name)
-                function = effects.unambiguous_function(binding)
-                if function is not None and id(function) in self._pure_nodes:
-                    names.add(name)
-                    continue
-                if not self._binding_constant(binding)[0]:
-                    continue
-                sites = model.binding_establishment_sites(binding)
-                if sites is None or any(site is func or site.is_descendant_of(func) for site in sites):
-                    continue
+        read = {
+            node.name for node in walk_scope(body, include_root_body=True)
+            if isinstance(node, JsIdentifier) and is_reference(node)
+        }
+        for name in read:
+            current = scope
+            while current is not None and name not in current.bindings:
+                current = current.parent
+            if current is None:
+                continue
+            binding = current.bindings[name]
+            function = effects.unambiguous_function(binding)
+            if function is not None and id(function) in self._pure_nodes:
                 names.add(name)
-            current = current.parent
+                continue
+            if not self._binding_constant(binding)[0]:
+                continue
+            sites = model.binding_establishment_sites(binding)
+            if sites is None or any(site is func or site.is_descendant_of(func) for site in sites):
+                continue
+            names.add(name)
         return names
 
     def _binding_constant(self, binding: Binding) -> tuple[bool, Value]:
         """
-        The constant *binding* holds once established, as `binding_constant` answers it, asked once
-        per binding for each invocation.
+        The constant *binding* holds once established, as
+        `refinery.lib.scripts.js.deobfuscation.helpers.binding_constant` answers it, asked once per
+        binding for each invocation.
         """
         effects = self._effects
         if effects is None:
@@ -382,16 +414,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 if not self._effects.summary_of(func).is_literal_replaceable:
                     continue
                 known = self._known_names(self._effects.model.function_scope(func), func)
-                if _is_value_closed(func, known, self._effects.model):
-                    self._pure_nodes.add(id(func))
-                    changed = True
-                    continue
-                if (
-                    not isinstance(func, JsFunctionDeclaration)
-                    and func.body is not None
-                    and not references_receiver_this(func.body)
-                    and not _unresolved_names(func, known, self._effects.model)
-                ):
+                if _is_evaluable(func, known, self._effects.model):
                     self._pure_nodes.add(id(func))
                     changed = True
 
@@ -430,12 +453,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def _evaluate_expression_and_replace(self, node: JsCallExpression) -> bool:
         """
         Evaluate *node* as a standalone expression and replace it with the result. Returns whether the
-        replacement happened.
-
-        The interpreter is anchored at *node* and handed the tampering oracle, so the trust questions
-        its arms ask are answered for the moment this call runs rather than the whole program: a
-        tampering site guaranteed to follow the call no longer refuses a builtin this expression
-        reads.
+        replacement happened. The interpreter is the one `_interpreter_at` builds for every fold, so
+        a function the expression calls back into is resolved only where it is in place when *node*
+        runs, just as a named call is.
 
         `_ThrowSignal` is caught alongside the interpreter's own refusals: a JavaScript exception raised
         inside the evaluated expression is the program's business, not a value this fold may produce, and it
@@ -443,13 +463,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         is a refusal too — the parameter substitution that makes it useful at a call site has no meaning for
         an expression that takes no parameters.
         """
-        cache = self._cache_for(node)
-        interpreter = JsInterpreter(
-            effects=self._effects,
-            anchor=node,
-            tampering=cache.tampering if cache is not None else None,
-            constant=lambda binding: self._constant_at(binding, node),
-        )
+        interpreter = self._interpreter_at(node)
         try:
             result = interpreter.eval_expression(node)
         except (InterpreterError, IrreducibleExpression, _ThrowSignal):
@@ -459,7 +473,26 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self.mark_changed()
         return True
 
-    def _cache_for(self, node: JsCallExpression):
+    def _interpreter_at(self, call: JsCallExpression) -> JsInterpreter:
+        """
+        The interpreter every fold of *call* runs in. It is anchored at *call* and handed the
+        tampering oracle, so the trust questions its arms ask are answered for the moment this call
+        runs rather than the whole program — the decoder a file carries before the call it blocks
+        still refuses it, the one guaranteed to run after does not. It asks this evaluator whether a
+        function it resolves is in place (`_established_before`) at the point it names, and knows a
+        name declared outside the function it runs only as the constant `_constant_at` finds that
+        name holding when *call* runs.
+        """
+        cache = self._cache_for(call)
+        return JsInterpreter(
+            effects=self._effects,
+            anchor=call,
+            tampering=cache.tampering if cache is not None else None,
+            established=self._established_before,
+            constant=lambda binding: self._constant_at(binding, call),
+        )
+
+    def _cache_for(self, node: Node):
         """
         The model cache of the script holding *node*, for the anchor the interpreter's trust
         questions are asked through — or `None` where no script holds it, leaving the interpreter
@@ -470,20 +503,22 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return None
         return model_cache(self, script)
 
-    def _established_before(self, func: _FuncNode, call: JsCallExpression) -> bool:
+    def _established_before(self, func: Node, reference: Node) -> bool:
         """
-        Whether *func*'s value is installed before *call* runs. A function declaration is hoisted, so it
-        is always established; a declarator initializer (`const`/`let`/`var f = function(){}`) is in place
-        only once its declarator has run, and a lone assignment (`f = function(){}`, the form namespace
-        flattening leaves) only once that assignment has run. A premature call to either reads a value
-        that is absent — a temporal dead zone `ReferenceError`, or the hoisted `undefined` a `var` call
-        throws a `TypeError` on — which the interpreted body must not silently replace with a result. The
-        model names the establishing nodes; dominance decides whether they all precede the call.
+        Whether *func*'s value is installed before *reference* runs, where *reference* is a call or
+        a read of the function's name. A function declaration is hoisted, so it is always
+        established; a declarator initializer (`const`/`let`/`var f = function(){}`) is in place
+        only once its declarator has run, and a lone assignment (`f = function(){}`, the form
+        namespace flattening leaves) only once that assignment has run. A premature call to either
+        reads a value that is absent — a temporal dead zone `ReferenceError`, or the hoisted
+        `undefined` a `var` call throws a `TypeError` on — which the interpreted body must not
+        silently replace with a result. The model names the establishing nodes; dominance decides
+        whether they all precede *reference*.
         """
         script = self._script
         if script is None:
             return False
-        return model_cache(self, script).dominance.established_before(func, call)
+        return model_cache(self, script).dominance.established_before(func, reference)
 
     def _try_named_call(self, node: JsCallExpression) -> None:
         if self._effects is None:
@@ -497,10 +532,11 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return
         func_id = id(func)
         self._call_counts[func_id] = self._call_counts.get(func_id, 0) + 1
-        args = self._extract_constant_args(node.arguments, node)
+        interpreter = self._interpreter_at(node)
+        args = self._extract_constant_args(node.arguments, interpreter)
         if args is None:
             return
-        success = self._evaluate_and_replace(node, func, args, gate_unresolved=True)
+        success = self._evaluate_and_replace(node, func, args, interpreter, gate_unresolved=True)
         if success:
             self._resolved_counts[func_id] = self._resolved_counts.get(func_id, 0) + 1
         else:
@@ -514,42 +550,27 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if self._effects is None or not self._effects.summary_of(func).is_literal_replaceable:
             return
         known = self._known_names(self._effects.model.scope_of(node), func)
-        if not _is_value_closed(func, known, self._effects.model):
-            if func.body is None or references_receiver_this(func.body):
-                return
-            if _unresolved_names(func, known, self._effects.model):
-                return
-        args = self._extract_constant_args(node.arguments, node)
+        if not _is_evaluable(func, known, self._effects.model):
+            return
+        interpreter = self._interpreter_at(node)
+        args = self._extract_constant_args(node.arguments, interpreter)
         if args is None:
             return
-        self._evaluate_and_replace(node, func, args, gate_unresolved=False)
+        self._evaluate_and_replace(node, func, args, interpreter, gate_unresolved=False)
 
     def _evaluate_and_replace(
         self,
         node: JsCallExpression,
         func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
         args: list,
+        interpreter: JsInterpreter,
         gate_unresolved: bool,
     ) -> bool:
         """
-        Run the interpreter on *func* with *args* and, on success, replace *node* with the result.
-        Returns True if the call site was resolved (either to a value or a substituted expression).
-
-        The interpreter is anchored at *node* and handed the tampering oracle, so the trust
-        questions its arms ask are answered for the moment this call runs rather than the whole
-        program — the decoder a file carries before the call it blocks still refuses it, the one
-        guaranteed to run after does not. A name the body reads that is declared outside *func* is
-        known to the interpreter only as the constant `_constant_at` finds it holding when this call
-        runs.
+        Run *interpreter*, the one `_interpreter_at` built for *node*, on *func* with *args* and, on
+        success, replace *node* with the result. Returns True if the call site was resolved (either
+        to a value or a substituted expression).
         """
-        cache = self._cache_for(node)
-        interpreter = JsInterpreter(
-            effects=self._effects,
-            anchor=node,
-            tampering=cache.tampering if cache is not None else None,
-            established=lambda callee: self._established_before(callee, node),
-            constant=lambda binding: self._constant_at(binding, node),
-        )
         try:
             result = interpreter.execute(func, args)
         except IrreducibleExpression as irr:
@@ -686,24 +707,21 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def _extract_constant_args(
         self,
         arguments: list,
-        call_node: JsCallExpression,
+        interpreter: JsInterpreter,
     ) -> list[Value] | None:
         """
-        The values of *call_node*'s arguments, or `None` when one of them is not known: a literal,
-        or a name read outside any dynamic scope that holds a constant when the call runs
-        (`_constant_at`).
+        The values of a call's *arguments*, or `None` when one of them is not known: a literal, or a
+        name that holds a constant when the call runs. The name is read by the *interpreter* that
+        runs the call, through
+        `refinery.lib.scripts.js.deobfuscation.interpreter.JsInterpreter.constant_of`, so an
+        argument naming a table is the same object a read of that name in the body answers, as it
+        is in the program.
         """
-        effects = self._effects
         args: list[Value] = []
         for arg in arguments:
             known, value = extract_literal_value(arg)
-            if (
-                not known
-                and isinstance(arg, JsIdentifier)
-                and effects is not None
-                and not effects.model.read_has_dynamic_effect(arg)
-            ):
-                known, value = self._constant_at(effects.model.resolve(arg), call_node)
+            if not known and isinstance(arg, JsIdentifier):
+                known, value = interpreter.constant_of(arg)
             if not known:
                 return None
             args.append(value)

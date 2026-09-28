@@ -1216,7 +1216,9 @@ class EffectModel:
         it is passed to a statically known function as an argument whose parameter is itself an immutable
         container (so the callee neither mutates nor further-escapes it). Any other escape — returned,
         stored as a property, passed to a call that cannot be resolved — is treated conservatively as
-        mutable. A mutation through a dynamic scope is modelled: a `with` body that names the container —
+        mutable, and so is an exported binding or an alias of one: an importer holds the container
+        and may change it after the module has run, which no reference in this file records. A
+        mutation through a dynamic scope is modelled: a `with` body that names the container —
         a member write, method call, reassignment, or escape — is attributed to it as a dynamic reference
         and judged by the same role logic, so a `with` that never names it keeps it foldable, and a direct
         `eval` in a local container's own function makes it mutable. The one residual is a script-scope
@@ -1259,6 +1261,8 @@ class EffectModel:
         key = id(binding)
         if key in visiting:
             return True
+        if binding.exported:
+            return False
         visiting = visiting | {key}
         if self._dynamic_scope_mutates(binding, member_calls_mutate, exclude, direct_eval_ordered):
             return False

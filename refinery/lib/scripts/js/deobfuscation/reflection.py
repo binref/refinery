@@ -1649,7 +1649,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 effects=cache.effects,
                 anchor=node,
                 tampering=cache.tampering,
-                established=lambda callee: cache.dominance.established_before(callee, node),
+                established=cache.dominance.established_before,
             )
             try:
                 values.append(interpreter.eval_expression(argument))

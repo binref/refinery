@@ -950,7 +950,9 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 #: A program whose only throw is a `let`/`const`/`class` read in a function body reached before the
 #: declaration runs, mapped to the `ReferenceError` Node ends it with. The read is a dead-zone throw
 #: at the call, reached directly and through a transitive callee, for a function, an arrow, and a
-#: class binding. A discarded call to such a function — a dead store — must keep the throw.
+#: class binding. A discarded call to such a function — a dead store — must keep the throw. The
+#: function evaluator writes the read in place of the call where the reader reads nothing else, so
+#: each such reader has a twin that reads `this` first, which keeps the call for the removal to see.
 A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
     'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
     'function f() { return q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
@@ -960,6 +962,13 @@ A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
     'var g = () => q;\nvar f = () => g();\n'
     'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
     'function f() { return C; }\nvar dead = f();\nclass C {}\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return this && q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return this && q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var g = () => this && q;\nvar dead = g();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function g() { return this && q; }\nfunction f() { return g(); }\n'
+    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var g = () => this && q;\nvar f = () => g();\n'
+    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
 }
 
 
@@ -2961,48 +2970,189 @@ class TestAConstantDefinedBeforeTheHostGetsControlIsFoldedIntoAnEntryPoint(TestB
         )
 
 
-#: A program whose one write of `c` may be skipped on a run that completes the statement holding
-#: it, and whose function reads `c` after that statement, mapped to the behavior an engine gives it.
-A_WRITE_ITS_STATEMENT_MAY_SKIP = {
-    'a write below and': Program(
+#: A program whose function writes a variable that only it reads, and reads it again on its next
+#: call, mapped to the behavior an engine gives it: a guard that lets the function run once, and a
+#: counter.
+A_WRITE_THE_NEXT_CALL_READS = {
+    'a guard running the function once': Program(
         a_program("""
-            var c;
-            Math.random() > 2 && (c = 5);
-            function g() { return c; }
-            console.log(g());
+            var done;
+            function once() { if (done) { return 'skip'; } done = true; return 'run'; }
+            once();
+            console.log(once());
             """),
-        prints('undefined'),
+        prints('skip'),
     ),
-    'a write in a class field initializer': Program(
+    'a counter': Program(
         a_program("""
-            var c;
-            class A { x = (c = 5); }
-            function g() { return c; }
-            console.log(g());
+            var n = 0;
+            function next() { n = n + 1; return n; }
+            next();
+            console.log(next());
             """),
-        prints('undefined'),
-    ),
-    'a write in a branch of a static block': Program(
-        a_program("""
-            var c;
-            class A { static { if (Math.random() > 2) { c = 5; } } }
-            function g() { return c; }
-            console.log(g());
-            """),
-        prints('undefined'),
+        prints('2'),
     ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_WRITE_ITS_STATEMENT_MAY_SKIP)
-class TestAWriteItsStatementMaySkipHasNotRunWhenTheStatementCompletes(TestBase):
+@one_expected_failure_per_program(A_WRITE_THE_NEXT_CALL_READS)
+class TestAWriteTheNextCallReadsIsKept(TestBase):
     """
-    A constant is written into a function when its definition runs before every call of that
-    function, and the ordering takes the statement holding the definition having completed for the
-    definition having run. A write below `&&`, in a class field initializer, or in a branch of a
-    static block is skipped on runs that complete its statement, so `g` reads `c` unset while the
-    deobfuscation writes `5` into it. Minifiers spell `if (x) c = 5;` as `x && (c = 5)`, so the
-    first shape is possible in real code, but only where the variable is declared without a value
-    and written nowhere else, which none of the real samples holds.
+    A write every reference of which stands inside the function performing it is taken as one no
+    outside code observes, so a call whose value is discarded counts as free and is dropped. The
+    function's own next call reads that write, so dropping the first call changes what the second
+    one answers. Deciding it needs to know whether each call writes the variable before it reads
+    it, which the effect model does not ask.
     """
+
+
+#: A script whose function writes a variable a host reads by name once the script has run.
+A_WRITE_A_HOST_READS = a_program("""
+    var a;
+    var f = function () { a = 2; return a; };
+    console.log(f());
+    """)
+
+
+class TestAWriteAHostReadsIsKept(TestBase):
+    """
+    A variable declared as a host entry point is read from outside the file, as an exported one is
+    read by an importer, so a function writing it cannot be replaced by the value it returns. The
+    effect model counts the export as an observer of the write but is never told the entry points.
+    """
+
+    @unittest.expectedFailure
+    def test_the_write_stays(self):
+        output = deobfuscate_source(A_WRITE_A_HOST_READS, entrypoints=('a',))
+        self.assertIn('a = 2', output)
+
+
+#: A program declaring a `var` inside a `with` body whose object holds a property of the same name,
+#: mapped to the behavior an engine gives it. The initializer writes the property, so the `var`
+#: keeps `undefined`.
+A_VAR_INITIALIZED_INSIDE_A_WITH_BODY = {
+    'a scalar read by a function': Program(
+        a_program("""
+            var obj = { T: 1 };
+            with (obj) { var T = 'x'; }
+            function A() { return T + '!'; }
+            console.log(A());
+            """),
+        prints('undefined!'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VAR_INITIALIZED_INSIDE_A_WITH_BODY)
+class TestAVarInitializedInsideAWithBodyMayWriteTheObject(TestBase):
+    """
+    The one value a binding holds is read from the initializer its declaration spells, and a
+    declaration inside a `with` body is no exception, but the initializer assigns through the
+    `with` object first: where the object has a property of that name, the property takes the
+    value and the `var` keeps `undefined`. Control-flow flattening writes `var` declarations inside
+    `with` bodies, so the shape is one an obfuscator emits whenever its scope object carries the
+    declared name.
+    """
+
+
+#: A classic script writing one of its own top-level variables through the global object it
+#: obtains by running `return this` as a function body, mapped to the behavior a host gives it.
+A_GLOBAL_WRITTEN_THROUGH_A_FOUND_GLOBAL_OBJECT = {
+    'a scalar read by a function': Program(
+        a_program("""
+            function A(i) { return K + i; }
+            var K = 'x';
+            var g = Function('return this')();
+            g.K = 'y';
+            console.log(A(0));
+            """),
+        prints('y0'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_GLOBAL_WRITTEN_THROUGH_A_FOUND_GLOBAL_OBJECT)
+class TestAGlobalWrittenThroughAFoundGlobalObjectChangesTheVariable(TestBase):
+    """
+    `Function('return this')()` is the global object, and a store on it under a variable's name is
+    a write of that variable. The model knows the global object by the names it is spelled with
+    and by the locals holding one of them, not by the value this call returns, so the write is
+    not seen and the value the declaration spelled is read in its place.
+    """
+
+
+#: Programs whose Annex B `var` inside a `catch` clause shares the name of the clause's parameter,
+#: mapped to what Node prints: the initializer writes the parameter, and the `var` keeps
+#: `undefined`.
+A_VAR_NAMED_LIKE_ITS_CATCH_PARAMETER = {
+    a_program("""
+        try { throw 0; } catch (T) { var T = 'x'; }
+        console.log(T);
+        """): 'undefined\n',
+    a_program("""
+        function A(i) { return T[i]; }
+        try { throw 0; } catch (T) { var T = ['x', 'y']; }
+        try { console.log(A(0)); } catch (e) { console.log(e.name); }
+        """): 'TypeError\n',
+}
+
+
+class TestAVarNamedLikeItsCatchParameterKeepsUndefined(TestBase):
+    """
+    A `var` declared inside a `catch` clause under the name of the clause's parameter is hoisted
+    out of the clause, but its initializer assigns the parameter, so the `var` itself is never
+    written. The model reads the initializer as the value of the `var`.
+    """
+
+    @wontfix(
+        'no obfuscated file declares a var under the name of the catch parameter around it (none '
+        'of 2,074 checked), and such a declaration is made up for the defect'
+    )
+    def test_the_var_keeps_undefined(self):
+        rows = A_VAR_NAMED_LIKE_ITS_CATCH_PARAMETER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program whose recursive function stores a closure in an outer variable on every run and
+#: calls it after a nested run has replaced it, mapped to what Node prints: the closure of the
+#: nested run, which returned before its own `var` was written.
+A_CLOSURE_A_NESTED_RUN_REPLACED = {
+    a_program("""
+        var h;
+        function S() { return h(); }
+        function Q(n) {
+          h = function () { return T; };
+          if (!n) return 'early';
+          Q(0);
+          var T = 'x';
+          return S();
+        }
+        console.log(Q(1));
+        """): 'undefined\n',
+}
+
+
+class TestAClosureANestedRunReplacedReadsThatRun(TestBase):
+    """
+    The ordering attributes every call of a function to one run of the function that created it.
+    A recursive function storing a new closure on every run breaks that: the closure called after
+    the nested run returned belongs to the nested run, whose `var` was never written.
+    """
+
+    @wontfix(
+        'a recursive function replacing a shared closure on every run and calling it after a '
+        'nested run is made up for the defect; no obfuscator writes that shape'
+    )
+    def test_the_closure_reads_its_own_run(self):
+        rows = A_CLOSURE_A_NESTED_RUN_REPLACED
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

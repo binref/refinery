@@ -1179,6 +1179,32 @@ A_MODULE_WHOSE_FUNCTION_WRITES_THE_EXPORT = inspect.cleandoc(
     """
 )
 
+#: Modules whose exported function reads an element of an exported table, through an accessor and
+#: directly, and the importer that changes the table before it calls the function. Node prints the
+#: element the importer wrote; a module whose read became the element the text spells prints `a`.
+MODULES_READING_AN_EXPORTED_TABLE = (
+    inspect.cleandoc(
+        """
+        export const T = ['a'];
+        function A(i) { return T[i]; }
+        export function get() { return A(0); }
+        """
+    ),
+    inspect.cleandoc(
+        """
+        export const T = ['a'];
+        export function get() { return T[0]; }
+        """
+    ),
+)
+AN_IMPORTER_CHANGING_THE_EXPORTED_TABLE = inspect.cleandoc(
+    """
+    import { T, get } from './lib.mjs';
+    T[0] = 'z';
+    console.log(get());
+    """
+)
+
 
 class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
     """
@@ -1276,6 +1302,36 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
                 ),
             ),
             (agreed, agreed),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_read_of_an_exported_table_answers_what_an_importer_wrote(self):
+        importer = AN_IMPORTER_CHANGING_THE_EXPORTED_TABLE
+        self.assertEqual(
+            {
+                module: (
+                    module_graph_behavior({'main.mjs': importer, 'lib.mjs': module}, 'main.mjs'),
+                    module_graph_behavior(
+                        {
+                            'main.mjs': importer,
+                            'lib.mjs': deobfuscate_source(module, module=True),
+                        },
+                        'main.mjs',
+                    ),
+                )
+                for module in MODULES_READING_AN_EXPORTED_TABLE
+            },
+            {
+                module: (('z\n', None), ('z\n', None))
+                for module in MODULES_READING_AN_EXPORTED_TABLE
+            },
+        )
+
+    def test_a_read_of_an_exported_table_is_left_as_it_is(self):
+        modules = MODULES_READING_AN_EXPORTED_TABLE
+        self.assertEqual(
+            {module: deobfuscate_source(module, module=True) for module in modules},
+            {module: printed(module) for module in modules},
         )
 
 

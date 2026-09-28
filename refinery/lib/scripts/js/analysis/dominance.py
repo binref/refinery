@@ -43,6 +43,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow_model,
+    evaluated_whenever_completed,
 )
 from refinery.lib.scripts.js.analysis.intrinsics import (
     SPECIES_KEYS,
@@ -289,11 +290,29 @@ class DominanceModel(DominatorModel):
         each establishing node runs before *reference*. `False` when the binding holds no single orderable
         value, so its presence cannot be ordered — the query a consumer needs before trusting a value that
         would otherwise be read out of its temporal dead zone or before its establishing write.
+        A site the statement or loop head holding it evaluates on some runs only orders nothing
+        (`refinery.lib.scripts.js.analysis.cfg.evaluated_whenever_completed`): `x && (T = [])`
+        completes without writing `T`.
         """
         sites = self.model.binding_establishment_sites(binding)
         if sites is None:
             return False
-        return all(self.runs_before(site, reference) for site in sites)
+        return all(
+            self._runs_with_its_node(site) and self.runs_before(site, reference)
+            for site in sites
+        )
+
+    def _runs_with_its_node(self, site: Node) -> bool:
+        """
+        Whether *site* has run whenever the control-flow node evaluating it has completed. A graph
+        has a node for a statement or a loop head and none for the parts of an expression, so an
+        ordering against that node answers for *site* only where the node evaluates it on every run.
+        """
+        located = self.locate(site)
+        if located is None:
+            return False
+        element = located[1].element
+        return element is not None and evaluated_whenever_completed(site, element)
 
     def past_dead_zone(self, binding: Binding, reference: Node) -> bool:
         """

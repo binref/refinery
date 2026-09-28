@@ -2687,6 +2687,10 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
     nothing changes or hands out, which is
     `refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`,
     and a binding a host may rewrite (`a_host_reaches_the_binding`) holds nothing the file decides.
+    Nor does one that code no reference records may reach under the run's execution model and trust
+    setting, `refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach`: a table of
+    a script is a property of the global object that an indirect `eval` or a store under a runtime
+    key can rewrite, while a table of a module is out of reach of every such surface.
     An array holding an array or an object is refused: an element read out of it is a container the
     program shares between reads, where a folded read hands out a fresh copy of it.
 
@@ -2702,6 +2706,8 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
         if not effects.binding_is_immutable_container(binding):
             return False, None
     if a_host_reaches_the_binding(model, binding, options):
+        return False, None
+    if model.reflection_can_reach(binding, module_scope=runs_as_module(options, model.root)):
         return False, None
     return True, value
 

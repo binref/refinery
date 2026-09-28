@@ -2697,7 +2697,7 @@ class SemanticModel:
             return False
         return self.may_be_the_global_object(member.object)
 
-    def reflection_can_reach(self, binding: Binding) -> bool:
+    def reflection_can_reach(self, binding: Binding, *, module_scope: bool = False) -> bool:
         """
         Whether a runtime name lookup could read or write *binding* without a reference this model
         records. Derived over the precise dynamic-scope facts. A global is reachable through any
@@ -2712,9 +2712,17 @@ class SemanticModel:
         A `with` that never names it cannot reach it, and reflective code in the global scope
         cannot name a local — so the local answer is exact, while the global one stays
         conservative (any surface).
+
+        Under the module execution model (*module_scope*) a declaration of the top-level scope is
+        scoped to the module: global-scope code cannot name it, so it is reached the way a
+        function-local is, from the module's own text only. An implicit global stays a global.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if (
+            owner is None
+            or binding.kind is BindingKind.IMPLICIT_GLOBAL
+            or (owner.kind is ScopeKind.SCRIPT and not module_scope)
+        ):
             return self.has_reflection_surface() or self.has_opaque_global_write()
         return (
             bool(binding.dynamic_refs)
