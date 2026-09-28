@@ -62,7 +62,7 @@ class TestFileReader(TestUnitBase):
         self.assertIn('bar', out5[1])
 
     def test_read_myself(self):
-        data = self.load(os.path.join(self.root, '**', 't??t_ef.py'), wild=True)()
+        data = self.load(os.path.join(self.root, 'test', '**', 't??t_ef.py'), wild=True)()
         self.assertEqual(data.count(B'bananapalooza'), 2)
 
     def test_regression_relative_path(self):
