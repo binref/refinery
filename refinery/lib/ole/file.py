@@ -14,6 +14,7 @@ import struct
 from typing import Any
 from uuid import UUID
 
+from refinery.lib.dt import filetime
 from refinery.lib.structures import MemoryFile, StructReader
 
 MAGIC = b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
@@ -85,8 +86,6 @@ DEFECT_POTENTIAL    = 20  # noqa
 DEFECT_INCORRECT    = 30  # noqa
 DEFECT_FATAL        = 40  # noqa
 
-_FILETIME_EPOCH = datetime.datetime(1601, 1, 1, 0, 0, 0)
-
 
 class OleFileError(IOError):
     pass
@@ -94,15 +93,6 @@ class OleFileError(IOError):
 
 class NotOleFileError(OleFileError):
     pass
-
-
-def filetime_to_datetime(filetime: int) -> datetime.datetime | None:
-    if filetime <= 0:
-        return None
-    try:
-        return _FILETIME_EPOCH + datetime.timedelta(microseconds=filetime // 10)
-    except (ValueError, OverflowError):
-        return None
 
 
 def _clsid(data: bytes | bytearray | memoryview) -> str:
@@ -677,13 +667,13 @@ class OleFile:
         entry = self._find(filename)
         if entry is None:
             return None
-        return filetime_to_datetime(entry.modify_time)
+        return filetime(entry.modify_time)
 
     def getctime(self, filename: str) -> datetime.datetime | None:
         entry = self._find(filename)
         if entry is None:
             return None
-        return filetime_to_datetime(entry.create_time)
+        return filetime(entry.create_time)
 
     def getproperties(
         self,
@@ -1154,10 +1144,10 @@ def _parse_basic_property(
             return None
         low = _i32(data, offset)
         high = _i32(data, offset + 4)
-        filetime = low + (high << 32)
+        stamp = low + (high << 32)
         if convert_time and prop_id not in no_conversion:
-            return filetime_to_datetime(filetime)
-        return filetime
+            return filetime(stamp)
+        return stamp
 
     if vt == VT_UI1:
         if offset >= len(data):

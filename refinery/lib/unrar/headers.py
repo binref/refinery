@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
+from refinery.lib.dt import filetime
 from refinery.lib.types import buf
 
 RAR_HEADER_V15 = b'Rar!\x1a\a\00'   # 52 61 72 21 1A 07 00
@@ -234,18 +235,6 @@ def dos_datetime(dostime: int) -> datetime | None:
         second = (time_part & 0x1F) * 2
         return datetime(year, month or 1, day or 1, hour, minute, min(second, 59))
     except (ValueError, OverflowError):
-        return None
-
-
-def filetime_datetime(filetime: int) -> datetime | None:
-    """
-    Convert a Windows FILETIME (100-nanosecond intervals since 1601-01-01 UTC) to a datetime.
-    """
-    if not filetime:
-        return None
-    try:
-        return datetime.fromtimestamp(filetime / 10_000_000 - 11644473600, tz=timezone.utc)
-    except (OSError, OverflowError, ValueError):
         return None
 
 
@@ -939,7 +928,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    hd.date = filetime_datetime(raw.get8())
+                    hd.date = filetime(raw.get8())
             if time_flags & FHEXTRA_HTIME_CTIME:
                 if is_unix:
                     ts = raw.get4()
@@ -948,7 +937,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    hd.ctime = filetime_datetime(raw.get8())
+                    hd.ctime = filetime(raw.get8())
             if time_flags & FHEXTRA_HTIME_ATIME:
                 if is_unix:
                     ts = raw.get4()
@@ -957,7 +946,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    hd.atime = filetime_datetime(raw.get8())
+                    hd.atime = filetime(raw.get8())
 
         elif field_type == FHEXTRA_REDIR:
             hd.redir_type = raw.getv()

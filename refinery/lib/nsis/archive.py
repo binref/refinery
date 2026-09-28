@@ -17,6 +17,7 @@ from typing import (
 )
 
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.dt import filetime
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
 from refinery.lib.tools import exception_to_string
@@ -1005,13 +1006,7 @@ class NSHeader(Struct):
                 if self._is_var_str(arg[1], self.NS_OUTDIR) and arg[2] == 0 and arg[3] == 0:
                     out_dir = prefixes[-1]
             elif cmd is Op.ExtractFile:
-                def epoch(t: int):
-                    return (t / 10000000 - 11644473600)
-                try:
-                    time = datetime.fromtimestamp(epoch((arg[4] << 32) | arg[3]))
-                except Exception:
-                    time = None
-                item = NSItem(arg[2], mtime=time)
+                item = NSItem(arg[2], mtime=filetime((arg[4] << 32) | arg[3]))
                 setpath(arg[1])
                 items.append(item)
                 if not self._is_var_str(arg[1], 10):

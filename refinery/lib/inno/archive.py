@@ -20,12 +20,12 @@ import re
 import struct
 import zlib
 
-from datetime import datetime, timezone
 from functools import cached_property
 from hashlib import md5, pbkdf2_hmac, sha1, sha256
 from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.dt import filetime
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.structures import Struct, StructReader, StructReaderBits
@@ -166,7 +166,6 @@ class InnoVersion(NamedTuple):
 
 _I = InnoVersion
 
-_FILE_TIME_1970_01_01 = 116444736000000000
 _DEFAULT_INNO_VERSION = _I(5, 0, 0, 0, IVF.UTF_16)
 
 _IS_AMBIGUOUS = {
@@ -2460,8 +2459,7 @@ class SetupDataEntry(InnoStruct):
             from refinery.lib.dt import dostime
             ts = dostime(reader.u32())
         else:
-            ts = reader.u64() - _FILE_TIME_1970_01_01
-            ts = datetime.fromtimestamp(ts / 10000000, timezone.utc)
+            ts = filetime(reader.u64())
 
         self.FileTime = ts
 

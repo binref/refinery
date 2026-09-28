@@ -14,7 +14,7 @@ import unittest
 
 from refinery.lib.ole.file import (
     OleFile, OleFileError, NotOleFileError, OleMetadata,
-    STGTY, MAGIC, VirtualOleFile, filetime_to_datetime, is_ole_file, _clsid,
+    STGTY, MAGIC, VirtualOleFile, is_ole_file, _clsid,
 )
 from refinery.lib.structures import MemoryFile
 
@@ -404,8 +404,8 @@ class TestOleFile(unittest.TestCase):
         props = ole.getproperties('\x05SummaryInformation', convert_time=True)
         self.assertIsInstance(props[12], datetime.datetime)
         self.assertIsInstance(props[13], datetime.datetime)
-        self.assertEqual(props[12], datetime.datetime(2024, 1, 1, 0, 0))
-        self.assertEqual(props[13], datetime.datetime(2024, 6, 15, 12, 0))
+        self.assertEqual(props[12], datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc))
+        self.assertEqual(props[13], datetime.datetime(2024, 6, 15, 12, 0, tzinfo=datetime.timezone.utc))
 
     def test_rich_filetime_raw(self):
         ole = OleFile(TestOleSamples.RICH_PROPERTIES)
@@ -499,23 +499,6 @@ class TestOleFile(unittest.TestCase):
 
 
 class TestOleUtilities(unittest.TestCase):
-
-    def test_filetime_to_datetime_known_value(self):
-        filetime = (1700000000 + 11644473600) * 10_000_000
-        dt = filetime_to_datetime(filetime)
-        assert dt is not None
-        self.assertEqual(dt.year, 2023)
-        self.assertEqual(dt.month, 11)
-        self.assertEqual(dt.day, 14)
-
-    def test_filetime_to_datetime_zero(self):
-        self.assertIsNone(filetime_to_datetime(0))
-
-    def test_filetime_to_datetime_negative(self):
-        self.assertIsNone(filetime_to_datetime(-1))
-
-    def test_filetime_to_datetime_overflow(self):
-        self.assertIsNone(filetime_to_datetime(0x7FFFFFFFFFFFFFFF))
 
     def test_clsid_known_value(self):
         clsid_bytes = bytes.fromhex('78563412341278569ABCDEF012345678')

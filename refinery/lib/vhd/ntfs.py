@@ -18,6 +18,7 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Iterator, Protocol
 
+from refinery.lib.dt import filetime
 from refinery.lib.types import buf
 
 _FILE_MAGIC = B'FILE'
@@ -56,16 +57,6 @@ class VolumeSource(Protocol):
 
 class NtfsError(ValueError):
     pass
-
-
-def _filetime(value: int) -> datetime.datetime | None:
-    if value == 0:
-        return None
-    try:
-        epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
-        return epoch + datetime.timedelta(microseconds=value // 10)
-    except (ValueError, OverflowError):
-        return None
 
 
 @dataclass
@@ -241,13 +232,13 @@ class NtfsVolume:
                     file_names.append(name)
             elif attr.type == _ATTR_STANDARD_INFO:
                 if len(attr.data) >= 0x24:
-                    created = _filetime(int.from_bytes(attr.data[_SI_CREATED:_SI_CREATED + 8], 'little'))
-                    date = _filetime(int.from_bytes(attr.data[_SI_MODIFIED:_SI_MODIFIED + 8], 'little'))
-                    changed = _filetime(int.from_bytes(attr.data[_SI_CHANGED:_SI_CHANGED + 8], 'little'))
-                    accessed = _filetime(int.from_bytes(attr.data[_SI_ACCESSED:_SI_ACCESSED + 8], 'little'))
+                    created = filetime(int.from_bytes(attr.data[_SI_CREATED:_SI_CREATED + 8], 'little'))
+                    date = filetime(int.from_bytes(attr.data[_SI_MODIFIED:_SI_MODIFIED + 8], 'little'))
+                    changed = filetime(int.from_bytes(attr.data[_SI_CHANGED:_SI_CHANGED + 8], 'little'))
+                    accessed = filetime(int.from_bytes(attr.data[_SI_ACCESSED:_SI_ACCESSED + 8], 'little'))
                     attributes = int.from_bytes(attr.data[_SI_ATTRIBUTES:_SI_ATTRIBUTES + 4], 'little')
                 elif len(attr.data) >= 8:
-                    date = _filetime(int.from_bytes(attr.data[_SI_MODIFIED:_SI_MODIFIED + 8], 'little'))
+                    date = filetime(int.from_bytes(attr.data[_SI_MODIFIED:_SI_MODIFIED + 8], 'little'))
             elif attr.type == _ATTR_DATA:
                 data_attrs.append(attr)
 
@@ -312,10 +303,10 @@ class NtfsVolume:
         if len(data) < 0x42:
             return None
         parent = int.from_bytes(data[0:6], 'little')
-        created = _filetime(int.from_bytes(data[_FN_CREATED:_FN_CREATED + 8], 'little'))
-        modified = _filetime(int.from_bytes(data[_FN_MODIFIED:_FN_MODIFIED + 8], 'little'))
-        changed = _filetime(int.from_bytes(data[_FN_CHANGED:_FN_CHANGED + 8], 'little'))
-        accessed = _filetime(int.from_bytes(data[_FN_ACCESSED:_FN_ACCESSED + 8], 'little'))
+        created = filetime(int.from_bytes(data[_FN_CREATED:_FN_CREATED + 8], 'little'))
+        modified = filetime(int.from_bytes(data[_FN_MODIFIED:_FN_MODIFIED + 8], 'little'))
+        changed = filetime(int.from_bytes(data[_FN_CHANGED:_FN_CHANGED + 8], 'little'))
+        accessed = filetime(int.from_bytes(data[_FN_ACCESSED:_FN_ACCESSED + 8], 'little'))
         attrib = int.from_bytes(data[0x38:0x3C], 'little')
         name_length = data[0x40]
         name_type = data[0x41]

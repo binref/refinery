@@ -7,13 +7,14 @@ import codecs
 import re
 import struct
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from email.parser import HeaderParser
 from functools import cached_property
 
+from refinery.lib.dt import filetime
+
 _PSETID_APPOINTMENT = bytes.fromhex('0220060000000000c000000000000046')
 _LID_LOCATION = 0x8208
-_FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 
 _CODEPAGE_OVERRIDES = {
     20127: 'ascii',
@@ -44,12 +45,6 @@ def _codepage_to_codec(cp: int) -> str:
         return codecs.lookup(F'cp{cp}').name
     except LookupError:
         return 'cp1252'
-
-
-def _filetime_to_datetime(filetime: int) -> datetime | None:
-    if filetime <= 0:
-        return None
-    return _FILETIME_EPOCH + timedelta(microseconds=filetime // 10)
 
 
 class MsgAttachment:
@@ -220,7 +215,7 @@ class MsgFile:
                 props[tag] = int.from_bytes(record[8:12], 'little')
             elif prop_type == 0x0040:
                 ft = int.from_bytes(record[8:16], 'little')
-                props[tag] = _filetime_to_datetime(ft)
+                props[tag] = filetime(ft)
         return props
 
     @cached_property

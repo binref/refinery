@@ -67,8 +67,8 @@ class TestDocMetaOle(TestUnitBase):
         test = data | self.load() | json.loads
         self.assertEqual(test['author'], 'Adobe')
         self.assertEqual(test['creating_application'], 'Microsoft Office Word')
-        self.assertEqual(test['create_time'], '2021-11-13 20:40:00')
-        self.assertEqual(test['last_saved_time'], '2021-11-15 12:15:00')
+        self.assertEqual(test['create_time'], '2021-11-13 20:40:00+00:00')
+        self.assertEqual(test['last_saved_time'], '2021-11-15 12:15:00+00:00')
         self.assertEqual(test['num_pages'], 3)
         self.assertEqual(test['num_words'], 560)
 

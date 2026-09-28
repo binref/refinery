@@ -6,13 +6,13 @@ import json
 
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from enum import Enum
 from typing import cast
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
-from refinery.lib.dt import date_from_timestamp
+from refinery.lib.dt import date_from_timestamp, filetime
 from refinery.lib.id import is_likely_pe
 from refinery.lib.lcid import LCID
 from refinery.lib.resources import datapath
@@ -25,11 +25,6 @@ from refinery.units.formats.pe import get_pe_size
 _PE = lief.PE
 _PE_Hdr = _PE.Header
 _PE_Dbg = _PE.Debug
-
-
-def _FILETIME(value: int) -> datetime:
-    s, ns100 = divmod(value - 116444736000000000, 10000000)
-    return datetime.fromtimestamp(s, timezone.utc).replace(microsecond=(ns100 // 10))
 
 
 def _STRING(value: str | bytes, dll: bool = False) -> str:
@@ -436,8 +431,8 @@ class pemeta(JSONTableUnit):
                     version_info[name] = T(val).name
                 except Exception:
                     continue
-            if t := info.file_date_ms << 32 | info.file_date_ls:
-                version_info.update(Timestamp=_FILETIME(t))
+            if timestamp := filetime(info.file_date_ms << 32 | info.file_date_ls):
+                version_info.update(Timestamp=timestamp)
             version_info.update(
                 ProductVersion=_to_version_string(info.product_version_ms, info.product_version_ls),
                 FileVersion=_to_version_string(info.file_version_ms, info.file_version_ls),

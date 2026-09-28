@@ -7,8 +7,9 @@ import dataclasses
 import enum
 import zlib
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
+from refinery.lib.dt import filetime
 from refinery.lib.structures import EOF, StructReader
 
 SIGNATURE = B'7z\xBC\xAF\x27\x1C'
@@ -203,16 +204,6 @@ def read_crcs(reader: StructReader, count: int) -> list[int | None]:
     return crcs
 
 
-_FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
-
-
-def _filetime_to_datetime(ft: int) -> datetime | None:
-    if ft == 0:
-        return None
-    try:
-        return _FILETIME_EPOCH + timedelta(microseconds=ft // 10)
-    except (OverflowError, OSError):
-        return None
 
 
 def parse_signature_header(data: bytes | bytearray | memoryview) -> SignatureHeader:
@@ -462,7 +453,7 @@ def _parse_files_info(reader: StructReader, num_files: int) -> list[FileEntry]:
             for i, d in enumerate(defined):
                 if d:
                     ft = reader.u64()
-                    dt = _filetime_to_datetime(ft)
+                    dt = filetime(ft)
                     if prop_id == PropertyID.CTIME:
                         files[i].ctime = dt
                     elif prop_id == PropertyID.ATIME:

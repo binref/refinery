@@ -2,7 +2,7 @@ import gc
 import hashlib
 import tracemalloc
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest import mock
 
 import pytest
@@ -128,7 +128,7 @@ class TestWimCapturesOfOneFolder(TestBase):
         wim = WimArchive(self.download_sample('f589d49d144f08cf8bbca6dd1026e4e3b57692a3f55d37f7140b30f13b3d5029'))
         hello, = (entry for entry in entries(wim) if entry.path == ('hello.txt',))
         write_time = hello.write_time or datetime.min
-        self.assertEqual(write_time.replace(microsecond=0), datetime(2026, 9, 26, 21, 25, 30))
+        self.assertEqual(write_time.replace(microsecond=0), datetime(2026, 9, 26, 21, 25, 30, tzinfo=timezone.utc))
 
     def test_lzx_resources_share_one_decoder(self):
         before = live_lzx_decoders()

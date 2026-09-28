@@ -59,13 +59,13 @@ def date_from_timestamp(ts: int | float):
 def filetime(value: int) -> datetime | None:
     """
     Convert a Windows `FILETIME` value, which counts 100-nanosecond intervals since January 1st of
-    1601 in UTC, to a naive `datetime` object in UTC. The value zero marks an unset time, and it
-    converts to `None` like every value that no `datetime` object can represent.
+    1601 in UTC, to a `datetime` object in the UTC time zone. The value zero marks an unset time,
+    and it converts to `None` like every value that no `datetime` object can represent.
     """
     if value <= 0:
         return None
     try:
-        return datetime(1601, 1, 1) + timedelta(microseconds=value // 10)
+        return datetime(1601, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=value // 10)
     except OverflowError:
         return None
 

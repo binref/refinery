@@ -8,7 +8,7 @@ import struct
 from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
-from refinery.lib.dt import date_from_timestamp
+from refinery.lib.dt import filetime
 from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile, Struct, StructReader
@@ -680,7 +680,7 @@ class A3xReader(StructReader[memoryview]):
         H = self.u32()
         L = self.u32()
         T = (H << 32) | L
-        return date_from_timestamp((T - 116444736000000000) / 10000000)
+        return filetime(T)
 
     def read_length_prefixed_string(self):
         length = self.i32()
@@ -833,8 +833,8 @@ class a3x(PathExtractorUnit):
                     record.path,
                     record.extract,
                     srcpath=record.src_path,
-                    created=record.created.isoformat(' ', 'seconds'),
-                    written=record.written.isoformat(' ', 'seconds'),
+                    created=record.created and record.created.isoformat(' ', 'seconds'),
+                    written=record.written and record.written.isoformat(' ', 'seconds'),
                 )
 
         while cursor < len(view):
