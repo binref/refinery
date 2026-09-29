@@ -48,6 +48,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     code_points,
     coerces_uninterceptably,
     coerces_uninterceptably_from_written_chain,
+    converts_uninterceptably,
     eval_binary_op,
     js_typeof,
     name_is_unbound,
@@ -1313,6 +1314,19 @@ class JsInterpreter:
         self._constant = constant
         self._entered: set[JsFunctionNode] = set() if entered is None else entered
         self._constants: dict[Binding, tuple[bool, Value]] = {} if constants is None else constants
+        self._anchor_verdict: bool | None = None
+        """
+        The tampering oracle's answer for the anchor, computed once: the anchor and the tree it
+        was pinned over are fixed for this interpreter's lifetime.
+        """
+        self._intact_callees: dict[JsCallExpression, bool] = {}
+        self._host_object_names: dict[JsIdentifier, bool] = {}
+        self._intact_prototypes: dict[type, bool] = {}
+        """
+        Remembered answers to the trust questions, keyed by the node or type each was asked
+        about. The tree and the pinned models are fixed for this interpreter's lifetime, so a
+        repeated question has the one answer.
+        """
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -1891,10 +1905,14 @@ class JsInterpreter:
         """
         if node.name in self._env:
             return False
-        model = self._model
-        if model is None:
-            return True
-        return not self._unknown_to_the_model(node) and names_runtime_builtin(node, model)
+        memo = self._host_object_names
+        if node not in memo:
+            model = self._model
+            memo[node] = model is None or (
+                not self._unknown_to_the_model(node)
+                and names_runtime_builtin(node, model)
+            )
+        return memo[node]
 
     def _names_a_global_value(self, node: JsIdentifier) -> bool:
         """
@@ -2294,11 +2312,14 @@ class JsInterpreter:
         `False`: the trust questions below then fall through to their no-anchor arms, which refuse
         wherever a reflective surface could have done the replacing.
         """
-        return (
-            self._tampering is not None
-            and self._anchor is not None
-            and self._tampering.builtins_intact_at(self._anchor)
-        )
+        verdict = self._anchor_verdict
+        if verdict is None:
+            self._anchor_verdict = verdict = (
+                self._tampering is not None
+                and self._anchor is not None
+                and self._tampering.builtins_intact_at(self._anchor)
+            )
+        return verdict
 
     def _callee_is_intact(self, node: JsCallExpression) -> bool:
         """
@@ -2310,12 +2331,17 @@ class JsInterpreter:
         Where the oracle has vouched for the anchor, the reflection terms of the name question are
         answered already, so the attributed writes alone decide — `call_names_an_unwritten_builtin`.
         """
-        effects = self._effects
-        if effects is None:
-            return True
-        if self._builtins_intact():
-            return effects.call_names_an_unwritten_builtin(node)
-        return effects.call_is_foldable(node)
+        memo = self._intact_callees
+        if node not in memo:
+            effects = self._effects
+            if effects is None:
+                answer = True
+            elif self._builtins_intact():
+                answer = effects.call_names_an_unwritten_builtin(node)
+            else:
+                answer = effects.call_is_foldable(node)
+            memo[node] = answer
+        return memo[node]
 
     def _require_uninterceptable(self, value: Value) -> None:
         """
@@ -2333,6 +2359,8 @@ class JsInterpreter:
         The coercion guard the operator, key, and template arms ask: `coerces_uninterceptably`, or
         its written-chain half where the oracle has vouched for the anchor.
         """
+        if converts_uninterceptably(value):
+            return True
         if self._builtins_intact():
             return coerces_uninterceptably_from_written_chain(self._effects, value)
         return coerces_uninterceptably(self._effects, value)
@@ -2344,12 +2372,17 @@ class JsInterpreter:
         `_callee_is_intact` asks, for a receiver that names no global; where the oracle has vouched for
         the anchor, the attributed writes alone decide.
         """
-        effects = self._effects
-        if effects is None:
-            return True
-        if self._builtins_intact():
-            return effects.prototype_name_unwritten(value_type)
-        return effects.trusted_prototype(value_type)
+        memo = self._intact_prototypes
+        if value_type not in memo:
+            effects = self._effects
+            if effects is None:
+                answer = True
+            elif self._builtins_intact():
+                answer = effects.prototype_name_unwritten(value_type)
+            else:
+                answer = effects.trusted_prototype(value_type)
+            memo[value_type] = answer
+        return memo[value_type]
 
     def _chain_is_intact(self, value_type: type) -> bool:
         """

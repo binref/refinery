@@ -136,6 +136,20 @@ _A_WRITTEN_CHAIN_ANSWERS: dict[str, _Row] = {
 }
 
 
+#: The same operator, run on a primitive and then on an object that owns a conversion, mapped to
+#: what Node prints for it and to the text the deobfuscation writes: the fold the first reading
+#: earned does not extend to the object the second reads.
+_A_PRIMITIVE_FIRST_OBJECT_SECOND: dict[str, _Row] = {
+    'function f() { var v = 5; var out = 0; for (var i = 0; i < 2; i++)'
+    ' { out += v * 2; v = { valueOf: function () { return 7; } }; } return out; }'
+    ' var x = f(); console.log(x);': _Row(
+        '24\n',
+        'function f() {\n  var v = 5;\n  var out = 0;\n  for (var i = 0; i < 2; i++) {\n'
+        '    out += v * 2;\n    v = { valueOf: function() {\n      return 7;\n    } };\n  }\n'
+        '  return out;\n}\nvar x = f();\nconsole.log(x);'),
+}
+
+
 #: The same programs with the conversion taken out, mapped to what Node prints for them and to the
 #: text the deobfuscation writes: the call folds to the value the language itself says, which is
 #: what the refusal above declines to guess at.
@@ -176,3 +190,10 @@ class TestTheUninstalledConversionFolds(unittest.TestCase):
 
     def test_each_row_behaves_and_writes_as_recorded(self):
         _assert_both_ways(self, _THE_UNINSTALLED_CONVERSION_FOLDS)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPrimitiveFirstObjectSecond(unittest.TestCase):
+
+    def test_each_row_behaves_and_writes_as_recorded(self):
+        _assert_both_ways(self, _A_PRIMITIVE_FIRST_OBJECT_SECOND)

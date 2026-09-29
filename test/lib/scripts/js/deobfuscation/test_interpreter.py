@@ -6,8 +6,10 @@ import unittest
 
 from typing import NamedTuple
 
-from test.lib.scripts.js.analysis.differential import completion_values, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, completion_values, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+
+from refinery.units.scripting.js import js
 
 
 class TestInterpreterValueSemantics(TestJsDeobfuscator):
@@ -1653,3 +1655,47 @@ class TestAStringDenotingNothingIsIrreducible(TestJsDeobfuscator):
 
     def test_a_well_formed_join_beside_it_still_folds(self):
         self.assertEqual("var x = 'a-b';", self._fold('["a", "b"].join("-")'))
+
+
+class TestInterpreterTrustVerdictBoundaries(TestJsDeobfuscator):
+    """
+    The interpreter remembers each trust verdict it computes. A binding the run creates below a
+    static-object name must still be honored, and a call the verdict admitted must fold again on
+    the second asking.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_catch_binding_below_a_folded_call_still_refuses_the_shadowed_method_call(self):
+        """
+        Node: the shadowed floor answers 9, so the program prints `10`.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var out = Math.floor(1.5);
+              try {
+                throw { floor: function () { return 9; } };
+              } catch (Math) {
+                out += Math.floor(2.5);
+              }
+              return out;
+            }
+            var x = f();
+            console.log(x);
+            """
+        )
+        self.assertEqual(('10\n', None), behavior(source))
+        self.assertEqual(('10\n', None), behavior(source.encode('utf8') | js | str))
+
+    def test_a_static_object_method_call_folds_every_time_it_is_asked(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = Math.floor(1.5);
+              var b = Math.floor(2.5);
+              return a + b;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual('var x = 3;', self._evaluate(source))
