@@ -1,52 +1,38 @@
 from __future__ import annotations
 
 import codecs
-import enum
-import functools
-import io
+import datetime
 import re
 
-from datetime import datetime
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Iterable
 
-import defusedxml
-
-from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import NoLogging
+from refinery.lib.excel import (
+    Cell,
+    CellKind,
+    ExcelFormatError,
+    SheetKind,
+    detect_format,
+    open_workbook,
+    rc2ref,
+    ref2rc,
+)
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
-if TYPE_CHECKING:
-    from openpyxl import Workbook as PyxlWorkbook
-    from openpyxl.worksheet.worksheet import Worksheet as PyxlSheet
-    from pyxlsb2 import Workbook as XlsbWorkbook
-    from pyxlsb2.records import SheetRecord as XlsbSheet
-    from xlrd2 import Book as XlrdWorkbook
+_CELL_REFERENCE = re.compile(R'^[A-Z]+\d+$')
 
 
-defusedxml.defuse_stdlib()
-
-
-def _ref2rc(ref: str):
-    match = re.match(R'^([A-Z]+)(\d+)$', ref)
-    if not match:
-        raise ValueError
-    col = functools.reduce(lambda acc, c: (acc * 26) + c, (ord(c) - 0x40 for c in match[1]), 0)
-    row = int(match[2], 10)
-    return row, col
-
-
-def _rc2ref(row: int, col: int):
-    if row <= 0:
-        raise ValueError
-    if col <= 0:
-        raise ValueError
-    alphabetic = ''
-    while col:
-        col, letter = divmod(col - 1, 26)
-        alphabetic = chr(0x41 + letter) + alphabetic
-    return F'{alphabetic}{row}'
+def _render_cell(cell: Cell) -> str | None:
+    if cell.kind is CellKind.BLANK:
+        return None
+    if cell.kind is CellKind.FORMULA:
+        return None
+    value = cell.value
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(' ', 'seconds')
+    if isinstance(value, datetime.time):
+        return value.isoformat('seconds')
+    return str(value)
 
 
 class SheetReference:
@@ -63,7 +49,7 @@ class SheetReference:
                 sheet = int(sheet, 0) - 1
             except (TypeError, ValueError):
                 if sheet[0] in ('"', "'") and sheet[~0] == sheet[0] and len(sheet) > 2:
-                    sheet = sheet[1:~1]
+                    sheet = sheet[1:-1]
         return sheet, token
 
     def _parse_range(self, token: str):
@@ -75,9 +61,9 @@ class SheetReference:
 
     @staticmethod
     def _parse_token(token: str):
-        try:
-            row, col = _ref2rc(token)
-        except ValueError:
+        if _CELL_REFERENCE.match(token) is not None:
+            row, col = ref2rc(token)
+        else:
             row, col = (int(x, 0) for x in token.split('.'))
         if row <= 0:
             raise ValueError(F'row must be positive, {row} is an invalid value')
@@ -113,20 +99,6 @@ class SheetReference:
             return self.sheet == index
         return self.sheet == name or fnmatch(name, self.sheet)
 
-    def cells(self, row_max, col_max):
-        if self.ubound is not None:
-            row_max, col_max = self.ubound
-        row, col = self.lbound
-        colstart = col
-        while True:
-            yield row, col
-            if col < col_max:
-                col += 1
-            elif row < row_max:
-                row, col = row + 1, colstart
-            else:
-                break
-
     def __contains__(self, ref):
         if self.ubound is None:
             return True
@@ -140,154 +112,7 @@ class SheetReference:
         return True
 
 
-class Workbook:
-
-    workbook: XlsbWorkbook | XlrdWorkbook | PyxlWorkbook
-
-    class _xlmode(enum.IntEnum):
-        openpyxl = 1
-        xlrd = 2
-        pyxlsb2 = 3
-
-    def __init__(self, data, unit: ExcelUnit):
-        def openpyxl():
-            return unit._openpyxl.load_workbook(MemoryFile(data), read_only=True)
-
-        def pyxlsb2():
-            return unit._pyxlsb2.open_workbook(MemoryFile(data))
-
-        def xlrd():
-            verbose = max(unit.log_level.verbosity - 1, 0)
-            log = unit._get_logger_io()
-            return unit._xlrd.open_workbook(
-                file_contents=data, logfile=log, verbosity=verbose, on_demand=True)
-
-        exception = None
-
-        for mode, loader in [
-            (self._xlmode.openpyxl, openpyxl),
-            (self._xlmode.xlrd, xlrd),
-            (self._xlmode.pyxlsb2, pyxlsb2)
-        ]:
-            try:
-                self.workbook = loader()
-            except Exception as e:
-                exception = e
-            else:
-                self.mode = mode
-                exception = None
-                break
-
-        if exception:
-            raise exception
-
-    def sheets(self):
-        if self.mode is self._xlmode.openpyxl:
-            pyxl: PyxlWorkbook = self.workbook
-            yield from pyxl.sheetnames
-            return
-        if self.mode is self._xlmode.xlrd:
-            xlrd: XlrdWorkbook = self.workbook
-            yield from xlrd.sheet_names()
-            return
-        if self.mode is self._xlmode.pyxlsb2:
-            xlsb: XlsbWorkbook = self.workbook
-            it: Iterable[XlsbSheet] = xlsb.sheets
-            yield from (rec.name for rec in it)
-
-    def get_sheet_data(self, name: str):
-        def _sanitize(value):
-            if value is None:
-                return None
-            if isinstance(value, str):
-                return value
-            try:
-                it = iter(value)
-            except Exception:
-                pass
-            else:
-                return [_sanitize(v) for v in it]
-            if isinstance(value, float):
-                if float(int(value)) == value:
-                    return int(value)
-            if isinstance(value, datetime):
-                return value.isoformat(' ', 'seconds')
-            return str(value)
-
-        def _padded(data: list[list[str]]):
-            ncols = max((len(row) for row in data), default=0)
-            for row in data:
-                row.extend([None] * (ncols - len(row)))
-            return data
-
-        if self.mode is self._xlmode.openpyxl:
-            pyxl_wbook: PyxlWorkbook = self.workbook
-            pyxl_sheet: PyxlSheet = pyxl_wbook[name]
-            with NoLogging():
-                data = _padded(_sanitize(pyxl_sheet.iter_rows(values_only=True)))
-        elif self.mode is self._xlmode.pyxlsb2:
-            xlsb_wbook: XlsbWorkbook = self.workbook
-            xlsb_sheet = xlsb_wbook.get_sheet_by_name(name)
-            data = _padded(_sanitize(xlsb_sheet.rows()))
-        elif self.mode is self._xlmode.xlrd:
-            xlrd_wbook: XlrdWorkbook = self.workbook
-            xlrd_sheet = xlrd_wbook.sheet_by_name(name)
-            data = []
-            for r in range(xlrd_sheet.nrows):
-                row = []
-                for c in range(xlrd_sheet.ncols):
-                    try:
-                        row.append(_sanitize(xlrd_sheet.cell_value(r, c)))
-                    except IndexError:
-                        row.append(None)
-                data.append(row)
-        else:
-            raise RuntimeError(F'Invalid mode {self.mode!r}.')
-
-        return data
-
-
-class ExcelUnit(Unit, abstract=True):
-
-    @Unit.Requires('xlrd2', 2)
-    def _xlrd():
-        import xlrd2
-        return xlrd2
-
-    @Unit.Requires('openpyxl', 2)
-    def _openpyxl():
-        import openpyxl
-        return openpyxl
-
-    @Unit.Requires('pyxlsb2', 2)
-    def _pyxlsb2():
-        import pyxlsb2
-        return pyxlsb2
-
-    def _get_logger_io(self):
-        class logger(io.TextIOBase):
-            unit = self
-
-            def write(self, string: str):
-                string = string.strip()
-                if not string or '\n' in string:
-                    return 0
-                if re.search(R'^[A-Z]+:', string) or '***' in string:
-                    self.unit.log_debug(string)
-                return len(string)
-
-        return logger()
-
-    @classmethod
-    def handles(cls, data) -> bool | None:
-        from refinery.lib.id import Fmt, get_microsoft_format, get_office_xml_type
-        if get_microsoft_format(data) == Fmt.XLS:
-            return True
-        if get_office_xml_type(data) == Fmt.XLSX:
-            return True
-
-
-class xlxtr(ExcelUnit):
+class xlxtr(Unit):
     """
     Extract data from Microsoft Excel documents, both legacy and XML type.
 
@@ -309,36 +134,38 @@ class xlxtr(ExcelUnit):
             references = b'*',
         super().__init__(references=references)
 
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        return detect_format(data) is not None
+
     def process(self, data):
         try:
-            wb = Workbook(data, self)
-        except ImportError:
-            raise
-        except Exception as E:
-            raise ValueError('Input not recognized as Excel document.') from E
+            workbook = open_workbook(data)
+        except ExcelFormatError as error:
+            raise ValueError('Input not recognized as Excel document.') from error
         references = [SheetReference(codecs.decode(r, self.codec)) for r in self.args.references]
         for ref in references:
-            for k, name in enumerate(wb.sheets()):
-                if not ref.match(k, name):
+            for index, sheet in enumerate(workbook.sheets()):
+                if not ref.match(index, sheet.name):
+                    continue
+                if sheet.kind not in (SheetKind.WORKSHEET, SheetKind.MACROSHEET):
                     continue
                 try:
-                    data = wb.get_sheet_data(name)
-                except Exception as error:
-                    self.log_info(F'error reading sheet {name}:', error)
-                    continue
-                for r, row in enumerate(data, 1):
-                    for c, value in enumerate(row, 1):
-                        if (r, c) not in ref:
+                    for cell in sheet.cells():
+                        if (cell.row, cell.col) not in ref:
                             continue
+                        value = _render_cell(cell)
                         if value is None:
                             continue
                         yield self.labelled(
-                            str(value).encode(self.codec),
-                            row=r,
-                            col=c,
-                            ref=_rc2ref(r, c),
-                            sheet=name
+                            value.encode(self.codec),
+                            row=cell.row,
+                            col=cell.col,
+                            ref=rc2ref(cell.row, cell.col),
+                            sheet=sheet.name
                         )
+                except ExcelFormatError as error:
+                    self.log_info(F'error reading sheet {sheet.name}:', error)
 
 
 if __doc := xlxtr.__doc__:

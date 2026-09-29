@@ -9,6 +9,16 @@ class xlmdeobf(Unit):
     Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. Uses an inlined port
     of XLMMacroDeobfuscator to emulate XLM macro formulas.
     """
+    @Unit.Requires('xlrd2', 2)
+    def _xlrd():
+        import xlrd2
+        return xlrd2
+
+    @Unit.Requires('pyxlsb2', 2)
+    def _pyxlsb2():
+        import pyxlsb2
+        return pyxlsb2
+
     @classmethod
     def handles(cls, data) -> bool | None:
         from refinery.lib.id import Fmt, get_microsoft_format, get_office_xml_type

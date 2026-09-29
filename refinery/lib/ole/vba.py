@@ -15,12 +15,13 @@ import enum
 import math
 import re
 import struct
-import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 
 from io import BytesIO
 from typing import Generator, NamedTuple
+
+from defusedxml.ElementTree import fromstring
 
 from refinery.lib.ole.file import MAGIC as OLE_MAGIC
 from refinery.lib.ole.file import STGTY, OleFile, OleFileLike
@@ -731,7 +732,7 @@ class VBAParser:
         if ns not in data:
             return False
         try:
-            et = ET.fromstring(data)
+            et = fromstring(data)
             found = False
             for bindata in et.iter(TAG_BINDATA):
                 fname = bindata.get(ATTR_NAME, 'noname.mso')
@@ -755,7 +756,7 @@ class VBAParser:
         if ns not in data:
             return False
         try:
-            et = ET.fromstring(data)
+            et = fromstring(data)
             found = False
             for pkgpart in et.iter(TAG_PKGPART):
                 content_type = pkgpart.get(ATTR_PKG_CONTENTTYPE, 'unknown')

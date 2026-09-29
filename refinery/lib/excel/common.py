@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import datetime
+import enum
+import functools
+import re
+import struct
+
+from typing import NamedTuple
+
+
+class ExcelFormatError(Exception):
+    """
+    The structure of a workbook is defective; the cells that were read before the defect are
+    still available to the caller while anything after it is not.
+    """
+
+
+class CellKind(enum.Enum):
+    """
+    The kind of value a spreadsheet cell holds. A formula cell with a cached result carries the
+    kind of that result together with the formula source; a formula cell without a cached
+    result carries `FORMULA` and no value.
+    """
+    TEXT = enum.auto()
+    NUMBER = enum.auto()
+    DATE = enum.auto()
+    BOOLEAN = enum.auto()
+    ERROR = enum.auto()
+    BLANK = enum.auto()
+    FORMULA = enum.auto()
+
+
+class SheetKind(enum.Enum):
+    """
+    The purpose of a sheet inside a workbook; only worksheets and macrosheets contain cells.
+    """
+    WORKSHEET = enum.auto()
+    MACROSHEET = enum.auto()
+    CHART = enum.auto()
+    MODULE = enum.auto()
+    OTHER = enum.auto()
+
+
+CellValue = str | int | float | bool | datetime.datetime | datetime.time | None
+FormulaSource = str | bytes | None
+
+
+class Cell(NamedTuple):
+    """
+    A single spreadsheet cell at a one-based `row` and `col`. The `value` is typed by `kind`;
+    `formula` is the formula source as stored by the format, without interpretation, and is
+    `None` for cells that are not formulas.
+    """
+    row: int
+    col: int
+    kind: CellKind
+    value: CellValue
+    formula: FormulaSource
+
+
+def local_name(tag: str) -> str:
+    """
+    Return the part of an XML tag that follows its namespace.
+    """
+    return tag.rsplit('}', 1)[-1]
+
+
+def ref2rc(ref: str) -> tuple[int, int]:
+    """
+    Convert a cell reference like `B12` into its one-based row and column.
+    """
+    match = re.match(R'^([A-Za-z]+)(\d+)$', ref)
+    if not match:
+        raise ValueError
+    col = functools.reduce(lambda acc, c: (acc * 26) + c, (ord(c.upper()) - 0x40 for c in match[1]), 0)
+    row = int(match[2], 10)
+    if row <= 0:
+        raise ValueError
+    return row, col
+
+
+def rc2ref(row: int, col: int) -> str:
+    """
+    Convert one-based row and column numbers into a cell reference like `B12`.
+    """
+    if row <= 0:
+        raise ValueError
+    if col <= 0:
+        raise ValueError
+    alphabetic = ''
+    while col:
+        col, letter = divmod(col - 1, 26)
+        alphabetic = chr(0x41 + letter) + alphabetic
+    return F'{alphabetic}{row}'
+
+
+ERROR_TEXT = {
+    0x00: '#NULL!',
+    0x07: '#DIV/0!',
+    0x0F: '#VALUE!',
+    0x17: '#REF!',
+    0x1D: '#NAME?',
+    0x24: '#NUM!',
+    0x2A: '#N/A',
+    0x2B: '#GETTING_DATA',
+}
+
+_EPOCH_1904 = datetime.datetime(1904, 1, 1)
+_EPOCH_1900 = datetime.datetime(1899, 12, 31)
+_EPOCH_1900_LEAP = datetime.datetime(1899, 12, 30)
+_MILLISECONDS_PER_DAY = 86400000.0
+
+
+def serial_to_datetime(serial: int | float, date_mode_1904: bool) -> datetime.datetime | datetime.time:
+    """
+    Convert an Excel serial date number into a datetime, or into a time when the serial number
+    carries only a fraction of a day. The 1900 epoch accounts for the spurious leap day that
+    Excel inherited from Lotus 1-2-3: serial 60 is the non-existent date of February 29, 1900,
+    and serials up to 59 are shifted back by one day.
+    """
+    days, fraction = divmod(float(serial), 1.0)
+    milliseconds = round(fraction * _MILLISECONDS_PER_DAY)
+    if 0 <= serial < 1 and milliseconds < _MILLISECONDS_PER_DAY:
+        return (datetime.datetime.min + datetime.timedelta(milliseconds=milliseconds)).time()
+    if date_mode_1904:
+        epoch = _EPOCH_1904
+    elif 0 < serial < 60:
+        epoch = _EPOCH_1900
+    else:
+        epoch = _EPOCH_1900_LEAP
+    return epoch + datetime.timedelta(days=days, milliseconds=milliseconds)
+
+
+def date_cell(
+    row: int,
+    col: int,
+    serial: int | float,
+    date_mode_1904: bool,
+    formula: FormulaSource = None,
+) -> Cell:
+    """
+    Compose the cell of a number whose format marks it as a date. A serial number that no
+    datetime can represent degrades to the `#VALUE!` error that Excel displays for it.
+    """
+    try:
+        value = serial_to_datetime(serial, date_mode_1904)
+    except (OverflowError, ValueError):
+        return Cell(row, col, CellKind.ERROR, ERROR_TEXT[0x0F], formula)
+    return Cell(row, col, CellKind.DATE, value, formula)
+
+
+def decode_rk(rk: bytes | bytearray | memoryview) -> float:
+    """
+    Decode the four-byte RK number encoding in which BIFF and XLSB store small numbers: either
+    a signed 30-bit integer or the top 30 bits of an IEEE 754 double, with the two low bits of
+    the first byte holding flags that select the type and a division by one hundred.
+    """
+    flags = rk[0] & 0x03
+    if flags & 0x02:
+        number = int.from_bytes(rk, 'little', signed=True) >> 2
+    else:
+        high = bytes((rk[0] & 0xFC, rk[1], rk[2], rk[3]))
+        number = struct.unpack('<d', b'\0\0\0\0' + high)[0]
+    if flags & 0x01:
+        return number / 100.0
+    return float(number)
+
+
+_BUILTIN_DATE_FORMATS = frozenset(
+    code
+    for lo, hi in [
+        (14, 22),
+        (27, 36),
+        (45, 47),
+        (50, 58),
+        (71, 81),
+    ]
+    for code in range(lo, hi + 1)
+)
+
+_NON_DATE_FORMATS = frozenset([
+    '0.00E+00',
+    '##0.0E+0',
+    'General',
+    'GENERAL',
+    'general',
+    '@',
+])
+_SKIP_FORMAT_CHARS = frozenset('$-+/(): ')
+_DATE_FORMAT_CHARS = frozenset('ymdhsYMDHS')
+_NUM_FORMAT_CHARS = frozenset('0#?')
+_BRACKETED_FORMAT = re.compile(r'\[[^\]]*\]')
+
+
+def is_date_format_string(fmt: str) -> bool:
+    """
+    Decide whether a number format string describes a date or time rather than a number.
+    Quoted and escaped literals are ignored, as are bracketed sections; among what remains,
+    the count of date letters like `y`, `m`, `d`, `h`, and `s` is weighed against the count
+    of digit placeholders.
+    """
+    literal = ''
+    escaped = False
+    quoted = False
+    for char in fmt:
+        if escaped:
+            escaped = False
+        elif quoted:
+            if char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in r'\_*':
+            escaped = True
+        elif char not in _SKIP_FORMAT_CHARS:
+            literal += char
+    reduced = _BRACKETED_FORMAT.sub('', literal)
+    if reduced in _NON_DATE_FORMATS:
+        return False
+    date_count = 0
+    num_count = 0
+    for char in reduced:
+        if char in _DATE_FORMAT_CHARS:
+            date_count += 1
+        elif char in _NUM_FORMAT_CHARS:
+            num_count += 1
+    if date_count and not num_count:
+        return True
+    if num_count and not date_count:
+        return False
+    return date_count > num_count
+
+
+def is_builtin_date_format(fmt_id: int) -> bool:
+    """
+    Decide whether a built-in number format identifier describes a date or time.
+    """
+    return fmt_id in _BUILTIN_DATE_FORMATS
+
+
+_XSTRING_ESCAPE = re.compile('_x([0-9A-Fa-f]{4})_')
+
+
+def decode_xstring(value: str) -> str:
+    """
+    Decode the ST_Xstring escaping in which an OOXML workbook stores control characters that
+    XML cannot represent, writing them as `_xHHHH_`. The escape of an underscore itself is
+    `_x005F_`, so a literal `_x000F_` is stored as `_x005F_x000F_` and survives decoding.
+    """
+    return _XSTRING_ESCAPE.sub(lambda m: chr(int(m[1], 16)), value)

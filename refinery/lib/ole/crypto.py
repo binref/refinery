@@ -17,9 +17,9 @@ import zipfile
 from hashlib import md5, sha1, sha256, sha384, sha512
 from struct import pack, unpack, unpack_from
 from typing import NamedTuple
-from xml.dom.minidom import parseString
 
 from Cryptodome.Cipher import AES, ARC4
+from defusedxml.minidom import parseString
 
 from refinery.lib.ole.file import (
     OleFile,
