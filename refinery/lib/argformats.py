@@ -989,7 +989,7 @@ class DelayedArgument(LazyEvaluation):
         return _cut
 
     @handler.register('pd')
-    def pd(self, input: bytes, region: slice | str = slice(1, None, 1), separator: bytes = B'/') -> bytes:
+    def pd(self, input: bytes, region: slice | str = slice(1, None, 1)) -> bytes:
         """
         The handler `pd[region=1:,sep=/]:input` splits the input at the given string `sep`
         and reverses the sequence. Parts are then selected according to the `region` parameter,
@@ -1001,23 +1001,24 @@ class DelayedArgument(LazyEvaluation):
         will return the string `/path/to/some/item`.
         """
         def _pd(data: Chunk | None = None):
-            b: slice = sliceobj(region, data=data, final=True)
-            pd = input.split(separator)
+            b = sliceobj(region, data=data, final=True)
+            assert isinstance(b, slice)
+            pd = re.split(rB'[\\/]', input)
             pd.reverse()
             pd = pd[b]
             pd.reverse()
-            return separator.join(pd)
+            return b'/'.join(pd)
         try:
             return _pd()
         except TooLazy:
             return _pd
 
     @handler.register('pb')
-    def pb(self, input: bytes, separator: bytes = B'/') -> bytes:
+    def pb(self, input: bytes) -> bytes:
         """
         The handler `pb:input` is equivalent to `pd[:1]:input` and corresponds to "basename".
         """
-        return self.pd(input, slice(0, 1, 1), separator=separator)
+        return self.pd(input, slice(0, 1, 1))
 
     @handler.register('pn')
     def pn(self, path: str | bytes) -> bytes:
