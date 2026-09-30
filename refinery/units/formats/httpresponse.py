@@ -42,4 +42,10 @@ class httpresponse(Unit):
 
     @classmethod
     def handles(cls, data) -> bool | None:
-        return data[:6] == B'HTTP/1'
+        if data[:5] != B'HTTP/':
+            return False
+        if data[5] in B'23':
+            return True
+        if data[5:8] not in (B'0.9', B'1.1', B'1.0'):
+            return False
+        return data[8] == 0x20 # space

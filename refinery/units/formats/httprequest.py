@@ -53,7 +53,7 @@ class httprequest(Unit):
     data in any format; each uploaded file is emitted as a separate chunk.
     """
     def process(self, data: Chunk):
-        def header(line: bytes):
+        def header(line: bytes | bytearray):
             name, colon, data = line.decode('utf8').partition(':')
             if colon:
                 yield (name.strip().lower(), data.strip())
@@ -71,7 +71,7 @@ class httprequest(Unit):
         if method == b'GET' and not body:
             mode = _Fmt.UrlEncode
             body = path.partition(B'?')[1]
-        if method == b'POST' and (ct := headers.get('content-type', None)):
+        if method in (b'POST', B'PATCH', B'PUT') and (ct := headers.get('content-type', None)):
             ct, _ = _parse_header(ct)
             try:
                 mode = _Fmt(ct)
@@ -81,10 +81,15 @@ class httprequest(Unit):
         def chunks(upload: dict[bytes, list[bytes]]):
             for key, values in upload.items():
                 for value in values:
-                    yield self.labelled(value, **{MV.NAME: key.decode('utf8')})
+                    yield self.labelled(value, **{
+                        MV.NAME: key.decode('utf8'),
+                        MV.METHOD: method,
+                    })
+
+        kwargs: dict = {MV.METHOD: method}
 
         if mode is _Fmt.RawBody:
-            yield body
+            yield self.labelled(body, **kwargs)
             return
         if mode is _Fmt.Multipart:
             _, _, message_data = data.partition(b'\n')
@@ -100,16 +105,27 @@ class httprequest(Unit):
                     payloads = [payloads]
                 for payload in payloads:
                     if buffer := asbuffer(payload):
-                        kwargs = {}
+                        kw = dict(kwargs)
                         if value := get_param('name'):
-                            kwargs[MV.NAME] = value
+                            kw[MV.NAME] = value
                         if value := get_param('filename'):
-                            kwargs[MV.FILE] = value
-                        yield self.labelled(buffer, **kwargs)
+                            kw[MV.FILE] = value
+                        yield self.labelled(buffer, **kw)
 
         if mode is _Fmt.UrlEncode:
             yield from chunks(parse_qs(body, keep_blank_values=True))
 
     @classmethod
     def handles(cls, data) -> bool | None:
-        return data[:5] == B'POST ' or data[:4] == B'GET '
+        return (
+            False
+            or data[:4] == B'GET '
+            or data[:5] == B'POST '
+            or data[:4] == B'PUT '
+            or data[:5] == B'HEAD '
+            or data[:6] == B'PATCH '
+            or data[:8] == B'OPTIONS '
+            or data[:6] == B'TRACE '
+            or data[:7] == B'DELETE '
+            or data[:8] == B'CONNECT '
+        )

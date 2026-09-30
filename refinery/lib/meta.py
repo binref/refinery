@@ -183,6 +183,7 @@ class MV(str, Enum):
     NAME = 'name'
     PATH = 'path'
     SRC = 'src'
+    URL = 'url'
     START = 'start'
     STREAM = 'stream'
     TAG = 'tag'
