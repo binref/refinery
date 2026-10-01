@@ -52,6 +52,17 @@ from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
 )
+from test.lib.scripts.js.deobfuscation.test_selfchecks import (
+    DATED_HELPERS,
+    DOUBLE,
+    DOUBLE_42,
+    PROGRAM_READING_A_KEY,
+    PROGRAM_READING_A_KEY_25,
+    checked,
+    checked_by_name,
+    guarded,
+    wrapped,
+)
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
 )
@@ -1384,6 +1395,9 @@ A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT = {
     'function patch(o) { o.prototype.zz = 9; }\npatch(Object);\n'
     + evaluated_in_a_body('{a: 1}', 'v.zz'):
         '9\n',
+    r'(function (O) { O.prototype[Symbol.toPrimitive] = function () { return "\n"; }; })(Object);' '\n'
+    + checked():
+        'tampered\nran\n',
 }
 
 
@@ -1412,9 +1426,10 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     @unittest.expectedFailure
     def test_a_prototype_handed_to_a_writer_answers_the_read(self):
         """
-        Node prints `9`, `9`, `false`, `9` and `9` for the five programs of
+        Node prints `9`, `9`, `false`, `9`, `9`, and `tampered` before `ran`, for the six programs of
         `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as if the call
-        it was handed to had not written it.
+        it was handed to had not written it; the last folds a line-break check that the conversion
+        the call installed makes trip.
         """
         rows = A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT
         self.assertEqual(
@@ -3152,6 +3167,99 @@ class TestAClosureANestedRunReplacedReadsThatRun(TestBase):
     )
     def test_the_closure_reads_its_own_run(self):
         rows = A_CLOSURE_A_NESTED_RUN_REPLACED
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Self-checks the input text decides that the deobfuscation leaves standing and then trips,
+#: mapped to what Node prints: the check reached through an array slot a nested function reads,
+#: and the older hash guard whose helper holds a date check the obfuscator inserted into it.
+A_DECIDED_SELF_CHECK_LEFT_TO_TRIP = {
+    r'(function (...m) { m.length = 0; m[9] = function () { const t = function () { const r = new RegExp("\n"); '
+    r'return r.test(m[9]); }; if (t()) { console.log("tampered"); } }; return m[9](); })();' '\n'
+    'console.log("ran");\n':
+        'ran\n',
+    wrapped(PROGRAM_READING_A_KEY_25, DATED_HELPERS, PROGRAM_READING_A_KEY):
+        'ran\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADecidedSelfCheckIsFoldedWhereverItStands(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.selfchecks` decides a line-break check only over a name
+    that holds the checked function, and the rest-array pass refuses an array a nested function
+    reads, so a check reaching its function through `m[9]` stays and trips on the reformatted
+    text. The older hash guard is decided only where its helpers equal their templates; a date,
+    host or debugger check the obfuscator inserts into the hash helper is a statement the template
+    does not hold, and removing the hash call would drop that check, so the guard stays and trips.
+    The fix for the first is the rest-array pass reading the slot; for the second, keeping the
+    call and folding only the comparison, which needs the helper read as its template after
+    statements that never return and write none of its names.
+    """
+
+    @unittest.expectedFailure
+    def test_the_check_does_not_trip(self):
+        rows = A_DECIDED_SELF_CHECK_LEFT_TO_TRIP
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+_SET_A_LINE_BREAK = r'function () { return "a\nb"; }'
+
+#: Programs that make a decided self-check trip through a route made up for it, each mapped to
+#: what Node prints: `Function.prototype` reached through `__proto__`, the `caller` key spelled
+#: at runtime, an empty function written over two lines that namespace flattening rebuilds on one,
+#: and the match statics of `RegExp` read after a guarded call through a key built at runtime or
+#: through `RegExp.input`, which holds the text the hash read.
+A_SELF_CHECK_TRIPPED_THROUGH_A_MADE_UP_ROUTE = {
+    r'(function () {}).__proto__.toString = function () { return "\n"; };' '\n' + checked():
+        'tampered\nran\n',
+    checked_by_name(
+        F'function g() {{ var k = ["cal", "ler"].join(process.argv[9] || ""); g[k].toString = {_SET_A_LINE_BREAK}; }} ',
+        'g(); ',
+    ):
+        'tampered\n',
+    (
+        'var NS = {};\nNS.g = function () {\n};\n'
+        r'var T = function () { const R = new RegExp("\n"); return R.test(NS.g); };' '\n'
+        'if (T()) { console.log("tampered"); } else { console.log("clean"); }\n'
+        'NS.g();\n'
+    ):
+        'tampered\n',
+    guarded(
+        DOUBLE, 'double', 42, DOUBLE_42,
+        'if (/(\\d+)/.test("abc 123")) { guarded(1); var k = process.argv[9] || "constructor"; '
+        'var R = /x/[k]; console.log("$1=" + R.$1); }\n',
+    ):
+        '$1=\n',
+    guarded(
+        DOUBLE, 'double', 42, DOUBLE_42,
+        'if (/(\\d+)/.test("abc 123")) { guarded(1); console.log("input=" + RegExp.input.length); }\n',
+    ):
+        'input=36\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestASelfCheckTrippedThroughAMadeUpRouteStillTrips(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.selfchecks` decides each of these checks as the input
+    text answers it, and each program makes the check answer otherwise through a route no
+    obfuscator writes.
+    """
+
+    @wontfix(
+        'every route here was made up to reach the check: no obfuscated file reaches a prototype '
+        'through __proto__ of a function literal, builds the caller key at runtime, rebuilds an empty '
+        'function spread over two lines, or reads the match statics a hash helper leaves behind'
+    )
+    def test_the_check_still_trips(self):
+        rows = A_SELF_CHECK_TRIPPED_THROUGH_A_MADE_UP_ROUTE
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

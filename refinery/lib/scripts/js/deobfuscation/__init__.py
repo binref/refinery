@@ -25,6 +25,7 @@ from refinery.lib.scripts.js.deobfuscation.protospelling import JsPrototypeSpell
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
+from refinery.lib.scripts.js.deobfuscation.selfchecks import JsSelfCheckFolding
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
 from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
@@ -54,6 +55,7 @@ _pipeline = DeobfuscationPipeline(
         ),
         TransformerGroup(
             'fold',
+            JsSelfCheckFolding,
             JsNamespaceFlattening,
             JsCallWrapperInliner,
             JsDispatcherUnwrapper,
