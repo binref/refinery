@@ -1777,9 +1777,10 @@ def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     value from the `options` dictionary.
     """
     try:
-        cache = OptionFactory.Cache
+        cache = getattr(OptionFactory, 'Cache')
     except AttributeError:
-        cache = OptionFactory.Cache = {}
+        cache = {}
+        setattr(OptionFactory, 'Cache', cache)
 
     option_description = ','.join(sorted(options))
     option_identifier = hash(option_description)
