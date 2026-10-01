@@ -3,6 +3,7 @@ import pytest
 import unittest
 
 from refinery.lib.exceptions import RefineryPartialResult
+from refinery.lib.fast.aplib import aplib_decompress
 from refinery.lib.fast.lzjb import lzjb_compress, lzjb_decompress
 from refinery.lib.fast.blz import blz_decompress_chunk
 from refinery.lib.fast.lzfse import lzfse_decompress
@@ -10,6 +11,23 @@ from refinery.lib.fast.xpress import xpress_decompress, xpress_huffman_decompres
 
 from test import TestBase
 from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS_HUFFMAN_CHUNK, KADATH2
+
+KEVIN = B'Kevin\'s got the magic - and the magic\'s got Kevin.'
+KEVIN_APLIB = bytes.fromhex('4B006576696E277320673A6F74727D68E86D7A613B6963392D77296E64104820682C982E00')
+
+V2_LMD_WORD = 16
+V2_STATE_WORD = 24
+
+
+def with_v2_field(stream: bytearray, word: int, shift: int, width: int, value: int) -> bytearray:
+    """
+    Store `value` in the field of an LZFSE V2 block header that is `width` bits wide and starts at
+    bit `shift` of the 64-bit little-endian word at offset `word` of the block.
+    """
+    fields = int.from_bytes(stream[word:word + 8], 'little')
+    mask = ((1 << width) - 1) << shift
+    stream[word:word + 8] = ((fields & ~mask) | (value << shift)).to_bytes(8, 'little')
+    return stream
 
 TWINKLE_RUNS = (
     B'Twinkle, twinkle, little star, ' * 2097
@@ -248,12 +266,93 @@ class TestXpressFast(unittest.TestCase):
 @pytest.mark.cythonized
 class TestLzfseFast(TestBase):
 
-    def test_block_decodes_to_the_size_in_its_header(self):
-        dmg = self.download_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+    def _disk_image(self):
+        return self.download_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+
+    def _first_lzfse_stream(self) -> bytearray:
+        dmg = self._disk_image()
         start = dmg.find(B'bvx2')
         end = dmg.find(B'bvx$', start) + 4
-        stream = dmg[start:end]
+        return bytearray(dmg[start:end])
+
+    def _first_lzvn_stream(self) -> bytearray:
+        dmg = self._disk_image()
+        self.assertEqual(dmg[:4], B'bvxn')
+        return bytearray(dmg[:dmg.find(B'bvx$') + 4])
+
+    def test_block_decodes_to_the_size_in_its_header(self):
+        stream = self._first_lzfse_stream()
         # The first stream of this disk image holds a single block, and the four bytes after the
         # block magic are the size of its output.
         size_in_header = int.from_bytes(stream[4:8], 'little')
         self.assertEqual(len(lzfse_decompress(stream)), size_in_header)
+
+    def test_block_with_a_state_outside_of_its_table_is_rejected(self):
+        for shift, states in ((32, 64), (42, 64), (52, 256)):
+            with self.subTest(shift=shift):
+                stream = with_v2_field(self._first_lzfse_stream(), V2_STATE_WORD, shift, 10, states)
+                with self.assertRaises(ValueError):
+                    lzfse_decompress(stream)
+
+    def test_block_whose_payload_extends_past_the_input_is_rejected(self):
+        stream = with_v2_field(self._first_lzfse_stream(), V2_LMD_WORD, 40, 20, 0xFFFFF)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_header_leaves_no_room_for_a_frequency_table_is_rejected(self):
+        for header_size in (0, 32):
+            with self.subTest(header_size=header_size):
+                stream = with_v2_field(self._first_lzfse_stream(), V2_STATE_WORD, 0, 32, header_size)
+                with self.assertRaises(ValueError):
+                    lzfse_decompress(stream)
+
+    def test_block_whose_frequencies_are_all_zero_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        header_size = int.from_bytes(stream[24:28], 'little')
+        # A zero frequency has the two-bit code 00, so 90 zero bytes hold exactly 360 of them.
+        stream[32:header_size] = bytes(90)
+        stream = with_v2_field(stream, V2_STATE_WORD, 0, 32, 32 + 90)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_stream_cut_inside_its_block_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        self.assertEqual(stream[-4:], B'bvx$')
+        for size in range(4, len(stream) - 4):
+            with self.subTest(size=size):
+                with self.assertRaises(ValueError):
+                    lzfse_decompress(stream[:size])
+
+    def test_lzvn_block_decodes_to_the_size_in_its_header(self):
+        stream = self._first_lzvn_stream()
+        size_in_header = int.from_bytes(stream[4:8], 'little')
+        self.assertEqual(len(lzfse_decompress(stream)), size_in_header)
+
+    def test_lzvn_match_that_starts_before_the_output_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        # The first instruction copies one literal and then eight bytes from the distance stored in
+        # the byte after the opcode. A distance of 2 points before the start of the output.
+        self.assertEqual(stream[12:14], bytes.fromhex('6801'))
+        stream[13] = 2
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+
+@pytest.mark.cythonized
+class TestAplibFast(unittest.TestCase):
+
+    def test_stream_cut_short_is_a_partial_result_that_the_plaintext_starts_with(self):
+        for size in range(1, len(KEVIN_APLIB)):
+            with self.subTest(size=size):
+                with self.assertRaises(RefineryPartialResult) as context:
+                    aplib_decompress(KEVIN_APLIB[:size])
+                self.assertTrue(KEVIN.startswith(context.exception.partial))
+
+    def test_match_that_repeats_the_offset_of_a_previous_match_before_any_match_is_rejected(self):
+        stream = bytearray(KEVIN_APLIB)
+        # The second byte holds the tag bits of the next instructions. The tag bits 1, 0 begin a
+        # match, and the offset code 0, 0 after them repeats the offset of the previous match.
+        stream[1] = 0x80
+        with self.assertRaises(ValueError) as context:
+            aplib_decompress(stream)
+        self.assertNotIsInstance(context.exception, RefineryPartialResult)

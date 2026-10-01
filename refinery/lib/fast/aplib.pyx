@@ -10,6 +10,8 @@ from libc.string cimport memcpy
 
 from refinery.lib.fast._buffer cimport reserve
 
+from refinery.lib.exceptions import RefineryPartialResult
+
 
 cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
     if offset < 0x80 or offset >= 0x7D00:
@@ -19,268 +21,150 @@ cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
     return 0
 
 
+cdef struct BitReader:
+    const uint8_t *src
+    Py_ssize_t end
+    Py_ssize_t pos
+    uint32_t tag
+    uint32_t bitcount
+
+
+cdef struct Output:
+    uint8_t *buf
+    Py_ssize_t cap
+    Py_ssize_t size
+
+
+cdef inline uint32_t _read_byte(BitReader *r) noexcept nogil:
+    """
+    Read the next byte, or zero past the end of the input; reading past the end moves the position
+    after the end.
+    """
+    if r.pos >= r.end:
+        r.pos = r.end + 1
+        return 0
+    r.pos += 1
+    return r.src[r.pos - 1]
+
+
+cdef inline uint32_t _read_bit(BitReader *r) noexcept nogil:
+    cdef uint32_t bit
+    if r.bitcount == 0:
+        r.tag = _read_byte(r)
+        r.bitcount = 8
+    r.bitcount -= 1
+    bit = (r.tag >> 7) & 1
+    r.tag = (r.tag << 1) & 0xFF
+    return bit
+
+
+cdef inline uint32_t _read_gamma(BitReader *r) noexcept nogil:
+    cdef uint32_t result = 1
+    result = (result << 1) | _read_bit(r)
+    while _read_bit(r):
+        result = (result << 1) | _read_bit(r)
+    return result
+
+
+cdef inline int _put(Output *out, uint8_t b) except -1 nogil:
+    reserve(&out.buf, &out.cap, out.size, 1)
+    out.buf[out.size] = b
+    out.size += 1
+    return 0
+
+
+cdef int _offset_error(uint32_t offset, Py_ssize_t size) except -1:
+    raise ValueError(F'aPLib match offset {offset} is outside the output of size {size}')
+
+
+cdef inline int _back_copy(Output *out, uint32_t offset, uint32_t length) except -1 nogil:
+    cdef uint32_t i
+    cdef uint8_t *dst
+    if offset == 0 or offset > out.size:
+        with gil:
+            _offset_error(offset, out.size)
+    reserve(&out.buf, &out.cap, out.size, length)
+    dst = out.buf + out.size
+    for i in range(length):
+        dst[i] = dst[<Py_ssize_t>i - offset]
+    out.size += length
+    return 0
+
+
 def aplib_decompress(data) -> bytearray:
     cdef:
         const uint8_t[::1] src = memoryview(data)
-        int end = len(data)
-        int pos = 0
-        uint32_t tag = 0
-        uint32_t bitcount = 0
-        uint32_t bit
-        uint32_t offs, length, R0, LWM
-        Py_ssize_t cursor = 0
-        Py_ssize_t out_cap
-        uint8_t *out_buf
-        uint8_t b
-        Py_ssize_t i
-        int done
+        BitReader r
+        Output out
+        uint32_t offs, length, b
+        uint32_t R0 = 0
+        bint LWM = 0
+        int i
 
-    if end == 0:
+    if len(src) == 0:
         return bytearray()
 
-    out_cap = end * 4 if end < 0x10000000 else end
-    if out_cap < 256:
-        out_cap = 256
-    out_buf = <uint8_t *>malloc(out_cap)
-    if out_buf == NULL:
+    r.src = &src[0]
+    r.end = len(src)
+    r.pos = 0
+    r.tag = 0
+    r.bitcount = 0
+    out.cap = r.end * 4 if r.end < 0x10000000 else r.end
+    if out.cap < 256:
+        out.cap = 256
+    out.size = 0
+    out.buf = <uint8_t *>malloc(out.cap)
+    if out.buf == NULL:
         raise MemoryError
 
     try:
-        R0 = 0
-        LWM = 0
-        done = 0
-
-        # first byte verbatim
-        out_buf[cursor] = src[pos]
-        cursor += 1
-        pos += 1
-
-        while not done:
-            # read bit
-            if bitcount == 0:
-                if pos >= end:
+        _put(&out, _read_byte(&r))
+        while True:
+            if not _read_bit(&r):
+                b = _read_byte(&r)
+                if r.pos > r.end:
                     break
-                tag = src[pos]
-                pos += 1
-                bitcount = 8
-            bitcount -= 1
-            bit = (tag >> 7) & 1
-            tag = (tag << 1) & 0xFF
-
-            if bit:
-                # read second bit
-                if bitcount == 0:
-                    if pos >= end:
-                        break
-                    tag = src[pos]
-                    pos += 1
-                    bitcount = 8
-                bitcount -= 1
-                bit = (tag >> 7) & 1
-                tag = (tag << 1) & 0xFF
-
-                if bit:
-                    # read third bit
-                    if bitcount == 0:
-                        if pos >= end:
-                            break
-                        tag = src[pos]
-                        pos += 1
-                        bitcount = 8
-                    bitcount -= 1
-                    bit = (tag >> 7) & 1
-                    tag = (tag << 1) & 0xFF
-
-                    if bit:
-                        # single byte: read 4-bit offset
-                        offs = 0
-                        for i in range(4):
-                            if bitcount == 0:
-                                if pos >= end:
-                                    break
-                                tag = src[pos]
-                                pos += 1
-                                bitcount = 8
-                            bitcount -= 1
-                            offs = (offs << 1) | ((tag >> 7) & 1)
-                            tag = (tag << 1) & 0xFF
-
-                        reserve(&out_buf, &out_cap, cursor, 1)
-                        if offs:
-                            if offs > cursor:
-                                raise IndexError
-                            out_buf[cursor] = out_buf[cursor - offs]
-                        else:
-                            out_buf[cursor] = 0
-                        cursor += 1
-                        LWM = 0
-                    else:
-                        # short block
-                        if pos >= end:
-                            break
-                        b = src[pos]
-                        pos += 1
-
-                        if b <= 1:
-                            done = 1
-                        else:
-                            length = 2 + (b & 1)
-                            offs = b >> 1
-                            if offs > cursor:
-                                raise IndexError
-                            reserve(&out_buf, &out_cap, cursor, length)
-                            for i in range(length):
-                                out_buf[cursor] = out_buf[cursor - offs]
-                                cursor += 1
-                            R0 = offs
-                            LWM = 1
-                else:
-                    # block: read gamma-encoded offset
-                    offs = 1
-                    # read gamma
-                    if bitcount == 0:
-                        if pos >= end:
-                            break
-                        tag = src[pos]
-                        pos += 1
-                        bitcount = 8
-                    bitcount -= 1
-                    offs = (offs << 1) | ((tag >> 7) & 1)
-                    tag = (tag << 1) & 0xFF
-
-                    while True:
-                        if bitcount == 0:
-                            if pos >= end:
-                                break
-                            tag = src[pos]
-                            pos += 1
-                            bitcount = 8
-                        bitcount -= 1
-                        bit = (tag >> 7) & 1
-                        tag = (tag << 1) & 0xFF
-                        if not bit:
-                            break
-                        if bitcount == 0:
-                            if pos >= end:
-                                break
-                            tag = src[pos]
-                            pos += 1
-                            bitcount = 8
-                        bitcount -= 1
-                        offs = (offs << 1) | ((tag >> 7) & 1)
-                        tag = (tag << 1) & 0xFF
-
-                    if LWM == 0 and offs == 2:
-                        offs = R0
-                        # read gamma for length
-                        length = 1
-                        if bitcount == 0:
-                            if pos >= end:
-                                break
-                            tag = src[pos]
-                            pos += 1
-                            bitcount = 8
-                        bitcount -= 1
-                        length = (length << 1) | ((tag >> 7) & 1)
-                        tag = (tag << 1) & 0xFF
-
-                        while True:
-                            if bitcount == 0:
-                                if pos >= end:
-                                    break
-                                tag = src[pos]
-                                pos += 1
-                                bitcount = 8
-                            bitcount -= 1
-                            bit = (tag >> 7) & 1
-                            tag = (tag << 1) & 0xFF
-                            if not bit:
-                                break
-                            if bitcount == 0:
-                                if pos >= end:
-                                    break
-                                tag = src[pos]
-                                pos += 1
-                                bitcount = 8
-                            bitcount -= 1
-                            length = (length << 1) | ((tag >> 7) & 1)
-                            tag = (tag << 1) & 0xFF
-
-                        if offs > cursor:
-                            raise IndexError
-                        reserve(&out_buf, &out_cap, cursor, length)
-                        for i in range(length):
-                            out_buf[cursor] = out_buf[cursor - offs]
-                            cursor += 1
-                    else:
-                        if LWM == 0:
-                            offs -= 3
-                        else:
-                            offs -= 2
-
-                        if pos >= end:
-                            break
-                        offs = (offs << 8) | src[pos]
-                        pos += 1
-
-                        # read gamma for length
-                        length = 1
-                        if bitcount == 0:
-                            if pos >= end:
-                                break
-                            tag = src[pos]
-                            pos += 1
-                            bitcount = 8
-                        bitcount -= 1
-                        length = (length << 1) | ((tag >> 7) & 1)
-                        tag = (tag << 1) & 0xFF
-
-                        while True:
-                            if bitcount == 0:
-                                if pos >= end:
-                                    break
-                                tag = src[pos]
-                                pos += 1
-                                bitcount = 8
-                            bitcount -= 1
-                            bit = (tag >> 7) & 1
-                            tag = (tag << 1) & 0xFF
-                            if not bit:
-                                break
-                            if bitcount == 0:
-                                if pos >= end:
-                                    break
-                                tag = src[pos]
-                                pos += 1
-                                bitcount = 8
-                            bitcount -= 1
-                            length = (length << 1) | ((tag >> 7) & 1)
-                            tag = (tag << 1) & 0xFF
-
-                        length += _lengthdelta(offs)
-
-                        if offs > cursor:
-                            raise IndexError
-                        reserve(&out_buf, &out_cap, cursor, length)
-                        for i in range(length):
-                            out_buf[cursor] = out_buf[cursor - offs]
-                            cursor += 1
-                        R0 = offs
-
-                    LWM = 1
-            else:
-                # literal
-                if pos >= end:
-                    break
-                reserve(&out_buf, &out_cap, cursor, 1)
-                out_buf[cursor] = src[pos]
-                cursor += 1
-                pos += 1
+                _put(&out, b)
                 LWM = 0
-
-        return bytearray(out_buf[:cursor])
+            elif not _read_bit(&r):
+                offs = _read_gamma(&r)
+                if not LWM and offs == 2:
+                    offs = R0
+                    length = _read_gamma(&r)
+                else:
+                    offs = ((offs - 2 if LWM else offs - 3) << 8) | _read_byte(&r)
+                    length = _read_gamma(&r) + _lengthdelta(offs)
+                if r.pos > r.end:
+                    break
+                _back_copy(&out, offs, length)
+                R0 = offs
+                LWM = 1
+            elif not _read_bit(&r):
+                b = _read_byte(&r)
+                if r.pos > r.end or b <= 1:
+                    break
+                offs = b >> 1
+                _back_copy(&out, offs, 2 + (b & 1))
+                R0 = offs
+                LWM = 1
+            else:
+                offs = 0
+                for i in range(4):
+                    offs = (offs << 1) | _read_bit(&r)
+                if r.pos > r.end:
+                    break
+                if offs:
+                    _back_copy(&out, offs, 1)
+                else:
+                    _put(&out, 0)
+                LWM = 0
+        if r.pos > r.end:
+            raise RefineryPartialResult(
+                'The input ended before the end marker.', bytearray(out.buf[:out.size])
+            )
+        return bytearray(out.buf[:out.size])
     finally:
-        free(out_buf)
+        free(out.buf)
 
 
 cdef struct CompressorState:

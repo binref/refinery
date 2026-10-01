@@ -23,21 +23,22 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
     cdef:
         const uint8_t[::1] src_view = memoryview(data)
         const uint8_t *src
-        int src_len
+        Py_ssize_t src_len
         uint8_t *out_buf
         Py_ssize_t out_cap, out_len
         uint8_t tab_suffix[WSIZE * 2]
         uint16_t tab_prefix[1 << BITS]
         int n_bits, maxcode, bitmask, maxmaxcode
-        int oldcode, finchar, posbits, inbits
+        int oldcode, finchar
+        Py_ssize_t posbits, inbits
         int free_entry
         bint resetbuf
         int code, incode
-        int n, p_int
+        Py_ssize_t n, p_int
         uint32_t b0, b1, b2
         uint8_t stack_buf[1 << BITS]
         int stack_len
-        int i
+        Py_ssize_t i
 
     if maxbits > BITS:
         raise ValueError(F'Compressed with {maxbits} bits; cannot handle file.')
