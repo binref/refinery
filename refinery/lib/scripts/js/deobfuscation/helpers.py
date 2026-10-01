@@ -340,8 +340,9 @@ def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
     `valueOf`, `toString` or `Symbol.toPrimitive` — this domain's objects are plain data
     dictionaries, so a program can have written one only as an own property — and the prototype
     chain that would supply them is still the one the language describes, which
-    `EffectModel.read_chain_intact` answers. An array converts element-wise, so each element has
-    to answer this question too.
+    `EffectModel.read_chain_intact` answers. A function is an object the program holds, and it may
+    have given the function a `toString` of its own, which `EffectModel.function_object_untouched`
+    rules out. An array converts element-wise, so each element has to answer this question too.
 
     A caller with no effect model gets `False` for every object: the interpreter used on one
     expression in isolation cannot see the file the expression came from, and whether anything
@@ -355,6 +356,8 @@ def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
     elif not isinstance(value, (list, JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
         return False
     if effects is None or not effects.read_chain_intact(type(value)):
+        return False
+    if isinstance(value, FUNCTION_NODES) and not effects.function_object_untouched(value):
         return False
     if isinstance(value, list) and not all(coerces_uninterceptably(effects, item) for item in value):
         return False
@@ -377,6 +380,8 @@ def coerces_uninterceptably_from_written_chain(effects: EffectModel | None, valu
     elif not isinstance(value, (list, JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
         return False
     if effects is None or not effects.chain_roots_unwritten(type(value)):
+        return False
+    if isinstance(value, FUNCTION_NODES) and not effects.function_object_untouched(value):
         return False
     if isinstance(value, list) and not all(
         coerces_uninterceptably_from_written_chain(effects, item) for item in value
