@@ -108,7 +108,8 @@ def guarded(subject: str, name: str, seed: int, constant: int, tail: str, helper
 
 def wrapped(constant: int, helpers: str = OLD_HELPERS, program: str = PROGRAM, prefix: str = '') -> str:
     """
-    A program wrapped in the older hash guard, with *helpers* and *program*, comparing to *constant*.
+    A program wrapped in the older hash guard, with *helpers* and *program*, comparing to
+    *constant*.
     """
     return (
         F'{prefix}(function () {{\n{helpers}{program}'
@@ -165,9 +166,19 @@ A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED = {
         DOUBLE, 'double', 42, DOUBLE_42,
         'if (/(\\d+)/.test("abc 123")) { guarded(1); console.log("$1=" + globalThis.RegExp.$1); }\n',
     ): ('$1=\n', 'hashOf(double, 42)'),
+    guarded(
+        DOUBLE,
+        'double',
+        42,
+        DOUBLE_42,
+        'if (/(\\d+)/.test("abc 123")) { guarded(1); console.log("$1=" + new RegExp("a").constructor.$1); }\n',
+    ): (
+        '$1=\n',
+        'hashOf(double, 42)',
+    ),
 }
 
-_SET_A_LINE_BREAK = r'function () { return "a\nb"; }'
+SET_A_LINE_BREAK = r'function () { return "a\nb"; }'
 
 
 def checked_by_name(route: str, prefix: str = '') -> str:
@@ -185,8 +196,9 @@ def checked_by_name(route: str, prefix: str = '') -> str:
     )
 
 
-#: Programs whose self-check the input text does not decide, mapped to what Node prints for each
-#: and to the text of the check, which the deobfuscation still holds.
+#: Programs whose self-check the input text does not decide, or which stands where its declaration
+#: is no statement of its own, mapped to what Node prints for each and to the text of the check,
+#: which the deobfuscation still holds.
 A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
     checked(
         'var n = function () {\nconst t = function () { const r = new RegExp("\\n"); return r.test(n); }; '
@@ -234,16 +246,16 @@ A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
         'globalThis["N"] = function () {\n};\n'
         'if (T()) { console.log("tampered"); } else { console.log("clean"); }\n'
     ): ('clean\n', LINE_BREAK_MARKER),
-    checked_by_name(F'var o = new N(); o.constructor.toString = {_SET_A_LINE_BREAK}; ', 'if (new.target) { return; } '): (
+    checked_by_name(F'var o = new N(); o.constructor.toString = {SET_A_LINE_BREAK}; ', 'if (new.target) { return; } '): (
         'tampered\n', LINE_BREAK_MARKER),
-    checked_by_name('new N(); ', F'if (new.target) {{ new.target.toString = {_SET_A_LINE_BREAK}; return; }} '): (
+    checked_by_name('new N(); ', F'if (new.target) {{ new.target.toString = {SET_A_LINE_BREAK}; return; }} '): (
         'tampered\n', LINE_BREAK_MARKER),
     checked_by_name(
-        F'var B = N.bind(null); new B().constructor.toString = {_SET_A_LINE_BREAK}; ', 'if (new.target) { return; } '
+        F'var B = N.bind(null); new B().constructor.toString = {SET_A_LINE_BREAK}; ', 'if (new.target) { return; } '
     ): ('tampered\n', LINE_BREAK_MARKER),
-    checked_by_name(F'(function (s, v) {{ v.toString = {_SET_A_LINE_BREAK}; }})`${{N}}`; '): (
+    checked_by_name(F'(function (s, v) {{ v.toString = {SET_A_LINE_BREAK}; }})`${{N}}`; '): (
         'tampered\n', LINE_BREAK_MARKER),
-    checked_by_name(F'function g() {{ g.caller.toString = {_SET_A_LINE_BREAK}; }} ', 'g(); '): (
+    checked_by_name(F'function g() {{ g.caller.toString = {SET_A_LINE_BREAK}; }} ', 'g(); '): (
         'tampered\n', LINE_BREAK_MARKER),
     guarded(DOUBLE, 'double', 42, DOUBLE_42 + 1, 'console.log(guarded(21));\n'): (
         'tampered\nundefined\n', str(DOUBLE_42 + 1)),
@@ -277,6 +289,78 @@ A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
     wrapped(PROGRAM_READING_TRIPPED_25, CONTEXT_HELPERS, PROGRAM_READING_TRIPPED, 'var ctx = globalThis;\n'): (
         'ran string\n', str(PROGRAM_READING_TRIPPED_25)),
     wrapped(PROGRAM_25, CRASH_HELPERS, PROGRAM, 'var ctx = globalThis;\n'): ('ran\n', str(PROGRAM_25)),
+    checked(LINE_BREAK_CHECK.replace('const t = function ()', 'const t = async function ()')): (
+        'tampered\nran\n',
+        LINE_BREAK_MARKER,
+    ),
+    checked(LINE_BREAK_CHECK.replace('const t = function ()', 'const t = async () =>')): (
+        'tampered\nran\n',
+        LINE_BREAK_MARKER,
+    ),
+    checked(LINE_BREAK_CHECK.replace('const t = function ()', 'const t = function* ()')): (
+        'tampered\nran\n',
+        LINE_BREAK_MARKER,
+    ),
+    (
+        '(function () { var N; var keep = (N = function () { '
+        r'const T = function () { const R = new RegExp("\n"); return R["test"](N); }; '
+        'if (T()) { console.log("tampered"); } else { console.log("fine"); } }); '
+        F'keep.toString = {SET_A_LINE_BREAK}; return N(); }})();\n'
+    ): (
+        'tampered\n',
+        LINE_BREAK_MARKER,
+    ),
+    guarded(DOUBLE, 'double', 42, DOUBLE_42, 'console.log(guarded(21));\n').replace('guarded.memo', 'guarded.name'): (
+        'tampered\nundefined\n',
+        str(DOUBLE_42),
+    ),
+    guarded(DOUBLE, 'double', 42, DOUBLE_42, 'console.log(guarded(21));\n').replace('guarded.memo', 'guarded.call'): (
+        'tampered\nundefined\n',
+        str(DOUBLE_42),
+    ),
+    guarded(
+        DOUBLE,
+        'double',
+        42,
+        DOUBLE_42,
+        'try { console.log(guarded(21)); } catch (e) { console.log(e.constructor.name); }\n',
+        helpers=NEW_HELPERS.replace('var imul = Math["imul"] || MathImulPolyfill;\n', '').replace('imul(', 'IMUL('),
+    ): (
+        'ReferenceError\n',
+        str(DOUBLE_42),
+    ),
+    guarded(
+        DOUBLE,
+        'double',
+        42,
+        DOUBLE_42,
+        'try { console.log(guarded(21)); } catch (e) { console.log(e.constructor.name); }\n',
+        helpers=NEW_HELPERS.replace('return hashText(fnStringed, seed)', 'return HASH(fnStringed, seed)'),
+    ): (
+        'ReferenceError\n',
+        str(DOUBLE_42),
+    ),
+    (
+        NEW_HELPERS
+        + DOUBLE
+        + '\nfunction guarded() { for (var h = guarded.memo || (guarded.memo = hashOf(double, 42)); ; ) { '
+        + F'if (h === {DOUBLE_42}) {{ return double(...arguments); }} else {{ console.log("tampered"); }} break; }} }}\n'
+        + 'if (/(\\d+)/.test("abc 123")) { console.log(guarded(21)); console.log("$1=" + RegExp.$1); }\n'
+    ): (
+        '42\n$1=\n',
+        str(DOUBLE_42),
+    ),
+}
+
+#: A hash guard over a name the module exports, mapped to what Node prints for the module. An
+#: importer reads the name, so its declaration stays.
+A_HASH_THE_MODULE_EXPORTS = {
+    (
+        NEW_HELPERS
+        + DOUBLE
+        + '\nexport var h = hashOf(double, 42);\n'
+        + F'if (h === {DOUBLE_42}) {{ console.log(double(21)); }} else {{ console.log("tampered"); }}\n'
+    ): '42\n',
 }
 
 #: Programs whose comparison constant or seed is not a finite number, mapped to what Node prints.
@@ -311,6 +395,11 @@ class TestTheCheckTheInputTextDoesNotDecideStays(TestBase):
             with self.subTest(source):
                 self.assertIn(marker, deobfuscate_source(source, module=True))
 
+    def test_the_deobfuscation_still_exports_the_hash(self):
+        for source in A_HASH_THE_MODULE_EXPORTS:
+            with self.subTest(source):
+                self.assertIn('export var h', deobfuscate_source(source, module=True))
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutASelfCheck(TestBase):
@@ -335,3 +424,10 @@ class TestNodePrintsTheSameAboutASelfCheck(TestBase):
 
     def test_a_comparison_with_no_integer_prints_what_the_program_prints(self):
         self._assert_each_still_prints(A_HASH_COMPARED_WITH_NO_INTEGER)
+
+    def test_an_exported_hash_prints_what_the_module_prints(self):
+        rows = A_HASH_THE_MODULE_EXPORTS
+        self.assertEqual(
+            {source: before_and_after(source, module=True) for source in rows},
+            each_program_still_prints(rows),
+        )

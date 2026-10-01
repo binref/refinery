@@ -2792,11 +2792,43 @@ class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
     """
     A function whose only top-level references write its properties is removed with those writes,
     but a reference from the body of a function the program reaches is a read the removal has to
-    count too.
+    count too. A reference from a function the program never reaches is not one: nothing runs it.
     """
 
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
+
+    def test_two_functions_only_each_other_read_are_removed(self):
+        source = inspect.cleandoc(
+            """
+            function W(a) {
+              return V.extra;
+            }
+            W.extra = 1;
+            function V(a) {
+              return W.extra;
+            }
+            V.extra = 2;
+            console.log(3);
+            """
+        )
+        self.assertEqual('console.log(3);', self._remove_unused(source))
+
+    def test_a_function_only_a_removed_property_write_holds_is_removed(self):
+        source = inspect.cleandoc(
+            """
+            function W(a) {
+              return a + 1;
+            }
+            W.handler = g;
+            function g() {
+              return W.extra;
+            }
+            W.extra = 5;
+            console.log(7);
+            """
+        )
+        self.assertEqual('console.log(7);', self._remove_unused(source))
 
     def test_a_function_whose_property_another_function_reads_is_kept(self):
         source = inspect.cleandoc(

@@ -1395,6 +1395,15 @@ class TestEffectModel(TestBase):
     def test_transitive_alias_mutation_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; var b = a; var c = b; c[0] = 9;'))
 
+    def test_alias_stored_by_a_chained_assignment_then_mutated_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; var b; var c = (b = a); c[0] = 9; SINK(a[0]);'))
+
+    def test_alias_stored_inside_a_comma_statement_then_read_is_immutable(self):
+        self.assertTrue(self._container('var a = [1, 2]; var b, c; b = a, c = 1; SINK(b[0]);'))
+
+    def test_alias_stored_inside_a_comma_statement_then_mutated_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; var b, c; b = a, c = 1; b[0] = 9; SINK(a[0]);'))
+
     def test_reassigned_then_read_is_immutable(self):
         self.assertTrue(self._container('var a; a = [1, 2]; SINK(a[0]);'))
 
@@ -2537,6 +2546,35 @@ class TestTrustedIntrinsicName(TestBase):
 
     def test_another_name_being_patched_is_trusted(self):
         self._trusts('String.prototype.zz = 1; console.log(/a/.test("a"));')
+
+
+class TestAFunctionObjectReachedThroughAName(TestBase):
+    """
+    `EffectModel.function_object_untouched` for the first function a program writes. A program can
+    give that function a `toString` of its own through any name that holds it, and converting it
+    then answers what the program installed rather than the text it was written with.
+    """
+
+    @staticmethod
+    def _untouched(source: str) -> bool:
+        ast = JsParser(source).parse()
+        function = next(node for node in ast.walk() if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression)))
+        return build_effects(build_semantic_model(ast)).function_object_untouched(function)
+
+    def test_a_method_whose_own_name_sets_its_tostring_is_touched(self):
+        self.assertFalse(self._untouched(
+            'var o = { m: function self() { self.toString = function () { return "x"; }; return 1; } };'
+            ' var g = o.m; g(); console.log(String(o.m));'
+        ))
+
+    def test_a_function_assigned_inside_a_call_argument_is_touched(self):
+        self.assertFalse(self._untouched('var W; mark(W = function (a) { return a + 1; }); console.log(String(W));'))
+
+    def test_a_function_assigned_by_a_statement_is_left_in_place(self):
+        self.assertTrue(self._untouched('var W; W = function (a) { return a + 1; }; console.log(String(W));'))
+
+    def test_a_method_that_is_only_converted_is_left_in_place(self):
+        self.assertTrue(self._untouched('var o = { m: function self() { return 1; } }; console.log(String(o.m));'))
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:

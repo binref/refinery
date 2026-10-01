@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -436,6 +437,8 @@ def _expand_replacement(replacement: str, s: str, start: int, matched: str) -> s
 def _str_replace(s: str, args: list[Value]) -> Value:
     if len(args) < 2:
         return s
+    if isinstance(args[1], FUNCTION_NODES):
+        raise InterpreterError
     search = to_string(args[0])
     replacement = to_string(args[1])
     index = s.find(search)
@@ -449,6 +452,8 @@ def _str_replace(s: str, args: list[Value]) -> Value:
 def _str_replace_all(s: str, args: list[Value]) -> Value:
     if len(args) < 2:
         return s
+    if isinstance(args[1], FUNCTION_NODES):
+        raise InterpreterError
     search = to_string(args[0])
     replacement = to_string(args[1])
     if not search:

@@ -56,8 +56,10 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     DATED_HELPERS,
     DOUBLE,
     DOUBLE_42,
+    NEW_HELPERS,
     PROGRAM_READING_A_KEY,
     PROGRAM_READING_A_KEY_25,
+    SET_A_LINE_BREAK,
     checked,
     checked_by_name,
     guarded,
@@ -1299,6 +1301,139 @@ class TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt(TestBase):
     """
 
 
+#: A function given a `toString` of its own and then converted by a built-in that turns its
+#: receiver's elements, its argument or a computed key into a string, mapped to what Node prints.
+#: Each conversion runs the `toString` the program installed.
+A_FUNCTION_A_BUILTIN_CONVERTS_THROUGH_ITS_OWN_TOSTRING = {
+    'an array joining it': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            W.toString = function () { return "x"; };
+            function f() { return [W].join(''); }
+            console.log(f());
+        '''),
+        prints('x'),
+    ),
+    'a string searched for it': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            W.toString = function () { return "x"; };
+            function f() { return 'axb'.indexOf(W); }
+            console.log(f());
+        '''),
+        prints('1'),
+    ),
+    'a computed key': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            W.toString = function () { return "x"; };
+            function f() { return Object.keys({ [W]: 1 })[0]; }
+            console.log(f());
+        '''),
+        prints('x'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTION_A_BUILTIN_CONVERTS_THROUGH_ITS_OWN_TOSTRING)
+class TestABuiltinConvertingAFunctionRunsItsOwnToString(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.helpers.coerces_uninterceptably` refuses to convert a
+    function the program may have given a `toString` of its own, but only where an operator, a
+    template hole, `String` or `Number` converts it. The array methods, the string methods and the
+    computed key of an object literal convert through `to_string` without asking, so they answer the
+    text the function was written with. The fix is the chokepoint
+    `TestABuiltinCoercingAnArgumentConsultsTheChainThatConvertsIt` names: the one question asked
+    wherever a value is converted.
+    """
+
+
+#: Programs converting a function no code gives a `toString` of its own, after handing it to code
+#: that could, mapped to what Node prints: the text the function was written with.
+A_FUNCTION_HANDED_ON_AND_CONVERTED = {
+    'held in an array': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function f() { var g = [W]; return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'returned by a function': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function get() { return W; }
+            function f() { return String(get()); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'guarded by or': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function f() { return String(W || null); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'counted in a logged array': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            console.log([W].length);
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('1', 'function W(a) { return a + 1; }'),
+    ),
+    'bound': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            var B = W.bind(null);
+            console.log(B(1));
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('2', 'function W(a) { return a + 1; }'),
+    ),
+    'beside a global written at runtime': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            globalThis[process.argv.length > 99 ? "a" : "b"] = 1;
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'walked with for-in': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            for (var k in W) { console.log(k); }
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTION_HANDED_ON_AND_CONVERTED)
+class TestAFunctionHandedOnStillConvertsToItsWrittenText(TestBase):
+    """
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_object_untouched` refuses a
+    function that any read hands on, so `refinery.lib.scripts.js.deobfuscation.helpers
+    .coerces_uninterceptably` leaves its conversion to run, and the conversion then reads the text
+    the deobfuscation printed rather than the text the function was written with. Leaving a
+    conversion of a function standing is never safe for that reason, so the question has to be the
+    narrow one: whether any code can give a function a `toString`, `valueOf` or
+    `Symbol.toPrimitive` of its own or a new prototype. The fix asks that of the whole program first
+    (a write or a descriptor install under one of those keys, or under a key it cannot name, on a
+    value that may be a function, a reflection surface, or code outside the file the function can
+    reach) and falls back to the per-function question only where the program can.
+    """
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestABuiltinTheProgramReplacedIsNotFoldedAsTheIntrinsic(TestBase):
     """
@@ -1426,10 +1561,10 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     @unittest.expectedFailure
     def test_a_prototype_handed_to_a_writer_answers_the_read(self):
         """
-        Node prints `9`, `9`, `false`, `9`, `9`, and `tampered` before `ran`, for the six programs of
-        `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as if the call
-        it was handed to had not written it; the last folds a line-break check that the conversion
-        the call installed makes trip.
+        Node prints `9`, `9`, `false`, `9`, `9`, and `tampered` before `ran`, for the six programs
+        of `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as if the
+        call it was handed to had not written it; the last folds a line-break check that the
+        conversion the call installed makes trip.
         """
         rows = A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT
         self.assertEqual(
@@ -3209,18 +3344,21 @@ class TestADecidedSelfCheckIsFoldedWhereverItStands(TestBase):
         )
 
 
-_SET_A_LINE_BREAK = r'function () { return "a\nb"; }'
-
 #: Programs that make a decided self-check trip through a route made up for it, each mapped to
 #: what Node prints: `Function.prototype` reached through `__proto__`, the `caller` key spelled
 #: at runtime, an empty function written over two lines that namespace flattening rebuilds on one,
-#: and the match statics of `RegExp` read after a guarded call through a key built at runtime or
-#: through `RegExp.input`, which holds the text the hash read.
+#: the match statics of `RegExp` read after a guarded call through a key built at runtime or
+#: through `RegExp.input`, which holds the text the hash read, and the checked function reached
+#: without its name: through the legacy `arguments` of a function it was handed to, through
+#: `arguments.callee` of an object's own `apply` or of a callback run as `arguments[0]()`, through
+#: the stack a replaced `Error.prepareStackTrace` hands out, and through the catch parameter a
+#: `var` of the same name writes. The last row reads a `let` of the hash helper before it is
+#: declared, which throws where the helper's template computes the hash.
 A_SELF_CHECK_TRIPPED_THROUGH_A_MADE_UP_ROUTE = {
     r'(function () {}).__proto__.toString = function () { return "\n"; };' '\n' + checked():
         'tampered\nran\n',
     checked_by_name(
-        F'function g() {{ var k = ["cal", "ler"].join(process.argv[9] || ""); g[k].toString = {_SET_A_LINE_BREAK}; }} ',
+        F'function g() {{ var k = ["cal", "ler"].join(process.argv[9] || ""); g[k].toString = {SET_A_LINE_BREAK}; }} ',
         'g(); ',
     ):
         'tampered\n',
@@ -3242,6 +3380,37 @@ A_SELF_CHECK_TRIPPED_THROUGH_A_MADE_UP_ROUTE = {
         'if (/(\\d+)/.test("abc 123")) { guarded(1); console.log("input=" + RegExp.input.length); }\n',
     ):
         'input=36\n',
+    checked_by_name(F'function g(x) {{ h(); }} function h() {{ g.arguments[0].toString = {SET_A_LINE_BREAK}; }} g(N); '):
+        'tampered\n',
+    checked_by_name(
+        F'var o = {{ apply: function (t, a) {{ a.callee.toString = {SET_A_LINE_BREAK}; }} }}; ',
+        'o.apply(null, arguments); ',
+    ):
+        'tampered\n',
+    (
+        '(function () { var N = function (cb) { arguments[0](); '
+        r'const T = function () { const R = new RegExp("\n"); return R["test"](N); }; '
+        'if (T()) { console.log("tampered"); } else { console.log("fine"); } }; '
+        F'return N(function () {{ this.callee.toString = {SET_A_LINE_BREAK}; }}); }})();\n'
+    ):
+        'tampered\n',
+    checked_by_name(
+        'function h() { var p = Error.prepareStackTrace; Error.prepareStackTrace = function (e, s) { return s; }; '
+        F'var s = new Error().stack; Error.prepareStackTrace = p; s[1].getFunction().toString = {SET_A_LINE_BREAK}; }} ',
+        'h(); ',
+    ):
+        'tampered\n',
+    checked_by_name(F'try {{ throw 0; }} catch (g) {{ var g = N; g.toString = {SET_A_LINE_BREAK}; }} '):
+        'tampered\n',
+    guarded(
+        DOUBLE,
+        'double',
+        42,
+        DOUBLE_42,
+        'try { console.log(guarded(21)); } catch (e) { console.log(e.constructor.name); }\n',
+        helpers=NEW_HELPERS.replace('var h1 = 0xdeadbeef ^ seed;', 'h1 = 0xdeadbeef ^ seed; let h1;'),
+    ):
+        'ReferenceError\n',
 }
 
 
@@ -3256,7 +3425,9 @@ class TestASelfCheckTrippedThroughAMadeUpRouteStillTrips(TestBase):
     @wontfix(
         'every route here was made up to reach the check: no obfuscated file reaches a prototype '
         'through __proto__ of a function literal, builds the caller key at runtime, rebuilds an empty '
-        'function spread over two lines, or reads the match statics a hash helper leaves behind'
+        'function spread over two lines, reads the match statics a hash helper leaves behind, reaches '
+        'the checked function through legacy arguments, arguments.callee, a stack trace or a catch '
+        'parameter, or reads a variable of a hash helper before it is declared'
     )
     def test_the_check_still_trips(self):
         rows = A_SELF_CHECK_TRIPPED_THROUGH_A_MADE_UP_ROUTE

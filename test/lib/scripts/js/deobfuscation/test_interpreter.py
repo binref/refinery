@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from test.lib.scripts.js.analysis.differential import behavior, completion_values, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.units.scripting.js import js
 
@@ -1699,3 +1700,32 @@ class TestInterpreterTrustVerdictBoundaries(TestJsDeobfuscator):
             """
         )
         self.assertEqual('var x = 3;', self._evaluate(source))
+
+
+#: Programs replacing a match with what a function returns for it, mapped to what Node prints.
+A_MATCH_REPLACED_BY_WHAT_A_FUNCTION_RETURNS = {
+    inspect.cleandoc("""
+        function fn() { return "X"; }
+        function f() { return "abc".replace("b", fn); }
+        console.log(f());
+    """): 'aXc\n',
+    inspect.cleandoc("""
+        function f() { return "abab".replaceAll("b", () => "X"); }
+        console.log(f());
+    """): 'aXaX\n',
+    inspect.cleandoc("""
+        function f() { return "abc".replace("b", function (m) { return m.toUpperCase(); }); }
+        console.log(f());
+    """): 'aBc\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReplacementFunctionIsCalledRatherThanConverted(TestJsDeobfuscator):
+
+    def test_each_program_prints_what_the_function_returns(self):
+        rows = A_MATCH_REPLACED_BY_WHAT_A_FUNCTION_RETURNS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

@@ -30,14 +30,13 @@ up to the changes other transforms make, so the hash computed here is the one th
 from __future__ import annotations
 
 import functools
-import math
+import re
 
 from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     Expression,
     Node,
-    Statement,
     _clone_node,
     _replace_in_parent,
     canonical,
@@ -48,11 +47,22 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, build_semantic_model
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    SemanticModel,
+    build_semantic_model,
+    enclosing_operator,
+    is_constructed_or_invoked,
+    is_invocation_target,
+    statement_list_of,
+)
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    FUNCTION_MEMBERS,
+    ScriptLevelTransformer,
+    remove_declarator,
+)
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
-    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsBinaryExpression,
     JsBlockStatement,
@@ -64,7 +74,7 @@ from refinery.lib.scripts.js.model import (
     JsForOfStatement,
     JsForStatement,
     JsFunctionDeclaration,
-    JsFunctionExpression,
+    JsFunctionNode,
     JsIdentifier,
     JsIfStatement,
     JsLogicalExpression,
@@ -82,7 +92,9 @@ from refinery.lib.scripts.js.model import (
     static_property_key,
     static_string,
     strip_parens,
+    wraps_return,
 )
+from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.utf16 import to_code_units
 
@@ -91,48 +103,53 @@ _STRIPPED_PATTERN = r' |\n|;|,|\{|\}|\(|\)|\.|\[|\]'
 The regular expression every hash helper removes from a function's text before hashing it.
 """
 
-_STRIPPED_CHARACTERS = frozenset(' \n;,{}().[]')
-"""
-The characters `_STRIPPED_PATTERN` matches.
-"""
 
-_HASH_TEMPLATE = (
+class _Template(NamedTuple):
+    """
+    A helper as the obfuscator writes it, and the free names in its text that stand for the other
+    helpers it calls.
+    """
+    text: str
+    placeholders: frozenset[str] = frozenset()
+
+
+_HASH_TEMPLATE = _Template(
     'function HASH(str, seed) {'
     ' var h1 = 0xdeadbeef ^ seed; var h2 = 0x41c6ce57 ^ seed;'
     ' for (var i = 0, ch; i < str.length; i++) {'
     ' ch = str.charCodeAt(i); h1 = IMUL(h1 ^ ch, 2654435761); h2 = IMUL(h2 ^ ch, 1597334677); }'
     ' h1 = IMUL(h1 ^ (h1 >>> 16), 2246822507) ^ IMUL(h2 ^ (h2 >>> 13), 3266489909);'
     ' h2 = IMUL(h2 ^ (h2 >>> 16), 2246822507) ^ IMUL(h1 ^ (h1 >>> 13), 3266489909);'
-    ' return 4294967296 * (2097151 & h2) + (h1 >>> 0); }'
+    ' return 4294967296 * (2097151 & h2) + (h1 >>> 0); }',
+    frozenset({'IMUL'}),
 )
 """
 The cyrb53 hash as the obfuscator writes it, `IMUL` standing for its 32-bit multiplication.
 """
 
-_TEXT_HASH_TEMPLATE = (
+_TEXT_HASH_TEMPLATE = _Template(
     'function TEXTHASH(fnObject, seed, regex = new RegExp("'
     + _STRIPPED_PATTERN.replace('\\', '\\\\')
-    + '", "g")) { var fnStringed = fnObject.toString().replace(regex, ""); return HASH(fnStringed, seed); }'
+    + '", "g")) { var fnStringed = fnObject.toString().replace(regex, ""); return HASH(fnStringed, seed); }',
+    frozenset({'HASH'}),
 )
 """
 The helper that hashes a function's stripped text, `HASH` standing for `_HASH_TEMPLATE`.
 """
 
-_TEXT_TEMPLATE = 'function TEXT(x) { return x.toString().replace(/' + _STRIPPED_PATTERN + '/g, ""); }'
+_TEXT_TEMPLATE = _Template(F'function TEXT(x) {{ return x.toString().replace(/{_STRIPPED_PATTERN}/g, ""); }}')
 """
 The older helper that strips a function's text, for the older hash guard to hash with
 `_HASH_TEMPLATE`.
 """
 
-_POLYFILL_TEMPLATE = (
+_POLYFILL_TEMPLATE = _Template(
     'function POLYFILL(opA, opB) { opB |= 0; var result = (opA & 0x003fffff) * opB;'
     ' if (opA & 0xffc00000) { result += (opA & 0xffc00000) * opB | 0; } return result | 0; }'
 )
 """
 The 32-bit multiplication the obfuscator falls back to where `Math.imul` is missing.
 """
-
-_Function = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
 _LOOPS = (
     JsWhileStatement,
@@ -143,31 +160,23 @@ _LOOPS = (
 )
 
 
-def _body(function: Node) -> list[Statement] | None:
-    body = getattr(function, 'body', None)
-    return body.body if isinstance(body, JsBlockStatement) else None
-
-
-def _call_of(node: Node) -> JsCallExpression | None:
-    child, parent = node, node.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        child, parent = parent, parent.parent
-    if isinstance(parent, JsCallExpression) and parent.callee is child:
-        return parent
-    return None
-
-
 def _integer(node: Node | None) -> int | None:
     """
     The value of the numeric literal *node* when it is a finite integer.
     """
     node = strip_parens(node)
-    if not isinstance(node, JsNumericLiteral):
-        return None
-    value = node.value
-    if not math.isfinite(value) or value != int(value):
-        return None
-    return int(value)
+    return exact_integer(node.value) if isinstance(node, JsNumericLiteral) else None
+
+
+class _Shape(NamedTuple):
+    """
+    The normal form of a function: whether it is a generator, whether it is `async`, and the
+    canonical forms of its parameters and of its body.
+    """
+    generator: bool
+    is_async: bool
+    params: tuple[object, ...]
+    body: object
 
 
 class _NormalForm:
@@ -186,7 +195,7 @@ class _NormalForm:
         self.placeholders = placeholders
         self.empty = empty
 
-    def of(self, function: _Function) -> object | None:
+    def of(self, function: JsFunctionNode) -> _Shape | None:
         renames: dict[int, str] = {}
         own: dict[int, str] = {}
         for node in function.walk():
@@ -212,7 +221,7 @@ class _NormalForm:
             if id(original) in renames:
                 set_value(copy, 'name', renames[id(original)])
         self._normalize(clone)
-        return (
+        return _Shape(
             bool(getattr(clone, 'generator', False)),
             bool(getattr(clone, 'is_async', False)),
             tuple(canonical(parameter) for parameter in clone.params),
@@ -304,31 +313,37 @@ def _rename_free(form: object, names: frozenset[str]) -> object:
 
 
 @functools.lru_cache(maxsize=None)
-def _template_form(text: str, placeholders: frozenset[str]) -> object:
+def _template_form(template: _Template) -> _Shape:
     """
-    The normal form of the template *text*, whose free names in *placeholders* stand for helpers.
+    The normal form of *template*. Each of its placeholders is renamed to itself, which only a call
+    of a helper recognized for it takes in the form of a function: a call of a global the program
+    never declares keeps its spelling as a free name, so a function calling an undeclared `IMUL`
+    does not match the hash.
     """
-    script = JsParser(text).parse()
-    template = script.body[0]
-    assert isinstance(template, JsFunctionDeclaration)
-    form = _NormalForm(build_semantic_model(script), {}, set()).of(template)
-    return _rename_free(form, placeholders)
+    script = JsParser(template.text).parse()
+    function = script.body[0]
+    assert isinstance(function, JsFunctionDeclaration)
+    form = _NormalForm(build_semantic_model(script), {}, set()).of(function)
+    assert form is not None
+    return form._replace(
+        params=tuple(_rename_free(parameter, template.placeholders) for parameter in form.params),
+        body=_rename_free(form.body, template.placeholders),
+    )
 
 
-def _empty_functions_called(model: SemanticModel, function: Node) -> dict[int, Binding]:
+def _empty_functions_called(model: SemanticModel, function: Node) -> set[int]:
     """
-    The names *function* calls that hold one function with no parameters and an empty body: the
-    wrapper the obfuscator puts around a sequence of statements.
+    The names *function* calls that hold one function with no parameters and an empty body, the
+    wrapper the obfuscator puts around a sequence of statements, by the identity of their binding.
     """
-    empty: dict[int, Binding] = {}
+    empty: set[int] = set()
     for node in function.walk():
         if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
             continue
         binding = model.resolve(node.callee)
         value = None if binding is None else model.singular_value(binding)
-        if isinstance(value, FUNCTION_NODES) and not value.params and _body(value) == []:
-            assert binding is not None
-            empty[id(binding)] = binding
+        if isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == []:
+            empty.add(id(binding))
     return empty
 
 
@@ -353,7 +368,7 @@ class _HelperRecognizer:
         self.effects = effects
         self.memo: dict[tuple[str, int, bool], bool] = {}
 
-    def function_held_by(self, name: Node | None) -> tuple[Binding | None, _Function | None]:
+    def function_held_by(self, name: Node | None) -> tuple[Binding | None, JsFunctionNode | None]:
         """
         The binding *name* resolves to and the one function it holds.
         """
@@ -375,10 +390,17 @@ class _HelperRecognizer:
             known = self.memo[key] = decide()
         return known
 
-    def _matches(self, function: _Function, template: str, placeholders: dict[int, str]) -> bool:
-        empty = set(_empty_functions_called(self.model, function))
-        form = _NormalForm(self.model, placeholders, empty).of(function)
-        return form is not None and form == _template_form(template, frozenset(placeholders.values()))
+    def _matches(self, function: JsFunctionNode, template: _Template, placeholders: dict[int, str]) -> bool:
+        """
+        Whether *function* has the normal form of *template*, the names in *placeholders* standing
+        for the template's placeholders. A function with another number of parameters is refused
+        before its form is built, which costs a copy of the whole function.
+        """
+        shape = _template_form(template)
+        if len(function.params) != len(shape.params):
+            return False
+        empty = _empty_functions_called(self.model, function)
+        return _NormalForm(self.model, placeholders, empty).of(function) == shape
 
     def _outer_calls(self, function: Node) -> Iterator[tuple[JsCallExpression, Binding]]:
         for node in function.walk():
@@ -417,30 +439,30 @@ class _HelperRecognizer:
             return False
         return es2015 or self._matches(fallback, _POLYFILL_TEMPLATE, {})
 
-    def hash(self, function: _Function, es2015: bool = False) -> bool:
+    def hash(self, function: JsFunctionNode, es2015: bool = False) -> bool:
         """
         Whether *function* is the cyrb53 helper.
         """
         return self._remembered('hash', function, es2015, lambda: self._hash(function, es2015))
 
-    def _hash(self, function: _Function, es2015: bool) -> bool:
+    def _hash(self, function: JsFunctionNode, es2015: bool) -> bool:
         placeholders: dict[int, str] = {}
         for _, binding in self._outer_calls(function):
             value = self.model.singular_value(binding)
-            if isinstance(value, FUNCTION_NODES) and not value.params and _body(value) == []:
+            if isinstance(value, FUNCTION_NODES) and not value.params and statement_list_of(value) == []:
                 continue
             if not self.multiplication(binding, es2015):
                 return False
             placeholders[id(binding)] = 'IMUL'
         return self._matches(function, _HASH_TEMPLATE, placeholders) and self.effects.trusted_prototype(str)
 
-    def text_hash(self, function: _Function) -> bool:
+    def text_hash(self, function: JsFunctionNode) -> bool:
         """
         Whether *function* is the helper that hashes a function's stripped text.
         """
         return self._remembered('text_hash', function, False, lambda: self._text_hash(function))
 
-    def _text_hash(self, function: _Function) -> bool:
+    def _text_hash(self, function: JsFunctionNode) -> bool:
         placeholders: dict[int, str] = {}
         for call, binding in self._outer_calls(function):
             _, value = self.function_held_by(call.callee)
@@ -453,13 +475,13 @@ class _HelperRecognizer:
             and self.effects.trusted_prototype(str)
         )
 
-    def text(self, function: _Function) -> bool:
+    def text(self, function: JsFunctionNode) -> bool:
         """
         Whether *function* is the older helper that strips a function's text.
         """
         return self._remembered('text', function, False, lambda: self._text(function))
 
-    def _text(self, function: _Function) -> bool:
+    def _text(self, function: JsFunctionNode) -> bool:
         return (
             self._matches(function, _TEXT_TEMPLATE, {})
             and self.effects.trusted_intrinsic_name('RegExp')
@@ -486,7 +508,7 @@ class _HelperRecognizer:
             return _Hashed(subject, seed, call, (helper_name,))
         if isinstance(subject, JsCallExpression) and len(subject.arguments) == 1:
             text_name, text = self.function_held_by(subject.callee)
-            if text_name is None or text is None or not self.hash(helper) or not self.text(text):
+            if text_name is None or text is None or not self.text(text) or not self.hash(helper):
                 return None
             name = strip_parens(subject.arguments[0])
             if not isinstance(name, JsIdentifier):
@@ -519,31 +541,25 @@ def cyrb53(text: str, seed: int) -> int:
     return 4294967296 * (2097151 & h2) + (h1 & 0xFFFFFFFF)
 
 
-def _callee_position(node: Node) -> bool:
-    """
-    Whether *node* is the callee of a call or of `new`, parentheses aside.
-    """
-    child, parent = node, node.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        child, parent = parent, parent.parent
-    return isinstance(parent, (JsCallExpression, JsNewExpression)) and parent.callee is child
-
-
 def _regexp_statics_observable(model: SemanticModel, root: JsScript) -> bool:
     """
     Whether the program may read the match statics of `RegExp`, such as `RegExp.$1`, which the
     `replace` in a hash helper sets: a reflection surface may, and so may any use of `RegExp` other
-    than as the callee of `new RegExp(…)` or `RegExp(…)`.
+    than as the callee of `new RegExp(…)` or `RegExp(…)` or as the tag of a template, which builds
+    a regular expression and reads none of them. So may any read of a `constructor`, which reaches
+    `RegExp` from every regular expression without naming it: `/x/.constructor.$1`.
     """
     if model.has_reflection_surface() or model.has_opaque_global_write():
         return True
     for node in root.walk():
+        if isinstance(node, JsMemberExpression) and static_property_key(node) == 'constructor':
+            return True
         if isinstance(node, JsIdentifier):
             if node.name != 'RegExp' or not model.is_reference(node) or model.resolve(node) is not None:
                 continue
         elif not isinstance(node, JsMemberExpression) or model.may_name_a_global(node) != 'RegExp':
             continue
-        if not _callee_position(node):
+        if not is_constructed_or_invoked(node):
             return True
     return False
 
@@ -621,7 +637,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         model: SemanticModel,
         effects: EffectModel,
         dominance: DominanceModel,
-        check: Node,
+        check: JsFunctionNode,
     ) -> list[JsCallExpression]:
         """
         The calls of *check* a line-break check answers `false` for: *check* tests the text of one
@@ -646,21 +662,27 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
             return []
         calls = []
         for read in name.reads:
-            call = _call_of(read)
-            if call is not None and not call.arguments and dominance.binding_established_before(name, call):
+            call = enclosing_operator(read)
+            if (
+                isinstance(call, JsCallExpression)
+                and is_invocation_target(read)
+                and not call.arguments
+                and dominance.binding_established_before(name, call)
+            ):
                 calls.append(call)
         return calls
 
     @staticmethod
-    def _line_break_subject(model: SemanticModel, effects: EffectModel, check: Node) -> JsIdentifier | None:
+    def _line_break_subject(model: SemanticModel, effects: EffectModel, check: JsFunctionNode) -> JsIdentifier | None:
         """
-        The name whose text *check* tests for a line break: *check* has no parameters, and its body
+        The name whose text *check* tests for a line break: *check* has no parameters, its call
+        answers what its body returns rather than a promise or a generator for it, and its body
         constructs `RegExp` from a line break and returns what its `test` answers for that name,
         through a constant or directly.
         """
-        if getattr(check, 'params', None):
+        if check.params or wraps_return(check):
             return None
-        body = _body(check)
+        body = statement_list_of(check)
         if not body or len(body) > 2:
             return None
         last = body[-1]
@@ -707,7 +729,8 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
     ) -> JsVariableDeclarator | None:
         """
         The declarator of the hash the test of *guard* compares, when that hash equals the constant
-        it is compared to.
+        it is compared to. The declaration has to be a statement of its own, which the hash call it
+        evaluates can replace, and no importer may read the name it declares.
         """
         test = strip_parens(guard.test)
         if not isinstance(test, JsBinaryExpression) or test.operator not in ('==', '==='):
@@ -722,6 +745,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
             or binding.reads != [name]
             or binding.writes
             or binding.dynamic_refs
+            or binding.exported
             or len(binding.declarations) != 1
         ):
             return None
@@ -731,10 +755,11 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         declaration = declarator.parent
         if not isinstance(declaration, JsVariableDeclaration) or len(declaration.declarations) != 1:
             return None
-        if not dominance.binding_established_before(binding, name):
+        holder = declaration.parent
+        if holder is None or not any(statement is declaration for statement in statement_list_of(holder) or ()):
             return None
         hashed = recognizer.hashed(self._hash_call(model, effects, dominance, declarator.init))
-        if hashed is None:
+        if hashed is None or not dominance.binding_established_before(binding, name):
             return None
         subject_binding, subject = recognizer.function_held_by(hashed.subject)
         if subject_binding is None or subject is None or subject.source_text is None:
@@ -752,8 +777,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
             return None
         if not effects.read_chain_intact(type(subject)):
             return None
-        text = ''.join(character for character in subject.source_text if character not in _STRIPPED_CHARACTERS)
-        if cyrb53(text, hashed.seed) != expected:
+        if cyrb53(re.sub(_STRIPPED_PATTERN, '', subject.source_text), hashed.seed) != expected:
             return None
         return declarator
 
@@ -766,7 +790,9 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
     ) -> Node | None:
         """
         The hash call *init* makes: *init* itself, or the call it keeps in a property of the one
-        function `F` a name holds, as `F.P || (F.P = call)`.
+        function `F` a name holds, as `F.P || (F.P = call)`. The key `P` has to be one a function
+        object does not have before the program writes it: `F.name || …` answers the name, and the
+        call never runs.
         """
         init = strip_parens(init)
         if isinstance(init, JsCallExpression):
@@ -781,7 +807,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         if store.operator != '=' or not isinstance(write, JsMemberExpression) or read.optional:
             return None
         key = static_property_key(read)
-        if key is None or static_property_key(write) != key:
+        if key is None or key in FUNCTION_MEMBERS or static_property_key(write) != key:
             return None
         owner = strip_parens(read.object)
         other = strip_parens(write.object)

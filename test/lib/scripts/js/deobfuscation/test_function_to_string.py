@@ -7,6 +7,7 @@ synthesizer would write it. Retired from `test.lib.scripts.js.test_release_block
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -95,6 +96,20 @@ A_FUNCTION_STRINGIFIES_TO_ITS_WRITTEN_SOURCE = {
         'console.log(size(W));\n'
         "console.log('function W(a) { return a + 1; }');",
     ),
+    'a function expression written into String': (
+        inspect.cleandoc('''
+            function f() { return String(function (a) { return a; }); }
+            console.log(f());
+        '''),
+        "console.log('function (a) { return a; }');",
+    ),
+    'an arrow written into a template': (
+        inspect.cleandoc('''
+            function f() { return `${(a) => a}`; }
+            console.log(f());
+        '''),
+        "console.log('(a) => a');",
+    ),
 }
 
 
@@ -172,7 +187,8 @@ class TestAClassMemberExcludesALeadingStatic(TestBase):
 
 #: Programs that give a function a `toString` of its own before converting it, each through a
 #: route that reaches the function somewhere other than the conversion, mapped to what Node prints
-#: for each. The text the function was written with is not what such a conversion answers.
+#: for each. The text the function was written with is not what such a conversion answers. An
+#: assignment that is not a statement of its own is such a route: its value is the function.
 A_FUNCTION_GIVEN_A_TOSTRING_OF_ITS_OWN = {
     'function W(a) { return a + 1; }\n'
     'W.toString = function () { return "x"; };\n'
@@ -224,6 +240,30 @@ A_FUNCTION_GIVEN_A_TOSTRING_OF_ITS_OWN = {
     'globalThis.String = function () { return "x"; };\n'
     'function f() { return String(W); }\n'
     'console.log(f());\n':
+        'x\n',
+    inspect.cleandoc('''
+        var W;
+        function mark(g) { g.toString = function () { return "x"; }; }
+        mark(W = function (a) { return a + 1; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        var W;
+        var g = (W = function (a) { return a + 1; });
+        g.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        var W, g;
+        g = W = function (a) { return a + 1; };
+        g.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
         'x\n',
 }
 

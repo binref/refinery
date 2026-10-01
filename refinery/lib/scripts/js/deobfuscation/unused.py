@@ -239,43 +239,45 @@ def _reachable_functions(
     calls survive too — the transitive closure below then does that work — which matters because the
     entrypoint is typically the root of the whole program.
 
-    Functions that are only referenced as the object of property-write statements
-    (`funcName.prop = ...`) where neither the function nor its properties are read anywhere else
-    are considered unreachable, unless they are in *entrypoints*: code outside *body* reaches those,
-    and what it reads of them is not in *body* to see. The body of another reachable function is
-    somewhere else too: `W.extra = 1` beside a reachable `function f() { return typeof W; }` leaves
-    `W` read. Returns a `(set, dict)` pair: the set of reachable function names and a dict mapping
-    each write-only function name to the statements that are its only references.
+    A function whose only references in *body* are property-write statements (`funcName.prop =
+    ...`), with neither the function nor its properties read anywhere else in *body*, is
+    write-only. Those statements do not make it reachable: it is reachable only where the body of
+    another reachable function names it, as a reachable `f` returning `W.extra` names `W`, and
+    once it is, the names its statements hold are reachable too. Two write-only functions that
+    only name each other stay unreachable. A name in *entrypoints* is never write-only: code
+    outside *body* reaches it, and what it reads of it is not in *body* to see. Returns a
+    `(set, dict)` pair: the set of reachable function names and a dict mapping each unreachable
+    write-only function name to the statements that are its only references.
     """
     referenced: set[str] = set()
+    named: list[tuple[Statement, set[str]]] = []
     for stmt in body:
         if isinstance(stmt, JsFunctionDeclaration):
             continue
-        referenced |= collect_identifier_names(stmt)
-    reachable = referenced & functions.keys()
-    reachable |= entrypoints & functions.keys()
-    named_in: dict[str, set[str]] = {}
+        names = collect_identifier_names(stmt)
+        named.append((stmt, names))
+        referenced |= names
+    write_only: dict[str, list[Statement]] = {}
+    for name in (referenced & functions.keys()) - entrypoints:
+        stmts = _classify_property_write_only(body, name)
+        if stmts is not None:
+            write_only[name] = stmts
+    written = {id(stmt) for stmts in write_only.values() for stmt in stmts}
+    reachable: set[str] = set(entrypoints & functions.keys())
+    for stmt, names in named:
+        if id(stmt) not in written:
+            reachable |= names & functions.keys()
     frontier = list(reachable)
     while frontier:
         name = frontier.pop()
-        named_in[name] = collect_identifier_names(functions[name])
-        for ident_name in named_in[name]:
+        names = collect_identifier_names(functions[name])
+        for stmt in write_only.get(name, ()):
+            names |= collect_identifier_names(stmt)
+        for ident_name in names:
             if ident_name in functions and ident_name not in reachable:
                 reachable.add(ident_name)
                 frontier.append(ident_name)
-    read_by_a_function = {
-        name for name in reachable
-        if any(name in names for other, names in named_in.items() if other != name)
-    }
-    write_only_stmts: dict[str, list[Statement]] = {}
-    for name in list(reachable - entrypoints - read_by_a_function):
-        if name not in functions:
-            continue
-        stmts = _classify_property_write_only(body, name)
-        if stmts is not None:
-            reachable.discard(name)
-            write_only_stmts[name] = stmts
-    return reachable, write_only_stmts
+    return reachable, {name: stmts for name, stmts in write_only.items() if name not in reachable}
 
 
 def _classify_property_write_only(

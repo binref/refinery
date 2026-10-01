@@ -88,7 +88,6 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsConditionalExpression,
     JsDoWhileStatement,
-    JsExpressionStatement,
     JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
@@ -124,6 +123,7 @@ from refinery.lib.scripts.js.model import (
     static_property_key,
     static_string,
     strip_parens,
+    value_is_discarded,
     wraps_return,
 )
 
@@ -266,8 +266,8 @@ _TESTED_FORMS = (
 def _spells_caller(root: Node) -> bool:
     """
     Whether the text spells the name `caller` anywhere: as a name, a property key or a string. In
-    sloppy mode `g.caller` is whichever function called `g`, so a program spelling it can reach every
-    function that calls another one without naming it.
+    sloppy mode `g.caller` is whichever function called `g`, so a program spelling it can reach
+    every function that calls another one without naming it.
     """
     for node in root.walk():
         if isinstance(node, JsIdentifier):
@@ -280,21 +280,6 @@ def _spells_caller(root: Node) -> bool:
             if static_property_key(node) == 'caller':
                 return True
     return False
-
-
-def _function_stays_where_written(function: Node, binding: Binding | None) -> bool:
-    """
-    Whether the function literal *function* hands its object to nothing where it is written: it is a
-    declaration, the initializer or assigned value of the name *binding*, or the callee of a call.
-    """
-    if isinstance(function, JsFunctionDeclaration):
-        return binding is not None
-    parent = enclosing_operator(function)
-    if isinstance(parent, JsVariableDeclarator) and strip_parens(parent.init) is function:
-        return binding is not None
-    if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.right) is function:
-        return binding is not None
-    return isinstance(parent, JsCallExpression) and strip_parens(parent.callee) is function
 
 
 def _arguments_name_their_function(function: Node) -> bool:
@@ -1019,6 +1004,8 @@ class EffectModel:
         self._mutators_escape_cache: dict[int, bool] = {}
         self._some_mutator_cache: dict[int, bool] = {}
         self._spells_caller: bool | None = None
+        self._function_untouched_cache: dict[tuple[Node, frozenset[Node]], bool] = {}
+        self._name_in_place_cache: dict[tuple[Binding, int, frozenset[Node]], bool] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -1419,9 +1406,10 @@ class EffectModel:
         and an argument passed to a statically known function (`f(ref)`) keeps it when the parameter it
         binds is itself an immutable container — interprocedural Case B, the parameter's own references
         decide whether the callee mutates or further-escapes it. Every other escape is conservatively
-        unsafe.
+        unsafe, an assignment that is no statement of its own among them: `var x = (y = ref)` stores
+        the container in `x` as well as in `y`.
         """
-        alias = self._alias_target(ref)
+        alias = self._alias_holding(ref)
         if alias is not None:
             return self._immutable_container(alias, visiting, member_calls_mutate)
         return self._argument_keeps_container(ref, visiting)
@@ -1554,21 +1542,6 @@ class EffectModel:
         post-reassignment value.
         """
         return unambiguous_callee(self.model, call)
-
-    def _alias_target(self, ref: JsIdentifier) -> Binding | None:
-        parent = ref.parent
-        if isinstance(parent, JsVariableDeclarator) and parent.init is ref:
-            if isinstance(parent.id, JsIdentifier):
-                return self.model.binding_of(parent.id)
-            return None
-        if (
-            isinstance(parent, JsAssignmentExpression)
-            and parent.right is ref
-            and parent.operator == '='
-            and isinstance(parent.left, JsIdentifier)
-        ):
-            return self.model.resolve(parent.left)
-        return None
 
     def _collect_functions(self) -> list[Node]:
         functions: list[Node] = [self.model.root]
@@ -2180,9 +2153,9 @@ class EffectModel:
 
     def trusted_intrinsic_name(self, name: str) -> bool:
         """
-        `trusted_intrinsic` for a caller that holds a global name rather than a node spelling it: a
-        regular-expression literal builds its object from `RegExp` without naming it, so a fold
-        deciding what `/a/g` matches has no identifier to ask about.
+        `EffectModel.trusted_intrinsic` for a caller that holds a global name rather than a node
+        spelling it: a regular-expression literal builds its object from `RegExp` without naming it,
+        so a fold deciding what `/a/g` matches has no identifier to ask about.
         """
         if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
             return False
@@ -2330,50 +2303,72 @@ class EffectModel:
         beside the prototype chain, and so does a fold deciding what its text is:
         `W.toString = f` changes what `String(W)` answers without touching any prototype.
 
-        The object is reached only through the names holding it — its declaring name, a named
-        expression's own name — or as the value of a property of an object literal that one name
-        holds as a read-only container. Every read of those names has to leave the object where it
-        is: call it, run `call` or `apply` on it, read its `toString`, `name` or `length`, convert,
-        compare or test it, or hand it to `String` while `String` is the built-in. A read may also
-        copy it into another name, or hand it to a parameter of a function the call certainly
-        runs, when the reads of that name or parameter answer the same question in turn, up to
-        `_FUNCTION_FOLLOW_LIMIT` steps. The left of `instanceof` is handed to a method of the right
-        operand, a tagged template hands its holes to the tag, and `new` hands the function to its
-        own body as `new.target` and to the object it builds as its `constructor`, so none of these
-        leave it in place. Its body may use its own `arguments` only by index, length, spread or as
-        the second argument of `apply`, since `arguments.callee` is the function. A program that
-        spells `caller` anywhere is refused: `g.caller` is whichever function called `g`.
+        The object is reached only through the names holding it — its declaring name, the one name
+        a declarator or an assignment statement stores it into, a named expression's own name — or
+        as the value of a property of an object literal that one name holds as a read-only
+        container, and a literal no name holds is reached only where it is written. An assignment
+        that is not a statement of its own hands its value on as well, as `f(W = function () {})`
+        does, so a function written there is not left in place. Every read of those names, and the
+        position of a literal no name holds, has to leave the object where it is: call it, run
+        `call` or `apply` on it, read its `toString`, `name` or `length`, convert, compare or test
+        it, or hand it to `String` while `String` is the built-in. A read may also copy it into
+        another name, or hand it to a parameter of a function the call certainly runs, when the
+        reads of that name or parameter answer the same question in turn, up to
+        `_FUNCTION_FOLLOW_LIMIT` steps. The left of
+        `instanceof` is handed to a method of the right operand, a tagged template hands its holes
+        to the tag, and `new` hands the function to its own body as `new.target` and to the object
+        it builds as its `constructor`, so none of these leave it in place. Its body may use its own
+        `arguments` only by index, length, spread or as the second argument of `apply`, since
+        `arguments.callee` is the function. A program that spells `caller` anywhere is refused:
+        `g.caller` is whichever function called `g`.
+
+        The answer is fixed for the model's lifetime, so it is memoized per function and set of
+        exempt reads: every conversion of a function the interpreter folds asks it again.
         """
+        spared = frozenset(exempt)
+        key = (function, spared)
+        cached = self._function_untouched_cache.get(key)
+        if cached is None:
+            cached = self._function_untouched_cache[key] = self._function_object_untouched(function, spared)
+        return cached
+
+    def _function_object_untouched(self, function: Node, spared: frozenset[Node]) -> bool:
         if self._spells_caller is None:
             self._spells_caller = _spells_caller(self.model.root)
-        if self._spells_caller:
+        if self._spells_caller or _arguments_name_their_function(function):
             return False
+        if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
+            own = self.model.binding_of(function.id)
+            if own is not None and not self._name_leaves_function_in_place(own, spared, 0):
+                return False
+        if isinstance(function, JsFunctionDeclaration):
+            binding = self.model.binding_of(function.id) if isinstance(function.id, JsIdentifier) else None
+            return binding is not None and self._name_leaves_function_in_place(binding, spared, 0)
         method = self._method_of_a_read_only_object(function)
         if method is not None:
             return method
-        binding = self.model.invocation_binding(function)
-        if not _function_stays_where_written(function, binding):
-            return False
-        names = [] if binding is None else [binding]
-        if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
-            own = self.model.binding_of(function.id)
-            if own is not None:
-                names.append(own)
-        spared = {id(node) for node in exempt}
-        if not all(self._name_leaves_function_in_place(name, spared, 0) for name in names):
-            return False
-        return not _arguments_name_their_function(function)
+        name = self._alias_holding(function)
+        if name is not None:
+            return self._name_leaves_function_in_place(name, spared, 0)
+        return self._leaves_function_in_place(function, 0)
 
-    def _name_leaves_function_in_place(self, name: Binding, spared: set[int], depth: int) -> bool:
+    def _name_leaves_function_in_place(self, name: Binding, spared: frozenset[Node], depth: int) -> bool:
         """
         Whether every read of the name *name*, which may hold a function object, leaves that object
-        in place, the reads in *spared* aside.
+        in place, the reads in *spared* aside. Memoized: a parameter is asked once for every read
+        that hands a function to it.
         """
-        if name.exported or name.written_at_entry or name.reachable_through_a_handed_object:
-            return False
-        if self.model.reflection_can_reach(name):
-            return False
-        return all(id(read) in spared or self._leaves_function_in_place(read, depth) for read in name.reads)
+        key = (name, depth, spared)
+        cached = self._name_in_place_cache.get(key)
+        if cached is None:
+            cached = self._name_in_place_cache[key] = (
+                not name.exported
+                and not name.written_at_entry
+                and not name.reachable_through_a_handed_object
+                and not self.model.reflection_can_reach(name)
+                and all(read in spared or self._leaves_function_in_place(read, depth) for read in name.reads)
+            )
+        return cached
 
     def _method_of_a_read_only_object(self, function: Node) -> bool | None:
         """
@@ -2408,7 +2403,7 @@ class EffectModel:
             taken = static_property_key(member)
             if (taken is None or taken == key) and not self._leaves_function_in_place(member, 0):
                 return False
-        return not _arguments_name_their_function(function)
+        return True
 
     def _leaves_function_in_place(self, read: Node, depth: int) -> bool:
         """
@@ -2426,8 +2421,8 @@ class EffectModel:
         if isinstance(parent, (JsVariableDeclarator, JsAssignmentExpression)):
             if depth >= _FUNCTION_FOLLOW_LIMIT:
                 return False
-            alias = self._alias_holding(parent, read)
-            return alias is not None and self._name_leaves_function_in_place(alias, set(), depth + 1)
+            alias = self._alias_holding(read)
+            return alias is not None and self._name_leaves_function_in_place(alias, frozenset(), depth + 1)
         if isinstance(parent, JsTaggedTemplateExpression):
             return strip_parens(parent.tag) is read
         if isinstance(parent, JsMemberExpression):
@@ -2446,18 +2441,23 @@ class EffectModel:
             return strip_parens(parent.test) is read
         return False
 
-    def _alias_holding(self, store: JsVariableDeclarator | JsAssignmentExpression, read: Node) -> Binding | None:
+    def _alias_holding(self, read: Node) -> Binding | None:
         """
-        The name *store* copies the value read at *read* into, when *store* is a declarator or an
-        assignment statement whose target is a name and *read* is the whole value it stores.
+        The one name the value read at *read* is stored into, when *read* is the whole value a
+        declarator or an assignment whose own value is discarded stores into a name. An assignment
+        whose value is used hands it on as well, so its target is not the one name holding the
+        value: `f(x = ref)` and `var y = (x = ref)`.
         """
+        store = enclosing_operator(read)
         if isinstance(store, JsVariableDeclarator):
             if strip_parens(store.init) is not read or not isinstance(store.id, JsIdentifier):
                 return None
             return self.model.binding_of(store.id)
+        if not isinstance(store, JsAssignmentExpression):
+            return None
         if store.operator != '=' or strip_parens(store.right) is not read:
             return None
-        if not isinstance(enclosing_operator(store), JsExpressionStatement):
+        if not value_is_discarded(store):
             return None
         target = strip_parens(store.left)
         if not isinstance(target, JsIdentifier):
@@ -2476,13 +2476,8 @@ class EffectModel:
         callee = self.unambiguous_callee(call)
         if callee is None or not all(isinstance(param, JsIdentifier) for param in callee.params):
             return False
-        if not isinstance(callee, JsArrowFunctionExpression):
-            scope = self.model.parameter_scope(callee)
-            if scope is None:
-                return False
-            own = scope.bindings.get('arguments')
-            if own is not None and (self.model.references(own) or self.model.reflection_can_reach(own)):
-                return False
+        if self._callee_uses_arguments(callee):
+            return False
         position = None
         for index, argument in enumerate(call.arguments):
             if isinstance(argument, JsSpreadElement):
@@ -2496,7 +2491,7 @@ class EffectModel:
             return True
         param = callee.params[position]
         binding = self.model.binding_of(param) if isinstance(param, JsIdentifier) else None
-        return binding is not None and self._name_leaves_function_in_place(binding, set(), depth + 1)
+        return binding is not None and self._name_leaves_function_in_place(binding, frozenset(), depth + 1)
 
     def call_is_foldable(
         self,

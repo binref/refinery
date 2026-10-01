@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    FUNCTION_MEMBERS,
     OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     UNARY_OPS,
@@ -89,17 +90,6 @@ from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
 
 _OBJECT_PROTO_PROPERTIES = OBJECT_PROTOTYPE_MEMBERS
-
-_FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
-    'apply',
-    'arguments',
-    'bind',
-    'call',
-    'caller',
-    'length',
-    'name',
-    'prototype',
-})
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
 
@@ -347,13 +337,13 @@ class JsSimplifications(Transformer):
         if not self.dominance.binding_established_before(binding, right):
             return None
         if isinstance(value, FUNCTION_NODES):
-            members, receiver_type = _FUNCTION_PROPERTIES, JsFunctionExpression
+            members, receiver_type = FUNCTION_MEMBERS, JsFunctionExpression
         elif isinstance(value, (JsClassDeclaration, JsClassExpression)):
             if value.super_class is not None:
                 return None
             if value.body is not None and value.body.body:
                 return None
-            members, receiver_type = _FUNCTION_PROPERTIES, JsFunctionExpression
+            members, receiver_type = FUNCTION_MEMBERS, JsFunctionExpression
         elif isinstance(value, JsObjectExpression) and not value.properties:
             members, receiver_type = _EMPTY_OBJECT_PROPERTIES, dict
         else:

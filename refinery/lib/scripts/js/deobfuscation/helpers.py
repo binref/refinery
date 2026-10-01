@@ -179,6 +179,22 @@ an object that does not own it resolves through the prototype rather than to `un
 that treats an absent own-property as `undefined` must leave these intact.
 """
 
+FUNCTION_MEMBERS = OBJECT_PROTOTYPE_MEMBERS | frozenset({
+    'apply',
+    'arguments',
+    'bind',
+    'call',
+    'caller',
+    'length',
+    'name',
+    'prototype',
+})
+"""
+The members a function object answers for before a program writes any: its own `length`, `name`
+and `prototype`, the legacy `arguments` and `caller`, and what `Function.prototype` and
+`Object.prototype` supply.
+"""
+
 STRING_PROTOTYPE_METHODS = frozenset({
     'anchor', 'at', 'big', 'blink', 'bold', 'charAt', 'charCodeAt', 'codePointAt', 'concat',
     'endsWith', 'fixed', 'fontcolor', 'fontsize', 'includes', 'indexOf', 'isWellFormed', 'italics',
@@ -341,8 +357,9 @@ def coerces_uninterceptably(effects: EffectModel | None, value: Value) -> bool:
     dictionaries, so a program can have written one only as an own property — and the prototype
     chain that would supply them is still the one the language describes, which
     `EffectModel.read_chain_intact` answers. A function is an object the program holds, and it may
-    have given the function a `toString` of its own, which `EffectModel.function_object_untouched`
-    rules out. An array converts element-wise, so each element has to answer this question too.
+    have given the function a `toString` of its own, which
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_object_untouched` rules out. An
+    array converts element-wise, so each element has to answer this question too.
 
     A caller with no effect model gets `False` for every object: the interpreter used on one
     expression in isolation cannot see the file the expression came from, and whether anything
