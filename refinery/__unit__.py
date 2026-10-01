@@ -21,6 +21,7 @@ UNITS = {
     'bz2'                                        : 'refinery.units.compression.bz2',
     'decompress'                                 : 'refinery.units.compression.decompress',
     'flz'                                        : 'refinery.units.compression.flz',
+    'huffman'                                    : 'refinery.units.compression.huffman',
     'jcalg'                                      : 'refinery.units.compression.jcalg',
     'lzma'                                       : 'refinery.units.compression.lz',
     'lz4'                                        : 'refinery.units.compression.lz4',

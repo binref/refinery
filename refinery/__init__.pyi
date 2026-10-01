@@ -22,6 +22,7 @@ from refinery.units.compression.brotli import brotli as brotli
 from refinery.units.compression.bz2 import bz2 as bz2
 from refinery.units.compression.decompress import decompress as decompress
 from refinery.units.compression.flz import flz as flz
+from refinery.units.compression.huffman import huffman as huffman
 from refinery.units.compression.jcalg import jcalg as jcalg
 from refinery.units.compression.lz import lzma as lzma
 from refinery.units.compression.lz4 import lz4 as lz4
