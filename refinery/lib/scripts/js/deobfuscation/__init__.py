@@ -89,13 +89,6 @@ _pipeline = DeobfuscationPipeline(
         'resolve': {'fold'},
         'cleanup': {'fold'},
     },
-    invalidators={
-        'unpack': {'normalize', 'fold', 'resolve', 'cleanup'},
-        'normalize': {'fold', 'resolve', 'cleanup', 'unpack'},
-        'fold': {'normalize', 'resolve', 'cleanup', 'unpack'},
-        'resolve': {'normalize', 'fold', 'unpack'},
-        'cleanup': {'fold'},
-    },
 )
 
 

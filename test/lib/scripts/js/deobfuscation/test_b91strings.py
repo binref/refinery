@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import inspect
 import lzma
-import unittest
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
@@ -115,12 +114,11 @@ class TestStringConcealing(TestJsDeobfuscator):
             self._deobfuscate(source),
         )
 
-    @unittest.expectedFailure
     def test_accessor_recognizable_once_its_unused_declarations_are_removed_is_resolved(self):
         """
         The accessor declares two variables it never uses, so it has four statements and does not
         match the accessor pattern until unused-code removal drops them. That removal runs after
-        string decoding and does not make it run again, so the calls stay undecoded.
+        string decoding, and a change in any group runs string decoding again.
         """
         accessor = self._access_js('accessor', 'cache', 'decode')
         accessor[1:1] = ['    var unused;', '    var other;']

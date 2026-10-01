@@ -1981,7 +1981,7 @@ A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL = {
     AN_ALIAS_CALL_READING_A_LOCAL_OF_ITS_CALLER: (
         'function f() {\n'
         '  try {\n'
-        "    return (0, eval)('loc');\n"
+        '    return loc;\n'
         '  } catch (e) {\n'
         '    return e.constructor.name;\n'
         '  }\n'
@@ -1990,7 +1990,7 @@ A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL = {
     ),
     AN_ALIAS_CALL_UNDER_A_TYPEOF_GUARD: (
         'function f() {\n'
-        "  return typeof (0, eval)('typeof loc');\n"
+        '  return typeof typeof loc;\n'
         '}\n'
         'console.log(f());'
     ),
@@ -2026,9 +2026,10 @@ class TestACallThroughANameBoundToEvalStaysIndirect(TestJsDeobfuscator):
     into a callee position instead — the spelling for the call the alias made, and one
     `test.lib.scripts.js.deobfuscation.test_simplify` pins as a sequence no collapse takes apart.
 
-    The texts are the module reading. The script reading hands the same programs to
-    `refinery.lib.scripts.js.deobfuscation.reflection`, which resolves the indirect eval against
-    the global scope itself, and the text it writes witnesses that pass instead of this rule.
+    The constant inliner alone writes `(0, eval)('loc')`, as the tests below pin. In the whole
+    deobfuscation, unused-code removal then drops the local `loc`, and
+    `refinery.lib.scripts.js.deobfuscation.reflection` resolves the indirect eval against the
+    global scope and writes the name it reads, which nothing local shadows any more.
     """
 
     def test_the_name_eval_is_never_written_into_a_callee_position(self):
