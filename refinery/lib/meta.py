@@ -121,7 +121,7 @@ import re
 import string
 
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable, MutableMapping
 
 from refinery.lib.environment import environment
 from refinery.lib.mime import get_cached_file_magic_info
@@ -455,7 +455,7 @@ class _NoDerivationAvailable(Exception):
     pass
 
 
-class _LazyMetaMeta(type):
+class _LazyMetaMeta(abc.ABCMeta):
     def __new__(cls, name: str, bases, namespace: dict):
         derivations: dict = namespace['derivations']
         for obj in namespace.values():
@@ -501,7 +501,7 @@ STRING_FORMAT_HELP = inspect.cleandoc(
 )
 
 
-class LazyMetaOracle(metaclass=_LazyMetaMeta):
+class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
     unit. For example, a SHA-256 hash is computed only as soon as the oracle is accessed at the
@@ -560,16 +560,15 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         else:
             self.history = {}
 
-    def update(self, other: dict | LazyMetaOracle):
-        if isinstance(other, LazyMetaOracle):
+    def update(self, other=(), /, **kwds):
+        if type(other) is LazyMetaOracle:
             self.current.update(other.current)
             self.updated.update(other.updated)
             self.tempval.update(other.tempval)
             self.rescope.update(other.rescope)
             self.history = other.history
-            return
-        for key, value in other.items():
-            self[key] = value
+            other = ()
+        return super().update(other, **kwds)
 
     def inherit(self, parent: LazyMetaOracle):
         """
@@ -686,24 +685,14 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             del serializable[key]
         return serializable
 
-    def items(self):
-        yield (_INDEX, self.index)
-        yield from self.tempval.items()
-        yield from self.current.items()
-
-    def keys(self):
-        yield _INDEX
-        yield from self.tempval.keys()
-        yield from self.current.keys()
-
     def variable_names(self):
         yield _INDEX
         yield from self.current.keys()
 
-    def values(self):
-        yield from (v for _, v in self.items())
-
-    __iter__ = keys
+    def __iter__(self):
+        yield _INDEX
+        yield from self.tempval.keys()
+        yield from self.current.keys()
 
     def format_str(
         self,
@@ -979,7 +968,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         except KeyError:
             return default
 
-    def pop(self, key, default=nodefault):
+    def pop(self, key: str, default: Any = nodefault) -> Any:
         try:
             value = self[key]
         except KeyError:

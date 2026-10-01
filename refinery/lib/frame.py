@@ -125,6 +125,7 @@ from typing import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     SupportsIndex,
     overload,
 )
@@ -214,7 +215,7 @@ class Chunk(bytearray):
         data: buf | None = None,
         path: list[int] | None = None,
         view: list[bool] | None = None,
-        meta: dict[str, Any] | None = None,
+        meta: Mapping[str, Any] | None = None,
         seed: dict[str, list] | None = None,
         fill_scope: bool | None = None,
         fill_batch: int | None = None,

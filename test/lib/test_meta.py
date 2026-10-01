@@ -42,7 +42,7 @@ class TestMeta(TestBase):
 
     def test_costly_variable_is_discarded(self):
         out, = L('emit rep[0x2000]:X [| cm sha256 | snip 1: ]')
-        self.assertNotIn('sha256', out.meta.keys())
+        self.assertNotIn('sha256', out.meta.variable_names())
 
     def test_cheap_variable_is_not_discarded(self):
         out, = L('emit rep[0x100]:X [| cm sha256 | snip 1: | mvg ]')

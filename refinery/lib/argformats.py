@@ -116,6 +116,7 @@ from typing import (
     Callable,
     Iterable,
     Mapping,
+    MutableMapping,
     TypeVar,
     get_type_hints,
     overload,
@@ -239,7 +240,7 @@ class PythonExpression:
     def __str__(self):
         return self.definition
 
-    def __call__(self, mapping: dict | None = None, **values):
+    def __call__(self, mapping: MutableMapping[str, Any] | None = None, **values):
         if mapping is not None:
             values, tmp = mapping, values
             values.update(tmp)
@@ -257,7 +258,7 @@ class PythonExpression:
         return cls(definition, all_variables_allowed=True)
 
     @classmethod
-    def Evaluate(cls, definition: str, values: dict):
+    def Evaluate(cls, definition: str, values: MutableMapping[str, Any]):
         """
         Creates a new `refinery.lib.argformats.PythonExpression` object based on `definition` and
         evaluates it based on the variable mapping `values`. If a variable used in the expression
@@ -547,7 +548,7 @@ class DelayedArgumentDispatch:
         return _register
 
 
-def LazyPythonExpression(expression: str, variables: dict | None = None) -> MaybeDelayedType[Any]:
+def LazyPythonExpression(expression: str, variables: MutableMapping[str, Any] | None = None) -> MaybeDelayedType[Any]:
     """
     Wraps the given expression for use as a `refinery.lib.argformats.multibin` expression. If it
     contains no variables, the expression is evaluated immediately, otherwise the function returns
