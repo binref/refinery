@@ -2786,3 +2786,75 @@ class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
             'if (x) {}\na();',
             self._remove_unused('if (x) {\n  ;\n}\na();'),
         )
+
+
+class TestAFunctionAnotherFunctionReadsIsKept(TestJsDeobfuscator):
+    """
+    A function whose only top-level references write its properties is removed with those writes,
+    but a reference from the body of a function the program reaches is a read the removal has to
+    count too.
+    """
+
+    def _remove_unused(self, source: str) -> str:
+        return self._run_transformer(source, JsUnusedCodeRemoval)
+
+    def test_a_function_whose_property_another_function_reads_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function W(a) {
+              return a + 1;
+            }
+            W.extra = 1;
+            function f() {
+              return W.extra;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_a_function_only_its_property_writes_reference_is_removed(self):
+        source = inspect.cleandoc(
+            """
+            function W(a) {
+              return a + 1;
+            }
+            W.extra = 1;
+            console.log(2);
+            """
+        )
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
+
+#: Programs whose top level only writes a property of a function another function reads, mapped
+#: to what Node prints for each.
+A_FUNCTION_ANOTHER_FUNCTION_READS = {
+    inspect.cleandoc("""
+        function W(a) { return a + 1; }
+        W.extra = 1;
+        function f() { return W(1) + W.extra; }
+        console.log(f());
+    """): '3\n',
+    inspect.cleandoc("""
+        function W(a) { return a + 1; }
+        W.extra = 2;
+        function g() { return W.extra; }
+        function f() { return g() * 3; }
+        console.log(f());
+    """): '6\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator):
+
+    def test_the_function_is_kept_for_the_function_that_reads_it(self):
+        """
+        Removing the function together with its property write turns the read in the other
+        function into a `ReferenceError`.
+        """
+        rows = A_FUNCTION_ANOTHER_FUNCTION_READS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

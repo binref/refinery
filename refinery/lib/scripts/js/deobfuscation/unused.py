@@ -242,9 +242,10 @@ def _reachable_functions(
     Functions that are only referenced as the object of property-write statements
     (`funcName.prop = ...`) where neither the function nor its properties are read anywhere else
     are considered unreachable, unless they are in *entrypoints*: code outside *body* reaches those,
-    and what it reads of them is not in *body* to see. Returns a `(set, dict)` pair: the set of
-    reachable function names and a dict mapping each write-only function name to the statements
-    that are its only references.
+    and what it reads of them is not in *body* to see. The body of another reachable function is
+    somewhere else too: `W.extra = 1` beside a reachable `function f() { return typeof W; }` leaves
+    `W` read. Returns a `(set, dict)` pair: the set of reachable function names and a dict mapping
+    each write-only function name to the statements that are its only references.
     """
     referenced: set[str] = set()
     for stmt in body:
@@ -253,16 +254,21 @@ def _reachable_functions(
         referenced |= collect_identifier_names(stmt)
     reachable = referenced & functions.keys()
     reachable |= entrypoints & functions.keys()
+    named_in: dict[str, set[str]] = {}
     frontier = list(reachable)
     while frontier:
         name = frontier.pop()
-        func = functions[name]
-        for ident_name in collect_identifier_names(func):
+        named_in[name] = collect_identifier_names(functions[name])
+        for ident_name in named_in[name]:
             if ident_name in functions and ident_name not in reachable:
                 reachable.add(ident_name)
                 frontier.append(ident_name)
+    read_by_a_function = {
+        name for name in reachable
+        if any(name in names for other, names in named_in.items() if other != name)
+    }
     write_only_stmts: dict[str, list[Statement]] = {}
-    for name in list(reachable - entrypoints):
+    for name in list(reachable - entrypoints - read_by_a_function):
         if name not in functions:
             continue
         stmts = _classify_property_write_only(body, name)
