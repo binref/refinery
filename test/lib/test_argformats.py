@@ -268,3 +268,13 @@ class TestArgumentFormats(TestBase):
         self.assertEqual(
             argformats.multibin('!h:h:DEADBEEF'),
             b'DEADBEEF')
+
+    def test_option_factory_distinguishes_values_and_case_sensitivity(self):
+        strict = argformats.OptionFactory({'CBC': 2, 'ECB': 1})
+        shifted = argformats.OptionFactory({'CBC': 99, 'ECB': 1})
+        folded = argformats.OptionFactory({'CBC': 2, 'ECB': 1}, ignorecase=True)
+        self.assertIsNot(strict, shifted)
+        self.assertIsNot(strict, folded)
+        self.assertEqual(strict('CBC').value, 2)
+        self.assertEqual(shifted('CBC').value, 99)
+        self.assertEqual(folded('cbc').value, 2)
