@@ -112,7 +112,11 @@ find the mechanism that already answers it and every guard on the code paths the
 Most designs are placement problems:
 A new mechanism needs evidence that no existing one already owns the question.
 
-**Falsify claims.** For each claim that can be falsified by a short script, run that script.
+**Falsify claims, including the unstated ones.** Your design may rest on implicit assumptions:
+That the code it removes does nothing else, that a check it reuses covers this case,
+that the shape it matches is the only shape, that its cost stays linear.
+Write these assumptions down in the plan. For each one, build the input that would break it and run it.
+A run on data you already have only tests what that data contains.
 
 When you are about to present your plan, first ask yourself:
 - Are you confident in this plan?
