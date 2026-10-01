@@ -5,7 +5,8 @@ from urllib.parse import urlunparse
 
 from refinery.lib.frame import Chunk
 from refinery.lib.meta import MV
-from refinery.units import Unit
+from refinery.lib.types import Param
+from refinery.units import Arg, Unit
 from refinery.units.formats.httpresponse import httpresponse
 from refinery.units.formats.httprequest import httprequest
 
@@ -58,6 +59,15 @@ class http(Unit):
     requests and responses. Each extracted HTTP response body is emitted with the requested URL
     attached as the `url` variable.
     """
+    def __init__(
+        self,
+        requests : Param[bool, Arg.Switch('-r', group='R', help='show only data from requests')] = False,
+        responses: Param[bool, Arg.Switch('-q', group='R', help='show only response bodies')] = False,
+    ):
+        if not requests and not responses:
+            requests = responses = True
+        super().__init__(requests=requests, responses=responses)
+
     @classmethod
     def handles(cls, data) -> bool | None:
         return httpresponse.handles(data) or httprequest.handles(data)
@@ -79,6 +89,8 @@ class http(Unit):
 
     def process(self, data: Chunk):
         streams: list[Chunk] = data.temp if data.temp is not None else [data]
+        x_resp = self.args.responses
+        x_reqt = self.args.requests
         p_resp = httpresponse()
         p_reqt = httprequest()
         requests: list[_HTTP_Request] = []
@@ -94,7 +106,7 @@ class http(Unit):
             return False
 
         for stream in streams:
-            if p_resp.handles(stream):
+            if x_resp and p_resp.handles(stream):
                 try:
                     body = p_resp.process(stream)
                 except Exception:
@@ -122,6 +134,8 @@ class http(Unit):
                     continue
                 else:
                     requests.append(rq)
+                if not x_reqt:
+                    continue
                 try:
                     meta: dict = {
                         MV.SRC: rq.src,

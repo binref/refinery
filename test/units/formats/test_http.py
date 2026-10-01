@@ -28,7 +28,7 @@ class TestHTTP(TestUnitBase):
     @pytest.mark.xdist_group(name='pcap')
     def test_pe_extraction_from_download_sample(self):
         data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
-        pipeline = self.load_pipeline('pcap [| tcp | http ]')
+        pipeline = self.load_pipeline('pcap [| tcp | http -q ]')
         test = {
             hashlib.sha256(chunk).hexdigest(): str(chunk['url'])
             for chunk in data | pipeline
