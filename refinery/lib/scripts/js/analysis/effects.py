@@ -2068,9 +2068,19 @@ class EffectModel:
         node = strip_parens(node)
         if not isinstance(node, JsIdentifier):
             return None
-        if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
+        if not self.trusted_intrinsic_name(node.name):
             return None
-        return self.intrinsic_name_unwritten(node)
+        return node.name
+
+    def trusted_intrinsic_name(self, name: str) -> bool:
+        """
+        `trusted_intrinsic` for a caller that holds a global name rather than a node spelling it: a
+        regular-expression literal builds its object from `RegExp` without naming it, so a fold
+        deciding what `/a/g` matches has no identifier to ask about.
+        """
+        if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
+            return False
+        return name not in self._globals_written
 
     def intrinsic_name_unwritten(self, node: Node | None) -> str | None:
         """

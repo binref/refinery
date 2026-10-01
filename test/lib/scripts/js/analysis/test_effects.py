@@ -2462,6 +2462,82 @@ class TestEscapedIntrinsicWrites(TestBase):
     def test_a_two_hop_alias_records_nothing(self):
         self._omits('var m = Math; var n = m; console.log(n.floor(1.7));', 'Math')
 
+    def test_regexp_passed_to_a_patching_function_is_recorded(self):
+        self._records('function p(R) { R.prototype.test = f; } p(RegExp);', 'RegExp')
+
+    def test_regexp_passed_to_an_unresolvable_callee_is_recorded(self):
+        self._records('p(RegExp);', 'RegExp')
+
+    def test_an_alias_of_regexp_passed_to_a_patching_function_is_recorded(self):
+        self._records('function p(R) { R.prototype.test = f; } var r = RegExp; p(r);', 'RegExp')
+
+    def test_regexp_constructed_with_new_records_nothing(self):
+        self._omits('console.log(new RegExp("a").test("a"));', 'RegExp')
+
+    def test_an_intrinsic_constructed_with_new_records_nothing(self):
+        self._omits('console.log(new Number(5) + 1);', 'Number')
+
+    def test_an_intrinsic_passed_to_a_constructor_is_recorded(self):
+        self._records('new P(Math);', 'Math')
+
+    def test_an_intrinsic_in_a_tagged_template_hole_is_recorded(self):
+        self._records('function tag(s, m) { m.floor = f; } tag`${Math}`;', 'Math')
+
+    def test_an_intrinsic_in_an_untagged_template_hole_records_nothing(self):
+        self._omits('console.log(`${Math}`);', 'Math')
+
+    def test_an_intrinsic_on_the_left_of_instanceof_is_recorded(self):
+        self._records(
+            'class X { static [Symbol.hasInstance](m) { m.floor = f; return false; } } Math instanceof X;',
+            'Math',
+        )
+
+    def test_an_intrinsic_on_the_right_of_instanceof_records_nothing(self):
+        self._omits('console.log([] instanceof Array);', 'Array')
+
+
+class TestTrustedIntrinsicName(TestBase):
+    """
+    `trusted_intrinsic_name` asks the question `trusted_intrinsic` asks, for a caller that holds a
+    name rather than a node spelling it: `/a/.test(s)` builds its object from `RegExp` without
+    naming it.
+    """
+
+    @staticmethod
+    def _trust(source: str) -> bool:
+        ast = JsParser(source).parse()
+        return build_effects(build_semantic_model(ast)).trusted_intrinsic_name('RegExp')
+
+    def _refuses(self, source: str):
+        self.assertFalse(self._trust(source))
+
+    def _trusts(self, source: str):
+        self.assertTrue(self._trust(source))
+
+    def test_a_literal_with_nothing_written_is_trusted(self):
+        self._trusts('console.log(/a/.test("a"));')
+
+    def test_a_replaced_prototype_method_is_refused(self):
+        self._refuses('RegExp.prototype.test = function () { return true; }; console.log(/a/.test("b"));')
+
+    def test_a_prototype_patched_by_the_function_it_is_handed_to_is_refused(self):
+        self._refuses(
+            'function p(R) { R.prototype.test = function () { return true; }; } p(RegExp);'
+            ' console.log(/a/.test("b"));'
+        )
+
+    def test_a_shadow_in_an_inner_scope_is_refused(self):
+        self._refuses('(function () { var RegExp = 1; })(); console.log(/a/.test("a"));')
+
+    def test_a_reflection_surface_is_refused(self):
+        self._refuses('eval(s); console.log(/a/.test("a"));')
+
+    def test_a_global_written_under_a_runtime_key_is_refused(self):
+        self._refuses('globalThis[k] = 1; console.log(/a/.test("a"));')
+
+    def test_another_name_being_patched_is_trusted(self):
+        self._trusts('String.prototype.zz = 1; console.log(/a/.test("a"));')
+
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:
     """

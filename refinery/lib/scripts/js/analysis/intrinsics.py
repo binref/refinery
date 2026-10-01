@@ -36,9 +36,11 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsLogicalExpression,
     JsMemberExpression,
+    JsNewExpression,
     JsParenthesizedExpression,
     JsSequenceExpression,
     JsSpreadElement,
+    JsTaggedTemplateExpression,
     JsTemplateLiteral,
     JsUnaryExpression,
     JsUpdateExpression,
@@ -187,6 +189,24 @@ that supply each value type's members. A caller asking about a name outside it i
 this scan was not built to answer, and is told so.
 """
 
+ESCAPE_RECORDED_ROOTS = PURE_INTRINSIC_ROOTS | frozenset({'RegExp'})
+"""
+The global names an escape records as written by name, not only by key: the names a fold trusts
+to run code. A fold runs the methods of the pure roots, and a fold that decides what a regular
+expression answers trusts `RegExp`, so `p(RegExp)` for a `p` that replaces `RegExp.prototype.test`
+must withdraw that trust.
+
+`Object` and `Function` are left out on purpose. Real samples hand `Object` to a call this scan
+cannot resolve, and recording that escape refuses every fold that trusts `Object.prototype` in
+them; the precise answer follows the escaped value to its writes, which this scan does not do.
+"""
+
+ESCAPE_WATCHED_ROOTS = KEYED_WRITE_ROOTS | ESCAPE_RECORDED_ROOTS
+"""
+The global names whose escape the scan looks for: every name it records keys for, and every name
+`ESCAPE_RECORDED_ROOTS` records by name.
+"""
+
 
 class IntrinsicWrites(NamedTuple):
     """
@@ -295,10 +315,10 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     for node in model.root.walk():
         if isinstance(node, JsIdentifier):
             if reference_role(node) is Role.READ:
-                watched = aliases.names_denoted_by(node) & KEYED_WRITE_ROOTS
+                watched = aliases.names_denoted_by(node) & ESCAPE_WATCHED_ROOTS
                 if watched and _value_escapes(model, aliases, node, watched):
                     record_keys(watched, None)
-                    names.update(watched & PURE_INTRINSIC_ROOTS)
+                    names.update(watched & ESCAPE_RECORDED_ROOTS)
             continue
         if isinstance(node, JsCallExpression):
             for base in _accessor_install_targets(node):
@@ -412,8 +432,10 @@ def _value_escapes(
 
     - a member base, when the key cannot yield the intrinsic's own mutable surface
       (`Math.floor(1.7)`)
-    - a callee, which the call consumes (`parseInt(x)`)
-    - an operator operand, which reads a value without capturing the object (`typeof Math`)
+    - a callee of a call or of `new`, which consumes it (`parseInt(x)`, `new RegExp(p)`)
+    - an operator operand, which reads a value without capturing the object (`typeof Math`), except
+      the left of `instanceof`, which is handed to the right operand's `Symbol.hasInstance` method
+    - a hole of an untagged template; a tagged template hands its holes to the tag as arguments
     - a rebinding whose target the alias analysis still resolves to the same names (`var m = Math`)
 
     That last arm is what makes one predicate serve both this scan and the parameter-escape question
@@ -428,12 +450,18 @@ def _value_escapes(
     if value is None:
         return False
     parent = value.parent
+    if isinstance(parent, JsNewExpression) and parent.callee is value:
+        return False
     if isinstance(parent, JsCallExpression):
         if parent.callee is value:
             return False
         callee = unambiguous_callee(model, parent)
         return not _callee_is_write_free(model, aliases, callee, depth + 1)
-    if isinstance(parent, (JsUnaryExpression, JsBinaryExpression, JsTemplateLiteral)):
+    if isinstance(parent, JsBinaryExpression) and parent.operator == 'instanceof':
+        return parent.left is value
+    if isinstance(parent, JsTemplateLiteral):
+        return isinstance(parent.parent, JsTaggedTemplateExpression)
+    if isinstance(parent, (JsUnaryExpression, JsBinaryExpression)):
         return False
     target = None
     if isinstance(parent, JsVariableDeclarator) and parent.init is value:
