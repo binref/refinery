@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from refinery.lib.exceptions import RefineryPartialResult
 from refinery.lib.tools import exception_to_string
-from refinery.lib.types import Callable, buf
+from refinery.lib.types import Callable, Iterable, buf
 from refinery.lib.wim import (
     WimArchive,
     WimBlob,
     WimDirectoryEntry,
     WimHashMismatch,
     WimHeader,
+    WimPart,
     WimStream,
     WimStreamKind,
     walk_image,
@@ -35,14 +38,36 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     as the target of a symbolic link or a junction, is not extracted, and links without data
     yield no items. Encrypted files are extracted in the raw EFS format; the EFS data of an
     encrypted directory is not extracted.
+
+    Multi-volume archives can be extracted if all required disks are present as chunks within the
+    current frame.
     """
     def unpack(self, data: Chunk):
-        wim = WimArchive(data)
-        header = wim.header
+        header = WimHeader.Parse(memoryview(data))
         if header.part_number != 1:
             raise ValueError(
-                F'This is part {header.part_number} of a split WIM with {header.total_parts} '
-                F'parts; only the first part lists the files.'
+                F'Part {header.part_number} of a split WIM with {header.total_parts} parts is '
+                F'given without part 1, which lists the files.'
+            )
+        others: list[tuple[int, Chunk]] = data.temp or []
+        data.temp = None
+        parts = [WimPart(data)]
+        for number, chunk in others:
+            try:
+                parts.append(WimPart(chunk))
+            except MemoryError:
+                raise
+            except Exception as error:
+                if self.log_debug():
+                    raise
+                self.log_warn(
+                    F'failed to read part {number} of the split WIM: {exception_to_string(error)}'
+                )
+        wim = WimArchive(*parts)
+        if wim.missing_parts:
+            self.log_warn(
+                F'the split WIM has {header.total_parts} parts, of which {len(parts)} can be read; '
+                F'files whose data is stored in the others cannot be extracted'
             )
         multiple = len(wim.images) > 1
         for index, image in enumerate(wim.images, 1):
@@ -52,6 +77,56 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 if self.log_debug():
                     raise
                 self.log_warn(F'failed to list image {index}: {exception_to_string(error)}')
+
+    def filter(self, chunks: Iterable[Chunk]):
+        incomplete: dict[tuple[UUID, int], list[dict[int, Chunk]]] = {}
+        for chunk in chunks:
+            if (ready := self._gather(chunk, incomplete)) is not None:
+                yield ready
+        for sets in incomplete.values():
+            while sets:
+                if 1 in sets[0]:
+                    yield self._combine(sets.pop(0))
+                else:
+                    yield from sets.pop(0).values()
+
+    @classmethod
+    def _gather(
+        cls,
+        chunk: Chunk,
+        incomplete: dict[tuple[UUID, int], list[dict[int, Chunk]]],
+    ) -> Chunk | None:
+        if (position := cls._split_position(chunk)) is None:
+            return chunk
+        split_id, number = position
+        sets = incomplete.setdefault(split_id, [])
+        index = next((k for k, parts in enumerate(sets) if number not in parts), len(sets))
+        if index == len(sets):
+            sets.append({})
+        parts = sets[index]
+        parts[number] = chunk
+        _, total = split_id
+        if len(parts) < total:
+            return None
+        return cls._combine(sets.pop(index))
+
+    @classmethod
+    def _split_position(cls, chunk: Chunk) -> tuple[tuple[UUID, int], int] | None:
+        if not chunk.visible or not cls.handles(chunk):
+            return None
+        try:
+            header = WimHeader.Parse(memoryview(chunk))
+        except (ValueError, EOFError):
+            return None
+        if header.total_parts == 1:
+            return None
+        return header.split_id, header.part_number
+
+    @staticmethod
+    def _combine(parts: dict[int, Chunk]) -> Chunk:
+        (_, first), *others = sorted(parts.items())
+        first.temp = others
+        return first
 
     def _image_items(self, wim: WimArchive, index: int, image: WimBlob, prefix: str):
         for entry in walk_image(self._metadata(index, image)):
@@ -87,15 +162,8 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         def extract():
             if not any(digest := stream.hash):
                 return B''
-            if (blob := wim.blobs.get(digest)) is None:
-                if wim.header.total_parts > 1:
-                    raise LookupError(
-                        F'The data with the SHA-1 hash {digest.hex()} is not stored in this part '
-                        F'of the split WIM.'
-                    )
-                raise LookupError(F'The WIM file contains no data with the SHA-1 hash {digest.hex()}.')
             try:
-                return blob.data()
+                return wim.blob(digest).data()
             except WimHashMismatch as mismatch:
                 raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
         return extract

@@ -1,9 +1,10 @@
 """
-Parsing of Windows Imaging Format (WIM) files, including the solid variant that is also known as
-the ESD format. A `WimArchive` provides the blobs that a WIM file stores, keyed by their SHA-1 hash,
-and the metadata blob of each image. The function `walk_image` parses the directory tree from the
-metadata of an image. Each `WimDirectoryEntry` lists the streams of a file, which include its
-contents, its NTFS alternate data streams, and its reparse data.
+Parsing of Windows Imaging Format (WIM) files, including the solid variant that is also known as the
+ESD format. A `WimArchive` provides the blobs that a WIM file stores, keyed by their SHA-1 hash, and
+the metadata blob of each image. A WIM file can be split into several parts; each part is read as a
+`WimPart`, and a `WimArchive` combines the parts that are given. The function `walk_image` parses
+the directory tree from the metadata of an image. Each `WimDirectoryEntry` lists the streams of a
+file, which include its contents, its NTFS alternate data streams, and its reparse data.
 """
 from __future__ import annotations
 
@@ -13,7 +14,8 @@ import itertools
 
 from datetime import datetime
 from enum import IntEnum, IntFlag
-from typing import Iterator, NamedTuple
+from typing import Iterable, Iterator, NamedTuple
+from uuid import UUID
 
 from refinery.lib.dt import filetime
 from refinery.lib.fast.xpress import xpress_huffman_decompress
@@ -95,13 +97,36 @@ class WimDecompressionError(ValueError):
 
 class WimPartMissing(LookupError):
     """
-    Raised when the data of a blob is stored in another part of a split WIM.
+    Raised when the data of a blob is not stored in the given parts of a split WIM, and other parts
+    are not given. The attribute `given` holds the numbers of the given parts, and `missing` lists
+    the numbers of the other parts.
     """
-    def __init__(self, part: int):
-        self.part = part
+    def __init__(self, digest: bytes, given: Iterable[int], total: int):
+        self.digest = digest
+        self.given = tuple(given)
+        self.total = total
+
+    @property
+    def missing(self) -> list[int]:
+        return [number for run in _missing_runs(self.given, self.total) for number in run]
 
     def __str__(self):
-        return F'The data is stored in part {self.part} of the split WIM.'
+        runs = _missing_runs(self.given, self.total)
+        plural = 's' * (sum(len(run) for run in runs) > 1)
+        ranges = ', '.join(str(run[0]) if len(run) == 1 else F'{run[0]}-{run[-1]}' for run in runs)
+        return (
+            F'The data with the SHA-1 hash {self.digest.hex()} is not stored in the given parts; '
+            F'the split WIM with {self.total} parts is given without part{plural} {ranges}.'
+        )
+
+
+def _missing_runs(given: Iterable[int], total: int) -> list[range]:
+    numbers = sorted({number for number in given if 0 < number <= total})
+    return [
+        range(low + 1, high)
+        for low, high in zip((0, *numbers), (*numbers, total + 1))
+        if high - low > 1
+    ]
 
 
 _WIM_HEADER_SIZE = 208
@@ -186,6 +211,13 @@ class WimHeader(Struct[memoryview]):
         else:
             raise ValueError('The WIM header sets the compression flag but names no method.')
         self.chunk_size = _check_chunk_size(self.compression, chunk_size)
+
+    @property
+    def split_id(self) -> tuple[UUID, int]:
+        """
+        The GUID and the number of parts; the parts of one split WIM share both.
+        """
+        return self.guid, self.total_parts
 
 
 class _WimChunkDecoder:
@@ -381,9 +413,8 @@ class WimResource:
 
 class WimBlob:
     """
-    A blob in a WIM file: data that is identified by its SHA-1 hash. The blob is stored in the
-    given resource at the given offset, unless it is stored in another part of a split WIM, in
-    which case the resource is `None`.
+    A blob in a WIM file: data that is identified by its SHA-1 hash. The blob is stored in the given
+    resource at the given offset, in the part of a split WIM with the given number.
     """
     def __init__(
         self,
@@ -391,7 +422,7 @@ class WimBlob:
         size: int,
         part: int,
         references: int,
-        resource: WimResource | None,
+        resource: WimResource,
         offset: int = 0,
     ):
         self.hash = hash
@@ -405,14 +436,12 @@ class WimBlob:
     def data(self) -> buf:
         """
         Return the data of the blob and keep it for later calls. Raises `WimHashMismatch` when the
-        data does not match the hash of the blob, `WimDecompressionError` when the data cannot be
-        decompressed, and `WimPartMissing` when the blob is stored in another part of a split WIM.
+        data does not match the hash of the blob, and `WimDecompressionError` when the data cannot
+        be decompressed.
         """
         if (data := self._data) is not None:
             return data
-        if (resource := self.resource) is None:
-            raise WimPartMissing(self.part)
-        data = resource.read(self.offset, self.size)
+        data = self.resource.read(self.offset, self.size)
         if hashlib.sha1(data).digest() != self.hash:
             raise WimHashMismatch(self, data)
         self._data = data
@@ -427,10 +456,13 @@ class _WimTableEntry(Struct[memoryview]):
         self.hash = bytes(reader.read_exactly(20))
 
 
-class WimArchive:
+class WimPart:
     """
-    Parses the header and the blob table of a WIM file. The attribute `blobs` maps the SHA-1 hash
-    of each blob to a `WimBlob`, and the attribute `images` lists the metadata blob of each image.
+    Parses the header and the blob table of a WIM file, which is either a whole WIM or one part of a
+    split WIM. The attribute `blobs` maps the SHA-1 hash of each blob that this file stores to a
+    `WimBlob`, and the attribute `images` lists the metadata blob of each image; only the first part
+    of a split WIM lists the images. Entries of the blob table for blobs that another part stores
+    are ignored.
     """
     def __init__(self, data: buf):
         view = memoryview(data)
@@ -448,10 +480,8 @@ class WimArchive:
                 self._register_solid_run(list(run))
                 continue
             for entry in run:
-                resource = None
                 if entry.part == header.part_number:
-                    resource = self._resource(entry.header)
-                self._register(entry, entry.header.size, resource)
+                    self._register(entry, entry.header.size, self._resource(entry.header))
 
     def _is_solid(self, entry: _WimTableEntry) -> bool:
         if self.header.version != WimVersion.SOLID:
@@ -474,7 +504,7 @@ class WimArchive:
                 raise ValueError(F'A solid resource is stored in part {entry.part} of a split WIM.')
             resources.append(WimResource.Solid(self._view, entry.header, self._decoders))
         for entry in run:
-            if entry.header.size == _SOLID_RESOURCE_MAGIC:
+            if entry.header.size == _SOLID_RESOURCE_MAGIC or entry.part != self.header.part_number:
                 continue
             offset = entry.header.offset
             size = entry.header.stored_size
@@ -490,7 +520,7 @@ class WimArchive:
         self,
         entry: _WimTableEntry,
         size: int,
-        resource: WimResource | None,
+        resource: WimResource,
         offset: int = 0,
     ):
         if not any(entry.hash) or not size:
@@ -501,10 +531,57 @@ class WimArchive:
             return
         if (
             entry.references
-            and entry.part == self.header.part_number == 1
+            and self.header.part_number == 1
             and len(self.images) < self.header.image_count
         ):
             self.images.append(blob)
+
+
+class WimArchive:
+    """
+    A WIM file that is made of one or more parts; each part is given either as a `WimPart` or as the
+    data of its file, in any order. The attribute `parts` lists the given parts in the order of
+    their numbers, and `header` is the header of the first of them. The attribute `images` lists the
+    metadata blob of each image, which only the first part stores. The attribute `blobs` maps the
+    SHA-1 hash of each blob that a given part stores to a `WimBlob`; a blob that several parts store
+    is taken from the part with the lowest number. The attribute `missing_parts` lists the numbers
+    of the parts that are not given.
+    """
+    def __init__(self, *parts: buf | WimPart):
+        if not parts:
+            raise ValueError('A WIM file has at least one part.')
+        self.parts = sorted(
+            (part if isinstance(part, WimPart) else WimPart(part) for part in parts),
+            key=lambda part: part.header.part_number,
+        )
+        self.header = header = self.parts[0].header
+        numbers: set[int] = set()
+        for part in self.parts:
+            if part.header.split_id != header.split_id:
+                raise ValueError('The given parts belong to different split WIMs.')
+            if (number := part.header.part_number) in numbers:
+                raise ValueError(F'Part {number} of the split WIM is given twice.')
+            numbers.add(number)
+        self.images = self.parts[0].images
+        self.blobs: dict[bytes, WimBlob] = {}
+        for part in self.parts:
+            for digest, blob in part.blobs.items():
+                self.blobs.setdefault(digest, blob)
+        self.missing_parts = [
+            number for run in _missing_runs(numbers, header.total_parts) for number in run
+        ]
+
+    def blob(self, digest: bytes) -> WimBlob:
+        """
+        Return the blob with the given SHA-1 hash. When no given part stores it, raise
+        `WimPartMissing` if parts are missing and `LookupError` otherwise.
+        """
+        if (blob := self.blobs.get(digest)) is not None:
+            return blob
+        if self.missing_parts:
+            given = tuple(part.header.part_number for part in self.parts)
+            raise WimPartMissing(digest, given, self.header.total_parts)
+        raise LookupError(F'The WIM file contains no data with the SHA-1 hash {digest.hex()}.')
 
 
 class WimStream(NamedTuple):

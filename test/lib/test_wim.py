@@ -16,6 +16,7 @@ from refinery.lib.wim import (
     WimCompression,
     WimDecompressionError,
     WimHashMismatch,
+    WimPartMissing,
     WimStreamKind,
     WimVersion,
     walk_image,
@@ -24,9 +25,17 @@ from refinery.lib.wim import (
 DATA = WimStreamKind.DATA
 REPARSE = WimStreamKind.REPARSE
 
+FIRST_OF_TWO_PARTS = 'b85f850c972b55807850e2eb6140ffd2ac276d20ede081842b759909fcab5234'
+SECOND_OF_TWO_PARTS = '8bfe3fdebc1950dbd362b0203c59fa8d25fe064d48a59fef8480886c3d542f2c'
+FIRST_OF_THREE_PARTS = 'c00add5959d58aeec7d6209d22573f5f32094632ef90ee5cf195595329222720'
+SECOND_OF_THREE_PARTS = '1b62e77fa0d3520b5f27488e173007234c7b219ad749a395eb8ee0846f870fd8'
+THIRD_OF_THREE_PARTS = 'c96142c64ec89036d1980a05d66424af3e4d806c5665c0c28c08cb023ba01de9'
+
 DIRECTORY_ENTRY_ATTRIBUTES = 0x08
 DIRECTORY_ENTRY_CHILDREN = 0x10
 DIRECTORY_ENTRY_NAME = 0x66
+HEADER_GUID = 0x18
+HEADER_TOTAL_PARTS = 0x2A
 
 TIMES_TABLE = '\n'.join(F'{a} x {b} = {a * b}' for a in range(1, 61) for b in range(1, 61)).encode()
 
@@ -42,6 +51,13 @@ FOLDER = {
     (('sub',), 'dirstream', DATA): B'A stream on a directory.\r\n',
     (('sub', 'times.txt'), '', DATA): TIMES_TABLE,
     (('sub', 'ünïcødé.txt'), '', DATA): B'unicode name\r\n',
+}
+
+SUBFOLDER = {
+    ((), '', DATA): B'',
+    ((), 'dirstream', DATA): B'A stream on a directory.\r\n',
+    (('times.txt',), '', DATA): TIMES_TABLE,
+    (('ünïcødé.txt',), '', DATA): B'unicode name\r\n',
 }
 
 
@@ -109,12 +125,7 @@ class TestWimCapturesOfOneFolder(TestBase):
     def test_second_image_captured_from_the_subfolder(self):
         wim = WimArchive(self.download_sample('4da6303a0a61a24d2ca12ae7348fc6de5573505aa451c7ca49cac9f964c3174f'))
         self.assertEqual(len(wim.images), 2)
-        self.assertEqual(streams(wim, 1), {
-            ((), '', DATA): B'',
-            ((), 'dirstream', DATA): B'A stream on a directory.\r\n',
-            (('times.txt',), '', DATA): TIMES_TABLE,
-            (('ünïcødé.txt',), '', DATA): B'unicode name\r\n',
-        })
+        self.assertEqual(streams(wim, 1), SUBFOLDER)
 
     def test_junction_is_a_mount_point_whose_reparse_data_names_the_target(self):
         wim = WimArchive(self.download_sample('f589d49d144f08cf8bbca6dd1026e4e3b57692a3f55d37f7140b30f13b3d5029'))
@@ -140,7 +151,6 @@ class TestWimCapturesOfOneFolder(TestBase):
     def test_read_across_a_chunk_boundary_keeps_only_the_requested_bytes(self):
         wim = WimArchive(self.download_sample('f57be775dffdd6758cf90065a83902a7c0ae1aefe6acbb94fe7810314a9611af'))
         resource = wim.blobs[hashlib.sha1(TIMES_TABLE).digest()].resource
-        assert resource is not None
         data = resource.read(4000, 200)
         self.assertEqual(bytes(data), TIMES_TABLE[4000:4200])
         self.assertEqual(memoryview(memoryview(data).obj).nbytes, 200)
@@ -176,6 +186,13 @@ class TestWimCapturesOfOneFolder(TestBase):
         with self.assertRaises(ValueError):
             list(walk_image(metadata))
 
+    def test_data_that_a_whole_wim_lacks_is_not_blamed_on_a_missing_part(self):
+        wim = WimArchive(self.download_sample('f589d49d144f08cf8bbca6dd1026e4e3b57692a3f55d37f7140b30f13b3d5029'))
+        self.assertEqual(wim.missing_parts, [])
+        with self.assertRaises(LookupError) as context:
+            wim.blob(hashlib.sha1(B'not stored').digest())
+        self.assertNotIsInstance(context.exception, WimPartMissing)
+
 
 @pytest.mark.cythonized
 class TestWimSplitIntoTwoParts(TestBase):
@@ -185,7 +202,7 @@ class TestWimSplitIntoTwoParts(TestBase):
     """
 
     def test_first_part_lists_every_file_but_lacks_the_data_of_the_largest(self):
-        wim = WimArchive(self.download_sample('b85f850c972b55807850e2eb6140ffd2ac276d20ede081842b759909fcab5234'))
+        wim = WimArchive(self.download_sample(FIRST_OF_TWO_PARTS))
         self.assertEqual((wim.header.part_number, wim.header.total_parts), (1, 2))
         listed = {(entry.path, stream.name, stream.kind) for entry in entries(wim) for stream in entry.streams}
         self.assertEqual(listed, set(FOLDER))
@@ -195,10 +212,76 @@ class TestWimSplitIntoTwoParts(TestBase):
         self.assertEqual(streams(wim), expected)
 
     def test_second_part_holds_the_data_of_the_largest_file_and_no_image(self):
-        wim = WimArchive(self.download_sample('8bfe3fdebc1950dbd362b0203c59fa8d25fe064d48a59fef8480886c3d542f2c'))
+        wim = WimArchive(self.download_sample(SECOND_OF_TWO_PARTS))
         self.assertEqual((wim.header.part_number, wim.header.total_parts), (2, 2))
         self.assertEqual(wim.images, [])
         self.assertEqual(bytes(wim.blobs[hashlib.sha1(TIMES_TABLE).digest()].data()), TIMES_TABLE)
+
+    def test_both_parts_hold_every_file(self):
+        wim = WimArchive(self.download_sample(FIRST_OF_TWO_PARTS), self.download_sample(SECOND_OF_TWO_PARTS))
+        self.assertEqual(wim.missing_parts, [])
+        self.assertEqual(streams(wim), FOLDER)
+
+    def test_order_of_the_parts_does_not_matter(self):
+        wim = WimArchive(self.download_sample(SECOND_OF_TWO_PARTS), self.download_sample(FIRST_OF_TWO_PARTS))
+        self.assertEqual(streams(wim), FOLDER)
+
+    def test_data_of_a_missing_part_names_that_part(self):
+        wim = WimArchive(self.download_sample(FIRST_OF_TWO_PARTS))
+        with self.assertRaises(WimPartMissing) as context:
+            wim.blob(hashlib.sha1(TIMES_TABLE).digest())
+        self.assertEqual(context.exception.missing, [2])
+
+    def test_a_part_given_twice_is_rejected(self):
+        first = self.download_sample(FIRST_OF_TWO_PARTS)
+        with self.assertRaises(ValueError):
+            WimArchive(first, first)
+
+
+@pytest.mark.cythonized
+class TestWimSplitIntoThreeParts(TestBase):
+    """
+    The WIM file of `TestWimCapturesOfOneFolder.test_lzx` was split with wimlib into three parts:
+    the first part holds both images and no file data, the second part holds the data of every file
+    except the largest, and the third part holds the data of the largest file.
+    """
+
+    def test_three_parts_hold_both_images(self):
+        wim = WimArchive(
+            self.download_sample(THIRD_OF_THREE_PARTS),
+            self.download_sample(FIRST_OF_THREE_PARTS),
+            self.download_sample(SECOND_OF_THREE_PARTS),
+        )
+        self.assertEqual(streams(wim), FOLDER)
+        self.assertEqual(streams(wim, 1), SUBFOLDER)
+
+    def test_missing_middle_part_loses_only_the_data_it_stores(self):
+        wim = WimArchive(self.download_sample(FIRST_OF_THREE_PARTS), self.download_sample(THIRD_OF_THREE_PARTS))
+        self.assertEqual(wim.missing_parts, [2])
+        self.assertEqual(bytes(wim.blob(hashlib.sha1(TIMES_TABLE).digest()).data()), TIMES_TABLE)
+        with self.assertRaises(WimPartMissing) as context:
+            wim.blob(hashlib.sha1(B'unicode name\r\n').digest())
+        self.assertEqual(context.exception.missing, [2])
+
+    def test_parts_of_different_split_wims_are_rejected(self):
+        with self.assertRaises(ValueError):
+            WimArchive(self.download_sample(FIRST_OF_THREE_PARTS), self.download_sample(SECOND_OF_TWO_PARTS))
+
+    def test_part_with_another_guid_is_rejected(self):
+        second = self.download_sample(SECOND_OF_THREE_PARTS)
+        second[HEADER_GUID] ^= 0xFF
+        with self.assertRaises(ValueError):
+            WimArchive(self.download_sample(FIRST_OF_THREE_PARTS), second)
+
+    def test_forged_number_of_parts_names_every_run_of_missing_parts(self):
+        first = self.download_sample(FIRST_OF_THREE_PARTS)
+        third = self.download_sample(THIRD_OF_THREE_PARTS)
+        for part in (first, third):
+            part[HEADER_TOTAL_PARTS:HEADER_TOTAL_PARTS + 2] = (0xFFFF).to_bytes(2, 'little')
+        with self.assertRaises(WimPartMissing) as context:
+            WimArchive(first, third).blob(hashlib.sha1(B'unicode name\r\n').digest())
+        self.assertEqual(context.exception.missing, [2, *range(4, 0x10000)])
+        self.assertIn('parts 2, 4-65535', str(context.exception))
 
 
 @pytest.mark.cythonized
