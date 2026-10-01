@@ -92,3 +92,81 @@ class TestStructUnit(TestUnitBase):
         unit = self.load(r'{k:B}{d}', r'{d:snip[k:]}')
         test = data | unit | bytes
         self.assertEqual(test, B'REFINERY')
+
+    def test_bit_field_reads_the_least_significant_bits_first(self):
+        unit = self.load('{a!0:4}{b!0:4}', '{a},{b}')
+        self.assertEqual(bytes(b'\x21' | unit), b'1,2')
+
+    def test_bit_field_follows_the_byte_order_of_the_spec(self):
+        unit = self.load('>{a!0:4}{b!0:4}', '{a},{b}')
+        self.assertEqual(bytes(b'\x21' | unit), b'2,1')
+
+    def test_bit_field_follows_network_byte_order(self):
+        unit = self.load('!{a!0:4}{b!0:4}', '{a},{b}')
+        self.assertEqual(bytes(b'\x21' | unit), b'2,1')
+
+    def test_bit_field_spans_byte_boundaries(self):
+        unit = self.load('{a!0:12}{b!0:4}', '{a},{b}')
+        self.assertEqual(bytes(b'\x34\x12' | unit), b'564,1')
+
+    def test_bit_field_count_can_use_previous_fields(self):
+        unit = self.load('{n:B}{a!0:{n}}', '{a}')
+        self.assertEqual(bytes(b'\x04\xab' | unit), b'11')
+
+    def test_byte_reads_continue_at_the_current_bit(self):
+        unit = self.load('{n!0:11}{m!0:3}{a:n}{b:m}', '{n},{m},{a},{b}')
+        self.assertEqual(bytes(b'\x02\x48\x90\xd0\x10' | unit), b'2,1,AB,C')
+
+    def test_alignment_discards_partial_bits(self):
+        unit = self.load('{a!0:4}{b!1:B}', '{a},{b}')
+        self.assertEqual(bytes(b'\x21X' | unit), b'1,88')
+
+    def test_bit_field_records_continue_at_the_current_bit(self):
+        unit = self.load('{a!0:4}', '{a}', multi=True)
+        self.assertEqual([bytes(chunk) for chunk in b'\x12\x34' | unit], [b'2', b'1', b'4', b'3'])
+
+    def test_leftover_starts_at_the_byte_containing_the_current_bit(self):
+        unit = self.load('{a!0:4}', '{a}', more=True)
+        self.assertEqual([bytes(chunk) for chunk in b'\x12\x34\x56' | unit], [b'2', b'\x12\x34\x56'])
+
+    def test_bit_field_can_be_peeked(self):
+        unit = self.load(':{a!0:4}{b!0:4}', '{a},{b}')
+        self.assertEqual(bytes(b'\x21' | unit), b'1,1')
+
+    def test_bit_field_rejects_a_non_integer_format(self):
+        unit = self.load('{a!0:B}')
+        with self.assertRaises(ValueError):
+            b'\x21' | unit | []
+
+    def test_multi_mode_rejects_records_that_consume_nothing(self):
+        unit = self.load('{a!0:0}', '{a}', multi=True)
+        with self.assertRaises(ValueError):
+            b'\x01' | unit | []
+
+    def test_peek_marker_in_a_bare_prefix(self):
+        unit = self.load(':B{v:B}', '{v}')
+        self.assertEqual(bytes(b'AB' | unit), b'65')
+
+    def test_peek_marker_applies_to_the_next_value_only(self):
+        unit = self.load(':Bxx{v:B}', '{v}')
+        self.assertEqual(bytes(b'ABCD' | unit), b'67')
+
+    def test_peek_marker_before_a_custom_letter(self):
+        unit = self.load(':a{v:a}', '{v}')
+        self.assertEqual(bytes(b'foo\0bar\0' | unit), b'foo')
+
+    def test_peek_marker_before_a_named_field(self):
+        unit = self.load('H:{v:B}{w:B}', '{v},{w}')
+        self.assertEqual(bytes(b'\x00\x01AB' | unit), b'65,65')
+
+    def test_peek_marker_peeks_the_entire_named_field(self):
+        unit = self.load(':{v:2s}{w:B}', '{v},{w}')
+        self.assertEqual(bytes(b'ABX' | unit), b'AB,65')
+
+    def test_peek_marker_composes_with_a_field_pipeline(self):
+        unit = self.load(':{v:a:hex}', '{v}')
+        self.assertEqual(bytes(b'4142\0' | unit), b'AB')
+
+    def test_peek_marker_with_a_byte_count(self):
+        unit = self.load(':{v:2}{r:}', '{v},{r}')
+        self.assertEqual(bytes(b'ABXY' | unit), b'AB,ABXY')

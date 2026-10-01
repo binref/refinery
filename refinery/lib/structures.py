@@ -597,7 +597,8 @@ class StructReader(MemoryFile[T, T]):
         """
         Read structured data from the stream in any format supported by the `struct` module. The `format`
         argument can be used to override the current byte ordering. If the `unwrap` parameter is `True`, a
-        single unpacked value will be returned as a scalar, not as a tuple with one element.
+        single unpacked value will be returned as a scalar, not as a tuple with one element. A colon in
+        the format string peeks the value that follows it, i.e. the cursor is not advanced past it.
         """
         if not spec:
             raise ValueError('no format specified')
@@ -609,9 +610,18 @@ class StructReader(MemoryFile[T, T]):
         data = []
         current_cursor = self.tell()
 
+        def unpack_run(run: str):
+            run = F'{byteorder}{run}'
+            data.extend(struct.unpack(run, self.read_bytes(struct.calcsize(run))))
+
         # reserved struct characters: xcbB?hHiIlLqQnNefdspP
-        for k, part in enumerate(re.split('(\\d*[auwgk])', spec)):
+        peek_next = False
+        for k, part in enumerate(re.split(R'(\d*[auwgk]|:)', spec)):
             if k % 2 == 1:
+                if part == ':':
+                    peek_next = True
+                    continue
+                before = self.tell()
                 count = 1 if len(part) == 1 else int(part[:~0])
                 part = part[~0]
                 for _ in range(count):
@@ -625,10 +635,20 @@ class StructReader(MemoryFile[T, T]):
                         data.append(codecs.decode(self.read_w_string(), 'utf-16le'))
                     elif part == 'k':
                         data.append(self.read_7bit_encoded_int())
-                continue
+                if peek_next:
+                    self.seekset(before)
+                    peek_next = False
             else:
-                part = F'{byteorder}{part}'
-                data.extend(struct.unpack(part, self.read_bytes(struct.calcsize(part))))
+                before = self.tell()
+                if peek_next and (first := re.match(R'\s*(\d*\S)', part)):
+                    unpack_run(first.group(1))
+                    self.seekset(before)
+                    peek_next = False
+                    part = part[first.end():]
+                if part:
+                    unpack_run(part)
+        if peek_next:
+            raise ValueError(F'The format string {spec!r} ends with a dangling peek marker.')
         if peek:
             self.seekset(current_cursor)
         return data
