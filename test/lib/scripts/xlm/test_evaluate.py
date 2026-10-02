@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.excel.formula.model import XlDefinedName
+from refinery.lib.excel.formula.model import XlDefinedName, XlFunctionCall
 from refinery.lib.scripts.xlm import (
     XlmCursor,
     XlmEngine,
@@ -33,7 +33,7 @@ class TestEvaluateExpression(TestBase):
     def test_the_argument_of_the_char_call_computes(self):
         view = XlmView(XLM_MACRO_FORMULA_XLSM)
         cell = view.cell('Cdfea', 2, 5)
-        assert cell is not None and cell.formula is not None
+        assert cell is not None and isinstance(cell.formula, XlFunctionCall)
         value = evaluate_expression(
             XlmEngine(view), cell.formula.arguments[0], XlmCursor('Cdfea', 2, 5),
         )
@@ -43,7 +43,7 @@ class TestEvaluateExpression(TestBase):
     def test_a_command_without_a_handler_spells_its_call_unevaluated(self):
         view = XlmView(XLM_MACRO_FORMULA_XLSM)
         cell = view.cell('Cdfea', 2, 5)
-        assert cell is not None and cell.formula is not None
+        assert cell is not None and isinstance(cell.formula, XlFunctionCall)
         engine = XlmEngine(view)
         outcome = engine.call(cell.formula, XlmCursor('Cdfea', 2, 5))
         self.assertEqual(outcome.value.text, '=CHAR(111)')

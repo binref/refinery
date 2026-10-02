@@ -8,11 +8,14 @@ import datetime
 import operator
 
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from refinery.lib.excel.common import column_letters
 from refinery.lib.excel.formula.model import XlBinaryOperator
 from refinery.lib.scripts.xlm.trace import XlmStatus
+
+if TYPE_CHECKING:
+    from refinery.lib.scripts.xlm.references import XlmCursor
 
 _DATETIME_FORMATS = (
     '%Y-%m-%d %H:%M:%S.%f',
@@ -126,7 +129,7 @@ class XlmValue:
         """
         The text of the value without the quotes of a string literal.
         """
-        return unwrap_literal(self.text)
+        return unwrap_literal(self.text or '')
 
     def unwrap_date(self) -> datetime.datetime | None:
         """
@@ -268,7 +271,7 @@ class XlmOutcome:
     def __init__(
         self,
         value: XlmValue | None = None,
-        jump: XlmReference | None = None,
+        jump: XlmCursor | None = None,
         status: XlmStatus | None = None,
     ):
         self.value = XlmValue() if value is None else value

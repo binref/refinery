@@ -1,11 +1,13 @@
 """
 The resolution of the reference nodes of the formula model against the cell a formula sits in:
 the cursor of the running engine turns the offsets of an R1C1-relative reference into absolute
-positions and the corners of a range into the cells it spans.
+positions and the corners of a range into the cells it spans, and the pending positions of a
+run — the branches a partial `IF` holds and the loops `WHILE` and `FOR.CELL` open — carry the
+cursors they continue from.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 from refinery.lib.excel.formula.model import XlA1Reference, XlR1C1Reference
 from refinery.lib.scripts.xlm.values import XlmReference
@@ -26,6 +28,36 @@ class XlmCursor(NamedTuple):
         The address of the cursor's own cell.
         """
         return XlmReference(None, self.row, self.col)
+
+
+class XlmFrame(NamedTuple):
+    """
+    One branch of a partial `IF` that has not run yet: the cell the branch runs at — its cursor
+    is the base the relative references of the branch resolve against — the expression the
+    branch runs instead of the cell's own formula, the journal position a false branch rolls
+    back to, the indentation the branch reports, and the label the first step of the branch
+    carries.
+    """
+
+    cursor: XlmCursor
+    branch: object | None
+    journal: int | None
+    indent: int
+    desc: str
+
+
+class XlmLoop:
+    """
+    One `WHILE` or `FOR.CELL` loop on the loop stack: the cursor of the cell that heads it,
+    whether its condition still holds — a `FOR.CELL` loop holds until its range runs out, a
+    `WHILE` loop holds when its condition is true — and the iterator of its range for a
+    `FOR.CELL`.
+    """
+
+    def __init__(self, cursor: XlmCursor, holds: bool = False):
+        self.cursor = cursor
+        self.holds = holds
+        self.iterator: Iterator[XlmReference] | None = None
 
 
 def resolve_reference(
