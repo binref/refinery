@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Iterable
+
 from refinery.units.crypto.keyderive import KeyDerivation
 
 
@@ -12,6 +14,14 @@ class hkdf(KeyDerivation):
     def __init__(self, size, salt, hash='SHA512'):
         super().__init__(size=size, salt=salt, hash=hash)
 
-    def process(self, data):
-        from Cryptodome.Protocol.KDF import HKDF
-        return HKDF(data, self.args.size, self.args.salt, self.hash)
+    def keystream(self, seed) -> Iterable[int]:
+        from Cryptodome.Hash import HMAC
+        hash_algorithm = self._hash_module()
+        prk = HMAC.new(self.args.salt, seed, hash_algorithm).digest()
+        previous = bytearray(1)
+        for counter in range(1, 256):
+            previous[-1] = counter
+            u = HMAC.new(prk, previous, hash_algorithm)
+            d = u.digest()
+            yield from d
+            previous[:-1] = d

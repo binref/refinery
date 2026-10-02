@@ -5,13 +5,15 @@ modules in `refinery.units.crypto.cipher`.
 """
 from __future__ import annotations
 
+import abc
 import importlib
 
 from enum import Enum
-from typing import TYPE_CHECKING, Callable, cast
+from itertools import islice
+from typing import TYPE_CHECKING, Iterable, cast
 
-from refinery.lib.types import Param, buf
-from refinery.units import Arg, Unit
+from refinery.lib.types import Param, asbuffer, buf
+from refinery.units import Arg, Unit, RefineryPartialResult
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -20,14 +22,22 @@ if TYPE_CHECKING:
         def update(self, data: buf):
             ...
 
-        def digest(self) -> buf:
+        def digest(self) -> bytes:
             ...
 
         def hexdigest(self) -> str:
             ...
 
+        @property
+        def digest_size(self) -> int:
+            ...
+
     class _HashModule(Protocol):
         def new(self, data=None) -> _Hash:
+            ...
+
+        @property
+        def digest_size(self) -> int:
             ...
 
 
@@ -43,16 +53,6 @@ class HASH(str, Enum):
     SHA512 = 'SHA512'
     SHA224 = 'SHA224'
     SHA384 = 'SHA384'
-
-
-def multidecode(data: buf, function: Callable[[str], buf]) -> buf:
-    for codec in ['utf8', 'latin1', 'cp1252']:
-        try:
-            return function(data.decode(codec))
-        except UnicodeError:
-            continue
-    else:
-        return function(''.join(chr(t) for t in data))
 
 
 class KeyDerivation(Unit, abstract=True):
@@ -71,8 +71,24 @@ class KeyDerivation(Unit, abstract=True):
             hash = Arg.AsOption(hash, HASH)
         return super().__init__(salt=salt, size=size, iter=iter, hash=hash, **kw)
 
-    @property
-    def hash(self) -> _HashModule:
+    @abc.abstractmethod
+    def keystream(self, seed: buf) -> Iterable[int]:
+        pass
+
+    def _hash_interface(self) -> _HashModule:
+        return cast('_HashModule', self._hash_module())
+
+    def _hash_module(self):
         name = self.args.hash.value
-        hash = importlib.import_module(F'Cryptodome.Hash.{name}')
-        return cast('_HashModule', hash)
+        return importlib.import_module(F'Cryptodome.Hash.{name}')
+
+    def process(self, data):
+        ks = self.keystream(data)
+        nb = self.args.size
+        if not (buf := asbuffer(ks)):
+            buf = bytearray(islice(ks, 0, nb))
+        if (n := len(buf)) < nb:
+            raise RefineryPartialResult(
+                F'Requested {nb} bytes, but given {self.args.hash!s}, '
+                F'{self.name} can only produce {n} bytes.', buf)
+        return buf[:nb]

@@ -4,7 +4,6 @@ import itertools
 import struct
 
 from refinery.lib.types import Param, buf
-from refinery.units import RefineryPartialResult
 from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
 __all__ = ['ucrypt']
@@ -308,10 +307,10 @@ class UnixCrypt:
         R, L = self._perm(R, L, 0x04, 0x0F0F0F0F)
         return L, R
 
-    def __init__(self, key: bytes, salt: bytes = b'', iterations=0x10):
+    def __init__(self, key: buf, salt: bytes = b'', iterations=0x10):
         self.salt = salt.ljust(2, b'A')
         self.iterations = iterations
-        self.key = key.ljust(8, B'\0')[:8]
+        self.key = bytes(key).ljust(8, B'\0')[:8]
 
     def __bytes__(self):
         ES0 = CON_SALT[self.salt[0] & 0x7F]
@@ -343,11 +342,5 @@ class ucrypt(KeyDerivation):
     ):
         super().__init__(size=size, salt=salt)
 
-    def process(self, data):
-        crypted = bytes(UnixCrypt(data, salt=self.args.salt))
-        if len(crypted) < self.args.size:
-            raise RefineryPartialResult(
-                F'unix crypt only provided {len(crypted)} bytes, but {self.args.size} '
-                F'were requested.', partial=crypted
-            )
-        return crypted[:self.args.size]
+    def keystream(self, seed):
+        return bytes(UnixCrypt(seed, salt=self.args.salt))

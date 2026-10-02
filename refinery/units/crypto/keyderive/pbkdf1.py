@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from refinery.units.crypto.keyderive import Arg, KeyDerivation, multidecode
+import codecs
+
+from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
 
 class pbkdf1(KeyDerivation):
@@ -13,8 +15,12 @@ class pbkdf1(KeyDerivation):
     def __init__(self, size, salt=bytes(8), iter=1000, hash='SHA1'):
         self.superinit(super(), **vars())
 
-    def process(self, data):
+    def keystream(self, seed):
         from Cryptodome.Protocol.KDF import PBKDF1
-        return multidecode(data, lambda pwd: (
-            PBKDF1(pwd, self.args.salt, dkLen=self.args.size, count=self.args.iter, hashAlgo=self.hash)
-        ))
+        return PBKDF1(
+            codecs.decode(seed, self.codec),
+            self.args.salt,
+            dkLen=self._hash_interface().digest_size,
+            count=self.args.iter,
+            hashAlgo=self._hash_module(),
+        )

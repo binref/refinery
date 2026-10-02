@@ -12,15 +12,16 @@ class mspdb(KeyDerivation):
     def __init__(self, size, salt, iter=100, hash='SHA1'):
         self.superinit(super(), **vars())
 
-    def process(self, data):
-        if self.codec != 'UTF8':
-            data = data.decode(self.codec).encode('UTF8')
-        data += self.args.salt
+    def keystream(self, seed):
+        if not isinstance(seed, bytearray):
+            seed = bytearray(seed)
+        seed.extend(self.args.salt)
+        hf = self._hash_interface()
         for _ in range(self.args.iter - 1):
-            data = self.hash.new(data).digest()
-        counter, seedhash = 1, data
-        data = self.hash.new(data).digest()
-        while len(data) < self.args.size:
-            data += self.hash.new(B'%d%s' % (counter, seedhash)).digest()
+            seed = hf.new(seed).digest()
+        counter, seedhash = 1, seed
+        seed = hf.new(seed).digest()
+        while len(seed) < self.args.size:
+            seed += hf.new(B'%d%s' % (counter, seedhash)).digest()
             counter += 1
-        return data[:self.args.size]
+        return seed

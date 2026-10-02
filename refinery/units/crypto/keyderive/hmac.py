@@ -9,9 +9,9 @@ class hmac(KeyDerivation):
     message integrity and key derivation in cryptographic protocols.
     """
 
-    def __init__(self, salt, hash='SHA1', size=None):
+    def __init__(self, salt, hash='SHA1', size=0):
         super().__init__(salt=salt, size=size, hash=hash)
 
     def process(self, data):
         from Cryptodome.Hash import HMAC
-        return HMAC.new(data, self.args.salt, digestmod=self.hash).digest()
+        return HMAC.new(data, self.args.salt, digestmod=self._hash_module()).digest()

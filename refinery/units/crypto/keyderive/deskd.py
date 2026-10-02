@@ -52,13 +52,13 @@ class deskd(KeyDerivation):
     not a modern key derivation function.
     """
     def __init__(self, size: Param[int, Arg(help='The number of bytes to generate, default is the maximum of 8.')] = 8):
-        super().__init__(size=size, salt=None)
+        super().__init__(size=size, salt=B'')
 
-    def process(self, password):
+    def keystream(self, seed):
         from Cryptodome.Cipher import DES
         from Cryptodome.Util.strxor import strxor
 
-        password = bytes(password)
+        password = bytes(seed)
         key = bytearray(8)
 
         for i, p in enumerate(password):
@@ -80,7 +80,4 @@ class deskd(KeyDerivation):
                 key[:] = des.encrypt(strxor(password[k:k + 8], key))
             des_set_odd_parity(key)
 
-        if self.args.size > 8:
-            raise RefineryPartialResult('can provide at most 8 bytes.', partial=key)
-
-        return key[:self.args.size]
+        return key
