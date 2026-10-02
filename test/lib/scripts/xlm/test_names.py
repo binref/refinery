@@ -135,7 +135,11 @@ class TestXlmNameResolution(TestBase):
         renamed = _resolve(table, 'print_area', 1)._replace(name='Print_Area')
         table.define(renamed)
         self.assertEqual(
-            [(entry.name, entry.sheet) for entry in table.entries() if entry.name.lower() == 'print_area'],
+            [
+                (entry.name, entry.sheet)
+                for entry in table.entries()
+                if entry.name.lower() == 'print_area'
+            ],
             [('print_area', 0), ('Print_Area', 1), ('print_area', 2)],
         )
         table.define(XlmNameEntry(name='print_area', sheet=None, formula=None))
