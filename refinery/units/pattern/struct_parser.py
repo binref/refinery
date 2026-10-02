@@ -5,7 +5,13 @@ import re
 import string
 
 from refinery.lib.argformats import ParserError, PythonExpression, numseq
-from refinery.lib.meta import STRING_FORMAT_HELP, LazyMetaOracle, SizeInt, check_variable_name, metavars
+from refinery.lib.meta import (
+    STRING_FORMAT_HELP,
+    LazyMetaOracle,
+    SizeInt,
+    check_variable_name,
+    metavars,
+)
 from refinery.lib.structures import StructReaderBits
 from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit

@@ -7,8 +7,8 @@ from refinery.lib.frame import Chunk
 from refinery.lib.meta import MV
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
-from refinery.units.formats.httpresponse import httpresponse
 from refinery.units.formats.httprequest import httprequest
+from refinery.units.formats.httpresponse import httpresponse
 
 
 class _HTTP_Request(NamedTuple):
