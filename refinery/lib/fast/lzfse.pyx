@@ -10,6 +10,7 @@ from libc.string cimport memcpy
 
 from refinery.lib.fast._buffer cimport reserve
 
+from refinery.lib.exceptions import RefineryPartialResult
 from refinery.lib.fast.lzfse_header import LITERALS_PER_BLOCK, BlockKind, read_block_header
 
 DEF ENCODE_L_SYMBOLS = 20
@@ -88,6 +89,9 @@ _LZVN_OPC_TABLE[:] = [
    10, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9,
 ]
 
+cdef uint8_t _LZVN_INSTRUCTION_SIZE[11]
+_LZVN_INSTRUCTION_SIZE[:] = [1, 1, 1, 2, 3, 3, 1, 1, 2, 1, 2]
+
 cdef uint8_t _FREQ_NBITS_TABLE[32]
 _FREQ_NBITS_TABLE[:] = [
     2, 3, 2, 5, 2, 3, 2, 8, 2, 3, 2, 5, 2, 3, 2, 14,
@@ -140,10 +144,22 @@ cdef inline int _clz32(uint32_t x) noexcept nogil:
     return n
 
 
-cdef inline uint16_t _read_le_u16(const uint8_t *buf, Py_ssize_t pos) noexcept nogil:
-    cdef uint16_t result
-    memcpy(&result, &buf[pos], 2)
+cdef inline uint64_t _read_le_u64(const uint8_t *buf, Py_ssize_t pos) noexcept nogil:
+    cdef uint64_t result
+    memcpy(&result, &buf[pos], 8)
     return result
+
+
+cdef inline void _copy_match(uint8_t *dst, Py_ssize_t distance, Py_ssize_t length) noexcept nogil:
+    """
+    Write `length` bytes to `dst` that repeat the output from `distance` bytes before `dst`.
+    """
+    cdef Py_ssize_t k
+    if distance >= length:
+        memcpy(dst, dst - distance, length)
+    else:
+        for k in range(length):
+            dst[k] = dst[k - distance]
 
 # ---------------------------------------------------------------------------
 # FSE bit-stream operations
@@ -186,16 +202,17 @@ cdef inline int _fse_in_init(
     return 0
 
 
-cdef inline bint _fse_in_exhausted(FseInState *st) noexcept nogil:
+cdef inline Py_ssize_t _fse_in_remaining(FseInState *st) noexcept nogil:
     """
-    Whether bits from before the start of the payload were consumed.
+    The number of payload bits that were not consumed yet; it is negative when bits from before the
+    start of the payload were consumed.
     """
-    return st.pos < st.start and st.accum_nbits < 8 * (st.start - st.pos)
+    return st.accum_nbits + 8 * (st.pos - st.start)
 
 
 cdef inline int _fse_in_flush(FseInState *st) noexcept nogil:
     cdef int nbits = (63 - st.accum_nbits) & ~7
-    if _fse_in_exhausted(st):
+    if _fse_in_remaining(st) < 0:
         return -1
     if nbits:
         st.pos -= nbits >> 3
@@ -436,7 +453,7 @@ cdef Py_ssize_t _decode_lzfse_payload(
 
         i += 4
 
-    if _fse_in_exhausted(&lit_stream):
+    if _fse_in_remaining(&lit_stream) != 0:
         return -1
 
     # LMD decode
@@ -450,8 +467,7 @@ cdef Py_ssize_t _decode_lzfse_payload(
     cdef int total_bits, value_bits
     cdef int32_t lmd_delta
     cdef uint32_t vbase, bits
-    cdef Py_ssize_t match_start, written = 0
-    cdef int j
+    cdef Py_ssize_t written = 0
     cdef int vidx
 
     for i in range(n_matches):
@@ -520,15 +536,14 @@ cdef Py_ssize_t _decode_lzfse_payload(
 
         # Copy match
         if m_value > 0:
-            match_start = out_pos + written - d_value
-            if d_value >= m_value:
-                memcpy(&output[out_pos + written], &output[match_start], m_value)
-            else:
-                for j in range(m_value):
-                    output[out_pos + written + j] = output[match_start + j]
+            _copy_match(&output[out_pos + written], d_value, m_value)
             written += m_value
 
-    if _fse_in_exhausted(&lmd_stream):
+    if (
+        _fse_in_remaining(&lmd_stream) != 64
+        or _read_le_u64(buf, lmd_payload) != 0
+        or written != raw_size
+    ):
         return -1
     return written
 
@@ -579,21 +594,6 @@ cdef Py_ssize_t _decode_lzfse_block(
 # LZVN decoder
 # ---------------------------------------------------------------------------
 
-cdef inline int _lzvn_copy_match(
-    uint8_t *output, Py_ssize_t out_pos, int D, int M,
-) noexcept nogil:
-    cdef Py_ssize_t start = out_pos - D
-    cdef int j
-    if start < 0:
-        return -1
-    if D >= M:
-        memcpy(&output[out_pos], &output[start], M)
-    else:
-        for j in range(M):
-            output[out_pos + j] = output[start + j]
-    return 0
-
-
 cdef Py_ssize_t _lzvn_decode(
     const uint8_t *src,
     Py_ssize_t src_pos,
@@ -603,165 +603,66 @@ cdef Py_ssize_t _lzvn_decode(
     Py_ssize_t out_pos,
 ) noexcept nogil:
     """
-    Decode an LZVN byte stream. Returns the number of bytes written, or -1 for a match that starts
-    before the start of the output.
+    Decode the LZVN payload of a block up to its end-of-stream instruction. Returns the number of
+    bytes written, which is `n_raw_bytes`, or -1 if the payload is corrupt.
     """
     cdef Py_ssize_t written = 0
-    cdef int d_prev = 0
+    cdef Py_ssize_t L, M, D = 0
     cdef uint8_t opc
-    cdef int kind, L, M, D
-    cdef uint16_t opc23
+    cdef int kind
 
-    while src_pos < src_end and written < n_raw_bytes:
+    while True:
+        if src_pos >= src_end:
+            return -1
         opc = src[src_pos]
         kind = _LZVN_OPC_TABLE[opc]
-
         if kind == LZVN_EOS:
             break
-        elif kind == LZVN_NOP:
+        if kind == LZVN_NOP:
             src_pos += 1
             continue
-        elif kind == LZVN_UDEF:
-            break
+        if kind == LZVN_UDEF or src_pos + _LZVN_INSTRUCTION_SIZE[kind] > src_end:
+            return -1
+        L = opc >> 6
+        M = ((opc >> 3) & 7) + 3
+        if kind == LZVN_SML_D:
+            D = ((opc & 7) << 8) | src[src_pos + 1]
+        elif kind == LZVN_MED_D:
+            L = (opc >> 3) & 3
+            M = (((opc & 7) << 2) | (src[src_pos + 1] & 3)) + 3
+            D = (src[src_pos + 1] >> 2) | (src[src_pos + 2] << 6)
+        elif kind == LZVN_LRG_D:
+            D = src[src_pos + 1] | (src[src_pos + 2] << 8)
         elif kind == LZVN_SML_L:
             L = opc & 0x0F
-            src_pos += 1
-            if src_pos + L > src_end:
-                L = src_end - src_pos
-            if written + L > n_raw_bytes:
-                L = n_raw_bytes - written
-            memcpy(&output[out_pos + written], &src[src_pos], L)
-            written += L
-            src_pos += L
-            continue
+            M = 0
         elif kind == LZVN_LRG_L:
-            if src_pos + 1 >= src_end:
-                break
             L = src[src_pos + 1] + 16
-            src_pos += 2
-            if src_pos + L > src_end:
-                L = src_end - src_pos
-            if written + L > n_raw_bytes:
-                L = n_raw_bytes - written
-            memcpy(&output[out_pos + written], &src[src_pos], L)
-            written += L
-            src_pos += L
-            continue
+            M = 0
         elif kind == LZVN_SML_M:
+            L = 0
             M = opc & 0x0F
-            src_pos += 1
-            D = d_prev
-            if D == 0:
-                break
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
-                return -1
-            written += M
         elif kind == LZVN_LRG_M:
-            if src_pos + 1 >= src_end:
-                break
+            L = 0
             M = src[src_pos + 1] + 16
-            src_pos += 2
-            D = d_prev
-            if D == 0:
-                break
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
+        src_pos += _LZVN_INSTRUCTION_SIZE[kind]
+
+        if written + L + M > n_raw_bytes:
+            return -1
+        if L:
+            if src_pos + L > src_end:
                 return -1
-            written += M
-        elif kind == LZVN_PRE_D:
-            L = (opc >> 6) & 0x03
-            M = ((opc >> 3) & 0x07) + 3
-            src_pos += 1
-            D = d_prev
-            if D == 0:
-                break
-            if L > 0:
-                if src_pos + L > src_end:
-                    break
-                if written + L > n_raw_bytes:
-                    L = n_raw_bytes - written
-                memcpy(&output[out_pos + written], &src[src_pos], L)
-                written += L
-                src_pos += L
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
+            memcpy(&output[out_pos + written], &src[src_pos], L)
+            src_pos += L
+            written += L
+        if M:
+            if not 0 < D <= out_pos + written:
                 return -1
-            written += M
-        elif kind == LZVN_LRG_D:
-            if src_pos + 2 >= src_end:
-                break
-            L = (opc >> 6) & 0x03
-            M = ((opc >> 3) & 0x07) + 3
-            D = <int>_read_le_u16(src, src_pos + 1)
-            src_pos += 3
-            if D == 0:
-                break
-            d_prev = D
-            if L > 0:
-                if src_pos + L > src_end:
-                    break
-                if written + L > n_raw_bytes:
-                    L = n_raw_bytes - written
-                memcpy(&output[out_pos + written], &src[src_pos], L)
-                written += L
-                src_pos += L
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
-                return -1
-            written += M
-        elif kind == LZVN_MED_D:
-            if src_pos + 2 >= src_end:
-                break
-            L = (opc >> 3) & 0x03
-            opc23 = _read_le_u16(src, src_pos + 1)
-            M = ((opc & 0x07) << 2 | (opc23 & 0x03)) + 3
-            D = opc23 >> 2
-            src_pos += 3
-            if D == 0:
-                break
-            d_prev = D
-            if L > 0:
-                if src_pos + L > src_end:
-                    break
-                if written + L > n_raw_bytes:
-                    L = n_raw_bytes - written
-                memcpy(&output[out_pos + written], &src[src_pos], L)
-                written += L
-                src_pos += L
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
-                return -1
-            written += M
-        elif kind == LZVN_SML_D:
-            if src_pos + 1 >= src_end:
-                break
-            L = (opc >> 6) & 0x03
-            M = ((opc >> 3) & 0x07) + 3
-            D = ((opc & 0x07) << 8) | src[src_pos + 1]
-            src_pos += 2
-            if D == 0:
-                break
-            d_prev = D
-            if L > 0:
-                if src_pos + L > src_end:
-                    break
-                if written + L > n_raw_bytes:
-                    L = n_raw_bytes - written
-                memcpy(&output[out_pos + written], &src[src_pos], L)
-                written += L
-                src_pos += L
-            if written + M > n_raw_bytes:
-                M = n_raw_bytes - written
-            if _lzvn_copy_match(output, out_pos + written, D, M) < 0:
-                return -1
+            _copy_match(&output[out_pos + written], D, M)
             written += M
 
+    if written != n_raw_bytes:
+        return -1
     return written
 
 # ---------------------------------------------------------------------------
@@ -770,7 +671,9 @@ cdef Py_ssize_t _lzvn_decode(
 
 def lzfse_decompress(data) -> bytearray:
     """
-    Decompress an LZFSE compressed stream. Returns the decompressed data as a bytearray.
+    Decompress an LZFSE stream, which ends with an end-of-stream block. Input that ends before that
+    block, or that cannot be decoded after some output, raises a `RefineryPartialResult` with the
+    output of the blocks decoded so far.
     """
     view = memoryview(data)
     cdef:
@@ -787,11 +690,8 @@ def lzfse_decompress(data) -> bytearray:
     try:
         if out_buf == NULL or literals == NULL:
             raise MemoryError
-        while pos + 4 <= end:
-            header = read_block_header(view, pos)
+        while (header := read_block_header(view, pos)).kind is not BlockKind.END:
             kind = header.kind
-            if kind is BlockKind.END:
-                break
             payload = header.payload
             raw_size = header.raw_size
             reserve(&out_buf, &out_cap, out_pos, raw_size)
@@ -807,6 +707,11 @@ def lzfse_decompress(data) -> bytearray:
             out_pos += written
             pos = header.end
         return bytearray(out_buf[:out_pos])
+    except ValueError as error:
+        if not out_pos:
+            raise
+        raise RefineryPartialResult(
+            F'Decoding failed after {out_pos} bytes: {error!s}', bytearray(out_buf[:out_pos])) from error
     finally:
         free(out_buf)
         free(literals)

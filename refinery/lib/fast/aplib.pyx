@@ -92,6 +92,10 @@ cdef inline int _back_copy(Output *out, uint64_t offset, uint32_t length) except
 
 
 def aplib_decompress(data) -> bytearray:
+    """
+    Decompress an aPLib stream. Input that ends before the end marker, or that cannot be decoded
+    after some output, raises a `RefineryPartialResult` with the output decoded so far.
+    """
     cdef:
         const uint8_t[::1] src = memoryview(data)
         BitReader r
@@ -164,6 +168,12 @@ def aplib_decompress(data) -> bytearray:
                 'The input ended before the end marker.', bytearray(out.buf[:out.size])
             )
         return bytearray(out.buf[:out.size])
+    except RefineryPartialResult:
+        raise
+    except ValueError as error:
+        raise RefineryPartialResult(
+            F'Decoding failed after {out.size} bytes: {error!s}', bytearray(out.buf[:out.size])
+        ) from error
     finally:
         free(out.buf)
 

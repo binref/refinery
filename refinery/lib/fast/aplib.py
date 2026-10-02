@@ -31,6 +31,10 @@ def _find_longest_match(data: bytes | bytearray, offset: int) -> tuple[int, int]
 
 
 def aplib_decompress(data: bytes | bytearray | memoryview) -> bytearray:
+    """
+    Decompress an aPLib stream. Input that ends before the end marker, or that cannot be decoded
+    after some output, raises a `RefineryPartialResult` with the output decoded so far.
+    """
     src = bytes(data)
     pos = 0
     end = len(src)
@@ -120,6 +124,8 @@ def aplib_decompress(data: bytes | bytearray | memoryview) -> bytearray:
                 LWM = 0
     except EOFError:
         raise RefineryPartialResult('The input ended before the end marker.', output) from None
+    except ValueError as error:
+        raise RefineryPartialResult(F'Decoding failed after {len(output)} bytes: {error!s}', output) from error
 
     return output
 

@@ -24,7 +24,7 @@ _V2_FIXED_SIZE = 32
 
 _RAW_FIELDS = struct.Struct('<I')
 _LZVN_FIELDS = struct.Struct('<II')
-_V1_FIELDS = struct.Struct('<6Ii4HiHHH360H')
+_V1_FIELDS = struct.Struct('<6Ii4HiHHH360H2x')
 _V2_FIELDS = struct.Struct('<IQQQ')
 
 
@@ -60,6 +60,8 @@ def read_block_header(data: memoryview, pos: int) -> BlockHeader:
     Read the header of the block at offset `pos`. The compressed frequency table of an LZFSE V2
     block is not decoded; it begins at `BlockHeader.freq_table` and ends at `BlockHeader.payload`.
     """
+    if pos + 4 > len(data):
+        raise ValueError('the input ends before the end-of-stream block')
     magic = int.from_bytes(data[pos:pos + 4], 'little')
     try:
         kind = BlockKind(magic)

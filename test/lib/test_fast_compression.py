@@ -365,9 +365,49 @@ class TestLzfseFast(TestBase):
         with self.assertRaises(ValueError):
             lzfse_decompress(stream)
 
+    def test_block_that_decodes_to_less_than_the_size_in_its_header_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        size_in_header = int.from_bytes(stream[4:8], 'little')
+        stream[4:8] = (size_in_header + 1).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
     def test_block_that_claims_more_output_than_it_can_produce_is_rejected(self):
         stream = self._first_lzfse_stream()
         stream[4:8] = (0xFFFFFFFF).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_literal_stream_has_a_byte_that_it_does_not_use_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        header_size = int.from_bytes(stream[24:28], 'little')
+        fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        # The literal stream is read from its end, so a byte in front of it changes no literal.
+        stream[header_size:header_size] = bytes(1)
+        stream = with_v2_field(stream, V2_LITERAL_WORD, 20, 20, ((fields >> 20) & 0xFFFFF) + 1)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_match_stream_has_more_than_eight_bytes_of_zero_padding_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        header_size = int.from_bytes(stream[24:28], 'little')
+        literal_fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        lmd_fields = int.from_bytes(stream[V2_LMD_WORD:V2_LMD_WORD + 8], 'little')
+        lmd_payload = header_size + ((literal_fields >> 20) & 0xFFFFF)
+        self.assertEqual(stream[lmd_payload:lmd_payload + 8], bytes(8))
+        # The match stream is read from its end, so a byte in front of it changes no match.
+        stream[lmd_payload:lmd_payload] = bytes(1)
+        stream = with_v2_field(stream, V2_LMD_WORD, 40, 20, ((lmd_fields >> 40) & 0xFFFFF) + 1)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_match_stream_padding_is_not_zero_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        header_size = int.from_bytes(stream[24:28], 'little')
+        literal_fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        lmd_payload = header_size + ((literal_fields >> 20) & 0xFFFFF)
+        self.assertEqual(stream[lmd_payload:lmd_payload + 8], bytes(8))
+        stream[lmd_payload] = 1
         with self.assertRaises(ValueError):
             lzfse_decompress(stream)
 
@@ -386,6 +426,22 @@ class TestLzfseFast(TestBase):
             with self.subTest(size=size):
                 with self.assertRaises(ValueError):
                     lzfse_decompress(stream[:size])
+
+    def test_stream_without_its_end_of_stream_block_is_a_partial_result_with_the_whole_output(self):
+        stream = self._first_lzfse_stream()
+        output = lzfse_decompress(stream)
+        for size in range(len(stream) - 4, len(stream)):
+            with self.subTest(size=size):
+                with self.assertRaises(RefineryPartialResult) as context:
+                    lzfse_decompress(stream[:size])
+                self.assertEqual(context.exception.partial, output)
+
+    def test_stream_cut_inside_its_second_block_is_a_partial_result_with_the_first_block(self):
+        first = self._first_lzfse_stream()
+        second = self._first_lzvn_stream()
+        with self.assertRaises(RefineryPartialResult) as context:
+            lzfse_decompress(first[:-4] + second[:20])
+        self.assertEqual(context.exception.partial, lzfse_decompress(first))
 
     def test_lzvn_block_decodes_to_the_size_in_its_header(self):
         stream = self._first_lzvn_stream()
@@ -419,6 +475,48 @@ class TestLzfseFast(TestBase):
         with self.assertRaises(ValueError):
             lzfse_decompress(stream)
 
+    def test_lzvn_block_that_decodes_to_less_than_the_size_in_its_header_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        size_in_header = int.from_bytes(stream[4:8], 'little')
+        stream[4:8] = (size_in_header + 1).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_lzvn_block_without_its_end_of_stream_instruction_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        payload_size = int.from_bytes(stream[8:12], 'little')
+        # The payload ends with the end-of-stream opcode 06 and seven zero bytes.
+        self.assertEqual(stream[-12:-4], bytes.fromhex('0600000000000000'))
+        del stream[-12:-4]
+        stream[8:12] = (payload_size - 8).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_lzvn_block_with_an_undefined_instruction_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        self.assertEqual(stream[12], 0x68)
+        stream[12] = 0x70
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_lzvn_match_at_distance_zero_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        self.assertEqual(stream[12:14], bytes.fromhex('6801'))
+        stream[13] = 0
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_lzvn_block_whose_payload_ends_inside_a_run_of_literals_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        payload_size = int.from_bytes(stream[8:12], 'little')
+        # The last instruction before the end-of-stream opcode is E3, which is followed by its three
+        # literals. Cutting the payload after the first of them leaves two literals missing.
+        self.assertEqual(stream[-16:-12], bytes.fromhex('E30055AA'))
+        stream[-14:-4] = B''
+        stream[8:12] = (payload_size - 10).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
 
 @pytest.mark.cythonized
 class TestAplibFast(unittest.TestCase):
@@ -435,19 +533,28 @@ class TestAplibFast(unittest.TestCase):
             aplib_decompress(KEVIN_APLIB[:-1])
         self.assertEqual(context.exception.partial, KEVIN)
 
-    def test_match_that_repeats_the_offset_of_a_previous_match_before_any_match_is_rejected(self):
-        stream = bytearray(KEVIN_APLIB[:2])
-        # The second byte holds the tag bits of the next instructions. The tag bits 1, 0 begin a
-        # match, and the offset code 0, 0 after them repeats the offset of the previous match. The
-        # input ends with that match, so a decoder that accepts the offset runs out of input.
-        stream[1] = 0x80
-        with self.assertRaises(ValueError) as context:
+    def test_stream_whose_end_marker_is_corrupt_is_a_partial_result_with_the_whole_plaintext(self):
+        stream = bytearray(KEVIN_APLIB)
+        # The end marker is a short match whose offset byte is zero. The offset byte 66 makes it a
+        # match with offset 51, one byte before the start of the output.
+        self.assertEqual(stream[-1], 0)
+        stream[-1] = 0x66
+        with self.assertRaises(RefineryPartialResult) as context:
             aplib_decompress(stream)
-        self.assertNotIsInstance(context.exception, RefineryPartialResult)
+        self.assertEqual(context.exception.partial, KEVIN)
 
-    def test_match_whose_offset_does_not_fit_in_32_bits_is_rejected(self):
+    def test_match_that_repeats_the_offset_of_a_previous_match_before_any_match_ends_the_output(self):
+        stream = bytearray(KEVIN_APLIB)
+        # The second byte holds the tag bits of the next instructions. The tag bits 1, 0 begin a
+        # match, and the offset code 0, 0 after them repeats the offset of the previous match.
+        stream[1] = 0x80
+        with self.assertRaises(RefineryPartialResult) as context:
+            aplib_decompress(stream)
+        self.assertEqual(context.exception.partial, KEVIN[:1])
+
+    def test_match_whose_offset_does_not_fit_in_32_bits_ends_the_output(self):
         # After the literals A and B, a match has the offset gamma 2**24 + 3 and the low offset byte
         # 01, which makes its offset 2**32 + 1.
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(RefineryPartialResult) as context:
             aplib_decompress(bytes.fromhex('414A42AAAAAAAAABC60100'))
-        self.assertNotIsInstance(context.exception, RefineryPartialResult)
+        self.assertEqual(context.exception.partial, B'AB')
