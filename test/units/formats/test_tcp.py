@@ -162,6 +162,17 @@ class TestTCP(TestUnitBase):
             'GET /286/pop.asp?url=http://59.34.197.''164:81/804635/adx352133.asp',
         )))
 
+    @pytest.mark.xdist_group(name='pcap')
+    def test_zero_total_length_packets_are_reassembled(self):
+        data = self.download_sample('75c92ebcae76c89acfe060dc40c4b93f03fab570b6eaa801b8a42dfc4f79cbc6')
+        pipeline = self.load_pipeline('pcap [| tcp | iffs telemetry ]')
+        chunks = list(data | pipeline)
+        self.assertEqual(len(chunks), 5)
+        self.assertEqual(
+            [bytes(chunk)[:31] for chunk in chunks],
+            [b'POST /api/v1/telemetry HTTP/1.1'] * 5,
+        )
+
 
 _TCP_VNC_SAMPLE = lzma.decompress(base64.b85decode(
     '{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;1VDXm|XyBFww|;i}(qf'

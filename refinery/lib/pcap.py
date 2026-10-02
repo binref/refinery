@@ -301,9 +301,12 @@ class _IPv4Header(Struct[memoryview]):
         self.dst = str(ipaddress.IPv4Address(reader.read_bytes(4)))
         if ihl > 20:
             reader.read_exactly(ihl - 20)
-        remaining = total_length - ihl
-        if remaining > reader.remaining_bytes:
+        if total_length == 0:
+            # packets captured at a network card with TCP segmentation offload carry
+            # a zero total length because the card never filled in the field
             remaining = reader.remaining_bytes
+        else:
+            remaining = min(total_length - ihl, reader.remaining_bytes)
         self.payload = reader.read_exactly(max(remaining, 0))
 
 
@@ -316,7 +319,11 @@ class _IPv6Header(Struct[memoryview]):
         self.hop_limit = reader.u8()
         self.src = str(ipaddress.IPv6Address(reader.read_bytes(16)))
         self.dst = str(ipaddress.IPv6Address(reader.read_bytes(16)))
-        payload_size = min(payload_length, reader.remaining_bytes)
+        if payload_length == 0:
+            # a zero payload length is written by segmentation offload and by jumbograms
+            payload_size = reader.remaining_bytes
+        else:
+            payload_size = min(payload_length, reader.remaining_bytes)
         payload_start = reader.tell()
         extension_headers = {0, 43, 44, 60, 135, 139, 140}
         while next_header in extension_headers:

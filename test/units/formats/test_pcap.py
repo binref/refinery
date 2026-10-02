@@ -117,7 +117,6 @@ class TestPCAP(TestUnitBase):
             )
 
 
-
 def _reassemble_tcp(data) -> list[Datagram]:
     return reassemble_tcp(iter_transport(data, IPProtocol.TCP))
 
@@ -258,3 +257,16 @@ class TestPCAPv6ExtensionHeaders(TestUnitBase):
 
     def test_ah_is_not_walked_as_extension_header(self):
         self.assertEqual(self._reassemble(51), [])
+
+    def test_zero_payload_length_is_not_treated_as_empty(self):
+        body = _hop_by_hop(IPProtocol.TCP) + _tcp_segment(49152, 80, self._TCP_PAYLOAD)
+        packet = bytearray(_ipv6_packet(0, body))
+        packet[4:6] = b'\x00\x00'
+        self.assertEqual(_reassemble_tcp(_classic_pcap_raw_ip(bytes(packet))), [Datagram(
+            protocol=IPProtocol.TCP,
+            src_addr='2001:db8::1',
+            dst_addr='2001:db8::2',
+            src_port=49152,
+            dst_port=80,
+            payload=bytearray(self._TCP_PAYLOAD),
+        )])
