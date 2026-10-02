@@ -3,6 +3,7 @@ JavaScript AST deobfuscation transforms.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -121,12 +122,14 @@ def deobfuscate(
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
 
     A conversion of a function that is handed on, with no evidence that the program installs a
-    conversion on it, is folded only once the run has settled: a key a later pass decodes may yet
-    spell such an install. The run keeps a record of every such conversion it refused
-    (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). When the pipeline has
-    reached its fixpoint with one recorded, every pass that decodes has run to its end, so the
-    record is settled and the pipeline runs a second time over the same models, with the step
-    budget carried over.
+    conversion on it, is folded only on a tree the run has settled: a key a later pass decodes may
+    yet spell such an install. The run keeps a record of the tree it last refused such a
+    conversion on (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). When the
+    pipeline reaches its fixpoint on that tree, every pass that decodes has run to its end, so the
+    record settles the tree and the pipeline runs again over the same models, with the step budget
+    carried over. A change in that run leaves the settled tree behind, since a fold may let a pass
+    decode more, so the pipeline runs again as long as a run that changed the tree ends on one it
+    refused a conversion on.
     """
     options = DeobfuscationOptions(
         module=module,
@@ -144,14 +147,17 @@ def deobfuscate(
         options=options,
         observer=observer,
     )
-    if not settlement.deferred:
-        return steps
-    settlement.settle()
-    return _pipeline.run(
-        ast,
-        max_steps=max_steps,
-        initial_steps=steps,
-        models=models,
-        options=options,
-        observer=observer,
-    )
+    while settlement.waits_on(tree_version(ast)):
+        settlement.settle(tree_version(ast))
+        settled_steps = _pipeline.run(
+            ast,
+            max_steps=max_steps,
+            initial_steps=steps,
+            models=models,
+            options=options,
+            observer=observer,
+        )
+        if settled_steps == steps:
+            break
+        steps = settled_steps
+    return steps

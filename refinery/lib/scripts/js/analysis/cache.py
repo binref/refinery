@@ -63,7 +63,7 @@ class ModelCache(ModelCacheBase):
     The cache hands the record of the run it serves, *settlement*, to every effect model it builds
     (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). Only
     `refinery.lib.scripts.js.deobfuscation.deobfuscate` creates one; a cache built anywhere else
-    holds none, and its effect models then refuse what they would only answer once a run has
+    holds none, and its effect models then refuse what they would only answer on a tree a run has
     settled.
     """
 

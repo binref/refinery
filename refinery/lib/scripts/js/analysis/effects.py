@@ -46,7 +46,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Sequence
 
-from refinery.lib.scripts import Expression, Node, tree_root
+from refinery.lib.scripts import Expression, Node, tree_root, tree_version
 from refinery.lib.scripts.js.analysis.conversions import (
     RECEIVER_INSTALL_METHODS,
     ConversionInstalls,
@@ -79,10 +79,13 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     _property_key_name,
     arguments_name_their_function,
+    arguments_reads_only_elements,
     container_reference_role,
+    element_positions,
     enclosing_function,
     enclosing_operator,
     is_member_write_target,
+    own_arguments_binding,
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
@@ -2280,13 +2283,17 @@ class EffectModel:
 
         A function that is only handed on converts so when no install the program makes can reach
         it (`refinery.lib.scripts.js.analysis.conversions.ConversionInstalls`), but this is asked
-        only once the run has settled, since a key the run decodes later may yet spell an install.
-        Until then the question is refused and the run record notes it
+        only of the tree the run has settled, since a key the run decodes later may yet spell an
+        install. On any other tree the question is refused and the run record notes the tree
         (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`); a model built without
-        a record refuses it and notes nothing. A function of another tree, such as one in the body
-        of a `new Function` the interpreter parsed, is refused: the scan never read that tree.
+        a record refuses it and notes nothing. The tree is read as it stands, not as this model saw
+        it, so a model a pass holds across its own changes refuses as soon as the tree has moved. A
+        function of another tree, such as one in the body of a `new Function` the interpreter
+        parsed, is judged by its own position alone: this model holds none of its names, and the
+        scan never read that tree.
 
-        The run record is read on every question; only the grade and the scan are remembered.
+        The run record and the tree are read on every question; only the grade and the scan are
+        remembered.
         """
         use = self._function_use(function, frozenset(exempt))
         if use is FunctionUse.IN_PLACE:
@@ -2300,9 +2307,10 @@ class EffectModel:
         settlement = self._settlement
         if settlement is None:
             return False
-        if settlement.settled:
+        version = tree_version(self.model.root)
+        if settlement.settled(version):
             return True
-        settlement.defer()
+        settlement.defer(version)
         return False
 
     def _function_use(self, function: Node, spared: frozenset[Node]) -> FunctionUse:
@@ -2323,7 +2331,9 @@ class EffectModel:
             use = FunctionUse.TOUCHED
         if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
             own = self.model.binding_of(function.id)
-            if own is not None:
+            if own is None:
+                use = max(use, FunctionUse.TOUCHED)
+            else:
                 use = max(use, self._name_use(own, spared, 0))
         if isinstance(function, JsFunctionDeclaration):
             binding = self.model.binding_of(function.id) if isinstance(function.id, JsIdentifier) else None
@@ -2444,13 +2454,13 @@ class EffectModel:
             return FunctionUse.CONVERSION
         installer = self.conversion_installs.installer_of_call(call)
         if installer is not None:
-            target = next(
-                (index for index, argument in enumerate(call.arguments) if strip_parens(argument) is read),
-                None,
-            )
-            if target is None:
-                return FunctionUse.CONVERSION
-            return self._install_use(call, installer, target)
+            for target, argument in enumerate(call.arguments):
+                argument = strip_parens(argument)
+                if isinstance(argument, JsSpreadElement):
+                    break
+                if argument is read:
+                    return self._install_use(call, installer, target)
+            return FunctionUse.CONVERSION
         if self.trusted_intrinsic(call.callee) == 'String':
             return FunctionUse.IN_PLACE
         return self._parameter_use(call, read, depth)
@@ -2494,15 +2504,14 @@ class EffectModel:
     def _parameter_use(self, call: JsCallExpression, read: Node, depth: int) -> FunctionUse:
         """
         The use handing the function read at *read* to *call* makes of it: the use the receiving
-        parameter makes, when the call certainly runs one function, whose parameters are plain names
-        and whose `arguments` nothing reads. A value past the last parameter is dropped.
+        parameter makes, when the call certainly runs one function whose parameters are plain
+        names, together with the use its own `arguments` make of it (`_element_use`). A value past
+        the last parameter is reached through `arguments` alone.
         """
         if depth >= _FUNCTION_FOLLOW_LIMIT:
             return FunctionUse.TOUCHED
         callee = self.unambiguous_callee(call)
         if callee is None or not all(isinstance(param, JsIdentifier) for param in callee.params):
-            return FunctionUse.TOUCHED
-        if self._callee_uses_arguments(callee):
             return FunctionUse.TOUCHED
         position = None
         for index, argument in enumerate(call.arguments):
@@ -2513,13 +2522,38 @@ class EffectModel:
                 break
         if position is None:
             return FunctionUse.TOUCHED
-        if position >= len(callee.params):
-            return FunctionUse.IN_PLACE
+        use = FunctionUse.IN_PLACE
+        if self._callee_uses_arguments(callee):
+            use = self._element_use(callee, position, depth)
+        if position >= len(callee.params) or use is FunctionUse.CONVERSION:
+            return use
         param = callee.params[position]
         binding = self.model.binding_of(param) if isinstance(param, JsIdentifier) else None
         if binding is None:
             return FunctionUse.TOUCHED
-        return self._name_use(binding, frozenset(), depth + 1)
+        return max(use, self._name_use(binding, frozenset(), depth + 1))
+
+    def _element_use(self, callee: Node, position: int, depth: int) -> FunctionUse:
+        """
+        The use the function *callee*, which can reach its own `arguments`, makes through them of
+        the value its call passes at *position*. It is `TOUCHED` at least, and where every
+        reference reads the object element by element (`arguments_reads_only_elements`), the most
+        any read of an element that may be that one does to the value.
+        """
+        own = own_arguments_binding(self.model, callee)
+        if own is None or self.model.reflection_can_reach(own) or not arguments_reads_only_elements(own):
+            return FunctionUse.TOUCHED
+        use = FunctionUse.TOUCHED
+        for reference in own.reads:
+            element = enclosing_operator(reference)
+            if not isinstance(element, JsMemberExpression):
+                continue
+            positions = element_positions(element)
+            if positions is None or position in positions:
+                use = max(use, self._function_read_use(element, depth + 1))
+            if use is FunctionUse.CONVERSION:
+                break
+        return use
 
     def call_is_foldable(
         self,

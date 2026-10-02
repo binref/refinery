@@ -7,6 +7,7 @@ from dataclasses import replace
 
 from test import TestBase
 
+from refinery.lib.scripts import set_child, tree_version
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.effects import (
     GLOBAL_OBJECT,
@@ -23,12 +24,14 @@ from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsBinaryExpression,
     JsCallExpression,
+    JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
     JsObjectExpression,
     JsParenthesizedExpression,
+    JsScript,
     JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -2583,99 +2586,271 @@ class TestAFunctionObjectReachedThroughAName(TestBase):
 
 class TestAFunctionHandedOnConvertsToItsTextUnlessAnInstallReachesIt(TestBase):
     """
-    `EffectModel.function_conversion_untouched` for the function `W` a program writes first and keeps
-    in an array. Converting `W` answers its written text unless the program gives it a conversion
-    method of its own or a new prototype, which a function handed on can receive from code that never
-    names it. The answer rests on finding no such install only once the run has settled, since a key
-    the run decodes later may yet spell one.
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched` for the
+    function `W` a program writes first and keeps in an array. Converting `W` answers its written
+    text unless the program gives it a conversion method of its own or a new prototype, which a
+    function handed on can receive from code that never names it. The answer rests on finding no
+    such install only on the tree the run has settled, since a key the run decodes later may yet
+    spell one.
     """
 
-    PREFIX = 'function W(a) { return a + 1; } var g = [W];\n'
-    SHOW = '\nconsole.log(g.length, String(W));'
-    HELPER = 'function setT(o) { o.toString = function () { return "x"; }; } setT({});\n'
+    PREFIX = 'function W(a) { return a + 1; } var g = [W];'
+    SHOW = 'console.log(g.length, String(W));'
+    HELPER = 'function setT(o) { o.toString = function () { return "x"; }; } setT({});'
+    X = 'function () { return "x"; }'
 
     @staticmethod
-    def _untouched(source: str, settlement: ConversionSettlement | None) -> bool:
+    def _first_function(ast: JsScript) -> JsFunctionDeclaration:
+        return next(node for node in ast.walk_in_order() if isinstance(node, JsFunctionDeclaration))
+
+    @classmethod
+    def _untouched(cls, source: str, settlement: ConversionSettlement | None) -> bool:
         ast = JsParser(source).parse()
-        function = next(node for node in ast.walk_in_order() if isinstance(node, JsFunctionDeclaration))
-        return build_effects(build_semantic_model(ast), settlement=settlement).function_conversion_untouched(function)
+        effects = build_effects(build_semantic_model(ast), settlement=settlement)
+        return effects.function_conversion_untouched(cls._first_function(ast))
 
-    @staticmethod
-    def _settled() -> ConversionSettlement:
+    @classmethod
+    def _untouched_on_the_settled_tree(cls, *statements: str) -> bool:
+        ast = JsParser(' '.join(statements)).parse()
         settlement = ConversionSettlement()
-        settlement.settle()
-        return settlement
+        settlement.settle(tree_version(ast))
+        effects = build_effects(build_semantic_model(ast), settlement=settlement)
+        return effects.function_conversion_untouched(cls._first_function(ast))
 
-    def test_a_function_only_handed_on_converts_to_its_text_once_the_run_has_settled(self):
-        self.assertTrue(self._untouched(self.PREFIX + self.SHOW, self._settled()))
+    def test_a_function_only_handed_on_converts_to_its_text_on_the_settled_tree(self):
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, self.SHOW))
 
-    def test_a_function_only_handed_on_is_refused_and_deferred_while_the_run_is_open(self):
+    def test_a_function_only_handed_on_is_refused_and_waits_on_the_tree_while_the_run_is_open(self):
+        ast = JsParser(F'{self.PREFIX} {self.SHOW}').parse()
         settlement = ConversionSettlement()
-        self.assertFalse(self._untouched(self.PREFIX + self.SHOW, settlement))
-        self.assertTrue(settlement.deferred)
+        effects = build_effects(build_semantic_model(ast), settlement=settlement)
+        self.assertFalse(effects.function_conversion_untouched(self._first_function(ast)))
+        self.assertTrue(settlement.waits_on(tree_version(ast)))
+
+    def test_a_function_only_handed_on_is_refused_once_the_tree_has_moved_past_the_settled_one(self):
+        ast = JsParser(F'{self.PREFIX} {self.SHOW}').parse()
+        settlement = ConversionSettlement()
+        settlement.settle(tree_version(ast))
+        effects = build_effects(build_semantic_model(ast), settlement=settlement)
+        function = self._first_function(ast)
+        self.assertTrue(effects.function_conversion_untouched(function))
+        statement = ast.body[-1]
+        assert isinstance(statement, JsExpressionStatement)
+        set_child(statement, 'expression', statement.expression)
+        self.assertFalse(effects.function_conversion_untouched(function))
+        self.assertTrue(settlement.waits_on(tree_version(ast)))
 
     def test_a_function_only_handed_on_is_refused_without_a_run_record(self):
-        self.assertFalse(self._untouched(self.PREFIX + self.SHOW, None))
+        self.assertFalse(self._untouched(F'{self.PREFIX} {self.SHOW}', None))
 
     def test_a_function_left_in_place_converts_to_its_text_without_waiting(self):
         source = 'function W(a) { return a + 1; } console.log(String(W));'
         settlement = ConversionSettlement()
         self.assertTrue(self._untouched(source, None))
         self.assertTrue(self._untouched(source, settlement))
-        self.assertFalse(settlement.deferred)
+        self.assertIsNone(settlement.waiting)
 
     def test_a_function_handed_on_is_refused_where_an_install_may_reach_it(self):
-        x = 'function () { return "x"; }'
+        x = self.X
         for label, install in {
-            'a dotted write'                : F'g[0].toString = {x};',
-            'a quoted write'                : F'g[0]["toString"] = {x};',
-            'valueOf'                       : 'g[0].valueOf = function () { return 1; };',
-            'a new prototype'               : 'g[0].__proto__ = {};',
-            'Symbol.toPrimitive'            : F'g[0][Symbol.toPrimitive] = {x};',
-            'a key held by a name'          : F'var k = "toString"; g[0][k] = {x};',
-            'a key handed to a helper'      : F'function def(o, k, v) {{ o[k] = v; }} def(g[0], "toString", {x});',
-            'defineProperty'                : F'Object.defineProperty(g[0], "toString", {{ value: {x} }});',
-            'defineProperties'              : F'Object.defineProperties(g[0], {{ toString: {{ value: {x} }} }});',
-            'assign'                        : F'Object.assign(g[0], {{ toString: {x} }});',
-            'setPrototypeOf'                : 'Object.setPrototypeOf(g[0], {});',
-            'Reflect.set'                   : F'Reflect.set(g[0], "toString", {x});',
-            '__defineGetter__'              : F'g[0].__defineGetter__("toString", function () {{ return {x}; }});',
-            'an installer taken as a value' : F'var d = [Object.defineProperty][0]; d(g[0], "toString", {{ value: {x} }});',
-            'Reflect taken as a value'      : F'var R = Reflect; R.set(g[0], "toString", {x});',
-            'a copy of an own toString'     : F'var m = {{ toString: {x} }}; for (var k in m) g[0][k] = m[k];',
-            'a reflection surface'          : 'eval(s);',
+            'a dotted write'                     : F'g[0].toString = {x};',
+            'a quoted write'                     : F'g[0]["toString"] = {x};',
+            'valueOf'                            : 'g[0].valueOf = function () { return 1; };',
+            'a new prototype'                    : 'g[0].__proto__ = {};',
+            'Symbol.toPrimitive'                 : F'g[0][Symbol.toPrimitive] = {x};',
+            'a key held by a name'               : F'var k = "toString"; g[0][k] = {x};',
+            'a key a conditional chooses'        : F'g[0][Math.random() < 2 ? "toString" : "valueOf"] = {x};',
+            'a key handed to a helper'           : F'function def(o, k, v) {{ o[k] = v; }} def(g[0], "toString", {x});',
+            'defineProperty'                     : F'Object.defineProperty(g[0], "toString", {{ value: {x} }});',
+            'defineProperties'                   : F'Object.defineProperties(g[0], {{ toString: {{ value: {x} }} }});',
+            'assign'                             : F'Object.assign(g[0], {{ toString: {x} }});',
+            'setPrototypeOf'                     : 'Object.setPrototypeOf(g[0], {});',
+            'Reflect.set'                        : F'Reflect.set(g[0], "toString", {x});',
+            '__defineGetter__'                   : F'g[0].__defineGetter__("toString", function () {{ return {x}; }});',
+            'an installer taken as a value'      : F'var d = [Object.defineProperty][0]; d(g[0], "toString", {{ value: {x} }});',
+            'an installer spread from an array'  : F'Object.defineProperty(...[g[0], "toString", {{ value: {x} }}]);',
+            'an installer spread from a name'    : F'var a = [g[0], "toString", {{ value: {x} }}]; Object.defineProperty(...a);',
+            'Reflect taken as a value'           : F'var R = Reflect; R.set(g[0], "toString", {x});',
+            'Reflect destructured'               : F'var {{ Reflect: R }} = globalThis; R.set(g[0], "toString", {x});',
+            'a copy of an own toString'          : F'var m = {{ toString: {x} }}; for (var k in m) g[0][k] = m[k];',
+            'a reflection surface'               : 'eval(s);',
         }.items():
             with self.subTest(label):
-                self.assertFalse(self._untouched(self.PREFIX + install + self.SHOW, self._settled()))
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, install, self.SHOW))
+
+    def test_a_function_handed_on_is_refused_where_a_helper_forwards_the_key_it_is_called_with(self):
+        x = self.X
+        for label, install in {
+            'through its own recursion': (
+                'var seen = {}; function put(o, k, v, again) { var key = k;'
+                ' if (again) { put(o, key, v, false); } o[key] = v; seen[k] = 1; }'
+                F' put(g[0], "toString", {x}, true);'
+            ),
+            'through nine helpers': (
+                'function w0(o, k, v) { o[k] = v; } function w1(o, k, v) { w0(o, k, v); }'
+                ' function w2(o, k, v) { w1(o, k, v); } function w3(o, k, v) { w2(o, k, v); }'
+                ' function w4(o, k, v) { w3(o, k, v); } function w5(o, k, v) { w4(o, k, v); }'
+                ' function w6(o, k, v) { w5(o, k, v); } function w7(o, k, v) { w6(o, k, v); }'
+                ' function w8(o, k, v) { w7(o, k, v); } function w9(o, k, v) { w8(o, k, v); }'
+                F' w9(g[0], "toString", {x});'
+            ),
+            'beside a parameter with a default': (
+                'function def(o, k, v, e = false) { Object.defineProperty(o, k, { value: v, enumerable: e }); }'
+                F' def(g[0], "toString", {x});'
+            ),
+            'beside a rest parameter': F'function def(o, k, v, ...more) {{ o[k] = v; }} def(g[0], "toString", {x});',
+            'as its default': F'function hide(o, k = "toString") {{ o[k] = {x}; }} hide(g[0]);',
+            'through its own arguments': (
+                'function def(o) { o[arguments[1]] = arguments[2]; } def({}, "a", 1);'
+                F' def(g[0], "toString", {x});'
+            ),
+            'as the constructor of a class': (
+                'class Hook { constructor(t, k, v) { t[k] = v; } }'
+                F' new Hook(g[0], "toString", {x});'
+            ),
+            'through super': (
+                'class Base { constructor(t, k, v) { t[k] = v; } }'
+                F' class Hook extends Base {{ constructor(t) {{ super(t, "toString", {x}); }} }}'
+                ' new Hook(g[0]);'
+            ),
+            'through a subclass without a constructor': (
+                'class Base { constructor(t, k, v) { t[k] = v; } } class Hook extends Base {}'
+                F' new Hook(g[0], "toString", {x});'
+            ),
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, install, self.SHOW))
+
+    def test_a_function_handed_on_is_refused_where_a_copy_may_carry_a_conversion_method_onto_it(self):
+        x = self.X
+        for label, install in {
+            'a class method by its descriptor': (
+                'class M { toString() { return "m"; } }'
+                ' Object.defineProperties(g[0], Object.getOwnPropertyDescriptors(M.prototype));'
+            ),
+            'a quoted class field': F'class M {{ "toString" = {x}; }} Object.assign(g[0], new M());',
+            'a value held by a name': F'var m = {{ toString: {x} }}; for (var k in m) {{ var v = m[k]; g[0][k] = v; }}',
+            'a value bound to the target': F'var m = {{ toString: {x} }}; for (var k in m) g[0][k] = m[k].bind(g[0]);',
+            'a descriptor': (
+                F'var m = {{ toString: {x} }};'
+                ' for (var k in m) Object.defineProperty(g[0], k, Object.getOwnPropertyDescriptor(m, k));'
+            ),
+            'an entry': F'var m = {{ toString: {x} }}; for (const [k, v] of Object.entries(m)) g[0][k] = v;',
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, install, self.SHOW))
+
+    def test_a_function_handed_on_converts_to_its_text_beside_a_delete_of_an_own_conversion(self):
+        install = 'var m = { a: 1 }; delete m.toString; for (var k in m) g[0][k] = m[k];'
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, install, self.SHOW))
 
     def test_a_function_handed_to_a_helper_that_installs_only_on_what_its_calls_pass_converts_to_its_text(self):
-        self.assertTrue(self._untouched(self.PREFIX + self.HELPER + self.SHOW, self._settled()))
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, self.HELPER, self.SHOW))
 
     def test_a_function_handed_on_is_refused_where_that_helper_may_be_called_another_way(self):
         for label, call in {
-            'call'             : 'setT.call(null, g[0]);',
-            'a callback'       : 'g.forEach(setT);',
-            'a sequence'       : '(0, setT)(g[0]);',
-            'an object method' : 'var api = { setT: setT }; api.setT(g[0]);',
+            'call'                    : 'setT.call(null, g[0]);',
+            'a callback'              : 'g.forEach(setT);',
+            'a sequence'              : '(0, setT)(g[0]);',
+            'an object method'        : 'var api = { setT: setT }; api.setT(g[0]);',
+            'an instance constructor' : 'var t = new setT({}); t.constructor(g[0]);',
         }.items():
             with self.subTest(label):
-                self.assertFalse(self._untouched(self.PREFIX + self.HELPER + call + self.SHOW, self._settled()))
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, self.HELPER, call, self.SHOW))
+
+    def test_a_function_handed_on_converts_to_its_text_where_a_class_installs_only_on_what_its_constructions_pass(self):
+        hook = F'class Hook {{ constructor(t) {{ if (t) {{ t.toString = {self.X}; }} }} }}'
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, hook, 'new Hook(null);', self.SHOW))
+
+    def test_a_function_handed_on_is_refused_where_that_class_may_be_constructed_another_way(self):
+        x = self.X
+        for label, hook in {
+            'a static block': (
+                F'class Hook {{ constructor(t) {{ if (t) {{ t.toString = {x}; }} }} static {{ new this(g[0]); }} }}'
+            ),
+            'a decorator': (
+                'function dec(C) { new C(g[0]); return C; }'
+                F' @dec class Hook {{ constructor(t) {{ if (t) {{ t.toString = {x}; }} }} }}'
+            ),
+            'the prototype of a subclass': (
+                F'class Hook {{ constructor(t) {{ if (t) {{ t.toString = {x}; }} }} }}'
+                ' class Sub extends Hook { constructor() { super(null); } } new Sub();'
+                ' Reflect.construct(Object.getPrototypeOf(Sub), [g[0]]);'
+            ),
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, hook, 'new Hook(null);', self.SHOW))
+
+    def test_a_function_handed_to_a_helper_that_counts_its_arguments_is_refused_where_it_writes_a_runtime_key(self):
+        helper = 'function put(o, k, v) { if (arguments.length < 3) { return; } o[k] = v; }'
+        call = F'put(W, (process.argv[99] || "") + "toString", {self.X});'
+        self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, helper, call, self.SHOW))
+
+    def test_a_function_handed_to_a_helper_that_counts_its_arguments_converts_to_its_text_where_it_installs_nothing(self):
+        helper = 'function put(o, k, v) { if (arguments.length < 3) { return; } o.label = v; }'
+        call = 'put(W, "label", "x");'
+        self.assertTrue(self._untouched_on_the_settled_tree(self.PREFIX, helper, call, self.SHOW))
 
     def test_a_function_handed_to_a_helper_through_arguments_callee_is_refused(self):
         helper = (
             'function setT(o, again) {'
             ' if (!again) { arguments.callee(g[0], true); }'
             ' o.toString = function () { return "x"; };'
-            ' } setT({});\n'
+            ' } setT({});'
         )
-        self.assertFalse(self._untouched(self.PREFIX + helper + self.SHOW, self._settled()))
+        self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, helper, self.SHOW))
 
-    def test_a_function_of_another_tree_is_refused_unless_left_in_place(self):
-        ast = JsParser(self.PREFIX + self.SHOW).parse()
-        effects = build_effects(build_semantic_model(ast), settlement=self._settled())
-        other = JsParser('function V(a) { return a; } var h = [V]; console.log(h.length, String(V));').parse()
-        function = next(node for node in other.walk() if isinstance(node, JsFunctionDeclaration))
-        self.assertFalse(effects.function_conversion_untouched(function))
+    def test_a_function_handed_to_a_helper_through_new_target_is_refused(self):
+        helper = (
+            'function setT(o, again) {'
+            ' if (!again && new.target) { new.target(g[0], true); }'
+            ' o.toString = function () { return "x"; };'
+            ' } new setT({});'
+        )
+        self.assertFalse(self._untouched_on_the_settled_tree(self.PREFIX, helper, self.SHOW))
+
+    def test_a_function_of_another_tree_converts_to_its_text_only_as_an_unnamed_expression_converted_in_place(self):
+        ast = JsParser(F'{self.PREFIX} {self.SHOW}').parse()
+        settlement = ConversionSettlement()
+        settlement.settle(tree_version(ast))
+        effects = build_effects(build_semantic_model(ast), settlement=settlement)
+        for source, converts in {
+            'function V(a) { return a; } var h = [V]; console.log(h.length, String(V));'                     : False,
+            'function V(a) { return a; } console.log(String(V));'                                            : False,
+            'console.log(String((function V() { V.toString = function () { return "x"; }; return V; })()));' : False,
+            'console.log(String(function (a) { return a; }));'                                               : True,
+        }.items():
+            with self.subTest(source):
+                other = JsParser(source).parse()
+                function = next(
+                    node for node in other.walk_in_order()
+                    if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression))
+                )
+                self.assertEqual(effects.function_conversion_untouched(function), converts)
+
+
+class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
+    """
+    The scan of conversion installs runs whenever an effect model is built, which a run does after
+    every change. Each receiver it judges, and each concatenation it reads, is read once.
+    """
+
+    def test_eight_hundred_fields_defined_on_this_in_one_constructor_build_within_a_second(self):
+        fields = ' '.join(F'Object.defineProperty(this, "f{k}", {{ value: {k} }});' for k in range(800))
+        ast = JsParser(F'function Foo() {{ {fields} }} new Foo();').parse()
+        model = build_semantic_model(ast)
+        start = time.perf_counter()
+        build_effects(model)
+        self.assertLess(time.perf_counter() - start, 1.0)
+
+    def test_forty_concatenations_of_five_hundred_strings_beside_an_install_on_this_build_within_a_second(self):
+        chain = ' + '.join(F'"p{k}"' for k in range(500))
+        chains = ' '.join(F'var s{k} = {chain};' for k in range(40))
+        ast = JsParser(F'function P() {{ this.toString = function () {{ return "p"; }}; }} new P(); {chains}').parse()
+        model = build_semantic_model(ast)
+        start = time.perf_counter()
+        build_effects(model)
+        self.assertLess(time.perf_counter() - start, 1.0)
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:
@@ -2917,15 +3092,25 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
         build_effects(build_semantic_model(JsParser(source).parse()))
 
     @unittest.expectedFailure
-    def test_names_given_one_of_ten_names_four_levels_deep_build_within_a_second(self):
-        width = 10
-        lines = [F'var n0_{i} = function () {{}};' for i in range(width)]
-        for level in range(1, 5):
-            for i in range(width):
-                lines.append(F'var n{level}_{i};')
-                lines.extend(F'if (Math.random() > 0.5) {{ n{level}_{i} = n{level - 1}_{j}; }}' for j in range(width))
-        lines.extend(F'n4_{i}.toString = function () {{ return "x"; }};' for i in range(width))
-        ast = JsParser('\n'.join(lines)).parse()
-        start = time.perf_counter()
-        build_effects(build_semantic_model(ast))
-        self.assertLess(time.perf_counter() - start, 1.0)
+    def test_names_given_one_of_ten_names_build_in_time_that_grows_with_the_program(self):
+        """
+        Every level of names adds the same lines to the program, so a build whose time grows with
+        the program takes about twice as long for four levels as for two.
+        """
+        def build(depth: int) -> tuple[float, int]:
+            width = 10
+            lines = [F'var n0_{i} = function () {{}};' for i in range(width)]
+            for level in range(1, depth + 1):
+                for i in range(width):
+                    lines.append(F'var n{level}_{i};')
+                    lines.extend(F'if (Math.random() > 0.5) {{ n{level}_{i} = n{level - 1}_{j}; }}' for j in range(width))
+            lines.extend(F'n{depth}_{i}.toString = function () {{ return "x"; }};' for i in range(width))
+            source = '\n'.join(lines)
+            ast = JsParser(source).parse()
+            start = time.perf_counter()
+            build_effects(build_semantic_model(ast))
+            return time.perf_counter() - start, len(source)
+
+        small_time, small_size = build(2)
+        large_time, large_size = build(4)
+        self.assertLess(large_time / small_time, 3 * large_size / small_size)

@@ -655,7 +655,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         value = model.singular_value(binding)
         if not isinstance(value, FUNCTION_NODES) or value.source_text is None or '\n' in value.source_text:
             return []
-        if not effects.function_conversion_untouched(value, (subject,)) or not effects.read_chain_intact(type(value)):
+        if not effects.read_chain_intact(type(value)):
             return []
         declarator = check.parent
         if not isinstance(declarator, JsVariableDeclarator) or not isinstance(declarator.id, JsIdentifier):
@@ -673,6 +673,8 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
                 and dominance.binding_established_before(name, call)
             ):
                 calls.append(call)
+        if not calls or not effects.function_conversion_untouched(value, (subject,)):
+            return []
         return calls
 
     @staticmethod
@@ -776,11 +778,11 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         helpers[id(subject_binding)] = subject_binding
         if not all(dominance.binding_established_before(helper, hashed.call) for helper in helpers.values()):
             return None
-        if not effects.function_conversion_untouched(subject, (hashed.subject,)):
-            return None
         if not effects.read_chain_intact(type(subject)):
             return None
         if cyrb53(re.sub(_STRIPPED_PATTERN, '', subject.source_text), hashed.seed) != expected:
+            return None
+        if not effects.function_conversion_untouched(subject, (hashed.subject,)):
             return None
         return declarator
 

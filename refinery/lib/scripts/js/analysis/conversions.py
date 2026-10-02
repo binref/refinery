@@ -9,36 +9,42 @@ through the names that hold it and refuses wherever one hands it on. A function 
 never receive such a method: `ConversionInstalls` scans the whole program once for every install
 that could reach a function, so a function handed on that no install reaches still converts to the
 text it was written with. A key known only at runtime is no evidence of an install. A key the run
-decodes later is, which is why a fold resting on the absence of evidence waits until the run has
-settled; `ConversionSettlement` is the record of that wait.
+decodes later is, which is why a fold resting on the absence of evidence waits for a tree the run
+has settled; `ConversionSettlement` is the record of that wait.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Iterable, TypeVar
+import weakref
+
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, NamedTuple, Sequence, TypeVar, cast
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.intrinsics import GLOBAL_OBJECT
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
+    BindingKind,
     Role,
     _property_key_name,
     arguments_name_their_function,
+    constructed_class,
+    element_positions,
     enclosing_operator,
     is_member_write_target,
     read_is_only_tested,
+    receiver_owner,
     reference_role,
     references_new_target,
 )
 from refinery.lib.scripts.js.model import (
     CONVERSION_INSTALL_METHODS,
     JsArrayExpression,
+    JsArrayPattern,
     JsAssignmentExpression,
     JsAssignmentPattern,
     JsBinaryExpression,
     JsBooleanLiteral,
     JsCallExpression,
-    JsClassBody,
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
@@ -48,25 +54,21 @@ from refinery.lib.scripts.js.model import (
     JsLogicalExpression,
     JsMemberExpression,
     JsMethodDefinition,
-    JsMethodKind,
     JsNewExpression,
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
-    JsParenthesizedExpression,
     JsProperty,
     JsPropertyDefinition,
     JsRegExpLiteral,
     JsSequenceExpression,
     JsSpreadElement,
-    JsStaticBlock,
     JsStringLiteral,
     JsTemplateLiteral,
     JsThisExpression,
     JsUnaryExpression,
     JsUpdateExpression,
-    JsVariableDeclarator,
     static_property_key,
     static_string,
     strip_parens,
@@ -129,9 +131,20 @@ Built-ins whose result is never a function, whether they are called or construct
 
 _NAME_DEPTH = 8
 """
-How many names a reader follows through the values they are given before it answers that it does
-not know. The limit bounds a chain of names each holding the previous one.
+How many names a reader follows through the values they are given. A reader that reaches the limit
+answers as if the name could hold anything: a key may spell a conversion, a receiver may hold any
+function. The limit bounds a chain of names each holding the previous one.
 """
+
+
+class _ArgumentAt(NamedTuple):
+    """
+    An element of the `arguments` of *function*: the one at *position*, or any one when it is
+    `None`. A key reader follows it the way it follows a name.
+    """
+    function: JsFunctionDeclaration | JsFunctionExpression
+    position: int | None
+
 
 _VALUE_FREE_OF_FUNCTIONS = (
     JsObjectExpression,
@@ -151,69 +164,85 @@ _VALUE_FREE_OF_FUNCTIONS = (
 class ConversionSettlement:
     """
     The record one deobfuscation run keeps of the conversions it could not fold yet. A function that
-    is handed on, with no evidence that an install reaches it, folds only once the run has settled:
-    a key the run decodes later, from a constant table or a string array, may yet spell an install.
-    While the run is open such a question is refused and `deferred` is set. A run that ends with a
-    deferral settles the record and runs again over the same models, and every such question then
-    folds.
+    is handed on, with no evidence that an install reaches it, folds only on the tree the run has
+    settled: the one the pipeline reached its fixpoint on, where every key the run can decode has
+    been decoded. A question asked on any other tree is refused, and the record notes the tree it
+    was asked on. When the pipeline reaches its fixpoint on a tree a question was refused on, the
+    run settles that tree and runs again. A change in that run leaves the settled tree behind,
+    since it may let the run decode a key that spells an install, so the questions asked after it
+    wait for the next fixpoint.
     """
 
     def __init__(self):
-        self.settled = False
-        self.deferred = False
+        self.version: int | None = None
+        self.waiting: int | None = None
 
-    def defer(self) -> None:
+    def settled(self, version: int) -> bool:
         """
-        Record that a question was refused which the settled run would answer.
+        Whether the tree at *version* is the one the run settled.
         """
-        self.deferred = True
+        return version == self.version
 
-    def settle(self) -> None:
+    def defer(self, version: int) -> None:
         """
-        Declare that the run has decoded every key it can.
+        Record that a question asked on the tree at *version* was refused until a settled tree.
         """
-        self.settled = True
+        self.waiting = version
+
+    def waits_on(self, version: int) -> bool:
+        """
+        Whether a question was refused on the tree at *version*, the last tree it was asked on.
+        """
+        return version == self.waiting
+
+    def settle(self, version: int) -> None:
+        """
+        Declare that the pipeline reached its fixpoint on the tree at *version*.
+        """
+        self.version = version
+        self.waiting = None
 
 
 def _is_direct_callee(node: Node) -> bool:
     """
     Whether *node*, through any parentheses, is the callee of a call.
     """
-    cursor = node
-    parent = cursor.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        cursor, parent = parent, parent.parent
-    return isinstance(parent, JsCallExpression) and parent.callee is cursor
+    call = enclosing_operator(node)
+    return isinstance(call, JsCallExpression) and strip_parens(call.callee) is node
 
 
-def _receiver_owner(node: Node) -> Node | None:
+def _stores_under_its_key(member: JsMemberExpression) -> bool:
     """
-    The node that gives the `this` at *node* its value: the nearest regular function around it, or a
-    class body, static block or field, which give it one of their own. Arrows are passed through.
+    Whether *member* is the target of a write that stores a value under its key, which a `delete`
+    of it does not.
     """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, (JsFunctionDeclaration, JsFunctionExpression)):
-            return cursor
-        if isinstance(cursor, (JsClassBody, JsStaticBlock, JsPropertyDefinition)):
-            return cursor
-        cursor = cursor.parent
-    return None
+    if not is_member_write_target(member):
+        return False
+    governor = enclosing_operator(member)
+    return not (isinstance(governor, JsUnaryExpression) and governor.operator == 'delete')
 
 
-def _constructor_read_is_harmless(node: Node) -> bool:
+def _spread_out(arguments: Sequence[Node]) -> tuple[list[Node], bool]:
     """
-    Whether a read of a `constructor` property at *node* only constructs with it, compares it, reads
-    its name, or tests it.
+    The arguments a call passes as far as their positions are known, every spread of an array
+    literal written out in place, and whether a spread of anything else hides the arguments after
+    them.
     """
-    parent = enclosing_operator(node)
-    if isinstance(parent, JsNewExpression) and strip_parens(parent.callee) is node:
-        return True
-    if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
-        return static_property_key(parent) == 'name' and not is_member_write_target(parent)
-    if isinstance(parent, JsBinaryExpression) and parent.operator == 'instanceof':
-        return True
-    return read_is_only_tested(node)
+    spread: list[Node] = []
+    for argument in arguments:
+        stripped = strip_parens(argument)
+        if not isinstance(stripped, JsSpreadElement):
+            spread.append(argument if stripped is None else stripped)
+            continue
+        array = strip_parens(stripped.argument)
+        if not isinstance(array, JsArrayExpression):
+            return spread, True
+        for element in array.elements:
+            element = strip_parens(element)
+            if element is None or isinstance(element, JsSpreadElement):
+                return spread, True
+            spread.append(element)
+    return spread, False
 
 
 def _destructured_key(binding: Binding) -> str | None:
@@ -230,6 +259,23 @@ def _destructured_key(binding: Binding) -> str | None:
     return None
 
 
+def _entry_position(binding: Binding) -> tuple[JsArrayPattern, int] | None:
+    """
+    The array pattern that declares *binding* and its position in it, the way a loop over
+    `Object.entries` names a key and its value: `[k, v]`.
+    """
+    if not binding.declarations:
+        return None
+    declaration = binding.declarations[0]
+    pattern = declaration.parent
+    if not isinstance(pattern, JsArrayPattern):
+        return None
+    for index, element in enumerate(pattern.elements):
+        if element is declaration:
+            return pattern, index
+    return None
+
+
 class ConversionInstalls:
     """
     The conversion installs of one script, scanned when its
@@ -243,29 +289,36 @@ class ConversionInstalls:
       `Reflect.set`) whose target may hold a function and which spells a conversion key, sets a
       prototype, or copies from a source spelling one;
     - a copy, onto a receiver that may hold a function, from a source the scan cannot read: an
-      `assign` or `defineProperties` call, or a write `d[k] = s[k]`. It counts only when the program
-      gives some object an own conversion method a copy could carry.
+      `assign` or `defineProperties` call, or a write or `defineProperty` under a key the scan
+      cannot read whose value is read off another object under the same key, directly, through
+      names, through `bind`, as its descriptor, or beside the key in a `[key, value]` entry. It
+      counts only when the program gives some object an own conversion method a copy could carry.
 
     Any function may be reached when the program has a reflection surface, reads an installer or
     `Reflect` as a value other than through a name every read of which calls or tests it, or
-    destructures an installer into such a name.
+    destructures an installer into such a name, or passes the target of an installer call through
+    a spread the scan cannot write out.
 
     A key, a source or a receiver is read through the values its names are given, a parameter
     through the calls of its function the text shows
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.values_through_calls`). A key known only
-    at runtime is no evidence. The readers remember their answer per name, so a name reused for many
-    writes is read once.
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.values_through_calls`), and a key also
+    through the arguments those calls pass where it reads the function's own `arguments`. A key
+    known only at runtime is no evidence. The readers remember their answers, a key per name and
+    the others per name and depth, so a name reused for many writes is read once, and no answer
+    depends on which question came first. The effect model that holds the scan is held back only
+    weakly, so the two leave memory together.
     """
 
     def __init__(self, effects: EffectModel):
-        self._effects = effects
+        self._effects = cast('EffectModel', weakref.proxy(effects))
         self._model = effects.model
-        self._keys: dict[Binding, bool | None] = {}
-        self._sources: dict[Binding, bool | None] = {}
-        self._may_hold: dict[Binding, bool] = {}
-        self._held: dict[Binding, frozenset[Node] | None] = {}
-        self._constructors_escape: bool | None = None
-        self._installer_aliases = self._collect_installer_aliases()
+        self._keys: dict[Binding | _ArgumentAt, bool | None] = {}
+        self._sources: dict[tuple[Binding, int], bool | None] = {}
+        self._may_hold: dict[tuple[Binding, int], bool] = {}
+        self._held: dict[tuple[Binding, int], frozenset[Node] | None] = {}
+        self._fresh_receivers: dict[Node, bool] = {}
+        self._fresh_prototypes: dict[Binding, bool] = {}
+        self._installer_aliases, self._installers_escape = self._collect_installer_aliases()
         self.reach = self._scan()
 
     def may_reach(self, function: Node) -> bool:
@@ -289,86 +342,179 @@ class ConversionInstalls:
 
     def install_spelled(self, call: JsCallExpression, installer: str, target: int) -> bool | None:
         """
-        What the installer call *call* spells for the value at argument *target*, or for its receiver
-        when *target* is -1: `True` a conversion key or a new prototype, `False` another key or a
-        position it does not install on, `None` a key or a source known only at runtime.
+        What the installer call *call* spells for the value at argument *target*, or for its
+        receiver when *target* is -1: `True` a conversion key or a new prototype, `False` another
+        key or a position it does not install on, `None` a key or a source known only at runtime.
+        A spread of an array literal is read as the arguments it writes out.
         """
-        arguments = call.arguments
-        if any(isinstance(argument, JsSpreadElement) for argument in arguments):
-            return None
+        arguments, hidden = _spread_out(call.arguments)
+
+        def argument(index: int) -> Node | None:
+            return arguments[index] if index < len(arguments) else None
+
+        def unknown_past(index: int) -> bool:
+            return hidden and index >= len(arguments)
+
         if installer == 'setPrototypeOf':
             return target == 0
         if installer == 'defineProperty':
             if target != 0:
                 return False
-            return self.spells_key(arguments[1] if len(arguments) > 1 else None)
+            return None if unknown_past(1) else self.spells_key(argument(1))
         if installer == 'Reflect.set':
             if target not in (0, 3):
                 return False
-            return self.spells_key(arguments[1] if len(arguments) > 1 else None)
+            return None if unknown_past(1) else self.spells_key(argument(1))
         if installer in ('assign', 'defineProperties'):
             if target != 0:
                 return False
             answers = [self._spells_source(source) for source in arguments[1:]]
             if any(answers):
                 return True
-            if any(answer is None for answer in answers):
+            if hidden or any(answer is None for answer in answers):
                 return None
             return False
         if installer in RECEIVER_INSTALL_METHODS:
             if target != -1:
                 return False
-            return self.spells_key(arguments[0] if arguments else None)
+            return None if unknown_past(0) else self.spells_key(argument(0))
         return False
 
     def spells_member_key(self, key: Node | None, computed: bool) -> bool | None:
         """
-        Whether the key of a member or a property spells a conversion key, in the sense of
-        `spells_key`; a key that is not computed is its own name.
+        Whether the key of a member, a property or a class member spells a conversion key, in the
+        sense of `spells_key`; a key that is not computed is its own name, quoted or not.
         """
-        if not computed:
-            return isinstance(key, JsIdentifier) and key.name in CONVERSION_KEYS
-        return self.spells_key(key)
+        if computed:
+            return self.spells_key(key)
+        name = key.name if isinstance(key, JsIdentifier) else static_string(key)
+        return name in CONVERSION_KEYS
 
-    def spells_key(self, node: Node | None, depth: int = 0) -> bool | None:
+    def spells_key(self, node: Node | None) -> bool | None:
         """
         Whether the key expression *node* spells a conversion key: `True`, `False` when it spells
         another key, `None` when it is known only at runtime. A member read named `toPrimitive`
-        counts whatever its object, and so does a name destructured from that key.
+        counts whatever its object, and so does a name destructured from that key. A conditional is
+        read through its branches the way a name is read through its values (`_key_of_name`), and
+        an element of a function's own `arguments` through the arguments its calls pass there.
+        """
+        answer: bool | None = False
+        for atom in self._key_atoms(node):
+            if isinstance(atom, (Binding, _ArgumentAt)):
+                atom = self._key_of_name(atom)
+            if atom is True:
+                return True
+            if atom is None:
+                answer = None
+        return answer
+
+    def _key_atoms(self, node: Node | None) -> Iterator[Binding | _ArgumentAt | bool | None]:
+        """
+        What the key expression *node* may evaluate to, as `spells_key` reads it without following
+        names: an answer of its own, or the name or the element of `arguments` whose values it
+        takes.
         """
         node = strip_parens(node)
         if node is None:
-            return None
+            yield None
+            return
         text = static_string(node)
         if text is not None:
-            return text in CONVERSION_KEYS
-        if isinstance(node, (JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-            return False
-        if isinstance(node, JsMemberExpression):
+            yield text in CONVERSION_KEYS
+        elif isinstance(node, (JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+            yield False
+        elif isinstance(node, JsMemberExpression):
             key = static_property_key(node)
             if key == 'toPrimitive':
-                return True
-            if key is not None and self._effects.trusted_intrinsic(node.object) == 'Symbol':
-                return False
-            return None
-        if not isinstance(node, JsIdentifier) or depth >= _NAME_DEPTH:
-            return None
-        binding = self._model.resolve(node)
-        if binding is None:
-            return None
+                yield True
+            elif key is not None and self._effects.trusted_intrinsic(node.object) == 'Symbol':
+                yield False
+            else:
+                yield self._argument_read(node)
+        elif isinstance(node, JsSequenceExpression):
+            yield from self._key_atoms(node.expressions[-1] if node.expressions else None)
+        elif isinstance(node, JsConditionalExpression):
+            yield from self._key_atoms(node.consequent)
+            yield from self._key_atoms(node.alternate)
+        elif isinstance(node, JsIdentifier):
+            yield self._model.resolve(node)
+        else:
+            yield None
 
-        def key_spelled() -> bool | None:
-            if _destructured_key(binding) == 'toPrimitive':
-                return True
-            values, complete = self._model.values_through_calls(binding)
-            answers = [self.spells_key(value, depth + 1) for value in values]
-            if any(answers):
-                return True
-            if complete and values and all(answer is False for answer in answers):
-                return False
+    def _argument_read(self, member: JsMemberExpression) -> Binding | _ArgumentAt | None:
+        """
+        What the key *member* reads when it takes an element of a function's own `arguments`: the
+        parameter the function names at that position, which the element starts out as and a
+        sloppy function's element keeps mirroring, or else the element itself; `None` for any
+        other member.
+        """
+        receiver = strip_parens(member.object)
+        if not isinstance(receiver, JsIdentifier):
             return None
+        binding = self._model.resolve(receiver)
+        if binding is None or binding.kind is not BindingKind.ARGUMENTS:
+            return None
+        function = binding.scope.node
+        if not isinstance(function, (JsFunctionDeclaration, JsFunctionExpression)):
+            return None
+        positions = element_positions(member)
+        if positions is None:
+            return _ArgumentAt(function, None)
+        if not positions:
+            return None
+        position = positions.start
+        if position < len(function.params):
+            parameter = function.params[position]
+            if isinstance(parameter, JsIdentifier):
+                return self._model.binding_of(parameter)
+        return _ArgumentAt(function, position)
 
-        return self._remembered(self._keys, binding, None, key_spelled)
+    def _key_of_name(self, name: Binding | _ArgumentAt) -> bool | None:
+        """
+        `spells_key` for a key the name or the element of `arguments` *name* holds: `True` when
+        some value of it, or of a name those values lead to within `_NAME_DEPTH` names, spells a
+        conversion key, or when the names lead on past that; `False` when every value read spells
+        another key and every name read lists all its values; `None` otherwise. Each name is read
+        once, so a cycle of names adds nothing the names in it do not hold, and the answer is
+        remembered per name.
+        """
+        if name not in self._keys:
+            self._keys[name] = self._read_key_of_name(name)
+        return self._keys[name]
+
+    def _read_key_of_name(self, name: Binding | _ArgumentAt) -> bool | None:
+        answer: bool | None = False
+        seen = {name}
+        level = [name]
+        for _ in range(_NAME_DEPTH):
+            following: list[Binding | _ArgumentAt] = []
+            for source in level:
+                atoms: Iterable[Binding | _ArgumentAt | bool | None]
+                if source is not name and source in self._keys:
+                    atoms = (self._keys[source],)
+                elif isinstance(source, Binding) and _destructured_key(source) == 'toPrimitive':
+                    return True
+                else:
+                    if isinstance(source, Binding):
+                        values, complete = self._model.values_through_calls(source)
+                    else:
+                        values, complete = self._model.arguments_through_calls(source.function, source.position)
+                    if not complete or not values:
+                        answer = None
+                    atoms = (atom for value in values for atom in self._key_atoms(value))
+                for atom in atoms:
+                    if isinstance(atom, (Binding, _ArgumentAt)):
+                        if atom not in seen:
+                            seen.add(atom)
+                            following.append(atom)
+                    elif atom is True:
+                        return True
+                    elif atom is None:
+                        answer = None
+            if not following:
+                return answer
+            level = following
+        return True
 
     def _spells_source(self, node: Node | None, depth: int = 0) -> bool | None:
         """
@@ -390,15 +536,11 @@ class ConversionInstalls:
                 if not isinstance(prop, JsProperty):
                     unknown = True
                     continue
-                if prop.computed:
-                    spelled = self.spells_member_key(prop.key, True)
-                    if spelled:
-                        return True
-                    if spelled is None:
-                        unknown = True
-                    continue
-                if _property_key_name(prop) in CONVERSION_KEYS:
+                spelled = self.spells_member_key(prop.key, prop.computed)
+                if spelled:
                     return True
+                if spelled is None:
+                    unknown = True
             return None if unknown else False
         if not isinstance(node, JsIdentifier) or depth >= _NAME_DEPTH:
             return None
@@ -416,7 +558,7 @@ class ConversionInstalls:
                 if (
                     isinstance(member, JsMemberExpression)
                     and strip_parens(member.object) is read
-                    and is_member_write_target(member)
+                    and _stores_under_its_key(member)
                     and self.spells_member_key(member.property, member.computed)
                 ):
                     return True
@@ -429,7 +571,7 @@ class ConversionInstalls:
                 return False
             return None
 
-        return self._remembered(self._sources, binding, None, source_spelled)
+        return self._remembered(self._sources, (binding, depth), source_spelled)
 
     def _may_hold_function(self, node: Node | None, depth: int = 0) -> bool:
         """
@@ -482,7 +624,7 @@ class ConversionInstalls:
                 return True
             return any(self._may_hold_function(value, depth + 1) for value in values)
 
-        return self._remembered(self._may_hold, binding, True, may_hold)
+        return self._remembered(self._may_hold, (binding, depth), may_hold)
 
     def _held_functions(self, node: Node | None, depth: int = 0) -> frozenset[Node] | None:
         """
@@ -524,7 +666,7 @@ class ConversionInstalls:
                 return None
             return self._union_of_held(values, depth + 1)
 
-        return self._remembered(self._held, binding, None, held)
+        return self._remembered(self._held, (binding, depth), held)
 
     def _union_of_held(self, parts: Iterable[Node | None], depth: int) -> frozenset[Node] | None:
         held: frozenset[Node] = frozenset()
@@ -541,24 +683,30 @@ class ConversionInstalls:
         class constructor whose class extends nothing or a built-in in `NON_FUNCTION_BUILDERS`, or
         of a plain function only `new` reaches (`_only_constructed`). The function must not reach
         itself without its name: its body names neither `new.target` nor its own `arguments` beyond
-        index and length, and the program spells no `caller`.
+        index and length, and the program spells no `caller`. The answer is the function's, so it is
+        remembered per function.
         """
-        owner = _receiver_owner(node)
+        owner = receiver_owner(node)
         if not isinstance(owner, (JsFunctionDeclaration, JsFunctionExpression)):
             return False
+        fresh = self._fresh_receivers.get(owner)
+        if fresh is None:
+            fresh = self._fresh_receivers[owner] = self._receiver_is_fresh(owner)
+        return fresh
+
+    def _receiver_is_fresh(self, owner: JsFunctionDeclaration | JsFunctionExpression) -> bool:
+        """
+        `_this_is_fresh` for every `this` of the function *owner*.
+        """
         if owner.generator or owner.is_async:
             return False
         if self._model.spells_caller() or arguments_name_their_function(owner):
             return False
         if references_new_target(owner):
             return False
-        method = owner.parent
-        if isinstance(method, JsMethodDefinition):
-            if method.kind is not JsMethodKind.CONSTRUCTOR:
-                return False
-            body = method.parent
-            cls = body.parent if body is not None else None
-            if not isinstance(cls, (JsClassDeclaration, JsClassExpression)):
+        if isinstance(owner.parent, JsMethodDefinition):
+            cls = constructed_class(owner)
+            if cls is None:
                 return False
             return cls.super_class is None or self._effects.trusted_intrinsic(cls.super_class) in NON_FUNCTION_BUILDERS
         if isinstance(owner, JsFunctionDeclaration):
@@ -576,7 +724,8 @@ class ConversionInstalls:
         Whether every read of the name *binding*, which holds a function, constructs with it, reads
         its `prototype`, is the right of `instanceof`, or is a test; and the function cannot be
         reached another way: the name is neither exported, nor written at entry, nor reached through
-        a handed object or by reflection, and no `constructor` property escapes in the program.
+        a handed object or by reflection, and no `constructor` property escapes in the program
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.constructors_may_escape`).
         """
         if (
             binding is None
@@ -585,7 +734,7 @@ class ConversionInstalls:
             or binding.reachable_through_a_handed_object
         ):
             return False
-        if self._constructors_may_escape() or self._model.reflection_can_reach(binding):
+        if self._model.constructors_may_escape() or self._model.reflection_can_reach(binding):
             return False
         for read in binding.reads:
             parent = enclosing_operator(read)
@@ -608,35 +757,12 @@ class ConversionInstalls:
             return False
         return True
 
-    def _constructors_may_escape(self) -> bool:
-        """
-        Whether a constructor may run on a receiver of the program's choice: the program spells
-        `"constructor"` in a string, reads a `constructor` property other than to construct with it,
-        compare it, or read its name, or destructures one.
-        """
-        if self._constructors_escape is None:
-            self._constructors_escape = any(self._lets_a_constructor_escape(node) for node in self._model.root.walk())
-        return self._constructors_escape
-
-    @staticmethod
-    def _lets_a_constructor_escape(node: Node) -> bool:
-        if isinstance(node, (JsStringLiteral, JsTemplateLiteral, JsBinaryExpression)):
-            return static_string(node) == 'constructor'
-        if isinstance(node, JsMemberExpression):
-            return (
-                static_property_key(node) == 'constructor'
-                and not is_member_write_target(node)
-                and not _constructor_read_is_harmless(node)
-            )
-        if isinstance(node, JsProperty) and isinstance(node.parent, JsObjectPattern):
-            return node.computed or _property_key_name(node) in (None, 'constructor')
-        return False
-
     def _prototype_is_fresh(self, member: JsMemberExpression, depth: int) -> bool:
         """
         Whether `X.prototype` at *member* is the object the language gave the function `X`: `X`
-        holds only function or class literals and nothing writes `X.prototype` itself, or `X` is a
-        trusted built-in other than `Function`.
+        holds only function or class literals and no write through `X`'s own name replaces
+        `X.prototype`, or `X` is a trusted built-in other than `Function`. The answer is the name's,
+        so it is remembered per name.
         """
         owner = strip_parens(member.object)
         trusted = self._effects.trusted_intrinsic(owner)
@@ -647,6 +773,15 @@ class ConversionInstalls:
         binding = self._model.resolve(owner)
         if binding is None:
             return False
+        fresh = self._fresh_prototypes.get(binding)
+        if fresh is None:
+            fresh = self._fresh_prototypes[binding] = self._prototype_of_is_fresh(binding)
+        return fresh
+
+    def _prototype_of_is_fresh(self, binding: Binding) -> bool:
+        """
+        `_prototype_is_fresh` for the `prototype` of every function the name *binding* holds.
+        """
         values, complete = self._model.values_through_calls(binding)
         if not complete or not values:
             return False
@@ -688,7 +823,12 @@ class ConversionInstalls:
         Whether every read of *binding* calls it or only tests it, and nothing reaches the name
         without a read.
         """
-        if binding.exported or self._model.reflection_can_reach(binding):
+        if (
+            binding.exported
+            or binding.written_at_entry
+            or binding.reachable_through_a_handed_object
+            or self._model.reflection_can_reach(binding)
+        ):
             return False
         return all(_is_direct_callee(read) or read_is_only_tested(read) for read in binding.reads)
 
@@ -697,16 +837,8 @@ class ConversionInstalls:
         The name the installer read *member* is stored into, when it is that name's one value and
         every read of the name calls or tests it.
         """
-        store = member.parent
-        while isinstance(store, JsParenthesizedExpression):
-            store = store.parent
-        if not isinstance(store, (JsVariableDeclarator, JsAssignmentExpression)):
-            return None
         alias = self._model.name_holding(member)
-        if alias is None:
-            return None
-        values, complete = self._model.binding_values(alias)
-        if not complete or len(values) != 1 or strip_parens(values[0]) is not member:
+        if alias is None or strip_parens(self._model.singular_value(alias)) is not member:
             return None
         return alias if self._calls_or_tests_only(alias) else None
 
@@ -727,61 +859,115 @@ class ConversionInstalls:
             return None
         return alias if self._calls_or_tests_only(alias) else None
 
-    def _collect_installer_aliases(self) -> dict[Binding, str]:
+    def _collect_installer_aliases(self) -> tuple[dict[Binding, str], bool]:
+        """
+        The names that hold an installer and are only called or tested, by the installer they hold,
+        and whether an installer is read another way: as a value that is no such name's one value,
+        or destructured into a name that is read another way. Destructuring `Reflect` hands it on
+        as well.
+        """
         aliases: dict[Binding, str] = {}
+        escape = False
         for node in self._model.root.walk():
             if isinstance(node, JsMemberExpression):
                 key = self._installer_key(node)
-                if key is None or _is_direct_callee(node):
+                if (
+                    key is None
+                    or is_member_write_target(node)
+                    or _is_direct_callee(node)
+                    or read_is_only_tested(node)
+                ):
                     continue
                 alias = self._installer_alias(node)
             elif isinstance(node, JsProperty) and isinstance(node.parent, JsObjectPattern):
                 key = _property_key_name(node)
+                if key == 'Reflect':
+                    escape = True
+                    continue
                 if key is None or key not in CONVERSION_INSTALL_METHODS:
                     continue
                 alias = self._pattern_alias(node)
             else:
                 continue
-            if alias is not None:
+            if alias is None:
+                escape = True
+            else:
                 aliases[alias] = key
-        return aliases
+        return aliases, escape
 
     def _is_copy_write(self, member: JsMemberExpression) -> bool:
         """
-        Whether the write through *member* stores a read of another object under the same key:
-        `d[k] = s[k]`.
+        Whether the write through *member* stores, under a key the scan cannot read, a value read
+        off another object under the same key (`_copies_under`).
         """
         store = enclosing_operator(member)
         if not isinstance(store, JsAssignmentExpression) or strip_parens(store.left) is not member:
             return False
         key = strip_parens(member.property)
-        value = strip_parens(store.right)
         if not member.computed or not isinstance(key, JsIdentifier):
             return False
-        if not isinstance(value, JsMemberExpression) or not value.computed:
+        binding = self._model.resolve(key)
+        return binding is not None and self._copies_under(store.right, binding)
+
+    def _copies_under(self, value: Node | None, key: Binding, depth: int = 0) -> bool:
+        """
+        Whether *value* is read off another object under the name *key* holds: `s[k]`, a copy of
+        that bound with `bind`, its descriptor `Object.getOwnPropertyDescriptor(s, k)`, a name
+        holding one of these, or the value beside *key* in a `[key, value]` entry.
+        """
+        value = strip_parens(value)
+        if isinstance(value, JsMemberExpression):
+            other = strip_parens(value.property)
+            return value.computed and isinstance(other, JsIdentifier) and self._model.resolve(other) is key
+        if isinstance(value, JsCallExpression):
+            callee = strip_parens(value.callee)
+            if not isinstance(callee, JsMemberExpression):
+                return False
+            method = static_property_key(callee)
+            if method == 'bind':
+                return self._copies_under(callee.object, key, depth)
+            if method == 'getOwnPropertyDescriptor' and len(value.arguments) > 1:
+                other = strip_parens(value.arguments[1])
+                return isinstance(other, JsIdentifier) and self._model.resolve(other) is key
             return False
-        other = strip_parens(value.property)
-        return isinstance(other, JsIdentifier) and self._model.resolve(other) is self._model.resolve(key)
+        if not isinstance(value, JsIdentifier) or depth >= _NAME_DEPTH:
+            return False
+        binding = self._model.resolve(value)
+        if binding is None:
+            return False
+        entry = _entry_position(binding)
+        if entry is not None and entry[1] == 1 and _entry_position(key) == (entry[0], 0):
+            return True
+        values, _ = self._model.values_through_calls(binding)
+        return any(self._copies_under(other, key, depth + 1) for other in values)
 
     def _gives_an_own_conversion(self, node: Node) -> bool:
         """
-        Whether *node* gives some object an own conversion method a copy could carry: an object
-        literal's or a class field's key, a member write, or an install spelling a conversion key.
+        Whether *node* gives some object an own conversion method a copy could carry: the key of an
+        object literal's property, of a class method or of a class field, a member write, or an
+        install spelling a conversion key.
         """
-        if isinstance(node, JsProperty) and isinstance(node.parent, JsObjectExpression):
-            if node.computed:
-                return self.spells_member_key(node.key, True) is True
-            return _property_key_name(node) in CONVERSION_KEYS
-        if isinstance(node, JsPropertyDefinition):
+        if isinstance(node, JsProperty):
+            return (
+                isinstance(node.parent, JsObjectExpression)
+                and self.spells_member_key(node.key, node.computed) is True
+            )
+        if isinstance(node, (JsMethodDefinition, JsPropertyDefinition)):
             return self.spells_member_key(node.key, node.computed) is True
-        if isinstance(node, JsMemberExpression) and is_member_write_target(node):
-            return self.spells_member_key(node.property, node.computed) is True
+        if isinstance(node, JsMemberExpression):
+            return _stores_under_its_key(node) and self.spells_member_key(node.property, node.computed) is True
         if isinstance(node, JsCallExpression):
             installer = self.installer_of_call(node)
             return installer is not None and any(
                 self.install_spelled(node, installer, target) is True for target in (-1, 0, 3)
             )
         return False
+
+    def _gives_some_object_an_own_conversion(self) -> bool:
+        """
+        Whether the program gives some object an own conversion method (`_gives_an_own_conversion`).
+        """
+        return any(self._gives_an_own_conversion(node) for node in self._model.root.walk())
 
     def _reads_reflect_as_a_value(self, node: JsIdentifier) -> bool:
         if not self._is_global_reflect(node) or reference_role(node) is not Role.READ:
@@ -799,39 +985,29 @@ class ConversionInstalls:
         """
         The function literals some install may reach, or `None` when one may reach any function.
         """
-        if self._model.has_reflection_surface():
+        if self._installers_escape or self._model.has_reflection_surface():
             return None
         sites: list[Node | None] = []
         copies: list[Node | None] = []
-        carrier = False
         for node in self._model.root.walk():
-            if not carrier and self._gives_an_own_conversion(node):
-                carrier = True
             if isinstance(node, JsIdentifier):
                 if self._reads_reflect_as_a_value(node):
                     return None
             elif isinstance(node, JsMemberExpression):
                 if is_member_write_target(node):
-                    governor = enclosing_operator(node)
-                    if isinstance(governor, JsUnaryExpression) and governor.operator == 'delete':
+                    if not _stores_under_its_key(node):
                         continue
                     spelled = self.spells_member_key(node.property, node.computed)
-                    if spelled is True and self._may_hold_function(node.object):
+                    if spelled is True:
                         sites.append(node.object)
-                    elif spelled is None and self._is_copy_write(node) and self._may_hold_function(node.object):
+                    elif spelled is None and self._is_copy_write(node):
                         copies.append(node.object)
-                elif static_property_key(node) == 'Reflect':
-                    if not read_is_only_tested(node):
-                        return None
-                elif self._installer_key(node) is not None:
-                    if not _is_direct_callee(node) and not read_is_only_tested(node) and self._installer_alias(node) is None:
-                        return None
-            elif isinstance(node, JsProperty) and isinstance(node.parent, JsObjectPattern):
-                if _property_key_name(node) in CONVERSION_INSTALL_METHODS and self._pattern_alias(node) is None:
+                elif static_property_key(node) == 'Reflect' and not read_is_only_tested(node):
                     return None
             elif isinstance(node, JsCallExpression):
-                self._collect_install_sites(node, sites, copies)
-        if carrier:
+                if self._collect_install_sites(node, sites, copies):
+                    return None
+        if copies and self._gives_some_object_an_own_conversion():
             sites.extend(copies)
         return self._union_of_held(sites, 0)
 
@@ -840,39 +1016,62 @@ class ConversionInstalls:
         call: JsCallExpression,
         sites: list[Node | None],
         copies: list[Node | None],
-    ) -> None:
+    ) -> bool:
+        """
+        Add the receivers the installer call *call* installs a conversion on to *sites*, and those
+        it copies onto from a source the scan cannot read to *copies*. Answers whether the call may
+        install on any function: a spread hides which value it installs on.
+        """
         installer = self.installer_of_call(call)
         if installer is None:
-            return
-        arguments = call.arguments
+            return False
         if installer in RECEIVER_INSTALL_METHODS:
             callee = strip_parens(call.callee)
-            if not isinstance(callee, JsMemberExpression):
-                return
-            receiver = callee.object
-            if self._may_hold_function(receiver) and self.install_spelled(call, installer, -1) is True:
-                sites.append(receiver)
-            return
+            if isinstance(callee, JsMemberExpression) and self.install_spelled(call, installer, -1) is True:
+                sites.append(callee.object)
+            return False
+        arguments, hidden = _spread_out(call.arguments)
         for target in (0, 3) if installer == 'Reflect.set' else (0,):
-            if target < len(arguments) and self._may_hold_function(arguments[target]):
-                if self.install_spelled(call, installer, target) is True:
-                    sites.append(arguments[target])
-        if (
-            installer in ('assign', 'defineProperties')
-            and arguments
-            and self._may_hold_function(arguments[0])
-            and self.install_spelled(call, installer, 0) is None
-        ):
-            copies.append(arguments[0])
+            if target >= len(arguments):
+                if hidden:
+                    return True
+                continue
+            spelled = self.install_spelled(call, installer, target)
+            if spelled is True:
+                sites.append(arguments[target])
+            elif spelled is None and target == 0 and self._copies_a_source(installer, arguments, hidden):
+                copies.append(arguments[target])
+        return False
+
+    def _copies_a_source(self, installer: str, arguments: list[Node], hidden: bool) -> bool:
+        """
+        Whether the installer call with *arguments*, whose key or source the scan cannot read,
+        copies from another object: `assign` and `defineProperties` always do, `defineProperty` and
+        `Reflect.set` when the value they store is read off another object under their key.
+        """
+        if installer in ('assign', 'defineProperties'):
+            return True
+        if hidden or len(arguments) < 3:
+            return False
+        key = strip_parens(arguments[1])
+        if not isinstance(key, JsIdentifier):
+            return False
+        binding = self._model.resolve(key)
+        return binding is not None and self._copies_under(arguments[2], binding)
 
     @staticmethod
-    def _remembered(memo: dict[Binding, _T], binding: Binding, unknown: _T, compute: Callable[[], _T]) -> _T:
+    def _remembered(
+        memo: dict[tuple[Binding, int], _T],
+        key: tuple[Binding, int],
+        compute: Callable[[], _T],
+    ) -> _T:
         """
-        The answer *compute* gives for *binding*, remembered in *memo*. A question about the binding
-        asked while its answer is being computed, through a cycle of names, is answered *unknown*.
+        The answer *compute* gives for a name read at a depth, remembered in *memo* under both. How
+        many more names a reader may follow decides its answer, so only a question at the same depth
+        shares it; and a reader that follows a name goes one step deeper, so no question is asked
+        again while it is being answered.
         """
-        if binding in memo:
-            return memo[binding]
-        memo[binding] = unknown
-        answer = memo[binding] = compute()
+        if key in memo:
+            return memo[key]
+        answer = memo[key] = compute()
         return answer

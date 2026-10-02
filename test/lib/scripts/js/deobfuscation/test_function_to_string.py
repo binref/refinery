@@ -281,7 +281,8 @@ class TestAFunctionGivenAToStringOfItsOwnIsConvertedByIt(TestBase):
 #: Programs that keep a function in an array and give it a conversion of its own through a
 #: reference the function itself holds, mapped to what Node prints: its `this` as a method,
 #: `arguments.callee`, `new.target`, the `constructor` of an instance of a bound copy or of its
-#: prototype, a parameter it is handed to, a name copied from the array, or its own name.
+#: prototype, a parameter it is handed to, also by a helper that reads its own `arguments`, a
+#: name copied from the array, or its own name.
 A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_ITS_OWN_REFERENCES = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -376,6 +377,24 @@ A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_ITS_OWN_REFERENCES = {
         console.log(f());
     '''):
         'c\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function def(o) { o[arguments[1]] = arguments[2]; }
+        def(W, "toString", function () { return "x"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function put(o, k, v) { if (arguments.length < 3) { return; } o[k] = v; }
+        put(W, (process.argv[99] || "") + "toString", function () { return "p"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'p\n',
 }
 
 
@@ -392,8 +411,8 @@ class TestAFunctionGivenAConversionThroughItsOwnReferencesIsConvertedByIt(TestBa
 #: Programs that keep a function in an array and give it a `toString`, `valueOf` or
 #: `Symbol.toPrimitive` of its own or a new prototype through code that never names it, mapped to
 #: what Node prints: a write in any form under a key spelled in any form, an installer however it
-#: is reached (an alias, `call`, `apply`, `Reflect`, destructuring, `with`, a fallback), a class
-#: static block, and code the program builds at runtime.
+#: is reached (an alias, `call`, `apply`, `Reflect`, destructuring, `with`, a fallback, a spread
+#: of its arguments), a class static block, and code the program builds at runtime.
 A_FUNCTION_GIVEN_A_CONVERSION_BY_AN_INSTALL = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -684,6 +703,23 @@ A_FUNCTION_GIVEN_A_CONVERSION_BY_AN_INSTALL = {
         console.log(f());
     '''):
         'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        var { Reflect: R } = globalThis;
+        R.set(g[0], "toString", function () { return "r"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'r\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Object.defineProperty(...[g[0], "toString", { value: function () { return "s"; } }]);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        's\n',
 }
 
 
@@ -709,9 +745,11 @@ class TestAFunctionGivenAConversionByAnInstallIsConvertedByIt(TestBase):
 
 #: Programs that give a function kept in an array a conversion of its own under a key the run can
 #: read although no write spells it, mapped to what Node prints: a key or a symbol a name holds, a
-#: key a helper is called with (also where the helper may be called in other ways), a key a
-#: constant object, a constant array, a string table or a decoder holds, and a key computed from
-#: the text of another function.
+#: key a helper is called with (also where the helper may be called in other ways, forwards the
+#: key through its own recursion, has a parameter with a default, reads its own `arguments`, or
+#: is the constructor of a class, also through `super`), a key a conditional chooses, a key a
+#: constant object, a constant array, a string table or a decoder holds, also where a self-check
+#: or a conversion holds up the decoding, and a key computed from the text of another function.
 A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_THE_RUN_CAN_READ = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -946,6 +984,115 @@ A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_THE_RUN_CAN_READ = {
         later[0]();
     '''):
         'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        var seen = {};
+        function put(o, k, v, again) {
+            var key = k;
+            if (again) { put(o, key, v, false); }
+            o[key] = v;
+            seen[k] = 1;
+        }
+        put(g[0], "toString", function () { return "x"; }, true);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function def(o, k, v, e = false) { Object.defineProperty(o, k, { value: v, enumerable: e }); }
+        def(g[0], "toString", function () { return "x"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        g[0][Math.random() < 2 ? "toString" : "valueOf"] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        var N = function () { return 1; };
+        var saved = [N];
+        var T = function () { const R = new RegExp("\\n"); return R.test(N); };
+        var p = "to";
+        var q = "to";
+        if (T()) { p = q; }
+        var key = p + "String";
+        saved[0][key] = function () { return "x"; };
+        function f() { return String(N); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        var N = function () { return 1; };
+        var saved = [N];
+        function dec() { var unused = String(N); return "to" + "String"; }
+        var key = dec();
+        saved[0][key] = function () { return "x"; };
+        function f() { return String(N); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        function V(b) { return b * 2; }
+        function show() { return String(V); }
+        function f() {
+          var g = [W, V];
+          var k = String(W).slice(0, 0) + "toString";
+          g[1][k] = function () { return "x"; };
+          return show();
+        }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function def(o) { o[arguments[1]] = arguments[2]; }
+        def({}, "a", 1);
+        def(g[0], "toString", function () { return "x"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class Hook {
+            constructor(target, prop, replacement) { this.original = target[prop]; target[prop] = replacement; }
+        }
+        new Hook(g[0], "toString", function () { return "function W() { [native code] }"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'function W() { [native code] }\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class Base { constructor(target, prop, replacement) { target[prop] = replacement; } }
+        class Hook extends Base { constructor(target) { super(target, "toString", function () { return "h"; }); } }
+        new Hook(g[0]);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'h\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class Base { constructor(target, prop, replacement) { target[prop] = replacement; } }
+        class Hook extends Base {}
+        new Hook(g[0], "toString", function () { return "h"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'h\n',
 }
 
 
@@ -962,8 +1109,8 @@ class TestAFunctionGivenAConversionUnderAKeyTheRunCanReadIsConvertedByIt(TestBas
 #: Programs that copy a conversion method onto a function kept in an array from a source that
 #: carries one, mapped to what Node prints: a literal spreading a mixin, a mixin built by writes,
 #: filled by a function, made by a factory or by a constructor, a prototype, a class instance, the
-#: descriptors of an object, a copy loop, a target spread from an array, and a source handed to a
-#: helper.
+#: methods and fields of a class, the descriptors of an object, a copy loop also through a name or
+#: a descriptor, a target spread from an array, and a source handed to a helper.
 A_FUNCTION_GIVEN_A_CONVERSION_COPIED_FROM_A_SOURCE = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1107,6 +1254,65 @@ A_FUNCTION_GIVEN_A_CONVERSION_COPIED_FROM_A_SOURCE = {
         console.log(f());
     '''):
         'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class M { toString() { return "m"; } }
+        Object.defineProperties(g[0], Object.getOwnPropertyDescriptors(M.prototype));
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'm\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class M { "toString" = function () { return "m"; }; }
+        Object.assign(g[0], new M());
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'm\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function extend(target, source) {
+            for (var name in source) {
+                var copy = source[name];
+                if (copy !== undefined) { target[name] = copy; }
+            }
+            return target;
+        }
+        extend(g[0], { toString: function () { return "e"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'e\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function merge(dest, src) {
+            Object.getOwnPropertyNames(src).forEach(function (name) {
+                var descriptor = Object.getOwnPropertyDescriptor(src, name);
+                Object.defineProperty(dest, name, descriptor);
+            });
+            return dest;
+        }
+        merge(g[0], { toString: function () { return "d"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class M { toString() { return "m"; } }
+        Object.getOwnPropertyNames(M.prototype).forEach(function (k) {
+            if (k !== "constructor") { Object.defineProperty(g[0], k, Object.getOwnPropertyDescriptor(M.prototype, k)); }
+        });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'm\n',
 }
 
 
@@ -1126,7 +1332,9 @@ class TestAFunctionGivenAConversionCopiedFromASourceIsConvertedByIt(TestBase):
 #: property named `prototype`, a function expression, an arrow or a method in an array, and the
 #: parameter of a helper that receives it through a call the text does not show as a call of the
 #: helper: `arguments.callee`, `caller`, `call`, a callback, a sequence, an object, a spread, its
-#: own name, a tagged template, `new`, `Reflect.apply`, a method on `Object.prototype`.
+#: own name, a tagged template, `new`, `Reflect.apply`, a method on `Object.prototype`,
+#: `new.target`, the `constructor` of an instance, and a class that constructs itself in a static
+#: block.
 A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_VALUE_THAT_MAY_HOLD_IT = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
@@ -1402,6 +1610,40 @@ A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_VALUE_THAT_MAY_HOLD_IT = {
         console.log(f());
     '''):
         'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function setT(o, again) {
+            if (!again && new.target) { new.target(g[0], true); }
+            o.toString = function () { return "x"; };
+        }
+        new setT({});
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function setT(o) { o.toString = function () { return "x"; }; }
+        var t = new setT({});
+        t.constructor(g[0]);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class Hook {
+            constructor(target) { if (target) { target.toString = function () { return "s"; }; } }
+            static { new this(g[0]); }
+        }
+        new Hook(null);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        's\n',
 }
 
 
@@ -2122,6 +2364,16 @@ A_FUNCTION_HANDED_ON_AND_CONVERTED_TO_ITS_WRITTEN_TEXT = {
         console.log(f());
     '''):
         '1\nfunction W(a) { return a + 1; }\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        var m = { a: 1 };
+        delete m.toString;
+        for (var k in m) { g[0][k] = m[k]; }
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'function W(a) { return a + 1; }\n',
 }
 
 

@@ -61,6 +61,8 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     PROGRAM_READING_A_KEY_25,
     SET_A_LINE_BREAK,
     checked,
+    NAME_OF,
+    NAME_OF_5,
     checked_by_name,
     guarded,
     wrapped,
@@ -1501,16 +1503,37 @@ A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME = {
         'x\n',
     inspect.cleandoc('''
         function W(a) { return a + 1; }
-        function V(b) { return b * 2; }
-        function show() { return String(V); }
-        function f() {
-          var g = [W, V];
-          var k = String(W).slice(0, 0) + "toString";
-          g[1][k] = function () { return "x"; };
-          return show();
-        }
+        var g = [W];
+        for (var k of ["toString"]) { g[0][k] = function () { return "x"; }; }
+        function f() { return String(W); }
         console.log(f());
     '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        ["toString"].forEach(function (k) { g[0][k] = function () { return "x"; }; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        function put(o, k, v) { o[k] = v; }
+        put.call(null, g[0], "toString", function () { return "x"; });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    guarded(NAME_OF, 'nameOf', 5, NAME_OF_5, inspect.cleandoc('''
+        var keep = [nameOf];
+        function W(a) { return a + 1; }
+        var g = [W];
+        g[0][guarded({ name: "toString" })] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    ''') + '\n'):
         'x\n',
 }
 
@@ -1524,9 +1547,11 @@ class TestAFunctionGivenAConversionUnderAKeyKnownOnlyAtRuntimeIsConvertedByIt(Te
     """
 
     @wontfix(
-        'no obfuscated file builds a conversion key at runtime: these keys are joined from pieces, '
-        'read from the command line, wrapped in an array, rotated by hand where the run never '
-        'decodes the table, or cut from the text of a function, all made up for the defect'
+        'no obfuscated file gives a function it hands on a conversion method under a key the run '
+        'cannot read: these keys are joined from pieces, read from the command line, wrapped in an '
+        'array, rotated by hand where the run never decodes the table, taken by a loop or a '
+        'callback, handed to a helper through call, or returned by a guarded decoder the run never '
+        'decodes, all made up for the defect'
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         rows = A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME
@@ -1550,17 +1575,6 @@ A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_MADE_UP_INSTALLER = {
     inspect.cleandoc('''
         function W(a) { return a + 1; }
         var g = [W];
-        class M { toString() { return "m"; } }
-        Object.getOwnPropertyNames(M.prototype).forEach(function (k) {
-            if (k !== "constructor") { Object.defineProperty(g[0], k, Object.getOwnPropertyDescriptor(M.prototype, k)); }
-        });
-        function f() { return String(W); }
-        console.log(f());
-    '''):
-        'm\n',
-    inspect.cleandoc('''
-        function W(a) { return a + 1; }
-        var g = [W];
         Object.prototype.__lookupSetter__("__proto__").call(g[0], { toString() { return "q"; } });
         function f() { return String(W); }
         console.log(f());
@@ -1570,6 +1584,31 @@ A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_MADE_UP_INSTALLER = {
         function W(a) { return a + 1; }
         var g = [W];
         Reflect.get(Object, "defineProperty")(g[0], "toString", { value: function () { return "d"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Object[process.argv[9] || "defineProperty"].call(Object, W, "toString", { value: function () { return "d"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Object[process.argv[9] || "defineProperty"].apply(Object, [W, "toString", { value: function () { return "d"; } }]);
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        var m = Object[process.argv[9] || "defineProperty"];
+        m(W, "toString", { value: function () { return "d"; } });
         function f() { return String(W); }
         console.log(f());
     '''):
@@ -1587,8 +1626,9 @@ class TestAFunctionGivenAConversionThroughAMadeUpInstallerIsConvertedByIt(TestBa
 
     @wontfix(
         'no obfuscated file reaches an installer this way: the __proto__ setter taken from its '
-        'descriptor or through __lookupSetter__, defineProperty taken with Reflect.get, and class '
-        'methods copied by names listed at runtime are made up for the defect'
+        'descriptor or through __lookupSetter__, defineProperty taken with Reflect.get, and an '
+        'installer taken under a key known only at runtime and called through call, apply or a '
+        'name are made up for the defect'
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         rows = A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_MADE_UP_INSTALLER
@@ -1631,6 +1671,134 @@ class TestAFunctionPrototypeReachedThroughAFunctionLiteralIsSeen(TestBase):
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
         rows = A_FUNCTION_PROTOTYPE_REACHED_THROUGH_A_FUNCTION_LITERAL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+#: Programs that give a conversion method to a value the scan of conversion installs reads as any
+#: function, and convert a function they hand on, mapped to what Node prints: the text the function
+#: was written with.
+A_FUNCTION_HANDED_ON_BESIDE_A_CONVERSION_ON_A_VALUE_READ_AS_ANY_FUNCTION = {
+    'a prototype replaced by an object literal': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function Foo() {}
+            Foo.prototype = { bar: 1 };
+            Foo.prototype.toString = function () { return "foo"; };
+            console.log(String(new Foo()));
+            function f() { var g = [W]; return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('foo', 'function W(a) { return a + 1; }'),
+    ),
+    'a prototype replaced by Object.create': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function Base() {}
+            function Foo() {}
+            Foo.prototype = Object.create(Base.prototype);
+            Foo.prototype.toString = function () { return "foo"; };
+            console.log(String(new Foo()));
+            function f() { var g = [W]; return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('foo', 'function W(a) { return a + 1; }'),
+    ),
+    'a bound function': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            var log = console.log.bind(console);
+            log.toString = function () { return "log"; };
+            console.log(String(log));
+            function f() { var g = [W]; return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('log', 'function W(a) { return a + 1; }'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTION_HANDED_ON_BESIDE_A_CONVERSION_ON_A_VALUE_READ_AS_ANY_FUNCTION)
+class TestAFunctionHandedOnConvertsToItsWrittenTextBesideAConversionOnAValueReadAsAnyFunction(TestBase):
+    """
+    `refinery.lib.scripts.js.analysis.conversions.ConversionInstalls` reads `X.prototype` once a
+    program replaces it, and the result of `bind`, as values that may hold any function, so a
+    conversion method given to one of them is evidence about every function. The conversion of a
+    function the program hands on then stays, and runs on the text the deobfuscation printed. The
+    fix reads a replaced prototype through the values written to it, and a bound copy as a function
+    no literal is.
+    """
+
+
+#: Programs that call or convert a top-level function of a classic script after a write to the
+#: global object under a key a helper is handed replaced it, mapped to what a host prints.
+A_NAME_A_GLOBAL_WRITE_UNDER_A_RUNTIME_KEY_REPLACES = {
+    'a call': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function setGlobal(name, value) { globalThis[name] = value; }
+            setGlobal("W", function () { return 9; });
+            function f() { return W(1); }
+            console.log(f());
+        '''),
+        prints('9'),
+        Reading.SCRIPT,
+    ),
+    'a conversion': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            function setGlobal(name, value) { globalThis[name] = value; }
+            setGlobal("W", 5);
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('5'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_NAME_A_GLOBAL_WRITE_UNDER_A_RUNTIME_KEY_REPLACES)
+class TestANameAGlobalWriteUnderARuntimeKeyReplacesIsNotReadAsItsDeclaration(TestBase):
+    """
+    In a classic script a top-level name is a property of the global object, and
+    `globalThis[name] = value` under a key known only at runtime may replace it. The interpreter
+    still reads the name as the function its declaration gives it, so a call through it folds to
+    what the declared function returns. The conversion of such a function used to be refused for
+    the write and now folds to its written text the same way. The fix is in the interpreter's read
+    of a name: one that such a write may replace
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.opaque_global_write_replacement_sites`)
+    holds its declared value only where no such write can run before the read.
+    """
+
+
+#: A program that hands a function on beside an installer used as the tag of a template, mapped to
+#: what Node prints: the text the function was written with.
+A_FUNCTION_HANDED_ON_BESIDE_AN_INSTALLER_USED_AS_A_TAG = {
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        Object.assign`x`;
+        function f() { var g = [W]; return String(g[0]); }
+        console.log(f());
+    '''):
+        'function W(a) { return a + 1; }\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionHandedOnBesideAnInstallerUsedAsATagConvertsToItsWrittenText(TestBase):
+    """
+    The scan of conversion installs reads an installer used as a tag as an installer read as a
+    value, which may install on any function, so the conversion of a function handed on stays and
+    runs on the text the deobfuscation printed.
+    """
+
+    @wontfix('no program calls an installer as the tag of a template, which passes it the strings of the template')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FUNCTION_HANDED_ON_BESIDE_AN_INSTALLER_USED_AS_A_TAG
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

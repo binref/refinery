@@ -14,6 +14,11 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
+from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
+from refinery.lib.scripts.js.deobfuscation.selfchecks import JsSelfCheckFolding
+from refinery.lib.scripts.js.parser import JsParser
+
 #: A line-break check over the function that holds it, in the shape the obfuscator writes at the
 #: start of a block, one line long.
 LINE_BREAK_CHECK = (
@@ -443,3 +448,39 @@ class TestNodePrintsTheSameAboutASelfCheck(TestBase):
             {source: before_and_after(source, module=True) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+class TestASelfCheckAsksAboutAConversionOnlyWhereNothingElseStopsTheFold(TestBase):
+    """
+    Asking whether a function handed on converts to its written text notes the tree the question was
+    refused on, and the run settles that tree and runs again. The self-check pass asks only where
+    nothing else stands in the way of the fold, so a check it cannot decide anyway costs no run.
+    """
+
+    @staticmethod
+    def _waits(source: str) -> bool:
+        ast = JsParser(source).parse()
+        settlement = ConversionSettlement()
+        transformer = JsSelfCheckFolding()
+        transformer.models = ModelCache(ast, None, settlement)
+        transformer.visit(ast)
+        return settlement.waiting is not None
+
+    def test_a_line_break_check_beside_a_written_object_prototype_leaves_nothing_waiting(self):
+        source = inspect.cleandoc(r'''
+            var N = function () { return 1; };
+            var saved = [N];
+            Object.prototype.extra = 1;
+            var T = function () { const R = new RegExp("\n"); return R.test(N); };
+            if (T()) { console.log("tampered"); } else { console.log("clean"); }
+            console.log(saved.length);
+        ''')
+        self.assertFalse(self._waits(source))
+
+    def test_a_hash_guard_comparing_against_another_constant_leaves_nothing_waiting(self):
+        tail = 'var keep = [double];\nconsole.log(guarded(21), keep.length);\n'
+        self.assertFalse(self._waits(guarded(DOUBLE, 'double', 42, DOUBLE_42 + 1, tail)))
+
+    def test_a_hash_guard_over_a_function_kept_in_an_array_waits_for_the_settled_tree(self):
+        tail = 'var keep = [double];\nconsole.log(guarded(21), keep.length);\n'
+        self.assertTrue(self._waits(guarded(DOUBLE, 'double', 42, DOUBLE_42, tail)))

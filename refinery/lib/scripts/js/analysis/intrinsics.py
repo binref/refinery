@@ -114,8 +114,8 @@ PURE_INTRINSIC_ROOTS = (
 
 class _GlobalObject:
     """
-    Sentinel denoting the global object as the value an expression evaluates to, distinct from a named
-    intrinsic root and from an unresolved value.
+    Sentinel denoting the global object as the value an expression evaluates to, distinct from a
+    named intrinsic root and from an unresolved value.
     """
 
 

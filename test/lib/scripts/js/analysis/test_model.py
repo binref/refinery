@@ -1956,6 +1956,44 @@ class TestWhereABareNameReachesTheHost(TestBase):
         self.assertEqual(verdicts, WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST)
 
 
+class TestTheElementsOfArgumentsHoldWhatTheCallsShownPass(TestBase):
+    """
+    `SemanticModel.arguments_through_calls` for the function `f`: an element of its own `arguments`
+    holds the argument every call of `f` the text shows passes at its position.
+    """
+
+    @staticmethod
+    def _passed(source: str, position: int | None) -> tuple[list[str], bool]:
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        function = next(node for node in ast.walk_in_order() if isinstance(node, JsFunctionDeclaration))
+        values, complete = model.arguments_through_calls(function, position)
+        return sorted(JsSynthesizer().convert(value) for value in values), complete
+
+    def test_an_element_holds_what_every_call_shown_passes_at_its_position(self):
+        source = 'function f() { return arguments[1]; } f(1, 2); f(3, 4);'
+        self.assertEqual(self._passed(source, 1), (['2', '4'], True))
+
+    def test_an_element_under_a_key_known_only_at_runtime_holds_what_the_calls_pass_anywhere(self):
+        source = 'function f(k) { return arguments[k]; } f(1, 2); f(3, 4);'
+        values, complete = self._passed(source, None)
+        self.assertEqual(values, ['1', '2', '3', '4'])
+        self.assertFalse(complete, 'the key may be callee, through which the function calls itself')
+
+    def test_a_spread_hides_the_elements_from_its_position_on(self):
+        source = 'function f() { return arguments[0]; } f(1, 2); f(3, ...rest);'
+        self.assertEqual(self._passed(source, 0), (['1', '3'], True))
+        values, complete = self._passed(source, 1)
+        self.assertFalse(complete)
+        self.assertIn('2', values)
+
+    def test_a_call_that_may_come_another_way_leaves_the_elements_incomplete_with_the_shown_values(self):
+        source = 'function f() { return arguments[1]; } f(1, 2); f.call(null, 3, 4);'
+        values, complete = self._passed(source, 1)
+        self.assertFalse(complete)
+        self.assertIn('2', values)
+
+
 class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
     """
     `SemanticModel.values_through_calls` for the parameter `p`: the arguments of every call of its
@@ -1982,6 +2020,16 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
             'a call through its own name'    : ('var f = function self(p, q) { if (!q) self(2, 1); return p; }; f(1);', ['1', '2']),
             'construction'                   : ('function f(p) { this.p = p; } new f(1); new f(2);', ['1', '2']),
             'a test of the name'             : ('function f(p) { return p; } if (typeof f === "function") f(1);', ['1']),
+            'a default after it'             : ('function f(p, q = 0) { return p; } f(1); f(2);', ['1', '2']),
+            'a rest parameter after it'      : ('function f(p, ...q) { return p; } f(1); f(2);', ['1', '2']),
+            'a spread after its argument'    : ('function f(p, q) { return p; } f(1, ...[3]); f(2);', ['1', '2']),
+            'its own default'                : ('function f(p = 3) { return p; } f(1); f();', ['1', '3']),
+            'a class constructed by name'    : ('class C { constructor(p) { this.p = p; } } new C(1); new C(2);', ['1', '2']),
+            'a subclass with no constructor' : ('class C { constructor(p) {} } class D extends C {} new C(1); new D(2);', ['1', '2']),
+            'a super call'                   : (
+                'class C { constructor(p) {} } class D extends C { constructor() { super(2); } } new C(1); new D();',
+                ['1', '2'],
+            ),
         }.items():
             with self.subTest(label):
                 self.assertEqual(self._received(source), (expected, True))
@@ -1997,10 +2045,18 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
             'Reflect.apply'                  : 'function f(p) { return p; } f(1); Reflect.apply(f, null, [2]);',
             'a method of the prototype'      : 'function f(p) { return p; } f(1); Object.prototype.f = f; [].f(2);',
             'arguments.callee'               : 'function f(p) { if (p === 1) arguments.callee(2); return p; } f(1);',
+            'new.target'                     : 'function f(p) { if (p === 1 && new.target) new.target(2); return p; } new f(1);',
+            'an instance constructor'        : 'function f(p) { return p; } var o = new f(1); o.constructor(2);',
             'caller'                         : 'function f(p) { if (p === 1) g(); return p; } function g() { g.caller(2); } f(1);',
             'another value under the name'   : 'var f = function (p) { return p; }; f(1); f = function (q) { return q; };',
             'a missing argument'             : 'function f(p) { return p; } f(1); f();',
             'reflection'                     : 'function f(p) { return p; } f(1); eval(s);',
+            'Reflect.construct'              : 'class C { constructor(p) {} } new C(1); Reflect.construct(C, [2]);',
+            'a static block'                 : 'class C { constructor(p) {} static { new this(2); } } new C(1);',
+            'a decorator'                    : 'function d(C) { new C(2); } @d class C { constructor(p) {} } new C(1);',
+            'a subclass handed on'           : (
+                'class C { constructor(p) {} } class D extends C { constructor() { super(3); } } new C(1); f(D);'
+            ),
         }.items():
             with self.subTest(label):
                 values, complete = self._received(source)
