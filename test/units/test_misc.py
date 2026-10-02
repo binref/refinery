@@ -234,7 +234,7 @@ class TestSimpleInvertible(TestUnitBase):
 
     def setUp(self):
         super().setUp()
-        self.invertibles = {}
+        self.invertibles: dict[str, tuple[Unit, Unit]] = {}
         self.structured_buffers = [
             B'A' * 1024,
             B'B' + B'A' * 1024,
@@ -263,7 +263,7 @@ class TestSimpleInvertible(TestUnitBase):
                 continue
             for size in (0x40, 0x100, 0x200, 0x500):
                 buffer = self.generate_random_buffer(size)
-                result = convert(invert(buffer))
+                result = buffer | invert[convert] | bytearray
                 self.assertEqual(buffer, result,
                     msg=F'inversion property failed for {name} testing random buffer of size {size}')
 
@@ -272,8 +272,7 @@ class TestSimpleInvertible(TestUnitBase):
             if name in self.exceptions:
                 continue
             for k, buffer in enumerate(self.structured_buffers, 1):
-                inverted = invert(buffer)
-                result = convert(inverted)
+                result = buffer | invert[convert] | bytearray
                 self.assertEqual(buffer, result,
                     msg=F'inversion property failed for {name} testing structured buffer #{k}.')
 
