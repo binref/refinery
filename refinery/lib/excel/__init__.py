@@ -1,6 +1,7 @@
 """
 Library for reading the cells of Microsoft Excel workbooks: sheets, sheet types, cell values,
-and uninterpreted formula sources across the OOXML, BIFF, and XLSB container families.
+and formula sources across the OOXML, BIFF, and XLSB container families. The `formula` package
+holds the AST model those sources decode into and the synthesizer that prints it back.
 """
 from __future__ import annotations
 
@@ -11,6 +12,29 @@ from refinery.lib.excel.common import (
     SheetKind,
     rc2ref,
     ref2rc,
+)
+from refinery.lib.excel.formula import (
+    FormulaSynthesizer,
+    International,
+    XlA1Reference,
+    XlArrayConstant,
+    XlBinaryExpression,
+    XlBinaryOperator,
+    XlBoolean,
+    XlDefinedName,
+    XlError,
+    XlFunctionCall,
+    XlLiteral,
+    XlMissingArgument,
+    XlNumber,
+    XlParenExpression,
+    XlR1C1Reference,
+    XlString,
+    XlUnaryExpression,
+    XlUnaryOperator,
+    XlUnparsedFormula,
+    parse_formula,
+    synthesize_formula,
 )
 from refinery.lib.excel.workbook import (
     ExcelFormat,
@@ -27,9 +51,30 @@ __all__ = [
     'ExcelFormatError',
     'ExcelSheet',
     'ExcelWorkbook',
+    'FormulaSynthesizer',
+    'International',
     'SheetKind',
+    'XlArrayConstant',
+    'XlA1Reference',
+    'XlBinaryExpression',
+    'XlBinaryOperator',
+    'XlBoolean',
+    'XlDefinedName',
+    'XlError',
+    'XlFunctionCall',
+    'XlLiteral',
+    'XlMissingArgument',
+    'XlNumber',
+    'XlParenExpression',
+    'XlR1C1Reference',
+    'XlString',
+    'XlUnaryExpression',
+    'XlUnaryOperator',
+    'XlUnparsedFormula',
     'detect_format',
     'open_workbook',
+    'parse_formula',
     'rc2ref',
     'ref2rc',
+    'synthesize_formula',
 ]

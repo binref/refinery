@@ -16,32 +16,27 @@ from typing import NamedTuple
 
 from refinery.lib.excel.common import (
     ERROR_TEXT,
+    BiffVersion,
     Cell,
     CellKind,
+    DefinedName,
     ExcelFormatError,
+    FormulaSource,
     SheetKind,
     date_cell,
     decode_rk,
     is_builtin_date_format,
     is_date_format_string,
 )
+from refinery.lib.excel.formula.biff import BiffRpnDecoder
+from refinery.lib.excel.formula.model import (
+    Expression,
+    XlDefinedName,
+    XlUnparsedFormula,
+)
+from refinery.lib.excel.formula.ptg import RpnError
 from refinery.lib.excel.workbook import ExcelSheet, ExcelWorkbook
 from refinery.lib.ole.file import OleFile, is_ole_file
-
-
-class BiffVersion(IntEnum):
-    """
-    The BIFF version of a stream. BIFF7 workbooks parse exactly like BIFF5, so there is no
-    member for it; BIFF2 workbooks without XF records fall back to the BIFF2.0 rule that
-    reads the format key from the cell attributes.
-    """
-
-    BIFF2_1 = 21
-    BIFF3 = 30
-    BIFF4 = 40
-    BIFF4W = 45
-    BIFF5 = 50
-    BIFF8 = 80
 
 
 class _Record(IntEnum):
@@ -56,6 +51,8 @@ class _Record(IntEnum):
     BOOLERR_B2 = 0x0005
     FORMULA = 0x0006
     STRING_B2 = 0x0007
+    EXTERNSHEET = 0x0017
+    NAME = 0x0018
     ARRAY_B2 = 0x0021
     TABLEOP_B2 = 0x0036
     TABLEOP2 = 0x0037
@@ -84,6 +81,7 @@ class _Record(IntEnum):
     FORMAT2 = 0x001E
     RK = 0x027E
     SHRFMLA = 0x04BC
+    SUPBOOK = 0x01AE
     BOUNDSHEET = 0x0085
     SHEETSOFFSET = 0x008E
     SHEETHDR = 0x008F
@@ -161,6 +159,39 @@ _CODEPAGE_ENCODINGS = {
 }
 
 _DEFECTS = (struct.error, UnicodeDecodeError, IndexError)
+
+_BUILTIN_DEFINED_NAMES = {
+    0x00: 'consolidate_area',
+    0x01: 'auto_open',
+    0x02: 'auto_close',
+    0x03: 'extract',
+    0x04: 'database',
+    0x05: 'criteria',
+    0x06: 'print_area',
+    0x07: 'print_titles',
+    0x08: 'recorder',
+    0x09: 'data_form',
+    0x0A: 'auto_activate',
+    0x0B: 'auto_deactivate',
+    0x0C: 'sheet_title',
+    0x0D: '_filterdatabase',
+}
+
+_NAME_BUILTIN = 0x20
+
+_SUPBOOK_INTERNAL = b'\x01\x04'
+
+_SUPBOOK_ADDIN = b'\x01\x00\x01\x3A'
+
+
+class _Supbook(NamedTuple):
+    """
+    One SUPBOOK record of a BIFF8 workbook: a pool of sheet names that the extern-sheet table
+    indexes into. The internal supbook refers to the workbook's own sheets, so its names are
+    not stored in the record and are read from the boundsheet table instead.
+    """
+    internal: bool
+    sheets: tuple[str, ...]
 
 
 def _u16(data: memoryview | bytes, offset: int = 0) -> int:
@@ -481,6 +512,10 @@ class BiffWorkbook(ExcelWorkbook):
         self._ixfe: int | None = None
         self._sheethdr_count = 0
         self._sheets: list[BiffSheet] = []
+        self._all_sheet_names: list[str] = []
+        self._names: list[DefinedName] = []
+        self._externsheet: list[tuple[int, int, int]] = []
+        self._supbooks: list[_Supbook] = []
         self._whole_stream_sheet: BiffSheet | None = None
         if self.version < BiffVersion.BIFF4W:
             self._whole_stream_sheet = BiffSheet('Sheet 1', SheetKind.WORKSHEET, 0, self)
@@ -499,6 +534,30 @@ class BiffWorkbook(ExcelWorkbook):
         appear in this list.
         """
         return self._sheets
+
+    def defined_names(self) -> Sequence[DefinedName]:
+        """
+        All defined names of the workbook, in the order their NAME records appear; the
+        one-based position of a name in this list is the index its `ptgName` tokens carry.
+        """
+        return self._names
+
+    def formula(self, source: FormulaSource) -> Expression | None:
+        """
+        Decode the formula token stream of a cell or a defined name of this workbook. A
+        stream that does not decode in full — hostile bytes, a token only the container's
+        trailing data completes, or a name that does not resolve — yields the carrier that
+        prints the raw bytes in hexadecimal; `None` yields `None`. Text is not a BIFF source.
+        """
+        if source is None:
+            return None
+        if isinstance(source, str):
+            return XlUnparsedFormula(text=source)
+        try:
+            decoder = BiffRpnDecoder(memoryview(source), self.version, self, self._codepage)
+            return decoder.decode()
+        except RpnError:
+            return XlUnparsedFormula(text=bytes(source).hex())
 
     @staticmethod
     def _locate_stream(view: memoryview) -> memoryview:
@@ -555,6 +614,12 @@ class BiffWorkbook(ExcelWorkbook):
             self._xf_format_keys.append(body[1])
         elif opcode == _Record.IXFE:
             self._ixfe = _u16(body)
+        elif opcode == _Record.NAME and self.version >= BiffVersion.BIFF5:
+            self._names.append(self._name_record(body))
+        elif opcode == _Record.EXTERNSHEET and self.version >= BiffVersion.BIFF8:
+            self._externsheet_record(body)
+        elif opcode == _Record.SUPBOOK and self.version >= BiffVersion.BIFF8:
+            self._supbook_record(body)
         elif opcode == _Record.SHEETHDR:
             self._sheethdr(body, stream)
 
@@ -569,8 +634,113 @@ class BiffWorkbook(ExcelWorkbook):
                 name = self._decode_unicode_string(body, 6, 1)
             else:
                 name = self._decode_short_string(body, 6)
+            self._all_sheet_names.append(name)
             if kind in (SheetKind.WORKSHEET, SheetKind.MACROSHEET):
                 self._sheets.append(BiffSheet(name, kind, offset, self))
+
+    def _name_record(self, body: memoryview) -> DefinedName:
+        """
+        Parse one NAME record. The header is the same from BIFF5 on: option flags, a keyboard
+        shortcut, the name length, the formula length, an extern-sheet index, and the scope
+        sheet index, followed by four counts of menu, description, help, and status text that
+        no reader consumes. The name follows without its length, which the header already
+        carried: the option byte of a unicode string and the characters after it in BIFF8,
+        plain codepage characters in the earlier versions. A builtin name carries its one-byte
+        code in place of the name, which the builtin flag of the option word announces; a code
+        without a canonical spelling still produces a name, because every record must keep its
+        position in the list that `ptgName` indexes.
+        """
+        grbit, _kbd, name_len, formula_len, _extsht, scope = struct.unpack_from('<HBBHHH', body)
+        if self.version >= BiffVersion.BIFF8:
+            position = 14
+            if name_len or position < len(body):
+                options = body[position]
+                position += 1
+                if options & 0x08:
+                    position += 2
+                if options & 0x04:
+                    position += 4
+                if options & 0x01:
+                    encoding, width = 'utf_16_le', 2
+                else:
+                    encoding, width = 'latin_1', 1
+            else:
+                encoding, width = 'latin_1', 1
+            name = bytes(body[position:position + width * name_len]).decode(encoding)
+            end = position + width * name_len
+        else:
+            name = bytes(body[14:14 + name_len]).decode(self._codepage)
+            end = 14 + name_len
+        if grbit & _NAME_BUILTIN and len(name) == 1:
+            code = ord(name)
+            name = _BUILTIN_DEFINED_NAMES.get(code, F'__builtin_{code:#04x}')
+        return DefinedName(
+            name=name,
+            formula=bytes(body[end:end + formula_len]),
+            sheet=None if scope == 0 else scope - 1,
+        )
+
+    def _externsheet_record(self, body: memoryview) -> None:
+        count, = struct.unpack_from('<H', body)
+        for index in range(count):
+            self._externsheet.append(struct.unpack_from('<HHH', body, 2 + 6 * index))
+
+    def _supbook_record(self, body: memoryview) -> None:
+        count, = struct.unpack_from('<H', body)
+        if body[2:4] == _SUPBOOK_INTERNAL or body[:4] == _SUPBOOK_ADDIN:
+            self._supbooks.append(_Supbook(internal=body[2:4] == _SUPBOOK_INTERNAL, sheets=()))
+            return
+        _url, position = self._decode_counted_string(body, 2, 2)
+        sheets: list[str] = []
+        for _ in range(count):
+            name, position = self._decode_counted_string(body, position, 2)
+            sheets.append(name)
+        self._supbooks.append(_Supbook(internal=False, sheets=tuple(sheets)))
+
+    def extern_sheets(self, ixti: int) -> tuple[str, ...]:
+        """
+        The sheet names one extern-sheet index spans: one entry for a plain qualification and
+        two for the 3-D span of a `ptgArea3d`. Raises `RpnError` when the index does not
+        resolve inside this workbook.
+        """
+        if not 0 <= ixti < len(self._externsheet):
+            raise RpnError(F'the extern-sheet index {ixti} does not exist')
+        supbook_index, first, last = self._externsheet[ixti]
+        if not 0 <= supbook_index < len(self._supbooks):
+            raise RpnError(F'the extern-sheet index {ixti} names a missing supbook')
+        supbook = self._supbooks[supbook_index]
+        sheets = self._all_sheet_names if supbook.internal else supbook.sheets
+        if first > last or not 0 <= first < len(sheets) or not 0 <= last < len(sheets):
+            raise RpnError(F'the extern-sheet index {ixti} does not span sheets of this workbook')
+        if first == last:
+            return (sheets[first],)
+        return (sheets[first], sheets[last])
+
+    def sheet_span(self, first: int, last: int) -> tuple[str, ...]:
+        """
+        The sheet names a BIFF5 3-D reference spans, given the first and last index into the
+        workbook's sheet table. Raises `RpnError` when the span does not resolve.
+        """
+        if not 0 <= first <= last < len(self._all_sheet_names):
+            raise RpnError(F'the sheet span {first}..{last} does not exist')
+        if first == last:
+            return (self._all_sheet_names[first],)
+        return (self._all_sheet_names[first], self._all_sheet_names[last])
+
+    def defined_name(self, index: int) -> XlDefinedName:
+        """
+        The model node for the defined name a one-based `ptgName` index refers to. Raises
+        `RpnError` when the index does not resolve inside this workbook.
+        """
+        if not 1 <= index <= len(self._names):
+            raise RpnError(F'the name index {index} does not exist')
+        record = self._names[index - 1]
+        sheet = None
+        if record.sheet is not None:
+            if not 0 <= record.sheet < len(self._all_sheet_names):
+                raise RpnError(F'the name {record.name} is scoped to a missing sheet')
+            sheet = self._all_sheet_names[record.sheet]
+        return XlDefinedName(name=record.name, sheet=sheet)
 
     def _sheethdr(self, body: memoryview, stream: _RecordStream) -> None:
         """
@@ -742,6 +912,36 @@ class BiffWorkbook(ExcelWorkbook):
         if pos + width * nchars > len(body):
             raise ExcelFormatError('the BIFF stream ends inside a string record')
         return bytes(body[pos:pos + width * nchars]).decode(encoding)
+
+    def _decode_counted_string(
+        self,
+        body: memoryview,
+        position: int,
+        count_size: int,
+        flagged: bool = True,
+    ) -> tuple[str, int]:
+        """
+        Read a length-counted string from `position` and return it with the position that
+        follows it. A flagged string carries the option byte of `_decode_unicode_string` after
+        its count; an unflagged one is a plain string in the workbook codepage.
+        """
+        nchars = int.from_bytes(body[position:position + count_size], 'little')
+        position += count_size
+        if flagged:
+            options = body[position]
+            position += 1
+            if options & 0x08:
+                position += 2
+            if options & 0x04:
+                position += 4
+            if options & 0x01:
+                encoding, width = 'utf_16_le', 2
+            else:
+                encoding, width = 'latin_1', 1
+        else:
+            encoding, width = self._codepage, 1
+        text = bytes(body[position:position + width * nchars]).decode(encoding)
+        return text, position + width * nchars
 
     def _decode_string_record(self, body: memoryview, stream: _RecordStream) -> str:
         count_size = 2 if self.version >= BiffVersion.BIFF3 else 1

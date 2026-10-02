@@ -11,7 +11,15 @@ from xml.etree.ElementTree import ParseError
 
 from defusedxml.ElementTree import fromstring
 
-from refinery.lib.excel.common import Cell, ExcelFormatError, SheetKind, local_name
+from refinery.lib.excel.common import (
+    Cell,
+    DefinedName,
+    ExcelFormatError,
+    FormulaSource,
+    SheetKind,
+    local_name,
+)
+from refinery.lib.excel.formula.model import Expression
 from refinery.lib.id import Fmt, get_microsoft_format
 from refinery.lib.structures import MemoryFile
 
@@ -50,6 +58,21 @@ class ExcelWorkbook(ABC):
         """
         All sheets of the workbook in document order.
         """
+
+    def formula(self, source: FormulaSource) -> Expression | None:
+        """
+        Decode the formula source of a cell or a defined name of this workbook into the
+        formula model. A source the format cannot decode yields the unparsed carrier rather
+        than an error, and `None` — a cell that is not a formula — yields `None`.
+        """
+        raise NotImplementedError
+
+    def defined_names(self) -> Sequence[DefinedName]:
+        """
+        All defined names of the workbook, in the order their records appear; the position
+        of a name in this list is the index its format's name token carries.
+        """
+        raise NotImplementedError
 
 
 _RAW_BIFF_VERSIONS = b'\x00\x02\x04\x08'

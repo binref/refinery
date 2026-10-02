@@ -22,13 +22,18 @@ from refinery.lib.excel.common import (
     ERROR_TEXT,
     Cell,
     CellKind,
+    DefinedName,
     ExcelFormatError,
+    FormulaSource,
     SheetKind,
     date_cell,
     decode_rk,
     is_builtin_date_format,
     is_date_format_string,
 )
+from refinery.lib.excel.formula.model import Expression, XlDefinedName, XlUnparsedFormula
+from refinery.lib.excel.formula.ptg import RpnError
+from refinery.lib.excel.formula.xlsb import XlsbRpnDecoder
 from refinery.lib.excel.workbook import ExcelSheet, ExcelWorkbook, _Package
 
 _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'
@@ -76,12 +81,21 @@ class _Record(IntEnum):
     BEGIN_SST = 159
     END_SST = 160
     END_STYLE_SHEET = 279
+    NAME = 39
+    BEGIN_EXTERNALS = 353
+    END_EXTERNALS = 354
+    SUP_BOOK_SRC = 355
+    SUP_SELF = 357
+    SUP_SAME = 358
+    SUP_TABS = 359
+    EXTERN_SHEET = 362
     BEGIN_FMTS = 615
     END_FMTS = 616
     BEGIN_CELL_XFS = 617
     END_CELL_XFS = 618
     BEGIN_CELL_STYLE_XFS = 626
     END_CELL_STYLE_XFS = 627
+    SUP_ADDIN = 667
 
 
 _CELL_RECORDS = frozenset((
@@ -104,6 +118,17 @@ _FORMULA_RECORDS = frozenset((
     _Record.FMLA_BOOL,
     _Record.FMLA_ERROR,
 ))
+
+# the records that each open one supporting book of the externals section; the order they
+# appear in is the index the entries of the extern-sheet table name.
+_SUPPORTING_LINKS = frozenset((
+    _Record.SUP_BOOK_SRC,
+    _Record.SUP_SELF,
+    _Record.SUP_SAME,
+    _Record.SUP_ADDIN,
+))
+
+_GLOBAL_NAME = 0xFFFFFFFF
 
 _DEFECTS = (struct.error, UnicodeDecodeError, IndexError)
 
@@ -168,6 +193,9 @@ class _Body:
 
     def u32(self) -> int:
         return int.from_bytes(self._take(4), 'little')
+
+    def i32(self) -> int:
+        return int.from_bytes(self._take(4), 'little', signed=True)
 
     def double(self) -> float:
         return struct.unpack('<d', self._take(8))[0]
@@ -283,6 +311,9 @@ class XlsbWorkbook(ExcelWorkbook):
         self._formats: dict[int, str] = {}
         self._style_formats: list[int] | None = None
         self._sheets: list[XlsbSheet] = []
+        self._names: list[DefinedName] = []
+        self._supporting_links: list[int] = []
+        self._externsheet: list[tuple[int, int, int]] = []
         part = self._part('xl/workbook.bin')
         if part is None:
             raise ExcelFormatError('the package has no workbook part')
@@ -305,6 +336,12 @@ class XlsbWorkbook(ExcelWorkbook):
                     kind = _SHEET_KINDS.get(rel_type or '', SheetKind.OTHER)
                     part_name = None if target is None else self._resolve(target)
                     self._sheets.append(XlsbSheet(name, kind, part_name, self))
+                elif rtype == _Record.NAME:
+                    self._names.append(self._name_record(record))
+                elif rtype == _Record.EXTERN_SHEET:
+                    self._extern_sheet_record(record)
+                elif rtype in _SUPPORTING_LINKS:
+                    self._supporting_links.append(rtype)
         except _DEFECTS as error:
             raise ExcelFormatError('the workbook part is malformed') from error
         self._load_shared_strings()
@@ -314,6 +351,93 @@ class XlsbWorkbook(ExcelWorkbook):
         All sheets of the workbook in document order.
         """
         return self._sheets
+
+    def defined_names(self) -> Sequence[DefinedName]:
+        """
+        All defined names of the workbook, in the order their BrtName records appear; the
+        one-based position of a name in this list is the index its `ptgName` tokens carry.
+        """
+        return self._names
+
+    def formula(self, source: FormulaSource) -> Expression | None:
+        """
+        Decode the formula token stream of a cell or a defined name of this workbook. A stream
+        that does not decode in full — hostile bytes, a name that does not resolve — yields
+        the carrier that prints the raw bytes in hexadecimal; `None` yields `None`. Text is
+        not an XLSB source.
+        """
+        if source is None:
+            return None
+        if isinstance(source, str):
+            return XlUnparsedFormula(text=source)
+        try:
+            decoder = XlsbRpnDecoder(memoryview(source), self)
+            return decoder.decode()
+        except RpnError:
+            return XlUnparsedFormula(text=bytes(source).hex())
+
+    def _name_record(self, record: memoryview) -> DefinedName:
+        """
+        Parse one BrtName record: option flags, a keyboard shortcut, the scope sheet index,
+        the name, and the formula stream, closed by a comment this reader does not consume.
+        """
+        body = _Body(record)
+        body.u32()
+        body.u8()
+        scope = body.u32()
+        name = body.string()
+        size = body.u32()
+        return DefinedName(
+            name=name,
+            formula=bytes(body.read(size)),
+            sheet=None if scope == _GLOBAL_NAME else scope,
+        )
+
+    def _extern_sheet_record(self, record: memoryview) -> None:
+        """
+        Parse one BrtExternSheet record: the number of entries, then each entry as a
+        supporting-link index and the first and last sheet of the span it names.
+        """
+        body = _Body(record)
+        for _ in range(body.u32()):
+            self._externsheet.append((body.u32(), body.i32(), body.i32()))
+
+    def extern_sheets(self, ixti: int) -> tuple[str, ...]:
+        """
+        The sheet names one extern-sheet index spans: one entry for a plain qualification and
+        two for the 3-D span of a `ptgArea3d`. Raises `RpnError` when the index does not
+        resolve to sheets of this workbook.
+        """
+        if not 0 <= ixti < len(self._externsheet):
+            raise RpnError(F'the extern-sheet index {ixti} does not exist')
+        link, first, last = self._externsheet[ixti]
+        if not 0 <= link < len(self._supporting_links):
+            raise RpnError(F'the extern-sheet index {ixti} names a missing supporting link')
+        if self._supporting_links[link] != _Record.SUP_SELF:
+            raise RpnError(F'the extern-sheet index {ixti} names a sheet of another document')
+        if first == last == -1 or first == last == -2:
+            raise RpnError('a 3-D reference names a deleted or unspecified sheet')
+        sheets = [sheet.name for sheet in self._sheets]
+        if first > last or not 0 <= first < len(sheets) or not 0 <= last < len(sheets):
+            raise RpnError(F'the extern-sheet index {ixti} does not span sheets of this workbook')
+        if first == last:
+            return (sheets[first],)
+        return (sheets[first], sheets[last])
+
+    def defined_name(self, index: int) -> XlDefinedName:
+        """
+        The model node for the defined name a one-based `ptgName` index refers to. Raises
+        `RpnError` when the index does not resolve inside this workbook.
+        """
+        if not 1 <= index <= len(self._names):
+            raise RpnError(F'the name index {index} does not exist')
+        record = self._names[index - 1]
+        sheet = None
+        if record.sheet is not None:
+            if not 0 <= record.sheet < len(self._sheets):
+                raise RpnError(F'the name {record.name} is scoped to a missing sheet')
+            sheet = self._sheets[record.sheet].name
+        return XlDefinedName(name=record.name, sheet=sheet)
 
     def _part(self, part: str) -> bytes | None:
         stream = self._package.open(part)

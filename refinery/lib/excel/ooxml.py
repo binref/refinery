@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import posixpath
 
-from typing import Iterator
+from collections.abc import Iterator, Sequence
 from xml.etree.ElementTree import Element, ParseError
 
 from defusedxml.ElementTree import fromstring, iterparse
@@ -11,7 +11,9 @@ from defusedxml.ElementTree import fromstring, iterparse
 from refinery.lib.excel.common import (
     Cell,
     CellKind,
+    DefinedName,
     ExcelFormatError,
+    FormulaSource,
     SheetKind,
     date_cell,
     decode_xstring,
@@ -21,6 +23,8 @@ from refinery.lib.excel.common import (
     rc2ref,
     ref2rc,
 )
+from refinery.lib.excel.formula.model import Expression, XlUnparsedFormula
+from refinery.lib.excel.formula.parse import parse_formula
 from refinery.lib.excel.workbook import ExcelSheet, ExcelWorkbook, _Package
 
 _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'
@@ -128,12 +132,14 @@ class OoxmlSheet(ExcelSheet):
 
     def _build_cell(self, element: Element, row: int, col: int) -> Cell:
         formula: str | None = None
+        assignment = False
         value_text: str | None = None
         inline: str | None = None
         for child in element:
             local = local_name(child.tag)
             if local == 'f':
                 formula = child.text or None
+                assignment = (child.get('bx') or '').lower() in ('1', 'true')
             elif local == 'v':
                 value_text = child.text
             elif local == 'is':
@@ -152,22 +158,43 @@ class OoxmlSheet(ExcelSheet):
                 raise ExcelFormatError(
                     F'cell {rc2ref(row, col)} of sheet {self.name!r} references shared string'
                     F' {value_text} outside the table of {len(strings)} entries')
-            return Cell(row, col, CellKind.TEXT, strings[index], formula)
+            return Cell(row, col, CellKind.TEXT, strings[index], formula, assignment)
         if kind_hint == 'inlineStr' and inline is not None:
-            return Cell(row, col, CellKind.TEXT, inline, formula)
+            return Cell(row, col, CellKind.TEXT, inline, formula, assignment)
         if value_text is None:
             if formula is not None:
-                return Cell(row, col, CellKind.FORMULA, None, formula)
+                return Cell(row, col, CellKind.FORMULA, None, formula, assignment)
             return Cell(row, col, CellKind.BLANK, None, None)
         if kind_hint == 'str':
-            return Cell(row, col, CellKind.TEXT, decode_xstring(value_text), formula)
+            return Cell(
+                row,
+                col,
+                CellKind.TEXT,
+                decode_xstring(value_text),
+                formula,
+                assignment,
+            )
         if kind_hint == 'b':
-            return Cell(row, col, CellKind.BOOLEAN, value_text.strip().lower() in ('1', 'true'), formula)
+            return Cell(
+                row,
+                col,
+                CellKind.BOOLEAN,
+                value_text.strip().lower() in ('1', 'true'),
+                formula,
+                assignment,
+            )
         if kind_hint == 'e':
-            return Cell(row, col, CellKind.ERROR, value_text, formula)
+            return Cell(row, col, CellKind.ERROR, value_text, formula, assignment)
         if kind_hint == 'd':
             try:
-                return Cell(row, col, CellKind.DATE, datetime.datetime.fromisoformat(value_text), formula)
+                return Cell(
+                    row,
+                    col,
+                    CellKind.DATE,
+                    datetime.datetime.fromisoformat(value_text),
+                    formula,
+                    assignment,
+                )
             except ValueError as error:
                 raise ExcelFormatError(
                     F'cell {rc2ref(row, col)} of sheet {self.name!r} has the malformed value'
@@ -179,8 +206,8 @@ class OoxmlSheet(ExcelSheet):
                 F'cell {rc2ref(row, col)} of sheet {self.name!r} has the malformed value'
                 F' {value_text!r}') from error
         if workbook._style_is_date(element.get('s')):
-            return date_cell(row, col, number, workbook._date_mode_1904, formula)
-        return Cell(row, col, CellKind.NUMBER, number, formula)
+            return date_cell(row, col, number, workbook._date_mode_1904, formula, assignment)
+        return Cell(row, col, CellKind.NUMBER, number, formula, assignment)
 
 
 class OoxmlWorkbook(ExcelWorkbook):
@@ -197,6 +224,7 @@ class OoxmlWorkbook(ExcelWorkbook):
         self._rels = self._read_rels(workbook_part)
         self._date_mode_1904 = False
         self._sheets: list[OoxmlSheet] = []
+        self._names: list[DefinedName] = []
         self._shared_strings: list[str] = []
         self._shared_strings_loaded = False
         self._formats: dict[int, str] = {}
@@ -214,12 +242,53 @@ class OoxmlWorkbook(ExcelWorkbook):
                 part = None if target is None else _resolve_part(self._base, target)
                 kind = _SHEET_KINDS.get(rel_type or '', SheetKind.OTHER)
                 self._sheets.append(OoxmlSheet(name, kind, part, self))
+            elif local == 'definedName':
+                self._names.append(self._defined_name(element))
 
     def sheets(self) -> list[OoxmlSheet]:
         """
         All sheets of the workbook in document order.
         """
         return self._sheets
+
+    def defined_names(self) -> Sequence[DefinedName]:
+        """
+        All defined names of the workbook, in the order their `definedName` elements appear.
+        """
+        return self._names
+
+    def formula(self, source: FormulaSource) -> Expression | None:
+        """
+        Decode the formula text of a cell or a defined name of this workbook through the text
+        parser. Text the parser cannot read in full yields the carrier that prints it verbatim,
+        and `None` yields `None`; a byte string is not an OOXML source.
+        """
+        if source is None:
+            return None
+        if isinstance(source, str):
+            return parse_formula(source)
+        return XlUnparsedFormula(text=bytes(source).hex())
+
+    @staticmethod
+    def _defined_name(element: Element) -> DefinedName:
+        """
+        Parse one `definedName` element. A built-in name carries the `_xlnm.` prefix, which the
+        BIFF readers spell away as the lower-case name its single-byte code selects, so the
+        prefix is stripped and the name lower-cased to match.
+        """
+        name = element.get('name') or ''
+        if name.startswith('_xlnm.'):
+            name = name[len('_xlnm.'):].lower()
+        sheet = element.get('localSheetId')
+        try:
+            scope = None if sheet is None else int(sheet)
+        except ValueError:
+            scope = None
+        return DefinedName(
+            name=name,
+            formula=element.text or None,
+            sheet=scope,
+        )
 
     def _workbook_part(self) -> str:
         part = 'xl/workbook.xml'

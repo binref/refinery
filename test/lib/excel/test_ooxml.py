@@ -15,6 +15,7 @@ from refinery.lib.excel import (
     open_workbook,
 )
 from refinery.lib.excel.common import decode_xstring
+from refinery.lib.excel.formula import synthesize_formula
 
 from ... import TestBase
 from .samples import (
@@ -24,6 +25,7 @@ from .samples import (
     REVENG1,
     SELF_EVALUATION_REPORT,
     SHARED_STRINGS_ALT_LOCATION,
+    XLM_MACRO_FORMULA_XLSM,
 )
 
 
@@ -276,6 +278,44 @@ class TestDefectiveReferences(TestBase):
             [(b'<c r="A2"', b'<c r="A0"')],
         )
         self.assertEqual(_cells(data), _cells(SHARED_STRINGS_ALT_LOCATION))
+
+
+class TestOoxmlFormulaCells(TestBase):
+
+    def test_stored_formula_text_decodes_through_the_workbook(self):
+        cells = _cells(REVENG1)
+        workbook = open_workbook(REVENG1)
+        self.assertEqual(
+            synthesize_formula(workbook.formula(cells[('ZZZfirstsheet', 3, 3)].formula)),
+            'REPT("x",D3)',
+        )
+        self.assertEqual(
+            synthesize_formula(workbook.formula(cells[('ZZZfirstsheet', 45, 2)].formula)),
+            '1/11',
+        )
+
+    def test_macrosheet_formula_cells_decode(self):
+        cells = _cells(XLM_MACRO_FORMULA_XLSM)
+        self.assertEqual(cells[('Cdfea', 2, 5)].formula, 'CHAR(113-2)')
+        self.assertEqual(cells[('Cdfea', 2, 12)].formula, 'CHAR(71-6)')
+        self.assertEqual(cells[('PCWV', 8, 7)].assignment, False)
+
+    def test_an_assignment_formula_carries_the_bx_flag(self):
+        # the `bx` attribute of a formula element marks a cell whose text spells an assignment
+        # of a value to a name; no sample in the corpus carries one, so the attribute is added
+        # to the formula of an authentic cell here
+        data = _replace_part(
+            XLM_MACRO_FORMULA_XLSM,
+            'xl/macrosheets/intlsheet1.xml',
+            [(b'<f>FORMULA(', b'<f bx="1">FORMULA(')],
+        )
+        cells = _cells(data)
+        self.assertEqual(cells[('Cdfea', 2, 5)].assignment, False)
+        self.assertEqual(cells[('PCWV', 8, 7)].assignment, True)
+        self.assertEqual(
+            cells[('PCWV', 8, 7)].formula,
+            _cells(XLM_MACRO_FORMULA_XLSM)[('PCWV', 8, 7)].formula,
+        )
 
 
 class TestDefectiveWorkbooks(TestBase):

@@ -50,13 +50,44 @@ class Cell(NamedTuple):
     """
     A single spreadsheet cell at a one-based `row` and `col`. The `value` is typed by `kind`;
     `formula` is the formula source as stored by the format, without interpretation, and is
-    `None` for cells that are not formulas.
+    `None` for cells that are not formulas. `assignment` marks a formula the container says
+    assigns a value to a name — the `bx` attribute of an OOXML macrosheet formula, whose text
+    spells the assignment as a comparison; the formats that store the assignment as the
+    `SET.NAME` call it already spells leave the flag unset.
     """
     row: int
     col: int
     kind: CellKind
     value: CellValue
     formula: FormulaSource
+    assignment: bool = False
+
+
+class BiffVersion(enum.IntEnum):
+    """
+    The BIFF version of a stream. BIFF7 workbooks parse exactly like BIFF5, so there is no
+    member for it; BIFF2 workbooks without XF records fall back to the BIFF2.0 rule that
+    reads the format key from the cell attributes.
+    """
+
+    BIFF2_1 = 21
+    BIFF3 = 30
+    BIFF4 = 40
+    BIFF4W = 45
+    BIFF5 = 50
+    BIFF8 = 80
+
+
+class DefinedName(NamedTuple):
+    """
+    A defined name of a workbook. The `formula` is the name's formula source as stored by the
+    format, without interpretation; `sheet` is the zero-based index of the sheet the name is
+    scoped to, counted in the document order of the format's own sheet table, or `None` when
+    the name is global.
+    """
+    name: str
+    formula: FormulaSource
+    sheet: int | None
 
 
 def local_name(tag: str) -> str:
@@ -138,6 +169,7 @@ def date_cell(
     serial: int | float,
     date_mode_1904: bool,
     formula: FormulaSource = None,
+    assignment: bool = False,
 ) -> Cell:
     """
     Compose the cell of a number whose format marks it as a date. A serial number that no
@@ -146,8 +178,8 @@ def date_cell(
     try:
         value = serial_to_datetime(serial, date_mode_1904)
     except (OverflowError, ValueError):
-        return Cell(row, col, CellKind.ERROR, ERROR_TEXT[0x0F], formula)
-    return Cell(row, col, CellKind.DATE, value, formula)
+        return Cell(row, col, CellKind.ERROR, ERROR_TEXT[0x0F], formula, assignment)
+    return Cell(row, col, CellKind.DATE, value, formula, assignment)
 
 
 def decode_rk(rk: bytes | bytearray | memoryview) -> float:
