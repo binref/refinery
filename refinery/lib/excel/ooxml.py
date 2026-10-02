@@ -4,11 +4,12 @@ import datetime
 import posixpath
 
 from collections.abc import Iterator, Sequence
-from xml.etree.ElementTree import Element, ParseError
+from xml.etree.ElementTree import Element
 
 from defusedxml.ElementTree import fromstring, iterparse
 
 from refinery.lib.excel.common import (
+    XML_DEFECTS,
     Cell,
     CellKind,
     DefinedName,
@@ -107,7 +108,12 @@ class OoxmlSheet(ExcelSheet):
                 if event != 'end' or local_name(element.tag) != 'row':
                     continue
                 reference = element.get('r')
-                if reference is not None and reference.isascii() and reference.isdigit():
+                if (
+                    reference is not None
+                    and reference.isascii()
+                    and reference.isdigit()
+                    and int(reference) > 0
+                ):
                     row_number = int(reference)
                 else:
                     row_number += 1
@@ -127,7 +133,7 @@ class OoxmlSheet(ExcelSheet):
                     yield self._build_cell(cell_element, row, col)
                 element.clear()
                 root.clear()
-        except ParseError as error:
+        except XML_DEFECTS as error:
             raise ExcelFormatError(F'sheet {self.name!r} is malformed') from error
 
     def _build_cell(self, element: Element, row: int, col: int) -> Cell:
@@ -146,9 +152,7 @@ class OoxmlSheet(ExcelSheet):
                 inline = decode_xstring(_collect_text(child))
         workbook = self._workbook
         kind_hint = element.get('t')
-        if kind_hint == 's':
-            if value_text is None:
-                return Cell(row, col, CellKind.BLANK, None, formula)
+        if kind_hint == 's' and value_text is not None:
             try:
                 index = int(value_text)
             except ValueError:
@@ -300,7 +304,7 @@ class OoxmlWorkbook(ExcelWorkbook):
         if stream is not None:
             try:
                 root = fromstring(stream.read())
-            except ParseError:
+            except XML_DEFECTS:
                 return part
             for element in root.iter():
                 if local_name(element.tag) != 'Override':
@@ -322,7 +326,7 @@ class OoxmlWorkbook(ExcelWorkbook):
             return {}
         try:
             root = fromstring(stream.read())
-        except ParseError:
+        except XML_DEFECTS:
             return {}
         result: dict[str, tuple[str, str]] = {}
         for element in root.iter():
@@ -339,7 +343,7 @@ class OoxmlWorkbook(ExcelWorkbook):
             raise ExcelFormatError(F'{what} {part!r} is missing from the archive')
         try:
             return fromstring(stream.read())
-        except ParseError as error:
+        except XML_DEFECTS as error:
             raise ExcelFormatError(F'{what} {part!r} is malformed') from error
 
     def _part_for(self, rel_type: str) -> str | None:
@@ -375,7 +379,7 @@ class OoxmlWorkbook(ExcelWorkbook):
                 strings.append(decode_xstring(_collect_text(element)))
                 element.clear()
                 root.clear()
-        except ParseError as error:
+        except XML_DEFECTS as error:
             raise ExcelFormatError(F'shared string part {part!r} is malformed') from error
         self._shared_strings = strings
 
@@ -389,7 +393,7 @@ class OoxmlWorkbook(ExcelWorkbook):
             return
         try:
             root = fromstring(stream.read())
-        except ParseError:
+        except XML_DEFECTS:
             return
         for element in root.iter():
             local = local_name(element.tag)

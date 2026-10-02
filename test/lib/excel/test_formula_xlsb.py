@@ -283,6 +283,37 @@ class TestXlsbFormulaDefects(TestBase):
         self.assertEqual(len(cut), 1)
         self.assertIsInstance(workbook.formula(cut[0].formula), XlUnparsedFormula)
 
+    def test_a_string_token_that_does_not_decode_is_a_carrier(self):
+        part = 'xl/worksheets/sheet1.bin'
+        source = zipfile.ZipFile(io.BytesIO(TEST_XLSB))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as target:
+            for info in source.infolist():
+                content = source.read(info)
+                if info.filename == part:
+                    # the string token of the formula `"A"` holds one UTF-16 character, which
+                    # becomes a high surrogate that no low surrogate follows
+                    assert content.count(b'\x17\x01\x00A\x00') == 1
+                    content = content.replace(b'\x17\x01\x00A\x00', b'\x17\x01\x00\x00\xD8')
+                target.writestr(info, content)
+        data = buffer.getvalue()
+        self.assertEqual(
+            _formula_texts(data),
+            {
+                key: text
+                for key, text in _TEST_FORMULA_TEXTS.items()
+                if key != ('Test', 1, 3)
+            },
+        )
+        workbook = open_workbook(data)
+        cell = next(
+            cell
+            for sheet in workbook.sheets()
+            for cell in sheet.cells()
+            if (sheet.name, cell.row, cell.col) == ('Test', 1, 3)
+        )
+        self.assertIsInstance(workbook.formula(cell.formula), XlUnparsedFormula)
+
     def test_cells_still_yield_when_the_token_stream_is_cut(self):
         original = open_workbook(TEST_XLSB)
         cut = open_workbook(

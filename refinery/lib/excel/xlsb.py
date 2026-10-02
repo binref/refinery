@@ -14,12 +14,12 @@ import struct
 
 from collections.abc import Iterator, Sequence
 from enum import IntEnum
-from xml.etree.ElementTree import ParseError
 
 from defusedxml.ElementTree import fromstring
 
 from refinery.lib.excel.common import (
     ERROR_TEXT,
+    XML_DEFECTS,
     Cell,
     CellKind,
     DefinedName,
@@ -461,7 +461,7 @@ class XlsbWorkbook(ExcelWorkbook):
             return {}
         try:
             root = fromstring(part)
-        except ParseError:
+        except XML_DEFECTS:
             return {}
         result: dict[str, tuple[str, str]] = {}
         for element in root.iter():

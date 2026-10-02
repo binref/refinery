@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import unittest
+
 from refinery.lib.excel import open_workbook, synthesize_formula
 from refinery.lib.excel.formula.model import Expression, XlUnparsedFormula
-from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth
 from refinery.lib.scripts.xlm import XlmNameEntry, XlmNameTable
 from test import TestBase
 from test.lib.excel.samples import (
+    ISSUE20,
     XLM_MACRO_ASSIGN_BIFF8,
     XLM_MACRO_FORMULA_XLSM,
     XLM_MACRO_NAMES_BIFF8,
@@ -16,7 +18,7 @@ from test.lib.excel.samples import (
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
 
 
-def _table(data: bytes) -> XlmNameTable:
+def _table(data: bytes | bytearray) -> XlmNameTable:
     return XlmNameTable(open_workbook(data))
 
 
@@ -26,9 +28,9 @@ def _resolve(table: XlmNameTable, name: str) -> XlmNameEntry:
     return entry
 
 
-def _text(formula: Expression) -> str:
-    with RecursionDepth(TREE_RECURSION_DEPTH):
-        return synthesize_formula(formula)
+def _text(formula: Expression | None) -> str:
+    assert formula is not None
+    return synthesize_formula(formula)
 
 
 class TestXlmNameResolution(TestBase):
@@ -61,17 +63,30 @@ class TestXlmNameResolution(TestBase):
                 'names_biff8',
                 XLM_MACRO_NAMES_BIFF8,
                 [
-                    'Application.Quit', 'auto_open', 'Bhf3WDT', 'bXTBeZNN',
-                    'fhQ3BngPgn8GXh2', 'gefg', 'hf3iCgNUuxNu1WDT', 'uBdhH',
-                    'VhQn8GXh2', 'VPYBVp', 'YwPkVFIXiyQV',
+                    'Application.Quit',
+                    'auto_open',
+                    'Bhf3WDT',
+                    'bXTBeZNN',
+                    'fhQ3BngPgn8GXh2',
+                    'gefg',
+                    'hf3iCgNUuxNu1WDT',
+                    'uBdhH',
+                    'VhQn8GXh2',
+                    'VPYBVp',
+                    'YwPkVFIXiyQV',
                 ],
             ),
             (
                 'assign_biff8',
                 XLM_MACRO_ASSIGN_BIFF8,
                 [
-                    'auto_open', 'GyGkxwNQ', 'jRiUYymkewtQ', 'pjZFOONS',
-                    'uTZVgjyU', 'xofsDmlZLmJV', 'ZirmQgyT',
+                    'auto_open',
+                    'GyGkxwNQ',
+                    'jRiUYymkewtQ',
+                    'pjZFOONS',
+                    'uTZVgjyU',
+                    'xofsDmlZLmJV',
+                    'ZirmQgyT',
                 ],
             ),
             ('text_xlsm', XLM_MACRO_TEXT_XLSM, ['auto_open']),
@@ -83,7 +98,7 @@ class TestXlmNameResolution(TestBase):
         ]:
             with self.subTest(sample=sample):
                 self.assertEqual(
-                    [name for name, _ in _table(data).entries()],
+                    [entry.name for entry in _table(data).entries()],
                     expected,
                 )
 
@@ -98,25 +113,39 @@ class TestXlmNameResolution(TestBase):
         entry = _resolve(_table(XLM_MACRO_NAMES_BIFF8), 'ubdhh')
         self.assertEqual((entry.sheet, _text(entry.formula)), (0, '#NAME?'))
 
+    @unittest.expectedFailure
+    def test_a_name_defined_for_several_sheets_keeps_an_entry_per_sheet(self):
+        self.assertEqual(
+            [entry.sheet for entry in _table(ISSUE20).entries() if entry.name == 'print_area'],
+            [0, 1, 2],
+        )
+
 
 class TestXlmNameDiscovery(TestBase):
 
     def test_prefix_matches_list_every_entry_that_starts_with_the_pattern(self):
         self.assertEqual(
-            [name for name, _ in _table(XLM_MACRO_FORMULA_XLSM).fuzzy('NEVR')],
+            [entry.name for entry in _table(XLM_MACRO_FORMULA_XLSM).fuzzy('NEVR')],
             ['NEVR1', 'NEVR2', 'NEVR3', 'NEVR4', 'NEVR5', 'NEVR6', 'NEVR7'],
         )
 
     def test_a_prefix_match_suppresses_the_subsequence_fallback(self):
         self.assertEqual(
-            [name for name, _ in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('app')],
+            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('app')],
             ['Application.Quit'],
         )
 
     def test_without_a_prefix_match_the_characters_in_order_match(self):
         self.assertEqual(
-            [name for name, _ in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('ao')],
+            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('ao')],
             ['Application.Quit', 'auto_open'],
+        )
+
+    def test_each_character_of_a_name_matches_one_character_of_the_pattern(self):
+        # of the names that contain a u, only one contains two of them
+        self.assertEqual(
+            [entry.name for entry in _table(XLM_MACRO_NAMES_BIFF8).fuzzy('uu')],
+            ['hf3iCgNUuxNu1WDT'],
         )
 
     def test_a_pattern_no_name_matches_yields_no_entries(self):
@@ -125,7 +154,7 @@ class TestXlmNameDiscovery(TestBase):
     def test_the_maldoc_entry_point_is_found_by_prefix_alone(self):
         table = _table(self.download_sample(_MALDOC))
         self.assertEqual(
-            [name for name, _ in table.fuzzy('auto')],
+            [entry.name for entry in table.fuzzy('auto')],
             ['Auto_Open' + '7' * 114],
         )
 
@@ -137,5 +166,19 @@ class TestXlmNameTableMutation(TestBase):
         entry = _resolve(table, 'auto_open')
         table.undefine('AUTO_OPEN')
         self.assertEqual(table.resolve('auto_open'), None)
-        table.define('EntryPoint', entry)
-        self.assertEqual(_resolve(table, 'entrypoint'), entry)
+        renamed = entry._replace(name='EntryPoint')
+        table.define(renamed)
+        self.assertEqual(_resolve(table, 'entrypoint'), renamed)
+
+    def test_every_listed_name_resolves_to_its_entry_after_a_redefinition(self):
+        table = _table(XLM_MACRO_FORMULA_XLSM)
+        table.define(_resolve(table, 'nevr1')._replace(name='Nevr1'))
+        table.undefine('NEVR2')
+        self.assertEqual(
+            [table.resolve(entry.name) for entry in table.entries()],
+            table.entries(),
+        )
+        self.assertEqual(
+            [entry.name for entry in table.fuzzy('nevr')],
+            ['Nevr1', 'NEVR3', 'NEVR4', 'NEVR5', 'NEVR6', 'NEVR7'],
+        )

@@ -101,11 +101,14 @@ def base_ptg(token: int) -> Ptg:
     """
     Strip the value-class bits off a raw token byte. Control ptgs live below `0x20` and carry
     no class bits; an operand ptg keeps its reference-class spelling, `0x40` adds the value
-    class and `0x60` the array class.
+    class and `0x60` the array class. A byte that names no ptg raises `RpnError`.
     """
-    if token < 0x20:
-        return Ptg(token)
-    return Ptg((token | 0x20) & 0x3F)
+    try:
+        if token < 0x20:
+            return Ptg(token)
+        return Ptg((token | 0x20) & 0x3F)
+    except ValueError:
+        raise RpnError(F'the byte {token:#x} names no token') from None
 
 
 BUILTIN_FUNCTIONS: dict[int, tuple[str, int, int]] = {
@@ -1272,6 +1275,16 @@ class RpnDecoder:
         raw = bytes(self._view[self._pos:self._pos + count])
         self._pos += count
         return raw
+
+    def _read_text(self, count: int, encoding: str) -> str:
+        """
+        Read `count` bytes as text in the given encoding; bytes that do not decode in it are a
+        defect of the stream like any other.
+        """
+        try:
+            return self._read_bytes(count).decode(encoding)
+        except UnicodeDecodeError as error:
+            raise RpnError(F'a string token does not decode as {encoding}') from error
 
     # the operand readers a container family supplies; every default raises so that a subclass
     # cannot silently skip a token it does not implement.

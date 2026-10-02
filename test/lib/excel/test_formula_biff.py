@@ -279,6 +279,37 @@ class TestBiffFormulaDefects(TestBase):
         self.assertEqual(len(cut), 1)
         self.assertIsInstance(workbook.formula(cut[0].formula), XlUnparsedFormula)
 
+    @staticmethod
+    def _with_first_formula_token(data: bytes, token: int) -> bytes:
+        """
+        Overwrite the first token byte of the first FORMULA record of the workbook stream. The
+        record keeps its length, so every other record of the stream reads as before.
+        """
+        stream = bytearray(bytes(OleFile(data).openstream('Workbook')))
+        position = 0
+        while struct.unpack_from('<HH', stream, position)[0] != 0x0006:
+            position += 4 + struct.unpack_from('<HH', stream, position)[1]
+        # the token stream follows the record header and the 22 bytes of the fixed record body
+        stream[position + 4 + 22] = token
+        return bytes(stream)
+
+    def test_a_token_byte_that_names_no_token_is_a_carrier(self):
+        expected = _formula_texts(FORMULA_TEST_SJMACHIN)
+        del expected[('Sheet1', 3, 2)]
+        # no ptg is numbered 0x00, and none in the range from 0x30 to 0x37
+        for token in (0x00, 0x36):
+            with self.subTest(token=token):
+                data = self._with_first_formula_token(FORMULA_TEST_SJMACHIN, token)
+                self.assertEqual(_formula_texts(data), expected)
+                workbook = open_workbook(data)
+                cell = next(
+                    cell
+                    for sheet in workbook.sheets()
+                    for cell in sheet.cells()
+                    if (sheet.name, cell.row, cell.col) == ('Sheet1', 3, 2)
+                )
+                self.assertIsInstance(workbook.formula(cell.formula), XlUnparsedFormula)
+
     def test_cells_still_yield_when_the_token_stream_is_cut(self):
         original = open_workbook(FORMULA_TEST_SJMACHIN)
         truncated = open_workbook(self._truncate_inside_formula_record(FORMULA_TEST_SJMACHIN))

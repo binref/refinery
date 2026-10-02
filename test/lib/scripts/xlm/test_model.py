@@ -3,14 +3,13 @@ from __future__ import annotations
 import io
 import zipfile
 
-from refinery.lib.excel import SheetKind, open_workbook, synthesize_formula
+from refinery.lib.excel import CellKind, SheetKind, open_workbook, synthesize_formula
 from refinery.lib.excel.formula.model import (
     XlBinaryExpression,
     XlBinaryOperator,
     XlFunctionCall,
     XlUnparsedFormula,
 )
-from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth
 from refinery.lib.scripts.xlm import XlmCell, XlmMacrosheet, build_xlm_model
 from test import TestBase
 from test.lib.excel.samples import (
@@ -24,14 +23,21 @@ from test.lib.excel.samples import (
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
 
 
-def _model(data: bytes) -> list[XlmMacrosheet]:
-    with RecursionDepth(TREE_RECURSION_DEPTH):
-        return build_xlm_model(open_workbook(data))
+def _model(data: bytes | bytearray) -> list[XlmMacrosheet]:
+    return build_xlm_model(open_workbook(data))
 
 
 def _sheet(macrosheets: list[XlmMacrosheet], name: str) -> XlmMacrosheet:
     sheet = next(sheet for sheet in macrosheets if sheet.name == name)
     return sheet
+
+
+def _body(sheet: XlmMacrosheet) -> list[XlmCell]:
+    cells: list[XlmCell] = []
+    for cell in sheet.body:
+        assert isinstance(cell, XlmCell)
+        cells.append(cell)
+    return cells
 
 
 def _cell(macrosheets: list[XlmMacrosheet], name: str, row: int, col: int) -> XlmCell:
@@ -42,18 +48,33 @@ def _cell(macrosheets: list[XlmMacrosheet], name: str, row: int, col: int) -> Xl
 
 def _formula_text(macrosheets: list[XlmMacrosheet], name: str, row: int, col: int) -> str:
     cell = _cell(macrosheets, name, row, col)
-    with RecursionDepth(TREE_RECURSION_DEPTH):
-        assert cell.formula is not None
-        return synthesize_formula(cell.formula)
+    assert cell.formula is not None
+    return synthesize_formula(cell.formula)
 
 
 def _carrier_count(macrosheets: list[XlmMacrosheet]) -> int:
     return sum(
         1
         for sheet in macrosheets
-        for cell in sheet.body
+        for cell in _body(sheet)
         if isinstance(cell.formula, XlUnparsedFormula)
     )
+
+
+def _with_macrosheet_replacement(data: bytes, old: bytes, new: bytes) -> bytes:
+    """
+    Replace the first occurrence of `old` in the macrosheet part of the XLSM sample.
+    """
+    source = zipfile.ZipFile(io.BytesIO(data))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename == 'xl/macrosheets/intlsheet1.xml':
+                assert old in content
+                content = content.replace(old, new, 1)
+            target.writestr(info, content)
+    return buffer.getvalue()
 
 
 class TestXlmModelInventory(TestBase):
@@ -112,7 +133,7 @@ class TestXlmModelInventory(TestBase):
         self.assertEqual(
             [
                 cell
-                for cell in macrosheets[0].body
+                for cell in _body(macrosheets[0])
                 if cell.formula is None and cell.value is None
             ],
             [],
@@ -192,6 +213,11 @@ class TestXlmModelCells(TestBase):
             True,
         )
 
+    def test_cells_keep_the_kind_of_their_cached_value(self):
+        macrosheets = _model(XLM_MACRO_TEXT_XLSM)
+        self.assertEqual(_cell(macrosheets, 'Doc1', 91, 56).kind, CellKind.BOOLEAN)
+        self.assertEqual(_cell(macrosheets, 'Doc1', 97, 59).kind, CellKind.TEXT)
+
     def test_the_program_of_the_pcwv_macrosheet_spans_ten_formula_calls(self):
         cell = _cell(_model(XLM_MACRO_FORMULA_XLSM), 'PCWV', 8, 7)
         formula = cell.formula
@@ -207,6 +233,39 @@ class TestXlmModelCells(TestBase):
         )
 
 
+class TestXlmModelDefects(TestBase):
+    """
+    Defects of a macrosheet, added to authentic cells of the XLSM sample by byte modification.
+    """
+
+    def test_a_macrosheet_whose_walk_fails_keeps_the_cells_before_the_defect(self):
+        broken = _with_macrosheet_replacement(
+            XLM_MACRO_TEXT_XLSM,
+            b'<c r="BI116" s="9" t="s"><v>26</v></c>',
+            b'<c r="BI116" s="9" t="s"><v>99999</v></c>',
+        )
+        intact = _sheet(_model(XLM_MACRO_TEXT_XLSM), 'Doc1')
+        kept = [(cell.row, cell.col) for cell in _body(_sheet(_model(broken), 'Doc1'))]
+        self.assertEqual(
+            kept,
+            [(cell.row, cell.col) for cell in _body(intact) if (cell.row, cell.col) < (116, 61)],
+        )
+        self.assertEqual(len(kept), 24)
+
+    def test_a_coordinate_stored_twice_holds_its_last_record(self):
+        data = _with_macrosheet_replacement(
+            XLM_MACRO_TEXT_XLSM,
+            b'<c r="BG97" ',
+            b'<c r="BG97" s="9" t="s"><v>26</v></c><c r="BG97" ',
+        )
+        sheet = _sheet(_model(data), 'Doc1')
+        cell = sheet.cell(97, 59)
+        assert cell is not None
+        self.assertEqual(len(sheet.body), 37)
+        self.assertEqual(sheet.next_formula_cell(97, 59), cell)
+        self.assertEqual(_formula_text([sheet], 'Doc1', 97, 59), '"..\\iekdhfe.dsk"')
+
+
 class TestXlmAssignmentNormalization(TestBase):
     """
     The `bx` attribute of an OOXML macrosheet formula marks a formula that assigns to a name.
@@ -216,44 +275,49 @@ class TestXlmAssignmentNormalization(TestBase):
 
     _STRING_CELL_FORMULA = b'<f>"..\\iekdhfe.dsk"</f>'
 
-    @staticmethod
-    def _with_replacement(data: bytes, old: bytes, new: bytes) -> bytes:
-        source = zipfile.ZipFile(io.BytesIO(data))
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w') as target:
-            for info in source.infolist():
-                content = source.read(info)
-                if info.filename == 'xl/macrosheets/intlsheet1.xml':
-                    assert old in content
-                    content = content.replace(old, new, 1)
-                target.writestr(info, content)
-        return buffer.getvalue()
-
-    def test_bx_on_a_comparison_of_a_bare_name_becomes_the_set_name_call(self):
-        data = self._with_replacement(
+    def _assigned(self, formula: bytes) -> XlmCell:
+        data = _with_macrosheet_replacement(
             XLM_MACRO_TEXT_XLSM,
             self._STRING_CELL_FORMULA,
-            b'<f bx="1">PldtZqwb="..\\iekdhfe.dsk"</f>',
+            b'<f bx="1">' + formula + b'</f>',
         )
-        cell = _cell(_model(data), 'Doc1', 97, 59)
+        return _cell(_model(data), 'Doc1', 97, 59)
+
+    def test_bx_on_a_comparison_of_a_bare_name_becomes_the_set_name_call(self):
+        cell = self._assigned(b'PldtZqwb="..\\iekdhfe.dsk"')
         self.assertEqual(cell.assignment, True)
+        assert cell.formula is not None
         self.assertEqual(
-            _formula_text(_model(data), 'Doc1', 97, 59),
+            synthesize_formula(cell.formula),
             'SET.NAME("PldtZqwb","..\\iekdhfe.dsk")',
         )
 
+    def test_bx_assigns_a_value_that_is_itself_a_comparison(self):
+        # the assigned value is everything after the first equals sign of the formula text
+        for formula, expected in [
+            (b'PldtZqwb=BG98="x"', 'SET.NAME("PldtZqwb",BG98="x")'),
+            (b'PldtZqwb=BG98&lt;&gt;BG99', 'SET.NAME("PldtZqwb",BG98<>BG99)'),
+            (b'PldtZqwb=GET.WORKSPACE(13)&lt;770', 'SET.NAME("PldtZqwb",GET.WORKSPACE(13)<770)'),
+            (b'PldtZqwb=BG98=BG99=BG100', 'SET.NAME("PldtZqwb",BG98=BG99=BG100)'),
+        ]:
+            with self.subTest(formula=formula):
+                cell = self._assigned(formula)
+                assert cell.formula is not None
+                self.assertEqual(synthesize_formula(cell.formula), expected)
+
     def test_bx_on_a_formula_that_is_no_comparison_keeps_the_tree(self):
-        data = self._with_replacement(
-            XLM_MACRO_TEXT_XLSM,
-            self._STRING_CELL_FORMULA,
-            b'<f bx="1">"..\\iekdhfe.dsk"</f>',
-        )
-        cell = _cell(_model(data), 'Doc1', 97, 59)
+        cell = self._assigned(b'"..\\iekdhfe.dsk"')
         self.assertEqual(cell.assignment, True)
-        self.assertEqual(_formula_text(_model(data), 'Doc1', 97, 59), '"..\\iekdhfe.dsk"')
+        assert cell.formula is not None
+        self.assertEqual(synthesize_formula(cell.formula), '"..\\iekdhfe.dsk"')
+
+    def test_bx_on_a_parenthesized_comparison_keeps_the_tree(self):
+        cell = self._assigned(b'(PldtZqwb=BG98)=1')
+        assert cell.formula is not None
+        self.assertEqual(synthesize_formula(cell.formula), '(PldtZqwb=BG98)=1')
 
     def test_bx_on_a_comparison_that_names_nothing_keeps_the_tree(self):
-        data = self._with_replacement(
+        data = _with_macrosheet_replacement(
             XLM_MACRO_TEXT_XLSM,
             b'<c r="BD91" s="9" t="b"><f>',
             b'<c r="BD91" s="9" t="b"><f bx="1">',
@@ -303,16 +367,64 @@ class TestXlmRowFallThrough(TestBase):
 
 class TestXlmSortedCells(TestBase):
 
-    def test_cells_sort_by_column_letters_then_by_row(self):
+    def test_value_cells_follow_the_formula_cells_in_document_order(self):
+        self.assertEqual(
+            [(cell.row, cell.col) for cell in _model(XLM_MACRO_NAMES_BIFF8)[0].sorted_cells()],
+            [
+                (2, 1),
+                (9584, 1),
+                (9585, 1),
+                (9586, 1),
+                (9587, 1),
+                (9588, 1),
+                (9591, 1),
+                (29999, 1),
+                (30009, 1),
+                (9581, 1),
+                (9590, 1),
+            ],
+        )
+
+    def test_formula_cells_sort_by_column_letters_then_by_row_before_the_value_cells(self):
         self.assertEqual(
             [(cell.row, cell.col) for cell in _model(XLM_MACRO_TEXT_XLSM)[0].sorted_cells()],
             [
-                (109, 52), (110, 52), (112, 52), (113, 52), (114, 52), (115, 52),
-                (116, 52), (118, 52), (120, 52), (121, 52),
-                (91, 56), (93, 56), (95, 56), (97, 56), (99, 56), (104, 56),
-                (109, 58), (110, 58), (111, 58), (112, 58), (113, 58),
-                (97, 59), (98, 59), (99, 59), (100, 59), (101, 59),
-                (116, 61), (117, 61), (118, 61), (119, 61), (120, 61),
-                (114, 62), (116, 62), (117, 62), (118, 62), (119, 62), (120, 62),
+                (109, 52),
+                (110, 52),
+                (112, 52),
+                (113, 52),
+                (114, 52),
+                (115, 52),
+                (116, 52),
+                (118, 52),
+                (120, 52),
+                (121, 52),
+                (91, 56),
+                (93, 56),
+                (95, 56),
+                (97, 56),
+                (99, 56),
+                (104, 56),
+                (109, 58),
+                (110, 58),
+                (111, 58),
+                (112, 58),
+                (113, 58),
+                (97, 59),
+                (98, 59),
+                (99, 59),
+                (100, 59),
+                (101, 59),
+                (114, 62),
+                (116, 61),
+                (116, 62),
+                (117, 61),
+                (117, 62),
+                (118, 61),
+                (118, 62),
+                (119, 61),
+                (119, 62),
+                (120, 61),
+                (120, 62),
             ],
         )

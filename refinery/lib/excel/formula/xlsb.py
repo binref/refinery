@@ -35,7 +35,7 @@ class XlsbRpnDecoder(RpnDecoder):
         The `ptgStr` token: a two-byte character count followed by UTF-16 characters.
         """
         count = self._read_u16()
-        return XlString(value=self._read_bytes(2 * count).decode('utf_16_le'))
+        return XlString(value=self._read_text(2 * count, 'utf_16_le'))
 
     def _read_function_id(self) -> int:
         return self._read_u16()
@@ -134,7 +134,7 @@ class XlsbRpnDecoder(RpnDecoder):
                 constants.append(XlNumber(value=number))
             elif kind == 0x02:
                 count = self._read_u16()
-                constants.append(XlString(value=self._read_bytes(2 * count).decode('utf_16_le')))
+                constants.append(XlString(value=self._read_text(2 * count, 'utf_16_le')))
             else:
                 raise RpnError(F'an array constant of type {kind:#x} holds no literal')
         return XlArrayConstant(

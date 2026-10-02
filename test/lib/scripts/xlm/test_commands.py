@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula.model import XlFunctionCall
-from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth
 from refinery.lib.scripts.xlm import XLM_COMMANDS, XlmSeverity, build_xlm_model, severity
 from test import TestBase
 from test.lib.excel.samples import (
@@ -100,12 +99,11 @@ _EXPECTED_SEVERITIES = {
 
 
 def _top_level_commands(data: bytes) -> list[str]:
-    with RecursionDepth(TREE_RECURSION_DEPTH):
-        macrosheets = build_xlm_model(open_workbook(data))
+    macrosheets = build_xlm_model(open_workbook(data))
     return sorted({
         cell.formula.callee
         for sheet in macrosheets
-        for cell in sheet.body
+        for cell in sheet.sorted_cells()
         if isinstance(cell.formula, XlFunctionCall) and isinstance(cell.formula.callee, str)
     })
 
@@ -115,10 +113,12 @@ class TestXlmCommandRegistry(TestBase):
     def test_the_registry_classifies_every_command_as_the_old_runtime_did(self):
         self.assertEqual(XLM_COMMANDS, _EXPECTED_SEVERITIES)
 
-    def test_set_value_stays_visible_at_the_triage_level(self):
+    def test_the_names_of_the_severity_set_the_old_runtime_never_read_are_ordinary(self):
         self.assertEqual(severity('SET.VALUE'), XlmSeverity.NORMAL)
         self.assertEqual(severity('FILE.DELETE'), XlmSeverity.NORMAL)
         self.assertEqual(severity('WORKBOOK.HIDE'), XlmSeverity.NORMAL)
+
+    def test_fread_is_important_although_the_old_runtime_had_no_handler_for_it(self):
         self.assertEqual(severity('FREAD'), XlmSeverity.IMPORTANT)
 
     def test_commands_outside_the_registry_are_ordinary(self):
@@ -157,8 +157,14 @@ class TestXlmCommandClassificationOfSamples(TestBase):
                 'assign_biff8',
                 XLM_MACRO_ASSIGN_BIFF8,
                 [
-                    'END.IF', 'HALT', 'IF', 'REGISTER', 'RETURN',
-                    'SET.NAME', 'WORKBOOK.HIDE', 'WORKBOOK.UNHIDE',
+                    'END.IF',
+                    'HALT',
+                    'IF',
+                    'REGISTER',
+                    'RETURN',
+                    'SET.NAME',
+                    'WORKBOOK.HIDE',
+                    'WORKBOOK.UNHIDE',
                 ],
                 {
                     'END.IF': XlmSeverity.NORMAL,

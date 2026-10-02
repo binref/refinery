@@ -195,6 +195,28 @@ class TestXlsbWorkbook(TestBase):
         with self.assertRaises(ExcelFormatError):
             open_workbook(data)
 
+    def test_relationships_that_declare_an_entity_read_like_missing_relationships(self):
+        part = 'xl/_rels/workbook.bin.rels'
+        source = zipfile.ZipFile(io.BytesIO(TEST_XLSB))
+
+        def package(relationships: bytes | None) -> bytes:
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, 'w') as target:
+                for info in source.infolist():
+                    if info.filename != part:
+                        target.writestr(info.filename, source.read(info))
+                    elif relationships is not None:
+                        target.writestr(info.filename, relationships)
+            return buffer.getvalue()
+
+        declared = package(
+            source.read(part).replace(b'?>', b'?><!DOCTYPE root [<!ENTITY e "x">]>'))
+        missing = package(None)
+        self.assertEqual(
+            [(sheet.name, sheet.kind) for sheet in open_workbook(declared).sheets()],
+            [(sheet.name, sheet.kind) for sheet in open_workbook(missing).sheets()],
+        )
+
 
 class TestAgainstPyxlsb2(TestBase):
 

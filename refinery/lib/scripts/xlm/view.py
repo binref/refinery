@@ -5,16 +5,9 @@ table the entry points resolve through. It replaces the three wrappers of the re
 """
 from __future__ import annotations
 
-from refinery.lib.excel import (
-    Cell,
-    ExcelFormat,
-    ExcelFormatError,
-    International,
-    SheetKind,
-    open_workbook,
-)
-from refinery.lib.excel.workbook import ExcelWorkbook
-from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_model
+from refinery.lib.excel import ExcelFormat, International, SheetKind, open_workbook
+from refinery.lib.excel.workbook import ExcelSheet
+from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_model, sheet_cells
 from refinery.lib.scripts.xlm.names import XlmNameTable
 
 #: The workbook name of each container family, as the wrappers of the retiring port spelled
@@ -29,29 +22,24 @@ _WORKBOOK_NAMES = {
 class XlmView:
     """
     A workbook opened for interpretation. The macrosheets are the model the trace and the
-    deobfuscation passes work on; the worksheets are data, their cells materialized once into
-    a coordinate dictionary because no reader offers random access to them. A worksheet whose
-    walk fails partway through keeps the cells it read before the defect.
+    deobfuscation passes work on; the worksheets are data, each read into a coordinate dictionary
+    of model cells when it is first asked for, because no reader offers random access to them.
+    Sheet names are matched case-insensitively, as Excel matches them.
     """
 
     def __init__(self, data: bytes | bytearray | memoryview):
-        self._workbook: ExcelWorkbook = open_workbook(data)
+        workbook = open_workbook(data)
+        self._workbook = workbook
         self._macrosheets: dict[str, XlmMacrosheet] = {}
-        for macrosheet in build_xlm_model(self._workbook):
-            self._macrosheets.setdefault(macrosheet.name, macrosheet)
-        self._worksheets: dict[str, dict[tuple[int, int], Cell]] = {}
-        for sheet in self._workbook.sheets():
-            if sheet.kind is not SheetKind.WORKSHEET:
-                continue
-            cells: dict[tuple[int, int], Cell] = {}
-            try:
-                for cell in sheet.cells():
-                    cells[(cell.row, cell.col)] = cell
-            except ExcelFormatError:
-                pass
-            self._worksheets.setdefault(sheet.name, cells)
-        self.names = XlmNameTable(self._workbook)
-        self.workbook_name = _WORKBOOK_NAMES[self._workbook.format]
+        for macrosheet in build_xlm_model(workbook):
+            self._macrosheets.setdefault(macrosheet.name.lower(), macrosheet)
+        self._worksheet_sources: dict[str, ExcelSheet] = {}
+        for sheet in workbook.sheets():
+            if sheet.kind is SheetKind.WORKSHEET:
+                self._worksheet_sources.setdefault(sheet.name.lower(), sheet)
+        self._worksheets: dict[str, dict[tuple[int, int], XlmCell]] = {}
+        self.names = XlmNameTable(workbook)
+        self.workbook_name = _WORKBOOK_NAMES[workbook.format]
         self.international = International()
 
     def macrosheets(self) -> list[XlmMacrosheet]:
@@ -64,25 +52,32 @@ class XlmView:
         """
         The macrosheet a name spells, or `None` when the workbook has none.
         """
-        return self._macrosheets.get(name)
+        return self._macrosheets.get(name.lower())
 
-    def worksheet(self, name: str) -> dict[tuple[int, int], Cell] | None:
+    def worksheet(self, name: str) -> dict[tuple[int, int], XlmCell] | None:
         """
-        The cells of the worksheet a name spells, keyed by one-based row and column, or `None`
-        when the workbook has no such worksheet.
+        The cells of the worksheet a name spells, keyed by one-based row and column as
+        `refinery.lib.scripts.xlm.model.sheet_cells` reads them, or `None` when the workbook has
+        no such worksheet.
         """
-        return self._worksheets.get(name)
+        key = name.lower()
+        cells = self._worksheets.get(key)
+        if cells is None:
+            sheet = self._worksheet_sources.get(key)
+            if sheet is None:
+                return None
+            cells = self._worksheets[key] = sheet_cells(self._workbook, sheet)
+        return cells
 
-    def cell(self, sheet_name: str, row: int, col: int) -> XlmCell | Cell | None:
+    def cell(self, sheet_name: str, row: int, col: int) -> XlmCell | None:
         """
-        The cell of the sheet a name spells at the one-based `row` and `col`: a cell of the
-        macrosheet model when the sheet is one, the reader cell when it is a worksheet, and
-        `None` when the sheet or the cell does not exist.
+        The cell of the sheet a name spells at the one-based `row` and `col`, or `None` when the
+        sheet or the cell does not exist.
         """
-        macrosheet = self._macrosheets.get(sheet_name)
+        macrosheet = self.macrosheet(sheet_name)
         if macrosheet is not None:
             return macrosheet.cell(row, col)
-        worksheet = self._worksheets.get(sheet_name)
+        worksheet = self.worksheet(sheet_name)
         if worksheet is not None:
             return worksheet.get((row, col))
         return None

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula import (
     International,
@@ -312,6 +314,17 @@ class TestFormulaFailurePaths(TestBase):
             canonical(parse_formula(text)),
             canonical(XlUnparsedFormula(text=text)),
         )
+
+    def test_how_deep_a_formula_nests_does_not_depend_on_the_recursion_limit_of_the_caller(self):
+        text = '=' + 'CHAR(' * 100 + '1' + ')' * 100
+        ambient = sys.getrecursionlimit()
+        sys.setrecursionlimit(1000)
+        try:
+            tree = parse_formula(text)
+        finally:
+            sys.setrecursionlimit(ambient)
+        # a carrier would print the leading equals sign along with the rest of the text
+        self.assertEqual(synthesize_formula(tree), text[1:])
 
 
 class TestFormulaInternational(TestBase):

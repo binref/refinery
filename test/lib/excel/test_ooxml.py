@@ -26,7 +26,12 @@ from .samples import (
     SELF_EVALUATION_REPORT,
     SHARED_STRINGS_ALT_LOCATION,
     XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_TEXT_XLSM,
 )
+
+#: The tail of an XML declaration followed by a document type that declares one entity, which the
+#: hardened parser of the reader refuses to expand.
+_ENTITY_DECLARATION = b'?><!DOCTYPE root [<!ENTITY e "x">]>'
 
 
 def _cells(data: bytes) -> dict[tuple[str, int, int], Cell]:
@@ -256,6 +261,21 @@ class TestNonstandardPackages(TestBase):
         entries['[Content_Types].xml'] = b'this is not xml'
         self.assertEqual(_cells(_package(entries)), _cells(SHARED_STRINGS_ALT_LOCATION))
 
+    def test_content_types_that_declare_an_entity_fall_back_to_the_default_part(self):
+        entries = _entries(SHARED_STRINGS_ALT_LOCATION)
+        entries['[Content_Types].xml'] = entries['[Content_Types].xml'].replace(
+            b'?>', _ENTITY_DECLARATION)
+        self.assertEqual(_cells(_package(entries)), _cells(SHARED_STRINGS_ALT_LOCATION))
+
+    def test_content_types_that_declare_an_entity_locate_no_relocated_workbook_part(self):
+        entries = _entries(SHARED_STRINGS_ALT_LOCATION)
+        entries['xl/main.xml'] = entries.pop('xl/workbook.xml')
+        entries['xl/_rels/main.xml.rels'] = entries.pop('xl/_rels/workbook.xml.rels')
+        entries['[Content_Types].xml'] = entries['[Content_Types].xml'].replace(
+            b'PartName="/xl/workbook.xml"', b'PartName="/xl/main.xml"').replace(
+            b'?>', _ENTITY_DECLARATION)
+        self.assertIsNone(detect_format(_package(entries)))
+
 
 class TestDefectiveReferences(TestBase):
     """
@@ -276,6 +296,19 @@ class TestDefectiveReferences(TestBase):
             SHARED_STRINGS_ALT_LOCATION,
             'xl/worksheets/sheet1.xml',
             [(b'<c r="A2"', b'<c r="A0"')],
+        )
+        self.assertEqual(_cells(data), _cells(SHARED_STRINGS_ALT_LOCATION))
+
+    def test_zero_row_reference(self):
+        # the cells of the row lose their own references, so only the row places them
+        data = _replace_part(
+            SHARED_STRINGS_ALT_LOCATION,
+            'xl/worksheets/sheet1.xml',
+            [
+                (b'<row r="2"', b'<row r="0"'),
+                (b'<c r="A2" ', b'<c '),
+                (b'<c r="B2" ', b'<c '),
+            ],
         )
         self.assertEqual(_cells(data), _cells(SHARED_STRINGS_ALT_LOCATION))
 
@@ -315,6 +348,20 @@ class TestOoxmlFormulaCells(TestBase):
         self.assertEqual(
             cells[('PCWV', 8, 7)].formula,
             _cells(XLM_MACRO_FORMULA_XLSM)[('PCWV', 8, 7)].formula,
+        )
+
+    def test_a_shared_string_formula_without_a_cached_result_is_a_formula_cell(self):
+        data = _replace_part(
+            XLM_MACRO_TEXT_XLSM,
+            'xl/macrosheets/intlsheet1.xml',
+            [(
+                b'<c r="BG97" s="9" t="str"><f>"..\\iekdhfe.dsk"</f><v>..\\iekdhfe.dsk</v></c>',
+                b'<c r="BG97" s="9" t="s"><f bx="1">"..\\iekdhfe.dsk"</f></c>',
+            )],
+        )
+        self.assertEqual(
+            _cells(data)[('Doc1', 97, 59)],
+            Cell(97, 59, CellKind.FORMULA, None, '"..\\iekdhfe.dsk"', True),
         )
 
 
@@ -372,6 +419,35 @@ class TestDefectiveWorkbooks(TestBase):
         with self.assertRaises(ExcelFormatError):
             open_workbook(data)
 
+    def test_a_sheet_part_that_declares_an_entity_is_malformed(self):
+        data = _replace_part(
+            SHARED_STRINGS_ALT_LOCATION,
+            'xl/worksheets/sheet1.xml',
+            [(b'?>', _ENTITY_DECLARATION)],
+        )
+        sheet = open_workbook(data).sheets()[0]
+        with self.assertRaises(ExcelFormatError):
+            list(sheet.cells())
+
+    def test_a_shared_string_part_that_declares_an_entity_is_malformed(self):
+        data = _replace_part(
+            SHARED_STRINGS_ALT_LOCATION,
+            'xl/sharedStrings.xml',
+            [(b'?>', _ENTITY_DECLARATION)],
+        )
+        sheet = open_workbook(data).sheets()[0]
+        with self.assertRaises(ExcelFormatError):
+            list(sheet.cells())
+
+    def test_a_workbook_part_that_declares_an_entity_is_malformed(self):
+        data = _replace_part(
+            SHARED_STRINGS_ALT_LOCATION,
+            'xl/workbook.xml',
+            [(b'?>', _ENTITY_DECLARATION)],
+        )
+        with self.assertRaises(ExcelFormatError):
+            open_workbook(data)
+
     def test_repeated_reads_of_defective_shared_strings(self):
         # A shared string part that fails to load fails the same way on every read of the
         # sheet, rather than resolving cells against a table that grows with every attempt.
@@ -398,6 +474,13 @@ class TestDefectiveWorkbooks(TestBase):
             cells[('ZZZfirstsheet', 1, 1)],
             Cell(1, 1, CellKind.TEXT, 'description', None),
         )
+
+    def test_styles_that_declare_an_entity_degrade_like_styles_that_are_no_markup(self):
+        declared = _entries(REVENG1)
+        declared['xl/styles.xml'] = declared['xl/styles.xml'].replace(b'?>', _ENTITY_DECLARATION)
+        garbled = _entries(REVENG1)
+        garbled['xl/styles.xml'] = b'this is not xml'
+        self.assertEqual(_cells(_package(declared)), _cells(_package(garbled)))
 
 
 class TestAgainstOpenpyxl(TestBase):

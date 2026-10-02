@@ -57,11 +57,11 @@ class XlmNameTable:
                 formula=workbook.formula(record.formula),
             )
 
-    def entries(self) -> list[tuple[str, XlmNameEntry]]:
+    def entries(self) -> list[XlmNameEntry]:
         """
-        Every entry as a pair of the name as written and its record, in name-table order.
+        Every entry, in name-table order.
         """
-        return [(entry.name, entry) for entry in self._entries.values()]
+        return list(self._entries.values())
 
     def resolve(self, name: str) -> XlmNameEntry | None:
         """
@@ -70,31 +70,23 @@ class XlmNameTable:
         """
         return self._entries.get(name.lower())
 
-    def fuzzy(self, pattern: str) -> list[tuple[str, XlmNameEntry]]:
+    def fuzzy(self, pattern: str) -> list[XlmNameEntry]:
         """
-        The entries a pattern might mean, as pairs of the name as written and its record, in
-        name-table order: every entry whose name starts with the pattern, and when none does,
-        every entry whose name contains the pattern's characters in order.
+        The entries a pattern might mean, in name-table order: every entry whose name starts with
+        the pattern, and when none does, every entry whose name contains the pattern's characters
+        in order, each character of the name matching at most one of the pattern.
         """
         pattern = pattern.lower()
-        matches = [
-            (entry.name, entry)
-            for key, entry in self._entries.items()
-            if key.startswith(pattern)
-        ]
+        matches = [entry for key, entry in self._entries.items() if key.startswith(pattern)]
         if matches:
             return matches
-        return [
-            (entry.name, entry)
-            for key, entry in self._entries.items()
-            if _is_subsequence(pattern, key)
-        ]
+        return [entry for key, entry in self._entries.items() if _is_subsequence(pattern, key)]
 
-    def define(self, name: str, entry: XlmNameEntry) -> None:
+    def define(self, entry: XlmNameEntry) -> None:
         """
-        Define a name, replacing any entry that already spells it.
+        Define the name an entry carries, replacing any entry that already spells it.
         """
-        self._entries[name.lower()] = entry
+        self._entries[entry.name.lower()] = entry
 
     def undefine(self, name: str) -> None:
         """

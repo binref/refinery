@@ -7,11 +7,11 @@ import zlib
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import IO, Iterator
-from xml.etree.ElementTree import ParseError
 
 from defusedxml.ElementTree import fromstring
 
 from refinery.lib.excel.common import (
+    XML_DEFECTS,
     Cell,
     DefinedName,
     ExcelFormatError,
@@ -157,7 +157,7 @@ def detect_format(data: bytes | bytearray | memoryview) -> ExcelFormat | None:
         if content_types is not None:
             try:
                 root = fromstring(content_types.read())
-            except (ParseError, ExcelFormatError):
+            except (*XML_DEFECTS, ExcelFormatError):
                 return None
             for element in root.iter():
                 if (

@@ -66,9 +66,9 @@ class BiffRpnDecoder(RpnDecoder):
         if self._version >= BiffVersion.BIFF8:
             flags = self._read_u8()
             if flags & 0x01:
-                return XlString(value=self._read_bytes(2 * count).decode('utf_16_le'))
-            return XlString(value=self._read_bytes(count).decode('latin_1'))
-        return XlString(value=self._read_bytes(count).decode(self._codepage))
+                return XlString(value=self._read_text(2 * count, 'utf_16_le'))
+            return XlString(value=self._read_text(count, 'latin_1'))
+        return XlString(value=self._read_text(count, self._codepage))
 
     def _read_function_id(self) -> int:
         """

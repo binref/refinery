@@ -121,7 +121,8 @@ _COMMAND_NAMES = frozenset((
 #: The severity of every macro command the registry knows, classified by the rule the runtime
 #: of the retiring port applied: GOTO and RUN move execution, the commands named by its
 #: important-functions set matter for triage, and everything else is ordinary — including
-#: SET.VALUE, which only a dead set of that port would have hidden at the triage level.
+#: SET.VALUE, FILE.DELETE, and WORKBOOK.HIDE, which a set of that port that its runtime never
+#: read would have shown at the triage level.
 XLM_COMMANDS: dict[str, XlmSeverity] = {
     name: (
         XlmSeverity.JUMP

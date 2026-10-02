@@ -7,6 +7,9 @@ import re
 import struct
 
 from typing import NamedTuple
+from xml.etree.ElementTree import ParseError
+
+from defusedxml import DefusedXmlException
 
 
 class ExcelFormatError(Exception):
@@ -14,6 +17,11 @@ class ExcelFormatError(Exception):
     The structure of a workbook is defective; the cells that were read before the defect are
     still available to the caller while anything after it is not.
     """
+
+
+#: What parsing the markup of a package part raises when the part is defective: markup that is
+#: not well-formed, and the entity declarations the hardened parser refuses to expand.
+XML_DEFECTS = (ParseError, DefusedXmlException)
 
 
 class CellKind(enum.Enum):

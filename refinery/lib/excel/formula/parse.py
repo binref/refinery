@@ -35,6 +35,8 @@ from refinery.lib.excel.formula.model import (
     XlUnaryOperator,
     XlUnparsedFormula,
 )
+from refinery.lib.scripts import TREE_RECURSION_DEPTH
+from refinery.lib.tools import RecursionDepth
 
 
 class International(NamedTuple):
@@ -114,13 +116,15 @@ def parse_formula(
     """
     Parse formula text into the AST model. The leading `=` of a stored formula is optional. Any
     input that does not read as one whole formula becomes an `XlUnparsedFormula` carrying the
-    text, never an exception.
+    text, never an exception. The parse runs under `refinery.lib.scripts.TREE_RECURSION_DEPTH`,
+    so how deeply a formula may nest does not depend on the recursion limit of the caller.
     """
     if not text or not text.strip():
         return XlUnparsedFormula(text=text)
     parser = _Parser(text.strip(), international or International())
     try:
-        expression = parser.parse()
+        with RecursionDepth(TREE_RECURSION_DEPTH):
+            expression = parser.parse()
     except (_ParseFailure, RecursionError, ValueError, IndexError):
         return XlUnparsedFormula(text=text)
     return expression
