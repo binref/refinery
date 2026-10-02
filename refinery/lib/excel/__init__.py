@@ -10,8 +10,10 @@ from refinery.lib.excel.common import (
     CellKind,
     ExcelFormatError,
     SheetKind,
+    datetime_to_serial,
     rc2ref,
     ref2rc,
+    serial_to_datetime,
 )
 from refinery.lib.excel.formula import (
     FormulaSynthesizer,
@@ -71,10 +73,12 @@ __all__ = [
     'XlUnaryExpression',
     'XlUnaryOperator',
     'XlUnparsedFormula',
+    'datetime_to_serial',
     'detect_format',
     'open_workbook',
     'parse_formula',
     'rc2ref',
     'ref2rc',
+    'serial_to_datetime',
     'synthesize_formula',
 ]

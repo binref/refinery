@@ -12,6 +12,7 @@ from refinery.lib.excel import (
     SheetKind,
     detect_format,
     open_workbook,
+    serial_to_datetime,
 )
 
 from ... import TestBase
@@ -98,6 +99,8 @@ def _with_lone_surrogate(data: bytes, part: str) -> bytes:
     return buffer.getvalue()
 
 
+#: A date cell carries the serial number Excel stores; the moment it names is pinned by the
+#: tests that follow the value tables.
 _TEST_VALUES = {
     (1, 1): (CellKind.TEXT, 'A'),
     (1, 2): (CellKind.TEXT, 'B'),
@@ -119,17 +122,19 @@ _TEST_VALUES = {
     (4, 2): (CellKind.ERROR, '#REF!'),
     (4, 3): (CellKind.ERROR, '#DIV/0!'),
     (4, 4): (CellKind.ERROR, '#REF!'),
-    (5, 1): (CellKind.DATE, datetime.datetime(2017, 12, 27, 0, 0)),
-    (5, 2): (CellKind.DATE, datetime.time(18, 6)),
-    (5, 3): (CellKind.DATE, datetime.datetime(2017, 12, 27, 18, 8)),
-    (5, 4): (CellKind.DATE, datetime.datetime(2017, 12, 27, 0, 0)),
-    (5, 5): (CellKind.DATE, datetime.time(18, 6)),
-    (5, 6): (CellKind.DATE, datetime.datetime(2017, 12, 27, 18, 8)),
+    (5, 1): (CellKind.DATE, 43096),
+    (5, 2): (CellKind.DATE, 0.7541666666666668),
+    (5, 3): (CellKind.DATE, 43096.75555555556),
+    (5, 4): (CellKind.DATE, 43096),
+    (5, 5): (CellKind.DATE, 0.7541666666666668),
+    (5, 6): (CellKind.DATE, 43096.75555555556),
 }
 
 _TEST_1904_VALUES = _TEST_VALUES | {
-    (5, 3): (CellKind.DATE, datetime.datetime(2017, 12, 27, 18, 6)),
-    (5, 6): (CellKind.DATE, datetime.datetime(2017, 12, 27, 18, 6)),
+    (5, 1): (CellKind.DATE, 41634),
+    (5, 3): (CellKind.DATE, 41634.754166666666),
+    (5, 4): (CellKind.DATE, 41634),
+    (5, 6): (CellKind.DATE, 41634.754166666666),
 }
 
 _TEST_FORMULAS = {
@@ -169,15 +174,40 @@ class TestXlsbWorkbook(TestBase):
         self.assertEqual(_cells(TEST_XLSB), _TEST_VALUES)
         self.assertEqual(_cells(TEST_1904_XLSB), _TEST_1904_VALUES)
 
+    def test_date_serials_resolve_their_values(self):
+        self.assertEqual(
+            serial_to_datetime(_TEST_VALUES[(5, 1)][1], False),
+            datetime.datetime(2017, 12, 27, 0, 0),
+        )
+        self.assertEqual(
+            serial_to_datetime(_TEST_VALUES[(5, 2)][1], False),
+            datetime.time(18, 6),
+        )
+        self.assertEqual(
+            serial_to_datetime(_TEST_VALUES[(5, 3)][1], False),
+            datetime.datetime(2017, 12, 27, 18, 8),
+        )
+        self.assertEqual(
+            serial_to_datetime(_TEST_1904_VALUES[(5, 3)][1], True),
+            datetime.datetime(2017, 12, 27, 18, 6),
+        )
+
     def test_formula_cells_carry_token_streams(self):
         self.assertEqual(_formulas(TEST_XLSB), _TEST_FORMULAS)
 
     def test_dates_of_second_sample(self):
         self.assertEqual(_cells(DATES_XLSB), {
-            (1, 1): (CellKind.DATE, datetime.datetime(2020, 3, 3, 0, 0)),
-            (2, 1): (CellKind.DATE, datetime.time(22, 5)),
-            (3, 1): (CellKind.DATE, datetime.datetime(2020, 3, 3, 22, 5)),
+            (1, 1): (CellKind.DATE, 43893),
+            (2, 1): (CellKind.DATE, 0.9201388888888888),
+            (3, 1): (CellKind.DATE, 43893.92013888889),
         })
+        for key, expected in [
+            ((1, 1), datetime.datetime(2020, 3, 3, 0, 0)),
+            ((2, 1), datetime.time(22, 5)),
+            ((3, 1), datetime.datetime(2020, 3, 3, 22, 5)),
+        ]:
+            with self.subTest(key=key):
+                self.assertEqual(serial_to_datetime(_cells(DATES_XLSB)[key][1], False), expected)
 
     def test_truncated_sheet_part_yields_partial_cells(self):
         part = 'xl/worksheets/sheet1.bin'

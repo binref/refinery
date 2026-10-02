@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import unittest
-
 from refinery.lib.excel import open_workbook, synthesize_formula
 from refinery.lib.excel.formula.model import Expression, XlUnparsedFormula
 from refinery.lib.scripts.xlm import XlmNameEntry, XlmNameTable
@@ -22,8 +20,8 @@ def _table(data: bytes | bytearray) -> XlmNameTable:
     return XlmNameTable(open_workbook(data))
 
 
-def _resolve(table: XlmNameTable, name: str) -> XlmNameEntry:
-    entry = table.resolve(name)
+def _resolve(table: XlmNameTable, name: str, sheet: int | None = None) -> XlmNameEntry:
+    entry = table.resolve(name, sheet)
     assert entry is not None
     return entry
 
@@ -113,11 +111,38 @@ class TestXlmNameResolution(TestBase):
         entry = _resolve(_table(XLM_MACRO_NAMES_BIFF8), 'ubdhh')
         self.assertEqual((entry.sheet, _text(entry.formula)), (0, '#NAME?'))
 
-    @unittest.expectedFailure
     def test_a_name_defined_for_several_sheets_keeps_an_entry_per_sheet(self):
         self.assertEqual(
             [entry.sheet for entry in _table(ISSUE20).entries() if entry.name == 'print_area'],
             [0, 1, 2],
+        )
+
+    def test_a_scope_the_table_is_asked_for_wins_over_the_first_entry(self):
+        table = _table(ISSUE20)
+        for sheet, name in [(0, 'print_area'), (1, 'print_area'), (2, 'sheet_title')]:
+            with self.subTest(sheet=sheet, name=name):
+                self.assertEqual(_resolve(table, name, sheet).sheet, sheet)
+
+    def test_an_unqualified_name_prefers_the_global_entry(self):
+        table = _table(ISSUE20)
+        self.assertEqual(_resolve(table, 'print_area').sheet, 0)
+        table.define(XlmNameEntry(name='print_area', sheet=None, formula=None))
+        self.assertEqual(_resolve(table, 'print_area').sheet, None)
+        self.assertEqual(_resolve(table, 'print_area', 2).sheet, 2)
+
+    def test_define_replaces_the_entry_of_the_same_name_and_scope(self):
+        table = _table(ISSUE20)
+        renamed = _resolve(table, 'print_area', 1)._replace(name='Print_Area')
+        table.define(renamed)
+        self.assertEqual(
+            [(entry.name, entry.sheet) for entry in table.entries() if entry.name.lower() == 'print_area'],
+            [('print_area', 0), ('Print_Area', 1), ('print_area', 2)],
+        )
+        table.define(XlmNameEntry(name='print_area', sheet=None, formula=None))
+        table.undefine('print_area')
+        self.assertEqual(
+            [(entry.name, entry.sheet) for entry in table.entries()],
+            [('sheet_title', 0), ('sheet_title', 1), ('sheet_title', 2)],
         )
 
 

@@ -2,9 +2,10 @@
 A reader for the cell values of workbooks in the BIFF record format, which covers the
 XLS file extension. Every version from BIFF2 to BIFF8 is read, including the raw streams
 of BIFF4 workbook files that are not wrapped in an OLE container. The reader implements
-the value model of `refinery.lib.excel.common`: date cells are converted according to the
-number format of the cell, and formula cells expose the cached result that Excel stored
-with the file together with the uninterpreted formula token stream.
+the value model of `refinery.lib.excel.common`: a number whose format marks it as a date
+carries the date kind together with the serial number Excel stores, and formula cells
+expose the cached result that Excel stored with the file together with the uninterpreted
+formula token stream.
 """
 from __future__ import annotations
 
@@ -467,7 +468,7 @@ class BiffSheet(ExcelSheet):
         if format_key is None:
             format_key = workbook._format_key_of_xf(xf)
         if format_key is not None and workbook._format_is_date(format_key):
-            return date_cell(row + 1, col + 1, value, workbook._date_mode_1904, formula)
+            return date_cell(row + 1, col + 1, value, workbook.date_mode_1904, formula)
         return Cell(row + 1, col + 1, CellKind.NUMBER, value, formula)
 
     def _boolean_or_error(self, row: int, col: int, value: int, is_error: int) -> Cell:
@@ -506,7 +507,7 @@ class BiffWorkbook(ExcelWorkbook):
             raise ExcelFormatError('the BIFF stream is not a workbook substream')
         self.version = bof.version
         self._encoding: str | None = None
-        self._date_mode_1904 = False
+        self.date_mode_1904 = False
         self._shared_strings: list[str] = []
         self._formats: dict[int, str] = {}
         self._format_count = 0
@@ -536,6 +537,20 @@ class BiffWorkbook(ExcelWorkbook):
         appear in this list.
         """
         return self._sheets
+
+    def sheet_index(self, name: str) -> int | None:
+        """
+        The position of a sheet in the boundsheet table, which the scopes of the defined names
+        count and which holds every sheet of the workbook, chartsheets included; the worksheet
+        list this reader exposes skips the sheets that carry no cells, so its positions differ
+        whenever such a sheet exists. Falls back to that list for the workbook versions that
+        store no boundsheet table, none of which define scoped names.
+        """
+        key = name.lower()
+        for index, sheet_name in enumerate(self._all_sheet_names):
+            if sheet_name.lower() == key:
+                return index
+        return super().sheet_index(name)
 
     def defined_names(self) -> Sequence[DefinedName]:
         """
@@ -603,7 +618,7 @@ class BiffWorkbook(ExcelWorkbook):
             else:
                 self._encoding = 'iso-8859-1'
         elif opcode == _Record.DATEMODE:
-            self._date_mode_1904 = body[0] == 1
+            self.date_mode_1904 = body[0] == 1
         elif opcode == _Record.FILEPASS:
             raise ExcelFormatError('the workbook is encrypted')
         elif opcode == _Record.FORMAT or opcode == _Record.FORMAT2:

@@ -11,6 +11,7 @@ from refinery.lib.excel import (
     SheetKind,
     detect_format,
     open_workbook,
+    serial_to_datetime,
 )
 from refinery.lib.excel.biff import BiffWorkbook
 from refinery.lib.ole.file import OleFile
@@ -144,13 +145,23 @@ class TestBiffWorkbook(TestBase):
             ],
         )
 
-    def test_dates_convert_by_cell_format(self):
+    def test_dates_carry_the_serial_by_cell_format(self):
         cells = _cells(FORMATE_BIFF8)
-        self.assertEqual(cells[('Blätt1', 1, 2)], Cell(1, 2, CellKind.DATE, datetime.datetime(1907, 7, 3), None))
-        self.assertEqual(cells[('Blätt1', 2, 2)], Cell(2, 2, CellKind.DATE, datetime.datetime(2005, 2, 23), None))
-        self.assertEqual(cells[('Blätt1', 4, 2)], Cell(4, 2, CellKind.DATE, datetime.time(6, 34), None))
+        self.assertEqual(cells[('Blätt1', 1, 2)], Cell(1, 2, CellKind.DATE, 2741, None))
+        self.assertEqual(cells[('Blätt1', 2, 2)], Cell(2, 2, CellKind.DATE, 38406, None))
+        self.assertEqual(cells[('Blätt1', 4, 2)], Cell(4, 2, CellKind.DATE, 0.2736111111111111, None))
         # the cells of this sheet carry no date format and stay numbers
         self.assertEqual(cells[('Blätt3', 1, 1)], Cell(1, 1, CellKind.NUMBER, 100, None))
+
+    def test_date_serials_resolve_their_values(self):
+        for key, expected in [
+            (('Blätt1', 1, 2), datetime.datetime(1907, 7, 3)),
+            (('Blätt1', 2, 2), datetime.datetime(2005, 2, 23)),
+            (('Blätt1', 4, 2), datetime.time(6, 34)),
+        ]:
+            with self.subTest(key=key):
+                cell = _cells(FORMATE_BIFF8)[key]
+                self.assertEqual(serial_to_datetime(cell.value, False), expected)
 
     def test_formula_cells_carry_cached_results(self):
         cells = _cells(FORMULA_TEST_SJMACHIN)
@@ -323,7 +334,6 @@ class TestAgainstXlrd(TestBase):
             import xlrd2
         except ImportError:
             self.skipTest('the xlrd2 oracle is not installed')
-        from xlrd2.xldate import xldate_as_datetime
         for name, data in [
             ('formate', FORMATE_BIFF8),
             ('profiles', PROFILES_BIFF8),
@@ -346,11 +356,9 @@ class TestAgainstXlrd(TestBase):
                             if cell.ctype in (xlrd2.XL_CELL_BLANK, xlrd2.XL_CELL_EMPTY):
                                 continue
                             value = cell.value
-                            if cell.ctype == xlrd2.XL_CELL_DATE:
-                                value = xldate_as_datetime(value, book.datemode)
-                                # a time-only serial is a datetime.time in the unified model
-                                value = value.time() if cell.value < 1 else value
-                            elif cell.ctype == xlrd2.XL_CELL_BOOLEAN:
+                            # date cells keep the serial number in both readers; the serials
+                            # of this corpus resolve to their moments in the tests above
+                            if cell.ctype == xlrd2.XL_CELL_BOOLEAN:
                                 value = bool(value)
                             elif cell.ctype == xlrd2.XL_CELL_ERROR:
                                 value = xlrd2.error_text_from_code.get(value, F'#{value:02X}')

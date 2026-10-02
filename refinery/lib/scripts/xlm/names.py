@@ -1,7 +1,8 @@
 """
 The name table of an XLM workbook: the defined names the format stores, keyed for the
-case-insensitive lookup the macro language performs, with the fuzzy discovery that finds the
-`auto_open` entry of a workbook whatever name it was hidden behind.
+case-insensitive lookup the macro language performs and resolved by scope when the caller
+knows the sheet it reads from, with the fuzzy discovery that finds the `auto_open` entry of
+a workbook whatever name it was hidden behind.
 """
 from __future__ import annotations
 
@@ -14,9 +15,8 @@ from refinery.lib.excel.workbook import ExcelWorkbook
 class XlmNameEntry(NamedTuple):
     """
     A defined name as the macro language sees it: the name as written, the zero-based index
-    of the sheet the name is scoped to, and the decoded formula. The scope index counts the
-    full sheet table of the format — chartsheets included — and is stored rather than resolved,
-    because what a scoped name means is a question of interpretation, not of reading.
+    of the sheet the name is scoped to in the full sheet table of the format — chartsheets
+    included — or `None` when the name is global, and the decoded formula.
     """
 
     name: str
@@ -39,57 +39,77 @@ def _is_subsequence(pattern: str, name: str) -> bool:
 
 class XlmNameTable:
     """
-    The defined names of a workbook, keyed by lowercased name. A duplicate lowercased name
-    keeps its first entry and drops the later ones, a fixed rule where the wrappers of the
-    retiring port disagreed. The table is mutable because `SET.NAME` and `DEFINE.NAME` define
-    names at run time.
+    The defined names of a workbook as a list in document order, keeping an entry for every
+    sheet a name is scoped to. The table is mutable because `SET.NAME` and `DEFINE.NAME`
+    define names at run time.
     """
 
     def __init__(self, workbook: ExcelWorkbook):
-        self._entries: dict[str, XlmNameEntry] = {}
-        for record in workbook.defined_names():
-            key = record.name.lower()
-            if key in self._entries:
-                continue
-            self._entries[key] = XlmNameEntry(
+        self._entries: list[XlmNameEntry] = [
+            XlmNameEntry(
                 name=record.name,
                 sheet=record.sheet,
                 formula=workbook.formula(record.formula),
             )
+            for record in workbook.defined_names()
+        ]
 
     def entries(self) -> list[XlmNameEntry]:
         """
-        Every entry, in name-table order.
+        Every entry, in document order.
         """
-        return list(self._entries.values())
+        return list(self._entries)
 
-    def resolve(self, name: str) -> XlmNameEntry | None:
+    def resolve(self, name: str, sheet: int | None = None) -> XlmNameEntry | None:
         """
-        The entry a name spells, matched case-insensitively, or `None` when the workbook
-        defines no such name.
+        The entry a name spells, matched case-insensitively. An entry scoped to the given
+        sheet wins over a global entry; without a scope to read, or when the workbook defines
+        no entry for the sheet and no global one, the first entry that spells the name answers,
+        because the retiring port resolved every name through one flat table. `None` when the
+        workbook defines no such name.
         """
-        return self._entries.get(name.lower())
+        key = name.lower()
+        scoped: XlmNameEntry | None = None
+        global_entry: XlmNameEntry | None = None
+        any_entry: XlmNameEntry | None = None
+        for entry in self._entries:
+            if entry.name.lower() != key:
+                continue
+            if any_entry is None:
+                any_entry = entry
+            if entry.sheet == sheet and scoped is None:
+                scoped = entry
+            elif entry.sheet is None and global_entry is None:
+                global_entry = entry
+        return scoped or global_entry or any_entry
 
     def fuzzy(self, pattern: str) -> list[XlmNameEntry]:
         """
-        The entries a pattern might mean, in name-table order: every entry whose name starts with
-        the pattern, and when none does, every entry whose name contains the pattern's characters
-        in order, each character of the name matching at most one of the pattern.
+        The entries a pattern might mean, in document order: every entry whose name starts
+        with the pattern, and when none does, every entry whose name contains the pattern's
+        characters in order, each character of the name matching at most one of the pattern.
         """
         pattern = pattern.lower()
-        matches = [entry for key, entry in self._entries.items() if key.startswith(pattern)]
+        matches = [entry for entry in self._entries if entry.name.lower().startswith(pattern)]
         if matches:
             return matches
-        return [entry for key, entry in self._entries.items() if _is_subsequence(pattern, key)]
+        return [entry for entry in self._entries if _is_subsequence(pattern, entry.name.lower())]
 
     def define(self, entry: XlmNameEntry) -> None:
         """
-        Define the name an entry carries, replacing any entry that already spells it.
+        Define the name an entry carries, replacing the entry that spells it in the same
+        scope and appending a new one when no such entry exists.
         """
-        self._entries[entry.name.lower()] = entry
+        key = entry.name.lower()
+        for position, existing in enumerate(self._entries):
+            if existing.name.lower() == key and existing.sheet == entry.sheet:
+                self._entries[position] = entry
+                return
+        self._entries.append(entry)
 
     def undefine(self, name: str) -> None:
         """
-        Remove the entry a name spells, case-insensitively, if there is one.
+        Remove every entry a name spells, case-insensitively, whatever sheet it is scoped to.
         """
-        self._entries.pop(name.lower(), None)
+        key = name.lower()
+        self._entries = [entry for entry in self._entries if entry.name.lower() != key]

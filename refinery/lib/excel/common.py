@@ -50,7 +50,9 @@ class SheetKind(enum.Enum):
     OTHER = enum.auto()
 
 
-CellValue = str | int | float | bool | datetime.datetime | datetime.time | None
+#: The value a spreadsheet cell carries; a date cell carries the serial number Excel stores,
+#: which only the date mode of its workbook turns into a calendar date.
+CellValue = str | int | float | bool | None
 FormulaSource = str | bytes | None
 
 
@@ -155,6 +157,7 @@ ERROR_TEXT = {
 _EPOCH_1904 = datetime.datetime(1904, 1, 1)
 _EPOCH_1900 = datetime.datetime(1899, 12, 31)
 _EPOCH_1900_LEAP = datetime.datetime(1899, 12, 30)
+_MARCH_FIRST_1900 = datetime.datetime(1900, 3, 1)
 _MILLISECONDS_PER_DAY = 86400000.0
 
 
@@ -178,6 +181,37 @@ def serial_to_datetime(serial: int | float, date_mode_1904: bool) -> datetime.da
     return epoch + datetime.timedelta(days=days, milliseconds=milliseconds)
 
 
+def datetime_to_serial(
+    value: datetime.datetime | datetime.time,
+    date_mode_1904: bool,
+) -> int | float:
+    """
+    Convert a datetime or a time into the Excel serial date number that `serial_to_datetime`
+    turns back into it. A time names the fraction of a day it covers; a datetime of the 1900
+    epoch before March 1, 1900 counts from December 31, 1899, so the spurious leap day that
+    Excel inherited from Lotus 1-2-3 keeps serial 60 out of the round trip: February 29,
+    1900 does not exist, and the February 28 that serials 59 and 60 both resolve to converts
+    back to 59 only.
+    """
+    if isinstance(value, datetime.time):
+        milliseconds = (value.hour * 60 + value.minute) * 60000 + value.second * 1000
+        milliseconds += value.microsecond // 1000
+        serial = milliseconds / _MILLISECONDS_PER_DAY
+    else:
+        if date_mode_1904:
+            epoch = _EPOCH_1904
+        elif value < _MARCH_FIRST_1900:
+            epoch = _EPOCH_1900
+        else:
+            epoch = _EPOCH_1900_LEAP
+        delta = value - epoch
+        milliseconds = delta.seconds * 1000 + delta.microseconds // 1000
+        serial = delta.days + milliseconds / _MILLISECONDS_PER_DAY
+    if isinstance(serial, float) and serial.is_integer():
+        return int(serial)
+    return serial
+
+
 def date_cell(
     row: int,
     col: int,
@@ -187,14 +221,16 @@ def date_cell(
     assignment: bool = False,
 ) -> Cell:
     """
-    Compose the cell of a number whose format marks it as a date. A serial number that no
-    datetime can represent degrades to the `#VALUE!` error that Excel displays for it.
+    Compose the cell of a number whose format marks it as a date. The cell keeps the serial
+    number Excel stores — the interpretation of the serial is a question of the reader, not of
+    the workbook — and a serial number that no datetime can represent degrades to the
+    `#VALUE!` error that Excel displays for it.
     """
     try:
-        value = serial_to_datetime(serial, date_mode_1904)
+        serial_to_datetime(serial, date_mode_1904)
     except (OverflowError, ValueError):
         return Cell(row, col, CellKind.ERROR, ERROR_TEXT[0x0F], formula, assignment)
-    return Cell(row, col, CellKind.DATE, value, formula, assignment)
+    return Cell(row, col, CellKind.DATE, serial, formula, assignment)
 
 
 def decode_rk(rk: bytes | bytearray | memoryview) -> float:

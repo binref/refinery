@@ -69,6 +69,14 @@ class XlmView:
             cells = self._worksheets[key] = sheet_cells(self._workbook, sheet)
         return cells
 
+    def sheet_index(self, name: str) -> int | None:
+        """
+        The position of the sheet a name spells in the full sheet table of the workbook — the
+        sequence the scopes of its defined names count, chartsheets included — or `None` when
+        the workbook has no such sheet.
+        """
+        return self._workbook.sheet_index(name)
+
     def cell(self, sheet_name: str, row: int, col: int) -> XlmCell | None:
         """
         The cell of the sheet a name spells at the one-based `row` and `col`, or `None` when the

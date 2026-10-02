@@ -6,8 +6,6 @@ holds their cells; `sheet_cells` reads the cells of either kind of sheet.
 """
 from __future__ import annotations
 
-import datetime
-
 from dataclasses import dataclass
 
 from refinery.lib.excel.common import Cell, CellKind, ExcelFormatError, SheetKind, column_letters
@@ -41,8 +39,7 @@ class XlmCell(Statement):
     A single cell at a one-based `row` and `col`. The `formula` is the decoded expression tree,
     the unparsed carrier for a formula the reader could not decode, or `None` for a cell that holds
     only a value; `value` is the cached value as the reader spelled it, of the `kind` the reader
-    gave it, with a date or a time stored as its ISO text so that every field of the node is a
-    primitive; `assignment` marks a formula the container says assigns to a name.
+    gave it; `assignment` marks a formula the container says assigns to a name.
     """
 
     row: int = 0
@@ -141,16 +138,13 @@ def build_xlm_model(workbook: ExcelWorkbook) -> list[XlmMacrosheet]:
 
 
 def _model_cell(workbook: ExcelWorkbook, record: Cell) -> XlmCell:
-    value = record.value
-    if isinstance(value, (datetime.datetime, datetime.time)):
-        value = value.isoformat()
     return XlmCell(
         row=record.row,
         col=record.col,
         kind=record.kind,
         assignment=record.assignment,
         formula=_decode_formula(workbook, record),
-        value=value,
+        value=record.value,
     )
 
 

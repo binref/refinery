@@ -7,6 +7,7 @@ from refinery.lib.excel.common import (
     Cell,
     CellKind,
     date_cell,
+    datetime_to_serial,
     decode_rk,
     decode_xstring,
     is_builtin_date_format,
@@ -108,17 +109,51 @@ class TestSerialDates(TestBase):
             with self.subTest(serial=serial):
                 self.assertEqual(serial_to_datetime(serial, False), expected)
 
+    def test_datetimes_and_times_convert_back_to_their_serial(self):
+        for expected, value, mode in [
+            (1, datetime.datetime(1900, 1, 1), False),
+            (59, datetime.datetime(1900, 2, 28), False),
+            (61, datetime.datetime(1900, 3, 1), False),
+            (36526, datetime.datetime(2000, 1, 1), False),
+            (1, datetime.datetime(1904, 1, 2), True),
+            (41634, datetime.datetime(2017, 12, 27), True),
+            (0.5, datetime.time(12, 0), False),
+            (0.75, datetime.time(18, 0), True),
+        ]:
+            with self.subTest(serial=expected, mode=mode):
+                self.assertEqual(datetime_to_serial(value, mode), expected)
+
+    def test_conversion_into_a_serial_and_back_resolves_the_same_moment(self):
+        for mode in (False, True):
+            for serial in (1, 1.5, 59, 61, 36526, 43893.92013888889, 0.5):
+                with self.subTest(serial=serial, mode=mode):
+                    value = serial_to_datetime(serial, mode)
+                    self.assertEqual(
+                        serial_to_datetime(datetime_to_serial(value, mode), mode),
+                        value,
+                    )
+
+    def test_the_spurious_leap_day_has_no_inverse(self):
+        # serial 60 is the non-existent February 29, 1900, and both serial 59 and serial 60
+        # resolve to February 28, which converts back to 59 only.
+        february = serial_to_datetime(59, False)
+        self.assertEqual(datetime_to_serial(february, False), 59)
+
 
 class TestDateCells(TestBase):
+    """
+    A date cell keeps the serial number Excel stores; the date mode of the workbook is what
+    turns that number into a calendar date, so a cell of a workbook carries the number alone.
+    """
 
     def test_serial_composes_a_date_cell(self):
         self.assertEqual(
             date_cell(2, 3, 36526, False, 'B2+1'),
-            Cell(2, 3, CellKind.DATE, datetime.datetime(2000, 1, 1), 'B2+1'),
+            Cell(2, 3, CellKind.DATE, 36526, 'B2+1'),
         )
         self.assertEqual(
             date_cell(2, 3, 0.75, False),
-            Cell(2, 3, CellKind.DATE, datetime.time(18, 0), None),
+            Cell(2, 3, CellKind.DATE, 0.75, None),
         )
 
     def test_unrepresentable_serial_degrades_to_the_excel_error(self):

@@ -17,6 +17,7 @@ from refinery.lib.excel.common import (
     FormulaSource,
     SheetKind,
     date_cell,
+    datetime_to_serial,
     decode_xstring,
     is_builtin_date_format,
     is_date_format_string,
@@ -191,18 +192,13 @@ class OoxmlSheet(ExcelSheet):
             return Cell(row, col, CellKind.ERROR, value_text, formula, assignment)
         if kind_hint == 'd':
             try:
-                return Cell(
-                    row,
-                    col,
-                    CellKind.DATE,
-                    datetime.datetime.fromisoformat(value_text),
-                    formula,
-                    assignment,
-                )
+                value = datetime.datetime.fromisoformat(value_text)
             except ValueError as error:
                 raise ExcelFormatError(
                     F'cell {rc2ref(row, col)} of sheet {self.name!r} has the malformed value'
                     F' {value_text!r}') from error
+            serial = datetime_to_serial(value, workbook.date_mode_1904)
+            return date_cell(row, col, serial, workbook.date_mode_1904, formula, assignment)
         try:
             number = _cast_number(value_text)
         except ValueError as error:
@@ -210,7 +206,7 @@ class OoxmlSheet(ExcelSheet):
                 F'cell {rc2ref(row, col)} of sheet {self.name!r} has the malformed value'
                 F' {value_text!r}') from error
         if workbook._style_is_date(element.get('s')):
-            return date_cell(row, col, number, workbook._date_mode_1904, formula, assignment)
+            return date_cell(row, col, number, workbook.date_mode_1904, formula, assignment)
         return Cell(row, col, CellKind.NUMBER, number, formula, assignment)
 
 
@@ -228,7 +224,7 @@ class OoxmlWorkbook(ExcelWorkbook):
         workbook_part = self._workbook_part()
         self._base = posixpath.dirname(workbook_part)
         self._rels = self._read_rels(workbook_part)
-        self._date_mode_1904 = False
+        self.date_mode_1904 = False
         self._sheets: list[OoxmlSheet] = []
         self._names: list[DefinedName] = []
         self._shared_strings: list[str] = []
@@ -240,7 +236,7 @@ class OoxmlWorkbook(ExcelWorkbook):
             local = local_name(element.tag)
             if local == 'workbookPr':
                 mode = element.get('date1904') or ''
-                self._date_mode_1904 = mode.lower() in ('true', '1')
+                self.date_mode_1904 = mode.lower() in ('true', '1')
             elif local == 'sheet':
                 name = element.get('name') or ''
                 rid = element.get(F'{{{_RELATIONSHIP_NS}}}id')

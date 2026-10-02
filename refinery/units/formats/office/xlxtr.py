@@ -10,11 +10,13 @@ from refinery.lib.excel import (
     Cell,
     CellKind,
     ExcelFormatError,
+    ExcelWorkbook,
     SheetKind,
     detect_format,
     open_workbook,
     rc2ref,
     ref2rc,
+    serial_to_datetime,
 )
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
@@ -22,15 +24,19 @@ from refinery.units import Arg, Unit
 _CELL_REFERENCE = re.compile(R'^[A-Z]+\d+$')
 
 
-def _render_cell(cell: Cell) -> str | None:
+def _render_cell(cell: Cell, workbook: ExcelWorkbook) -> str | None:
     if cell.kind is CellKind.BLANK:
         return None
     if cell.kind is CellKind.FORMULA:
         return None
     value = cell.value
-    if isinstance(value, datetime.datetime):
-        return value.isoformat(' ', 'seconds')
-    if isinstance(value, datetime.time):
+    if cell.kind is CellKind.DATE:
+        # a date cell carries the serial number Excel stores, which only the epoch of this
+        # particular workbook turns into a calendar date
+        assert isinstance(value, (int, float))
+        value = serial_to_datetime(value, workbook.date_mode_1904)
+        if isinstance(value, datetime.datetime):
+            return value.isoformat(' ', 'seconds')
         return value.isoformat('seconds')
     return str(value)
 
@@ -154,7 +160,7 @@ class xlxtr(Unit):
                     for cell in sheet.cells():
                         if (cell.row, cell.col) not in ref:
                             continue
-                        value = _render_cell(cell)
+                        value = _render_cell(cell, workbook)
                         if value is None:
                             continue
                         yield self.labelled(

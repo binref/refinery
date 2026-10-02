@@ -55,11 +55,26 @@ class ExcelWorkbook(ABC):
 
     format: ExcelFormat
 
+    #: Whether the serial date numbers of this workbook count from the 1904 epoch.
+    date_mode_1904: bool
+
     @abstractmethod
     def sheets(self) -> Sequence[ExcelSheet]:
         """
         All sheets of the workbook in document order.
         """
+
+    def sheet_index(self, name: str) -> int | None:
+        """
+        The position of a sheet in the sequence the format's defined-name scopes count: the
+        full sheet table of the workbook, chartsheets included, matched case-insensitively as
+        Excel matches sheet names. `None` when the workbook has no such sheet.
+        """
+        key = name.lower()
+        for index, sheet in enumerate(self.sheets()):
+            if sheet.name.lower() == key:
+                return index
+        return None
 
     def formula(self, source: FormulaSource) -> Expression | None:
         """

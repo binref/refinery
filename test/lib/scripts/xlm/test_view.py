@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import io
-import unittest
+import struct
 import zipfile
 
 from refinery.lib.excel import SheetKind, synthesize_formula
 from refinery.lib.excel.formula import International
+from refinery.lib.ole.file import OleFile
 from refinery.lib.scripts.xlm import XlmCell, XlmMacrosheet, XlmView
 from test import TestBase
 from test.lib.excel.samples import (
     DATES_XLSB,
+    ISSUE20,
     XLM_MACRO_ASSIGN_BIFF8,
     XLM_MACRO_FORMULA_XLSM,
     XLM_MACRO_NAMES_BIFF8,
@@ -67,7 +69,6 @@ class TestXlmViewCells(TestBase):
         assert cell.formula is not None
         self.assertEqual(synthesize_formula(cell.formula), '".dat"')
 
-    @unittest.expectedFailure
     def test_a_date_cell_keeps_the_serial_number_excel_stores(self):
         worksheet = XlmView(DATES_XLSB).worksheet('Sheet1')
         assert worksheet is not None
@@ -236,3 +237,74 @@ class TestXlmViewWorkbook(TestBase):
             ],
         )
         self.assertEqual(view.macrosheets()[0].kind, SheetKind.MACROSHEET)
+
+
+def _record_positions(stream: bytes, opcode: int) -> list[int]:
+    result = []
+    position = 0
+    while len(stream) - position >= 4:
+        record, length = struct.unpack_from('<HH', stream, position)
+        if record == opcode:
+            result.append(position)
+        position += 4 + length
+    return result
+
+
+def _with_chartsheet_between_two_worksheets(data: bytes) -> bytes:
+    """
+    Insert a BOUNDSHEET record of a chart sheet between the first two sheets of the workbook
+    and move the scopes of the names that follow it, so that the stream carries the record
+    layout a workbook with a chart sheet between two worksheets has. The substream offsets of
+    the sheets are shifted by the bytes the insertion adds.
+    """
+    stream = bytes(OleFile(data).openstream('Workbook'))
+    second = _record_positions(stream, 0x0085)[1]
+    offset, = struct.unpack_from('<i', stream, second + 4)
+    record = (
+        struct.pack('<HH', 0x0085, 12)
+        + struct.pack('<iBBB', offset, 0, 0x02, 4)
+        + b'\x00Graf'
+    )
+    modified = bytearray(stream[:second] + record + stream[second:])
+    for position in _record_positions(bytes(modified), 0x0085):
+        offset, = struct.unpack_from('<i', modified, position + 4)
+        if offset >= second:
+            struct.pack_into('<i', modified, position + 4, offset + len(record))
+    for position in _record_positions(bytes(modified), 0x0018):
+        # the scope sheet index is a one-based count of the boundsheet table, so every name
+        # scoped to a sheet after the chart moves with it; a global name keeps its zero
+        scope, = struct.unpack_from('<H', modified, position + 12)
+        if scope >= 2:
+            struct.pack_into('<H', modified, position + 12, scope + 1)
+    return bytes(modified)
+
+
+class TestXlmViewSheetIndex(TestBase):
+
+    def test_sheet_indexes_count_every_sheet_of_the_workbook(self):
+        view = XlmView(_with_chartsheet_between_two_worksheets(ISSUE20))
+        self.assertEqual(
+            [view.sheet_index(name) for name in ('Sheet1', 'Graf', 'Sheet2', 'Sheet3')],
+            [0, 1, 2, 3],
+        )
+        self.assertEqual(view.sheet_index('nope'), None)
+
+    def test_sheet_indexes_match_case_insensitively(self):
+        self.assertEqual(XlmView(ISSUE20).sheet_index('sheet2'), 1)
+
+    def test_a_name_resolves_through_the_sheet_index_of_its_scope(self):
+        # the scope of a name counts every sheet of the workbook, so the chart sheet between
+        # Sheet1 and Sheet2 moves the index of Sheet2 and every name scoped to it with it
+        for data, name, sheet, text in [
+            (ISSUE20, 'sheet_title', 'Sheet1', '"Sheet1"'),
+            (ISSUE20, 'sheet_title', 'Sheet2', '"Sheet2"'),
+            (ISSUE20, 'sheet_title', 'Sheet3', '"Sheet3"'),
+            (_with_chartsheet_between_two_worksheets(ISSUE20), 'sheet_title', 'Sheet2', '"Sheet2"'),
+            (_with_chartsheet_between_two_worksheets(ISSUE20), 'sheet_title', 'Sheet3', '"Sheet3"'),
+        ]:
+            with self.subTest(sheet=sheet, text=text):
+                view = XlmView(data)
+                entry = view.names.resolve(name, view.sheet_index(sheet))
+                assert entry is not None
+                assert entry.formula is not None
+                self.assertEqual(synthesize_formula(entry.formula), text)

@@ -14,7 +14,7 @@ from refinery.lib.excel import (
     detect_format,
     open_workbook,
 )
-from refinery.lib.excel.common import decode_xstring
+from refinery.lib.excel.common import datetime_to_serial, decode_xstring, serial_to_datetime
 from refinery.lib.excel.formula import synthesize_formula
 
 from ... import TestBase
@@ -61,8 +61,8 @@ def _package(entries: dict[str, bytes]) -> bytes:
 
 def _normalized(value):
     # openpyxl decodes ST_Xstring escapes in shared strings but leaves them in formula results
-    # and inline strings, so both sides are decoded to a fixed point before comparison; integral
-    # floats are folded to integers the way the reader casts numbers.
+    # and inline strings, so both sides are decoded to a fixed point before comparison, and
+    # integral floats are folded to integers the way the reader casts numbers.
     if isinstance(value, float) and value.is_integer():
         return int(value)
     if isinstance(value, str):
@@ -136,11 +136,23 @@ class TestWorkbookStructure(TestBase):
         self.assertEqual(cells[(zzz, 24, 2)], Cell(24, 2, CellKind.BLANK, None, None))
         self.assertEqual(
             cells[(zzz, 28, 2)],
-            Cell(28, 2, CellKind.DATE, datetime.datetime(1999, 12, 31), None),
+            Cell(28, 2, CellKind.DATE, 36525, None),
         )
         self.assertEqual(
             cells[(zzz, 45, 2)],
-            Cell(45, 2, CellKind.DATE, datetime.time(2, 10, 54, 545000), '1/11'),
+            Cell(45, 2, CellKind.DATE, 0.09090909090909091, '1/11'),
+        )
+
+    def test_the_serials_of_date_cells_resolve_their_values(self):
+        cells = _cells(REVENG1)
+        zzz = 'ZZZfirstsheet'
+        self.assertEqual(
+            serial_to_datetime(cells[(zzz, 28, 2)].value, False),
+            datetime.datetime(1999, 12, 31),
+        )
+        self.assertEqual(
+            serial_to_datetime(cells[(zzz, 45, 2)].value, False),
+            datetime.time(2, 10, 54, 545000),
         )
 
     def test_formula_cells_carry_cached_results(self):
@@ -154,7 +166,7 @@ class TestWorkbookStructure(TestBase):
         )
         self.assertEqual(
             cells[(zzz, 28, 3)],
-            Cell(28, 3, CellKind.DATE, datetime.datetime(2000, 1, 1), 'B28+1'),
+            Cell(28, 3, CellKind.DATE, 36526, 'B28+1'),
         )
         # A formula cell without a cached result carries no value.
         self.assertEqual(cells[(zzz, 2, 3)], Cell(2, 3, CellKind.FORMULA, None, '""'))
@@ -168,7 +180,8 @@ class TestWorkbookStructure(TestBase):
 
     def test_iso_date_cells(self):
         # A cell of type `d` stores its value as an ISO 8601 date rather than as a serial
-        # number whose format marks it as a date.
+        # number whose format marks it as a date; the reader carries it as the serial number
+        # that date spells in the epoch of the workbook.
         data = _replace_part(
             SHARED_STRINGS_ALT_LOCATION,
             'xl/worksheets/sheet1.xml',
@@ -179,7 +192,7 @@ class TestWorkbookStructure(TestBase):
         )
         self.assertEqual(
             _cells(data)[('Sheet1', 2, 1)],
-            Cell(2, 1, CellKind.DATE, datetime.datetime(2017, 12, 27), None),
+            Cell(2, 1, CellKind.DATE, 43096, None),
         )
 
     def test_workbook_openpyxl_cannot_load(self):
@@ -511,8 +524,14 @@ class TestAgainstOpenpyxl(TestBase):
                     [sheet.name for sheet in workbook.sheets()],
                     reference.sheetnames,
                 )
+                # a date cell carries the serial number Excel stores, which has the
+                # millisecond resolution that the datetimes of the oracle share with it
                 actual = {
-                    key: _normalized(cell.value)
+                    key: (
+                        serial_to_datetime(cell.value, workbook.date_mode_1904)
+                        if cell.kind is CellKind.DATE
+                        else _normalized(cell.value)
+                    )
                     for key, cell in _cells(data).items()
                     if cell.kind not in (CellKind.BLANK, CellKind.FORMULA)
                 }

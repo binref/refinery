@@ -3,9 +3,9 @@ A reader for the cell values of workbooks in the MS-XLSB format, which covers th
 extension: a zip package of binary record streams. The framing of the streams differs from
 the BIFF format — a record starts with a one- or two-byte identifier and a variable-length
 integer for the size of its body. The reader implements the value model of
-`refinery.lib.excel.common`: date cells are converted according to the number format of the
-cell, and formula cells expose the cached result that Excel stored with the file together
-with the uninterpreted formula token stream.
+`refinery.lib.excel.common`: a number whose format marks it as a date carries the date kind
+together with the serial number Excel stores, and formula cells expose the cached result
+that Excel stored with the file together with the uninterpreted formula token stream.
 """
 from __future__ import annotations
 
@@ -294,7 +294,7 @@ class XlsbSheet(ExcelSheet):
             if value.is_integer():
                 value = int(value)
             if workbook._style_is_date(style):
-                return date_cell(row + 1, col + 1, value, workbook._date_mode_1904, formula)
+                return date_cell(row + 1, col + 1, value, workbook.date_mode_1904, formula)
         return Cell(row + 1, col + 1, kind, value, formula)
 
 
@@ -309,7 +309,7 @@ class XlsbWorkbook(ExcelWorkbook):
 
     def __init__(self, data: bytes | bytearray | memoryview):
         self._package = _Package(data)
-        self._date_mode_1904 = False
+        self.date_mode_1904 = False
         self._shared_strings: list[str] = []
         self._formats: dict[int, str] = {}
         self._style_formats: list[int] | None = None
@@ -328,7 +328,7 @@ class XlsbWorkbook(ExcelWorkbook):
                 if rtype == _Record.WB_PROP:
                     body = _Body(record)
                     flags = body.u32()
-                    self._date_mode_1904 = bool(flags & 1)
+                    self.date_mode_1904 = bool(flags & 1)
                 elif rtype == _Record.BUNDLE_SH:
                     body = _Body(record)
                     body.u32()
