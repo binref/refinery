@@ -111,6 +111,17 @@ def ref2rc(ref: str) -> tuple[int, int]:
     return row, col
 
 
+def column_letters(col: int) -> str:
+    """
+    The A1 letters of a one-based column number, so that `column_letters(1)` is `A`.
+    """
+    letters = ''
+    while col:
+        col, letter = divmod(col - 1, 26)
+        letters = chr(0x41 + letter) + letters
+    return letters
+
+
 def rc2ref(row: int, col: int) -> str:
     """
     Convert one-based row and column numbers into a cell reference like `B12`.
@@ -119,11 +130,7 @@ def rc2ref(row: int, col: int) -> str:
         raise ValueError
     if col <= 0:
         raise ValueError
-    alphabetic = ''
-    while col:
-        col, letter = divmod(col - 1, 26)
-        alphabetic = chr(0x41 + letter) + alphabetic
-    return F'{alphabetic}{row}'
+    return F'{column_letters(col)}{row}'
 
 
 ERROR_TEXT = {

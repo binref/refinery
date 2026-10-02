@@ -293,6 +293,15 @@ class TestFormulaFailurePaths(TestBase):
                 canonical(XlUnparsedFormula(text=text)),
             )
 
+    def test_whole_column_and_row_spans_become_carriers(self):
+        # `A:C` would otherwise read as a range between the defined names A and C, and `1:3` as
+        # a range between two numbers; the model has no node for either span
+        for text in ('=SUM(A:C)', '=SUM($A:$C)', '=SUM(Sheet1!A:C)', '=SUM(1:3)', '=SUM(A:A)'):
+            self.assertEqual(
+                canonical(parse_formula(text)),
+                canonical(XlUnparsedFormula(text=text)),
+            )
+
     def test_carrier_prints_its_text(self):
         for text in ('=SUM(A1,B1', '== broken'):
             self.assertEqual(synthesize_formula(parse_formula(text)), text)

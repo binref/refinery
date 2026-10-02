@@ -11,6 +11,7 @@ from refinery.lib.excel.formula.model import (
     XlR1C1Reference,
     XlUnparsedFormula,
 )
+from refinery.lib.excel.formula.ptg import RpnError
 from refinery.lib.ole.file import OleFile
 from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth, canonical
 
@@ -184,6 +185,51 @@ class TestBiffFormulaAgainstXlrd(TestBase):
 
 
 class TestBiffFormulaDefects(TestBase):
+
+    @staticmethod
+    def _with_foreign_supbook(data: bytes) -> bytes:
+        """
+        Replace the second supporting book of the workbook stream — the add-in library — with an
+        external document that carries one sheet name, and point the second extern-sheet entry
+        at it. A 3-D reference through that entry names a sheet of another document, which the
+        reader has to refuse rather than present as a sheet of this workbook.
+        """
+        stream = bytearray(bytes(OleFile(data).openstream('Workbook')))
+        position = 0
+        while struct.unpack_from('<H', stream, position)[0] != 0x01AE:
+            position += 4 + struct.unpack_from('<HH', stream, position)[1]
+        position += 4 + struct.unpack_from('<HH', stream, position)[1]
+        end = position + 4 + struct.unpack_from('<HH', stream, position)[1]
+        # one sheet, an empty source path, and the sheet name X, each length-counted
+        supbook = struct.pack('<HH', 0x01AE, 9) + b'\x01\x00\x00\x00\x00\x01\x00\x00X'
+        stream[position:end] = supbook
+        delta = len(supbook) - (end - position)
+        position = 0
+        while position + 4 <= len(stream):
+            opcode, length = struct.unpack_from('<HH', stream, position)
+            if opcode == 0x0017:
+                # the second entry of the extern-sheet table: the supporting book the
+                # replacement occupies, and its first and only sheet
+                struct.pack_into('<HHH', stream, position + 4 + 2 + 6, 1, 0, 0)
+            elif opcode == 0x0085:
+                offset, = struct.unpack_from('<i', stream, position + 4)
+                if offset >= end:
+                    struct.pack_into('<i', stream, position + 4, offset + delta)
+            position += 4 + length
+        return bytes(stream)
+
+    def test_extern_sheets_refuse_a_sheet_of_another_document(self):
+        workbook = open_workbook(self._with_foreign_supbook(XLM_MACRO_RPN_BIFF8))
+        with self.assertRaises(RpnError):
+            workbook.extern_sheets(1)
+
+    def test_extern_sheets_still_resolve_the_workbook_itself(self):
+        original = open_workbook(XLM_MACRO_RPN_BIFF8)
+        modified = open_workbook(self._with_foreign_supbook(XLM_MACRO_RPN_BIFF8))
+        self.assertEqual(
+            modified.extern_sheets(0),
+            original.extern_sheets(0),
+        )
 
     @staticmethod
     def _truncate_inside_formula_record(data: bytes) -> bytes:

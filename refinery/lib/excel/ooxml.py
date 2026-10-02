@@ -274,7 +274,9 @@ class OoxmlWorkbook(ExcelWorkbook):
         """
         Parse one `definedName` element. A built-in name carries the `_xlnm.` prefix, which the
         BIFF readers spell away as the lower-case name its single-byte code selects, so the
-        prefix is stripped and the name lower-cased to match.
+        prefix is stripped and the name lower-cased to match. An element without text names a
+        broken reference; the empty formula it yields decodes to the empty carrier, as the empty
+        token stream of the other readers does.
         """
         name = element.get('name') or ''
         if name.startswith('_xlnm.'):
@@ -286,7 +288,7 @@ class OoxmlWorkbook(ExcelWorkbook):
             scope = None
         return DefinedName(
             name=name,
-            formula=element.text or None,
+            formula=element.text or '',
             sheet=scope,
         )
 

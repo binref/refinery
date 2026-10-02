@@ -709,7 +709,9 @@ class BiffWorkbook(ExcelWorkbook):
         if not 0 <= supbook_index < len(self._supbooks):
             raise RpnError(F'the extern-sheet index {ixti} names a missing supbook')
         supbook = self._supbooks[supbook_index]
-        sheets = self._all_sheet_names if supbook.internal else supbook.sheets
+        if not supbook.internal:
+            raise RpnError(F'the extern-sheet index {ixti} names a sheet of another document')
+        sheets = self._all_sheet_names
         if first > last or not 0 <= first < len(sheets) or not 0 <= last < len(sheets):
             raise RpnError(F'the extern-sheet index {ixti} does not span sheets of this workbook')
         if first == last:

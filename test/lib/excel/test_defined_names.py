@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import zipfile
+
 from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula import synthesize_formula
 
@@ -16,6 +19,25 @@ def _names(data: bytes) -> list[tuple[str, int | None, str]]:
         (record.name, record.sheet, synthesize_formula(workbook.formula(record.formula)))
         for record in workbook.defined_names()
     ]
+
+
+def _blanked_name_formula(data: bytes) -> bytes:
+    """
+    Remove the formula text of the `NEVR1` defined name, leaving an element that names a
+    reference no formula spells.
+    """
+    source = zipfile.ZipFile(io.BytesIO(data))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename == 'xl/workbook.xml':
+                content = content.replace(
+                    b'<definedName name="NEVR1">PCWV!$G$13</definedName>',
+                    b'<definedName name="NEVR1"/>',
+                )
+            target.writestr(info, content)
+    return buffer.getvalue()
 
 
 class TestBiffDefinedNames(TestBase):
@@ -70,3 +92,9 @@ class TestOoxmlDefinedNames(TestBase):
             ('NEVR7', None, 'PCWV!$G$25'),
             ('auto_open', None, 'PCWV!$G$1'),
         ])
+
+    def test_a_name_without_formula_text_synthesizes_nothing(self):
+        # the BIFF and XLSB readers carry an empty formula for such a name, which decodes to
+        # the empty carrier rather than to no formula at all
+        names = _names(_blanked_name_formula(XLM_MACRO_FORMULA_XLSM))
+        self.assertEqual(names[0], ('NEVR1', None, ''))

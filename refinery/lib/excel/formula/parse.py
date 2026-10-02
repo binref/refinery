@@ -87,6 +87,25 @@ _OPERATORS = {
     ':': XlBinaryOperator.RANGE,
 }
 
+_RE_COLUMN = re.compile(R'[A-Za-z]{1,3}')
+
+
+def _spells_whole_span(left: Expression, right: Expression) -> bool:
+    """
+    Whether the operands of a range operator spell a whole-column reference such as `A:C` or a
+    whole-row reference such as `1:3`. The model has no node for either yet, and bare letters
+    would otherwise read as defined names and bare digits as numbers, so the range they form
+    would be a different program; such input is refused.
+    """
+    if isinstance(left, XlNumber) and isinstance(right, XlNumber):
+        return True
+    if not isinstance(left, XlDefinedName) or not isinstance(right, XlDefinedName):
+        return False
+    return (
+        _RE_COLUMN.fullmatch(left.name) is not None
+        and _RE_COLUMN.fullmatch(right.name) is not None
+    )
+
 
 def parse_formula(
     text: str,
@@ -243,7 +262,19 @@ class _Parser:
         return left
 
     def _parse_range(self) -> Expression:
-        return self._binary(self._parse_primary, (':',))
+        left = self._parse_primary()
+        while not self._at_end() and self._peek() == ':':
+            self._pos += 1
+            self._skip_spaces()
+            right = self._parse_primary()
+            if _spells_whole_span(left, right):
+                raise _ParseFailure
+            left = XlBinaryExpression(
+                left=left,
+                operator=XlBinaryOperator.RANGE,
+                right=right,
+            )
+        return left
 
     def _parse_primary(self) -> Expression:
         char = self._peek()
@@ -254,15 +285,9 @@ class _Parser:
             self._consume(')')
             return XlParenExpression(operand=inner)
         if char == '"':
-            match = self._match(_RE_STRING)
-            if match is None:
-                raise _ParseFailure
-            return XlString(value=match.group()[1:-1].replace('""', '"'))
+            return self._parse_string_literal()
         if char == '#':
-            match = self._match(_RE_ERROR)
-            if match is None:
-                raise _ParseFailure
-            return XlError(value=match.group().upper())
+            return self._parse_error_literal()
         if char == '{':
             return self._parse_array()
         if char.isdigit() or char == '.':

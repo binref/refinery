@@ -87,7 +87,6 @@ class _Record(IntEnum):
     SUP_BOOK_SRC = 355
     SUP_SELF = 357
     SUP_SAME = 358
-    SUP_TABS = 359
     EXTERN_SHEET = 362
     BEGIN_FMTS = 615
     END_FMTS = 616
@@ -119,8 +118,10 @@ _FORMULA_RECORDS = frozenset((
     _Record.FMLA_ERROR,
 ))
 
-# the records that each open one supporting book of the externals section; the order they
-# appear in is the index the entries of the extern-sheet table name.
+# the records that each open one supporting link of the externals section; the order they
+# appear in is the index the entries of the extern-sheet table name. A BrtSupTabs record
+# names the sheets of an external workbook inside the external link part, so it opens no
+# link here.
 _SUPPORTING_LINKS = frozenset((
     _Record.SUP_BOOK_SRC,
     _Record.SUP_SELF,

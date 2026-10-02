@@ -68,14 +68,7 @@ class XlsbRpnDecoder(RpnDecoder):
         bits carry the relative flags. The grammar stores the absolute position in both
         spellings; the containing cell of a copied formula is what the flags select for.
         """
-        row = self._read_u32()
-        col_word = self._read_u16()
-        return XlA1Reference(
-            row=row + 1,
-            col=(col_word & 0x3FFF) + 1,
-            relative_row=bool(col_word & 0x8000),
-            relative_col=bool(col_word & 0x4000),
-        )
+        return self._compose(self._read_u32(), self._read_u16())
 
     def _read_area(self, relative: bool) -> Expression:
         """

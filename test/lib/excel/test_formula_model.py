@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from refinery.lib.excel.formula import parse_formula, synthesize_formula
 from refinery.lib.excel.formula.model import (
+    Expression,
+    XlA1Reference,
     XlArrayConstant,
+    XlBinaryExpression,
+    XlBinaryOperator,
     XlDefinedName,
     XlFunctionCall,
     XlNumber,
@@ -77,3 +81,28 @@ class TestFormulaModelNodeFramework(TestBase):
             canonical(tree),
             canonical(XlFunctionCall(callee='RETURN', arguments=[])),
         )
+
+
+class TestFormulaModelSynthesis(TestBase):
+    """
+    Synthesis of trees whose output has to stay readable as the same tree: a union inside an
+    argument list, and a nesting deeper than the recursion limit the synthesizer runs under.
+    """
+
+    def test_a_union_call_argument_is_wrapped_in_parentheses(self):
+        # a union bare in the argument list would read back as two arguments of the call
+        union = XlBinaryExpression(
+            left=XlA1Reference(row=1, col=1),
+            operator=XlBinaryOperator.UNION,
+            right=XlA1Reference(row=1, col=2),
+        )
+        call = XlFunctionCall(callee='SUM', arguments=[union])
+        self.assertEqual(synthesize_formula(call), 'SUM((A1,B1))')
+        self.assertEqual(canonical(call), canonical(parse_formula('=SUM((A1,B1))')))
+        self.assertNotEqual(canonical(call), canonical(parse_formula('=SUM(A1,B1)')))
+
+    def test_a_tree_past_the_recursion_limit_synthesizes(self):
+        tree: Expression = XlNumber(value=1)
+        for _ in range(2000):
+            tree = XlParenExpression(operand=tree)
+        self.assertEqual(synthesize_formula(tree), 2000 * '(' + '1' + 2000 * ')')

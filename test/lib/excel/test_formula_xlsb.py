@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+from collections.abc import Iterator
+
 from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula import parse_formula, synthesize_formula
 from refinery.lib.excel.formula.model import (
@@ -181,6 +183,29 @@ class TestXlsbFormulaAgainstPyxlsb2(TestBase):
                         )
 
 
+def _record_positions(body: bytes | bytearray) -> Iterator[tuple[int, int, int]]:
+    """
+    The framing of an MS-XLSB stream walked record by record, yielding each record identifier
+    with the offset and the length of its body.
+    """
+    position = 0
+    while position < len(body):
+        rtype = body[position]
+        position += 1
+        if rtype & 0x80:
+            rtype = (rtype & 0x7F) | ((body[position] & 0x7F) << 7)
+            position += 1
+        length = 0
+        for index in range(4):
+            byte = body[position]
+            position += 1
+            length |= (byte & 0x7F) << (7 * index)
+            if not byte & 0x80:
+                break
+        yield rtype, position, length
+        position += length
+
+
 class TestXlsbFormulaDefects(TestBase):
 
     @staticmethod
@@ -192,20 +217,7 @@ class TestXlsbFormulaDefects(TestBase):
         """
         source = zipfile.ZipFile(io.BytesIO(data))
         body = bytearray(source.read(part))
-        position = 0
-        while position < len(body):
-            rtype = body[position]
-            position += 1
-            if rtype & 0x80:
-                rtype = (rtype & 0x7F) | ((body[position] & 0x7F) << 7)
-                position += 1
-            length = 0
-            for index in range(4):
-                byte = body[position]
-                position += 1
-                length |= (byte & 0x7F) << (7 * index)
-                if not byte & 0x80:
-                    break
+        for rtype, position, _ in _record_positions(body):
             if 8 <= rtype <= 11:
                 # the record body holds the column, the style, the cached result of the width
                 # the record identifier selects, a reserved word, the formula length, and then
@@ -219,11 +231,35 @@ class TestXlsbFormulaDefects(TestBase):
                     width = 1
                 body[position + 8 + width + 6] = 0x01
                 break
-            position += length
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as target:
             for info in source.infolist():
                 content = bytes(body) if info.filename == part else source.read(info)
+                target.writestr(info, content)
+        return buffer.getvalue()
+
+    @staticmethod
+    def _with_sup_tabs_record(data: bytes | bytearray) -> bytes:
+        """
+        Insert a `BrtSupTabs` record between the opening of the externals section of the
+        workbook part and its first supporting link. The record names the sheets of an
+        external workbook, which belong to the external link part, so it must not open a
+        supporting link and shift the indexes the extern-sheet table reads.
+        """
+        source = zipfile.ZipFile(io.BytesIO(data))
+        body = bytearray(source.read('xl/workbook.bin'))
+        insert = None
+        for rtype, position, length in _record_positions(body):
+            if rtype == 353:  # BrtBeginExternals
+                insert = position + length
+                break
+        assert insert is not None
+        # the identifier of the record, the length of its body, and a count of no sheets
+        body[insert:insert] = b'\xE7\x02\x04\x00\x00\x00\x00'
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as target:
+            for info in source.infolist():
+                content = bytes(body) if info.filename == 'xl/workbook.bin' else source.read(info)
                 target.writestr(info, content)
         return buffer.getvalue()
 
@@ -263,3 +299,16 @@ class TestXlsbFormulaDefects(TestBase):
                 for cell in sheet.cells()
             ],
         )
+
+    def test_a_sup_tabs_record_opens_no_supporting_link(self):
+        # the two names whose formulas resolve an extern-sheet index are the ones a supporting
+        # link shifted past its table would degrade to a carrier of raw bytes
+        data = self._with_sup_tabs_record(self.download_sample(_MALDOC))
+        workbook = open_workbook(data)
+        formulas = {
+            record.name: synthesize_formula(formula)
+            for record in workbook.defined_names()
+            if (formula := workbook.formula(record.formula)) is not None
+        }
+        self.assertEqual(formulas['Fola'], 'Tiposa!$E$16')
+        self.assertEqual(formulas['Auto_Open' + '7' * 114], 'Tiposa!$G$1')

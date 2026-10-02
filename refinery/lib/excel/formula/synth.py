@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from refinery.lib.excel.common import column_letters
 from refinery.lib.excel.formula.model import (
     Expression,
     XlA1Reference,
@@ -29,7 +30,8 @@ from refinery.lib.excel.formula.model import (
     XlUnparsedFormula,
 )
 from refinery.lib.excel.formula.parse import International
-from refinery.lib.scripts import Node, Synthesizer
+from refinery.lib.scripts import TREE_RECURSION_DEPTH, Node, Synthesizer
+from refinery.lib.tools import RecursionDepth
 
 _PRECEDENCE = {
     XlBinaryOperator.EQ: 1,
@@ -66,14 +68,6 @@ def _qualify(sheets: tuple[str, ...]) -> str:
     return F"{':'.join(_sheet_token(s) for s in sheets)}!"
 
 
-def _column_letters(col: int) -> str:
-    letters = ''
-    while col:
-        col, letter = divmod(col - 1, 26)
-        letters = chr(0x41 + letter) + letters
-    return letters
-
-
 class FormulaSynthesizer(Synthesizer):
     """
     Print a formula `Expression` as formula text. The list separator of the output follows the
@@ -90,7 +84,8 @@ class FormulaSynthesizer(Synthesizer):
     def convert(self, node: Node) -> str:
         if isinstance(node, XlBinaryExpression) and node.operator is XlBinaryOperator.UNION:
             node = XlParenExpression(operand=node)
-        return super().convert(node)
+        with RecursionDepth(TREE_RECURSION_DEPTH):
+            return super().convert(node)
 
     def _emit_operand(self, operand: Expression | None, parent: int, left: bool):
         if operand is None:
@@ -158,7 +153,7 @@ class FormulaSynthesizer(Synthesizer):
     def visit_XlA1Reference(self, node: XlA1Reference):
         if node.sheets is not None:
             self._write(_qualify(node.sheets))
-        column = _column_letters(node.col)
+        column = column_letters(node.col)
         row = F'${node.row}' if not node.relative_row else str(node.row)
         col = F'${column}' if not node.relative_col else column
         self._write(F'{col}{row}')
@@ -185,7 +180,9 @@ class FormulaSynthesizer(Synthesizer):
         for index, argument in enumerate(node.arguments):
             if index:
                 self._write(self._sep)
-            self.visit(argument)
+            # a call argument sits in a fully delimited position, so no precedence asks for
+            # parentheses around it — only a union does, because bare it would read as two
+            self._emit_operand(argument, 0, left=False)
         self._write(')')
 
     def visit_XlArrayConstant(self, node: XlArrayConstant):
