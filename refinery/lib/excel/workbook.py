@@ -53,6 +53,8 @@ class ExcelWorkbook(ABC):
     rendering any of the values they contain.
     """
 
+    format: ExcelFormat
+
     @abstractmethod
     def sheets(self) -> Sequence[ExcelSheet]:
         """

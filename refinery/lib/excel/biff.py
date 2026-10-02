@@ -35,7 +35,7 @@ from refinery.lib.excel.formula.model import (
     XlUnparsedFormula,
 )
 from refinery.lib.excel.formula.ptg import RpnError
-from refinery.lib.excel.workbook import ExcelSheet, ExcelWorkbook
+from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook
 from refinery.lib.ole.file import OleFile, is_ole_file
 
 
@@ -490,6 +490,8 @@ class BiffWorkbook(ExcelWorkbook):
     container of an XLS file, or the whole input is taken as the stream of a raw BIFF4
     workbook. Workbooks protected by a password raise an `ExcelFormatError`.
     """
+
+    format = ExcelFormat.BIFF
 
     def __init__(self, data: bytes | bytearray | memoryview):
         self._view = self._locate_stream(memoryview(data))

@@ -25,7 +25,7 @@ from refinery.lib.excel.common import (
 )
 from refinery.lib.excel.formula.model import Expression, XlUnparsedFormula
 from refinery.lib.excel.formula.parse import parse_formula
-from refinery.lib.excel.workbook import ExcelSheet, ExcelWorkbook, _Package
+from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook, _Package
 
 _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'
 _REL_CHARTSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet'
@@ -216,6 +216,8 @@ class OoxmlWorkbook(ExcelWorkbook):
     extensions. The parts of the container are located through the relationships of the
     workbook part so that relocated or oddly cased part names do not break extraction.
     """
+
+    format = ExcelFormat.OOXML
 
     def __init__(self, data: bytes | bytearray | memoryview):
         self._package = _Package(data)
