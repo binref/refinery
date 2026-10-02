@@ -23,6 +23,7 @@ _ATTRIBUTES_FILE_ID = 8
 
 _DECMPFS_MAGIC = b'fpmc'
 _DECMPFS_ATTR_NAME = 'com.apple.decmpfs'
+_LZVN_UNCOMPRESSED_MARKER = b'\x06'
 
 _FORK_DATA = 0x00
 _FORK_RSRC = 0xFF
@@ -612,14 +613,18 @@ class HFSVolume:
 
 def _lzvn_decompress_attr(payload: buf, expected_size: int) -> bytearray:
     """
-    Decompress LZVN-compressed data from a decmpfs attribute or resource fork. The payload is a raw
-    LZVN bit stream; it is wrapped in an LZVN block frame so that it can be decoded through the public
-    lzfse_decompress entry point, which is the only symbol the compiled lzfse module exports.
+    Decompress LZVN-compressed data from a decmpfs attribute or resource fork. A payload that starts
+    with the LZVN end-of-stream opcode holds the data uncompressed after that byte. Otherwise, the
+    payload is a raw LZVN bit stream; it is wrapped in an LZVN block frame so that it can be decoded
+    through the public lzfse_decompress entry point, which is the only symbol the compiled lzfse
+    module exports.
     """
     from refinery.lib.fast.lzfse import lzfse_decompress
     n_raw_bytes = min(max(expected_size, 0), 0xFFFFFFFF)
     if n_raw_bytes == 0:
         return bytearray()
+    if payload[:1] == _LZVN_UNCOMPRESSED_MARKER:
+        return bytearray(payload[1:1 + n_raw_bytes])
     block = b''.join((
         b'bvxn',
         n_raw_bytes.to_bytes(4, 'little'),
