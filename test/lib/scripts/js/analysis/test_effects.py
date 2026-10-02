@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+import unittest
+
 from dataclasses import replace
 
 from test import TestBase
@@ -2897,3 +2900,32 @@ class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
             _without_binding_identity(_call_summary(default, 'f')),
             _without_binding_identity(_call_summary(moved, 'f')),
         )
+
+
+class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
+    """
+    Two defects of building the effect model, which show on programs that pass a function through
+    many names. The scan of what a program writes on the intrinsics follows a name to the name it
+    holds by recursion, so a long enough chain of names exhausts the stack. A name given one of
+    several other names under a condition, a few levels deep, makes the build take time that grows
+    far faster than the program does.
+    """
+
+    @unittest.expectedFailure
+    def test_a_chain_of_two_thousand_names_each_holding_the_one_before_builds(self):
+        source = 'var c0 = function () {};\n' + ''.join(F'var c{k} = c{k - 1};\n' for k in range(1, 2000))
+        build_effects(build_semantic_model(JsParser(source).parse()))
+
+    @unittest.expectedFailure
+    def test_names_given_one_of_ten_names_four_levels_deep_build_within_a_second(self):
+        width = 10
+        lines = [F'var n0_{i} = function () {{}};' for i in range(width)]
+        for level in range(1, 5):
+            for i in range(width):
+                lines.append(F'var n{level}_{i};')
+                lines.extend(F'if (Math.random() > 0.5) {{ n{level}_{i} = n{level - 1}_{j}; }}' for j in range(width))
+        lines.extend(F'n4_{i}.toString = function () {{ return "x"; }};' for i in range(width))
+        ast = JsParser('\n'.join(lines)).parse()
+        start = time.perf_counter()
+        build_effects(build_semantic_model(ast))
+        self.assertLess(time.perf_counter() - start, 1.0)
