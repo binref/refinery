@@ -270,3 +270,18 @@ class TestPCAPv6ExtensionHeaders(TestUnitBase):
             dst_port=80,
             payload=bytearray(self._TCP_PAYLOAD),
         )])
+
+    def test_zero_payload_length_without_extension_headers(self):
+        packet = bytearray(_ipv6_packet(
+            IPProtocol.TCP,
+            _tcp_segment(49152, 80, self._TCP_PAYLOAD),
+        ))
+        packet[4:6] = b'\x00\x00'
+        self.assertEqual(_reassemble_tcp(_classic_pcap_raw_ip(bytes(packet))), [Datagram(
+            protocol=IPProtocol.TCP,
+            src_addr='2001:db8::1',
+            dst_addr='2001:db8::2',
+            src_port=49152,
+            dst_port=80,
+            payload=bytearray(self._TCP_PAYLOAD),
+        )])
