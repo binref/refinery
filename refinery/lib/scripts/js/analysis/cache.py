@@ -16,6 +16,7 @@ from refinery.lib.scripts.js.analysis.assignment import (
     build_definite_assignment,
 )
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control_flow_model
+from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
@@ -58,6 +59,12 @@ class ModelCache(ModelCacheBase):
     one that could reveal a fact the held models predate would act on the stale, more permissive answer
     and must not read them pinned. The `--no-pin` differential (`test/conftest.py`) is the mechanical
     check: the whole suite must pass identically with every pin neutralized.
+
+    The cache hands the record of the run it serves, *settlement*, to every effect model it builds
+    (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). Only
+    `refinery.lib.scripts.js.deobfuscation.deobfuscate` creates one; a cache built anywhere else
+    holds none, and its effect models then refuse what they would only answer once a run has
+    settled.
     """
 
     _SLOTS = (
@@ -111,6 +118,15 @@ class ModelCache(ModelCacheBase):
     _assignment: DefiniteAssignmentModel | None
     _tampering: TamperingModel | None
 
+    def __init__(
+        self,
+        root: Node,
+        options: object | None = None,
+        settlement: ConversionSettlement | None = None,
+    ):
+        self.settlement = settlement
+        super().__init__(root, options)
+
     @property
     def model(self) -> SemanticModel:
         return self._lazy('_model', lambda: build_semantic_model(
@@ -129,6 +145,7 @@ class ModelCache(ModelCacheBase):
             self.model,
             self.dominance,
             self.intrinsic_writes,
+            self.settlement,
         ))
 
     @property

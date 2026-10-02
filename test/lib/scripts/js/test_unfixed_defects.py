@@ -1349,89 +1349,292 @@ class TestABuiltinConvertingAFunctionRunsItsOwnToString(TestBase):
     """
 
 
-#: Programs converting a function no code gives a `toString` of its own, after handing it to code
-#: that could, mapped to what Node prints: the text the function was written with.
-A_FUNCTION_HANDED_ON_AND_CONVERTED = {
-    'held in an array': Program(
+#: Programs converting a function no code gives a conversion of its own, where a fold older than
+#: the conversion question does not reach, mapped to what Node prints: the text the function was
+#: written with.
+A_FUNCTION_HANDED_ON_WHERE_THE_FOLD_DOES_NOT_REACH = {
+    'converted at the top level': Program(
         inspect.cleandoc('''
             function W(a) { return a + 1; }
+            console.log(String(W));
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'read from a top-level array inside a function': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            var g = [W];
+            function f() { return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'handed to a timer': Program(
+        inspect.cleandoc('''
+            function W(a) { return a + 1; }
+            setTimeout(W, 0);
+            function f() { return String(W); }
+            console.log(f());
+        '''),
+        prints('function W(a) { return a + 1; }'),
+    ),
+    'a method of an object handed on': Program(
+        inspect.cleandoc('''
+            var o = { m: function (a) { return a + 1; } };
+            var g = [o];
+            console.log(g.length);
+            function f() { return String(o.m); }
+            console.log(f());
+        '''),
+        prints('1', 'function (a) { return a + 1; }'),
+    ),
+    'a member of a namespace': Program(
+        inspect.cleandoc('''
+            var NS = {};
+            NS.W = function (a) { return a + 1; };
+            function f() { var g = [NS.W]; return String(g[0]); }
+            console.log(f());
+        '''),
+        prints('function (a) { return a + 1; }'),
+    ),
+    'with rest parameters': Program(
+        inspect.cleandoc('''
+            function W(...args) { return args[0] + 1; }
             function f() { var g = [W]; return String(g[0]); }
             console.log(f());
         '''),
-        prints('function W(a) { return a + 1; }'),
+        prints('function W(...args) { return args[0] + 1; }'),
     ),
-    'returned by a function': Program(
+    'beside a class-inheritance helper': Program(
         inspect.cleandoc('''
             function W(a) { return a + 1; }
-            function get() { return W; }
-            function f() { return String(get()); }
-            console.log(f());
-        '''),
-        prints('function W(a) { return a + 1; }'),
-    ),
-    'guarded by or': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            function f() { return String(W || null); }
-            console.log(f());
-        '''),
-        prints('function W(a) { return a + 1; }'),
-    ),
-    'counted in a logged array': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            console.log([W].length);
+            var g = [W];
+            console.log(g.length);
+            var __extends = (this && this.__extends) || (function () {
+                var extendStatics = function (d, b) {
+                    extendStatics = Object.setPrototypeOf ||
+                        ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
+                        function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+                    return extendStatics(d, b);
+                };
+                return function (d, b) {
+                    extendStatics(d, b);
+                    function __() { this.constructor = d; }
+                    d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+                };
+            })();
+            var Animal = (function () { function Animal() { this.legs = 4; } return Animal; }());
+            var Dog = (function (_super) {
+                __extends(Dog, _super);
+                function Dog() { return _super.call(this) || this; }
+                return Dog;
+            }(Animal));
+            console.log(new Dog().legs);
             function f() { return String(W); }
             console.log(f());
         '''),
-        prints('1', 'function W(a) { return a + 1; }'),
-    ),
-    'bound': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            var B = W.bind(null);
-            console.log(B(1));
-            function f() { return String(W); }
-            console.log(f());
-        '''),
-        prints('2', 'function W(a) { return a + 1; }'),
-    ),
-    'beside a global written at runtime': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            globalThis[process.argv.length > 99 ? "a" : "b"] = 1;
-            function f() { return String(W); }
-            console.log(f());
-        '''),
-        prints('function W(a) { return a + 1; }'),
-    ),
-    'walked with for-in': Program(
-        inspect.cleandoc('''
-            function W(a) { return a + 1; }
-            for (var k in W) { console.log(k); }
-            function f() { return String(W); }
-            console.log(f());
-        '''),
-        prints('function W(a) { return a + 1; }'),
+        prints('1', '4', 'function W(a) { return a + 1; }'),
     ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_FUNCTION_HANDED_ON_AND_CONVERTED)
-class TestAFunctionHandedOnStillConvertsToItsWrittenText(TestBase):
+@one_expected_failure_per_program(A_FUNCTION_HANDED_ON_WHERE_THE_FOLD_DOES_NOT_REACH)
+class TestAFunctionHandedOnIsConvertedToItsWrittenTextWhereNoFoldReachesIt(TestBase):
     """
-    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_object_untouched` refuses a
-    function that any read hands on, so `refinery.lib.scripts.js.deobfuscation.helpers
-    .coerces_uninterceptably` leaves its conversion to run, and the conversion then reads the text
-    the deobfuscation printed rather than the text the function was written with. Leaving a
-    conversion of a function standing is never safe for that reason, so the question has to be the
-    narrow one: whether any code can give a function a `toString`, `valueOf` or
-    `Symbol.toPrimitive` of its own or a new prototype. The fix asks that of the whole program first
-    (a write or a descriptor install under one of those keys, or under a key it cannot name, on a
-    value that may be a function, a reflection surface, or code outside the file the function can
-    reach) and falls back to the per-function question only where the program can.
+    Each program converts a function no code gives a conversion of its own, and the deobfuscation
+    leaves the conversion standing, so it reads the text the deobfuscation printed rather than the
+    text the function was written with. Each is wrong for a reason of its own, older than
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched`:
+
+    - a conversion at the top level of a script is never folded;
+    - the interpreter does not read a top-level array from inside a function;
+    - `setTimeout(W)` counts as a reflection surface although `W` is a function and not code;
+    - a method of an object literal is not read once the object is handed on, since the object
+      may be changed where it went;
+    - namespace flattening rebuilds `NS.W = function (a) {…}` without its text and under the name
+      `W`, so its conversion prints `function W(a) {…}`;
+    - a function with rest parameters is never folded;
+    - the `__extends` helper TypeScript emits writes `d.__proto__ = b` on a parameter and reads
+      `Object.setPrototypeOf` as a value, so every function handed on in such a program is
+      refused; knowing where that value goes needs interprocedural analysis.
     """
+
+
+#: Programs that give a function handed on a conversion under a key known only at runtime, mapped
+#: to what Node prints.
+A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME = {
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        g[0][["to", "Str", "ing"].join(process.argv[9] || "")] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        g[0][process.argv[9] || "toString"] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        g[0][["toString"]] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        var _a = ["valueOf", "toString"];
+        (function (arr, n) { while (--n) { arr.push(arr.shift()); } })(_a, 2);
+        function _b(i) { return _a[i]; }
+        g[0][_b(0)] = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        function V(b) { return b * 2; }
+        function show() { return String(V); }
+        function f() {
+          var g = [W, V];
+          var k = String(W).slice(0, 0) + "toString";
+          g[1][k] = function () { return "x"; };
+          return show();
+        }
+        console.log(f());
+    '''):
+        'x\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionGivenAConversionUnderAKeyKnownOnlyAtRuntimeIsConvertedByIt(TestBase):
+    """
+    A key known only at runtime is no evidence that a program installs a conversion, so a function
+    handed on beside a write under such a key converts to its written text, and the conversion the
+    program installed is lost.
+    """
+
+    @wontfix(
+        'no obfuscated file builds a conversion key at runtime: these keys are joined from pieces, '
+        'read from the command line, wrapped in an array, rotated by hand where the run never '
+        'decodes the table, or cut from the text of a function, all made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FUNCTION_GIVEN_A_CONVERSION_UNDER_A_KEY_KNOWN_ONLY_AT_RUNTIME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs that give a function handed on a conversion through an installer reached in a way made
+#: up for the scan, mapped to what Node prints.
+A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_MADE_UP_INSTALLER = {
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Object.getOwnPropertyDescriptor(Object.prototype, "__proto__").set.call(g[0], { toString() { return "d"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        class M { toString() { return "m"; } }
+        Object.getOwnPropertyNames(M.prototype).forEach(function (k) {
+            if (k !== "constructor") { Object.defineProperty(g[0], k, Object.getOwnPropertyDescriptor(M.prototype, k)); }
+        });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'm\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Object.prototype.__lookupSetter__("__proto__").call(g[0], { toString() { return "q"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'q\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        var g = [W];
+        Reflect.get(Object, "defineProperty")(g[0], "toString", { value: function () { return "d"; } });
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'd\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionGivenAConversionThroughAMadeUpInstallerIsConvertedByIt(TestBase):
+    """
+    The scan of conversion installs knows the installers by name and reads them where they are
+    called or stored, so an installer reached another way installs a conversion the fold of a
+    function handed on does not see.
+    """
+
+    @wontfix(
+        'no obfuscated file reaches an installer this way: the __proto__ setter taken from its '
+        'descriptor or through __lookupSetter__, defineProperty taken with Reflect.get, and class '
+        'methods copied by names listed at runtime are made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FUNCTION_GIVEN_A_CONVERSION_THROUGH_A_MADE_UP_INSTALLER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs that give `Function.prototype` a `toString` through a function literal, mapped to
+#: what Node prints.
+A_FUNCTION_PROTOTYPE_REACHED_THROUGH_A_FUNCTION_LITERAL = {
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        Object.getPrototypeOf(function () {}).toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+    inspect.cleandoc('''
+        function W(a) { return a + 1; }
+        (function () {}).__proto__.toString = function () { return "x"; };
+        function f() { return String(W); }
+        console.log(f());
+    '''):
+        'x\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionPrototypeReachedThroughAFunctionLiteralIsSeen(TestBase):
+    """
+    `Function.prototype` given a `toString` through the prototype or `__proto__` of a function
+    literal changes every conversion of a function, and the prototype chain is read as untouched.
+    """
+
+    @wontfix(
+        'no obfuscated file reaches Function.prototype through the prototype or __proto__ of a '
+        'function literal, and the other folds decline the same shape for the same reason'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FUNCTION_PROTOTYPE_REACHED_THROUGH_A_FUNCTION_LITERAL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

@@ -7,6 +7,7 @@ print `tampered` in Node and fail the test that reads what it prints.
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from test import TestBase
@@ -156,6 +157,17 @@ A_CHECK_THE_INPUT_TEXT_DECIDES = {
     guarded(NAME_OF, 'nameOf', 5, NAME_OF_5, 'console.log(guarded({ name: "you" }));\n'): (
         'you\n', str(NAME_OF_5)),
     wrapped(PROGRAM_25): ('ran\n', str(PROGRAM_25)),
+    inspect.cleandoc(r'''
+        var N = function () { return 1; };
+        var saved = [N];
+        var T = function () { const R = new RegExp("\n"); return R.test(N); };
+        if (T()) { console.log("tampered"); } else { console.log("clean"); }
+        console.log(saved.length);
+    '''): ('clean\n1\n', LINE_BREAK_MARKER),
+    guarded(DOUBLE, 'double', 42, DOUBLE_42, 'var keep = [double];\nconsole.log(guarded(21), guarded(4), keep.length);\n'): (
+        '42 8 1\n', str(DOUBLE_42)),
+    guarded(DOUBLE, 'double', 42, DOUBLE_42, 'function use(f) { return [f]; }\nconsole.log(guarded(21), use(double).length);\n'): (
+        '42 1\n', str(DOUBLE_42)),
 }
 
 #: Programs whose hash guard the input text decides while the program may read the match statics

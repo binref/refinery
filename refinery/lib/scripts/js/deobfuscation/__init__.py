@@ -4,6 +4,7 @@ JavaScript AST deobfuscation transforms.
 from __future__ import annotations
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
@@ -118,6 +119,14 @@ def deobfuscate(
     its input keeps that claim. *observer* is called around
     every transformer, which is how a property of the tree is attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
+
+    A conversion of a function that is handed on, with no evidence that the program installs a
+    conversion on it, is folded only once the run has settled: a key a later pass decodes may yet
+    spell such an install. The run keeps a record of every such conversion it refused
+    (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`). When the pipeline has
+    reached its fixpoint with one recorded, every pass that decodes has run to its end, so the
+    record is settled and the pipeline runs a second time over the same models, with the step
+    budget carried over.
     """
     options = DeobfuscationOptions(
         module=module,
@@ -126,10 +135,23 @@ def deobfuscate(
         trust_eval=trust_eval,
         preserve_script_return=preserve_script_return,
     )
+    settlement = ConversionSettlement()
+    models = ModelCache(ast, options, settlement)
+    steps = _pipeline.run(
+        ast,
+        max_steps=max_steps,
+        models=models,
+        options=options,
+        observer=observer,
+    )
+    if not settlement.deferred:
+        return steps
+    settlement.settle()
     return _pipeline.run(
         ast,
         max_steps=max_steps,
-        models=ModelCache(ast, options),
+        initial_steps=steps,
+        models=models,
         options=options,
         observer=observer,
     )

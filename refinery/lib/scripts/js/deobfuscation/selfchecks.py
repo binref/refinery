@@ -22,10 +22,13 @@ breaks and `;,{}().[]` removed, equals a constant. Any rewrite of `G` changes th
 and wraps the whole program in one such guard.
 
 Both checks are decided on the text the parser kept for the function, which is what the engine
-answers for it as long as the program gave the function no property of its own
-(`refinery.lib.scripts.js.analysis.effects.EffectModel.function_object_untouched`) and the
-prototypes it reads are the built-ins. A hash helper is recognized only where it equals its template
-up to the changes other transforms make, so the hash computed here is the one the file computes.
+answers for it as long as the program gave the function no conversion of its own
+(`refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched`) and the
+prototypes it reads are the built-ins. The memo of the newer guard is read off a property of a
+function, so that function has to carry no property of its own at all
+(`refinery.lib.scripts.js.analysis.effects.EffectModel.function_object_untouched`). A hash helper
+is recognized only where it equals its template up to the changes other transforms make, so the
+hash computed here is the one the file computes.
 """
 from __future__ import annotations
 
@@ -652,7 +655,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         value = model.singular_value(binding)
         if not isinstance(value, FUNCTION_NODES) or value.source_text is None or '\n' in value.source_text:
             return []
-        if not effects.function_object_untouched(value, (subject,)) or not effects.read_chain_intact(type(value)):
+        if not effects.function_conversion_untouched(value, (subject,)) or not effects.read_chain_intact(type(value)):
             return []
         declarator = check.parent
         if not isinstance(declarator, JsVariableDeclarator) or not isinstance(declarator.id, JsIdentifier):
@@ -773,7 +776,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         helpers[id(subject_binding)] = subject_binding
         if not all(dominance.binding_established_before(helper, hashed.call) for helper in helpers.values()):
             return None
-        if not effects.function_object_untouched(subject, (hashed.subject,)):
+        if not effects.function_conversion_untouched(subject, (hashed.subject,)):
             return None
         if not effects.read_chain_intact(type(subject)):
             return None
