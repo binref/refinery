@@ -40,7 +40,9 @@ class TestDMGExtractor(TestUnitBase):
         self.assertIn(b'Flare is a free ActionScript decompiler.', files['Flare/flare.html'])
 
     def _test_artificial_sample(self, sha256hash: str):
-        data = self.download_sample(sha256hash)
+        self._test_artificial_data(self.download_sample(sha256hash))
+
+    def _test_artificial_data(self, data: bytearray):
         results = data | self.load() | {'path': bytearray}
         k1 = results['TestVol/kadath1.txt']
         k2 = results['TestVol/kadath2.txt']
@@ -54,6 +56,14 @@ class TestDMGExtractor(TestUnitBase):
 
     def test_sample_lzfse(self):
         self._test_artificial_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+
+    def test_sample_lzfse_whose_chunks_lack_their_end_of_stream_block(self):
+        data = self.download_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+        # Each of the eight LZFSE chunks of this image ends with the end-of-stream block bvx$.
+        # Without it, every block before it still decodes, and the decoder reports them as a
+        # partial result.
+        self.assertEqual(data.count(B'bvx$'), 8)
+        self._test_artificial_data(data.replace(B'bvx$', B'bvx!'))
 
     def test_sample_lzma(self):
         self._test_artificial_sample('482bf764b9bce292cff93914bd831f0bb15b07f44fc668b8924c964a88f55ccd')

@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Generator, NamedTuple
 
+from refinery.lib.exceptions import RefineryPartialResult
 from refinery.lib.fast.lzfse import lzfse_decompress
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.types import buf
@@ -329,52 +330,55 @@ class DiskImage:
         self._data = data
         self._view = memoryview(data)
 
-    def _decompress_chunk(self, chunk: BlkxChunk, data_offset: int = 0) -> tuple[bytes, str | None]:
+    def _decompress_chunk(self, chunk: BlkxChunk, data_offset: int = 0) -> buf:
         ct = chunk.type
-        offset = data_offset + chunk.compressed_offset
-        length = chunk.compressed_length
-        sector_bytes = chunk.sector_count * _SECTOR_SIZE
-        if ct in (_BLK_COMMENT, _BLK_END):
-            return b'', None
         if ct in (_BLK_ZERO, _BLK_IGNORE):
-            return bytes(sector_bytes), None
-        src = self._view[offset:offset + length]
+            return bytes(chunk.sector_count * _SECTOR_SIZE)
+        offset = data_offset + chunk.compressed_offset
+        src = self._view[offset:offset + chunk.compressed_length]
         if ct == _BLK_RAW:
-            result = bytes(src)
-        elif ct == _BLK_ZLIB:
-            result = zlib.decompress(src)
-        elif ct == _BLK_BZ2:
-            result = bz2.decompress(src)
-        elif ct == _BLK_XZ:
+            return bytes(src)
+        if ct == _BLK_ZLIB:
+            return zlib.decompress(src)
+        if ct == _BLK_BZ2:
+            return bz2.decompress(src)
+        if ct == _BLK_XZ:
             import lzma
-            result = lzma.decompress(src)
-        elif ct == _BLK_LZFSE:
-            result = lzfse_decompress(src)
-        elif ct == _BLK_ADC:
-            result = _adc_decompress(src)
-        else:
-            return b'', F'unknown block type 0x{ct:08X}, skipping {length} bytes'
-        if len(result) > sector_bytes:
-            result = result[:sector_bytes]
-        return result, None
+            return lzma.decompress(src)
+        if ct == _BLK_LZFSE:
+            return lzfse_decompress(src)
+        if ct == _BLK_ADC:
+            return _adc_decompress(src)
+        raise ValueError(F'unknown block type 0x{ct:08X}')
 
     def _read_partition(
         self, table: BlkxTable, name: str, data_offset: int = 0,
     ) -> tuple[bytes, list[str]]:
+        """
+        Decompress the chunks of a partition so that every chunk fills exactly the sectors that the
+        table assigns to it. A chunk that fails keeps what it decoded, a chunk that decodes to less
+        data is padded with zeros, a chunk that decodes to more data is cut, and each of these adds
+        a warning.
+        """
         warnings: list[str] = []
         output = MemoryFile()
         for chunk in table.chunks:
             if chunk.type in (_BLK_COMMENT, _BLK_END):
                 continue
+            size = chunk.sector_count * _SECTOR_SIZE
             try:
-                block, warning = self._decompress_chunk(chunk, data_offset)
-            except Exception as e:
-                warnings.append(F'decompression error in {name}: {e}')
-                block = bytes(chunk.sector_count * _SECTOR_SIZE)
+                block = self._decompress_chunk(chunk, data_offset)
+            except Exception as error:
+                warnings.append(F'decompression error in {name}: {error}')
+                block = error.partial if isinstance(error, RefineryPartialResult) else B''
             else:
-                if warning is not None:
-                    warnings.append(warning)
-            output.write(block)
+                if len(block) != size:
+                    warnings.append(
+                        F'a chunk in {name} decompressed to {len(block)} bytes instead of {size}'
+                    )
+            output.write(memoryview(block)[:size])
+            if len(block) < size:
+                output.write(bytes(size - len(block)))
         return output.getvalue(), warnings
 
     def partitions(self) -> Generator[PartitionInfo, None, None]:
