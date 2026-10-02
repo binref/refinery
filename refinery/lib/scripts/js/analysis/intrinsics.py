@@ -111,6 +111,16 @@ PURE_INTRINSIC_ROOTS = (
     frozenset(name.split('.', 1)[0] for name in PURE_INTRINSIC_METHODS) | PURE_GLOBAL_FUNCTIONS
 )
 
+
+class _GlobalObject:
+    """
+    Sentinel denoting the global object as the value an expression evaluates to, distinct from a named
+    intrinsic root and from an unresolved value.
+    """
+
+
+GLOBAL_OBJECT = _GlobalObject()
+
 _DENOTED_ROOT_DEPTH_LIMIT = 16
 
 _CALLEE_DEPTH_LIMIT = 4

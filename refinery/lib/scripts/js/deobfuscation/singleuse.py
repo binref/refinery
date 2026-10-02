@@ -14,6 +14,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     is_direct_eval_call,
     own_arguments_binding,
+    references_new_target,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -23,7 +24,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     nothing_still_names,
     preserve_script_end_value,
     reaches_script_completion,
-    references_new_target,
     references_receiver_this,
     sanitize_inlined_body,
     walk_scope,

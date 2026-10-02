@@ -1954,3 +1954,55 @@ class TestWhereABareNameReachesTheHost(TestBase):
             this = next(node for node in ast.walk() if isinstance(node, JsThisExpression))
             verdicts[source] = model.bare_name_reaches_the_host('globalThis', this)
         self.assertEqual(verdicts, WHETHER_A_GLOBAL_THIS_AT_THE_THIS_REACHES_THE_HOST)
+
+
+class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
+    """
+    `SemanticModel.values_through_calls` for the parameter `p`: the arguments of every call of its
+    function that the text shows, and its own writes. The list is complete only when no call of the
+    function can come another way, and a value a shown call passes is listed either way.
+    """
+
+    @staticmethod
+    def _received(source: str) -> tuple[list[str], bool]:
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        parameter = next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name == 'p' and model.binding_of(node) is not None
+        )
+        values, complete = model.values_through_calls(model.binding_of(parameter))
+        return sorted(JsSynthesizer().convert(value) for value in values), complete
+
+    def test_every_call_shown_gives_the_complete_list_of_what_the_calls_pass(self):
+        for label, (source, expected) in {
+            'two calls by name'              : ('function f(p) { return p; } f(1); f(2);', ['1', '2']),
+            'a write of its own'             : ('function f(p) { p = 2; return p; } f(1);', ['1', '2']),
+            'a call where it is written'     : ('(function (p) { return p; })(1);', ['1']),
+            'a call through its own name'    : ('var f = function self(p, q) { if (!q) self(2, 1); return p; }; f(1);', ['1', '2']),
+            'construction'                   : ('function f(p) { this.p = p; } new f(1); new f(2);', ['1', '2']),
+            'a test of the name'             : ('function f(p) { return p; } if (typeof f === "function") f(1);', ['1']),
+        }.items():
+            with self.subTest(label):
+                self.assertEqual(self._received(source), (expected, True))
+
+    def test_a_call_that_may_come_another_way_leaves_the_list_incomplete_with_the_shown_values(self):
+        for label, source in {
+            'call'                           : 'function f(p) { return p; } f(1); f.call(null, 2);',
+            'a callback'                     : 'function f(p) { return p; } f(1); [2].forEach(f);',
+            'a sequence'                     : 'function f(p) { return p; } f(1); (0, f)(2);',
+            'an object method'               : 'function f(p) { return p; } f(1); var o = { f: f }; o.f(2);',
+            'a spread'                       : 'function f(p) { return p; } f(1); f(...[2]);',
+            'a tagged template'              : 'function f(p) { return p; } f(1); f`${2}`;',
+            'Reflect.apply'                  : 'function f(p) { return p; } f(1); Reflect.apply(f, null, [2]);',
+            'a method of the prototype'      : 'function f(p) { return p; } f(1); Object.prototype.f = f; [].f(2);',
+            'arguments.callee'               : 'function f(p) { if (p === 1) arguments.callee(2); return p; } f(1);',
+            'caller'                         : 'function f(p) { if (p === 1) g(); return p; } function g() { g.caller(2); } f(1);',
+            'another value under the name'   : 'var f = function (p) { return p; }; f(1); f = function (q) { return q; };',
+            'a missing argument'             : 'function f(p) { return p; } f(1); f();',
+            'reflection'                     : 'function f(p) { return p; } f(1); eval(s);',
+        }.items():
+            with self.subTest(label):
+                values, complete = self._received(source)
+                self.assertFalse(complete)
+                self.assertIn('1', values)

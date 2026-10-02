@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from test import TestBase
 
+from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.effects import (
     GLOBAL_OBJECT,
     EffectModel,
@@ -2575,6 +2576,103 @@ class TestAFunctionObjectReachedThroughAName(TestBase):
 
     def test_a_method_that_is_only_converted_is_left_in_place(self):
         self.assertTrue(self._untouched('var o = { m: function self() { return 1; } }; console.log(String(o.m));'))
+
+
+class TestAFunctionHandedOnConvertsToItsTextUnlessAnInstallReachesIt(TestBase):
+    """
+    `EffectModel.function_conversion_untouched` for the function `W` a program writes first and keeps
+    in an array. Converting `W` answers its written text unless the program gives it a conversion
+    method of its own or a new prototype, which a function handed on can receive from code that never
+    names it. The answer rests on finding no such install only once the run has settled, since a key
+    the run decodes later may yet spell one.
+    """
+
+    PREFIX = 'function W(a) { return a + 1; } var g = [W];\n'
+    SHOW = '\nconsole.log(g.length, String(W));'
+    HELPER = 'function setT(o) { o.toString = function () { return "x"; }; } setT({});\n'
+
+    @staticmethod
+    def _untouched(source: str, settlement: ConversionSettlement | None) -> bool:
+        ast = JsParser(source).parse()
+        function = next(node for node in ast.walk_in_order() if isinstance(node, JsFunctionDeclaration))
+        return build_effects(build_semantic_model(ast), settlement=settlement).function_conversion_untouched(function)
+
+    @staticmethod
+    def _settled() -> ConversionSettlement:
+        settlement = ConversionSettlement()
+        settlement.settle()
+        return settlement
+
+    def test_a_function_only_handed_on_converts_to_its_text_once_the_run_has_settled(self):
+        self.assertTrue(self._untouched(self.PREFIX + self.SHOW, self._settled()))
+
+    def test_a_function_only_handed_on_is_refused_and_deferred_while_the_run_is_open(self):
+        settlement = ConversionSettlement()
+        self.assertFalse(self._untouched(self.PREFIX + self.SHOW, settlement))
+        self.assertTrue(settlement.deferred)
+
+    def test_a_function_only_handed_on_is_refused_without_a_run_record(self):
+        self.assertFalse(self._untouched(self.PREFIX + self.SHOW, None))
+
+    def test_a_function_left_in_place_converts_to_its_text_without_waiting(self):
+        source = 'function W(a) { return a + 1; } console.log(String(W));'
+        settlement = ConversionSettlement()
+        self.assertTrue(self._untouched(source, None))
+        self.assertTrue(self._untouched(source, settlement))
+        self.assertFalse(settlement.deferred)
+
+    def test_a_function_handed_on_is_refused_where_an_install_may_reach_it(self):
+        x = 'function () { return "x"; }'
+        for label, install in {
+            'a dotted write'                : F'g[0].toString = {x};',
+            'a quoted write'                : F'g[0]["toString"] = {x};',
+            'valueOf'                       : 'g[0].valueOf = function () { return 1; };',
+            'a new prototype'               : 'g[0].__proto__ = {};',
+            'Symbol.toPrimitive'            : F'g[0][Symbol.toPrimitive] = {x};',
+            'a key held by a name'          : F'var k = "toString"; g[0][k] = {x};',
+            'a key handed to a helper'      : F'function def(o, k, v) {{ o[k] = v; }} def(g[0], "toString", {x});',
+            'defineProperty'                : F'Object.defineProperty(g[0], "toString", {{ value: {x} }});',
+            'defineProperties'              : F'Object.defineProperties(g[0], {{ toString: {{ value: {x} }} }});',
+            'assign'                        : F'Object.assign(g[0], {{ toString: {x} }});',
+            'setPrototypeOf'                : 'Object.setPrototypeOf(g[0], {});',
+            'Reflect.set'                   : F'Reflect.set(g[0], "toString", {x});',
+            '__defineGetter__'              : F'g[0].__defineGetter__("toString", function () {{ return {x}; }});',
+            'an installer taken as a value' : F'var d = [Object.defineProperty][0]; d(g[0], "toString", {{ value: {x} }});',
+            'Reflect taken as a value'      : F'var R = Reflect; R.set(g[0], "toString", {x});',
+            'a copy of an own toString'     : F'var m = {{ toString: {x} }}; for (var k in m) g[0][k] = m[k];',
+            'a reflection surface'          : 'eval(s);',
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched(self.PREFIX + install + self.SHOW, self._settled()))
+
+    def test_a_function_handed_to_a_helper_that_installs_only_on_what_its_calls_pass_converts_to_its_text(self):
+        self.assertTrue(self._untouched(self.PREFIX + self.HELPER + self.SHOW, self._settled()))
+
+    def test_a_function_handed_on_is_refused_where_that_helper_may_be_called_another_way(self):
+        for label, call in {
+            'call'             : 'setT.call(null, g[0]);',
+            'a callback'       : 'g.forEach(setT);',
+            'a sequence'       : '(0, setT)(g[0]);',
+            'an object method' : 'var api = { setT: setT }; api.setT(g[0]);',
+        }.items():
+            with self.subTest(label):
+                self.assertFalse(self._untouched(self.PREFIX + self.HELPER + call + self.SHOW, self._settled()))
+
+    def test_a_function_handed_to_a_helper_through_arguments_callee_is_refused(self):
+        helper = (
+            'function setT(o, again) {'
+            ' if (!again) { arguments.callee(g[0], true); }'
+            ' o.toString = function () { return "x"; };'
+            ' } setT({});\n'
+        )
+        self.assertFalse(self._untouched(self.PREFIX + helper + self.SHOW, self._settled()))
+
+    def test_a_function_of_another_tree_is_refused_unless_left_in_place(self):
+        ast = JsParser(self.PREFIX + self.SHOW).parse()
+        effects = build_effects(build_semantic_model(ast), settlement=self._settled())
+        other = JsParser('function V(a) { return a; } var h = [V]; console.log(h.length, String(V));').parse()
+        function = next(node for node in other.walk() if isinstance(node, JsFunctionDeclaration))
+        self.assertFalse(effects.function_conversion_untouched(function))
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:

@@ -1853,23 +1853,6 @@ def sanitize_inlined_body(stmts: list[Statement]) -> list[Statement] | None:
     return stmts[:-1]
 
 
-def references_new_target(root: Node) -> bool:
-    """
-    Whether *root* reads the `new.target` meta-property, which the parser models as a member access
-    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
-    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
-    `new.target` to the caller's, so a body that reads it cannot be inlined.
-    """
-    for node in root.walk():
-        if (
-            isinstance(node, JsMemberExpression)
-            and isinstance(node.object, JsIdentifier)
-            and node.object.name == 'new'
-        ):
-            return True
-    return False
-
-
 def hoist_path_is_clear(
     names: set[str],
     site_scope: Scope,

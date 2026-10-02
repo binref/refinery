@@ -93,6 +93,7 @@ from refinery.lib.scripts.js.model import (
     JsSwitchCase,
     JsSwitchStatement,
     JsTaggedTemplateExpression,
+    JsTemplateLiteral,
     JsThisExpression,
     JsUnaryExpression,
     JsUpdateExpression,
@@ -104,7 +105,9 @@ from refinery.lib.scripts.js.model import (
     file_ended_inside,
     names_a_property,
     static_property_key,
+    static_string,
     strip_parens,
+    value_is_discarded,
 )
 from refinery.lib.scripts.js.numbers import canonical_array_index, exact_integer
 from refinery.lib.scripts.js.strict import (
@@ -1307,6 +1310,114 @@ def references_own_arguments(fn: Node) -> bool:
     )
 
 
+def arguments_name_their_function(function: Node) -> bool:
+    """
+    Whether the body of *function* may reach the function through its own `arguments`, whose
+    `callee` is the function in sloppy mode: any use of it other than an index, its `length`, a
+    spread, or the second argument of `apply`.
+    """
+    if isinstance(function, JsArrowFunctionExpression):
+        return False
+    for node in walk_receiver_scope(function):
+        if not isinstance(node, JsIdentifier) or node.name != 'arguments' or not is_use_position(node):
+            continue
+        parent = enclosing_operator(node)
+        if isinstance(parent, JsSpreadElement):
+            continue
+        if (
+            isinstance(parent, JsMemberExpression)
+            and strip_parens(parent.object) is node
+            and not is_member_write_target(parent)
+        ):
+            if parent.computed and isinstance(strip_parens(parent.property), JsNumericLiteral):
+                continue
+            if static_property_key(parent) == 'length':
+                continue
+        if (
+            isinstance(parent, JsCallExpression)
+            and len(parent.arguments) == 2
+            and strip_parens(parent.arguments[1]) is node
+        ):
+            callee = strip_parens(parent.callee)
+            if isinstance(callee, JsMemberExpression) and static_property_key(callee) == 'apply':
+                continue
+        return True
+    return False
+
+
+def references_new_target(root: Node) -> bool:
+    """
+    Whether *root* reads the `new.target` meta-property, which the parser models as a member access
+    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
+    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
+    `new.target` to the caller's, so a body that reads it cannot be inlined.
+    """
+    for node in root.walk():
+        if (
+            isinstance(node, JsMemberExpression)
+            and isinstance(node.object, JsIdentifier)
+            and node.object.name == 'new'
+        ):
+            return True
+    return False
+
+
+def _spells_caller_at(node: Node) -> bool:
+    """
+    Whether *node* spells the name `caller`, in the sense of `SemanticModel.spells_caller`.
+    """
+    if isinstance(node, JsIdentifier):
+        return node.name == 'caller'
+    if isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
+        return static_string(node) == 'caller'
+    if isinstance(node, JsMemberExpression) and node.computed:
+        return static_property_key(node) == 'caller'
+    return False
+
+
+_TESTED_FORMS = (
+    JsIfStatement,
+    JsWhileStatement,
+    JsDoWhileStatement,
+    JsForStatement,
+    JsConditionalExpression,
+)
+
+
+def read_is_only_tested(node: Node) -> bool:
+    """
+    Whether the value read at *node* is only tested: its type asked, negated, compared for equality,
+    or used as the condition of a branch or a loop or as the left of `&&`, which is how a program
+    detects a feature without taking it. A `&&` or `||` whose own value is tested in turn passes the
+    test on to its operands.
+    """
+    parent = enclosing_operator(node)
+    if isinstance(parent, JsUnaryExpression):
+        return parent.operator in ('typeof', '!', 'void')
+    if isinstance(parent, JsBinaryExpression):
+        return parent.operator in ('===', '!==', '==', '!=')
+    if isinstance(parent, JsLogicalExpression):
+        if parent.operator == '&&' and strip_parens(parent.left) is node:
+            return True
+        return read_is_only_tested(parent)
+    if isinstance(parent, _TESTED_FORMS):
+        return strip_parens(parent.test) is node
+    return False
+
+
+def _parameter_owner(binding: Binding | None) -> JsFunctionNode | None:
+    """
+    The function whose parameter list declares *binding* as a plain name, or `None`.
+    """
+    if binding is None or not binding.declarations:
+        return None
+    declaration = binding.declarations[0]
+    parent = declaration.parent
+    if isinstance(parent, FUNCTION_NODES) and any(param is declaration for param in parent.params):
+        return parent
+    return None
+
+
 def has_mapped_arguments(fn: Node, *, strict: bool) -> bool:
     """
     Whether *fn* observes an `arguments` object whose elements alias its parameters. Aliasing holds for
@@ -1926,6 +2037,8 @@ class SemanticModel:
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
+        self._spells_caller: bool | None = None
+        self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
         self._module_may_be_reentered = False
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
@@ -2346,6 +2459,29 @@ class SemanticModel:
                 return self.resolve(target)
         return None
 
+    def name_holding(self, read: Node) -> Binding | None:
+        """
+        The one name the value read at *read* is stored into, when *read* is the whole value a
+        declarator or an assignment whose own value is discarded stores into a name. An assignment
+        whose value is used hands it on as well, so its target is not the one name holding the
+        value: `f(x = ref)` and `var y = (x = ref)`.
+        """
+        store = enclosing_operator(read)
+        if isinstance(store, JsVariableDeclarator):
+            if strip_parens(store.init) is not read or not isinstance(store.id, JsIdentifier):
+                return None
+            return self.binding_of(store.id)
+        if not isinstance(store, JsAssignmentExpression):
+            return None
+        if store.operator != '=' or strip_parens(store.right) is not read:
+            return None
+        if not value_is_discarded(store):
+            return None
+        target = strip_parens(store.left)
+        if not isinstance(target, JsIdentifier):
+            return None
+        return self.resolve(target)
+
     def binding_pinned_to(self, binding: Binding, function: Node) -> bool:
         """
         Whether *binding* holds *function* as its one assigned value, so every read of it outside the
@@ -2427,6 +2563,107 @@ class SemanticModel:
         """
         channels, complete = self._binding_value_channels(binding, arguments)
         return [value for _, value in channels], complete
+
+    def values_through_calls(self, binding: Binding | None) -> tuple[list[Node], bool]:
+        """
+        `binding_values`, with a parameter read through the calls of its function the text shows:
+        its values are its own writes and the arguments each such call passes (`values_at_call`). A
+        call shown is a call or `new` directly through a name holding the function, its own name
+        included, or the call of a function written as the callee. A value one of these calls
+        passes is listed whatever other calls exist.
+
+        The list is complete only when no call can come another way: every read of those names is
+        such a call or only tested (`read_is_only_tested`); each name holds the function alone and
+        is neither exported nor reached through a handed object or by reflection; the body uses its
+        own `arguments` only by index, length, spread or in `apply`
+        (`arguments_name_their_function`); and the program spells no `caller` (`spells_caller`).
+        Every consumer reads a parameter through here, so none can forget a way a call comes.
+        Memoized per binding.
+        """
+        function = _parameter_owner(binding)
+        if binding is None or function is None:
+            return self.binding_values(binding)
+        cached = self._values_through_calls.get(binding)
+        if cached is not None:
+            return cached
+        values, _ = self.binding_values(binding)
+        listed = {id(value) for value in values}
+        complete = self._every_call_visible(function)
+        for call in self._visible_calls(function):
+            mapping = self._argument_parameter_map(call, function)
+            if mapping is None:
+                complete = False
+                continue
+            received, received_all = self.values_at_call(binding, mapping)
+            complete = complete and received_all
+            for value in received:
+                if id(value) not in listed:
+                    listed.add(id(value))
+                    values.append(value)
+        cached = self._values_through_calls[binding] = values, complete
+        return cached
+
+    def _names_calling(self, function: JsFunctionNode) -> list[Binding | None]:
+        """
+        The names *function* is called through: its declared name, or the one name a declarator or
+        an assignment statement stores it into (`name_holding`), and a function expression's own
+        name. `None` stands for a holder that is no name. A function written as the callee of a
+        call is held by none.
+        """
+        names: list[Binding | None] = []
+        if isinstance(function, JsFunctionDeclaration):
+            names.append(self.binding_of(function.id) if isinstance(function.id, JsIdentifier) else None)
+        else:
+            parent = enclosing_operator(function)
+            if not isinstance(parent, (JsCallExpression, JsNewExpression)) or strip_parens(parent.callee) is not function:
+                names.append(self.name_holding(function))
+        if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
+            names.append(self.binding_of(function.id))
+        return names
+
+    def _visible_calls(self, function: JsFunctionNode) -> list[JsCallExpression | JsNewExpression]:
+        """
+        The calls of *function* the text shows, in the sense of `values_through_calls`.
+        """
+        calls: list[JsCallExpression | JsNewExpression] = []
+        parent = enclosing_operator(function)
+        if isinstance(parent, (JsCallExpression, JsNewExpression)) and strip_parens(parent.callee) is function:
+            calls.append(parent)
+        for name in self._names_calling(function):
+            if name is None:
+                continue
+            for read in name.reads:
+                call = enclosing_operator(read)
+                if isinstance(call, (JsCallExpression, JsNewExpression)) and strip_parens(call.callee) is read:
+                    calls.append(call)
+        return calls
+
+    def _every_call_visible(self, function: JsFunctionNode) -> bool:
+        """
+        Whether no call of *function* can come another way than `_visible_calls`, in the sense of
+        `values_through_calls`.
+        """
+        if self.spells_caller() or arguments_name_their_function(function):
+            return False
+        for name in self._names_calling(function):
+            if name is None:
+                return False
+            if (
+                name.exported
+                or name.written_at_entry
+                or name.reachable_through_a_handed_object
+                or self.reflection_can_reach(name)
+            ):
+                return False
+            if name.kind is not BindingKind.FUNC_NAME and strip_parens(self.singular_value(name)) is not function:
+                return False
+            for read in name.reads:
+                call = enclosing_operator(read)
+                if isinstance(call, (JsCallExpression, JsNewExpression)) and strip_parens(call.callee) is read:
+                    continue
+                if not read_is_only_tested(read):
+                    return False
+        return True
 
     def _binding_value_channels(
         self,
@@ -2607,6 +2844,16 @@ class SemanticModel:
         self._ensure_reflection_detected()
         assert self._reflection_surface is not None
         return self._reflection_surface
+
+    def spells_caller(self) -> bool:
+        """
+        Whether the text spells the name `caller` anywhere: as a name, a property key or a string. In
+        sloppy mode `g.caller` is whichever function called `g`, so a program spelling it can reach
+        every function that calls another one without naming it. Memoized.
+        """
+        if self._spells_caller is None:
+            self._spells_caller = any(_spells_caller_at(node) for node in self.root.walk())
+        return self._spells_caller
 
     def has_opaque_global_write(self) -> bool:
         """

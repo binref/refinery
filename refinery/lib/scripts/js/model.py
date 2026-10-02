@@ -961,6 +961,16 @@ ACCESSOR_INSTALL_METHODS = frozenset({
     '__defineSetter__',
 })
 
+CONVERSION_INSTALL_METHODS = ACCESSOR_INSTALL_METHODS | frozenset({
+    'assign',
+    'setPrototypeOf',
+})
+"""
+The methods that can give an object a property of its own or a new prototype under a key they are
+handed: the accessor installers, `Object.assign`, which copies the own properties of its sources,
+and `Object.setPrototypeOf`.
+"""
+
 
 def static_string(node: Node | None) -> str | None:
     """

@@ -46,9 +46,15 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Sequence
 
-from refinery.lib.scripts import Expression, Node
+from refinery.lib.scripts import Expression, Node, tree_root
+from refinery.lib.scripts.js.analysis.conversions import (
+    RECEIVER_INSTALL_METHODS,
+    ConversionInstalls,
+    ConversionSettlement,
+)
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.intrinsics import (
+    GLOBAL_OBJECT,
     INHERITED_CHAIN_ROOTS,
     KEYED_WRITE_ROOTS,
     PROTOTYPE_OWNERS,
@@ -57,11 +63,13 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     PURE_INTRINSIC_ROOTS,
     SPECIES_KEYS,
     IntrinsicWrites,
+    _GlobalObject,
     build_intrinsic_writes,
     unambiguous_callee,
     unambiguous_function,
 )
 from refinery.lib.scripts.js.analysis.model import (
+    _TESTED_FORMS,
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
     Binding,
@@ -70,13 +78,12 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     _property_key_name,
+    arguments_name_their_function,
     container_reference_role,
     enclosing_function,
     enclosing_operator,
     is_member_write_target,
-    is_use_position,
     reference_role,
-    walk_receiver_scope,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -87,12 +94,9 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
-    JsDoWhileStatement,
-    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
-    JsIfStatement,
     JsImportExpression,
     JsLogicalExpression,
     JsMemberExpression,
@@ -115,15 +119,12 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclarator,
-    JsWhileStatement,
     JsYieldExpression,
     accessor_install_method,
     is_generator_function,
     object_member_access_runs_accessor,
     static_property_key,
-    static_string,
     strip_parens,
-    value_is_discarded,
     wraps_return,
 )
 
@@ -254,67 +255,20 @@ through before it refuses. The limit bounds a function handed around a cycle of 
 
 _UNARY_OPERATORS_READING_A_FUNCTION = frozenset({'typeof', '!', 'void', '+', '-', '~'})
 
-_TESTED_FORMS = (
-    JsIfStatement,
-    JsWhileStatement,
-    JsDoWhileStatement,
-    JsForStatement,
-    JsConditionalExpression,
-)
 
-
-def _spells_caller(root: Node) -> bool:
+class FunctionUse(enum.IntEnum):
     """
-    Whether the text spells the name `caller` anywhere: as a name, a property key or a string. In
-    sloppy mode `g.caller` is whichever function called `g`, so a program spelling it can reach
-    every function that calls another one without naming it.
+    What a use of a function object may do to the function, from least to most: `IN_PLACE` leaves
+    it where it is, in the sense of `EffectModel.function_object_untouched`; `TOUCHED` may hand it
+    to code that could give it a property of its own, or gives it one under a key other than a
+    conversion key; `CONVERSION` may give it a `toString`, `valueOf` or `Symbol.toPrimitive` of its
+    own, or a new prototype: a write under a conversion key or under a key known only at runtime,
+    an installer call with the function as its target whose key may name a conversion, or a call
+    through a key known only at runtime that receives the function.
     """
-    for node in root.walk():
-        if isinstance(node, JsIdentifier):
-            if node.name == 'caller':
-                return True
-        elif isinstance(node, (JsStringLiteral, JsTemplateLiteral)):
-            if static_string(node) == 'caller':
-                return True
-        elif isinstance(node, JsMemberExpression) and node.computed:
-            if static_property_key(node) == 'caller':
-                return True
-    return False
-
-
-def _arguments_name_their_function(function: Node) -> bool:
-    """
-    Whether the body of *function* may reach the function through its own `arguments`, whose
-    `callee` is the function in sloppy mode: any use of it other than an index, its `length`, a
-    spread, or the second argument of `apply`.
-    """
-    if isinstance(function, JsArrowFunctionExpression):
-        return False
-    for node in walk_receiver_scope(function):
-        if not isinstance(node, JsIdentifier) or node.name != 'arguments' or not is_use_position(node):
-            continue
-        parent = enclosing_operator(node)
-        if isinstance(parent, JsSpreadElement):
-            continue
-        if (
-            isinstance(parent, JsMemberExpression)
-            and strip_parens(parent.object) is node
-            and not is_member_write_target(parent)
-        ):
-            if parent.computed and isinstance(strip_parens(parent.property), JsNumericLiteral):
-                continue
-            if static_property_key(parent) == 'length':
-                continue
-        if (
-            isinstance(parent, JsCallExpression)
-            and len(parent.arguments) == 2
-            and strip_parens(parent.arguments[1]) is node
-        ):
-            callee = strip_parens(parent.callee)
-            if isinstance(callee, JsMemberExpression) and static_property_key(callee) == 'apply':
-                continue
-        return True
-    return False
+    IN_PLACE = 0
+    TOUCHED = 1
+    CONVERSION = 2
 
 
 _INTRINSIC_CHAIN_ROOTS = frozenset({'Object', 'Function'})
@@ -370,16 +324,6 @@ class _PureCall:
 
 
 _PURE = _PureCall()
-
-
-class _GlobalObject:
-    """
-    Sentinel denoting the global object as the value an expression evaluates to, distinct from a named
-    intrinsic root and from an unresolved value.
-    """
-
-
-GLOBAL_OBJECT = _GlobalObject()
 
 
 @dataclass
@@ -986,6 +930,7 @@ class EffectModel:
         model: SemanticModel,
         dominance: DominanceModel | None = None,
         intrinsic_writes: IntrinsicWrites | None = None,
+        settlement: ConversionSettlement | None = None,
     ):
         self.model = model
         self._dominance = dominance
@@ -1003,11 +948,12 @@ class EffectModel:
         self._uses_arguments_cache: dict[int, bool] = {}
         self._mutators_escape_cache: dict[int, bool] = {}
         self._some_mutator_cache: dict[int, bool] = {}
-        self._spells_caller: bool | None = None
-        self._function_untouched_cache: dict[tuple[Node, frozenset[Node]], bool] = {}
-        self._name_in_place_cache: dict[tuple[Binding, int, frozenset[Node]], bool] = {}
+        self._settlement = settlement
+        self._function_use_cache: dict[tuple[Node, frozenset[Node]], FunctionUse] = {}
+        self._name_use_cache: dict[tuple[Binding, int, frozenset[Node]], FunctionUse] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
+        self.conversion_installs = ConversionInstalls(self)
 
     def summary_of(self, func: Node) -> EffectSummary:
         """
@@ -1409,7 +1355,7 @@ class EffectModel:
         unsafe, an assignment that is no statement of its own among them: `var x = (y = ref)` stores
         the container in `x` as well as in `y`.
         """
-        alias = self._alias_holding(ref)
+        alias = self.model.name_holding(ref)
         if alias is not None:
             return self._immutable_container(alias, visiting, member_calls_mutate)
         return self._argument_keeps_container(ref, visiting)
@@ -2299,9 +2245,9 @@ class EffectModel:
     def function_object_untouched(self, function: Node, exempt: Sequence[Node] = ()) -> bool:
         """
         Whether no code but the reads in *exempt* can give the function object *function* a
-        property of its own, or hand it to code that could. A conversion of the function asks this
-        beside the prototype chain, and so does a fold deciding what its text is:
-        `W.toString = f` changes what `String(W)` answers without touching any prototype.
+        property of its own, or hand it to code that could: whether every use of it is
+        `FunctionUse.IN_PLACE`. A fold deciding whether the object may carry a property it reads
+        asks this; a conversion asks `function_conversion_untouched`.
 
         The object is reached only through the names holding it — its declaring name, the one name
         a declarator or an assignment statement stores it into, a named expression's own name — or
@@ -2321,61 +2267,109 @@ class EffectModel:
         `arguments` only by index, length, spread or as the second argument of `apply`, since
         `arguments.callee` is the function. A program that spells `caller` anywhere is refused:
         `g.caller` is whichever function called `g`.
-
-        The answer is fixed for the model's lifetime, so it is memoized per function and set of
-        exempt reads: every conversion of a function the interpreter folds asks it again.
         """
-        spared = frozenset(exempt)
-        key = (function, spared)
-        cached = self._function_untouched_cache.get(key)
-        if cached is None:
-            cached = self._function_untouched_cache[key] = self._function_object_untouched(function, spared)
-        return cached
+        return self._function_use(function, frozenset(exempt)) is FunctionUse.IN_PLACE
 
-    def _function_object_untouched(self, function: Node, spared: frozenset[Node]) -> bool:
-        if self._spells_caller is None:
-            self._spells_caller = _spells_caller(self.model.root)
-        if self._spells_caller or _arguments_name_their_function(function):
+    def function_conversion_untouched(self, function: Node, exempt: Sequence[Node] = ()) -> bool:
+        """
+        Whether no code but the reads in *exempt* can give the function object *function* a
+        `toString`, `valueOf` or `Symbol.toPrimitive` of its own, or a new prototype, so that
+        converting it answers the text it was written with as far as the function itself goes. A
+        function `function_object_untouched` accepts converts so, and a use that may install a
+        conversion (`FunctionUse.CONVERSION`) refuses.
+
+        A function that is only handed on converts so when no install the program makes can reach
+        it (`refinery.lib.scripts.js.analysis.conversions.ConversionInstalls`), but this is asked
+        only once the run has settled, since a key the run decodes later may yet spell an install.
+        Until then the question is refused and the run record notes it
+        (`refinery.lib.scripts.js.analysis.conversions.ConversionSettlement`); a model built without
+        a record refuses it and notes nothing. A function of another tree, such as one in the body
+        of a `new Function` the interpreter parsed, is refused: the scan never read that tree.
+
+        The run record is read on every question; only the grade and the scan are remembered.
+        """
+        use = self._function_use(function, frozenset(exempt))
+        if use is FunctionUse.IN_PLACE:
+            return True
+        if use is FunctionUse.CONVERSION:
             return False
+        if tree_root(function) is not self.model.root:
+            return False
+        if self.conversion_installs.may_reach(function):
+            return False
+        settlement = self._settlement
+        if settlement is None:
+            return False
+        if settlement.settled:
+            return True
+        settlement.defer()
+        return False
+
+    def _function_use(self, function: Node, spared: frozenset[Node]) -> FunctionUse:
+        """
+        The most a use of the function object *function* may do to it, the reads in *spared*
+        aside. The answer is fixed for the model's lifetime, so it is memoized per function and set
+        of spared reads: every conversion of a function the interpreter folds asks it again.
+        """
+        key = (function, spared)
+        use = self._function_use_cache.get(key)
+        if use is None:
+            use = self._function_use_cache[key] = self._compute_function_use(function, spared)
+        return use
+
+    def _compute_function_use(self, function: Node, spared: frozenset[Node]) -> FunctionUse:
+        use = FunctionUse.IN_PLACE
+        if self.model.spells_caller() or arguments_name_their_function(function):
+            use = FunctionUse.TOUCHED
         if isinstance(function, JsFunctionExpression) and isinstance(function.id, JsIdentifier):
             own = self.model.binding_of(function.id)
-            if own is not None and not self._name_leaves_function_in_place(own, spared, 0):
-                return False
+            if own is not None:
+                use = max(use, self._name_use(own, spared, 0))
         if isinstance(function, JsFunctionDeclaration):
             binding = self.model.binding_of(function.id) if isinstance(function.id, JsIdentifier) else None
-            return binding is not None and self._name_leaves_function_in_place(binding, spared, 0)
-        method = self._method_of_a_read_only_object(function)
+            if binding is None:
+                return max(use, FunctionUse.TOUCHED)
+            return max(use, self._name_use(binding, spared, 0))
+        method = self._method_use(function)
         if method is not None:
-            return method
-        name = self._alias_holding(function)
+            return max(use, method)
+        name = self.model.name_holding(function)
         if name is not None:
-            return self._name_leaves_function_in_place(name, spared, 0)
-        return self._leaves_function_in_place(function, 0)
+            return max(use, self._name_use(name, spared, 0))
+        return max(use, self._function_read_use(function, 0))
 
-    def _name_leaves_function_in_place(self, name: Binding, spared: frozenset[Node], depth: int) -> bool:
+    def _name_use(self, name: Binding, spared: frozenset[Node], depth: int) -> FunctionUse:
         """
-        Whether every read of the name *name*, which may hold a function object, leaves that object
-        in place, the reads in *spared* aside. Memoized: a parameter is asked once for every read
-        that hands a function to it.
+        The most a read of the name *name*, which may hold a function object, may do to that object,
+        the reads in *spared* aside; a name code can reach without a read is `FunctionUse.TOUCHED`
+        at least. Memoized: a parameter is asked once for every read that hands a function to it.
         """
         key = (name, depth, spared)
-        cached = self._name_in_place_cache.get(key)
-        if cached is None:
-            cached = self._name_in_place_cache[key] = (
-                not name.exported
-                and not name.written_at_entry
-                and not name.reachable_through_a_handed_object
-                and not self.model.reflection_can_reach(name)
-                and all(read in spared or self._leaves_function_in_place(read, depth) for read in name.reads)
-            )
-        return cached
+        use = self._name_use_cache.get(key)
+        if use is None:
+            use = FunctionUse.IN_PLACE
+            if (
+                name.exported
+                or name.written_at_entry
+                or name.reachable_through_a_handed_object
+                or self.model.reflection_can_reach(name)
+            ):
+                use = FunctionUse.TOUCHED
+            for read in name.reads:
+                if read in spared:
+                    continue
+                use = max(use, self._function_read_use(read, depth))
+                if use is FunctionUse.CONVERSION:
+                    break
+            self._name_use_cache[key] = use
+        return use
 
-    def _method_of_a_read_only_object(self, function: Node) -> bool | None:
+    def _method_use(self, function: Node) -> FunctionUse | None:
         """
-        `function_object_untouched` for a function written as the value of a property of an object
-        literal, or `None` for a function written anywhere else. The literal has to be the one value
-        of a name that holds it as a read-only container, and every read of that name has to take a
-        key off it; a read that may take the function's key has to leave the function in place.
+        `_function_use` for a function written as the value of a property of an object literal, or
+        `None` for a function written anywhere else. The literal has to be the one value of a name
+        that holds it as a read-only container, and every read of that name has to take a key off
+        it; a read that may take the function's key is a read of the function.
         """
         parent = enclosing_operator(function)
         if not isinstance(parent, JsProperty) or strip_parens(parent.value) is not function:
@@ -2383,115 +2377,149 @@ class EffectModel:
         key = _property_key_name(parent)
         holder = parent.parent
         if parent.kind is not JsPropertyKind.INIT or key is None or not isinstance(holder, JsObjectExpression):
-            return False
+            return FunctionUse.TOUCHED
         declarator = enclosing_operator(holder)
         if (
             not isinstance(declarator, JsVariableDeclarator)
             or strip_parens(declarator.init) is not holder
             or not isinstance(declarator.id, JsIdentifier)
         ):
-            return False
+            return FunctionUse.TOUCHED
         binding = self.model.binding_of(declarator.id)
         if binding is None or strip_parens(self.model.singular_value(binding)) is not holder:
-            return False
+            return FunctionUse.TOUCHED
         if not self.binding_is_immutable_container(binding) or self.model.reflection_can_reach(binding):
-            return False
+            return FunctionUse.TOUCHED
+        use = FunctionUse.IN_PLACE
         for read in binding.reads:
             member = enclosing_operator(read)
             if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not read:
-                return False
+                use = max(use, FunctionUse.TOUCHED)
+                continue
             taken = static_property_key(member)
-            if (taken is None or taken == key) and not self._leaves_function_in_place(member, 0):
-                return False
-        return True
+            if taken is None or taken == key:
+                use = max(use, self._function_read_use(member, 0))
+        return use
 
-    def _leaves_function_in_place(self, read: Node, depth: int) -> bool:
+    def _function_read_use(self, read: Node, depth: int) -> FunctionUse:
         """
-        Whether the read *read* of a function object leaves the object where it is, in the sense
-        `function_object_untouched` gives that; *depth* counts the names and parameters followed
-        to reach it.
+        The most the read *read* of a function object may do to the object, in the sense of
+        `function_object_untouched`; *depth* counts the names and parameters followed to reach it.
         """
         parent = enclosing_operator(read)
         if isinstance(parent, JsCallExpression):
-            if strip_parens(parent.callee) is read:
-                return True
-            if self.trusted_intrinsic(parent.callee) == 'String':
-                return True
-            return self._parameter_leaves_function_in_place(parent, read, depth)
+            return self._call_use(parent, read, depth)
         if isinstance(parent, (JsVariableDeclarator, JsAssignmentExpression)):
             if depth >= _FUNCTION_FOLLOW_LIMIT:
-                return False
-            alias = self._alias_holding(read)
-            return alias is not None and self._name_leaves_function_in_place(alias, frozenset(), depth + 1)
-        if isinstance(parent, JsTaggedTemplateExpression):
-            return strip_parens(parent.tag) is read
+                return FunctionUse.TOUCHED
+            alias = self.model.name_holding(read)
+            if alias is None:
+                return FunctionUse.TOUCHED
+            return self._name_use(alias, frozenset(), depth + 1)
         if isinstance(parent, JsMemberExpression):
-            return (
-                strip_parens(parent.object) is read
-                and not is_member_write_target(parent)
-                and static_property_key(parent) in _FUNCTION_KEYS_READ_IN_PLACE
+            return self._member_use(parent, read)
+        if isinstance(parent, JsTaggedTemplateExpression):
+            in_place = strip_parens(parent.tag) is read
+        elif isinstance(parent, JsBinaryExpression):
+            in_place = parent.operator != 'instanceof' or strip_parens(parent.right) is read
+        elif isinstance(parent, JsUnaryExpression):
+            in_place = parent.operator in _UNARY_OPERATORS_READING_A_FUNCTION
+        elif isinstance(parent, JsTemplateLiteral):
+            in_place = not isinstance(parent.parent, JsTaggedTemplateExpression)
+        elif isinstance(parent, _TESTED_FORMS):
+            in_place = strip_parens(parent.test) is read
+        else:
+            in_place = False
+        return FunctionUse.IN_PLACE if in_place else FunctionUse.TOUCHED
+
+    def _call_use(self, call: JsCallExpression, read: Node, depth: int) -> FunctionUse:
+        """
+        `_function_read_use` for a function read as the callee or an argument of *call*. A call
+        through a key known only at runtime may run an installer, and so is a `CONVERSION`.
+        """
+        callee = strip_parens(call.callee)
+        if callee is read:
+            return FunctionUse.IN_PLACE
+        if isinstance(callee, JsMemberExpression) and callee.computed and static_property_key(callee) is None:
+            return FunctionUse.CONVERSION
+        installer = self.conversion_installs.installer_of_call(call)
+        if installer is not None:
+            target = next(
+                (index for index, argument in enumerate(call.arguments) if strip_parens(argument) is read),
+                None,
             )
-        if isinstance(parent, JsBinaryExpression):
-            return parent.operator != 'instanceof' or strip_parens(parent.right) is read
-        if isinstance(parent, JsUnaryExpression):
-            return parent.operator in _UNARY_OPERATORS_READING_A_FUNCTION
-        if isinstance(parent, JsTemplateLiteral):
-            return not isinstance(parent.parent, JsTaggedTemplateExpression)
-        if isinstance(parent, _TESTED_FORMS):
-            return strip_parens(parent.test) is read
-        return False
+            if target is None:
+                return FunctionUse.CONVERSION
+            return self._install_use(call, installer, target)
+        if self.trusted_intrinsic(call.callee) == 'String':
+            return FunctionUse.IN_PLACE
+        return self._parameter_use(call, read, depth)
 
-    def _alias_holding(self, read: Node) -> Binding | None:
+    def _member_use(self, member: JsMemberExpression, read: Node) -> FunctionUse:
         """
-        The one name the value read at *read* is stored into, when *read* is the whole value a
-        declarator or an assignment whose own value is discarded stores into a name. An assignment
-        whose value is used hands it on as well, so its target is not the one name holding the
-        value: `f(x = ref)` and `var y = (x = ref)`.
+        `_function_read_use` for a function read as the object or the key of *member*. A write
+        under a key that may be a conversion key, and a call of a method under a key known only at
+        runtime, are a `CONVERSION`; reading `call`, `apply`, `toString`, `name` or `length` leaves
+        the function in place.
         """
-        store = enclosing_operator(read)
-        if isinstance(store, JsVariableDeclarator):
-            if strip_parens(store.init) is not read or not isinstance(store.id, JsIdentifier):
-                return None
-            return self.model.binding_of(store.id)
-        if not isinstance(store, JsAssignmentExpression):
-            return None
-        if store.operator != '=' or strip_parens(store.right) is not read:
-            return None
-        if not value_is_discarded(store):
-            return None
-        target = strip_parens(store.left)
-        if not isinstance(target, JsIdentifier):
-            return None
-        return self.model.resolve(target)
+        if strip_parens(member.object) is not read:
+            return FunctionUse.TOUCHED
+        if is_member_write_target(member):
+            governor = enclosing_operator(member)
+            if isinstance(governor, JsUnaryExpression) and governor.operator == 'delete':
+                return FunctionUse.TOUCHED
+            if self.conversion_installs.spells_member_key(member.property, member.computed) is False:
+                return FunctionUse.TOUCHED
+            return FunctionUse.CONVERSION
+        key = static_property_key(member)
+        call = enclosing_operator(member)
+        if isinstance(call, JsCallExpression) and strip_parens(call.callee) is member:
+            if key is None:
+                return FunctionUse.CONVERSION
+            if key in RECEIVER_INSTALL_METHODS:
+                return self._install_use(call, key, -1)
+        if key in _FUNCTION_KEYS_READ_IN_PLACE:
+            return FunctionUse.IN_PLACE
+        return FunctionUse.TOUCHED
 
-    def _parameter_leaves_function_in_place(self, call: JsCallExpression, read: Node, depth: int) -> bool:
+    def _install_use(self, call: JsCallExpression, installer: str, target: int) -> FunctionUse:
         """
-        Whether handing the function read at *read* to *call* leaves it in place: the call certainly
-        runs one function, whose parameters are plain names and whose `arguments` nothing reads,
-        and the parameter receiving the value leaves it in place in turn. A value past the last
-        parameter is dropped.
+        The use the installer call *call* makes of the value at argument *target*, or of its
+        receiver when *target* is -1: a `CONVERSION` unless it certainly installs no conversion.
+        """
+        if self.conversion_installs.install_spelled(call, installer, target) is False:
+            return FunctionUse.TOUCHED
+        return FunctionUse.CONVERSION
+
+    def _parameter_use(self, call: JsCallExpression, read: Node, depth: int) -> FunctionUse:
+        """
+        The use handing the function read at *read* to *call* makes of it: the use the receiving
+        parameter makes, when the call certainly runs one function, whose parameters are plain names
+        and whose `arguments` nothing reads. A value past the last parameter is dropped.
         """
         if depth >= _FUNCTION_FOLLOW_LIMIT:
-            return False
+            return FunctionUse.TOUCHED
         callee = self.unambiguous_callee(call)
         if callee is None or not all(isinstance(param, JsIdentifier) for param in callee.params):
-            return False
+            return FunctionUse.TOUCHED
         if self._callee_uses_arguments(callee):
-            return False
+            return FunctionUse.TOUCHED
         position = None
         for index, argument in enumerate(call.arguments):
             if isinstance(argument, JsSpreadElement):
-                return False
+                return FunctionUse.TOUCHED
             if strip_parens(argument) is read:
                 position = index
                 break
         if position is None:
-            return False
+            return FunctionUse.TOUCHED
         if position >= len(callee.params):
-            return True
+            return FunctionUse.IN_PLACE
         param = callee.params[position]
         binding = self.model.binding_of(param) if isinstance(param, JsIdentifier) else None
-        return binding is not None and self._name_leaves_function_in_place(binding, frozenset(), depth + 1)
+        if binding is None:
+            return FunctionUse.TOUCHED
+        return self._name_use(binding, frozenset(), depth + 1)
 
     def call_is_foldable(
         self,
@@ -3048,6 +3076,7 @@ def build_effects(
     model: SemanticModel,
     dominance: DominanceModel | None = None,
     intrinsic_writes: IntrinsicWrites | None = None,
+    settlement: ConversionSettlement | None = None,
 ) -> EffectModel:
     """
     Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
@@ -3055,6 +3084,8 @@ def build_effects(
     control-flow layer. A `None` is not a refusal: the model builds its own the first time a summary
     must order a binding's temporal dead zone. *intrinsic_writes* is shared the same way, so the
     effect and ordering layers read one scan of what the program writes on the intrinsics; a `None`
-    builds it here.
+    builds it here. *settlement* is the record of the deobfuscation run the model serves, which
+    `EffectModel.function_conversion_untouched` reads; without one that question refuses wherever
+    it would wait for the run to settle.
     """
-    return EffectModel(model, dominance, intrinsic_writes)
+    return EffectModel(model, dominance, intrinsic_writes, settlement)

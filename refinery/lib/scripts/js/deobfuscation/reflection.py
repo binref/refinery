@@ -37,6 +37,7 @@ from refinery.lib.scripts.js.analysis.model import (
     is_simple_assignment_target,
     name_uses_in_scope,
     reference_role,
+    references_new_target,
 )
 from refinery.lib.scripts.js.analysis.tampering import (
     denotes_function_intrinsic,
@@ -55,7 +56,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     preserve_script_end_value,
     property_key,
     reaches_script_completion,
-    references_new_target,
     references_receiver_this,
     remove_declarator,
     replace_with_value,
