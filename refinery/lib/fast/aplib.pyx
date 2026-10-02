@@ -4,7 +4,7 @@
 # cython: cdivision=True
 cimport cython
 
-from libc.stdint cimport uint8_t, uint32_t
+from libc.stdint cimport uint8_t, uint32_t, uint64_t
 from libc.stdlib cimport free, malloc
 from libc.string cimport memcpy
 
@@ -13,7 +13,7 @@ from refinery.lib.fast._buffer cimport reserve
 from refinery.lib.exceptions import RefineryPartialResult
 
 
-cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
+cdef inline uint32_t _lengthdelta(uint64_t offset) noexcept nogil:
     if offset < 0x80 or offset >= 0x7D00:
         return 2
     elif offset >= 0x500:
@@ -73,20 +73,20 @@ cdef inline int _put(Output *out, uint8_t b) except -1 nogil:
     return 0
 
 
-cdef int _offset_error(uint32_t offset, Py_ssize_t size) except -1:
+cdef int _offset_error(uint64_t offset, Py_ssize_t size) except -1:
     raise ValueError(F'aPLib match offset {offset} is outside the output of size {size}')
 
 
-cdef inline int _back_copy(Output *out, uint32_t offset, uint32_t length) except -1 nogil:
+cdef inline int _back_copy(Output *out, uint64_t offset, uint32_t length) except -1 nogil:
     cdef uint32_t i
     cdef uint8_t *dst
-    if offset == 0 or offset > out.size:
+    if offset == 0 or offset > <uint64_t>out.size:
         with gil:
             _offset_error(offset, out.size)
     reserve(&out.buf, &out.cap, out.size, length)
     dst = out.buf + out.size
     for i in range(length):
-        dst[i] = dst[<Py_ssize_t>i - offset]
+        dst[i] = dst[<Py_ssize_t>i - <Py_ssize_t>offset]
     out.size += length
     return 0
 
@@ -96,8 +96,9 @@ def aplib_decompress(data) -> bytearray:
         const uint8_t[::1] src = memoryview(data)
         BitReader r
         Output out
-        uint32_t offs, length, b
-        uint32_t R0 = 0
+        uint64_t offs
+        uint64_t R0 = 0
+        uint32_t length, b
         bint LWM = 0
         int i
 
@@ -132,7 +133,7 @@ def aplib_decompress(data) -> bytearray:
                     offs = R0
                     length = _read_gamma(&r)
                 else:
-                    offs = ((offs - 2 if LWM else offs - 3) << 8) | _read_byte(&r)
+                    offs = ((offs - (2 if LWM else 3)) << 8) | _read_byte(&r)
                     length = _read_gamma(&r) + _lengthdelta(offs)
                 if r.pos > r.end:
                     break

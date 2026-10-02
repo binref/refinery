@@ -1,6 +1,6 @@
 """
-Reads the block headers of an LZFSE stream for both LZFSE decoders in `refinery.lib.fast.lzfse`
-and checks that each block lies within the input and that its fields are in range.
+Reads the block headers of an LZFSE stream for both LZFSE decoders in `refinery.lib.fast.lzfse` and
+checks that each block lies within the input and that its fields are in range.
 """
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ _LITERAL_STATES = 1024
 _L_STATES = 64
 _M_STATES = 64
 _D_STATES = 256
+
+_LONGEST_LZFSE_MATCH = 2359
+_LONGEST_LZVN_MATCH = 271
 
 _V2_FIXED_SIZE = 32
 
@@ -55,7 +58,7 @@ class BlockHeader(NamedTuple):
 def read_block_header(data: memoryview, pos: int) -> BlockHeader:
     """
     Read the header of the block at offset `pos`. The compressed frequency table of an LZFSE V2
-    block is not decoded; it begins at `freq_table` and ends at `payload`.
+    block is not decoded; it begins at `BlockHeader.freq_table` and ends at `BlockHeader.payload`.
     """
     magic = int.from_bytes(data[pos:pos + 4], 'little')
     try:
@@ -125,7 +128,21 @@ def read_block_header(data: memoryview, pos: int) -> BlockHeader:
         raise ValueError(F'the LZFSE block at offset {pos} ends after the end of the input')
     if kind in (BlockKind.LZFSE_V1, BlockKind.LZFSE_V2) and not _lzfse_fields_in_range(header):
         raise ValueError(F'the LZFSE block at offset {pos} has an invalid header')
+    if header.raw_size > _most_output(header):
+        raise ValueError(F'the LZFSE block at offset {pos} claims more output than it can produce')
     return header
+
+
+def _most_output(header: BlockHeader) -> int:
+    """
+    The largest output that the payload of the block can decode to. No LZVN instruction produces
+    more output per payload byte than a match of the longest length, which takes two bytes.
+    """
+    if header.kind is BlockKind.RAW:
+        return header.raw_size
+    if header.kind is BlockKind.LZVN:
+        return (header.end - header.payload + 1) // 2 * _LONGEST_LZVN_MATCH
+    return header.n_literals + header.n_matches * _LONGEST_LZFSE_MATCH
 
 
 def _lzfse_fields_in_range(header: BlockHeader) -> bool:

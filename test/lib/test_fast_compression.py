@@ -15,6 +15,7 @@ from test.units.compression import KADATH1, KADATH1_XPRESS_CHUNK, KADATH1_XPRESS
 KEVIN = B'Kevin\'s got the magic - and the magic\'s got Kevin.'
 KEVIN_APLIB = bytes.fromhex('4B006576696E277320673A6F74727D68E86D7A613B6963392D77296E64104820682C982E00')
 
+V2_LITERAL_WORD = 8
 V2_LMD_WORD = 16
 V2_STATE_WORD = 24
 
@@ -28,6 +29,7 @@ def with_v2_field(stream: bytearray, word: int, shift: int, width: int, value: i
     mask = ((1 << width) - 1) << shift
     stream[word:word + 8] = ((fields & ~mask) | (value << shift)).to_bytes(8, 'little')
     return stream
+
 
 TWINKLE_RUNS = (
     B'Twinkle, twinkle, little star, ' * 2097
@@ -315,6 +317,68 @@ class TestLzfseFast(TestBase):
         with self.assertRaises(ValueError):
             lzfse_decompress(stream)
 
+    def test_block_whose_frequency_table_leaves_a_header_byte_unread_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        header_size = int.from_bytes(stream[24:28], 'little')
+        stream[header_size:header_size] = bytes(1)
+        stream = with_v2_field(stream, V2_STATE_WORD, 0, 32, header_size + 1)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_literal_count_is_not_a_multiple_of_four_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        # One literal more than the block holds leaves every decoded literal and match as it was, so
+        # only the rule that the literal count is a multiple of four can reject the block.
+        stream = with_v2_field(stream, V2_LITERAL_WORD, 0, 20, (fields & 0xFFFFF) + 1)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_literal_stream_ends_before_its_last_literal_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        stream = with_v2_field(stream, V2_LITERAL_WORD, 0, 20, (fields & 0xFFFFF) + 32)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_bit_stream_has_set_bits_among_its_unused_bits_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        # The literal stream of this block leaves its top five bits unused. A bit count field of 1
+        # declares six unused bits, and the sixth bit from the top is set.
+        self.assertEqual(fields >> 60, 2)
+        stream = with_v2_field(stream, V2_LITERAL_WORD, 60, 3, 1)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_matches_use_more_literals_than_it_holds_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        fields = int.from_bytes(stream[V2_LITERAL_WORD:V2_LITERAL_WORD + 8], 'little')
+        stream = with_v2_field(stream, V2_LITERAL_WORD, 0, 20, (fields & 0xFFFFF) - 4)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_that_decodes_to_more_than_the_size_in_its_header_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        size_in_header = int.from_bytes(stream[4:8], 'little')
+        stream[4:8] = (size_in_header - 1).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_that_claims_more_output_than_it_can_produce_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        stream[4:8] = (0xFFFFFFFF).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_block_whose_match_starts_before_the_output_is_rejected(self):
+        stream = self._first_lzfse_stream()
+        # Starting the distance decoder in state 0 instead of the final state of the encoder makes a
+        # match distance point before the start of the output.
+        stream = with_v2_field(stream, V2_STATE_WORD, 52, 10, 0)
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
     def test_stream_cut_inside_its_block_is_rejected(self):
         stream = self._first_lzfse_stream()
         self.assertEqual(stream[-4:], B'bvx$')
@@ -337,6 +401,24 @@ class TestLzfseFast(TestBase):
         with self.assertRaises(ValueError):
             lzfse_decompress(stream)
 
+    def test_lzvn_block_that_claims_more_output_than_it_can_produce_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        stream[4:8] = (0xFFFFFFFF).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
+    def test_lzvn_match_beyond_the_output_cut_short_by_the_block_size_is_rejected(self):
+        stream = self._first_lzvn_stream()
+        # The instruction at offset 29 writes three literals at output offset 458 and then copies
+        # four bytes from distance 1. Opcode C9 with the distance byte CC keeps both lengths and
+        # sets the distance to 460. A block size of 459 leaves room for one of the literals, so the
+        # match would start one byte before the start of the output.
+        self.assertEqual(stream[29:31], bytes.fromhex('C801'))
+        stream[29:31] = bytes.fromhex('C9CC')
+        stream[4:8] = (459).to_bytes(4, 'little')
+        with self.assertRaises(ValueError):
+            lzfse_decompress(stream)
+
 
 @pytest.mark.cythonized
 class TestAplibFast(unittest.TestCase):
@@ -348,11 +430,24 @@ class TestAplibFast(unittest.TestCase):
                     aplib_decompress(KEVIN_APLIB[:size])
                 self.assertTrue(KEVIN.startswith(context.exception.partial))
 
+    def test_stream_without_its_end_marker_byte_is_a_partial_result_with_the_whole_plaintext(self):
+        with self.assertRaises(RefineryPartialResult) as context:
+            aplib_decompress(KEVIN_APLIB[:-1])
+        self.assertEqual(context.exception.partial, KEVIN)
+
     def test_match_that_repeats_the_offset_of_a_previous_match_before_any_match_is_rejected(self):
-        stream = bytearray(KEVIN_APLIB)
+        stream = bytearray(KEVIN_APLIB[:2])
         # The second byte holds the tag bits of the next instructions. The tag bits 1, 0 begin a
-        # match, and the offset code 0, 0 after them repeats the offset of the previous match.
+        # match, and the offset code 0, 0 after them repeats the offset of the previous match. The
+        # input ends with that match, so a decoder that accepts the offset runs out of input.
         stream[1] = 0x80
         with self.assertRaises(ValueError) as context:
             aplib_decompress(stream)
+        self.assertNotIsInstance(context.exception, RefineryPartialResult)
+
+    def test_match_whose_offset_does_not_fit_in_32_bits_is_rejected(self):
+        # After the literals A and B, a match has the offset gamma 2**24 + 3 and the low offset byte
+        # 01, which makes its offset 2**32 + 1.
+        with self.assertRaises(ValueError) as context:
+            aplib_decompress(bytes.fromhex('414A42AAAAAAAAABC60100'))
         self.assertNotIsInstance(context.exception, RefineryPartialResult)

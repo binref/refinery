@@ -103,8 +103,8 @@ def _fse_in_load(state: list, pos: int) -> int:
 
 def _fse_in_init(buf: memoryview, start: int, end: int, nbits: int) -> list:
     """
-    Initialise a backward bit-stream reader for the 64-bit FSE decoding path over the payload
-    from `start` to `end`.
+    Initialise a backward bit-stream reader for the 64-bit FSE decoding path over the payload from
+    `start` to `end`.
     """
     state = [buf, 0, 0, 0, start, end]
     if nbits:
@@ -229,8 +229,8 @@ def _fse_init_value_decoder_table(
 
 def _decode_v2_freq_table(buf: memoryview, pos: int, end: int) -> list[int]:
     """
-    Decode the variable-length compressed frequency table from a V2 header, which must consume
-    the bytes from `pos` to `end`.
+    Decode the variable-length compressed frequency table from a V2 header, which must consume the
+    bytes from `pos` to `end`.
 
     Returns a list of 360 frequency values (L:20 + M:20 + D:64 + literal:256).
     """
@@ -472,10 +472,10 @@ def _lzvn_decode(
     Uses a 256-entry lookup table for opcode classification, matching the
     C reference implementation exactly.
     """
-    dst_start = len(output)
+    dst_end = len(output) + n_raw_bytes
     d_prev = 0
 
-    while src_pos < src_end and (len(output) - dst_start) < n_raw_bytes:
+    while src_pos < src_end and len(output) < dst_end:
         opc = src[src_pos]
         kind = _LZVN_OPC_TABLE[opc]
 
@@ -491,7 +491,7 @@ def _lzvn_decode(
             src_pos += 1
             if src_pos + L > src_end:
                 L = src_end - src_pos
-            output.extend(src[src_pos:src_pos + L])
+            output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
             src_pos += L
             continue
         elif kind == _LZVN_LRG_L:
@@ -501,7 +501,7 @@ def _lzvn_decode(
             src_pos += 2
             if src_pos + L > src_end:
                 L = src_end - src_pos
-            output.extend(src[src_pos:src_pos + L])
+            output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
             src_pos += L
             continue
         elif kind == _LZVN_SML_M:
@@ -510,7 +510,7 @@ def _lzvn_decode(
             D = d_prev
             if D == 0:
                 break
-            _lzvn_copy_match(output, D, M)
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
         elif kind == _LZVN_LRG_M:
             if src_pos + 1 >= src_end:
                 break
@@ -519,7 +519,7 @@ def _lzvn_decode(
             D = d_prev
             if D == 0:
                 break
-            _lzvn_copy_match(output, D, M)
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
         elif kind == _LZVN_PRE_D:
             L = (opc >> 6) & 0x03
             M = ((opc >> 3) & 0x07) + 3
@@ -530,9 +530,9 @@ def _lzvn_decode(
             if L > 0:
                 if src_pos + L > src_end:
                     break
-                output.extend(src[src_pos:src_pos + L])
+                output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
                 src_pos += L
-            _lzvn_copy_match(output, D, M)
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
         elif kind == _LZVN_LRG_D:
             if src_pos + 2 >= src_end:
                 break
@@ -546,9 +546,9 @@ def _lzvn_decode(
             if L > 0:
                 if src_pos + L > src_end:
                     break
-                output.extend(src[src_pos:src_pos + L])
+                output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
                 src_pos += L
-            _lzvn_copy_match(output, D, M)
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
         elif kind == _LZVN_MED_D:
             if src_pos + 2 >= src_end:
                 break
@@ -563,9 +563,9 @@ def _lzvn_decode(
             if L > 0:
                 if src_pos + L > src_end:
                     break
-                output.extend(src[src_pos:src_pos + L])
+                output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
                 src_pos += L
-            _lzvn_copy_match(output, D, M)
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
         elif kind == _LZVN_SML_D:
             if src_pos + 1 >= src_end:
                 break
@@ -579,11 +579,9 @@ def _lzvn_decode(
             if L > 0:
                 if src_pos + L > src_end:
                     break
-                output.extend(src[src_pos:src_pos + L])
+                output.extend(src[src_pos:src_pos + min(L, dst_end - len(output))])
                 src_pos += L
-            _lzvn_copy_match(output, D, M)
-
-    del output[dst_start + n_raw_bytes:]
+            _lzvn_copy_match(output, D, min(M, dst_end - len(output)))
 
 
 def _lzvn_copy_match(output: bytearray, D: int, M: int) -> None:

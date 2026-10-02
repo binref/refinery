@@ -30,7 +30,7 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
         uint16_t tab_prefix[1 << BITS]
         int n_bits, maxcode, bitmask, maxmaxcode
         int oldcode, finchar
-        Py_ssize_t posbits, inbits
+        Py_ssize_t posbits, inbits, consumed
         int free_entry
         bint resetbuf
         int code, incode
@@ -74,8 +74,9 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
         while resetbuf:
             resetbuf = False
 
-            src = src + (posbits >> 3)
-            src_len = src_len - (posbits >> 3)
+            consumed = min(posbits >> 3, src_len)
+            src = src + consumed
+            src_len = src_len - consumed
             posbits = 0
             inbits = (src_len << 3) - (n_bits - 1)
 
