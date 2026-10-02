@@ -9,6 +9,16 @@ from refinery.lib.scripts.xlm.commands import XLM_COMMANDS, XlmSeverity, severit
 from refinery.lib.scripts.xlm.environment import XlmEnvironment
 from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_model
 from refinery.lib.scripts.xlm.names import XlmNameEntry, XlmNameTable
+from refinery.lib.scripts.xlm.trace import XlmStatus, XlmStep, visible_steps
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmReference,
+    XlmValue,
+    apply_binary,
+    concat,
+    unwrap_literal,
+    wrap_literal,
+)
 from refinery.lib.scripts.xlm.view import XlmView
 
 __all__ = [
@@ -18,8 +28,18 @@ __all__ = [
     'XlmMacrosheet',
     'XlmNameEntry',
     'XlmNameTable',
+    'XlmOutcome',
+    'XlmReference',
     'XlmSeverity',
+    'XlmStatus',
+    'XlmStep',
+    'XlmValue',
     'XlmView',
+    'apply_binary',
     'build_xlm_model',
+    'concat',
     'severity',
+    'unwrap_literal',
+    'visible_steps',
+    'wrap_literal',
 ]
