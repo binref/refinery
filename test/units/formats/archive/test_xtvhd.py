@@ -431,6 +431,18 @@ class TestVHDExtractor(TestUnitBase):
         self.assertTrue(paths)
         self.assertTrue(all(path.startswith('partition0.img/') for path in paths))
 
+    def test_ntfs_volume_whose_mft_claims_more_than_the_stored_data_is_extracted_raw(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        mbr = self._file_offset(data, 0)
+        data[mbr + 0x1CA:mbr + 0x1CE] = B'\xFF' * 4
+        record, attribute = self._ntfs_mft_data_attribute(data)
+        size = attribute + 0x30
+        self.assertLess((size - record) % 512, 510 - 8)
+        data[size:size + 8] = (1 << 40).to_bytes(8, 'little')
+        paths = data | self.load(list=True) | {str}
+        self.assertTrue(paths)
+        self.assertTrue(all(path.startswith('partition0.img/') for path in paths))
+
     def test_ntfs_volume_whose_mft_runs_claim_more_than_its_size_is_listed(self):
         intact = self._sample('ntfs.vhd') | self.load(list=True) | {str}
         for compression_unit in (0, 4):

@@ -56,6 +56,9 @@ class VolumeSource(Protocol):
     def read(self, offset: int, length: int) -> buf:
         ...
 
+    def stored(self, offset: int, length: int) -> Iterator[tuple[int, int]]:
+        ...
+
 
 class NtfsError(ValueError):
     pass
@@ -177,14 +180,21 @@ class NtfsVolume:
         data = self._find_unnamed_data(record)
         if data is None:
             raise NtfsError('the $MFT record has no data attribute')
-        if data.real_size > self._source.size:
-            raise NtfsError('the $MFT is larger than the volume')
+        if not self._stores(data.real_size):
+            raise NtfsError('the $MFT is larger than the data stored for the volume')
         mft = self._read_attr_data(data)
         count = len(mft) // self.record_size
         self._records = [None] * count
         for index in range(count):
             chunk = mft[index * self.record_size:(index + 1) * self.record_size]
             self._records[index] = self._parse_record(chunk, index)
+
+    def _stores(self, size: int) -> bool:
+        for lower, upper in self._source.stored(0, self._source.size):
+            size -= upper - lower
+            if size <= 0:
+                break
+        return size <= 0
 
     def _apply_fixups(self, record: bytearray) -> bool:
         usa_offset = int.from_bytes(record[0x04:0x06], 'little')

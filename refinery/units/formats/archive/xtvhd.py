@@ -80,9 +80,7 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 continue
             self.log_info(F'partition {part.index} exceeds the input, extracting stored blocks')
             w = len(hex(part.size))
-            for lower, upper in disk.stored(part.offset, part.size):
-                start = lower - part.offset
-                end = upper - part.offset
+            for start, end in view.stored(0, part.size):
                 yield self._pack(
                     F'{name}.img/{start:#0{w}x}',
                     None,
