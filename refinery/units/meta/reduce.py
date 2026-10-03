@@ -33,17 +33,25 @@ class reduce(Unit):
         it = iter(chunks)
         just = self.args.just
         name = self.args.temp
-        accu = next(it)
-        if not just:
-            scope = it
+        for accu in it:
+            if accu.visible:
+                break
+            yield accu
         else:
-            import itertools
+            return
+        if just:
             self.log_info(F'reducing only the next {just} chunks')
-            scope = itertools.islice(it, 0, just)
-        for chunk in scope:
+        reduced = 0
+        for chunk in it:
+            if not chunk.visible:
+                yield chunk
+                continue
             chunk.meta[name] = accu
             accu[:] = DelayedBinaryArgument(self.args.suffix, reverse=True, seed=chunk)(chunk)
             self.log_debug('reduced:', accu, clip=True)
+            reduced += 1
+            if reduced == just:
+                break
         accu.meta.discard(name)
         yield accu
         yield from it

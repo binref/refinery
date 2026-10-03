@@ -39,3 +39,7 @@ class TestReduce(TestUnitBase):
         self.assertEqual(chunk['b'], p(5))
         self.assertEqual(chunk['c'], p(9))
         self.assertEqual(chunk['x'], 0)
+
+    def test_reduce_in_pushed_frame_leaves_the_original_for_pop(self):
+        pl = L('emit FOO [| push [| chop 1 | reduce cca[var:t] | pop k ]| cca v:k ]')
+        self.assertEqual(pl(), B'FOOOOF')
