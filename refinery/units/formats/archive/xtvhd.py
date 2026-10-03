@@ -31,9 +31,9 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     is extracted as a raw image after all files, unless the container stores no data for it. When
     such a volume is larger than the input, each block of it that the container stores is extracted
     as a separate item instead, named by its offset in the volume and carrying the variables start
-    and end. A volume whose file system fails to parse is reported with a warning and does not stop
-    the extraction of the other volumes. Volumes that share a GPT label are told apart by their
-    partition index.
+    and end. A volume whose file system fails to parse is reported with a warning and is extracted
+    as a raw image as well, even when some of its files were already listed; the other volumes are
+    not affected. Volumes that share a GPT label are told apart by their partition index.
     """
     def __init__(
         self, *paths,
@@ -55,23 +55,24 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             self.log_warn(warning)
         parts = list(partitions(disk))
         names = self._names(parts)
-        volumes: list[tuple[Partition, NtfsVolume | FatVolume]] = []
+        volumes: list[tuple[Partition, VolumeView, NtfsVolume | FatVolume]] = []
         images: list[tuple[Partition, VolumeView]] = []
         for part in parts:
             view = VolumeView(disk, part)
             if fs := self._volume(part, view):
-                volumes.append((part, fs))
+                volumes.append((part, view, fs))
             elif disk.allocated(part.offset, part.size):
                 images.append((part, view))
             else:
                 self.log_info(F'partition {part.index}: no data stored, skipped')
         multiple = len(volumes) > 1
-        for part, fs in volumes:
+        for part, view, fs in volumes:
             prefix = F'{names[part.index]}/' if multiple else ''
             try:
                 yield from self._files(fs, prefix)
             except Exception as error:
                 self._failed(part, error)
+                images.append((part, view))
         for part, view in images:
             name = 'disk' if part.whole_disk else names[part.index]
             if part.size <= len(data):
@@ -101,8 +102,8 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             yield self._pack(path, date, file.extract, **meta)
 
     def _volume(self, part: Partition, view: VolumeView) -> NtfsVolume | FatVolume | None:
-        boot = view.read(0, 512)
         try:
+            boot = view.read(0, 512)
             if is_ntfs(boot):
                 return NtfsVolume(view)
             if is_fat(boot):

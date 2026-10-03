@@ -305,19 +305,15 @@ class TestVHDExtractor(TestUnitBase):
 
     def _malware_with_its_partition_copied_under(self, *labels: str):
         data = bytearray(self._sample('malware.vhd'))
-        header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
-        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
-        block_size = int.from_bytes(data[header + 0x20:header + 0x24], 'big')
-        bitmap_size = (block_size // 512 // 8 + 511) // 512 * 512
-        disk = int.from_bytes(data[table:table + 4], 'big') * 512 + bitmap_size
-        gpt = disk + 512
+        gpt = self._file_offset(data, 512)
         self.assertEqual(data[gpt:gpt + 8], B'EFI PART')
-        entries = disk + int.from_bytes(data[gpt + 0x48:gpt + 0x50], 'little') * 512
+        table = int.from_bytes(data[gpt + 0x48:gpt + 0x50], 'little') * 512
         size = int.from_bytes(data[gpt + 0x54:gpt + 0x58], 'little')
+        first = self._file_offset(data, table)
         for slot, label in enumerate(labels, 1):
-            entry = entries + slot * size
+            entry = self._file_offset(data, table + slot * size)
             self.assertFalse(any(data[entry:entry + size]))
-            data[entry:entry + size] = data[entries:entries + size]
+            data[entry:entry + size] = data[first:first + size]
             data[entry + 0x38:entry + 0x38 + 72] = label.encode('utf-16le').ljust(72, B'\0')
         return data
 
@@ -342,7 +338,7 @@ class TestVHDExtractor(TestUnitBase):
             'Basic data partition.1.2',
         })
 
-    def test_volume_failing_to_list_does_not_stop_the_other_volumes(self):
+    def test_volume_failing_to_list_is_extracted_raw_and_does_not_stop_the_other_volumes(self):
         intact = self._sample('malware.vhd') | self.load(list=True) | {str}
         data = self._malware_with_its_partition_copied_under('Basic data partition')
         files = FatVolume.files
@@ -355,7 +351,10 @@ class TestVHDExtractor(TestUnitBase):
 
         with patch.object(FatVolume, 'files', fail_once):
             paths = data | self.load(list=True) | {str}
-        self.assertEqual(paths, {F'Basic data partition.1/{path}' for path in intact})
+        self.assertEqual(paths, {
+            'Basic data partition.0.img',
+            *(F'Basic data partition.1/{path}' for path in intact),
+        })
 
     def test_directories_nested_beyond_the_recursion_limit_are_listed(self):
         data = bytearray(self._sample('fixed.vhd'))
