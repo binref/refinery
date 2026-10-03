@@ -35,6 +35,21 @@ class TestVHDExtractor(TestUnitBase):
     def _sample(self, name: str):
         return lzma.decompress(self.download_sample(_DISK_HASHES[name]))
 
+    def _file_offset(self, data: bytes | bytearray, offset: int) -> int:
+        footer = data[-512:]
+        kind = int.from_bytes(footer[0x3C:0x40], 'big')
+        if kind == 2:
+            return offset
+        self.assertEqual(kind, 3)
+        header = int.from_bytes(footer[0x10:0x18], 'big')
+        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
+        block_size = int.from_bytes(data[header + 0x20:header + 0x24], 'big')
+        bitmap_size = (block_size // 512 // 8 + 511) // 512 * 512
+        block, offset = divmod(offset, block_size)
+        sector = int.from_bytes(data[table + 4 * block:table + 4 * block + 4], 'big')
+        self.assertNotEqual(sector, 0xFFFFFFFF)
+        return sector * 512 + bitmap_size + offset
+
     def _payload(self, data: bytes, meta: int = 0):
         chunks = data | self.load(meta=meta) | {'path': ...}
         for name, digest in _FILE_HASHES.items():
@@ -379,3 +394,23 @@ class TestVHDExtractor(TestUnitBase):
                 data[table:table + 64] = entry(B'NESTED     ', 0x10, child) + bytes(32)
         paths = data | self.load(list=True) | {str}
         self.assertIn('NESTED/' * depth + 'DEEP.TXT', paths)
+
+    def test_ntfs_volume_whose_mft_claims_more_than_the_volume_is_extracted_raw(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        mbr = self._file_offset(data, 0)
+        volume = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little') * 512
+        boot = self._file_offset(data, volume)
+        cluster_size = int.from_bytes(data[boot + 0x0B:boot + 0x0D], 'little') * data[boot + 0x0D]
+        mft_cluster = int.from_bytes(data[boot + 0x30:boot + 0x38], 'little')
+        record = self._file_offset(data, volume + mft_cluster * cluster_size)
+        self.assertEqual(data[record:record + 4], B'FILE')
+        position = record + int.from_bytes(data[record + 0x14:record + 0x16], 'little')
+        while int.from_bytes(data[position:position + 4], 'little') != 0x80:
+            position += int.from_bytes(data[position + 4:position + 8], 'little')
+        self.assertEqual(data[position + 8], 1)
+        size = position + 0x30
+        self.assertLess((size - record) % 512, 510 - 8)
+        data[size:size + 8] = (1 << 62).to_bytes(8, 'little')
+        paths = data | self.load(list=True) | {str}
+        self.assertTrue(paths)
+        self.assertTrue(all(path.startswith('partition0.img/') for path in paths))

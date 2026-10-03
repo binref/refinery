@@ -51,6 +51,8 @@ _EMPTY_EXTENT = -1
 
 
 class VolumeSource(Protocol):
+    size: int
+
     def read(self, offset: int, length: int) -> buf:
         ...
 
@@ -175,6 +177,8 @@ class NtfsVolume:
         data = self._find_unnamed_data(record)
         if data is None:
             raise NtfsError('the $MFT record has no data attribute')
+        if data.real_size > self._source.size:
+            raise NtfsError('the $MFT is larger than the volume')
         mft = self._read_attr_data(data)
         count = len(mft) // self.record_size
         self._records = [None] * count
@@ -376,11 +380,14 @@ class NtfsVolume:
             return self._read_compressed(extents, attr)
         out = bytearray()
         for _, lcn, length in extents:
-            size = length << self.cluster_size_log
+            size = min(length << self.cluster_size_log, attr.real_size - len(out))
+            if size <= 0:
+                break
             if lcn == _EMPTY_EXTENT:
                 out.extend(bytes(size))
             else:
-                out.extend(self._read_clusters(lcn, length))
+                count = (size + self.cluster_size - 1) >> self.cluster_size_log
+                out.extend(self._read_clusters(lcn, count))
         del out[attr.real_size:]
         if len(out) < attr.real_size:
             out.extend(bytes(attr.real_size - len(out)))
