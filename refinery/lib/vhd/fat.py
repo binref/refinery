@@ -189,15 +189,20 @@ class FatVolume:
         else:
             root_offset = self.root_dir_sector * self.bytes_per_sector
             root = self._source.read(root_offset, self.root_entries * _DIR_ENTRY_SIZE)
-        yield from self._walk(root, '', set(), recover)
+        seen: set[int] = set()
+        stack = [self._entries(root, '', recover)]
+        while stack:
+            for file in stack[-1]:
+                yield file
+                if file.is_dir and file.cluster >= 2 and file.cluster not in seen:
+                    seen.add(file.cluster)
+                    table = self._read_chain(file.cluster)
+                    stack.append(self._entries(table, F'{file.path}/', recover))
+                    break
+            else:
+                stack.pop()
 
-    def _walk(
-        self,
-        table: buf,
-        prefix: str,
-        seen: set[int],
-        recover: bool,
-    ) -> Iterator[FatFile]:
+    def _entries(self, table: buf, prefix: str, recover: bool) -> Iterator[FatFile]:
         lfn_parts: dict[int, bytes] = {}
         expected = 0
         checksum = -1
@@ -246,18 +251,13 @@ class FatVolume:
             )
             accessed = _dos_datetime(int.from_bytes(entry[0x12:0x14], 'little'), 0)
             is_dir = bool(attrib & _ATTR_DIRECTORY)
-            path = F'{prefix}{name}'
             yield FatFile(
-                path, modified, size, is_dir, cluster, self,
+                F'{prefix}{name}', modified, size, is_dir, cluster, self,
                 btime=created,
                 mtime=modified,
                 atime=accessed,
                 attributes=attrib,
             )
-            if is_dir and cluster >= 2 and cluster not in seen:
-                seen.add(cluster)
-                table_data = self._read_chain(cluster)
-                yield from self._walk(table_data, F'{path}/', seen, recover)
 
     def _entry_cluster(self, entry: buf) -> int:
         cluster = int.from_bytes(entry[0x1A:0x1C], 'little')

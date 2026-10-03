@@ -1,6 +1,7 @@
 import datetime
 import lzma
 import functools
+import itertools
 import uuid
 
 from unittest.mock import patch
@@ -340,3 +341,41 @@ class TestVHDExtractor(TestUnitBase):
         with patch.object(FatVolume, 'files', fail_once):
             paths = data | self.load(list=True) | {str}
         self.assertEqual(paths, {F'Basic data partition.1/{path}' for path in intact})
+
+    def test_directories_nested_beyond_the_recursion_limit_are_listed(self):
+        data = bytearray(self._sample('fixed.vhd'))
+        volume = int.from_bytes(data[0x1C6:0x1CA], 'little') * 512
+        boot = data[volume:volume + 512]
+        sector_size = int.from_bytes(boot[0x0B:0x0D], 'little')
+        cluster_size = sector_size * boot[0x0D]
+        fat = volume + int.from_bytes(boot[0x0E:0x10], 'little') * sector_size
+        fat_size = int.from_bytes(boot[0x24:0x28], 'little') * sector_size
+        clusters = fat + boot[0x10] * fat_size
+        root = clusters + (int.from_bytes(boot[0x2C:0x30], 'little') - 2) * cluster_size
+
+        def entry(name: bytes, attributes: int, cluster: int = 0):
+            return B''.join((
+                name,
+                bytes((attributes,)),
+                bytes(8),
+                (cluster >> 16).to_bytes(2, 'little'),
+                bytes(4),
+                (cluster & 0xFFFF).to_bytes(2, 'little'),
+                bytes(4),
+            ))
+
+        depth = 1200
+        free = (
+            cluster for cluster in range(3, fat_size // 4)
+            if not int.from_bytes(data[fat + 4 * cluster:fat + 4 * cluster + 4], 'little'))
+        chain = list(itertools.islice(free, depth))
+        slot = next(k for k in range(root, root + cluster_size, 32) if data[k] == 0)
+        data[slot:slot + 32] = entry(B'NESTED     ', 0x10, chain[0])
+        for parent, child in itertools.pairwise(chain + [None]):
+            table = clusters + (parent - 2) * cluster_size
+            if child is None:
+                data[table:table + 64] = entry(B'DEEP    TXT', 0x20) + bytes(32)
+            else:
+                data[table:table + 64] = entry(B'NESTED     ', 0x10, child) + bytes(32)
+        paths = data | self.load(list=True) | {str}
+        self.assertIn('NESTED/' * depth + 'DEEP.TXT', paths)
