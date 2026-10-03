@@ -105,7 +105,7 @@ class TestXlmEngineTraces(TestBase):
             '"The workbook cannot be opened or repaired by Microsoft Excel because it\'s '
             'corrupt.",2)')
 
-    def test_the_assign_sample_runs_the_cell_calls_the_old_parser_could_not_read(self):
+    def test_the_assign_sample_enters_through_a_cell_call(self):
         steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
         self.assertNotEqual(steps, [])
         self.assertEqual(
@@ -199,6 +199,11 @@ class TestXlmEngineControl(TestBase):
         entry = engine.view.names.resolve('counter')
         assert entry is not None and entry.formula is not None
         self.assertEqual(synthesize_formula(entry.formula), 'Doc1!$AZ$112')
+
+    def test_an_unknown_command_spells_the_empty_slot_of_a_missing_argument(self):
+        steps = _steps(('AZ110', 'FOO(1,,2)'))
+        self.assertEqual(steps[1].status, XlmStatus.PartialEvaluation)
+        self.assertEqual(steps[1].text, '=FOO(1,,2)')
 
     def test_a_partial_condition_branches_into_both_arms_in_turn(self):
         steps = _steps(('AZ110', 'IF(AZ112,1+1,2+2)'))

@@ -118,9 +118,7 @@ class TestBiffFormulaDecoding(TestBase):
         )
 
     def test_relative_flags_of_a_cross_sheet_area_survive_decoding(self):
-        # the column words of this token carry both relative flags set; the retiring oracle
-        # renders the area absolute because its own decompiler drops the flags whenever the
-        # referenced sheet differs from the sheet holding the formula
+        # the column words of this token carry both relative flags set
         self.assertEqual(
             _formula_texts(PROFILES_BIFF8)[('PROFILELEVELS', 2, 3)],
             'AXISDATUMLEVELS!B2:AXISDATUMLEVELS!B15',
@@ -128,8 +126,7 @@ class TestBiffFormulaDecoding(TestBase):
 
     def test_relative_area_names_the_stored_row(self):
         # the stored row of this relative area is the row above the formula, which Excel
-        # resolves against the cell the reference is anchored at; the retiring oracle adds the
-        # anchoring row a second time and names a row past the end of the sheet
+        # resolves against the cell the reference is anchored at
         self.assertEqual(
             _formula_texts(XLM_MACRO_NAMES_BIFF8)[('Acf444', 9591, 1)],
             'EXEC("po"&"wershel"&"l -Command "&Acf444!A9590:Acf444!A9590&"")',
@@ -156,13 +153,13 @@ class TestBiffFormulaDecoding(TestBase):
 
 class TestBiffFormulaAgainstXlrd(TestBase):
     """
-    The token stream of every formula cell decodes to the same program the retiring xlrd2
-    reader reports for it, compared canonically so that number spellings, redundant
-    parentheses and quoted sheet names cannot mask a match. xlrd2 decodes relative 3-D areas
-    wrongly — it drops the relative flags whenever the referenced sheet differs from the
-    formula's own sheet, and it adds the anchoring row twice when it does not — so those cells
-    carry their own pinned expectations above and are excluded here. The member cells of a
-    shared formula are excluded too: xlrd2 renders their `ptgExp` token as the placeholder
+    The token stream of every formula cell decodes to the same program the xlrd2 reader
+    reports for it, compared canonically so that number spellings, redundant parentheses
+    and quoted sheet names cannot mask a match. xlrd2 decodes relative 3-D areas wrongly — it
+    drops the relative flags whenever the referenced sheet differs from the formula's own
+    sheet, and it adds the anchoring row twice when it does not — so those cells carry their
+    own pinned expectations above and are excluded here. The member cells of a shared
+    formula are excluded too: xlrd2 renders their `ptgExp` token as the placeholder
     text `SHARED FMLA at rowx=…` instead of the template, which this reader resolves.
     """
 

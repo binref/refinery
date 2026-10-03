@@ -13,7 +13,7 @@ from itertools import islice
 from typing import TYPE_CHECKING, Iterable, cast
 
 from refinery.lib.types import Param, asbuffer, buf
-from refinery.units import Arg, Unit, RefineryPartialResult
+from refinery.units import Arg, RefineryPartialResult, Unit
 
 if TYPE_CHECKING:
     from typing import Protocol

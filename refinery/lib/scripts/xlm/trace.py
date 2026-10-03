@@ -1,6 +1,6 @@
 """
-The trace the emulator produces: one step per executed cell, with the status the retiring
-interpreter reported and the output level that decides which steps a trace shows.
+The trace the emulator produces: one step per executed cell, with the status of the cell and
+the output level that decides which steps a trace shows.
 """
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from refinery.lib.scripts.xlm.commands import XlmSeverity
 
 class XlmStatus(enum.Enum):
     """
-    The state one executed cell left the program in, spelled as the retiring interpreter
-    reported it.
+    The state one executed cell left the program in.
     """
 
     FullEvaluation = enum.auto()

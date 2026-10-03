@@ -1,10 +1,9 @@
 """
-The environment of answers the macro commands of an XLM workbook read: the workspace and
-window tables of the retiring interpreter, transcribed verbatim, and the document answers its
-GET.DOCUMENT handler computed from the names of the workbook and the current sheet. The tables
-hardcode the username `user` and the account name `Windows User`; routing them through
-`refinery.lib.scripts.win32const.make_win32_environment` would change those answers, so the
-tables stand as they were and the divergence from the other script emulators is deliberate.
+The environment of answers the macro commands of an XLM workbook read: fixed workspace and
+window tables, and the document answers computed from the names of the workbook and the
+current sheet. The tables hardcode the username `user` and the account name `Windows User`;
+routing them through `refinery.lib.scripts.win32const.make_win32_environment` would change
+those answers, so the divergence from the other script emulators is deliberate.
 """
 from __future__ import annotations
 
@@ -107,14 +106,13 @@ _WINDOW = {
 class XlmEnvironment:
     """
     The answers the environment-reading macro commands get from an emulated Excel
-    installation: the workspace and window tables and the two document answers, the way the
-    retiring interpreter answered them.
+    installation: the workspace and window tables and the two document answers.
     """
 
     def workspace(self, number: int) -> str | None:
         """
-        The workspace-table answer of the old interpreter, or `None` for a number it did not
-        answer; the old interpreter reported such a call as fully evaluated to no value.
+        The workspace-table answer, or `None` for a number the table holds none for; a call
+        the table does not answer reports as fully evaluated to no value.
         """
         return _WORKSPACE.get(number)
 
@@ -137,9 +135,9 @@ class XlmEnvironment:
 
     def document(self, number: int, workbook_name: str, sheet_name: str) -> str | None:
         """
-        The answer of the GET.DOCUMENT handler of the old interpreter, which computed only two:
-        number 76 names the workbook and the given sheet, number 88 names the workbook, and
-        every other number yields a partial evaluation, which `None` stands for here.
+        The document-table answer, which holds two entries: number 76 names the workbook and
+        the given sheet, number 88 names the workbook, and every other number yields a partial
+        evaluation, which `None` stands for here.
         """
         if number == 76:
             return F'[{workbook_name}]{sheet_name}'
@@ -150,7 +148,6 @@ class XlmEnvironment:
     def cell_info(self, sheet_name: str, row: int, col: int, number: int) -> str | None:
         """
         Not implemented: the style surface a real answer reads — row heights, font sizes and
-        colors, alignment — does not exist yet, so every GET.CELL call yields nothing, exactly
-        as it did through the XLSB wrapper of the old port.
+        colors, alignment — does not exist, so every GET.CELL call yields nothing.
         """
         return None

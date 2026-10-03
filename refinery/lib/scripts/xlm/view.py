@@ -1,7 +1,7 @@
 """
 The workbook view of an XLM macro language program: the one object the interpreter is handed,
 combining the macrosheet model with the worksheet data the macro formulas read and the name
-table the entry points resolve through. It replaces the three wrappers of the retiring port.
+table the entry points resolve through.
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_mod
 from refinery.lib.scripts.xlm.names import XlmNameTable
 from refinery.lib.scripts.xlm.references import XlmCursor, XlmReference, resolve_reference
 
-#: The workbook name of each container family, as the wrappers of the retiring port spelled
-#: them; no reader exposes the name the file was saved under.
+#: The workbook name of each container family, a generic spelling — no reader exposes the name
+#: the file was saved under.
 _WORKBOOK_NAMES = {
     ExcelFormat.BIFF: 'workbook.xls',
     ExcelFormat.OOXML: 'workbook.xlsm',

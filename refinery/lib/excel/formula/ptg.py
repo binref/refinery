@@ -112,9 +112,7 @@ def base_ptg(token: int) -> Ptg:
 
 
 BUILTIN_FUNCTIONS: dict[int, tuple[str, int, int]] = {
-    # id: (name, minimum arguments, maximum arguments); -1 marks an arity neither oracle
-    # recorded. Built as the union of the xlrd2 and pyxlsb2 tables, which agree on every
-    # name except the one noted below.
+    # id: (name, minimum arguments, maximum arguments); -1 marks an unknown arity
     0x000: ('COUNT', 0, 30),
     0x001: ('IF', 1, 3),
     0x002: ('ISNA', 1, 1),
@@ -207,7 +205,7 @@ BUILTIN_FUNCTIONS: dict[int, tuple[str, int, int]] = {
     0x059: ('CALLER', 0, 0),
     0x05A: ('DEREF', 1, 1),
     0x05B: ('WINDOWS', 0, 2),
-    0x05C: ('SERIESSUM', 4, 4),  # pyxlsb2 spells this one 'SERIES'; xlrd2's name is the function
+    0x05C: ('SERIESSUM', 4, 4),
     0x05D: ('DOCUMENTS', 0, 2),
     0x05E: ('ACTIVE.CELL', 0, 0),
     0x05F: ('SELECTION', 0, 0),

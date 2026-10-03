@@ -33,9 +33,9 @@ _IMPORTANT_COMMANDS = frozenset((
     'NEXT',
 ))
 
-#: Every macro command the retiring interpreter had a handler for — including the three
-#: Kernel32 pseudo-commands its CALL emulation installs and `_xlfn.ARABIC` — together with the
-#: names its severity sets spell without a handler: FREAD, FILE.DELETE, and WORKBOOK.HIDE.
+#: Every macro command a handler answers — including the three Kernel32 pseudo-commands the
+#: CALL emulation installs and `_xlfn.ARABIC` — together with the names the severity sets spell
+#: without a handler: FREAD, FILE.DELETE, and WORKBOOK.HIDE.
 _COMMAND_NAMES = frozenset((
     'ABS',
     'ABSREF',
@@ -118,11 +118,10 @@ _COMMAND_NAMES = frozenset((
     '_xlfn.ARABIC',
 ))
 
-#: The severity of every macro command the registry knows, classified by the rule the runtime
-#: of the retiring port applied: GOTO and RUN move execution, the commands named by its
-#: important-functions set matter for triage, and everything else is ordinary — including
-#: SET.VALUE, FILE.DELETE, and WORKBOOK.HIDE, which a set of that port that its runtime never
-#: read would have shown at the triage level.
+#: The severity of every macro command the registry knows: GOTO and RUN move execution, the
+#: commands of the triage set matter for triage, and everything else is ordinary — SET.VALUE,
+#: FILE.DELETE, and WORKBOOK.HIDE included, ordinary although a triage reading of a listing
+#: would expect them among the important ones.
 XLM_COMMANDS: dict[str, XlmSeverity] = {
     name: (
         XlmSeverity.JUMP
@@ -179,7 +178,6 @@ PURE_COMMANDS = frozenset((
 
 def severity(command_name: str) -> XlmSeverity:
     """
-    The severity of a macro command; a name outside the registry is ordinary, as it was in the
-    retiring port.
+    The severity of a macro command; a name outside the registry is ordinary.
     """
     return XLM_COMMANDS.get(command_name, XlmSeverity.NORMAL)

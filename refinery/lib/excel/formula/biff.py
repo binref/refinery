@@ -3,8 +3,7 @@ The BIFF operand layouts for the shared RPN stack machine: one reader per token 
 layout the BIFF record format defines. Everything that only depends on the BIFF version is
 decided here — the string encoding, the reference widths, the 3-D sheet resolution — while the
 token semantics stay in the shared machine. The layouts follow the OpenOffice documentation of
-the BIFF format; the sizes of trailing unused bytes match the size tables of the `xlrd2`
-reader.
+the BIFF format.
 """
 from __future__ import annotations
 

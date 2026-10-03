@@ -20,7 +20,6 @@ from refinery.lib.excel.formula.model import (
     XlBinaryOperator,
     XlDefinedName,
     XlFunctionCall,
-    XlMissingArgument,
     XlR1C1Reference,
     XlString,
 )
@@ -696,13 +695,12 @@ class XlmEngine:
     def _unknown_command(self, name: str, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
         """
         The fallback for a command no handler answers: the call spelled unevaluated, with
-        every argument evaluated for the side effects it may have had. A missing argument spells
-        nothing — the grammar of the retiring port did not materialize one at all.
+        every argument evaluated for the side effects it may have had and a missing argument
+        spelling the empty slot the call wrote.
         """
         arguments = [
             evaluate_expression(self, argument, cursor).text or ''
             for argument in call.arguments
-            if not isinstance(argument, XlMissingArgument)
         ]
         text = F'={name}({",".join(arguments)})'
         return XlmOutcome(value=XlmValue(value=text, partial=True))

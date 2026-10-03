@@ -107,9 +107,11 @@ class TestXlmNameResolution(TestBase):
         self.assertEqual(formula.text, '3a000000000000')
         self.assertIsInstance(_resolve(table, 'Application.Quit').formula, XlUnparsedFormula)
 
-    def test_a_scoped_name_keeps_its_sheet_index(self):
-        entry = _resolve(_table(XLM_MACRO_NAMES_BIFF8), 'ubdhh')
-        self.assertEqual((entry.sheet, _text(entry.formula)), (0, '#NAME?'))
+    def test_a_name_scoped_to_one_sheet_resolves_only_under_that_sheet(self):
+        table = _table(XLM_MACRO_NAMES_BIFF8)
+        self.assertEqual(_resolve(table, 'ubdhh', 0).sheet, 0)
+        self.assertEqual(_text(_resolve(table, 'ubdhh', 0).formula), '#NAME?')
+        self.assertEqual(table.resolve('ubdhh'), None)
 
     def test_a_name_defined_for_several_sheets_keeps_an_entry_per_sheet(self):
         self.assertEqual(
@@ -123,9 +125,9 @@ class TestXlmNameResolution(TestBase):
             with self.subTest(sheet=sheet, name=name):
                 self.assertEqual(_resolve(table, name, sheet).sheet, sheet)
 
-    def test_an_unqualified_name_prefers_the_global_entry(self):
+    def test_an_unqualified_name_answers_only_a_global_entry(self):
         table = _table(ISSUE20)
-        self.assertEqual(_resolve(table, 'print_area').sheet, 0)
+        self.assertEqual(table.resolve('print_area'), None)
         table.define(XlmNameEntry(name='print_area', sheet=None, formula=None))
         self.assertEqual(_resolve(table, 'print_area').sheet, None)
         self.assertEqual(_resolve(table, 'print_area', 2).sheet, 2)

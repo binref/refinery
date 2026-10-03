@@ -63,25 +63,21 @@ class XlmNameTable:
     def resolve(self, name: str, sheet: int | None = None) -> XlmNameEntry | None:
         """
         The entry a name spells, matched case-insensitively. An entry scoped to the given
-        sheet wins over a global entry; without a scope to read, or when the workbook defines
-        no entry for the sheet and no global one, the first entry that spells the name answers,
-        because the retiring port resolved every name through one flat table. `None` when the
-        workbook defines no such name.
+        sheet wins over a global entry, and a name scoped only to another sheet answers
+        nothing — the way Excel answers `#NAME?`. `None` when the workbook defines no such
+        name for the scope.
         """
         key = name.lower()
         scoped: XlmNameEntry | None = None
         global_entry: XlmNameEntry | None = None
-        any_entry: XlmNameEntry | None = None
         for entry in self._entries:
             if entry.name.lower() != key:
                 continue
-            if any_entry is None:
-                any_entry = entry
             if entry.sheet == sheet and scoped is None:
                 scoped = entry
             elif entry.sheet is None and global_entry is None:
                 global_entry = entry
-        return scoped or global_entry or any_entry
+        return scoped or global_entry
 
     def fuzzy(self, pattern: str) -> list[XlmNameEntry]:
         """

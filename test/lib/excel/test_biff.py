@@ -217,8 +217,8 @@ class TestBiffWorkbook(TestBase):
         self.assertTrue(all(cell.kind is CellKind.TEXT for cell in cells.values()))
 
     def test_defective_ole_container(self):
-        # the OLE container of this workbook is defective enough for the retiring reader to
-        # reject the file; the cells of all nine sheets are still readable
+        # the OLE container of this workbook is defective; the cells of all nine sheets are
+        # still readable
         workbook = open_workbook(CORRUPTED_ERROR)
         self.assertEqual(len(workbook.sheets()), 9)
         self.assertEqual(workbook.sheets()[0].name, 'Трубы ВГП')
@@ -277,8 +277,7 @@ class TestBiffWorkbook(TestBase):
 class TestSharedStringContinueRecords(TestBase):
     """
     The shared string table of the workbook is split into a CONTINUE chain inside its only
-    uncompressed string; both the new reader and the retiring oracle must read the split
-    stream exactly like the original one.
+    uncompressed string; a reader must read the split stream exactly like the original one.
     """
 
     def _stream(self) -> bytes:

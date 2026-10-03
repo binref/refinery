@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from refinery.lib.excel import synthesize_formula
-from refinery.lib.excel.formula.model import XlMissingArgument
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from refinery.lib.scripts.xlm.values import XlmOutcome, XlmValue, is_number, wrap_literal
@@ -27,14 +26,10 @@ def _partial(spelled: str) -> XlmOutcome:
 
 def _arguments(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> list[XlmValue]:
     """
-    The values of the arguments a call spells, a missing argument left out — the grammar of the
-    retiring port did not materialize one at all.
+    The values of the arguments a call spells, each at the position the call wrote it and a
+    missing argument the empty value.
     """
-    return [
-        evaluate_expression(engine, node, cursor)
-        for node in call.arguments
-        if not isinstance(node, XlMissingArgument)
-    ]
+    return [evaluate_expression(engine, node, cursor) for node in call.arguments]
 
 
 def _call(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:

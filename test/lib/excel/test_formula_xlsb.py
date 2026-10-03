@@ -86,8 +86,8 @@ class TestXlsbFormulaDecoding(TestBase):
         )
 
     def test_a_name_reference_spells_the_name_and_not_its_formula(self):
-        # the name operand of the REGISTER call is the defined name `Fola` itself, while the
-        # retiring oracle replaces every name with the formula it was defined by
+        # the name operand of the REGISTER call is the defined name `Fola` itself, not the
+        # formula it was defined by
         self.assertEqual(
             _formula_texts(self.download_sample(_MALDOC))[('Vtreytr', 22, 6)],
             'REGISTER("uRl"&"Mon",Fola&"FileA",Tiposa!D20,"Drwrgdfghfhf",,Tiposa!D22,Tiposa!D23)',
@@ -114,10 +114,10 @@ class TestXlsbFormulaDecoding(TestBase):
 
 class TestXlsbFormulaAgainstPyxlsb2(TestBase):
     """
-    The token stream of every formula cell decodes to the same program the retiring pyxlsb2
-    reader reports for it, compared canonically so that number spellings, redundant parentheses
+    The token stream of every formula cell decodes to the same program the pyxlsb2 reader
+    reports for it, compared canonically so that number spellings, redundant parentheses
     and quoted sheet names cannot mask a match. Cells that reference a defined name are
-    excluded, because the oracle spells every name as the formula it was defined by while the
+    excluded, because pyxlsb2 spells every name as the formula it was defined by while this
     reader spells the name itself; their pinned expectations above cover them.
     """
 

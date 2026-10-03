@@ -15,10 +15,9 @@ def guess_day(engine: XlmEngine) -> int:
     """
     The day of the month that makes the program's own trace most readable: every candidate day
     runs the program from its entry points through a fresh engine over the shared view — the
-    writes and names of one trial are the state the next trial starts from, the way the trial
-    runs of the retiring interpreter shared their cells — and the day whose trace carries the
-    smallest share of unprintable characters and failed CHAR calls wins. Zero names no day at
-    all, because every trial of the program died.
+    writes and names of one trial are the state the next trial starts from — and the day whose
+    trace carries the smallest share of unprintable characters and failed CHAR calls wins.
+    Zero names no day at all, because every trial of the program died.
     """
     best_day = 0
     best_ratio = 1.0

@@ -12,9 +12,9 @@ from test.lib.excel.samples import (
     XLM_MACRO_TEXT_XLSM,
 )
 
-#: The classification of every macro command of the old port, transcribed from the rule its
-#: runtime applied: GOTO and RUN at the jump level, its important-functions set at the triage
-#: level, every handler it had left — and the severity names without a handler — ordinary.
+#: The severity of every macro command the registry knows: GOTO and RUN at the jump level, the
+#: triage set at the triage level, and everything else — the severity names a handler does not
+#: answer among them — ordinary.
 _EXPECTED_SEVERITIES = {
     'ABS': XlmSeverity.NORMAL,
     'ABSREF': XlmSeverity.NORMAL,
@@ -110,15 +110,15 @@ def _top_level_commands(data: bytes) -> list[str]:
 
 class TestXlmCommandRegistry(TestBase):
 
-    def test_the_registry_classifies_every_command_as_the_old_runtime_did(self):
+    def test_the_registry_classifies_every_command_it_knows(self):
         self.assertEqual(XLM_COMMANDS, _EXPECTED_SEVERITIES)
 
-    def test_the_names_of_the_severity_set_the_old_runtime_never_read_are_ordinary(self):
+    def test_the_commands_a_triage_reading_would_expect_are_ordinary(self):
         self.assertEqual(severity('SET.VALUE'), XlmSeverity.NORMAL)
         self.assertEqual(severity('FILE.DELETE'), XlmSeverity.NORMAL)
         self.assertEqual(severity('WORKBOOK.HIDE'), XlmSeverity.NORMAL)
 
-    def test_fread_is_important_although_the_old_runtime_had_no_handler_for_it(self):
+    def test_fread_is_important_although_no_handler_answers_it(self):
         self.assertEqual(severity('FREAD'), XlmSeverity.IMPORTANT)
 
     def test_commands_outside_the_registry_are_ordinary(self):

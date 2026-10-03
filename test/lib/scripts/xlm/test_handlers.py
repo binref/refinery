@@ -276,6 +276,17 @@ class TestSystemCommands(TestBase):
         self.assertEqual(outcome.status, None)
         self.assertEqual(engine.aliases['load'], 'urlmon.URLDownloadToFileA')
 
+    def test_a_register_with_a_missing_argument_keeps_the_alias_at_its_position(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        outcome = engine.call(parse_formula(
+            'REGISTER("urlmon","URLDownloadToFileA",,"load")'), _CURSOR)
+        self.assertEqual(outcome.status, None)
+        self.assertEqual(engine.aliases['load'], 'urlmon.URLDownloadToFileA')
+        self.assertEqual(
+            outcome.value.text,
+            'REGISTER("urlmon","URLDownloadToFileA",,"load")',
+        )
+
     def test_register_id_names_the_function_but_registers_nothing(self):
         engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
         outcome = engine.call(parse_formula(
