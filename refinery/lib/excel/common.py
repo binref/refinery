@@ -114,7 +114,11 @@ def ref2rc(ref: str) -> tuple[int, int]:
     match = re.match(R'^([A-Za-z]+)(\d+)$', ref)
     if not match:
         raise ValueError
-    col = functools.reduce(lambda acc, c: (acc * 26) + c, (ord(c.upper()) - 0x40 for c in match[1]), 0)
+    col = functools.reduce(
+        lambda acc, c: (acc * 26) + c,
+        (ord(c.upper()) - 0x40 for c in match[1]),
+        0,
+    )
     row = int(match[2], 10)
     if row <= 0:
         raise ValueError
@@ -161,7 +165,10 @@ _MARCH_FIRST_1900 = datetime.datetime(1900, 3, 1)
 _MILLISECONDS_PER_DAY = 86400000.0
 
 
-def serial_to_datetime(serial: int | float, date_mode_1904: bool) -> datetime.datetime | datetime.time:
+def serial_to_datetime(
+    serial: int | float,
+    date_mode_1904: bool,
+) -> datetime.datetime | datetime.time:
     """
     Convert an Excel serial date number into a datetime, or into a time when the serial number
     carries only a fraction of a day. The 1900 epoch accounts for the spurious leap day that

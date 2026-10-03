@@ -102,13 +102,30 @@ class TestXlmEngineTraces(TestBase):
         steps = list(XlmEngine(XlmView(XLM_MACRO_RPN_BIFF8)).run())
         self.assertEqual([(step.sheet, step.row, step.col) for step in steps], [
             ('mP9mScF1m5', row, 19) for row in range(41, 52)
+        ] + [
+            ('mP9mScF1m5', row, 20) for row in (1, 3, 4, 5, 6, 7, 8, 9, 10)
         ])
         self.assertEqual(
             [step.status for step in steps],
-            [XlmStatus.PartialEvaluation] * 10 + [XlmStatus.FullEvaluation],
+            [XlmStatus.FullEvaluation] * 9
+            + [XlmStatus.PartialEvaluation, XlmStatus.FullEvaluation]
+            + [XlmStatus.FullEvaluation] * 6
+            + [XlmStatus.PartialEvaluation, XlmStatus.FullEvaluation]
+            + [XlmStatus.End],
         )
         self.assertEqual(steps[10].severity, XlmSeverity.JUMP)
         self.assertEqual(steps[10].text, 'GOTO(T1)')
+        self.assertEqual(steps[-1].text, 'CLOSE(FALSE)')
+
+    def test_the_rpn_sample_executes_the_formulas_its_own_column_writes(self):
+        # the ten writes the sample performs install executable trees, so the run does not end
+        # at the jump target but walks the written column until the CLOSE it wrote there
+        steps = list(XlmEngine(XlmView(XLM_MACRO_RPN_BIFF8)).run())
+        self.assertEqual(steps[11].row, 1)
+        self.assertEqual(steps[11].text, 'IF(GET.WORKSPACE(13)<770,CLOSE(FALSE),)')
+        self.assertEqual(steps[17].text, '=ALERT('
+            '"The workbook cannot be opened or repaired by Microsoft Excel because it\'s '
+            'corrupt.",2)')
 
     def test_the_assign_sample_runs_the_cell_calls_the_old_parser_could_not_read(self):
         steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
@@ -147,7 +164,8 @@ class TestXlmEngineControl(TestBase):
     def test_a_goto_that_jumps_to_itself_terminates_by_loop_detection(self):
         steps = _steps(('AZ110', 'GOTO(AZ110)'))
         self.assertEqual(steps[0].row, 109)
-        self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
+        self.assertEqual(steps[0].status, XlmStatus.FullEvaluation)
+        self.assertEqual(steps[0].text, 'SET.VALUE(BD108,"URLMo")')
         self.assertEqual([step.text for step in steps[1:]], ['GOTO(AZ110)'] * 19)
         self.assertEqual(
             [step.status for step in steps[1:]],

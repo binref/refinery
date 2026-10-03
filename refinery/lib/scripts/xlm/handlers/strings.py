@@ -88,7 +88,7 @@ def _mid(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     ):
         start = int(float(base.value)) - 1
         count = int(float(length.value))
-        result = text.unwrap()[start:start + count]
+        result = str(text.value)[start:start + count]
         return XlmOutcome(value=XlmValue(value=result, text=str(result)))
     fragments = ','.join(synthesize_formula(node) for node in call.arguments)
     return XlmOutcome(value=XlmValue(value=F'MID({fragments})', partial=True))
@@ -99,7 +99,7 @@ def _search(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
     haystack = evaluate_expression(engine, call.arguments[1], cursor)
     if not needle.partial and not haystack.partial:
         try:
-            position = haystack.unwrap().lower().index(needle.unwrap().lower())
+            position = str(haystack.value).lower().index(str(needle.value).lower())
         except ValueError:
             return XlmOutcome(value=XlmValue(value=None, text=''))
         return XlmOutcome(value=XlmValue(value=position))

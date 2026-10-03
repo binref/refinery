@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from refinery.lib.excel import synthesize_formula
-from refinery.lib.excel.formula.model import XlA1Reference
+from refinery.lib.excel.formula.model import XlA1Reference, XlMissingArgument
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.references import XlmFrame, XlmLoop
@@ -92,6 +92,8 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
         branch, desc = call.arguments[1], '[TRUE]'
     else:
         branch, desc = call.arguments[2], '[FALSE]'
+    if isinstance(branch, XlMissingArgument):
+        return XlmOutcome(value=XlmValue(value=0, text=spelled))
     engine.branch_stack.append(XlmFrame(cursor, branch, None, engine.indent_level, desc))
     return XlmOutcome(
         value=XlmValue(value=0, text=spelled),

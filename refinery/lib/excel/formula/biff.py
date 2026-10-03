@@ -221,7 +221,7 @@ class BiffRpnDecoder(RpnDecoder):
                 relative_col=col_relative,
             )
         if self._version >= BiffVersion.BIFF8:
-            row_bits, col_bits = 0x8000, 0x2000
+            row_bits, col_bits = 0x8000, 0x80
         else:
             row_bits, col_bits = 0x2000, 0x80
         if row_relative and row >= row_bits:

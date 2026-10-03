@@ -81,7 +81,7 @@ class TestXlmModelInventory(TestBase):
 
     def test_sheet_inventory_of_every_embedded_sample(self):
         for data, expected in [
-            (XLM_MACRO_RPN_BIFF8, [('mP9mScF1m5', 1179, 128)]),
+            (XLM_MACRO_RPN_BIFF8, [('mP9mScF1m5', 1179, 0)]),
             (XLM_MACRO_NAMES_BIFF8, [('Acf444', 11, 0)]),
             (XLM_MACRO_ASSIGN_BIFF8, [('sod', 426, 0)]),
             (XLM_MACRO_TEXT_XLSM, [('Doc1', 37, 0)]),

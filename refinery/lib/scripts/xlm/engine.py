@@ -13,19 +13,23 @@ import time
 from typing import Any, Iterator, NamedTuple
 
 from refinery.lib.excel import CellKind, parse_formula, synthesize_formula
+from refinery.lib.excel.common import column_letters
 from refinery.lib.excel.formula.model import (
     XlA1Reference,
     XlBinaryExpression,
     XlBinaryOperator,
     XlDefinedName,
     XlFunctionCall,
+    XlMissingArgument,
     XlR1C1Reference,
     XlString,
 )
 from refinery.lib.scripts import BodyEdit, set_body, set_child, set_value
 from refinery.lib.scripts.xlm.commands import severity
+from refinery.lib.scripts.xlm.environment import XlmEnvironment
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.handlers import HANDLERS
+from refinery.lib.scripts.xlm.memory import XlmFiles, XlmMemory
 from refinery.lib.scripts.xlm.model import XlmCell
 from refinery.lib.scripts.xlm.references import (
     XlmCursor,
@@ -103,6 +107,11 @@ class XlmEngine:
         self.iserror_at: XlmCursor | None = None
         self.iserror_flag = False
         self.iserror_repeats = 0
+        self.files = XlmFiles()
+        self.memory = XlmMemory()
+        self.environment = XlmEnvironment()
+        self.active_cell: XlmReference | None = None
+        self.failed_writes: set[XlmReference] = set()
         self.call_stack: list[XlmCursor] = []
         self.branch_stack: list[XlmFrame] = []
         self.while_stack: list[XlmLoop] = []
@@ -146,6 +155,9 @@ class XlmEngine:
         reference = XlmReference(sheet, reference.row, reference.col)
         cell = self._find_cell(sheet, reference.row, reference.col)
         if cell is None:
+            if reference in self.failed_writes:
+                address = F'{column_letters(reference.col)}{reference.row}'
+                return XlmValue(value=address, partial=True)
             return XlmValue(reference=reference)
         if cell.formula is not None:
             spelled = synthesize_formula(cell.formula)
@@ -503,11 +515,13 @@ class XlmEngine:
     def _unknown_command(self, name: str, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
         """
         The fallback for a command no handler answers: the call spelled unevaluated, with
-        every argument evaluated for the side effects it may have had.
+        every argument evaluated for the side effects it may have had. A missing argument spells
+        nothing — the grammar of the retiring port did not materialize one at all.
         """
         arguments = [
             evaluate_expression(self, argument, cursor).text or ''
             for argument in call.arguments
+            if not isinstance(argument, XlMissingArgument)
         ]
         text = F'={name}({",".join(arguments)})'
         return XlmOutcome(value=XlmValue(value=text, partial=True))

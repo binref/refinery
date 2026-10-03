@@ -164,9 +164,9 @@ def _index(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
 def _indirect(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     spelled = synthesize_formula(call)
     argument = evaluate_expression(engine, call.arguments[0], cursor)
-    if argument.partial:
+    if argument.partial or not isinstance(argument.value, str):
         return _partial(spelled)
-    parsed = parse_formula(argument.unwrap())
+    parsed = parse_formula(argument.value)
     if not isinstance(parsed, (XlA1Reference, XlR1C1Reference)):
         return _partial(spelled)
     return XlmOutcome(value=engine.read_reference(resolve_reference(parsed, cursor), cursor))

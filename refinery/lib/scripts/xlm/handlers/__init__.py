@@ -9,13 +9,17 @@ from refinery.lib.scripts.xlm.commands import XLM_COMMANDS
 from refinery.lib.scripts.xlm.handlers.control import CONTROL_HANDLERS
 from refinery.lib.scripts.xlm.handlers.functions import FUNCTION_HANDLERS
 from refinery.lib.scripts.xlm.handlers.lookups import LOOKUP_HANDLERS
+from refinery.lib.scripts.xlm.handlers.mutate import MUTATION_HANDLERS
 from refinery.lib.scripts.xlm.handlers.strings import STRING_HANDLERS
+from refinery.lib.scripts.xlm.handlers.system import SYSTEM_HANDLERS
 
 HANDLERS = {
     **CONTROL_HANDLERS,
     **FUNCTION_HANDLERS,
     **STRING_HANDLERS,
     **LOOKUP_HANDLERS,
+    **MUTATION_HANDLERS,
+    **SYSTEM_HANDLERS,
 }
 
 _UNREGISTERED = set(HANDLERS) - set(XLM_COMMANDS)

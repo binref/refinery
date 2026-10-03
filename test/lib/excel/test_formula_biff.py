@@ -13,7 +13,7 @@ from refinery.lib.excel.formula.model import (
 )
 from refinery.lib.excel.formula.ptg import RpnError
 from refinery.lib.ole.file import OleFile
-from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth, canonical
+from refinery.lib.scripts import TREE_RECURSION_DEPTH, RecursionDepth, Transformer, canonical
 
 from ... import TestBase
 from .samples import (
@@ -50,6 +50,28 @@ def _contains_relative_3d_area(expression) -> bool:
                 if corner.sheets and (corner.relative_row or corner.relative_col):
                     return True
     return False
+
+
+class _R1C1AgainstCell(Transformer):
+    """
+    Resolve the relative references of a shared-formula template against the member cell that
+    holds it. The reader keeps the template position-independent, while the oracle renders it
+    resolved into absolute coordinates, so the comparison needs both sides in one notation.
+    """
+
+    def __init__(self, row: int, col: int):
+        super().__init__()
+        self._row = row
+        self._col = col
+
+    def visit_XlR1C1Reference(self, node: XlR1C1Reference):
+        return XlA1Reference(
+            sheets=node.sheets,
+            row=self._row + node.row if node.relative_row else node.row,
+            col=self._col + node.col if node.relative_col else node.col,
+            relative_row=node.relative_row,
+            relative_col=node.relative_col,
+        )
 
 
 class TestBiffFormulaDecoding(TestBase):
@@ -113,7 +135,7 @@ class TestBiffFormulaDecoding(TestBase):
             'EXEC("po"&"wershel"&"l -Command "&Acf444!A9590:Acf444!A9590&"")',
         )
 
-    def test_shared_formula_members_degrade_to_carriers(self):
+    def test_shared_formula_members_carry_the_template(self):
         workbook = open_workbook(XLM_MACRO_RPN_BIFF8)
         decoded = carriers = 0
         for sheet in workbook.sheets():
@@ -124,8 +146,12 @@ class TestBiffFormulaDecoding(TestBase):
                     carriers += 1
                 else:
                     decoded += 1
-        self.assertEqual(decoded, 467)
-        self.assertEqual(carriers, 128)
+        self.assertEqual(decoded, 595)
+        self.assertEqual(carriers, 0)
+        self.assertEqual(
+            _formula_texts(XLM_MACRO_RPN_BIFF8)[('mP9mScF1m5', 66, 12)],
+            'CHAR(RC[-1])',
+        )
 
 
 class TestBiffFormulaAgainstXlrd(TestBase):
@@ -135,7 +161,9 @@ class TestBiffFormulaAgainstXlrd(TestBase):
     parentheses and quoted sheet names cannot mask a match. xlrd2 decodes relative 3-D areas
     wrongly — it drops the relative flags whenever the referenced sheet differs from the
     formula's own sheet, and it adds the anchoring row twice when it does not — so those cells
-    carry their own pinned expectations above and are excluded here.
+    carry their own pinned expectations above and are excluded here. The member cells of a
+    shared formula are excluded too: xlrd2 renders their `ptgExp` token as the placeholder
+    text `SHARED FMLA at rowx=…` instead of the template, which this reader resolves.
     """
 
     def test_formula_programs_match_the_oracle(self):
@@ -154,11 +182,12 @@ class TestBiffFormulaAgainstXlrd(TestBase):
             with self.subTest(sample=name):
                 book = xlrd2.open_workbook(file_contents=data)
                 expected = {
-                    (sheet.name, row + 1, col + 1): sheet.cell(row, col).formula
+                    (sheet.name, row + 1, col + 1): text
                     for sheet in book.sheets()
                     for row in range(sheet.nrows)
                     for col in range(sheet.ncols)
-                    if sheet.cell(row, col).formula
+                    if (text := sheet.cell(row, col).formula)
+                    and not text.startswith('SHARED FMLA at rowx=')
                 }
                 workbook = open_workbook(data)
                 actual = {}
@@ -172,13 +201,13 @@ class TestBiffFormulaAgainstXlrd(TestBase):
                         if _contains_relative_3d_area(formula):
                             continue
                         actual[sheet.name, cell.row, cell.col] = formula
-                self.assertEqual(set(actual) & set(expected), set(actual))
                 with RecursionDepth(TREE_RECURSION_DEPTH):
-                    for key in actual:
+                    for key in actual.keys() & expected.keys():
                         oracle = parse_formula(expected[key])
                         self.assertNotIsInstance(oracle, XlUnparsedFormula)
+                        resolved = _R1C1AgainstCell(key[1], key[2]).visit(actual[key])
                         self.assertEqual(
-                            canonical(actual[key]),
+                            canonical(resolved or actual[key]),
                             canonical(oracle),
                             F'{name} {key}: {expected[key]}',
                         )

@@ -299,6 +299,7 @@ class BiffSheet(ExcelSheet):
         self._workbook = workbook
         self._cells: list[Cell] | None = None
         self._error: ExcelFormatError | None = None
+        self._shared: list[tuple[int, int, int, int, bytes]] = []
 
     def cells(self) -> Iterator[Cell]:
         """
@@ -313,9 +314,39 @@ class BiffSheet(ExcelSheet):
             except _DEFECTS as error:
                 self._error = ExcelFormatError(F'sheet {self.name!r} is malformed: {error}')
             self._cells = cells
+            self._apply_shared_formulas(cells)
         yield from self._cells
         if self._error is not None:
             raise self._error
+
+    def _shared_formula(self, body: memoryview) -> None:
+        """
+        The SHRFMLA record that follows the FORMULA record of the head cell of a shared
+        formula: a rectangle of member cells and the token stream they all carry. Every
+        member's own FORMULA record holds a `ptgExp` token pointing at the head instead
+        of the formula; the template's relative references resolve against whichever
+        member cell reads them.
+        """
+        first_row, last_row, first_col, last_col = struct.unpack_from('<HHBB', body)
+        cce = _u16(body, 8)
+        self._shared.append((
+            first_row,
+            last_row,
+            first_col,
+            last_col,
+            bytes(body[10:10 + cce]),
+        ))
+
+    def _apply_shared_formulas(self, cells: list[Cell]) -> None:
+        for index, cell in enumerate(cells):
+            formula = cell.formula
+            if not isinstance(formula, bytes) or not formula.startswith(b'\x01'):
+                continue
+            row, col = cell.row - 1, cell.col - 1
+            for first_row, last_row, first_col, last_col, template in self._shared:
+                if first_row <= row <= last_row and first_col <= col <= last_col:
+                    cells[index] = cell._replace(formula=template)
+                    break
 
     def _read(self) -> Iterator[Cell]:
         workbook = self._workbook
@@ -393,6 +424,8 @@ class BiffSheet(ExcelSheet):
             last = _u16(body, len(body) - 2)
             for col in range(first, last + 1):
                 yield Cell(row + 1, col + 1, CellKind.BLANK, None, None)
+        elif opcode == _Record.SHRFMLA:
+            self._shared_formula(body)
 
     def _biff2_record(self, opcode: int, body: memoryview) -> Iterator[Cell]:
         workbook = self._workbook
@@ -406,7 +439,11 @@ class BiffSheet(ExcelSheet):
             yield self._number(row, col, number, None, format_key)
         elif opcode == _Record.LABEL_B2:
             row, col = struct.unpack_from('<HH', body)
-            yield Cell(row + 1, col + 1, CellKind.TEXT, workbook._decode_short_string(body, 7), None)
+            yield Cell(
+                row + 1, col + 1, CellKind.TEXT,
+                workbook._decode_short_string(body, 7),
+                None,
+            )
         elif opcode == _Record.BOOLERR_B2:
             row, col = struct.unpack_from('<HH', body)
             yield self._boolean_or_error(row, col, body[7], body[8])
@@ -447,10 +484,14 @@ class BiffSheet(ExcelSheet):
         opcode, body = stream.next_record()
         if opcode not in _STRING_RECORDS:
             if opcode not in _FORMULA_INTERMEDIATE_RECORDS:
-                raise ExcelFormatError(F'a string formula result is followed by record {opcode:#06x}')
+                raise ExcelFormatError(
+                    F'a string formula result is followed by record {opcode:#06x}')
+            if opcode == _Record.SHRFMLA:
+                self._shared_formula(body)
             opcode, body = stream.next_record()
             if opcode not in _STRING_RECORDS:
-                raise ExcelFormatError(F'a string formula result is followed by record {opcode:#06x}')
+                raise ExcelFormatError(
+                    F'a string formula result is followed by record {opcode:#06x}')
         return self._workbook._decode_string_record(body, stream)
 
     def _number(
@@ -828,7 +869,12 @@ class BiffWorkbook(ExcelWorkbook):
         return strings
 
     @staticmethod
-    def _advance_chunks(chunks: list[memoryview], index: int, pos: int, count: int) -> tuple[int, int]:
+    def _advance_chunks(
+        chunks: list[memoryview],
+        index: int,
+        pos: int,
+        count: int,
+    ) -> tuple[int, int]:
         if count < 0:
             raise ExcelFormatError('the shared string table announces a negative section size')
         while count:
@@ -879,7 +925,8 @@ class BiffWorkbook(ExcelWorkbook):
             index = attributes[0] & 0x3F
             if index == 0x3F:
                 if self._ixfe is None:
-                    raise ExcelFormatError('a BIFF2 cell references XF index 63 with no IXFE record')
+                    raise ExcelFormatError(
+                        'a BIFF2 cell references XF index 63 with no IXFE record')
                 index = self._ixfe
             return self._format_key_of_xf(index) or 0
         return attributes[1] & 0x3F
@@ -979,9 +1026,11 @@ class BiffWorkbook(ExcelWorkbook):
             collected += len(chunk)
             if collected >= nchars:
                 if collected > nchars:
-                    raise ExcelFormatError('a string formula result is longer than its length field')
+                    raise ExcelFormatError(
+                        'a string formula result is longer than its length field')
                 return ''.join(parts)
             opcode, body = stream.next_record()
             if opcode != _Record.CONTINUE:
-                raise ExcelFormatError(F'a string formula result is followed by record {opcode:#06x}')
+                raise ExcelFormatError(
+                    F'a string formula result is followed by record {opcode:#06x}')
             pos = 0

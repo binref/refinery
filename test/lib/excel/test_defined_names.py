@@ -7,7 +7,13 @@ from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula import synthesize_formula
 
 from ... import TestBase
-from .samples import FORMULA_TEST_NAMES, ISSUE20, REVENG1, XLM_MACRO_FORMULA_XLSM, XLM_MACRO_TEXT_XLSM
+from .samples import (
+    FORMULA_TEST_NAMES,
+    ISSUE20,
+    REVENG1,
+    XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_TEXT_XLSM,
+)
 
 
 def _names(data: bytes) -> list[tuple[str, int | None, str]]:

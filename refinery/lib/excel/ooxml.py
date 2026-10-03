@@ -33,7 +33,8 @@ _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relation
 _REL_CHARTSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet'
 _REL_MACROSHEET = 'http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet'
 _REL_INTL_MACROSHEET = 'http://schemas.microsoft.com/office/2006/relationships/xlIntlMacrosheet'
-_REL_SHARED_STRINGS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings'
+_REL_SHARED_STRINGS = (
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings')
 _REL_STYLES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles'
 _RELATIONSHIP_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 
@@ -395,7 +396,8 @@ class OoxmlWorkbook(ExcelWorkbook):
             local = local_name(element.tag)
             if local == 'numFmt':
                 try:
-                    self._formats[int(element.get('numFmtId') or 0)] = element.get('formatCode') or ''
+                    self._formats[int(element.get('numFmtId') or 0)] = (
+                        element.get('formatCode') or '')
                 except ValueError:
                     pass
             elif local == 'cellXfs':
