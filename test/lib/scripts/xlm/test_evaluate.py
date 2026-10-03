@@ -12,6 +12,7 @@ from test import TestBase
 from test.lib.excel.samples import (
     DATES_XLSB,
     XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_RPN_BIFF8,
 )
 from test.lib.scripts.xlm.test_view import _with_part_replacement
 
@@ -41,12 +42,11 @@ class TestEvaluateExpression(TestBase):
         self.assertEqual(value.text, '111')
 
     def test_a_command_without_a_handler_spells_its_call_unevaluated(self):
-        view = XlmView(XLM_MACRO_FORMULA_XLSM)
-        cell = view.cell('Cdfea', 2, 5)
+        view = XlmView(XLM_MACRO_RPN_BIFF8)
+        cell = view.cell('mP9mScF1m5', 50, 19)
         assert cell is not None and isinstance(cell.formula, XlFunctionCall)
-        engine = XlmEngine(view)
-        outcome = engine.call(cell.formula, XlmCursor('Cdfea', 2, 5))
-        self.assertEqual(outcome.value.text, '=CHAR(111)')
+        outcome = XlmEngine(view).call(cell.formula, XlmCursor('mP9mScF1m5', 50, 19))
+        self.assertEqual(outcome.value.text, '=WORKBOOK.HIDE("mP9mScF1m5",True)')
         self.assertEqual(outcome.value.partial, True)
 
     def test_a_relative_reference_resolves_against_the_reading_cell(self):

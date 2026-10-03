@@ -67,9 +67,9 @@ def unwrap_literal(text: str) -> str:
 
 def wrap_literal(data: Any, must_wrap: bool = False) -> str:
     """
-    The spelling the trace gives a value: a number and a boolean keep their own text, a text
-    that already carries quotes keeps them, and every other text is quoted with its quotes
-    doubled — unless the caller insists on quotes around anything, numbers included.
+    The spelling the trace gives a value: a number, a boolean, and a text that already carries
+    quotes keep their own spelling — the quoted text only while the caller does not insist on
+    quotes — and every other text is quoted with its quotes doubled.
     """
     if is_number(data) or (
         len(data) > 1

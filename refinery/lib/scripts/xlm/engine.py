@@ -98,6 +98,11 @@ class XlmEngine:
         self.ignore_processing = False
         self.indent_level = 0
         self.indent_current_line = False
+        self.now_count = 0
+        self.char_errors = 0
+        self.iserror_at: XlmCursor | None = None
+        self.iserror_flag = False
+        self.iserror_repeats = 0
         self.call_stack: list[XlmCursor] = []
         self.branch_stack: list[XlmFrame] = []
         self.while_stack: list[XlmLoop] = []

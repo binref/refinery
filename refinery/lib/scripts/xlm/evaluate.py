@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from refinery.lib.excel.common import column_letters
 from refinery.lib.excel.formula.model import (
     XlA1Reference,
     XlArrayConstant,
@@ -26,7 +27,7 @@ from refinery.lib.excel.formula.model import (
     XlUnparsedFormula,
 )
 from refinery.lib.scripts.xlm.references import XlmCursor, resolve_reference
-from refinery.lib.scripts.xlm.values import XlmValue, apply_binary
+from refinery.lib.scripts.xlm.values import XlmReference, XlmValue, apply_binary
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.xlm.engine import XlmEngine
@@ -57,6 +58,8 @@ def evaluate_expression(
     if isinstance(node, XlUnaryExpression):
         return _evaluate_unary(engine, node, cursor)
     if isinstance(node, XlBinaryExpression):
+        if node.operator is XlBinaryOperator.RANGE:
+            return _evaluate_range(engine, node, cursor)
         left = evaluate_expression(engine, node.left, cursor)
         right = evaluate_expression(engine, node.right, cursor)
         return apply_binary(node.operator, left, right)
@@ -93,3 +96,40 @@ def _evaluate_unary(
     if operand.partial:
         return XlmValue(value=F'-{operand.unwrap()}', partial=True)
     return apply_binary(XlBinaryOperator.SUB, XlmValue(value=0), operand)
+
+
+def _evaluate_range(
+    engine: XlmEngine,
+    node: XlBinaryExpression,
+    cursor: XlmCursor,
+) -> XlmValue:
+    """
+    The value a range expression computes: the two corners it spans, spelled as the address of
+    the rectangle they name. The corners are addresses rather than values — reading the cells
+    a range covers is a question of the command that consumes the range, and a corner that
+    holds an unfinished formula does not make the range itself unfinished. A side the cursor
+    cannot resolve to an address falls back to the value it computes.
+    """
+    left = engine.node_reference(node.left, cursor)
+    right = engine.node_reference(node.right, cursor)
+    if left is None or right is None:
+        return apply_binary(
+            XlBinaryOperator.RANGE,
+            evaluate_expression(engine, node.left, cursor),
+            evaluate_expression(engine, node.right, cursor),
+        )
+    return XlmValue(
+        value=_range_spelling(left, right),
+        cells=(
+            XlmValue(value=_cell_spelling(left), reference=left),
+            XlmValue(value=_cell_spelling(right), reference=right),
+        ),
+    )
+
+
+def _cell_spelling(reference: XlmReference) -> str:
+    return F'{column_letters(reference.col)}{reference.row}'
+
+
+def _range_spelling(left: XlmReference, right: XlmReference) -> str:
+    return F'{left.a1()}:{right.a1()}'

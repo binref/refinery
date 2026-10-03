@@ -7,8 +7,16 @@ from __future__ import annotations
 
 from refinery.lib.scripts.xlm.commands import XLM_COMMANDS
 from refinery.lib.scripts.xlm.handlers.control import CONTROL_HANDLERS
+from refinery.lib.scripts.xlm.handlers.functions import FUNCTION_HANDLERS
+from refinery.lib.scripts.xlm.handlers.lookups import LOOKUP_HANDLERS
+from refinery.lib.scripts.xlm.handlers.strings import STRING_HANDLERS
 
-HANDLERS = dict(CONTROL_HANDLERS)
+HANDLERS = {
+    **CONTROL_HANDLERS,
+    **FUNCTION_HANDLERS,
+    **STRING_HANDLERS,
+    **LOOKUP_HANDLERS,
+}
 
 _UNREGISTERED = set(HANDLERS) - set(XLM_COMMANDS)
 assert not _UNREGISTERED, F'handlers without a command registry entry: {sorted(_UNREGISTERED)}'

