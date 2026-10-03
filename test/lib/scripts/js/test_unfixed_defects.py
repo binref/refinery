@@ -2630,6 +2630,40 @@ class TestADeclaredNameReboundToTheGlobalObjectHoldsIt(TestBase):
     """
 
 
+#: A classic script writing one of its own top-level variables through a name holding the global
+#: object, from inside a function it then calls, mapped to the behavior a host gives it.
+A_GLOBAL_WRITTEN_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT = {
+    'a write inside a called function': Program(
+        a_program("""
+            var g = 1;
+            var w = globalThis;
+            function f() { w.g = 2; }
+            f();
+            console.log(g);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_GLOBAL_WRITTEN_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT)
+class TestAGlobalWrittenInsideACallThroughANameHoldingTheGlobalObjectChangesTheVariable(TestBase):
+    """
+    The model records `w.g = 2` as a write of `g`, but whether a variable is written through the
+    global object is decided a second time, from how the base of each recorded member write is
+    spelled: `w` is not a spelling of the global object, so `g` is taken for a variable no member
+    write reaches. The effect summary of `f` does not list `g` either, so the read after the call is
+    folded to the value the declaration spelled. The same write made at the top level is read
+    correctly; the law `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object`
+    holds it.
+
+    The rule that closes it: the model marks each reference it records through the global object
+    as such, and every later question reads that mark instead of the spelling.
+    """
+
+
 #: A classic script handing the global object to a call from inside a function body, mapped to the
 #: behavior a host gives it. Every row spells the object as the `this` of a function nothing calls as
 #: a method, which §10.2.1.2 makes the global object for the duration of the call.
