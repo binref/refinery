@@ -258,6 +258,7 @@ class TestVHDExtractor(TestUnitBase):
                 expected[lower - offset, upper - offset] = data[start:start + upper - lower]
         chunks = data | self.load() | []
         self.assertEqual(chunks[0]['path'], 'partition0.img/0x0000000')
+        self.assertEqual(len(chunks), len(expected))
         self.assertEqual({(chunk['start'], chunk['end']): chunk for chunk in chunks}, expected)
 
     def test_raw_volume_claiming_2_tb_yields_only_the_stored_blocks(self):
@@ -275,3 +276,9 @@ class TestVHDExtractor(TestUnitBase):
             (block_size - offset, 2 * block_size - offset),
         ])
         self.assertEqual(chunks[0], data[mbr + offset:mbr + block_size])
+        second = int.from_bytes(data[table + 8:table + 16], 'little') & ~0xFFFFF
+        self.assertEqual(chunks[1], data[second:second + block_size])
+        width = len(hex(0xFFFFFFFF * 512))
+        self.assertEqual([chunk['path'] for chunk in chunks], [
+            F'partition0.img/{start:#0{width}x}' for start in (0, block_size - offset)
+        ])
