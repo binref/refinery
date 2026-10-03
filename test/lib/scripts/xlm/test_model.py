@@ -365,11 +365,11 @@ class TestXlmRowFallThrough(TestBase):
         self.assertEqual(sheet.next_formula_cell(9592, 1), None)
 
 
-class TestXlmSortedCells(TestBase):
+class TestXlmListing(TestBase):
 
     def test_value_cells_follow_the_formula_cells_in_document_order(self):
         self.assertEqual(
-            [(cell.row, cell.col) for cell in _model(XLM_MACRO_NAMES_BIFF8)[0].sorted_cells()],
+            [(cell.row, cell.col) for cell in _model(XLM_MACRO_NAMES_BIFF8)[0].listing()],
             [
                 (2, 1),
                 (9584, 1),
@@ -387,7 +387,7 @@ class TestXlmSortedCells(TestBase):
 
     def test_formula_cells_sort_by_column_letters_then_by_row_before_the_value_cells(self):
         self.assertEqual(
-            [(cell.row, cell.col) for cell in _model(XLM_MACRO_TEXT_XLSM)[0].sorted_cells()],
+            [(cell.row, cell.col) for cell in _model(XLM_MACRO_TEXT_XLSM)[0].listing(sort_formulas=True)],
             [
                 (109, 52),
                 (110, 52),

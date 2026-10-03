@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import io
-import re
-import zipfile
-
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmView
 from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
@@ -15,10 +11,9 @@ from test.lib.excel.samples import (
     XLM_MACRO_RPN_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
+from test.lib.scripts.xlm.modify import replace_cell_formula
 
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
-
-_MACROSHEET_PART = 'xl/macrosheets/intlsheet1.xml'
 
 
 def _macrosheet(view: XlmView, name: str):
@@ -27,30 +22,10 @@ def _macrosheet(view: XlmView, name: str):
     return sheet
 
 
-def _with_cell_formula(data: bytes, cell: str, formula: str) -> bytes:
-    """
-    Replace the stored formula of one cell of the macrosheet of the XLSM sample with another.
-    """
-    source = zipfile.ZipFile(io.BytesIO(data))
-    buffer = io.BytesIO()
-    pattern = re.compile(F'(<c r="{cell}"[^>]*>)<f>.*?</f>'.encode(), re.DOTALL)
-    with zipfile.ZipFile(buffer, 'w') as target:
-        for info in source.infolist():
-            content = source.read(info)
-            if info.filename == _MACROSHEET_PART:
-                content = pattern.sub(
-                    lambda match: match.group(1) + F'<f>{formula}</f>'.encode(),
-                    content,
-                    count=1,
-                )
-            target.writestr(info, content)
-    return buffer.getvalue()
-
-
 def _run(*replacements: tuple[str, str], **options):
     data = XLM_MACRO_TEXT_XLSM
     for cell, formula in replacements:
-        data = _with_cell_formula(data, cell, formula)
+        data = replace_cell_formula(data, cell, formula)
     engine = XlmEngine(XlmView(data), **options)
     return list(engine.run()), engine
 

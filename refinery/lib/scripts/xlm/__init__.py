@@ -6,6 +6,7 @@ registry with its severity classes, and the environment of answers the macro com
 from __future__ import annotations
 
 from refinery.lib.scripts.xlm.commands import XLM_COMMANDS, XlmSeverity, severity
+from refinery.lib.scripts.xlm.deobfuscation import deobfuscate
 from refinery.lib.scripts.xlm.engine import XlmEngine
 from refinery.lib.scripts.xlm.environment import XlmEnvironment
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
@@ -43,6 +44,7 @@ __all__ = [
     'apply_binary',
     'build_xlm_model',
     'concat',
+    'deobfuscate',
     'evaluate_expression',
     'expand_range',
     'resolve_reference',

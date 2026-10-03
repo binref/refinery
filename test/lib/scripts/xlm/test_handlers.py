@@ -5,7 +5,8 @@ from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmView
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from test import TestBase
 from test.lib.excel.samples import XLM_MACRO_TEXT_XLSM
-from test.lib.scripts.xlm.test_engine import _steps, _with_cell_formula
+from test.lib.scripts.xlm.modify import replace_cell_formula
+from test.lib.scripts.xlm.test_engine import _steps
 
 _CURSOR = XlmCursor('Doc1', 109, 52)
 
@@ -129,19 +130,19 @@ class TestLookupCommands(TestBase):
         self.assertEqual(outcome.status, None)
 
     def test_index_reads_the_cell_of_a_range_at_a_position(self):
-        data = _with_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
         engine = XlmEngine(XlmView(data))
         outcome = engine.call(parse_formula('INDEX(AZ112:AZ116,2)'), _CURSOR)
         self.assertEqual(outcome.value.value, 123)
 
     def test_indirect_reads_the_cell_its_text_names(self):
-        data = _with_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '123')
         engine = XlmEngine(XlmView(data))
         outcome = engine.call(parse_formula('INDIRECT("AZ113")'), _CURSOR)
         self.assertEqual(outcome.value.value, 123)
 
     def test_hlookup_finds_the_first_match_below_its_index_row(self):
-        data = _with_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ114', '"needle"')
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ114', '"needle"')
         engine = XlmEngine(XlmView(data))
         call = parse_formula('HLOOKUP("needle",AZ112:AZ116,1,FALSE)')
         outcome = engine.call(call, _CURSOR)
@@ -199,7 +200,7 @@ class TestMutationCommands(TestBase):
         self.assertEqual(synthesize_formula(entry.formula), '7')
 
     def test_select_moves_the_cell_that_active_cell_reads(self):
-        data = _with_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '42')
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '42')
         engine = XlmEngine(XlmView(data))
         engine.call(parse_formula('SELECT(AZ112)'), _CURSOR)
         self.assertEqual(engine.call(parse_formula('ACTIVE.CELL()'), _CURSOR).value.value, 42)

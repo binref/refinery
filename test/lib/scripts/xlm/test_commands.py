@@ -103,7 +103,7 @@ def _top_level_commands(data: bytes) -> list[str]:
     return sorted({
         cell.formula.callee
         for sheet in macrosheets
-        for cell in sheet.sorted_cells()
+        for cell in sheet.listing()
         if isinstance(cell.formula, XlFunctionCall) and isinstance(cell.formula.callee, str)
     })
 

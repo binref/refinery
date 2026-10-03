@@ -1,37 +1,10 @@
 from __future__ import annotations
 
-import io
-import re
-import zipfile
-
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from test import TestBase
 from test.lib.excel.samples import XLM_MACRO_TEXT_XLSM
-from test.lib.scripts.xlm.test_engine import _with_cell_formula
-
-_MACROSHEET_PART = 'xl/macrosheets/intlsheet1.xml'
-
-
-def _with_date_cell(data: bytes, cell: str, iso: str) -> bytes:
-    """
-    Turn one cell of the macrosheet of the XLSM sample into a date cell that stores the given
-    moment as its cached value.
-    """
-    source = zipfile.ZipFile(io.BytesIO(data))
-    buffer = io.BytesIO()
-    pattern = re.compile(F'<c r="{cell}"[^>]*>.*?</c>'.encode(), re.DOTALL)
-    with zipfile.ZipFile(buffer, 'w') as target:
-        for info in source.infolist():
-            content = source.read(info)
-            if info.filename == _MACROSHEET_PART:
-                content = pattern.sub(
-                    F'<c r="{cell}" t="d"><v>{iso}</v></c>'.encode(),
-                    content,
-                    count=1,
-                )
-            target.writestr(info, content)
-    return buffer.getvalue()
+from test.lib.scripts.xlm.modify import date_cell, replace_cell_formula
 
 
 def _sample() -> bytes:
@@ -40,8 +13,8 @@ def _sample() -> bytes:
     made to spell one character whose code the day of the month decides: every day but the
     fourth spells a control character, so the day the guess keeps is the fourth.
     """
-    data = _with_date_cell(XLM_MACRO_TEXT_XLSM, 'AZ113', '2026-10-01T00:00:00')
-    return _with_cell_formula(data, 'AZ110', 'CHAR(DAY(AZ113)*8)')
+    data = date_cell(XLM_MACRO_TEXT_XLSM, 'AZ113', '2026-10-01T00:00:00')
+    return replace_cell_formula(data, 'AZ110', 'CHAR(DAY(AZ113)*8)')
 
 
 class TestDayGuess(TestBase):
@@ -69,7 +42,7 @@ class TestDayGuess(TestBase):
         self.assertEqual(reference.value, 'URLMo')
 
     def test_a_serial_that_is_no_date_stays_unimplemented(self):
-        data = _with_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ110', 'DAY(AZ109)')
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ110', 'DAY(AZ109)')
         steps = list(XlmEngine(XlmView(data)).run())
         self.assertEqual(steps[1].status, XlmStatus.NotImplemented)
         self.assertEqual(steps[1].text, 'DAY(Serial Date)')

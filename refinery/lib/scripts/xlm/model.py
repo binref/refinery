@@ -70,17 +70,16 @@ class XlmMacrosheet(Script):
                 return item
         return None
 
-    def sorted_cells(self) -> list[XlmCell]:
+    def listing(self, sort_formulas: bool = False) -> list[XlmCell]:
         """
-        The cells in the order the sorted extract listing shows them: the cells that hold a
-        formula by column letters and then by row, followed by the cells that hold only a value,
-        in document order.
+        The cells in the order the extract listing shows them: the cells that hold a formula
+        first and the cells that hold only a value after, each group in document order — or,
+        when sorted, the formulas by column letters and then by row.
         """
         cells = [cell for cell in self.body if isinstance(cell, XlmCell)]
-        formulas = sorted(
-            (cell for cell in cells if cell.formula is not None),
-            key=lambda cell: (column_letters(cell.col), cell.row),
-        )
+        formulas = [cell for cell in cells if cell.formula is not None]
+        if sort_formulas:
+            formulas.sort(key=lambda cell: (column_letters(cell.col), cell.row))
         return formulas + [cell for cell in cells if cell.formula is None]
 
     def next_formula_cell(self, row: int, col: int) -> XlmCell | None:

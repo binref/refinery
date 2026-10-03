@@ -5,10 +5,18 @@ table the entry points resolve through. It replaces the three wrappers of the re
 """
 from __future__ import annotations
 
-from refinery.lib.excel import ExcelFormat, International, SheetKind, open_workbook
+from refinery.lib.excel import (
+    ExcelFormat,
+    International,
+    SheetKind,
+    open_workbook,
+    parse_formula,
+)
+from refinery.lib.excel.formula.model import XlA1Reference, XlR1C1Reference
 from refinery.lib.excel.workbook import ExcelSheet
 from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_model, sheet_cells
 from refinery.lib.scripts.xlm.names import XlmNameTable
+from refinery.lib.scripts.xlm.references import XlmCursor, XlmReference, resolve_reference
 
 #: The workbook name of each container family, as the wrappers of the retiring port spelled
 #: them; no reader exposes the name the file was saved under.
@@ -47,6 +55,29 @@ class XlmView:
         Every macrosheet of the workbook in document order.
         """
         return list(self._macrosheets.values())
+
+    def entry_points(self, start_point: str = '') -> list[XlmReference]:
+        """
+        The cells a run of the program starts at: every defined name that fuzzy-spells
+        `auto_open` or `auto_close` points at one, and without such a name a start point a
+        caller named is the only entry.
+        """
+        result: list[XlmReference] = []
+        for pattern in ('auto_open', 'auto_close'):
+            for entry in self.names.fuzzy(pattern):
+                formula = entry.formula
+                if not isinstance(formula, (XlA1Reference, XlR1C1Reference)):
+                    continue
+                reference = resolve_reference(formula, XlmCursor('', 0, 0))
+                if reference.sheet is not None:
+                    result.append(reference)
+        if not result and start_point:
+            parsed = parse_formula(start_point)
+            if isinstance(parsed, (XlA1Reference, XlR1C1Reference)):
+                reference = resolve_reference(parsed, XlmCursor('', 0, 0))
+                if reference.sheet is not None:
+                    result.append(reference)
+        return result
 
     def macrosheet(self, name: str) -> XlmMacrosheet | None:
         """

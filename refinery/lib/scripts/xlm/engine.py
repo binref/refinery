@@ -496,19 +496,7 @@ class XlmEngine:
         return XlmOutcome(value=evaluate_expression(self, node, cursor))
 
     def _entry_points(self, start_point: str) -> list[XlmReference]:
-        result: list[XlmReference] = []
-        for pattern in ('auto_open', 'auto_close'):
-            for entry in self.view.names.fuzzy(pattern):
-                reference = self._reference_of(entry.formula, XlmCursor('', 0, 0))
-                if reference is not None and reference.sheet is not None:
-                    result.append(reference)
-        if not result and start_point:
-            parsed = parse_formula(start_point)
-            if isinstance(parsed, (XlA1Reference, XlR1C1Reference)):
-                reference = resolve_reference(parsed, XlmCursor('', 0, 0))
-                if reference.sheet is not None:
-                    result.append(reference)
-        return result
+        return self.view.entry_points(start_point)
 
     def _step_severity(self, node) -> XlmSeverity:
         if isinstance(node, XlFunctionCall) and isinstance(node.callee, str):
