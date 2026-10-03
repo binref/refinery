@@ -44,9 +44,11 @@ class DiskBackend(abc.ABC):
     to its contents, returning zero bytes for sparse and unallocated regions. Its result can be a
     view of the input and must not be modified. The `stored` method yields the parts of a byte
     range for which the container stores data, one for each allocation block of the container, and
-    the `allocated` method reports whether there are any.
+    the `allocated` method reports whether there are any. Problems that do not prevent reading the
+    disk are collected in `warnings`.
     """
     size: int
+    warnings: list[str]
 
     @abc.abstractmethod
     def read(self, offset: int, length: int) -> buf:
@@ -73,14 +75,8 @@ class VirtualDisk(DiskBackend):
             self._backend = VhdImage(view)
         else:
             raise VirtualDiskError('input is not a VHD or VHDX image')
-
-    @property
-    def size(self) -> int:
-        return self._backend.size
-
-    @property
-    def warnings(self) -> list[str]:
-        return self._backend.warnings
+        self.size = self._backend.size
+        self.warnings = self._backend.warnings
 
     def read(self, offset: int, length: int) -> buf:
         return self._backend.read(offset, length)
@@ -365,7 +361,6 @@ class VhdxImage(DiskBackend):
                 sector_size = int.from_bytes(item[0:4], 'little')
                 self._sector_size_log = sector_size.bit_length() - 1
         if self._block_size_log <= 0 or self._sector_size_log <= 0 or size is None:
-            raise VirtualDiskError('VHDX metadata is missing required entries')
             raise VirtualDiskError('VHDX metadata is missing required entries')
         self.size = size
 
