@@ -592,7 +592,25 @@ class TestVHDExtractor(TestUnitBase):
             paths = fat.data | unit | {str}
         self.assertEqual(paths, intact | {'A/A.TXT', 'A/T.TXT', 'B/B.TXT'})
         log_warn.assert_called_once_with(
-            'partition 0: directory cluster chains loop or overlap, each cluster was read once'
+            'partition 0: directory cluster chains loop or overlap, each cluster was listed once'
+        )
+
+    def test_fat_directory_owns_its_clusters_before_its_subdirectories(self):
+        intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        continuation, = fat.free(1)
+        fat.link(fat.last(fat.root), continuation)
+        fat.write(continuation, fat.entry(B'X       TXT', 0x20))
+        slot = fat.root_end()
+        end = fat.offset(fat.root) + fat.cluster_size
+        fat.data[slot:end - 32] = (B'\xE5' + bytes(31)) * ((end - 32 - slot) // 32)
+        fat.data[end - 32:end] = fat.entry(B'D          ', 0x10, continuation)
+        unit = self.load(list=True)
+        with patch.object(unit, 'log_warn') as log_warn:
+            paths = fat.data | unit | {str}
+        self.assertEqual(paths, intact | {'X.TXT'})
+        log_warn.assert_called_once_with(
+            'partition 0: directory cluster chains loop or overlap, each cluster was listed once'
         )
 
     def test_fat_long_name_spanning_two_clusters_is_assembled(self):

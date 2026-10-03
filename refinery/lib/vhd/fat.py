@@ -24,7 +24,7 @@ _DIR_ENTRY_SIZE = 32
 _SECTOR_SIZES = (512, 1024, 2048, 4096)
 _MAX_PATH = 32767
 _PATH_SKIPPED = F'entries whose path exceeds {_MAX_PATH} characters were skipped with their contents'
-_CHAINS_OVERLAP = 'directory cluster chains loop or overlap, each cluster was read once'
+_CHAINS_OVERLAP = 'directory cluster chains loop or overlap, each cluster was listed once'
 
 _ATTR_READ_ONLY = 0x01
 _ATTR_VOLUME_ID = 0x08
@@ -100,10 +100,11 @@ class FatVolume:
     """
     Parses a FAT12, FAT16, or FAT32 volume. The bit width is derived from the cluster count exactly
     as specified by the FAT format. The `files` method yields all file and directory entries with
-    their full paths. Each cluster is read for at most one directory: when directory chains loop or
-    overlap, a directory ends at the first cluster that was already read. Entries whose path would
-    be longer than 32,767 characters, the maximum on Windows, are skipped together with their
-    contents. Both are reported in `warnings`.
+    their full paths. Each cluster belongs to at most one directory, and a directory claims its
+    clusters up to its end marker before any of its subdirectories is read: when directory chains
+    loop or overlap, a directory ends at the first cluster that was already claimed. Entries whose
+    path would be longer than 32,767 characters, the maximum on Windows, are skipped together with
+    their contents. Both are reported in `warnings`.
     """
     def __init__(self, source: VolumeSource):
         self._source = source
@@ -206,13 +207,20 @@ class FatVolume:
         if warning not in self.warnings:
             self.warnings.append(warning)
 
+    def _cluster(self, cluster: int) -> buf:
+        return self._source.read(self._cluster_offset(cluster), self.cluster_size)
+
     def _directory(self, cluster: int, seen: set[int]) -> Iterator[buf]:
+        clusters: list[int] = []
         for cluster in self._chain(cluster):
             if cluster in seen:
                 self._warn(_CHAINS_OVERLAP)
                 break
             seen.add(cluster)
-            yield self._source.read(self._cluster_offset(cluster), self.cluster_size)
+            clusters.append(cluster)
+            if any(record[0] == 0 for record in self._records((self._cluster(cluster),))):
+                break
+        return map(self._cluster, clusters)
 
     def files(self, recover: bool = False) -> Iterator[FatFile]:
         seen: set[int] = set()
