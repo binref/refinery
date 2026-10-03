@@ -3,6 +3,10 @@ import lzma
 import functools
 import uuid
 
+from unittest.mock import patch
+
+from refinery.lib.vhd.fat import FatVolume
+
 from ... import TestUnitBase
 
 _DISK_HASHES = {
@@ -282,3 +286,40 @@ class TestVHDExtractor(TestUnitBase):
             'partition0.img/0x00000000000',
             'partition0.img/0x00001ff0000',
         ])
+
+    def _malware_with_its_partition_listed_twice(self):
+        data = bytearray(self._sample('malware.vhd'))
+        header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
+        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
+        block_size = int.from_bytes(data[header + 0x20:header + 0x24], 'big')
+        bitmap_size = (block_size // 512 // 8 + 511) // 512 * 512
+        disk = int.from_bytes(data[table:table + 4], 'big') * 512 + bitmap_size
+        gpt = disk + 512
+        self.assertEqual(data[gpt:gpt + 8], B'EFI PART')
+        entries = disk + int.from_bytes(data[gpt + 0x48:gpt + 0x50], 'little') * 512
+        size = int.from_bytes(data[gpt + 0x54:gpt + 0x58], 'little')
+        self.assertFalse(any(data[entries + size:entries + 2 * size]))
+        data[entries + size:entries + 2 * size] = data[entries:entries + size]
+        return data
+
+    def test_volumes_sharing_a_gpt_label_get_separate_folders(self):
+        intact = self._sample('malware.vhd') | self.load(list=True) | {str}
+        data = self._malware_with_its_partition_listed_twice()
+        paths = data | self.load(list=True) | {str}
+        self.assertEqual(paths, {
+            F'Basic data partition.{index}/{path}' for index in (0, 1) for path in intact})
+
+    def test_volume_failing_to_list_does_not_stop_the_other_volumes(self):
+        intact = self._sample('malware.vhd') | self.load(list=True) | {str}
+        data = self._malware_with_its_partition_listed_twice()
+        files = FatVolume.files
+        failures = [IndexError('damaged directory')]
+
+        def fail_once(volume: FatVolume, recover: bool = False):
+            if failures:
+                raise failures.pop()
+            return files(volume, recover)
+
+        with patch.object(FatVolume, 'files', fail_once):
+            paths = data | self.load(list=True) | {str}
+        self.assertEqual(paths, {F'Basic data partition.1/{path}' for path in intact})
