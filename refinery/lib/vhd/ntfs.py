@@ -140,10 +140,12 @@ class NtfsVolume:
     """
     Parses an NTFS volume. The boot sector supplies the cluster geometry and the location of the
     MFT, which is then read as a file in order to enumerate all other records. The `files` method
-    yields all non-system file and directory entries with their full paths.
+    yields all non-system file and directory entries with their full paths. Problems that do not
+    prevent listing the volume are collected in `warnings`.
     """
     def __init__(self, source: VolumeSource):
         self._source = source
+        self.warnings: list[str] = []
         boot = source.read(0, 512)
         if boot[3:11] != B'NTFS    ':
             raise NtfsError('missing NTFS boot sector signature')

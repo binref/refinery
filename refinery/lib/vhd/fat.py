@@ -18,6 +18,7 @@ from typing import Iterator, Protocol
 from refinery.lib.types import buf
 
 _DIR_ENTRY_SIZE = 32
+_MAX_PATH = 32767
 
 _ATTR_READ_ONLY = 0x01
 _ATTR_VOLUME_ID = 0x08
@@ -93,10 +94,12 @@ class FatVolume:
     """
     Parses a FAT12, FAT16, or FAT32 volume. The bit width is derived from the cluster count exactly
     as specified by the FAT format. The `files` method yields all file and directory entries with
-    their full paths.
+    their full paths. Entries whose path would be longer than 32,767 characters, the maximum on
+    Windows, are skipped together with their contents, which is reported in `warnings`.
     """
     def __init__(self, source: VolumeSource):
         self._source = source
+        self.warnings: list[str] = []
         boot = source.read(0, _DIR_ENTRY_SIZE + 512)
         if int.from_bytes(boot[0x1FE:0x200], 'little') != 0xAA55:
             raise FatError('missing boot sector signature')
@@ -190,19 +193,30 @@ class FatVolume:
             root_offset = self.root_dir_sector * self.bytes_per_sector
             root = self._source.read(root_offset, self.root_entries * _DIR_ENTRY_SIZE)
         seen: set[int] = set()
-        stack = [self._entries(root, '', recover)]
+        skipped = 0
+        directory = ''
+        stack = [(self._entries(root, recover), 0)]
         while stack:
-            for file in stack[-1]:
+            entries, length = stack[-1]
+            directory = directory[:length]
+            for file in entries:
+                if len(directory) + len(file.path) > _MAX_PATH:
+                    skipped += 1
+                    continue
+                file.path = F'{directory}{file.path}'
                 yield file
                 if file.is_dir and file.cluster >= 2 and file.cluster not in seen:
                     seen.add(file.cluster)
+                    directory = F'{file.path}/'
                     table = self._read_chain(file.cluster)
-                    stack.append(self._entries(table, F'{file.path}/', recover))
+                    stack.append((self._entries(table, recover), len(directory)))
                     break
             else:
                 stack.pop()
+        if skipped:
+            self.warnings.append(F'entries skipped because their path exceeds {_MAX_PATH} characters: {skipped}')
 
-    def _entries(self, table: buf, prefix: str, recover: bool) -> Iterator[FatFile]:
+    def _entries(self, table: buf, recover: bool) -> Iterator[FatFile]:
         lfn_parts: dict[int, bytes] = {}
         expected = 0
         checksum = -1
@@ -216,7 +230,7 @@ class FatVolume:
                 lfn_parts.clear()
                 expected = 0
                 if recover:
-                    recovered = self._recover_entry(entry, prefix)
+                    recovered = self._recover_entry(entry)
                     if recovered is not None:
                         yield recovered
                 continue
@@ -252,7 +266,7 @@ class FatVolume:
             accessed = _dos_datetime(int.from_bytes(entry[0x12:0x14], 'little'), 0)
             is_dir = bool(attrib & _ATTR_DIRECTORY)
             yield FatFile(
-                F'{prefix}{name}', modified, size, is_dir, cluster, self,
+                name, modified, size, is_dir, cluster, self,
                 btime=created,
                 mtime=modified,
                 atime=accessed,
@@ -265,7 +279,7 @@ class FatVolume:
             cluster |= int.from_bytes(entry[0x14:0x16], 'little') << 16
         return cluster
 
-    def _recover_entry(self, entry: buf, prefix: str) -> FatFile | None:
+    def _recover_entry(self, entry: buf) -> FatFile | None:
         attrib = entry[0x0B]
         if (attrib & 0x3F) == _ATTR_LONG_NAME or attrib & _ATTR_VOLUME_ID:
             return None
@@ -288,7 +302,7 @@ class FatVolume:
         )
         accessed = _dos_datetime(int.from_bytes(entry[0x12:0x14], 'little'), 0)
         return FatFile(
-            F'{prefix}{name}', modified, size, False, cluster, self,
+            name, modified, size, False, cluster, self,
             btime=created,
             mtime=modified,
             atime=accessed,

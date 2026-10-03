@@ -361,7 +361,7 @@ class TestVHDExtractor(TestUnitBase):
             *(F'Basic data partition.1/{path}' for path in intact),
         })
 
-    def test_directories_nested_beyond_the_recursion_limit_are_listed(self):
+    def _fixed_vhd_with_nested_directories(self, depth: int, files: dict[int, list[bytes]]):
         data = bytearray(self._sample('fixed.vhd'))
         volume = int.from_bytes(data[0x1C6:0x1CA], 'little') * 512
         boot = data[volume:volume + 512]
@@ -386,26 +386,50 @@ class TestVHDExtractor(TestUnitBase):
                 bytes(4),
             ))
 
-        depth = 1200
         free = (
             cluster for cluster in range(3, cluster_count + 2)
             if not int.from_bytes(data[fat + 4 * cluster:fat + 4 * cluster + 4], 'little')
         )
         chain = list(itertools.islice(free, depth))
         self.assertEqual(len(chain), depth)
-        slot = next(k for k in range(root, root + cluster_size, 32) if data[k] == 0)
-        data[slot:slot + 32] = entry(B'NESTED     ', 0x10, chain[0])
-        for parent, child in zip(chain, [*chain[1:], None]):
+        for cluster in chain:
             for copy in range(fat_count):
-                link = fat + copy * fat_size + 4 * parent
+                link = fat + copy * fat_size + 4 * cluster
                 data[link:link + 4] = (0x0FFFFFFF).to_bytes(4, 'little')
-            table = clusters + (parent - 2) * cluster_size
-            if child is None:
-                data[table:table + 64] = entry(B'DEEP    TXT', 0x20) + bytes(32)
-            else:
-                data[table:table + 64] = entry(B'NESTED     ', 0x10, child) + bytes(32)
+        slot = next(k for k in range(root, root + cluster_size, 32) if data[k] == 0)
+        tables = [slot, *(clusters + (cluster - 2) * cluster_size for cluster in chain)]
+        for level, table in enumerate(tables):
+            listing = [entry(name, 0x20) for name in files.get(level, ())]
+            if level < depth:
+                listing.insert(0, entry(B'NESTED     ', 0x10, chain[level]))
+            listing.append(bytes(32))
+            size = 32 * len(listing)
+            if level == 0:
+                self.assertLessEqual(slot + size, root + cluster_size)
+                self.assertFalse(any(data[slot:slot + size]))
+            data[table:table + size] = B''.join(listing)
+        return data
+
+    def test_directories_nested_beyond_the_recursion_limit_are_listed(self):
+        depth = 1200
+        data = self._fixed_vhd_with_nested_directories(depth, {depth: [B'DEEP    TXT']})
         paths = data | self.load(list=True) | {str}
         self.assertIn('NESTED/' * depth + 'DEEP.TXT', paths)
+
+    def test_entries_whose_path_exceeds_the_windows_maximum_are_skipped(self):
+        depth = 4700
+        data = self._fixed_vhd_with_nested_directories(depth, {
+            0: [B'AFTER   TXT'],
+            4680: [B'FIT     TXT', B'OVER    TXT'],
+            depth: [B'DEEP    TXT'],
+        })
+        paths = data | self.load(list=True) | {str}
+        longest = 'NESTED/' * 4680 + 'FIT.TXT'
+        self.assertEqual(len(longest), 32767)
+        self.assertIn(longest, paths)
+        self.assertEqual(max(map(len, paths)), 32767)
+        self.assertIn('AFTER.TXT', paths)
+        self.assertTrue(set(_FILE_HASHES) <= paths)
 
     def _ntfs_mft_data_attribute(self, data: bytearray) -> tuple[int, int]:
         mbr = self._file_offset(data, 0)
