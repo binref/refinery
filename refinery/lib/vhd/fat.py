@@ -1,8 +1,8 @@
 """
 A parser for the FAT family of file systems (FAT12, FAT16, and FAT32). The implementation reads
-the BIOS parameter block from the boot sector, walks the file allocation table to follow cluster
-chains, and recursively traverses directories while assembling long file names (LFN) from the
-associated VFAT entries.
+the BIOS parameter block from the boot sector, follows cluster chains by reading the file
+allocation table one entry at a time, and traverses directories while assembling long file names
+(LFN) from the associated VFAT entries.
 
 The parser operates on a single volume that is provided as a `refinery.lib.vhd.fat.VolumeSource`,
 i.e. any object exposing a `read(offset, length)` method. It is independent of any container format
@@ -139,28 +139,12 @@ class FatVolume:
         else:
             self.bits = 32
         self.bad_cluster = 0x0FFFFFF7 & ((1 << self.bits) - 1) if self.bits != 32 else 0x0FFFFFF7
-        self._fat = self._read_fat(reserved_sectors)
+        self._fat_offset = reserved_sectors * self.bytes_per_sector
+        self._fat_entries = fat_size * self.bytes_per_sector * 8 // self.bits
 
     @property
     def cluster_size(self) -> int:
         return self.bytes_per_sector * self.sectors_per_cluster
-
-    def _read_fat(self, reserved_sectors: int) -> list[int]:
-        fat_offset = reserved_sectors * self.bytes_per_sector
-        fat_bytes = self._source.read(fat_offset, self.fat_size_sectors * self.bytes_per_sector)
-        entries = (len(fat_bytes) * 8) // self.bits
-        fat = []
-        if self.bits == 16:
-            for j in range(entries):
-                fat.append(int.from_bytes(fat_bytes[j * 2:j * 2 + 2], 'little'))
-        elif self.bits == 32:
-            for j in range(entries):
-                fat.append(int.from_bytes(fat_bytes[j * 4:j * 4 + 4], 'little') & 0x0FFFFFFF)
-        else:
-            for j in range(entries):
-                pair = int.from_bytes(fat_bytes[j * 3 // 2:j * 3 // 2 + 2], 'little')
-                fat.append((pair >> ((j & 1) << 2)) & 0xFFF)
-        return fat
 
     def _is_eoc(self, cluster: int) -> bool:
         return cluster > self.bad_cluster
@@ -169,15 +153,27 @@ class FatVolume:
         sector = self.data_sector + (cluster - 2) * self.sectors_per_cluster
         return sector * self.bytes_per_sector
 
+    def _next(self, cluster: int) -> int:
+        if self.bits == 12:
+            pair = int.from_bytes(self._source.read(self._fat_offset + cluster * 3 // 2, 2), 'little')
+            return (pair >> ((cluster & 1) << 2)) & 0xFFF
+        width = self.bits // 8
+        entry = int.from_bytes(self._source.read(self._fat_offset + cluster * width, width), 'little')
+        return entry & 0x0FFFFFFF
+
+    def _chain(self, cluster: int) -> Iterator[int]:
+        while 2 <= cluster < self._fat_entries and not self._is_eoc(cluster):
+            yield cluster
+            cluster = self._next(cluster)
+
     def _read_chain(self, cluster: int, size: int | None = None) -> bytearray:
         out = bytearray()
         seen = set()
-        while 2 <= cluster < len(self._fat) and not self._is_eoc(cluster):
+        for cluster in self._chain(cluster):
             if cluster in seen:
                 break
             seen.add(cluster)
             out.extend(self._source.read(self._cluster_offset(cluster), self.cluster_size))
-            cluster = self._fat[cluster]
         if size is not None:
             del out[size:]
         return out

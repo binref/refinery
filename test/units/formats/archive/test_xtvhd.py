@@ -469,6 +469,22 @@ class TestVHDExtractor(TestUnitBase):
             self.assertTrue(all(len(file.path) <= 32767 for file in volume.files(recover)))
         self.assertEqual(len(volume.warnings), 1)
 
+    def test_fat_volume_claiming_a_terabyte_fat_does_not_stop_the_other_volume(self):
+        intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
+        data = bytearray(self._sample('fixed.vhd'))
+        start = int.from_bytes(data[0x1C6:0x1CA], 'little')
+        entry = 0x1BE + 16
+        data[entry + 4] = 0x0C
+        data[entry + 8:entry + 12] = (1).to_bytes(4, 'little')
+        data[entry + 12:entry + 16] = (start - 1).to_bytes(4, 'little')
+        boot = 512
+        data[boot:boot + 512] = data[start * 512:start * 512 + 512]
+        data[boot + 0x20:boot + 0x24] = B'\xFF' * 4
+        data[boot + 0x24:boot + 0x28] = (0x7FFF0000).to_bytes(4, 'little')
+        data[-512 + 0x30:-512 + 0x38] = (1 << 41).to_bytes(8, 'big')
+        paths = data | self.load(list=True) | {str}
+        self.assertEqual(paths, {F'partition0/{path}' for path in intact})
+
     def _ntfs_mft_data_attribute(self, data: bytearray) -> tuple[int, int]:
         mbr = self._file_offset(data, 0)
         volume = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little') * 512
