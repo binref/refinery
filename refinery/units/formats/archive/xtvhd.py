@@ -31,10 +31,7 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     is extracted as a raw image after all files, unless the container stores no data for it. When
     such a volume is larger than the input, each block of it that the container stores is extracted
     as a separate item instead, named by its offset in the volume and carrying the variables start
-    and end. A volume whose file system fails to parse is reported with a warning and is extracted
-    as a raw image as well, even when some of its files were already listed; the other volumes are
-    not affected. Volumes that share a GPT label are told apart by their partition index. Entries
-    of a FAT volume whose path would be longer than 32,767 characters are skipped with a warning.
+    and end.
     """
     def __init__(
         self, *paths,
