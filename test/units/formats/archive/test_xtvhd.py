@@ -278,7 +278,7 @@ class TestVHDExtractor(TestUnitBase):
         self.assertEqual(chunks[0], data[mbr + offset:mbr + block_size])
         second = int.from_bytes(data[table + 8:table + 16], 'little') & ~0xFFFFF
         self.assertEqual(chunks[1], data[second:second + block_size])
-        width = len(hex(0xFFFFFFFF * 512))
         self.assertEqual([chunk['path'] for chunk in chunks], [
-            F'partition0.img/{start:#0{width}x}' for start in (0, block_size - offset)
+            'partition0.img/0x00000000000',
+            'partition0.img/0x00001ff0000',
         ])
