@@ -1,7 +1,7 @@
 import datetime
-import lzma
 import functools
 import itertools
+import lzma
 import uuid
 
 from unittest.mock import patch
