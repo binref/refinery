@@ -398,14 +398,15 @@ class NtfsVolume:
 
     def _read_compressed(self, extents: list[tuple[int, int, int]], attr: _Attr) -> bytearray:
         unit = 1 << attr.compression_unit
+        total_clusters = (attr.real_size + self.cluster_size - 1) >> self.cluster_size_log
+        limit = -(-total_clusters // unit) * unit
         clusters: dict[int, int] = {}
         for vcn, lcn, length in extents:
             if lcn == _EMPTY_EXTENT:
                 continue
-            for offset in range(length):
+            for offset in range(max(0, min(length, limit - vcn))):
                 clusters[vcn + offset] = lcn + offset
         out = bytearray()
-        total_clusters = (attr.real_size + self.cluster_size - 1) >> self.cluster_size_log
         vcn = 0
         while vcn < total_clusters:
             block = [clusters.get(vcn + k) for k in range(unit)]

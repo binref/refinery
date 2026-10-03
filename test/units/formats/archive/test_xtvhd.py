@@ -339,19 +339,24 @@ class TestVHDExtractor(TestUnitBase):
         })
 
     def test_volume_failing_to_list_is_extracted_raw_and_does_not_stop_the_other_volumes(self):
-        intact = self._sample('malware.vhd') | self.load(list=True) | {str}
+        intact = [str(path) for path in self._sample('malware.vhd') | self.load(list=True) | []]
         data = self._malware_with_its_partition_copied_under('Basic data partition')
         files = FatVolume.files
         failures = [IndexError('damaged directory')]
 
-        def fail_once(volume: FatVolume, recover: bool = False):
+        def fail_after_first_file(volume: FatVolume, recover: bool = False):
+            listing = files(volume, recover)
             if failures:
-                raise failures.pop()
-            yield from files(volume, recover)
+                for file in listing:
+                    yield file
+                    if not file.is_dir:
+                        raise failures.pop()
+            yield from listing
 
-        with patch.object(FatVolume, 'files', fail_once):
+        with patch.object(FatVolume, 'files', fail_after_first_file):
             paths = data | self.load(list=True) | {str}
         self.assertEqual(paths, {
+            F'Basic data partition.0/{intact[0]}',
             'Basic data partition.0.img',
             *(F'Basic data partition.1/{path}' for path in intact),
         })
@@ -364,8 +369,11 @@ class TestVHDExtractor(TestUnitBase):
         cluster_size = sector_size * boot[0x0D]
         fat = volume + int.from_bytes(boot[0x0E:0x10], 'little') * sector_size
         fat_size = int.from_bytes(boot[0x24:0x28], 'little') * sector_size
-        clusters = fat + boot[0x10] * fat_size
+        fat_count = boot[0x10]
+        clusters = fat + fat_count * fat_size
         root = clusters + (int.from_bytes(boot[0x2C:0x30], 'little') - 2) * cluster_size
+        end = volume + int.from_bytes(boot[0x20:0x24], 'little') * sector_size
+        cluster_count = (end - clusters) // cluster_size
 
         def entry(name: bytes, attributes: int, cluster: int = 0):
             return B''.join((
@@ -380,12 +388,17 @@ class TestVHDExtractor(TestUnitBase):
 
         depth = 1200
         free = (
-            cluster for cluster in range(3, fat_size // 4)
-            if not int.from_bytes(data[fat + 4 * cluster:fat + 4 * cluster + 4], 'little'))
+            cluster for cluster in range(3, cluster_count + 2)
+            if not int.from_bytes(data[fat + 4 * cluster:fat + 4 * cluster + 4], 'little')
+        )
         chain = list(itertools.islice(free, depth))
+        self.assertEqual(len(chain), depth)
         slot = next(k for k in range(root, root + cluster_size, 32) if data[k] == 0)
         data[slot:slot + 32] = entry(B'NESTED     ', 0x10, chain[0])
-        for parent, child in itertools.pairwise(chain + [None]):
+        for parent, child in zip(chain, [*chain[1:], None]):
+            for copy in range(fat_count):
+                link = fat + copy * fat_size + 4 * parent
+                data[link:link + 4] = (0x0FFFFFFF).to_bytes(4, 'little')
             table = clusters + (parent - 2) * cluster_size
             if child is None:
                 data[table:table + 64] = entry(B'DEEP    TXT', 0x20) + bytes(32)
@@ -394,8 +407,7 @@ class TestVHDExtractor(TestUnitBase):
         paths = data | self.load(list=True) | {str}
         self.assertIn('NESTED/' * depth + 'DEEP.TXT', paths)
 
-    def test_ntfs_volume_whose_mft_claims_more_than_the_volume_is_extracted_raw(self):
-        data = bytearray(self._sample('ntfs.vhd'))
+    def _ntfs_mft_data_attribute(self, data: bytearray) -> tuple[int, int]:
         mbr = self._file_offset(data, 0)
         volume = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little') * 512
         boot = self._file_offset(data, volume)
@@ -407,9 +419,32 @@ class TestVHDExtractor(TestUnitBase):
         while int.from_bytes(data[position:position + 4], 'little') != 0x80:
             position += int.from_bytes(data[position + 4:position + 8], 'little')
         self.assertEqual(data[position + 8], 1)
-        size = position + 0x30
+        return record, position
+
+    def test_ntfs_volume_whose_mft_claims_more_than_the_volume_is_extracted_raw(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        record, attribute = self._ntfs_mft_data_attribute(data)
+        size = attribute + 0x30
         self.assertLess((size - record) % 512, 510 - 8)
         data[size:size + 8] = (1 << 62).to_bytes(8, 'little')
         paths = data | self.load(list=True) | {str}
         self.assertTrue(paths)
         self.assertTrue(all(path.startswith('partition0.img/') for path in paths))
+
+    def test_ntfs_volume_whose_mft_runs_claim_more_than_its_size_is_listed(self):
+        intact = self._sample('ntfs.vhd') | self.load(list=True) | {str}
+        for compression_unit in (0, 4):
+            with self.subTest(compression_unit=compression_unit):
+                data = bytearray(self._sample('ntfs.vhd'))
+                record, attribute = self._ntfs_mft_data_attribute(data)
+                length = int.from_bytes(data[attribute + 4:attribute + 8], 'little')
+                runs = attribute + int.from_bytes(data[attribute + 0x20:attribute + 0x22], 'little')
+                self.assertLessEqual(runs + 8, attribute + length)
+                self.assertLess((runs - record) % 512, 510 - 8)
+                self.assertEqual(data[runs], 0x21)
+                self.assertFalse(any(data[runs + 4:runs + 8]))
+                offset = bytes(data[runs + 2:runs + 4])
+                data[runs:runs + 8] = B'\x24\xFF\xFF\xFF\x7F' + offset + B'\0'
+                data[attribute + 0x22] = compression_unit
+                paths = data | self.load(list=True) | {str}
+                self.assertEqual(paths, intact)
