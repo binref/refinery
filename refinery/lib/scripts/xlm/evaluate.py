@@ -60,8 +60,8 @@ def evaluate_expression(
     if isinstance(node, XlBinaryExpression):
         if node.operator is XlBinaryOperator.RANGE:
             return _evaluate_range(engine, node, cursor)
-        left = evaluate_expression(engine, node.left, cursor)
-        right = evaluate_expression(engine, node.right, cursor)
+        left = _scalar(engine, evaluate_expression(engine, node.left, cursor), cursor)
+        right = _scalar(engine, evaluate_expression(engine, node.right, cursor), cursor)
         return apply_binary(node.operator, left, right)
     if isinstance(node, (XlA1Reference, XlR1C1Reference)):
         return engine.read_reference(resolve_reference(node, cursor), cursor)
@@ -83,12 +83,26 @@ def evaluate_expression(
     return XlmValue()
 
 
+def _scalar(engine: XlmEngine, value: XlmValue, cursor: XlmCursor) -> XlmValue:
+    """
+    The value a scalar operator reads from an operand: a range that names one cell twice
+    reads as the value of that cell — the implicit intersection of the smallest rectangle a
+    range can be — and any other range keeps the address it spells, because which of its many
+    cells a scalar read picks is a question of the position of the reading cell.
+    """
+    if value.cells is not None and len(value.cells) == 2:
+        first, second = value.cells
+        if first.reference is not None and first.reference == second.reference:
+            return engine.read_reference(first.reference, cursor)
+    return value
+
+
 def _evaluate_unary(
     engine: XlmEngine,
     node: XlUnaryExpression,
     cursor: XlmCursor,
 ) -> XlmValue:
-    operand = evaluate_expression(engine, node.operand, cursor)
+    operand = _scalar(engine, evaluate_expression(engine, node.operand, cursor), cursor)
     if node.operator is XlUnaryOperator.POS:
         return operand
     if node.operator is XlUnaryOperator.PERCENT:

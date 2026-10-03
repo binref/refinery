@@ -57,6 +57,12 @@ class XlmFiles:
         """
         self._files.setdefault(name, XlmFile(access))
 
+    def close(self, name: str) -> None:
+        """
+        Remove a file the program opened, as the undo of an open performs.
+        """
+        self._files.pop(name, None)
+
     def first(self) -> str:
         """
         The name of the first file the program opened, for a write that names none: the name of
@@ -85,6 +91,14 @@ class XlmFiles:
         file.content += text
         return True
 
+    def truncate(self, name: str, length: int) -> None:
+        """
+        Cut the content of a file back to the length it had, as the undo of a write performs.
+        """
+        file = self._files.get(name)
+        if file is not None:
+            file.content = file.content[:length]
+
 
 class XlmMemory:
     """
@@ -111,6 +125,13 @@ class XlmMemory:
         self._regions.append(XlmRegion(base, size))
         return base
 
+    def release(self) -> None:
+        """
+        Drop the region the latest allocation reserved, as the undo of an allocation performs.
+        """
+        if self._regions:
+            self._regions.pop()
+
     def write(self, base: int, data: bytes | bytearray, size: int) -> bool:
         """
         Write bytes at an address, reporting whether the whole write fits inside one reserved
@@ -125,3 +146,27 @@ class XlmMemory:
             region.data[offset:offset + size] = data[:size]
             return True
         return False
+
+    def peek(self, base: int, size: int) -> bytes | None:
+        """
+        The bytes a region holds at an address, or `None` when the slice does not fit inside
+        one reserved region.
+        """
+        for region in self._regions:
+            if not region.base <= base <= region.base + region.size:
+                continue
+            if not region.base <= base + size <= region.base + region.size:
+                return None
+            offset = base - region.base
+            return bytes(region.data[offset:offset + size])
+        return None
+
+    def restore(self, base: int, data: bytes) -> None:
+        """
+        Write earlier content back at an address, as the undo of a write performs.
+        """
+        for region in self._regions:
+            if region.base <= base <= region.base + region.size:
+                offset = base - region.base
+                region.data[offset:offset + len(data)] = data
+                return

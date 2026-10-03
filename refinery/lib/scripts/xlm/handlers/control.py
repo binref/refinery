@@ -142,7 +142,7 @@ def _for_cell(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
         except StopIteration:
             loop.holds = False
         else:
-            engine.view.names.define(XlmNameEntry(
+            engine.define_name(XlmNameEntry(
                 name=variable.unwrap().lower(),
                 sheet=None,
                 formula=XlA1Reference(

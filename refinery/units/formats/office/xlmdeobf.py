@@ -6,9 +6,10 @@ from refinery.units.formats import Arg, Unit
 
 class xlmdeobf(Unit):
     """
-    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. The macrosheets are
-    cleaned of the cells no run can reach, then either listed as they were stored or emulated to
-    a trace of the program's execution.
+    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. The macrosheets
+    are cleaned of the cells no run can reach; an extraction also folds every statically
+    computable formula into the value it computes, while the trace emulates the program as it
+    was stored, because a trace that folded its input would hide the program it exists to show.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
@@ -82,12 +83,13 @@ class xlmdeobf(Unit):
         from refinery.lib.excel.common import column_letters
         from refinery.lib.excel.formula import synthesize_formula
         from refinery.lib.scripts.xlm import XlmEngine, XlmView, deobfuscate
+        from refinery.lib.scripts.xlm.deobfuscation import sweep
         from refinery.lib.scripts.xlm.trace import visible_steps
 
         view = XlmView(data)
-        deobfuscate(view, self.args.start_point)
         lines: list[str] = []
         if self.args.extract_only:
+            deobfuscate(view, self.args.start_point)
             for macrosheet in view.macrosheets():
                 lines.append(F'SHEET: {macrosheet.name}, {macrosheet.kind.name.lower()}')
                 for cell in macrosheet.listing(self.args.sort_formulas):
@@ -102,6 +104,7 @@ class xlmdeobf(Unit):
                     line = line.replace('[[CELL-VALUE]]', str(cell.value))
                     lines.append(line)
         else:
+            sweep(view, self.args.start_point)
             engine = XlmEngine(
                 view,
                 output_level=self.args.output_level,

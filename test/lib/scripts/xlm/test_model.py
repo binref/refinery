@@ -387,7 +387,10 @@ class TestXlmListing(TestBase):
 
     def test_formula_cells_sort_by_column_letters_then_by_row_before_the_value_cells(self):
         self.assertEqual(
-            [(cell.row, cell.col) for cell in _model(XLM_MACRO_TEXT_XLSM)[0].listing(sort_formulas=True)],
+            [
+                (cell.row, cell.col)
+                for cell in _model(XLM_MACRO_TEXT_XLSM)[0].listing(sort_formulas=True)
+            ],
             [
                 (109, 52),
                 (110, 52),

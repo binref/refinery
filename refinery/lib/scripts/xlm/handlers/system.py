@@ -54,7 +54,10 @@ def _register(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
             status=XlmStatus.Error,
         )
     arguments = _arguments(engine, call, cursor)
-    engine.aliases[arguments[3].unwrap()] = F'{arguments[0].unwrap()}.{arguments[1].unwrap()}'
+    engine.register_alias(
+        arguments[3].unwrap(),
+        F'{arguments[0].unwrap()}.{arguments[1].unwrap()}',
+    )
     return XlmOutcome(value=XlmValue(
         value=0,
         text=F'REGISTER({",".join(argument.text or "" for argument in arguments)})',
@@ -80,7 +83,7 @@ def _fopen(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
     if len(call.arguments) > 1:
         access = str(evaluate_expression(engine, call.arguments[1], cursor).value)
     file_name = name.unwrap() if not name.partial else 'default_name'
-    engine.files.open(file_name, access)
+    engine.open_file(file_name, access)
     return XlmOutcome(value=XlmValue(
         value=file_name,
         text=F'FOPEN({name.text},{access})',
@@ -119,7 +122,7 @@ def _fwrite(
     if not file_name.strip() or is_number(file_name):
         file_name = engine.files.first()
     written = content.unwrap()
-    took = engine.files.write(file_name, F'{written}{line}')
+    took = engine.write_file(file_name, F'{written}{line}')
     return XlmOutcome(value=XlmValue(
         value=0,
         text=F'FWRITE({wrap_literal(file_name)},{wrap_literal(written)})',
@@ -221,7 +224,7 @@ def _virtual_alloc(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -
         or not is_number(size.value)
     ):
         return _partial(spelled)
-    address = engine.memory.allocate(int(float(base.value)), int(float(size.value)))
+    address = engine.allocate_memory(int(float(base.value)), int(float(size.value)))
     return XlmOutcome(value=XlmValue(value=address, text=spelled))
 
 
@@ -235,7 +238,7 @@ def _write_process_memory(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCu
     base = int(float(arguments[1].value))
     data = bytes(ord(char) for char in str(arguments[2].value))
     size = int(float(arguments[3].value))
-    if not engine.memory.write(base, data, size):
+    if not engine.write_memory(base, data, size):
         return XlmOutcome(
             value=XlmValue(value=0, text=spelled),
             status=XlmStatus.Error,
@@ -256,7 +259,7 @@ def _rtl_copy_memory(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor)
     if destination.partial or source.partial:
         return _partial(spelled)
     data = bytes(ord(char) for char in str(source.value))
-    if not engine.memory.write(int(float(destination.value)), data, len(data)):
+    if not engine.write_memory(int(float(destination.value)), data, len(data)):
         return XlmOutcome(
             value=XlmValue(value=0, text=spelled),
             status=XlmStatus.Error,

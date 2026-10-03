@@ -125,10 +125,10 @@ def _write_formula(
         text = F'{name}({source.text},{spelled})'
     if source.partial:
         for reference in expand_range(*corners):
-            engine.failed_writes.add(reference)
+            engine.mark_failed(reference)
         return XlmOutcome(value=XlmValue(value=0, text=text, partial=True))
     for reference in expand_range(*corners):
-        engine.failed_writes.discard(reference)
+        engine.unmark_failed(reference)
         engine.write_cell(reference, str(source.value), cursor, value_only=value_only)
     return XlmOutcome(value=XlmValue(value=0, text=text))
 
@@ -142,7 +142,7 @@ def _set_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     label = unwrap_literal(synthesize_formula(call.arguments[0])).lower()
     node = call.arguments[1]
     if isinstance(node, (XlA1Reference, XlR1C1Reference)):
-        engine.view.names.define(XlmNameEntry(
+        engine.define_name(XlmNameEntry(
             name=label,
             sheet=None,
             formula=node,
@@ -154,7 +154,7 @@ def _set_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     value = evaluate_expression(engine, node, cursor)
     if value.partial:
         return _partial(spelled)
-    engine.view.names.define(XlmNameEntry(
+    engine.define_name(XlmNameEntry(
         name=label,
         sheet=None,
         formula=_name_formula(node, value),
@@ -174,7 +174,7 @@ def _define_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
     if value.partial:
         return _partial(spelled)
     name = label.unwrap().lower()
-    engine.view.names.define(XlmNameEntry(
+    engine.define_name(XlmNameEntry(
         name=name,
         sheet=None,
         formula=_name_formula(call.arguments[1], value),

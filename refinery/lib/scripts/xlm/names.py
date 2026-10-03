@@ -107,6 +107,13 @@ class XlmNameTable:
                 return
         self._entries.append(entry)
 
+    def restore(self, entries: list[XlmNameEntry]) -> None:
+        """
+        Hold the entries an earlier state of the table held, as the undo of a definition
+        performs.
+        """
+        self._entries = list(entries)
+
     def undefine(self, name: str) -> None:
         """
         Remove every entry a name spells, case-insensitively, whatever sheet it is scoped to.

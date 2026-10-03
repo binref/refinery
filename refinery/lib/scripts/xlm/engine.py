@@ -10,7 +10,7 @@ from __future__ import annotations
 import bisect
 import time
 
-from typing import Any, Iterator, NamedTuple
+from typing import Any, Iterator, NamedTuple, Protocol
 
 from refinery.lib.excel import CellKind, parse_formula, synthesize_formula
 from refinery.lib.excel.common import column_letters
@@ -31,6 +31,7 @@ from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.handlers import HANDLERS
 from refinery.lib.scripts.xlm.memory import XlmFiles, XlmMemory
 from refinery.lib.scripts.xlm.model import XlmCell
+from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.references import (
     XlmCursor,
     XlmFrame,
@@ -64,6 +65,17 @@ def _callee_name(call: XlFunctionCall) -> str:
     return ''
 
 
+class _Undo(Protocol):
+    """
+    One change the journal undoes: every state a run mutates — cells, names, aliases, files,
+    memory regions, failed-write marks — lands in the journal as one record that knows how to
+    take the state it found back.
+    """
+
+    def undo(self, engine: XlmEngine) -> None:
+        ...
+
+
 class _Write(NamedTuple):
     """
     One cell write the journal undoes: the sheet the cell sits on, the cell, the value and the
@@ -75,6 +87,109 @@ class _Write(NamedTuple):
     old_value: Any
     old_formula: Any
     created: bool
+
+    def undo(self, engine: XlmEngine) -> None:
+        had_formula = self.cell.formula is not None
+        engine._update_formula_rows(
+            self.sheet, self.cell, had_formula, self.old_formula is not None,
+        )
+        set_value(self.cell, 'value', self.old_value)
+        set_child(self.cell, 'formula', self.old_formula)
+        if self.created:
+            index = engine._cells.get(self.sheet)
+            if index is not None:
+                index.pop((self.cell.row, self.cell.col), None)
+            engine._sheet_of.pop(id(self.cell), None)
+            macrosheet = engine.view.macrosheet(self.sheet)
+            if macrosheet is not None:
+                edit = BodyEdit(macrosheet)
+                edit.splice(self.cell, [])
+                edit.apply()
+
+
+class _NameDefine(NamedTuple):
+    """
+    One name definition the journal undoes: every entry the table held before the definition.
+    """
+
+    before: list[XlmNameEntry]
+
+    def undo(self, engine: XlmEngine) -> None:
+        engine.view.names.restore(self.before)
+
+
+class _AliasRegistration(NamedTuple):
+    """
+    One registered alias the journal undoes: the target the name dispatched to before, if any.
+    """
+
+    name: str
+    before: str | None
+
+    def undo(self, engine: XlmEngine) -> None:
+        if self.before is None:
+            engine.aliases.pop(self.name, None)
+        else:
+            engine.aliases[self.name] = self.before
+
+
+class _FileOpen(NamedTuple):
+    """
+    One file the program opened, the journal undoes by closing it again.
+    """
+
+    name: str
+
+    def undo(self, engine: XlmEngine) -> None:
+        engine.files.close(self.name)
+
+
+class _FileWrite(NamedTuple):
+    """
+    One append to a file the journal undoes: the length of the content before the append.
+    """
+
+    name: str
+    length: int
+
+    def undo(self, engine: XlmEngine) -> None:
+        engine.files.truncate(self.name, self.length)
+
+
+class _RegionAlloc(NamedTuple):
+    """
+    One region of memory a command reserved, the journal undoes by releasing it.
+    """
+
+    def undo(self, engine: XlmEngine) -> None:
+        engine.memory.release()
+
+
+class _MemoryWrite(NamedTuple):
+    """
+    One write into a region of memory the journal undoes: the bytes the slice held before.
+    """
+
+    base: int
+    before: bytes
+
+    def undo(self, engine: XlmEngine) -> None:
+        engine.memory.restore(self.base, self.before)
+
+
+class _FailedMark(NamedTuple):
+    """
+    One failed-write mark the journal undoes, in the direction the mark was made.
+    """
+
+    reference: XlmReference
+    added: bool
+
+    def undo(self, engine: XlmEngine) -> None:
+        if self.added:
+            engine.failed_writes.discard(self.reference)
+        else:
+            engine.failed_writes.add(self.reference)
 
 
 class XlmEngine:
@@ -118,7 +233,7 @@ class XlmEngine:
         self._cells: dict[str, dict[tuple[int, int], XlmCell]] = {}
         self._formula_rows: dict[str, dict[int, list[int]]] = {}
         self._sheet_of: dict[int, str] = {}
-        self._journal: list[_Write] = []
+        self._journal: list[_Undo] = []
         for macrosheet in view.macrosheets():
             for cell in macrosheet.body:
                 key = macrosheet.name.lower()
@@ -347,25 +462,12 @@ class XlmEngine:
 
     def rollback(self, position: int) -> None:
         """
-        Undo every cell write the journal holds past a position: values and formulas return to
-        what they carried, and cells the writes created leave their sheet again.
+        Undo every change the journal holds past a position: cells, names, aliases, files,
+        memory regions, and failed-write marks return to what they carried, and cells the
+        writes created leave their sheet again.
         """
         while len(self._journal) > position:
-            sheet, cell, old_value, old_formula, created = self._journal.pop()
-            had_formula = cell.formula is not None
-            self._update_formula_rows(sheet, cell, had_formula, old_formula is not None)
-            set_value(cell, 'value', old_value)
-            set_child(cell, 'formula', old_formula)
-            if created:
-                index = self._cells.get(sheet)
-                if index is not None:
-                    index.pop((cell.row, cell.col), None)
-                self._sheet_of.pop(id(cell), None)
-                macrosheet = self.view.macrosheet(sheet)
-                if macrosheet is not None:
-                    edit = BodyEdit(macrosheet)
-                    edit.splice(cell, [])
-                    edit.apply()
+            self._journal.pop().undo(self)
 
     def write_value(self, cell: XlmCell, value: object) -> None:
         """
@@ -413,6 +515,83 @@ class XlmEngine:
         self._update_formula_rows(key, cell, cell.formula is not None, formula is not None)
         set_value(cell, 'value', text)
         set_child(cell, 'formula', formula)
+
+    def define_name(self, entry: XlmNameEntry) -> None:
+        """
+        Define the name an entry carries, as the name commands and the `FOR.CELL` loop do,
+        undoable by a branch that rolls back.
+        """
+        self._journal.append(_NameDefine(self.view.names.entries()))
+        self.view.names.define(entry)
+
+    def register_alias(self, name: str, target: str) -> None:
+        """
+        Register the target a command name dispatches to, as `REGISTER` does, undoable by a
+        branch that rolls back.
+        """
+        self._journal.append(_AliasRegistration(name, self.aliases.get(name)))
+        self.aliases[name] = target
+
+    def open_file(self, name: str, access: str = '1') -> None:
+        """
+        Open the name as a file, as `FOPEN` does, undoable by a branch that rolls back; a name
+        that already answers a file changes nothing.
+        """
+        if self.files.opened(name):
+            return
+        self._journal.append(_FileOpen(name))
+        self.files.open(name, access)
+
+    def write_file(self, name: str, text: str) -> bool:
+        """
+        Append to a file the program opened, as `FWRITE` does, undoable by a branch that rolls
+        back, reporting whether the file took the write.
+        """
+        length = self.files.size(name)
+        if length is None:
+            return False
+        self._journal.append(_FileWrite(name, length))
+        self.files.write(name, text)
+        return True
+
+    def allocate_memory(self, base: int, size: int) -> int:
+        """
+        Reserve a region of memory, as `Kernel32.VirtualAlloc` does, undoable by a branch that
+        rolls back.
+        """
+        self._journal.append(_RegionAlloc())
+        return self.memory.allocate(base, size)
+
+    def write_memory(self, base: int, data: bytes, size: int) -> bool:
+        """
+        Write bytes into a region of memory, as the Kernel32 write commands do, undoable by a
+        branch that rolls back, reporting whether a region took the whole write.
+        """
+        before = self.memory.peek(base, size)
+        if before is None:
+            return False
+        self.memory.write(base, data, size)
+        self._journal.append(_MemoryWrite(base, before))
+        return True
+
+    def mark_failed(self, reference: XlmReference) -> None:
+        """
+        Mark an address as the destination of a write that never finished, undoable by a
+        branch that rolls back.
+        """
+        if reference in self.failed_writes:
+            return
+        self._journal.append(_FailedMark(reference, True))
+        self.failed_writes.add(reference)
+
+    def unmark_failed(self, reference: XlmReference) -> None:
+        """
+        Drop the failed-write mark of an address, undoable by a branch that rolls back.
+        """
+        if reference not in self.failed_writes:
+            return
+        self._journal.append(_FailedMark(reference, False))
+        self.failed_writes.discard(reference)
 
     def _run_entry(self, anchor: XlmCursor, deadline: float | None) -> Iterator[XlmStep]:
         steps = 0

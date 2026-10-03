@@ -135,6 +135,48 @@ XLM_COMMANDS: dict[str, XlmSeverity] = {
 }
 
 
+#: The commands that only compute from their arguments and the values the workbook stores —
+#: never the clock, randomness, the environment, or the state a run mutates. The constant
+#: folding of the deobfuscation evaluates their calls statically; every command outside the
+#: set reads or writes something no listing can decide.
+PURE_COMMANDS = frozenset((
+    'ABS',
+    'ABSREF',
+    'ADDRESS',
+    'AND',
+    'CHAR',
+    'CODE',
+    'CONCATENATE',
+    'COUNT',
+    'COUNTA',
+    'HLOOKUP',
+    'INDEX',
+    'INDIRECT',
+    'INT',
+    'ISNUMBER',
+    'LEN',
+    'MAX',
+    'MID',
+    'MIN',
+    'MOD',
+    'NOT',
+    'OR',
+    'PRODUCT',
+    'QUOTIENT',
+    'ROUND',
+    'ROUNDUP',
+    'ROWS',
+    'SEARCH',
+    'SQRT',
+    'SUM',
+    'T',
+    'TEXT',
+    'TRUNC',
+    'VALUE',
+    '_xlfn.ARABIC',
+))
+
+
 def severity(command_name: str) -> XlmSeverity:
     """
     The severity of a macro command; a name outside the registry is ordinary, as it was in the
