@@ -114,6 +114,8 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return None
 
     def _failed(self, part: Partition, error: Exception) -> None:
+        if isinstance(error, MemoryError):
+            raise error
         if self.log_debug() and not isinstance(error, (FatError, NtfsError)):
             raise error
         self.log_warn(F'partition {part.index}: {exception_to_string(error)}')
@@ -152,16 +154,14 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
     @staticmethod
     def _names(parts: list[Partition]) -> dict[int, str]:
-        labels = collections.Counter(part.label for part in parts)
-        names: dict[int, str] = {}
-        for part in parts:
-            if not part.label:
-                names[part.index] = F'partition{part.index}'
-            elif labels[part.label] > 1:
-                names[part.index] = F'{part.label}.{part.index}'
-            else:
-                names[part.index] = part.label
-        return names
+        names = {part.index: part.label or F'partition{part.index}' for part in parts}
+        while True:
+            counts = collections.Counter(names.values())
+            clashes = [index for index, name in names.items() if counts[name] > 1]
+            if not clashes:
+                return names
+            for index in clashes:
+                names[index] = F'{names[index]}.{index}'
 
     @classmethod
     def handles(cls, data) -> bool | None:

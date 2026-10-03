@@ -287,7 +287,7 @@ class TestVHDExtractor(TestUnitBase):
             'partition0.img/0x00001ff0000',
         ])
 
-    def _malware_with_its_partition_listed_twice(self):
+    def _malware_with_its_partition_copied_under(self, *labels: str):
         data = bytearray(self._sample('malware.vhd'))
         header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
         table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
@@ -298,27 +298,44 @@ class TestVHDExtractor(TestUnitBase):
         self.assertEqual(data[gpt:gpt + 8], B'EFI PART')
         entries = disk + int.from_bytes(data[gpt + 0x48:gpt + 0x50], 'little') * 512
         size = int.from_bytes(data[gpt + 0x54:gpt + 0x58], 'little')
-        self.assertFalse(any(data[entries + size:entries + 2 * size]))
-        data[entries + size:entries + 2 * size] = data[entries:entries + size]
+        for slot, label in enumerate(labels, 1):
+            entry = entries + slot * size
+            self.assertFalse(any(data[entry:entry + size]))
+            data[entry:entry + size] = data[entries:entries + size]
+            data[entry + 0x38:entry + 0x38 + 72] = label.encode('utf-16le').ljust(72, B'\0')
         return data
 
     def test_volumes_sharing_a_gpt_label_get_separate_folders(self):
         intact = self._sample('malware.vhd') | self.load(list=True) | {str}
-        data = self._malware_with_its_partition_listed_twice()
+        data = self._malware_with_its_partition_copied_under('Basic data partition')
         paths = data | self.load(list=True) | {str}
         self.assertEqual(paths, {
             F'Basic data partition.{index}/{path}' for index in (0, 1) for path in intact})
 
+    def test_volume_named_like_a_disambiguated_label_gets_a_separate_folder(self):
+        intact = self._sample('malware.vhd') | self.load(list=True) | {str}
+        data = self._malware_with_its_partition_copied_under(
+            'Basic data partition',
+            'Basic data partition.1',
+        )
+        paths = data | self.load(list=True) | {str}
+        self.assertEqual(len(paths), 3 * len(intact))
+        self.assertEqual({path.split('/')[0] for path in paths}, {
+            'Basic data partition.0',
+            'Basic data partition.1.1',
+            'Basic data partition.1.2',
+        })
+
     def test_volume_failing_to_list_does_not_stop_the_other_volumes(self):
         intact = self._sample('malware.vhd') | self.load(list=True) | {str}
-        data = self._malware_with_its_partition_listed_twice()
+        data = self._malware_with_its_partition_copied_under('Basic data partition')
         files = FatVolume.files
         failures = [IndexError('damaged directory')]
 
         def fail_once(volume: FatVolume, recover: bool = False):
             if failures:
                 raise failures.pop()
-            return files(volume, recover)
+            yield from files(volume, recover)
 
         with patch.object(FatVolume, 'files', fail_once):
             paths = data | self.load(list=True) | {str}
