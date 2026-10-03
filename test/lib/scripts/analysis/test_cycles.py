@@ -3,7 +3,12 @@ from __future__ import annotations
 from test import TestBase
 from test.lib.scripts.analysis import graph_from_edges as _graph
 
+from refinery.lib.scripts.analysis.cfg import CfgNode
 from refinery.lib.scripts.analysis.cycles import nodes_on_a_cycle, strongly_connected_components
+
+
+def _successors(node: CfgNode) -> list[CfgNode]:
+    return node.successors
 
 
 class TestCycles(TestBase):
@@ -12,6 +17,19 @@ class TestCycles(TestBase):
         graph, named = _graph(edges)
         found = nodes_on_a_cycle(graph)
         return {name for name, node in named.items() if id(node) in found}
+
+    def _components(self, edges: dict[str, list[str]], *starts: str) -> list[list[str]]:
+        """
+        The components of the graph *edges* spells, as sorted lists of names in the order they are
+        listed, over the nodes reachable from *starts*, or from every node when none is given.
+        """
+        graph, named = _graph(edges)
+        name_of = {id(node): name for name, node in named.items()}
+        nodes = [named[start] for start in starts] if starts else graph.nodes
+        return [
+            sorted(name_of[id(node)] for node in component)
+            for component in strongly_connected_components(nodes, _successors)
+        ]
 
     def test_an_isolated_node_is_not_on_a_cycle(self):
         self.assertEqual(self._on_a_cycle({'a': []}), set())
@@ -56,8 +74,7 @@ class TestCycles(TestBase):
             'a': ['h'],
             'x': ['h'],
         }
-        components = strongly_connected_components(_graph(edges)[0])
-        self.assertEqual(sorted(len(c) for c in components), [3])
+        self.assertEqual(self._components(edges), [['a', 'h', 'x']])
 
     def test_disjoint_cycles_are_separate_components(self):
         edges = {
@@ -66,8 +83,7 @@ class TestCycles(TestBase):
             'c': ['d'],
             'd': ['c'],
         }
-        components = strongly_connected_components(_graph(edges)[0])
-        self.assertEqual(sorted(len(c) for c in components), [2, 2])
+        self.assertEqual(sorted(self._components(edges)), [['a', 'b'], ['c', 'd']])
 
     def test_every_node_belongs_to_exactly_one_component(self):
         edges = {
@@ -78,9 +94,34 @@ class TestCycles(TestBase):
             'e': [],
         }
         graph, named = _graph(edges)
-        members = [node for component in strongly_connected_components(graph) for node in component]
+        components = strongly_connected_components(graph.nodes, _successors)
+        members = [node for component in components for node in component]
         self.assertEqual(len(members), len(named))
         self.assertEqual(len({id(node) for node in members}), len(named))
+
+    def test_every_component_is_listed_after_each_component_it_reaches(self):
+        """
+        `s` reaches every other component, `a` and `b` reach `c` and `d`, and those reach `x`, so
+        exactly one order lists every component after each one it reaches.
+        """
+        edges = {
+            's': ['a', 'x'],
+            'a': ['b'],
+            'b': ['a', 'c'],
+            'c': ['d'],
+            'd': ['c', 'x'],
+            'x': [],
+        }
+        self.assertEqual(self._components(edges), [['x'], ['c', 'd'], ['a', 'b'], ['s']])
+
+    def test_the_components_are_those_of_the_nodes_the_starts_reach(self):
+        edges = {
+            'u': ['s'],
+            's': ['a'],
+            'a': ['s'],
+            'z': [],
+        }
+        self.assertEqual(self._components(edges, 's'), [['a', 's']])
 
     def test_a_chain_longer_than_the_interpreter_recursion_limit_is_handled(self):
         """

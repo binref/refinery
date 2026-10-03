@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import inspect
 import time
-import unittest
 
 from dataclasses import replace
 
@@ -2198,6 +2198,20 @@ class TestAliasedIntrinsicWrites(TestBase):
     def test_write_through_a_two_hop_alias_is_recorded(self):
         self._records('var a = Math; var b = a; b.floor = f;', 'Math')
 
+    def test_write_through_an_alias_copied_back_and_forth_is_recorded(self):
+        """
+        `a` and `b` may each hold what the other holds, so a write through `b` reaches `Object`
+        whichever of the two names the scan asks about first.
+        """
+        self._records(inspect.cleandoc("""
+            function patch() { b.prototype.foo = 1; }
+            var a, b;
+            a = Object;
+            if (c) { a = b; }
+            b = a;
+            patch();
+            """), 'Object')
+
     def test_write_through_an_alias_assigned_after_declaration_is_recorded(self):
         self._records('var m; m = Math; m.floor = f;', 'Math')
 
@@ -3083,7 +3097,6 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
     grows with the program.
     """
 
-    @unittest.expectedFailure
     def test_a_chain_of_two_thousand_names_each_holding_the_one_before_builds(self):
         source = 'var c0 = function () {};\n' + ''.join(F'var c{k} = c{k - 1};\n' for k in range(1, 2000))
         build_effects(build_semantic_model(JsParser(source).parse()))

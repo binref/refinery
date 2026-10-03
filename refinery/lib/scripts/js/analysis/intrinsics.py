@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.analysis.cycles import strongly_connected_components
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
@@ -667,7 +668,8 @@ class _IntrinsicAliases:
 
     def __init__(self, model: SemanticModel):
         self.model = model
-        self._cache: dict[int, frozenset[str]] = {}
+        self._answers: dict[Binding, frozenset[str]] = {}
+        self._sources: dict[Binding, tuple[frozenset[str], tuple[Binding, ...]]] = {}
 
     def names_denoted_by(self, node: JsIdentifier) -> frozenset[str]:
         """
@@ -686,37 +688,54 @@ class _IntrinsicAliases:
         Every name a value of *binding* may denote. The binding-level entry point, for a caller
         holding a binding rather than a reference to it — resolving a *write* target, whose
         declaration id is not a reference at all.
-        """
-        return self._names_of(binding, set())
 
-    def _names_of(self, binding: Binding, visiting: set[int]) -> frozenset[str]:
+        A name holding another name denotes everything that one does, through chains of any length
+        and through cycles (`a = b; b = a`). The bindings not yet answered that *binding* reaches
+        are split into strongly connected components: the members of one reach the same bindings
+        and share one answer, and each component comes after every component it reaches, whose
+        answers it takes over.
         """
-        Every name a value of *binding* may denote, memoized per binding. The *visiting* set breaks
-        the cycle a mutually-assigning pair (`a = b; b = a`) would otherwise spin on; a binding
-        still on the stack contributes nothing further, since whatever it reaches is already being
-        collected.
+        answer = self._answers.get(binding)
+        if answer is not None:
+            return answer
+        for component in strongly_connected_components((binding,), self._unanswered_sources):
+            members = set(component)
+            found: set[str] = set()
+            for member in component:
+                names, sources = self._sources_of(member)
+                found.update(names)
+                for source in sources:
+                    if source not in members:
+                        found.update(self._answers[source])
+            answer = frozenset(found)
+            for member in component:
+                self._answers[member] = answer
+        return self._answers[binding]
+
+    def _unanswered_sources(self, binding: Binding) -> list[Binding]:
+        return [source for source in self._sources_of(binding)[1] if source not in self._answers]
+
+    def _sources_of(self, binding: Binding) -> tuple[frozenset[str], tuple[Binding, ...]]:
         """
-        key = id(binding)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return cached
-        if key in visiting:
-            return frozenset()
-        visiting.add(key)
-        found: set[str] = set()
-        for root in _binding_value_roots(binding):
-            if root.name in PURE_INTRINSIC_ROOTS:
-                found.add(root.name)
-                continue
-            inner = self.model.resolve(root)
-            if inner is None:
-                found.add(root.name)
-                continue
-            found |= self._names_of(inner, visiting)
-        visiting.discard(key)
-        result = frozenset(found)
-        self._cache[key] = result
-        return result
+        The names a value of *binding* denotes directly, and the bindings of the names it holds,
+        memoized per binding. A root spelled as a pure intrinsic denotes it even where a local of
+        that name exists, and a root that resolves to no binding is a free global denoting itself.
+        """
+        known = self._sources.get(binding)
+        if known is None:
+            names: set[str] = set()
+            sources: list[Binding] = []
+            for root in _binding_value_roots(binding):
+                if root.name in PURE_INTRINSIC_ROOTS:
+                    names.add(root.name)
+                    continue
+                source = self.model.resolve(root)
+                if source is None:
+                    names.add(root.name)
+                else:
+                    sources.append(source)
+            known = self._sources[binding] = frozenset(names), tuple(sources)
+        return known
 
 
 def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:

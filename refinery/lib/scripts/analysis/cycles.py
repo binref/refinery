@@ -34,7 +34,7 @@ loop somewhere else; that is a call-graph question, and these graphs do not hold
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterable, Iterator, TypeVar
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, ControlFlowModel
@@ -46,37 +46,46 @@ from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, Control
 #: how a language reports a body run by something other than the code around it.
 BodySite = Callable[[Node], 'tuple[Node, bool] | None']
 
+_Vertex = TypeVar('_Vertex')
 
-def strongly_connected_components(graph: ControlFlowGraph) -> list[list[CfgNode]]:
+
+def strongly_connected_components(
+    nodes: Iterable[_Vertex],
+    successors: Callable[[_Vertex], Iterable[_Vertex]],
+) -> list[list[_Vertex]]:
     """
-    The strongly connected components of *graph*, each a list of the nodes that can all reach one
-    another. Tarjan's algorithm, driven by an explicit stack rather than by recursion: the graphs
-    are as deep as the script is long and a deeply nested body would otherwise exhaust the
-    interpreter's stack on a script that parses fine.
+    The strongly connected components of the graph *successors* spans from *nodes*, each a list of
+    nodes that can all reach one another; every node reachable from one of *nodes* is in exactly
+    one of them, and nodes are told apart by identity. Each component is listed after every
+    component it has an edge into, so a caller combining answers along the edges finds those of
+    everything a component reaches already listed.
+
+    Tarjan's algorithm, driven by an explicit stack rather than by recursion: the graphs are as deep
+    as the script is long and a deeply nested body would otherwise exhaust the interpreter's stack
+    on a script that parses fine.
     """
     index: dict[int, int] = {}
     lowlink: dict[int, int] = {}
     stacked: set[int] = set()
-    pending: list[CfgNode] = []
-    components: list[list[CfgNode]] = []
-    counter = 0
-    for start in graph.nodes:
+    pending: list[_Vertex] = []
+    components: list[list[_Vertex]] = []
+
+    def enter(node: _Vertex) -> tuple[_Vertex, Iterator[_Vertex]]:
+        index[id(node)] = lowlink[id(node)] = len(index)
+        pending.append(node)
+        stacked.add(id(node))
+        return node, iter(successors(node))
+
+    for start in nodes:
         if id(start) in index:
             continue
-        work: list[tuple[CfgNode, int]] = [(start, 0)]
+        work = [enter(start)]
         while work:
-            node, position = work[-1]
-            if position == 0:
-                index[id(node)] = lowlink[id(node)] = counter
-                counter += 1
-                pending.append(node)
-                stacked.add(id(node))
+            node, unvisited = work[-1]
             descended = False
-            for offset in range(position, len(node.successors)):
-                successor = node.successors[offset]
+            for successor in unvisited:
                 if id(successor) not in index:
-                    work[-1] = (node, offset + 1)
-                    work.append((successor, 0))
+                    work.append(enter(successor))
                     descended = True
                     break
                 if id(successor) in stacked:
@@ -88,7 +97,7 @@ def strongly_connected_components(graph: ControlFlowGraph) -> list[list[CfgNode]
                 parent = work[-1][0]
                 lowlink[id(parent)] = min(lowlink[id(parent)], lowlink[id(node)])
             if lowlink[id(node)] == index[id(node)]:
-                component: list[CfgNode] = []
+                component: list[_Vertex] = []
                 while True:
                     member = pending.pop()
                     stacked.discard(id(member))
@@ -109,7 +118,7 @@ def nodes_on_a_cycle(graph: ControlFlowGraph) -> frozenset[int]:
     a dispatch whose every arm is empty, is one node reaching only itself.
     """
     found: set[int] = set()
-    for component in strongly_connected_components(graph):
+    for component in strongly_connected_components(graph.nodes, lambda node: node.successors):
         if len(component) > 1:
             found.update(id(node) for node in component)
             continue
