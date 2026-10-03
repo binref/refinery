@@ -298,3 +298,43 @@ class TestSystemCommands(TestBase):
             b'AB\x00\x00\x00\x00\x00\x00CD',
         )
         self.assertEqual(outcome.value.text, F'Kernel32.RtlCopyMemory({base + 8},"4344",2)')
+
+
+class TestControlCommands(TestBase):
+
+    def test_a_goto_to_a_missing_sheet_is_an_error_step(self):
+        outcome = _answer('GOTO(NoSuch!A1)')
+        self.assertEqual(outcome.status, XlmStatus.Error)
+        self.assertEqual(outcome.jump, None)
+
+    def test_a_goto_jumps_to_the_cell_it_names(self):
+        outcome = _answer('GOTO(AZ109)')
+        self.assertEqual(outcome.jump, XlmCursor('Doc1', 109, 52))
+
+    def test_a_run_jumps_and_spells_the_address_it_resolves(self):
+        self.assertEqual(_answer('RUN(AZ109)').jump, XlmCursor('Doc1', 109, 52))
+        self.assertEqual(_answer('RUN(AZ109)').value.text, 'RUN(Doc1!AZ109)')
+        self.assertEqual(
+            _answer('RUN(AZ109,AZ109)').value.text,
+            'RUN(Doc1!AZ109, AZ109)',
+        )
+
+    def test_an_offset_jumps_by_the_rows_and_columns_it_is_given(self):
+        self.assertEqual(_answer('OFFSET(AZ109,1,0)').jump, XlmCursor('Doc1', 110, 52))
+
+    def test_an_offset_above_the_first_formula_of_a_column_falls_through_to_it(self):
+        self.assertEqual(_answer('OFFSET(AZ109,-1,0)').jump, XlmCursor('Doc1', 109, 52))
+
+    def test_an_offset_without_its_columns_stays_partial(self):
+        outcome = _answer('OFFSET(AZ109,1)')
+        self.assertEqual(outcome.jump, None)
+        self.assertEqual(outcome.value.partial, True)
+
+    def test_an_on_time_jumps_to_the_cell_it_names(self):
+        outcome = _answer('ON.TIME(0,AZ109)')
+        self.assertEqual(outcome.jump, XlmCursor('Doc1', 109, 52))
+
+    def test_an_on_time_with_the_wrong_number_of_arguments_is_an_error_step(self):
+        outcome = _answer('ON.TIME(0,AZ109,1)')
+        self.assertEqual(outcome.status, XlmStatus.Error)
+        self.assertEqual(outcome.jump, None)

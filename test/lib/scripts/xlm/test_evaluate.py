@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from refinery.lib.excel.formula.model import XlDefinedName, XlFunctionCall
+from refinery.lib.excel import parse_formula
+from refinery.lib.excel.formula.model import XlDefinedName, XlFunctionCall, XlUnparsedFormula
 from refinery.lib.scripts.xlm import (
     XlmCursor,
     XlmEngine,
@@ -13,6 +14,7 @@ from test.lib.excel.samples import (
     DATES_XLSB,
     XLM_MACRO_FORMULA_XLSM,
     XLM_MACRO_RPN_BIFF8,
+    XLM_MACRO_TEXT_XLSM,
 )
 from test.lib.scripts.xlm.test_view import _with_part_replacement
 
@@ -96,3 +98,35 @@ class TestEvaluateExpression(TestBase):
         )
         self.assertEqual(value.text, '')
         self.assertEqual(value.partial, False)
+
+    def test_the_node_kinds_the_corpus_carries_no_vector_for(self):
+        """
+        The array constant, the percent operator, the unary plus, the error literal, and the
+        parenthesized operand have no vector in any sample; the text parser spells them.
+        """
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        cursor = XlmCursor('Doc1', 109, 52)
+        array = evaluate_expression(engine, parse_formula('{1,2;3,4}'), cursor)
+        self.assertEqual([cell.value for cell in array.cells], [1, 2, 3, 4])
+        for formula, expected in [
+            ('50%', 0.5),
+            ('+7', 7),
+            ('(1+2)*3', 9),
+        ]:
+            with self.subTest(formula=formula):
+                self.assertEqual(
+                    evaluate_expression(engine, parse_formula(formula), cursor).value,
+                    expected,
+                )
+        self.assertEqual(
+            evaluate_expression(engine, parse_formula('#N/A'), cursor).text,
+            '#N/A',
+        )
+
+    def test_an_unparsed_formula_evaluates_to_its_partial_text(self):
+        engine = XlmEngine(XlmView(XLM_MACRO_TEXT_XLSM))
+        value = evaluate_expression(
+            engine, XlUnparsedFormula(text='garbage'), XlmCursor('Doc1', 109, 52),
+        )
+        self.assertEqual(value.value, 'garbage')
+        self.assertEqual(value.partial, True)
