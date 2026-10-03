@@ -100,10 +100,6 @@ class TestCycles(TestBase):
         self.assertEqual(len({id(node) for node in members}), len(named))
 
     def test_every_component_is_listed_after_each_component_it_reaches(self):
-        """
-        `s` reaches every other component, `a` and `b` reach `c` and `d`, and those reach `x`, so
-        exactly one order lists every component after each one it reaches.
-        """
         edges = {
             's': ['a', 'x'],
             'a': ['b'],
@@ -112,6 +108,8 @@ class TestCycles(TestBase):
             'd': ['c', 'x'],
             'x': [],
         }
+        # s reaches every other component, a and b reach c and d, and those reach x, so exactly one
+        # order lists every component after each one it reaches.
         self.assertEqual(self._components(edges), [['x'], ['c', 'd'], ['a', 'b'], ['s']])
 
     def test_the_components_are_those_of_the_nodes_the_starts_reach(self):

@@ -5,8 +5,8 @@ A name the file gives the global object to is the global object.
 reads its properties through the name afterwards, and in a classic script those properties are the
 file's own top-level declarations.
 `refinery.lib.scripts.js.analysis.model.SemanticModel.names_the_global_object` is what says so, and
-the references made through such a name are recorded against the globals they reach — a read so
-the declaration survives, a write so no value is folded across it.
+the references made through such a name are recorded against the globals they reach — a read so the
+declaration survives, a write so no value is folded across it.
 
 The name is asked for its value and never for its spelling, so the cost rows below are the two ways
 a name can look like the object and not be one: a name bound to something else, and a name spelled
@@ -109,6 +109,50 @@ class TestANameHoldingTheGlobalObjectReachesTheGlobals(TestBase):
 
     def test_every_program_behaves_the_way_the_host_does(self):
         for label, source in A_NAME_HOLDS_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label):
+                before, after = before_and_after_in_a_host(source)
+                self.assertEqual(after, before)
+
+
+#: Classic scripts reaching a top-level function or object through a name that is given the global
+#: object only on a path that never runs, keyed by what each does through the name. The name holds
+#: its own object whenever the script runs, so a rewrite taking a reference through it for one made
+#: through the global object changes what the script prints.
+A_NAME_THAT_MAY_HOLD_THE_GLOBAL_OBJECT = {
+    'a call through the name': a_program("""
+        function f() { console.log('global'); }
+        var w = { f: function () { console.log('own'); } };
+        if (Math.random() > 2) { w = globalThis; }
+        w.f();
+        """),
+    'a store through the name': a_program("""
+        var o = {};
+        var w = { o: {} };
+        if (Math.random() > 2) { w = globalThis; }
+        w.o.k = 1;
+        console.log('k' in o);
+        """),
+    'a line-break check called through the name': a_program(r"""
+        function subject() { return 1; }
+        var check = function () { return new RegExp('\n').test(subject); };
+        var w = { check: function () { return 'own'; } };
+        if (Math.random() > 2) { w = globalThis; }
+        console.log(w.check());
+        console.log(check());
+        """),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameThatMayHoldTheGlobalObjectIsNotTakenForIt(TestBase):
+    """
+    A reference through such a name is recorded against the global it may reach, which keeps that
+    global's declaration; a rewrite acting on the reference as one made through the global object
+    acts on an object the name does not hold.
+    """
+
+    def test_every_program_behaves_the_way_the_host_does(self):
+        for label, source in A_NAME_THAT_MAY_HOLD_THE_GLOBAL_OBJECT.items():
             with self.subTest(label):
                 before, after = before_and_after_in_a_host(source)
                 self.assertEqual(after, before)

@@ -370,8 +370,11 @@ class JsSimplifications(Transformer):
         present at it, and a key that may be deleted — or that shares the binding with a `delete` of an
         unbounded computed key — is withheld. *any_store* records whether the value receives any
         own-property store at all, so the caller only concludes absence for a value that receives none.
-        References are resolved through the model so the set is shadowing-correct. `None` when a store or
-        delete targets a computed key that is not a string literal, since the own-property set is then
+        References are resolved through the model so the set is shadowing-correct. A store through a
+        member access the model records in place of the name — `w.o.k = ...` for an `o` read through
+        a `w` that may be the global object — may install its key and counts toward *any_store*, but
+        it proves no key present, because `w` may hold another object. `None` when a store or delete
+        targets a computed key that is not a string literal, since the own-property set is then
         unbounded and no `in` membership can be decided.
         """
         stores: list[tuple[str, JsMemberExpression]] = []
@@ -394,7 +397,8 @@ class JsSimplifications(Transformer):
                 if name is None:
                     return None
                 any_store = True
-                stores.append((name, member))
+                if isinstance(ref, JsIdentifier):
+                    stores.append((name, member))
             elif (
                 isinstance(parent, JsUnaryExpression)
                 and parent.operator == 'delete'

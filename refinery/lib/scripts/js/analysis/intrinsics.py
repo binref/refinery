@@ -691,26 +691,37 @@ class _IntrinsicAliases:
 
         A name holding another name denotes everything that one does, through chains of any length
         and through cycles (`a = b; b = a`). The bindings not yet answered that *binding* reaches
-        are split into strongly connected components: the members of one reach the same bindings
-        and share one answer, and each component comes after every component it reaches, whose
-        answers it takes over.
+        are split into strongly connected components: the members of one reach the same bindings and
+        share one answer, and each component comes after every component it reaches, whose answers
+        it takes over. A binding that holds no name still unanswered is a component of its own and
+        is answered without the search, which is how most bindings are asked about.
         """
         answer = self._answers.get(binding)
         if answer is not None:
             return answer
-        for component in strongly_connected_components((binding,), self._unanswered_sources):
-            members = set(component)
-            found: set[str] = set()
-            for member in component:
-                names, sources = self._sources_of(member)
-                found.update(names)
-                for source in sources:
-                    if source not in members:
-                        found.update(self._answers[source])
-            answer = frozenset(found)
-            for member in component:
-                self._answers[member] = answer
+        if not self._unanswered_sources(binding):
+            self._answer([binding])
+        else:
+            for component in strongly_connected_components((binding,), self._unanswered_sources):
+                self._answer(component)
         return self._answers[binding]
+
+    def _answer(self, component: list[Binding]):
+        """
+        Give every member of *component* the one answer they share: the names each of them denotes
+        directly, and the answer of every binding outside the component that one of them holds.
+        """
+        members = set(component)
+        found: set[str] = set()
+        for member in component:
+            names, sources = self._sources_of(member)
+            found.update(names)
+            for source in sources:
+                if source not in members:
+                    found.update(self._answers[source])
+        answer = frozenset(found)
+        for member in component:
+            self._answers[member] = answer
 
     def _unanswered_sources(self, binding: Binding) -> list[Binding]:
         return [source for source in self._sources_of(binding)[1] if source not in self._answers]

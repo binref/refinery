@@ -2343,6 +2343,39 @@ class TestAReflectiveSpliceTheSiteWouldRebindIsDeclined(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
+#: A function whose direct `eval` rebinds one of its locals, and whose later reflective site reads
+#: that local through another function, mapped to the behavior an engine gives it.
+A_LOCAL_A_SPLICED_EVAL_REBINDS = {
+    'an indirect eval of a string read through a closure': Program(
+        a_program(r"""
+            function k(p) { var q = p(); return q(); }
+            function f() {
+              var g = function () { return 'console.log("A")'; };
+              var h = function () { return g; };
+              eval('g = function () { return \'console.log("B")\'; }');
+              (0, eval)(k(h));
+            }
+            f();
+            """),
+        prints('B'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestALocalASplicedEvalRebindsIsNotReadAtItsFormerValue(TestBase):
+    """
+    The pass reads the model it held before splicing the `eval`, so which functions hold a direct
+    `eval` is read off the tree that model was built from: the local the splice rebinds still holds
+    a value the model cannot name, and the later site is not resolved through it.
+    """
+
+    def test_every_program_behaves_the_way_the_engine_does(self):
+        for label, row in A_LOCAL_A_SPLICED_EVAL_REBINDS.items():
+            with self.subTest(label):
+                self.assertEqual(row.read(), row.required())
+
+
 #: Programs in which something still names the single-use `Function`-constructor temporary the pass
 #: is consuming — a same-pass eval splice reading or rebinding it, an eval the pass declines, the
 #: global object a folded finder hands away, or the construction argument's own effect — mapped to

@@ -2538,10 +2538,11 @@ class TestADirectEvalInADefaultDeclaresWhereItRuns(TestBase):
     """
 
 
-#: A classic script reading one of its own top-level declarations through a name the file itself
-#: installs on the global object, mapped to the behavior a host gives it. The installing statement is
-#: what every row has in common: Node has no `window`, so a file meaning to read one has to put it
-#: there, and a browser file that never installs one is already read correctly.
+#: A classic script reaching one of its own top-level declarations through a name the file itself
+#: installs on the global object — by a write through the object, or by assigning a name it never
+#: declares — mapped to the behavior a host gives it. The installing statement is what every row has
+#: in common: Node has no `window`, so a file meaning to read one has to put it there, and a browser
+#: file that never installs one is already read correctly.
 A_NAME_THE_FILE_INSTALLS_ON_THE_GLOBAL_OBJECT = {
     'read through the installed name': Program(
         a_program("""
@@ -2562,6 +2563,26 @@ A_NAME_THE_FILE_INSTALLS_ON_THE_GLOBAL_OBJECT = {
         prints('q 1'),
         Reading.SCRIPT,
     ),
+    'a write through the installed name': Program(
+        a_program("""
+            globalThis.window = globalThis;
+            var q = 1;
+            window.q = 2;
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a name installed by assigning it undeclared': Program(
+        a_program("""
+            var q = 1;
+            w = globalThis;
+            w.q = 2;
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
 }
 
 
@@ -2571,17 +2592,20 @@ class TestANameTheFileInstallsOnTheGlobalObjectHoldsIt(TestBase):
     """
     A name given the global object holds it, and a read through the name is a read of a global —
     the law `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object` states. It is
-    answered from the value the name is declared with, and a name the file only ever assigns is
-    declared with none: the binding minted for `globalThis.window = globalThis` carries no
-    declaration, so both value queries decline for it, the name is taken for one bound to something
-    other than the object, and every global read through it is recorded nowhere.
+    answered from the values the name is declared with and assigned, and a name the file never
+    declares has none: neither the binding minted for `globalThis.window = globalThis` nor the
+    implicit global `w = globalThis` creates carries a declaration, so both value queries decline
+    for them, the name is taken for one bound to something other than the object, and every global
+    reference through it is recorded nowhere.
 
-    Declining is deliberate and its reason is an ordering one. The names holding the global object
-    are found once, from the values written to names, before any member access is classified,
-    because which member accesses reach a global depends on which names hold the object. The
-    installing write is a member access, so its value would join the very set that decides which
-    member accesses are writes; answering needs the holders and the member writes found together,
-    which is a change to how the model is built rather than to what it knows.
+    The names holding the global object are found once, from the values written to names, before any
+    member access is classified, because which member accesses reach a global depends on which names
+    hold the object. An installing write through the object is a member access, so its value is not
+    among those values. That order does not forbid reading it: which global `B.n = V` writes is
+    named by `n`, and whether it writes one only grows as more names are found to hold the object.
+    The rules that close it: such a write whose base and value both hold the object makes `n` hold
+    it too, one more rule of the fixpoint `refinery.lib.scripts.js.analysis.model.SemanticModel`
+    finds the holders by, and that fixpoint reads the values an undeclared name is assigned by name.
 
     The second row is the shape that made this worth having: `var w = window || {}` is how a file
     meant for a browser and for something else names the object once. It is read correctly wherever
@@ -2593,9 +2617,9 @@ class TestANameTheFileInstallsOnTheGlobalObjectHoldsIt(TestBase):
     """
 
 
-#: A classic script writing one of its own top-level variables through a name holding the global
-#: object, from inside a function it then calls, mapped to the behavior a host gives it.
-A_GLOBAL_WRITTEN_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT = {
+#: A classic script reaching one of its own top-level variables through a name holding the global
+#: object, from inside a function it calls, mapped to the behavior a host gives it.
+A_GLOBAL_REACHED_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT = {
     'a write inside a called function': Program(
         a_program("""
             var g = 1;
@@ -2607,29 +2631,217 @@ A_GLOBAL_WRITTEN_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT = {
         prints('2'),
         Reading.SCRIPT,
     ),
+    'a write inside a callback': Program(
+        a_program("""
+            var g = 1;
+            var w = globalThis;
+            [0].forEach(function () { w.g = 2; });
+            console.log(g);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a read after a write by name in a function called twice': Program(
+        a_program("""
+            var g;
+            var w = global || {};
+            function f() { g = 1; console.log(w.g); }
+            f();
+            f();
+            """),
+        prints('1', '1'),
+        Reading.SCRIPT,
+    ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_GLOBAL_WRITTEN_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT)
-class TestAGlobalWrittenInsideACallThroughANameHoldingTheGlobalObjectChangesTheVariable(TestBase):
+@one_expected_failure_per_program(A_GLOBAL_REACHED_INSIDE_A_CALL_THROUGH_A_NAME_HOLDING_THE_GLOBAL_OBJECT)
+class TestAGlobalReachedInsideACallThroughANameHoldingTheGlobalObjectIsReachedThere(TestBase):
     """
-    The model records `w.g = 2` as a write of `g`, but whether a variable is written through the
-    global object is decided a second time, from how the base of each recorded member write is
-    spelled: `w` is not a spelling of the global object, so `g` is taken for a variable no member
-    write reaches. The effect summary of `f` does not list `g` either, so the read after the call is
-    folded to the value the declaration spelled. The same write made at the top level is read
-    correctly; the law `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object`
-    holds it.
+    The model records `w.g = 2` as a write of `g` and `w.g` as a read of it, but whether a variable
+    is reached through the global object is decided a second time, from how the base of each
+    recorded member access is spelled: `w` is not a spelling of the global object, so `g` is taken
+    for a variable no member access reaches. The effect summary of a function writing `w.g` does
+    not list `g` either, so a read after the call is folded to the value the declaration spelled;
+    and `g = 1` inside `f` is removed as a store no other code reads. The same write made at the
+    top level is read correctly; the law
+    `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object` holds it.
 
-    The rule that closes it: the model marks each reference it records through the global object
-    as such, and every later question reads that mark instead of the spelling.
+    The rule that closes it: the model marks each reference it records through the global object as
+    such, and every later question reads that mark instead of the spelling.
     """
 
 
-#: A classic script handing the global object to a call from inside a function body, mapped to the
-#: behavior a host gives it. Every row spells the object as the `this` of a function nothing calls as
-#: a method, which §10.2.1.2 makes the global object for the duration of the call.
+#: A classic script reading one of its own top-level declarations through the global object beside
+#: the reads it makes by name, mapped to the behavior a host gives it.
+A_DECLARATION_ALSO_READ_THROUGH_THE_GLOBAL_OBJECT = {
+    'a constant read through the object': Program(
+        a_program("""
+            var q = 1;
+            console.log(globalThis.q);
+            console.log(q);
+            """),
+        prints('1', '1'),
+        Reading.SCRIPT,
+    ),
+    'a constant read through a name holding the object': Program(
+        a_program("""
+            var q = 1;
+            var w = globalThis;
+            console.log(w.q);
+            console.log(q);
+            """),
+        prints('1', '1'),
+        Reading.SCRIPT,
+    ),
+    'a namespace read through the object': Program(
+        a_program("""
+            var App = {};
+            App.name = 'x';
+            console.log(App.name);
+            console.log(globalThis.App.name);
+            """),
+        prints('x', 'x'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_DECLARATION_ALSO_READ_THROUGH_THE_GLOBAL_OBJECT)
+class TestADeclarationAlsoReadThroughTheGlobalObjectIsKept(TestBase):
+    """
+    The model records a read through the global object against the declaration it reaches, and that
+    record keeps the declaration of a file that reads it there and nowhere else — the law
+    `test.lib.scripts.js.deobfuscation.test_a_name_holding_the_global_object` holds it. Two passes
+    count only the identifiers spelled with the name: constant inlining replaces the reads by name
+    and then removes the declaration, and namespace flattening turns the object into one variable
+    per key. The read through the object is then a read of a property nothing defines any more.
+
+    The rule that closes it: a pass removing or splitting a declaration counts every reference the
+    model records for it, the ones through the global object included.
+    """
+
+
+#: A classic script calling one of its own functions through the global object, mapped to the
+#: behavior a host gives it.
+A_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT = Program(
+    a_program("""
+        var counter = 0;
+        function tick() { counter = counter + 1; }
+        globalThis.tick();
+        console.log(counter);
+        """),
+    prints('1'),
+    Reading.SCRIPT,
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionCalledThroughTheGlobalObjectRuns(TestBase):
+    """
+    `globalThis.tick()` runs the file's own `tick`. The effect model takes it for a call by name
+    when it decides that `tick` does not escape, but resolves which function a call runs only for a
+    callee spelled as a name, so nothing treats the call as running `tick`, and the value `tick`
+    writes is folded across it.
+    """
+
+    @wontfix(
+        'obfuscators route only names a program never declares through the global object, and '
+        'a program calls its own functions by name'
+    )
+    def test_the_write_the_call_makes_is_seen(self):
+        row = A_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT
+        self.assertEqual(row.read(), row.required())
+
+    def test_the_program_prints_what_is_pinned(self):
+        row = A_FUNCTION_CALLED_THROUGH_THE_GLOBAL_OBJECT
+        self.assertEqual(row.behaves(), row.prints)
+
+
+#: A classic script naming the global object once with the test a file meant for several hosts
+#: writes, and writing one of its own top-level variables through that name, mapped to the behavior
+#: a host gives it.
+A_NAME_GIVEN_THE_GLOBAL_OBJECT_BY_A_HOST_TEST = {
+    'a conditional chooses the spelling': Program(
+        a_program("""
+            var q = 1;
+            var w = typeof window !== 'undefined' ? window : globalThis;
+            w.q = 2;
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+    'a test guards the spelling': Program(
+        a_program("""
+            var q = 1;
+            var w = typeof globalThis === 'object' && globalThis || {};
+            w.q = 2;
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_NAME_GIVEN_THE_GLOBAL_OBJECT_BY_A_HOST_TEST)
+class TestANameGivenTheGlobalObjectByAHostTestHoldsIt(TestBase):
+    """
+    A name holds the global object when a value it is given is spelled as the object, or is an `||`
+    whose left is, which covers `var w = window || {}`. A file meant for several hosts tests first
+    and spells the object in a branch: the arms of a conditional and the right of an `&&` are not
+    read, so the name is taken for one holding something else and the write through it is recorded
+    nowhere.
+
+    The rule that closes it: a value is the object when any value it may evaluate to is — either arm
+    of a conditional, the right of an `&&`, either side of `||` and `??`, the last of a sequence —
+    the may-reading `refinery.lib.scripts.js.analysis.intrinsics` already makes of a name's value.
+    """
+
+
+#: A classic script patching a built-in through a conditional written in place of the object, mapped
+#: to the behavior a host gives it.
+AN_INTRINSIC_PATCHED_THROUGH_A_CONDITIONAL_BASE = Program(
+    a_program("""
+        var c = Math.random() > 2;
+        (c ? {} : Math).floor = function () { return 7; };
+        console.log(Math.floor(1.5));
+        """),
+    prints('7'),
+    Reading.SCRIPT,
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnIntrinsicPatchedThroughAConditionalBaseIsSeen(TestBase):
+    """
+    The scan for writes to built-ins finds the object a member write patches from the name its base
+    is spelled with, and a conditional written in place of that name names none, so the patch is not
+    seen and `Math.floor(1.5)` is folded to the built-in's answer. The same patch made through a
+    name holding the conditional is seen.
+    """
+
+    @wontfix(
+        'a program patches a built-in through its own name or a name holding it, not through a '
+        'conditional written in place of the object'
+    )
+    def test_the_patch_is_seen(self):
+        row = AN_INTRINSIC_PATCHED_THROUGH_A_CONDITIONAL_BASE
+        self.assertEqual(row.read(), row.required())
+
+    def test_the_program_prints_what_is_pinned(self):
+        row = AN_INTRINSIC_PATCHED_THROUGH_A_CONDITIONAL_BASE
+        self.assertEqual(row.behaves(), row.prints)
+
+
+#: A classic script handing the global object on from inside a function body — to a call or to a
+#: name — mapped to the behavior a host gives it. Every row spells the object as the `this` of a
+#: function nothing calls as a method, which §10.2.1.2 makes the global object for the duration of
+#: the call.
 THE_GLOBAL_OBJECT_A_CALL_SUPPLIES_HANDED_ON = {
     'a write through it': Program(
         a_program("""
@@ -2652,6 +2864,19 @@ THE_GLOBAL_OBJECT_A_CALL_SUPPLIES_HANDED_ON = {
         prints('1'),
         Reading.SCRIPT,
     ),
+    'a name given it': Program(
+        a_program("""
+            var lib = 1;
+            (function () {
+              var root = this;
+              function set() { root.lib = 2; }
+              set();
+            })();
+            console.log(lib);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
 }
 
 
@@ -2664,7 +2889,8 @@ class TestAReceiverACallSuppliesMayBeHandedOn(TestBase):
     recorded — `test.lib.scripts.js.deobfuscation.test_global_handed_to_a_call` states that law — but
     only for the spellings the text settles: an unshadowed alias, and the `this` a script's top level
     holds. Which receiver reaches a body is not decided anywhere, so a `this` written inside a
-    function is not admitted, and a hand-over spelled with one is recorded nowhere.
+    function is not admitted: a hand-over spelled with one is recorded nowhere, and a name given one
+    is not taken for a name holding the global object.
 
     Admitting every `this` is measured, not assumed, and it is what this entry costs: a
     self-defending wrapper passes its own `this` to a call, and a run that took that for the global

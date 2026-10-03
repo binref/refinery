@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
+    JsIdentifier,
     JsScript,
     Statement,
 )
@@ -176,11 +177,15 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         `None`. The statement position is what makes the move an identity for control flow: an
         invocation written under an `if`, inside a loop, or nested in another expression does not
         run unconditionally at that position, and a `new` expression or a read that hands the
-        function elsewhere is not the call this pass replaces.
+        function elsewhere is not the call this pass replaces. Neither is a member access the model
+        records as a read through an object that may be the global object: `w.f()` for a name `w`
+        that holds the object on one path only calls whatever `w` holds there.
         """
         if len(binding.reads) != 1 or binding.writes:
             return None
         read = binding.reads[0]
+        if not isinstance(read, JsIdentifier):
+            return None
         call = read.parent
         if not isinstance(call, JsCallExpression) or call.callee is not read:
             return None

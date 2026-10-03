@@ -248,7 +248,9 @@ def _discardable_guard_invocations(model, binding, declarator) -> list[JsCallExp
     that reference naming an undeclared name. A reference inside the declarator is the payload
     closing over its own guard — the self-defending payload reads its guard's source through it —
     and vanishes with the declaration, so it neither blocks the removal nor needs excising. A
-    binding no invocation reaches is left alone.
+    binding no invocation reaches is left alone. So is one the model also reads through a member
+    access standing in for its name: `w.guard()` for a `w` that may be the global object calls
+    whatever `w` holds, which excising would mute and keeping would leave without its target.
     """
     if binding is None or binding.dynamic_refs or binding.exported:
         return None
@@ -256,6 +258,8 @@ def _discardable_guard_invocations(model, binding, declarator) -> list[JsCallExp
     for reference in model.references(binding):
         if reference.is_descendant_of(declarator):
             continue
+        if not isinstance(reference, JsIdentifier):
+            return None
         call = _invocation_of(reference)
         if call is None or not value_is_discarded(call):
             return None

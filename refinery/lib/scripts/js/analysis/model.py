@@ -2701,13 +2701,13 @@ class SemanticModel:
         catch or import binding and a function expression's own name; a compound assignment, an update,
         a `for-in`/`for-of` head, and a destructuring target store a value they do not spell; a write
         recorded with no value and a dynamic rebinding (`binding_maybe_reassigned_dynamically`) say a
-        value arrived without saying which. A write through a member access on a global-object alias is
-        left unread and breaks completeness too: which member accesses are such writes depends on
+        value arrived without saying which. A write through a member access on a global-object alias
+        is left unread and breaks completeness too: which member accesses are such writes depends on
         the names holding the global object, and those are found from these values
         (`_bindings_holding_the_global_object`), so a value read out of such a write would feed the
-        very set that decides whether it is one. A binding with no declaration — an implicit
-        global, and the binding `_ensure_implicit_global_from_alias_write` mints — contributes
-        nothing and is never complete, for that same reason. With *ignore_dynamic_rebinds* the
+        very set that decides whether it is one. A binding with no declaration — an implicit global,
+        and the binding `_ensure_implicit_global_from_alias_write` mints — contributes nothing and
+        is never complete, even where the file assigns it by name. With *ignore_dynamic_rebinds* the
         dynamic-rebind conjunct is left out of the completeness verdict: the values answer what the
         text spells, and whether a rebind crosses a given read is the caller's ordering question
         over `binding_dynamic_rebind_sites`.
@@ -2718,10 +2718,10 @@ class SemanticModel:
         recognizer whose safe direction is admitting decides on ANY value and ignores completeness; a
         consumer whose rewrite needs the binding to hold nothing else requires completeness first, and
         must also require a value, since a complete empty list answers every universal question
-        vacuously. `refinery.lib.scripts.js.analysis.effects._binding_value_roots` is the may-side
-        sibling that over-approximates where this list refuses, and
-        `refinery.lib.scripts.js.analysis.reaching.ReachingModel._value_definitions` the flow-aware one
-        that enumerates kill sites rather than values.
+        vacuously. `refinery.lib.scripts.js.analysis.intrinsics._binding_value_roots` is the
+        may-side sibling that over-approximates where this list refuses, and
+        `refinery.lib.scripts.js.analysis.reaching.ReachingModel._value_definitions` the flow-aware
+        one that enumerates kill sites rather than values.
         """
         channels, complete = self._binding_value_channels(
             binding, ignore_dynamic_rebinds=ignore_dynamic_rebinds)
@@ -3144,11 +3144,10 @@ class SemanticModel:
         (`is_member_write_target`: plain and compound assignment, update, `delete`, `for-in`/`for-of`
         heads, destructuring patterns), so the fact stands on its own wherever a consumer consults it.
         Computed lazily and memoized,
-        but never while `_record_def_use_references` is still recording: that walk is what fills the
-        `binding.writes` list `binding_values` reads, so an answer taken mid-walk would depend on how
-        far it had got; asked there, the conservative `True` is answered instead of a partial fact.
-        The alias-recording walks that follow consult only value facts those first walks froze, so
-        the answer they get is the final one.
+        but never while `_build_def_use` is still recording references: which member accesses reach
+        the global object depends on the names holding it, which that step finds from the writes it
+        records, so an answer taken inside it would depend on how far it had got; asked there, the
+        conservative `True` is answered instead of a partial fact.
         """
         if self._recording_def_use:
             return True
@@ -3515,7 +3514,9 @@ class SemanticModel:
         that runs in the function's own scope and can therefore name its locals. Nested functions are
         included, since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is
         not scanned — a `with` body's accesses are attributed precisely as dynamic references — so only
-        direct eval needs a per-function answer. Computed once per function and memoized.
+        direct eval needs a per-function answer. Filed for every scope owning variables while the
+        model is built (`_record_def_use_references`), and computed once and memoized for any other
+        node.
 
         The trusting model (`trust_eval`) answers no sites: a direct `eval` whose argument cannot be
         resolved is the one surface that model assumes inert, so every consumer that freezes a local
@@ -3540,8 +3541,8 @@ class SemanticModel:
         a construct the file ended inside (see `is_unread_source`). Each stands where the function's
         own locals are in scope and says nothing about what it references, so it can name any of
         them with no reference this model records, exactly as a direct `eval` can. Nested functions
-        are included, since a span inside one names the enclosing locals too. Computed once per
-        function and memoized.
+        are included, since a span inside one names the enclosing locals too. Filed and memoized the
+        way `_direct_eval_sites` is.
         """
         cached = self._function_unread_source_sites.get(id(function))
         if cached is None:
@@ -3788,8 +3789,20 @@ class SemanticModel:
         the dedup a read's multiplicity would follow its spelling rather than the program. The
         export-marking rider shares the walk: it consults only scope-builder state, so riding along
         changes nothing the remaining construction walks observe. So does the rider answering
-        `module_may_be_reentered`, which consults nothing but the node.
+        `module_may_be_reentered`, which consults nothing but the node, and the one filing the
+        direct `eval` calls and unread spans of every scope owning variables, which
+        `_direct_eval_sites` and `_unread_source_sites` answer from. Those lists are facts of the
+        tree the model is built from like every other: a pass holding the model across its own edits
+        would otherwise read them off the edited tree, where an `eval` it spliced away no longer
+        stands while the writes the splice made are missing from the model.
         """
+        pending = [self.root_scope]
+        while pending:
+            scope = pending.pop()
+            if scope.is_var_scope:
+                self._function_direct_eval_sites[id(scope.node)] = []
+                self._function_unread_source_sites[id(scope.node)] = []
+            pending.extend(scope.children)
         seen: set[int] = set()
         accesses: list[JsMemberExpression] = []
         for node in self.root.walk():
@@ -3797,6 +3810,10 @@ class SemanticModel:
                 self._mark_export_declaration(node)
             if _lets_another_module_run(node):
                 self._module_may_be_reentered = True
+            if is_direct_eval_call(node):
+                self._file_reflective_site(node, self._function_direct_eval_sites)
+            elif is_unread_source(node):
+                self._file_reflective_site(node, self._function_unread_source_sites)
             if isinstance(node, JsMemberExpression):
                 accesses.append(node)
                 continue
@@ -3819,6 +3836,19 @@ class SemanticModel:
                 binding.writes.append(node)
             binding.note_reference_from(ref_scope)
         return accesses
+
+    @staticmethod
+    def _file_reflective_site(site: Node, sites_of: dict[int, list[Node]]):
+        """
+        Add *site* to the list *sites_of* keeps for every scope node enclosing it, which is the list
+        of each scope owning variables that the site can name a variable of.
+        """
+        cursor: Node | None = site
+        while cursor is not None:
+            sites = sites_of.get(id(cursor))
+            if sites is not None:
+                sites.append(site)
+            cursor = cursor.parent
 
     def _attribute_dynamic_reference(self, node: JsIdentifier, scope: Scope | None):
         """
@@ -3978,17 +4008,21 @@ class SemanticModel:
         record a reference, where one admission too many keeps a declaration and one refusal too
         many deletes one, so admitting is this answer's safe direction — a name that held the object
         on one branch of its life records the reads made through it even where another branch gave
-        it something else.
+        it something else. Parentheses around the name are looked through, as they are for a name
+        spelled as the object (`is_global_object_base`).
 
-        A name the file only ever assigns through a member access still answers nothing:
-        `_ensure_implicit_global_from_alias_write` mints its binding without a declaration and
-        `binding_values` declines for it, because that write is a member access, classified by the
-        very set its value would join.
+        A name the file never declares answers nothing, since `binding_values` declines for a
+        binding with no declaration: an implicit global the file assigns by name, and the binding
+        `_ensure_implicit_global_from_alias_write` mints for a name the file installs on the global
+        object, whose value only a member access gives.
 
         The values hold wherever the name is not in their temporal dead zone, and nothing here orders
         an establishing definition before the read. A caller driving a rewrite has to — and needs the
         complete-singleton reading `singular_value` gives, not this one.
         """
+        if not self._global_object_holders:
+            return False
+        node = strip_parens(node)
         return isinstance(node, JsIdentifier) and self.resolve(node) in self._global_object_holders
 
     def _bindings_holding_the_global_object(self) -> frozenset[Binding]:

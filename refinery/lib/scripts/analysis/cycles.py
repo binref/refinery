@@ -55,10 +55,10 @@ def strongly_connected_components(
 ) -> list[list[_Vertex]]:
     """
     The strongly connected components of the graph *successors* spans from *nodes*, each a list of
-    nodes that can all reach one another; every node reachable from one of *nodes* is in exactly
-    one of them, and nodes are told apart by identity. Each component is listed after every
-    component it has an edge into, so a caller combining answers along the edges finds those of
-    everything a component reaches already listed.
+    nodes that can all reach one another; every node reachable from one of *nodes* is in exactly one
+    of them, and nodes are told apart by identity. Each component is listed after every component it
+    has an edge into, so a caller combining answers along the edges finds those of everything a
+    component reaches already listed.
 
     Tarjan's algorithm, driven by an explicit stack rather than by recursion: the graphs are as deep
     as the script is long and a deeply nested body would otherwise exhaust the interpreter's stack
@@ -82,29 +82,26 @@ def strongly_connected_components(
         work = [enter(start)]
         while work:
             node, unvisited = work[-1]
-            descended = False
             for successor in unvisited:
                 if id(successor) not in index:
                     work.append(enter(successor))
-                    descended = True
                     break
                 if id(successor) in stacked:
                     lowlink[id(node)] = min(lowlink[id(node)], index[id(successor)])
-            if descended:
-                continue
-            work.pop()
-            if work:
-                parent = work[-1][0]
-                lowlink[id(parent)] = min(lowlink[id(parent)], lowlink[id(node)])
-            if lowlink[id(node)] == index[id(node)]:
-                component: list[_Vertex] = []
-                while True:
-                    member = pending.pop()
-                    stacked.discard(id(member))
-                    component.append(member)
-                    if member is node:
-                        break
-                components.append(component)
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    lowlink[id(parent)] = min(lowlink[id(parent)], lowlink[id(node)])
+                if lowlink[id(node)] == index[id(node)]:
+                    component: list[_Vertex] = []
+                    while True:
+                        member = pending.pop()
+                        stacked.discard(id(member))
+                        component.append(member)
+                        if member is node:
+                            break
+                    components.append(component)
     return components
 
 

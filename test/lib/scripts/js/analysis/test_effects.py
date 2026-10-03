@@ -3093,8 +3093,8 @@ class TestAParameterDefaultIsPartOfWhatACallEvaluates(TestBase):
 
 class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
     """
-    The effect model builds for programs that pass a function through many names, in time that
-    grows with the program.
+    The effect model builds for programs that pass a function through many names, in time that grows
+    with the program.
     """
 
     def test_a_chain_of_two_thousand_names_each_holding_the_one_before_builds(self):
@@ -3104,9 +3104,7 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
     def test_names_given_one_of_ten_names_build_in_time_that_grows_with_the_program(self):
         """
         Every level of names adds the same lines to the program, so a build whose time grows with
-        the program takes about twice as long for four levels as for two. The fastest of three
-        builds of each program is compared, so a pause of the machine during one build cannot
-        decide the test.
+        the program takes about seven times as long for eight levels as for one.
         """
         def build(depth: int) -> tuple[float, int]:
             width = 10
@@ -3118,6 +3116,8 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
             lines.extend(F'n{depth}_{i}.toString = function () {{ return "x"; }};' for i in range(width))
             source = '\n'.join(lines)
             ast = JsParser(source).parse()
+            # The fastest of three builds is compared, so a pause of the machine during one build
+            # cannot decide the test.
             times: list[float] = []
             for _ in range(3):
                 start = time.perf_counter()
@@ -3125,6 +3125,8 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
                 times.append(time.perf_counter() - start)
             return min(times), len(source)
 
-        small_time, small_size = build(2)
-        large_time, large_size = build(4)
+        small_time, small_size = build(1)
+        large_time, large_size = build(8)
+        # A build growing with the square of the program takes about 49 times as long, which the
+        # bound of three times the size ratio refuses with room to spare.
         self.assertLess(large_time / small_time, 3 * large_size / small_size)

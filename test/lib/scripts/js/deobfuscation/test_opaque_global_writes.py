@@ -77,6 +77,12 @@ _A_GLOBAL_WRITTEN_UNDER_A_RUNTIME_KEY = {
         g[k] = {};
         console.log(String.fromCharCode(65));
         """),
+    'the written name is reached through that name in parentheses': a_program("""
+        var g = globalThis;
+        var k = process.env.KEY || 'String';
+        (g)[k] = {};
+        console.log(String.fromCharCode(65));
+        """),
     'the written name holds a construction': a_program("""
         var h = Function('return 1;');
         var k = process.env.KEY || 'h';

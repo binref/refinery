@@ -667,7 +667,8 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         for read in name.reads:
             call = enclosing_operator(read)
             if (
-                isinstance(call, JsCallExpression)
+                isinstance(read, JsIdentifier)
+                and isinstance(call, JsCallExpression)
                 and is_invocation_target(read)
                 and not call.arguments
                 and dominance.binding_established_before(name, call)

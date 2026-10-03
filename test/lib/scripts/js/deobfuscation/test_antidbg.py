@@ -35,6 +35,16 @@ class TestAntiDebug(TestJsDeobfuscator):
         )
         self.assertEqual(self._deobfuscate(source), "console.log('hello');")
 
+    def test_a_call_through_a_name_that_may_hold_the_global_object_is_not_excised(self):
+        source = self._DEFENSE_CODE + (
+            "var w = { g: function() { console.log('own'); } };"
+            "if (Math.random() > 2) { w = globalThis; }"
+            "w.g();"
+            "g();"
+            "console.log('hello');"
+        )
+        self.assertIn('w.g();', self._run_transformer(source, JsRemoveSelfDefending))
+
     def test_preserves_code_without_redos(self):
         source = inspect.cleandoc(
             """
