@@ -1,7 +1,9 @@
 import datetime
 import functools
+import hashlib
 import itertools
 import lzma
+import tracemalloc
 import uuid
 
 from unittest.mock import patch
@@ -29,6 +31,74 @@ _FILE_HASHES = {
 
 _VHDX_REGION_TABLE = 0x30000
 _VHDX_REGION_BAT = uuid.UUID('2DC27766-F623-4200-9D64-115E9BFD4A08').bytes_le
+
+
+class _FixedFat32:
+    """
+    The layout of the FAT32 volume in the first partition of the fixed.vhd sample.
+    """
+    def __init__(self, data: bytearray):
+        self.data = data
+        volume = int.from_bytes(data[0x1C6:0x1CA], 'little') * 512
+        boot = data[volume:volume + 512]
+        sector_size = int.from_bytes(boot[0x0B:0x0D], 'little')
+        self.cluster_size = sector_size * boot[0x0D]
+        self.fat = volume + int.from_bytes(boot[0x0E:0x10], 'little') * sector_size
+        self.fat_size = int.from_bytes(boot[0x24:0x28], 'little') * sector_size
+        self.fat_count = boot[0x10]
+        self.heap = self.fat + self.fat_count * self.fat_size
+        self.root = int.from_bytes(boot[0x2C:0x30], 'little')
+        end = volume + int.from_bytes(boot[0x20:0x24], 'little') * sector_size
+        self.cluster_count = (end - self.heap) // self.cluster_size
+
+    def volume(self):
+        disk = VirtualDisk(self.data)
+        return FatVolume(VolumeView(disk, next(partitions(disk))))
+
+    def offset(self, cluster: int):
+        return self.heap + (cluster - 2) * self.cluster_size
+
+    def next(self, cluster: int):
+        link = self.fat + 4 * cluster
+        return int.from_bytes(self.data[link:link + 4], 'little')
+
+    def last(self, cluster: int):
+        while (link := self.next(cluster)) < 0x0FFFFFF8:
+            cluster = link
+        return cluster
+
+    def free(self, count: int):
+        free = (c for c in range(2, self.cluster_count + 2) if not self.next(c))
+        clusters = list(itertools.islice(free, count))
+        assert len(clusters) == count
+        return clusters
+
+    def link(self, *chain: int):
+        for cluster, target in zip(chain, (*chain[1:], 0x0FFFFFFF)):
+            for copy in range(self.fat_count):
+                link = self.fat + copy * self.fat_size + 4 * cluster
+                self.data[link:link + 4] = target.to_bytes(4, 'little')
+
+    def write(self, cluster: int, records: bytes):
+        assert len(records) <= self.cluster_size
+        offset = self.offset(cluster)
+        self.data[offset:offset + self.cluster_size] = records.ljust(self.cluster_size, B'\0')
+
+    def root_end(self):
+        root = self.offset(self.root)
+        return next(k for k in range(root, root + self.cluster_size, 32) if self.data[k] == 0)
+
+    @staticmethod
+    def entry(name: bytes, attributes: int, cluster: int = 0):
+        return B''.join((
+            name,
+            bytes((attributes,)),
+            bytes(8),
+            (cluster >> 16).to_bytes(2, 'little'),
+            bytes(4),
+            (cluster & 0xFFFF).to_bytes(2, 'little'),
+            bytes(4),
+        ))
 
 
 class TestVHDExtractor(TestUnitBase):
@@ -364,50 +434,21 @@ class TestVHDExtractor(TestUnitBase):
         })
 
     def _fixed_vhd_with_nested_directories(self, depth: int, files: dict[int, list[bytes]]):
-        data = bytearray(self._sample('fixed.vhd'))
-        volume = int.from_bytes(data[0x1C6:0x1CA], 'little') * 512
-        boot = data[volume:volume + 512]
-        sector_size = int.from_bytes(boot[0x0B:0x0D], 'little')
-        cluster_size = sector_size * boot[0x0D]
-        fat = volume + int.from_bytes(boot[0x0E:0x10], 'little') * sector_size
-        fat_size = int.from_bytes(boot[0x24:0x28], 'little') * sector_size
-        fat_count = boot[0x10]
-        clusters = fat + fat_count * fat_size
-        root = clusters + (int.from_bytes(boot[0x2C:0x30], 'little') - 2) * cluster_size
-        end = volume + int.from_bytes(boot[0x20:0x24], 'little') * sector_size
-        cluster_count = (end - clusters) // cluster_size
-
-        def entry(name: bytes, attributes: int, cluster: int = 0):
-            return B''.join((
-                name,
-                bytes((attributes,)),
-                bytes(8),
-                (cluster >> 16).to_bytes(2, 'little'),
-                bytes(4),
-                (cluster & 0xFFFF).to_bytes(2, 'little'),
-                bytes(4),
-            ))
-
-        free = (
-            cluster for cluster in range(3, cluster_count + 2)
-            if not int.from_bytes(data[fat + 4 * cluster:fat + 4 * cluster + 4], 'little')
-        )
-        chain = list(itertools.islice(free, depth))
-        self.assertEqual(len(chain), depth)
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        data = fat.data
+        chain = fat.free(depth)
         for cluster in chain:
-            for copy in range(fat_count):
-                link = fat + copy * fat_size + 4 * cluster
-                data[link:link + 4] = (0x0FFFFFFF).to_bytes(4, 'little')
-        slot = next(k for k in range(root, root + cluster_size, 32) if data[k] == 0)
-        tables = [slot, *(clusters + (cluster - 2) * cluster_size for cluster in chain)]
+            fat.link(cluster)
+        slot = fat.root_end()
+        tables = [slot, *map(fat.offset, chain)]
         for level, table in enumerate(tables):
-            listing = [entry(name, 0x20) for name in files.get(level, ())]
+            listing = [fat.entry(name, 0x20) for name in files.get(level, ())]
             if level < depth:
-                listing.insert(0, entry(B'NESTED     ', 0x10, chain[level]))
+                listing.insert(0, fat.entry(B'NESTED     ', 0x10, chain[level]))
             listing.append(bytes(32))
             size = 32 * len(listing)
             if level == 0:
-                self.assertLessEqual(slot + size, root + cluster_size)
+                self.assertLessEqual(slot + size, fat.offset(fat.root) + fat.cluster_size)
                 self.assertFalse(any(data[slot:slot + size]))
             data[table:table + size] = B''.join(listing)
         return data
@@ -484,6 +525,77 @@ class TestVHDExtractor(TestUnitBase):
         data[-512 + 0x30:-512 + 0x38] = (1 << 41).to_bytes(8, 'big')
         paths = data | self.load(list=True) | {str}
         self.assertEqual(paths, {F'partition0/{path}' for path in intact})
+
+    def test_fat_directory_is_read_up_to_its_end_marker(self):
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        intact = {file.path for file in fat.volume().files()}
+        extension = fat.free(100_000)
+        fat.link(fat.last(fat.root), *extension)
+        volume = fat.volume()
+        tracemalloc.start()
+        try:
+            paths = {file.path for file in volume.files()}
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(paths, intact)
+        self.assertLess(peak, len(extension) * fat.cluster_size // 16)
+
+    def test_fat_file_is_read_up_to_its_size(self):
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        cluster = next(file.cluster for file in fat.volume().files() if file.path == 'big.txt')
+        extension = fat.free(100_000)
+        fat.link(fat.last(cluster), *extension)
+        big = next(file for file in fat.volume().files() if file.path == 'big.txt')
+        tracemalloc.start()
+        try:
+            body = big.extract()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(hashlib.sha256(body).hexdigest(), _FILE_HASHES['big.txt'])
+        self.assertLess(peak, len(extension) * fat.cluster_size // 16)
+
+    def test_fat_directories_sharing_clusters_list_them_once(self):
+        intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        a, b, shared = fat.free(3)
+        deleted = B'\xE5' + bytes(31)
+        for first, name in ((a, B'A       TXT'), (b, B'B       TXT')):
+            fat.link(first, shared)
+            fat.write(first, fat.entry(name, 0x20) + deleted * (fat.cluster_size // 32 - 1))
+        fat.write(shared, fat.entry(B'T       TXT', 0x20))
+        slot = fat.root_end()
+        self.assertLessEqual(slot + 96, fat.offset(fat.root) + fat.cluster_size)
+        fat.data[slot:slot + 96] = B''.join((
+            fat.entry(B'A          ', 0x10, a),
+            fat.entry(B'B          ', 0x10, b),
+            bytes(32),
+        ))
+        unit = self.load(list=True)
+        with patch.object(unit, 'log_warn') as log_warn:
+            paths = fat.data | unit | {str}
+        self.assertEqual(paths, intact | {'A/A.TXT', 'A/T.TXT', 'B/B.TXT'})
+        log_warn.assert_called_once_with(
+            'partition 0: directory cluster chains loop or overlap, each cluster was read once')
+
+    def test_fat_long_name_spanning_two_clusters_is_assembled(self):
+        intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        size = fat.cluster_size
+        root = fat.offset(fat.root)
+        records = [bytes(fat.data[k:k + 32]) for k in range(root, fat.root_end(), 32)]
+        start = next(k for k, record in enumerate(records) if record[0x0B] == 0x0F)
+        self.assertTrue(records[start][0] & 0x40)
+        records[start:start] = [B'\xE5' + bytes(31)] * (size // 32 - start - 1)
+        table = B''.join(records)
+        self.assertLess(len(table), 2 * size)
+        extension, = fat.free(1)
+        fat.link(fat.root, extension)
+        fat.write(fat.root, table[:size])
+        fat.write(extension, table[size:])
+        paths = fat.data | self.load(list=True) | {str}
+        self.assertEqual(paths, intact)
 
     def _ntfs_mft_data_attribute(self, data: bytearray) -> tuple[int, int]:
         mbr = self._file_offset(data, 0)

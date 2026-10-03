@@ -2,7 +2,9 @@
 A parser for the FAT family of file systems (FAT12, FAT16, and FAT32). The implementation reads
 the BIOS parameter block from the boot sector, follows cluster chains by reading the file
 allocation table one entry at a time, and traverses directories while assembling long file names
-(LFN) from the associated VFAT entries.
+(LFN) from the associated VFAT entries. Directories are read one cluster at a time up to their end
+marker and files only up to their size, so the memory that a listing or an extraction needs
+depends on the data that the volume uses rather than on the sizes that its structures claim.
 
 The parser operates on a single volume that is provided as a `refinery.lib.vhd.fat.VolumeSource`,
 i.e. any object exposing a `read(offset, length)` method. It is independent of any container format
@@ -11,15 +13,18 @@ and follows the FAT handler from the 7-Zip source code as its reference.
 from __future__ import annotations
 
 import datetime
+import itertools
 
 from dataclasses import dataclass, field
-from typing import Iterator, Protocol
+from typing import Iterable, Iterator, Protocol
 
 from refinery.lib.types import buf
 
 _DIR_ENTRY_SIZE = 32
+_SECTOR_SIZES = (512, 1024, 2048, 4096)
 _MAX_PATH = 32767
 _PATH_SKIPPED = F'entries whose path exceeds {_MAX_PATH} characters were skipped with their contents'
+_CHAINS_OVERLAP = 'directory cluster chains loop or overlap, each cluster was read once'
 
 _ATTR_READ_ONLY = 0x01
 _ATTR_VOLUME_ID = 0x08
@@ -46,8 +51,8 @@ class FatError(ValueError):
 class FatFile:
     """
     A file or directory entry within a FAT file system. The `cluster` is the first cluster of the
-    file data; the `extract` method follows the cluster chain and returns the file contents
-    truncated to `size`. Entries recovered from deleted directory records are flagged via the
+    file data; the `extract` method follows the cluster chain only as far as `size` requires and
+    returns the file contents. Entries recovered from deleted directory records are flagged via the
     `deleted` field; for these the allocation table no longer describes the chain, so the contents
     are read contiguously from the first cluster as a best effort.
     """
@@ -95,8 +100,10 @@ class FatVolume:
     """
     Parses a FAT12, FAT16, or FAT32 volume. The bit width is derived from the cluster count exactly
     as specified by the FAT format. The `files` method yields all file and directory entries with
-    their full paths. Entries whose path would be longer than 32,767 characters, the maximum on
-    Windows, are skipped together with their contents, which is reported in `warnings`.
+    their full paths. Each cluster is read for at most one directory: when directory chains loop or
+    overlap, a directory ends at the first cluster that was already read. Entries whose path would
+    be longer than 32,767 characters, the maximum on Windows, are skipped together with their
+    contents. Both are reported in `warnings`.
     """
     def __init__(self, source: VolumeSource):
         self._source = source
@@ -113,7 +120,9 @@ class FatVolume:
         total_sectors = int.from_bytes(boot[0x13:0x15], 'little')
         fat_size = int.from_bytes(boot[0x16:0x18], 'little')
 
-        if not self.bytes_per_sector or not self.sectors_per_cluster or not self.num_fats:
+        if self.bytes_per_sector not in _SECTOR_SIZES:
+            raise FatError(F'invalid FAT sector size {self.bytes_per_sector}')
+        if not self.sectors_per_cluster or not self.num_fats:
             raise FatError('invalid FAT BIOS parameter block')
 
         if total_sectors == 0:
@@ -155,27 +164,37 @@ class FatVolume:
 
     def _next(self, cluster: int) -> int:
         if self.bits == 12:
-            pair = int.from_bytes(self._source.read(self._fat_offset + cluster * 3 // 2, 2), 'little')
-            return (pair >> ((cluster & 1) << 2)) & 0xFFF
+            pair = self._source.read(self._fat_offset + cluster * 3 // 2, 2)
+            return (int.from_bytes(pair, 'little') >> ((cluster & 1) << 2)) & 0xFFF
         width = self.bits // 8
-        entry = int.from_bytes(self._source.read(self._fat_offset + cluster * width, width), 'little')
-        return entry & 0x0FFFFFFF
+        entry = self._source.read(self._fat_offset + cluster * width, width)
+        return int.from_bytes(entry, 'little') & 0x0FFFFFFF
 
     def _chain(self, cluster: int) -> Iterator[int]:
         while 2 <= cluster < self._fat_entries and not self._is_eoc(cluster):
             yield cluster
             cluster = self._next(cluster)
 
-    def _read_chain(self, cluster: int, size: int | None = None) -> bytearray:
-        out = bytearray()
+    def _read_chain(self, cluster: int, size: int) -> buf:
+        cluster_size = self.cluster_size
+        runs: list[list[int]] = []
         seen = set()
-        for cluster in self._chain(cluster):
+        for cluster in itertools.islice(self._chain(cluster), -(-size // cluster_size)):
             if cluster in seen:
                 break
             seen.add(cluster)
-            out.extend(self._source.read(self._cluster_offset(cluster), self.cluster_size))
-        if size is not None:
-            del out[size:]
+            if runs and runs[-1][1] == cluster:
+                runs[-1][1] = cluster + 1
+            else:
+                runs.append([cluster, cluster + 1])
+        out = bytearray()
+        for lower, upper in runs:
+            length = min(size, (upper - lower) * cluster_size)
+            size -= length
+            data = self._source.read(self._cluster_offset(lower), length)
+            if len(runs) == 1:
+                return data
+            out.extend(data)
         return out
 
     def _read_contiguous(self, cluster: int, size: int) -> buf:
@@ -183,13 +202,26 @@ class FatVolume:
             return bytearray()
         return self._source.read(self._cluster_offset(cluster), size)
 
+    def _warn(self, warning: str) -> None:
+        if warning not in self.warnings:
+            self.warnings.append(warning)
+
+    def _directory(self, cluster: int, seen: set[int]) -> Iterator[buf]:
+        for cluster in self._chain(cluster):
+            if cluster in seen:
+                self._warn(_CHAINS_OVERLAP)
+                break
+            seen.add(cluster)
+            yield self._source.read(self._cluster_offset(cluster), self.cluster_size)
+
     def files(self, recover: bool = False) -> Iterator[FatFile]:
+        seen: set[int] = set()
+        root: Iterable[buf]
         if self.bits == 32:
-            root = self._read_chain(self.root_cluster)
+            root = self._directory(self.root_cluster, seen)
         else:
             root_offset = self.root_dir_sector * self.bytes_per_sector
-            root = self._source.read(root_offset, self.root_entries * _DIR_ENTRY_SIZE)
-        seen: set[int] = set()
+            root = (self._source.read(root_offset, self.root_entries * _DIR_ENTRY_SIZE),)
         directory = ''
         stack = [(self._entries(root, recover), 0)]
         while stack:
@@ -197,26 +229,30 @@ class FatVolume:
             directory = directory[:length]
             for file in entries:
                 if len(directory) + len(file.path) > _MAX_PATH:
-                    if _PATH_SKIPPED not in self.warnings:
-                        self.warnings.append(_PATH_SKIPPED)
+                    self._warn(_PATH_SKIPPED)
                     continue
                 file.path = F'{directory}{file.path}'
                 yield file
-                if file.is_dir and file.cluster >= 2 and file.cluster not in seen:
-                    seen.add(file.cluster)
+                if file.is_dir and file.cluster >= 2:
                     directory = F'{file.path}/'
-                    table = self._read_chain(file.cluster)
+                    table = self._directory(file.cluster, seen)
                     stack.append((self._entries(table, recover), len(directory)))
                     break
             else:
                 stack.pop()
 
-    def _entries(self, table: buf, recover: bool) -> Iterator[FatFile]:
+    @staticmethod
+    def _records(pieces: Iterable[buf]) -> Iterator[memoryview]:
+        for piece in pieces:
+            view = memoryview(piece)
+            for pos in range(0, len(view) - _DIR_ENTRY_SIZE + 1, _DIR_ENTRY_SIZE):
+                yield view[pos:pos + _DIR_ENTRY_SIZE]
+
+    def _entries(self, pieces: Iterable[buf], recover: bool) -> Iterator[FatFile]:
         lfn_parts: dict[int, bytes] = {}
         expected = 0
         checksum = -1
-        for pos in range(0, len(table) - _DIR_ENTRY_SIZE + 1, _DIR_ENTRY_SIZE):
-            entry = table[pos:pos + _DIR_ENTRY_SIZE]
+        for entry in self._records(pieces):
             first = entry[0]
             if first == 0x00:
                 break
@@ -364,4 +400,4 @@ def is_fat(data: buf) -> bool:
     if int.from_bytes(data[0x1FE:0x200], 'little') != 0xAA55:
         return False
     bytes_per_sector = int.from_bytes(data[0x0B:0x0D], 'little')
-    return bytes_per_sector in (512, 1024, 2048, 4096) and data[0x0D] != 0
+    return bytes_per_sector in _SECTOR_SIZES and data[0x0D] != 0
