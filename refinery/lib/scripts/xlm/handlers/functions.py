@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.common import datetime_to_serial
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
+from refinery.lib.scripts.xlm.guess import guess_day
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from refinery.lib.scripts.xlm.values import XlmOutcome, XlmValue, is_number, wrap_literal
 
@@ -313,6 +314,27 @@ def _count(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
     return XlmOutcome(value=XlmValue(value=len(call.arguments)))
 
 
+def _day(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    spelled = synthesize_formula(call)
+    if engine.day >= 0:
+        text = str(engine.day)
+        return XlmOutcome(value=XlmValue(value=text, text=text))
+    argument = evaluate_expression(engine, call.arguments[0], cursor)
+    if argument.partial:
+        return _partial(spelled)
+    if argument.date:
+        day = guess_day(engine)
+        engine.day = day
+        text = str(day)
+        return XlmOutcome(value=XlmValue(value=text, text=text))
+    if is_number(argument.value):
+        return XlmOutcome(
+            value=XlmValue(value=0, text='DAY(Serial Date)'),
+            status=XlmStatus.NotImplemented,
+        )
+    return _partial(spelled)
+
+
 def _now(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     moment = datetime.datetime.now() + datetime.timedelta(
         seconds=engine.now_count * _NOW_STEP,
@@ -337,6 +359,7 @@ FUNCTION_HANDLERS = {
     'ABS': _abs,
     'AND': _and,
     'COUNT': _count,
+    'DAY': _day,
     'INT': _int,
     'ISERROR': _iserror,
     'ISNUMBER': _isnumber,

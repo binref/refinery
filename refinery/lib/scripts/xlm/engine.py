@@ -144,6 +144,20 @@ class XlmEngine:
                 continue
             yield from self._run_entry(anchor, deadline)
 
+    def trial(self, day: int) -> XlmEngine:
+        """
+        A fresh engine for one trial run of the day guess: it shares this engine's view — the
+        cells and names the runs so far have written — and answers the given day, but starts
+        with no files, no memory, and no registered names of its own.
+        """
+        return XlmEngine(
+            self.view,
+            self.output_level,
+            day,
+            self.timeout,
+            self.max_steps,
+        )
+
     def read_reference(self, reference: XlmReference, cursor: XlmCursor) -> XlmValue:
         """
         The value a cell address holds. The sheet the reference fails to name is the sheet the
