@@ -6,6 +6,8 @@ import uuid
 
 from unittest.mock import patch
 
+from refinery.lib.vhd import VirtualDisk
+from refinery.lib.vhd.disk import VolumeView, partitions
 from refinery.lib.vhd.fat import FatVolume
 
 from ... import TestUnitBase
@@ -423,13 +425,49 @@ class TestVHDExtractor(TestUnitBase):
             4680: [B'FIT     TXT', B'OVER    TXT'],
             depth: [B'DEEP    TXT'],
         })
-        paths = data | self.load(list=True) | {str}
+        unit = self.load(list=True)
+        with patch.object(unit, 'log_warn') as log_warn:
+            paths = data | unit | {str}
         longest = 'NESTED/' * 4680 + 'FIT.TXT'
         self.assertEqual(len(longest), 32767)
         self.assertIn(longest, paths)
         self.assertEqual(max(map(len, paths)), 32767)
         self.assertIn('AFTER.TXT', paths)
         self.assertTrue(set(_FILE_HASHES) <= paths)
+        log_warn.assert_called_once_with(
+            'partition 0: entries whose path exceeds 32767 characters were skipped with their contents'
+        )
+
+    def test_skipped_long_paths_are_reported_when_the_listing_fails_afterwards(self):
+        depth = 4682
+        data = self._fixed_vhd_with_nested_directories(depth, {
+            0: [B'AFTER   TXT'],
+            4680: [B'OVER    TXT'],
+        })
+        files = FatVolume.files
+
+        def fail_at_the_last_file(volume: FatVolume, recover: bool = False):
+            for file in files(volume, recover):
+                yield file
+                if file.path == 'AFTER.TXT':
+                    raise IndexError('damaged directory')
+
+        unit = self.load(list=True)
+        with patch.object(FatVolume, 'files', fail_at_the_last_file):
+            with patch.object(unit, 'log_warn') as log_warn:
+                paths = data | unit | {str}
+        self.assertIn('partition0.img', paths)
+        log_warn.assert_any_call(
+            'partition 0: entries whose path exceeds 32767 characters were skipped with their contents'
+        )
+
+    def test_fat_volume_listed_twice_reports_skipped_paths_once(self):
+        data = self._fixed_vhd_with_nested_directories(4682, {4680: [B'OVER    TXT']})
+        disk = VirtualDisk(data)
+        volume = FatVolume(VolumeView(disk, next(partitions(disk))))
+        for recover in (False, True):
+            self.assertTrue(all(len(file.path) <= 32767 for file in volume.files(recover)))
+        self.assertEqual(len(volume.warnings), 1)
 
     def _ntfs_mft_data_attribute(self, data: bytearray) -> tuple[int, int]:
         mbr = self._file_offset(data, 0)

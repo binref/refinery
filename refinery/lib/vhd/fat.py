@@ -19,6 +19,7 @@ from refinery.lib.types import buf
 
 _DIR_ENTRY_SIZE = 32
 _MAX_PATH = 32767
+_PATH_SKIPPED = F'entries whose path exceeds {_MAX_PATH} characters were skipped with their contents'
 
 _ATTR_READ_ONLY = 0x01
 _ATTR_VOLUME_ID = 0x08
@@ -193,7 +194,6 @@ class FatVolume:
             root_offset = self.root_dir_sector * self.bytes_per_sector
             root = self._source.read(root_offset, self.root_entries * _DIR_ENTRY_SIZE)
         seen: set[int] = set()
-        skipped = 0
         directory = ''
         stack = [(self._entries(root, recover), 0)]
         while stack:
@@ -201,7 +201,8 @@ class FatVolume:
             directory = directory[:length]
             for file in entries:
                 if len(directory) + len(file.path) > _MAX_PATH:
-                    skipped += 1
+                    if _PATH_SKIPPED not in self.warnings:
+                        self.warnings.append(_PATH_SKIPPED)
                     continue
                 file.path = F'{directory}{file.path}'
                 yield file
@@ -213,8 +214,6 @@ class FatVolume:
                     break
             else:
                 stack.pop()
-        if skipped:
-            self.warnings.append(F'entries skipped because their path exceeds {_MAX_PATH} characters: {skipped}')
 
     def _entries(self, table: buf, recover: bool) -> Iterator[FatFile]:
         lfn_parts: dict[int, bytes] = {}
