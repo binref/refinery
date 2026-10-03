@@ -249,7 +249,7 @@ class FatVolume:
                 yield view[pos:pos + _DIR_ENTRY_SIZE]
 
     def _entries(self, pieces: Iterable[buf], recover: bool) -> Iterator[FatFile]:
-        lfn_parts: dict[int, bytes] = {}
+        lfn_parts: dict[int, memoryview] = {}
         expected = 0
         checksum = -1
         for entry in self._records(pieces):
@@ -271,7 +271,7 @@ class FatVolume:
                     lfn_parts.clear()
                     expected = index
                     checksum = entry[0x0D]
-                lfn_parts[index] = bytes(entry[1:11]) + bytes(entry[14:26]) + bytes(entry[28:32])
+                lfn_parts[index] = entry
                 continue
             if attrib & _ATTR_VOLUME_ID:
                 lfn_parts.clear()
@@ -344,7 +344,7 @@ class FatVolume:
     def _assemble_name(
         self,
         entry: buf,
-        lfn_parts: dict[int, bytes],
+        lfn_parts: dict[int, memoryview],
         expected: int,
         checksum: int,
     ) -> str:
@@ -355,7 +355,9 @@ class FatVolume:
                 if part is None:
                     raw.clear()
                     break
-                raw.extend(part)
+                raw.extend(part[1:11])
+                raw.extend(part[14:26])
+                raw.extend(part[28:32])
             if raw:
                 name = raw.decode('utf-16le', 'replace')
                 terminator = name.find('\0')

@@ -556,6 +556,21 @@ class TestVHDExtractor(TestUnitBase):
         self.assertEqual(hashlib.sha256(body).hexdigest(), _FILE_HASHES['big.txt'])
         self.assertLess(peak, len(extension) * fat.cluster_size // 16)
 
+    def test_fat_fragmented_file_is_reassembled(self):
+        fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
+        cluster = next(file.cluster for file in fat.volume().files() if file.path == 'big.txt')
+        chain = [cluster]
+        while (cluster := fat.next(cluster)) < 0x0FFFFFF8:
+            chain.append(cluster)
+        self.assertGreater(len(chain), 2)
+        moved, = fat.free(1)
+        source = fat.offset(chain[1])
+        fat.write(moved, bytes(fat.data[source:source + fat.cluster_size]))
+        fat.write(chain[1], B'')
+        fat.link(chain[0], moved, *chain[2:])
+        big = next(file for file in fat.volume().files() if file.path == 'big.txt')
+        self.assertEqual(hashlib.sha256(big.extract()).hexdigest(), _FILE_HASHES['big.txt'])
+
     def test_fat_directories_sharing_clusters_list_them_once(self):
         intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
         fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
@@ -577,7 +592,8 @@ class TestVHDExtractor(TestUnitBase):
             paths = fat.data | unit | {str}
         self.assertEqual(paths, intact | {'A/A.TXT', 'A/T.TXT', 'B/B.TXT'})
         log_warn.assert_called_once_with(
-            'partition 0: directory cluster chains loop or overlap, each cluster was read once')
+            'partition 0: directory cluster chains loop or overlap, each cluster was read once'
+        )
 
     def test_fat_long_name_spanning_two_clusters_is_assembled(self):
         intact = self._sample('fixed.vhd') | self.load(list=True) | {str}
