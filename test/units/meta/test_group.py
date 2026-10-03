@@ -16,3 +16,7 @@ class TestGroupingUnit(TestUnitBase):
     def test_03(self):
         pipeline = L('emit A B C D [| put q c::1 | group 2 [| put q test | pick 0 ]| cca var:q ]')
         self.assertEqual(pipeline(), B'AACC')
+
+    def test_hidden_chunks_are_not_grouped(self):
+        pipeline = L('emit A B C D [| scope -n 1 | group 2 [| sep - ]| sep , ]')
+        self.assertSetEqual(set(bytes(pipeline()).split(B',')), {B'A-C', B'B', B'D'})

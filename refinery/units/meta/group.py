@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from itertools import islice
-
 from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit
 
@@ -16,15 +14,23 @@ class group(Unit):
     def process(self, data: Chunk):
         if not data.temp:
             return
-        yield data
-        yield from islice(data.temp, 0, self.args.size - 1)
+        yield from data.temp
 
     def filter(self, chunks):
-        it = iter(chunks)
-        while True:
-            try:
-                head: Chunk = next(it)
-            except StopIteration:
-                return
-            head.temp = it
+        size = self.args.size
+        members: list[Chunk] = []
+        for chunk in chunks:
+            if not chunk.visible:
+                yield chunk
+                continue
+            members.append(chunk)
+            if len(members) < size:
+                continue
+            head = members[0]
+            head.temp = members
+            members = []
+            yield head
+        if members:
+            head = members[0]
+            head.temp = members
             yield head

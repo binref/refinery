@@ -33,10 +33,17 @@ class urn(Unit):
         yield from data.temp
 
     def filter(self, chunks: Iterable[Chunk]):
-        it = iter(chunks)
-        head = next(it)
-        buffer = [bytes(head)]
-        buffer.extend(bytes(c) for c in it)
+        head = None
+        buffer: list[bytes] = []
+        for chunk in chunks:
+            if not chunk.visible:
+                yield chunk
+                continue
+            if head is None:
+                head = chunk
+            buffer.append(bytes(chunk))
+        if head is None:
+            return
         head = head.copy(meta=True, data=False)
         head.meta['N'] = len(buffer)
         size = sliceobj(self.args.size, head)

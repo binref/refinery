@@ -35,3 +35,8 @@ class TestUrn(TestUnitBase):
     def test_default_behavior_nonempty(self):
         test = self.load_pipeline('emit A B C [| urn -ks []]') | bytes
         self.assertEqual(len(test), 18)
+
+    def test_hidden_chunk_is_not_drawn(self):
+        test = self.load_pipeline(
+            'emit AB [| push [| chop 1 | urn -ks [| sep - ]| pop a b ]| pf {}{a}{b} ]') | bytes
+        self.assertEqual(test, B'ABA-BB-A')

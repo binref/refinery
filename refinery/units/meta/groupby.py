@@ -26,6 +26,9 @@ class groupby(Unit):
         name = self.args.name
         members = defaultdict(list)
         for chunk in chunks:
+            if not chunk.visible:
+                yield chunk
+                continue
             try:
                 value = chunk.meta[name]
             except KeyError:
