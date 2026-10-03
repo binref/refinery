@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from refinery.lib.types import Param
-from refinery.units import RefineryPartialResult
 from refinery.units.crypto.keyderive import Arg, KeyDerivation
 
 _DES_PARITYTABLE = bytearray((

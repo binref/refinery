@@ -204,8 +204,6 @@ def read_crcs(reader: StructReader, count: int) -> list[int | None]:
     return crcs
 
 
-
-
 def parse_signature_header(data: bytes | bytearray | memoryview) -> SignatureHeader:
     view = memoryview(data)
     if view[:6] != SIGNATURE:
