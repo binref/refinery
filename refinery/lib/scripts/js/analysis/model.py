@@ -1963,15 +1963,6 @@ def _sole_returned_function(function: Node) -> JsFunctionNode | None:
     return returned[0] if len(returned) == 1 else None
 
 
-_GLOBAL_ALIAS_CHAIN_LIMIT = 4
-"""
-How far `SemanticModel.names_the_global_object` follows one name to the next before it
-gives up. A program names the global object once and reads through that name; a chain of four
-is already past anything a file writes, and the bound is what keeps `var a = b, b = a` from
-recurring forever.
-"""
-
-
 _HANDED_OBJECT_OBSERVATION_DEPTH = 4
 """
 How far `SemanticModel.global_object_argument_is_observed` follows a handed object through nested
@@ -2711,13 +2702,15 @@ class SemanticModel:
         a `for-in`/`for-of` head, and a destructuring target store a value they do not spell; a write
         recorded with no value and a dynamic rebinding (`binding_maybe_reassigned_dynamically`) say a
         value arrived without saying which. A write through a member access on a global-object alias is
-        left unread and breaks completeness too, because the walk recording those entries consults this
-        query through `names_the_global_object`, so an answer built on them would depend on how far
-        that walk had got. A binding with no declaration — an implicit global, and the binding
-        `_ensure_implicit_global_from_alias_write` mints — contributes nothing and is never complete,
-        for that same walk-order reason. With *ignore_dynamic_rebinds* the dynamic-rebind conjunct is
-        left out of the completeness verdict: the values answer what the text spells, and whether a
-        rebind crosses a given read is the caller's ordering question over `binding_dynamic_rebind_sites`.
+        left unread and breaks completeness too: which member accesses are such writes depends on
+        the names holding the global object, and those are found from these values
+        (`_bindings_holding_the_global_object`), so a value read out of such a write would feed the
+        very set that decides whether it is one. A binding with no declaration — an implicit
+        global, and the binding `_ensure_implicit_global_from_alias_write` mints — contributes
+        nothing and is never complete, for that same reason. With *ignore_dynamic_rebinds* the
+        dynamic-rebind conjunct is left out of the completeness verdict: the values answer what the
+        text spells, and whether a rebind crosses a given read is the caller's ordering question
+        over `binding_dynamic_rebind_sites`.
 
         The values hold wherever the name is not in their temporal dead zone; a bare declarator
         contributes no value even though the name reads `undefined` there, and a consumer that needs a
@@ -3729,9 +3722,18 @@ class SemanticModel:
         return bool(self.opaque_reflection_sites())
 
     def _build_def_use(self):
+        """
+        Record every reference of the program against the binding it reaches. The identifier
+        references come first, the names holding the global object are found from the values those
+        write, and only then is each member access classified: whether `w.g = 2` writes the global
+        `g` depends on whether `w` holds the object, wherever in the program `w` is given it.
+        """
         self._recording_def_use = True
         self._create_implicit_globals()
-        self._record_def_use_references()
+        accesses = self._record_def_use_references()
+        self._global_object_holders = self._bindings_holding_the_global_object()
+        for access in accesses:
+            self._record_global_alias_member_reference(access)
         self._recording_def_use = False
         self._record_arguments_alias_references()
         self._record_global_object_alias_references()
@@ -3777,23 +3779,26 @@ class SemanticModel:
         if binding is not None:
             binding.exported = True
 
-    def _record_def_use_references(self):
+    def _record_def_use_references(self) -> list[JsMemberExpression]:
         """
-        One record per reference node: the walk reaches a node once per slot holding it, and the
-        one identifier of `{ a }` or of `export { a };` fills two, so without the dedup a read's
-        multiplicity would follow its spelling rather than the program. The export-marking rider
-        shares the walk: it consults only scope-builder state, so riding along changes nothing the
-        remaining construction walks observe. So does the rider answering
+        Record every identifier reference, and return the member accesses the walk passes in the
+        order it meets them, for `_build_def_use` to classify once the names holding the global
+        object are known. One record per reference node: the walk reaches a node once per slot
+        holding it, and the one identifier of `{ a }` or of `export { a };` fills two, so without
+        the dedup a read's multiplicity would follow its spelling rather than the program. The
+        export-marking rider shares the walk: it consults only scope-builder state, so riding along
+        changes nothing the remaining construction walks observe. So does the rider answering
         `module_may_be_reentered`, which consults nothing but the node.
         """
         seen: set[int] = set()
+        accesses: list[JsMemberExpression] = []
         for node in self.root.walk():
             if isinstance(node, (JsExportNamedDeclaration, JsExportDefaultDeclaration)):
                 self._mark_export_declaration(node)
             if _lets_another_module_run(node):
                 self._module_may_be_reentered = True
             if isinstance(node, JsMemberExpression):
-                self._record_global_alias_member_reference(node)
+                accesses.append(node)
                 continue
             if not isinstance(node, JsIdentifier):
                 continue
@@ -3813,6 +3818,7 @@ class SemanticModel:
             if role is not Role.READ:
                 binding.writes.append(node)
             binding.note_reference_from(ref_scope)
+        return accesses
 
     def _attribute_dynamic_reference(self, node: JsIdentifier, scope: Scope | None):
         """
@@ -3964,44 +3970,56 @@ class SemanticModel:
             and self.lookup(node.name, self._node_scope.get(id(node))) is not None
         )
 
-    def names_the_global_object(self, node: Node | None, *, depth: int = 0) -> bool:
+    def names_the_global_object(self, node: Node | None) -> bool:
         """
         Whether *node* is a name the file gives the global object, so a property read on it may be a
-        read of a global. ANY value of `binding_values` being the object is enough, and completeness
-        is not asked: the callers record a reference, where one admission too many keeps a
-        declaration and one refusal too many deletes one, so admitting is this answer's safe
-        direction — a name that held the object on one branch of its life records the reads made
-        through it even where another branch gave it something else.
+        read of a global: one of the names `_bindings_holding_the_global_object` finds. ANY value of
+        `binding_values` being the object is enough, and completeness is not asked: the callers
+        record a reference, where one admission too many keeps a declaration and one refusal too
+        many deletes one, so admitting is this answer's safe direction — a name that held the object
+        on one branch of its life records the reads made through it even where another branch gave
+        it something else.
 
-        A name the file only ever assigns still answers nothing:
+        A name the file only ever assigns through a member access still answers nothing:
         `_ensure_implicit_global_from_alias_write` mints its binding without a declaration and
-        `binding_values` declines for it. That is what keeps this answer out of the walk which is
-        still recording those very writes — a read admitted or refused by how far that walk had got
-        would depend on nothing the program says.
+        `binding_values` declines for it, because that write is a member access, classified by the
+        very set its value would join.
 
         The values hold wherever the name is not in their temporal dead zone, and nothing here orders
         an establishing definition before the read. A caller driving a rewrite has to — and needs the
         complete-singleton reading `singular_value` gives, not this one.
         """
-        if depth >= _GLOBAL_ALIAS_CHAIN_LIMIT or not isinstance(node, JsIdentifier):
-            return False
-        values, _ = self.binding_values(self.resolve(node))
-        return any(self._value_is_the_global_object(value, depth + 1) for value in values)
+        return isinstance(node, JsIdentifier) and self.resolve(node) in self._global_object_holders
 
-    def _value_is_the_global_object(self, value: Node | None, depth: int) -> bool:
+    def _bindings_holding_the_global_object(self) -> frozenset[Binding]:
         """
-        Whether *value*, the one value a name holds, is the global object. `A || B` is it whenever
-        `A` is: every spelling of the object is truthy, so the guard a program writes to survive a
-        host lacking the name it prefers evaluates to the object wherever that name exists.
+        Every binding the text gives the global object, directly or through any number of other
+        names, read once per build from `binding_values`. A value is the object when it is spelled
+        as one, and `A || B` is it whenever `A` is: every spelling of the object is truthy, so the
+        guard a program writes to survive a host lacking the name it prefers evaluates to the object
+        wherever that name exists. A value that is a name passes on whatever that name holds.
         """
-        value = strip_parens(value)
-        if value is None:
-            return False
-        if self._base_is_the_global_object(value):
-            return True
-        if isinstance(value, JsLogicalExpression) and value.operator == '||':
-            return self._value_is_the_global_object(value.left, depth)
-        return self.names_the_global_object(value, depth=depth)
+        holders: set[Binding] = set()
+        copies: dict[Binding, list[Binding]] = {}
+        for binding in dict.fromkeys(self._binding_of.values()):
+            values, _ = self.binding_values(binding, ignore_dynamic_rebinds=True)
+            for value in values:
+                value = strip_parens(value)
+                while isinstance(value, JsLogicalExpression) and value.operator == '||':
+                    value = strip_parens(value.left)
+                if self._base_is_the_global_object(value):
+                    holders.add(binding)
+                elif isinstance(value, JsIdentifier):
+                    source = self.resolve(value)
+                    if source is not None:
+                        copies.setdefault(source, []).append(binding)
+        pending = list(holders)
+        while pending:
+            for binding in copies.get(pending.pop(), ()):
+                if binding not in holders:
+                    holders.add(binding)
+                    pending.append(binding)
+        return frozenset(holders)
 
     def _ensure_implicit_global_from_alias_write(self, member: JsMemberExpression):
         """
@@ -4184,9 +4202,10 @@ class SemanticModel:
         The gate runs in two phases because it reads `singular_value` to resolve a callee, and the
         record it is about to make is an indefinite write that would make that query decline. Every
         hand-over is judged first, against the model as it stands before this method writes anything,
-        and only then are the observed ones recorded. This is the order `names_the_global_object`
-        keeps for the same reason — an answer read out of the walk still recording those very writes
-        would depend on how far the walk had got, not on what the program says.
+        and only then are the observed ones recorded. `_build_def_use` finds the names holding the
+        global object in the same order for the same reason — an answer read out of a walk still
+        recording the writes it depends on would depend on how far the walk had got, not on what the
+        program says.
 
         The object is recognized by `_holds_the_global_object`, so only the `this` a script's top
         level holds is one. A `this` inside a function is the receiver its call supplied, and
@@ -4206,7 +4225,7 @@ class SemanticModel:
         for node in self.root.walk():
             if not isinstance(node, (JsIdentifier, JsThisExpression)):
                 continue
-            if not self._holds_the_global_object(node) or not _is_call_argument(node):
+            if not _is_call_argument(node) or not self._holds_the_global_object(node):
                 continue
             if self.global_object_argument_is_observed(node):
                 observed.append(node)

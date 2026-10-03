@@ -550,6 +550,14 @@ class TestSemanticModel(TestBase):
         self.assertEqual(binding.kind, BindingKind.VAR)
         self.assertEqual(len(binding.writes), 1)
 
+    def test_a_write_after_the_name_is_given_the_global_object_records_on_the_global(self):
+        ast, model = self._model('var g = 1; var w; w = globalThis; w.g = 2;')
+        self.assertEqual(len(self._binding(ast, model, 'g').writes), 1)
+
+    def test_a_write_written_before_the_name_is_given_the_global_object_records_on_the_global(self):
+        ast, model = self._model('var g = 1; var w; function f() { w.g = 2; } w = globalThis; f();')
+        self.assertEqual(len(self._binding(ast, model, 'g').writes), 1)
+
     def test_non_alias_member_write_does_not_create_global(self):
         ast, model = self._model('obj.g = 99; g;')
         self.assertNotIn('g', model.root_scope.bindings)

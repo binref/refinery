@@ -3,10 +3,10 @@ A name the file gives the global object to is the global object.
 
 `var w = globalThis` and `var w = window || {}` are how a script names the global object once and
 reads its properties through the name afterwards, and in a classic script those properties are the
-file's own top-level declarations. `refinery.lib.scripts.js.analysis.model.SemanticModel
-._name_holds_the_global_object` is what says so, and the references made through such a name are
-recorded against the globals they reach — a read so the declaration survives, a write so no value is
-folded across it.
+file's own top-level declarations.
+`refinery.lib.scripts.js.analysis.model.SemanticModel.names_the_global_object` is what says so, and
+the references made through such a name are recorded against the globals they reach — a read so
+the declaration survives, a write so no value is folded across it.
 
 The name is asked for its value and never for its spelling, so the cost rows below are the two ways
 a name can look like the object and not be one: a name bound to something else, and a name spelled
@@ -63,6 +63,38 @@ A_NAME_HOLDS_THE_GLOBAL_OBJECT = {
         var w = globalThis;
         function a(g, k) { g[k] = 2; }
         a(w, 'q');
+        console.log(q);
+        """),
+    'the name is given the object after its declaration': a_program("""
+        var q = 1;
+        var w;
+        w = globalThis;
+        w.q = 2;
+        console.log(q);
+        """),
+    'the name is rebound to the object': a_program("""
+        var secret = 'S';
+        var g = {};
+        g = globalThis;
+        console.log(g.secret);
+        """),
+    'a chain of five names': a_program("""
+        var q = 1;
+        var a = globalThis;
+        var b = a;
+        var c = b;
+        var d = c;
+        var e = d;
+        e.q = 2;
+        console.log(q);
+        """),
+    'two names copying each other': a_program("""
+        var q = 1;
+        var a, b;
+        a = globalThis;
+        if (q > 5) { a = b; }
+        b = a;
+        b.q = 2;
         console.log(q);
         """),
 }
