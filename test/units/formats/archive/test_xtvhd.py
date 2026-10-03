@@ -556,20 +556,27 @@ class TestVHDExtractor(TestUnitBase):
         self.assertEqual(hashlib.sha256(body).hexdigest(), _FILE_HASHES['big.txt'])
         self.assertLess(peak, len(extension) * fat.cluster_size // 16)
 
-    def test_fat_fragmented_file_is_reassembled(self):
+    def test_fat_fully_fragmented_file_is_reassembled(self):
         fat = _FixedFat32(bytearray(self._sample('fixed.vhd')))
         cluster = next(file.cluster for file in fat.volume().files() if file.path == 'big.txt')
         chain = [cluster]
         while (cluster := fat.next(cluster)) < 0x0FFFFFF8:
             chain.append(cluster)
         self.assertGreater(len(chain), 2)
-        moved, = fat.free(1)
-        source = fat.offset(chain[1])
-        fat.write(moved, bytes(fat.data[source:source + fat.cluster_size]))
-        fat.write(chain[1], B'')
-        fat.link(chain[0], moved, *chain[2:])
+        pieces = [bytes(fat.data[fat.offset(c):fat.offset(c) + fat.cluster_size]) for c in chain]
+        fragmented = [chain[0], *chain[:0:-1]]
+        for cluster, piece in zip(fragmented, pieces):
+            fat.write(cluster, piece)
+        fat.link(*fragmented)
         big = next(file for file in fat.volume().files() if file.path == 'big.txt')
-        self.assertEqual(hashlib.sha256(big.extract()).hexdigest(), _FILE_HASHES['big.txt'])
+        tracemalloc.start()
+        try:
+            body = big.extract()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(hashlib.sha256(body).hexdigest(), _FILE_HASHES['big.txt'])
+        self.assertLess(peak, big.size * 5 // 4)
 
     def test_fat_directories_sharing_clusters_list_them_once(self):
         intact = self._sample('fixed.vhd') | self.load(list=True) | {str}

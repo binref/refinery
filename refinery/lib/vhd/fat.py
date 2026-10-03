@@ -176,26 +176,35 @@ class FatVolume:
             yield cluster
             cluster = self._next(cluster)
 
-    def _read_chain(self, cluster: int, size: int) -> buf:
+    def _runs(self, cluster: int, size: int) -> Iterator[tuple[int, int]]:
         cluster_size = self.cluster_size
-        runs: list[list[int]] = []
-        seen = set()
+        seen: set[int] = set()
+        lower = upper = 0
         for cluster in itertools.islice(self._chain(cluster), -(-size // cluster_size)):
             if cluster in seen:
                 break
             seen.add(cluster)
-            if runs and runs[-1][1] == cluster:
-                runs[-1][1] = cluster + 1
-            else:
-                runs.append([cluster, cluster + 1])
+            if cluster != upper:
+                if lower < upper:
+                    length = (upper - lower) * cluster_size
+                    yield self._cluster_offset(lower), length
+                    size -= length
+                lower = cluster
+            upper = cluster + 1
+        if lower < upper:
+            yield self._cluster_offset(lower), min(size, (upper - lower) * cluster_size)
+
+    def _read_chain(self, cluster: int, size: int) -> buf:
+        runs = self._runs(cluster, size)
+        first = next(runs, None)
+        if first is None:
+            return bytearray()
+        second = next(runs, None)
+        if second is None:
+            return self._source.read(*first)
         out = bytearray()
-        for lower, upper in runs:
-            length = min(size, (upper - lower) * cluster_size)
-            size -= length
-            data = self._source.read(self._cluster_offset(lower), length)
-            if len(runs) == 1:
-                return data
-            out.extend(data)
+        for offset, length in itertools.chain((first, second), runs):
+            out.extend(self._source.read(offset, length))
         return out
 
     def _read_contiguous(self, cluster: int, size: int) -> buf:
