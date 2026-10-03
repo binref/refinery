@@ -24,7 +24,10 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     attributes are attached to each extracted file. For NTFS volumes, the timestamps from the
     `$FILE_NAME` attribute are also exposed when they differ from those in `$STANDARD_INFORMATION`,
     which is a common indicator of timestamp manipulation. A volume without a readable file system
-    is extracted as a raw image after all files, unless the container stores no data for it.
+    is extracted as a raw image after all files, unless the container stores no data for it. When
+    such a volume is larger than the input, each block of it that the container stores is extracted
+    as a separate item instead, named by its offset in the volume and carrying the variables start
+    and end.
     """
     def __init__(
         self, *paths,
@@ -68,8 +71,21 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     date = None
                 yield self._pack(path, date, file.extract, **meta)
         for part, view in images:
-            path = 'disk.img' if part.whole_disk else F'{self._name(part)}.img'
-            yield self._pack(path, None, functools.partial(view.read, 0, part.size))
+            name = 'disk' if part.whole_disk else self._name(part)
+            if part.size <= len(data):
+                yield self._pack(F'{name}.img', None, functools.partial(view.read, 0, part.size))
+                continue
+            self.log_info(F'partition {part.index} exceeds the input, extracting stored blocks')
+            w = len(hex(part.size))
+            for lower, upper in disk.stored(part.offset, part.size):
+                start = lower - part.offset
+                end = upper - part.offset
+                yield self._pack(
+                    F'{name}.img/{start:#0{w}x}',
+                    None,
+                    functools.partial(view.read, start, end - start),
+                    **{MV.START: start, MV.END: end},
+                )
 
     def _volume(self, part: Partition, view: VolumeView) -> NtfsVolume | FatVolume | None:
         boot = view.read(0, 512)

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import abc
 
+from typing import Iterator
+
 from refinery.lib.structures import StructReader
 from refinery.lib.types import buf
 from refinery.lib.vhd.crc import crc32c
@@ -40,8 +42,9 @@ class DiskBackend(abc.ABC):
     Common interface for the virtual disk produced by a container parser. The `size` property is
     the size of the reconstructed virtual disk in bytes; the `read` method provides random access
     to its contents, returning zero bytes for sparse and unallocated regions. Its result can be a
-    view of the input and must not be modified. The `allocated` method reports whether the
-    container stores data for any part of a byte range.
+    view of the input and must not be modified. The `stored` method yields the parts of a byte
+    range for which the container stores data, one for each allocation block of the container, and
+    the `allocated` method reports whether there are any.
     """
     size: int
 
@@ -50,8 +53,11 @@ class DiskBackend(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def allocated(self, offset: int, length: int) -> bool:
+    def stored(self, offset: int, length: int) -> Iterator[tuple[int, int]]:
         ...
+
+    def allocated(self, offset: int, length: int) -> bool:
+        return any(self.stored(offset, length))
 
 
 class VirtualDisk(DiskBackend):
@@ -79,8 +85,8 @@ class VirtualDisk(DiskBackend):
     def read(self, offset: int, length: int) -> buf:
         return self._backend.read(offset, length)
 
-    def allocated(self, offset: int, length: int) -> bool:
-        return self._backend.allocated(offset, length)
+    def stored(self, offset: int, length: int) -> Iterator[tuple[int, int]]:
+        return self._backend.stored(offset, length)
 
 
 def _phys(view: memoryview, offset: int, length: int) -> buf:
@@ -165,28 +171,28 @@ class VhdImage(DiskBackend):
             offset += count
         return out
 
-    def allocated(self, offset: int, length: int) -> bool:
+    def stored(self, offset: int, length: int) -> Iterator[tuple[int, int]]:
         end = min(offset + length, self.size)
-        if offset >= end:
-            return False
         view = self._view
         if self._type == _VHD_TYPE_FIXED:
-            return offset < len(view) - _SECTOR
+            end = min(end, len(view) - _SECTOR)
+            if offset < end:
+                yield offset, end
+            return
         block_size = self._block_size
         shift = block_size.bit_length() - 1
         while offset < end:
             block = offset >> shift
             if block >= len(self._bat):
-                return False
+                return
             off_in_block = offset & (block_size - 1)
             count = min(block_size - off_in_block, end - offset)
             base = self._block_offset(block)
             if base is not None:
                 bitmap = view[base:base + self._bitmap_size]
                 if self._any_sector_present(bitmap, off_in_block, count):
-                    return True
+                    yield offset, offset + count
             offset += count
-        return False
 
     @staticmethod
     def _any_sector_present(bitmap: memoryview, off_in_block: int, length: int) -> bool:
@@ -379,17 +385,17 @@ class VhdxImage(DiskBackend):
             offset += count
         return out
 
-    def allocated(self, offset: int, length: int) -> bool:
+    def stored(self, offset: int, length: int) -> Iterator[tuple[int, int]]:
         end = min(offset + length, self.size)
-        if offset >= end:
-            return False
         chunk_ratio = 1 << self._chunk_ratio_log
         chunks, rest = divmod(len(self._bat) // 8, chunk_ratio + 1)
         blocks = chunks * chunk_ratio + min(rest, chunk_ratio)
         shift = self._block_size_log
         first = offset >> shift
         last = min((end - 1) >> shift, blocks - 1)
-        return any(self._block_offset(block) is not None for block in range(first, last + 1))
+        for block in range(first, last + 1):
+            if self._block_offset(block) is not None:
+                yield max(offset, block << shift), min(end, (block + 1) << shift)
 
     def _block_offset(self, block: int) -> int | None:
         chunk_ratio = 1 << self._chunk_ratio_log

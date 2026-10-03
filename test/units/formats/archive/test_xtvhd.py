@@ -231,3 +231,47 @@ class TestVHDExtractor(TestUnitBase):
         for position in range(offset, offset + length, 8):
             data[position] &= 0xF8
         self.assertEqual(set(data | self.load() | {'path': ...}), set())
+
+    def test_raw_volume_larger_than_the_input_is_split_into_stored_blocks(self):
+        data = bytearray(self._sample('ntfs.vhd'))
+        header = int.from_bytes(data[-512 + 0x10:-512 + 0x18], 'big')
+        table = int.from_bytes(data[header + 0x10:header + 0x18], 'big')
+        count = int.from_bytes(data[header + 0x1C:header + 0x20], 'big')
+        block_size = int.from_bytes(data[header + 0x20:header + 0x24], 'big')
+        bitmap_size = block_size // 512 // 8
+        blocks = {}
+        for index in range(count):
+            sector = int.from_bytes(data[table + 4 * index:table + 4 * index + 4], 'big')
+            if sector != 0xFFFFFFFF:
+                blocks[index] = sector * 512 + bitmap_size
+        mbr = blocks[0]
+        offset = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little') * 512
+        size = int.from_bytes(data[mbr + 0x1CA:mbr + 0x1CE], 'little') * 512
+        self.assertGreater(size, len(data))
+        data[mbr + offset + 0x1FE:mbr + offset + 0x200] = bytes(2)
+        expected = {}
+        for index, position in blocks.items():
+            lower = max(index * block_size, offset)
+            upper = min((index + 1) * block_size, offset + size)
+            if lower < upper:
+                start = position + lower - index * block_size
+                expected[lower - offset, upper - offset] = data[start:start + upper - lower]
+        chunks = data | self.load() | []
+        self.assertEqual(chunks[0]['path'], 'partition0.img/0x0000000')
+        self.assertEqual({(chunk['start'], chunk['end']): chunk for chunk in chunks}, expected)
+
+    def test_raw_volume_claiming_2_tb_yields_only_the_stored_blocks(self):
+        data = bytearray(self._sample('vhdx.vhdx'))
+        entry = data.find(_VHDX_REGION_BAT, _VHDX_REGION_TABLE)
+        table = int.from_bytes(data[entry + 16:entry + 24], 'little')
+        mbr = int.from_bytes(data[table:table + 8], 'little') & ~0xFFFFF
+        offset = int.from_bytes(data[mbr + 0x1C6:mbr + 0x1CA], 'little') * 512
+        data[mbr + 0x1CA:mbr + 0x1CE] = B'\xFF' * 4
+        data[mbr + offset + 0x1FE:mbr + offset + 0x200] = bytes(2)
+        chunks = data | self.load() | []
+        block_size = 32 << 20
+        self.assertEqual([(chunk['start'], chunk['end']) for chunk in chunks], [
+            (0, block_size - offset),
+            (block_size - offset, 2 * block_size - offset),
+        ])
+        self.assertEqual(chunks[0], data[mbr + offset:mbr + block_size])
