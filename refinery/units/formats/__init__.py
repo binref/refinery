@@ -251,7 +251,7 @@ class PathExtractorUnit(Unit, abstract=True):
             result.data = data = error.partial
             return data
 
-    def _selection(self, data: Chunk) -> collections.deque[UnpackResult]:
+    def _selection(self, data: Chunk, metavar: str) -> collections.deque[UnpackResult]:
         """
         Unpacks the input and returns the results that the path patterns select, in the order in
         which they are extracted. A result appears once for every pattern that selects it.
@@ -261,7 +261,6 @@ class PathExtractorUnit(Unit, abstract=True):
 
         patterns = self._patterns
 
-        metavar = self.args.path.decode(self.codec)
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
         root = ''
@@ -359,9 +358,9 @@ class PathExtractorUnit(Unit, abstract=True):
         return self.labelled(data, **result.meta)
 
     def process(self, data: Chunk):
-        selection = self._selection(data)
-        remaining = Counter(selection)
         metavar = self.args.path.decode(self.codec)
+        selection = self._selection(data, metavar)
+        remaining = Counter(selection)
         while selection:
             result = selection.popleft()
             last = remaining[result] == 1

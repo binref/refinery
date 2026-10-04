@@ -572,8 +572,9 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     @property
     def chunk(self) -> buf:
         """
-        The data that this metadata describes. When the metadata belongs to a chunk, it refers to that
-        chunk weakly, so the chunk has to be kept for as long as values are derived from its data.
+        The data that this metadata describes. When the metadata belongs to a chunk, it refers to
+        that chunk weakly, so the chunk has to be kept for as long as values are derived from its
+        data.
         """
         chunk = self._chunk
         if isinstance(chunk, weakref.ref):

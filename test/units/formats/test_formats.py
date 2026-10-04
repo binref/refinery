@@ -1,10 +1,13 @@
 import gc
 import lzma
 import tracemalloc
+import unittest
 
 from .. import TestUnitBase
 
 from refinery.units.formats import PathPattern
+
+_MALWARE_VHD = '2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'
 
 
 class TestFormats(TestUnitBase):
@@ -74,7 +77,7 @@ class TestFormats(TestUnitBase):
                         F'{query} pruned {ancestor} but matches {path}')
 
     def test_extracted_files_are_freed_once_handed_out(self):
-        data = lzma.decompress(self.download_sample('2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'))
+        data = lzma.decompress(self.download_sample(_MALWARE_VHD))
         unit = self.ldu('xtvhd')
         extracted = 0
         gc.collect()
@@ -92,3 +95,27 @@ class TestFormats(TestUnitBase):
             gc.enable()
         self.assertGreater(extracted, 0)
         self.assertLess(held - start - len(data), extracted // 8)
+
+    @unittest.expectedFailure
+    def test_extracted_file_is_freed_as_soon_as_it_is_dropped(self):
+        data = lzma.decompress(self.download_sample(_MALWARE_VHD))
+        unit = self.ldu('xtvhd')
+        largest = 0
+        held_after_largest = 0
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            start, _ = tracemalloc.get_traced_memory()
+            for chunk in data | unit:
+                size = len(chunk)
+                del chunk
+                held, _ = tracemalloc.get_traced_memory()
+                if size > largest:
+                    largest = size
+                    held_after_largest = held - start - len(data)
+        finally:
+            tracemalloc.stop()
+            gc.enable()
+        self.assertGreater(largest, 0)
+        self.assertLess(held_after_largest, largest // 8)
