@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from test import TestBase, a_property_of_the_pin_itself
+from test import TestBase, a_property_of_the_batch_itself, a_property_of_the_pin_itself
 
 from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.analysis.jsgen import generate
@@ -13,6 +13,7 @@ from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
+from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
@@ -626,13 +627,45 @@ class TestWrapperInliningDoesNotRebuildPerSite(TestBase):
         self.assertGreater(without_pin_builds, 1)
 
 
+class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
+    """
+    Dead-code removal takes every decision of a run before its first edit, so it reads the models
+    of one tree however many branches it prunes. Taking each decision where the edit is made
+    instead reads models rebuilt after every pruned branch.
+    """
+
+    @staticmethod
+    def _bodies(count: int) -> str:
+        """
+        A script with *count* functions, each holding one branch that never runs.
+        """
+        functions = '\n'.join(
+            F'function f{i}(a) {{ if (false) {{ a.x = {i}; }} return a; }}' for i in range(count)
+        )
+        return F'{functions}\nSINK({", ".join(F"f{i}" for i in range(count))});'
+
+    @a_property_of_the_batch_itself
+    def test_the_model_is_built_once_however_many_bodies_hold_a_dead_branch(self):
+        self.assertEqual(1, _transform_root_builds(JsDeadCodeElimination, self._bodies(2))[0])
+        self.assertEqual(1, _transform_root_builds(JsDeadCodeElimination, self._bodies(16))[0])
+
+    def test_deciding_before_the_first_edit_does_not_change_the_result(self):
+        class Unbatched(JsDeadCodeElimination):
+            batching = False
+
+        source = self._bodies(8)
+        batched = _transform_root_builds(JsDeadCodeElimination, source)[1]
+        unbatched_builds, unbatched = _transform_root_builds(Unbatched, source)
+        self.assertNotIn('false', batched)
+        self.assertEqual(batched, unbatched)
+        self.assertGreater(unbatched_builds, 1)
 
 
-
-#: Programs that run every pinned pass through its rewriting arm — a reflective site at statement
-#: and at expression position, a string timer, a consumed `Function` temporary, a gated fold, a
-#: string respelling and a call wrapper — beside a few plain shapes and the generated corpus, which
-#: exercise the rest of the pipeline.
+#: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
+#: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
+#: fold, a string respelling, a call wrapper and a pruned branch whose kept test assigns what a
+#: later test reads — beside a few plain shapes and the generated corpus, which exercise the rest
+#: of the pipeline.
 _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var q = 1; var t = (q + 1) * 2; f(t);',
     'var x = 5; var t = delete x; g(); f(t);',
@@ -647,6 +680,7 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     "var m = Function('return 41'); SINK(m());",
     'var g = String.fromCharCode(65); SINK(g);',
     'function w(a, b) { return target(a, b); } var r = w(1, 2); SINK(r);',
+    'function main(c) { var o; if (c) { if ([o = {}, f()]) { A(); } } if (o) { X(); } else { Y(); } } SINK(main);',
 )
 
 

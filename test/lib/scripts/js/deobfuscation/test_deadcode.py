@@ -128,6 +128,110 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
 
+class TestAConditionalWriteInAKeptTestKeepsALaterBranch(TestJsDeobfuscator):
+    """
+    A pruned branch whose test may have an effect leaves the test behind as a statement, where the
+    `if` stood. When that statement assigns a name under a branch that may not run, a later test
+    reading the name has no known value, and its branch stays.
+    """
+
+    def test_an_assignment_in_a_nested_block(self):
+        source = inspect.cleandoc(
+            """
+            function main(c) {
+              var o;
+              if (c) {
+                if ([o = {}, f()]) { A(); }
+              }
+              if (o) { X(); } else { Y(); }
+            }
+            SINK(main);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function main(c) {
+                  var o;
+                  if (c) {
+                    [o = {}, f()];
+                    A();
+                  }
+                  if (o) {
+                    X();
+                  } else {
+                    Y();
+                  }
+                }
+                SINK(main);
+                """
+            ),
+            self._deadcode(source),
+        )
+
+    def test_an_assignment_in_a_loop_body(self):
+        source = inspect.cleandoc(
+            """
+            function main(n) {
+              var o;
+              while (n--) {
+                if ([o = {}]) { A(); }
+              }
+              if (o) { X(); } else { Y(); }
+            }
+            SINK(main);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function main(n) {
+                  var o;
+                  while (n--) {
+                    [o = {}];
+                    A();
+                  }
+                  if (o) {
+                    X();
+                  } else {
+                    Y();
+                  }
+                }
+                SINK(main);
+                """
+            ),
+            self._deadcode(source),
+        )
+
+    def test_an_assignment_at_script_scope(self):
+        source = inspect.cleandoc(
+            """
+            var o;
+            if (c) {
+              if ({ k: o = {} }) { A(); }
+            }
+            if (o) { X(); } else { Y(); }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o;
+                if (c) {
+                  ({ k: o = {} });
+                  A();
+                }
+                if (o) {
+                  X();
+                } else {
+                  Y();
+                }
+                """
+            ),
+            self._deadcode(source),
+        )
+
+
 class TestALocalContainerBindingIsTruthyWhereEstablished(TestJsDeobfuscator):
     """
     A guard testing a local the model can resolve to a single allocation answers from that

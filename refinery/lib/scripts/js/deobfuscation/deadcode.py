@@ -9,19 +9,17 @@ model, so a test that only invokes proven-pure functions or intrinsics is droppe
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.effects import (
-    EffectModel,
-    side_effect_free,
-)
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.model import (
-    SemanticModel,
     _walk_skipping_functions,
     annex_b_var_home,
     pattern_identifiers,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    BatchedTransformer,
     BodyProcessingTransformer,
     is_truthy,
 )
@@ -103,45 +101,54 @@ def _the_names_a_dropped_branch_still_declares(branch: Statement | None) -> list
     )]
 
 
-class JsDeadCodeElimination(BodyProcessingTransformer):
+class _Decision(NamedTuple):
+    """
+    What an `if` statement's test evaluates to, and whether the test may go with the dropped branch
+    or has to stay behind as a statement.
+    """
+    test_is_truthy: bool
+    test_may_go: bool
+
+
+class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
     """
     Remove unreachable code guarded by constant conditions.
+
+    The pass runs in the batched regime of
+    `refinery.lib.scripts.js.deobfuscation.helpers.BatchedTransformer`. One walk over the tree the
+    run entered on decides every `if` standing in a statement list, and the pass's usual walk then
+    makes the edits, innermost list first, each list replaced once. That walk reaches only the lists
+    the tree still holds, so every edit lands on an attached list.
+
+    A decision reads the value the test evaluates to and whether the test has an effect, and both
+    survive every other edit of the run, because each edit keeps every surviving statement's
+    evaluations and their order: a dropped branch never ran; a lifted branch ran exactly where it
+    now stands, carrying the edits made inside it; a test that may have an effect stays behind and
+    runs once in its place; a test without one goes, and nothing observed it; and the `var`
+    declarations left behind for a dropped branch carry no value. A block that holds a declaration
+    scoped to it is kept whole rather than lifted. The values every other test reads are therefore
+    the ones they read on the entry tree.
     """
 
     def __init__(self):
         super().__init__()
         self._root: JsScript | None = None
-        self._effects: EffectModel | None = None
-
-    @property
-    def effects(self) -> EffectModel | None:
-        """
-        The effect model for the current script, built on first demand. It is `None` until a script
-        has been visited, and is built only when a prunable test is not already conservatively free
-        of side effects, so a run that never reaches that check pays nothing.
-        """
-        if self._root is None:
-            return None
-        if self._effects is None:
-            self._effects = model_cache(self, self._root).effects
-        return self._effects
-
-    @property
-    def model(self) -> SemanticModel | None:
-        """
-        The semantic model for the current script. Whether a test denotes a value at all is a scope
-        question — `undefined` is a value only where nothing has bound that name — so no branch can be
-        pruned without one. It is reached through the cache rather than through `effects`, which holds
-        a model but is built lazily and costs far more than this pass needs to spend on an `if`.
-        """
-        if self._root is None:
-            return None
-        return model_cache(self, self._root).model
+        self._decisions: dict[JsIfStatement, _Decision] | None = None
 
     def visit_JsScript(self, node: JsScript):
         self._root = node
-        self._effects = None
-        return super().visit_JsScript(node)
+        self._decisions = None
+        if self.batching:
+            self._decisions = {
+                stmt: decision for stmt in node.walk()
+                if isinstance(stmt, JsIfStatement)
+                and isinstance(stmt.parent, (JsScript, JsBlockStatement))
+                and (decision := self._decide(stmt)) is not None
+            }
+        try:
+            return super().visit_JsScript(node)
+        finally:
+            self._decisions = None
 
     def _process_body(self, parent: Node, body: list[Statement]):
         result: list[Statement] = []
@@ -159,40 +166,46 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
     def _try_prune(self, stmt: Statement) -> list[Statement] | None:
         if not isinstance(stmt, JsIfStatement):
             return None
-        if stmt.test is None:
+        if self._decisions is None:
+            decision = self._decide(stmt)
+        else:
+            decision = self._decisions.get(stmt)
+        if decision is None:
             return None
-        model = self.model
-        if model is None:
-            return None
-        assert self._root is not None
-        truthy = is_truthy(stmt.test, model_cache(self, self._root))
-        if truthy is None:
-            return None
-        taken = stmt.consequent if truthy else stmt.alternate
-        dropped = stmt.alternate if truthy else stmt.consequent
+        taken = stmt.consequent if decision.test_is_truthy else stmt.alternate
+        dropped = stmt.alternate if decision.test_is_truthy else stmt.consequent
         result = self._unwrap_branch(taken)
         result[0:0] = _the_names_a_dropped_branch_still_declares(dropped)
-        if not self._test_is_side_effect_free(stmt.test):
+        if not decision.test_may_go:
             result.insert(0, JsExpressionStatement(expression=stmt.test))
         return result
 
-    def _test_is_side_effect_free(self, test: Node) -> bool:
+    def _decide(self, stmt: JsIfStatement) -> _Decision | None:
         """
-        Whether the discarded test can be dropped. The model-aware effect check is authoritative when a
-        model is available: it certifies a proven-pure call the model-free check would keep, and rejects
-        a read through a `with` body's dynamic scope the model-free check would wrongly call pure (that
-        read may fire the `with` object's getter or throw). Dropping the test discards its whole
-        value, so the throw a read of a name nothing binds would raise is kept unless the shared
-        establishment proof vouches a creating write for it. The structural check is only a fallback
-        for a pass constructed without a model.
+        The decision for *stmt*, or `None` where the value of its test is not known. Whether a test
+        denotes a value at all is a scope question — `undefined` is a value only where nothing has
+        bound that name — so no branch is pruned in a run that entered on no script.
         """
-        effects = self.effects
-        if effects is not None:
-            assert self._root is not None
-            established = model_cache(self, self._root).read_established
-            return effects.is_side_effect_free(
-                test, reads_may_throw=True, read_established=established)
-        return side_effect_free(test)
+        if stmt.test is None or self._root is None:
+            return None
+        cache = model_cache(self, self._root)
+        truthy = is_truthy(stmt.test, cache)
+        if truthy is None:
+            return None
+        return _Decision(truthy, self._test_is_side_effect_free(stmt.test, cache))
+
+    @staticmethod
+    def _test_is_side_effect_free(test: Node, cache: ModelCache) -> bool:
+        """
+        Whether the discarded test can be dropped, by the model-aware effect check: it certifies a
+        proven-pure call a structural check would keep, and rejects a read through a `with` body's
+        dynamic scope a structural check would wrongly call pure (that read may fire the `with`
+        object's getter or throw). Dropping the test discards its whole value, so the throw a read
+        of a name nothing binds would raise is kept unless the shared establishment proof vouches a
+        creating write for it.
+        """
+        return cache.effects.is_side_effect_free(
+            test, reads_may_throw=True, read_established=cache.read_established)
 
     @staticmethod
     def _unwrap_branch(branch: Statement | None) -> list[Statement]:

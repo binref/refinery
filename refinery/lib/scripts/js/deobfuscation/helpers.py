@@ -2835,48 +2835,61 @@ class ScopeProcessingTransformer(Transformer):
         raise NotImplementedError
 
 
-class BatchedScopeTransformer(ScopeProcessingTransformer, Generic[_Plan]):
+class BatchedTransformer(Transformer):
     """
-    Intermediate base for scope-processing transforms that decide every rewrite of one invocation
-    against one entry model snapshot and apply the whole batch afterwards, once. This is a third
-    freshness regime beside the two the codebase already documents: a pin holds the models across a
-    pass whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass
-    whose edits make facts more restrictive. A batched pass emits bindings, so neither regime fits:
-    the models stay fresh for the whole traversal because no edit runs until it ends, and the batch
-    is applied as one unit afterwards.
+    Intermediate base for transforms that take every decision of one invocation against the models
+    of the tree the invocation entered on, and make the edits afterwards. This is a third freshness
+    regime beside the two the codebase already documents: a pin holds the models across a pass
+    whose edits only remove facts, and a re-read-per-rewrite pass rebuilds them for a pass whose
+    edits make facts more restrictive. A batched pass asks no model anything once its first edit
+    has landed, so every decision reads models that describe the tree it was taken on, without
+    holding them past an edit and without rebuilding them after one.
 
-    A subclass owes the batch five obligations:
+    A subclass owes the regime four obligations:
+
+    - Every node an edit holds from the decision — an anchor statement, a declarator, a
+      substitution target — is attached to the live tree when the edit lands: either it is checked
+      through `refinery.lib.scripts.is_attached`, or the edit is made by a walk that reaches only
+      what the tree still holds. A decision that carries a node from the entry tree can otherwise
+      be pointed at a subtree an earlier edit already detached.
+    - A value an edit writes at a position other than where the entry tree holds it is a copy made
+      at decision. An earlier edit, another decision's or the decision's own, may rewrite the
+      original before the edit lands, and the edit would then write something its decision never
+      checked. An edit that moves a subtree instead of copying one carries the edits made inside it
+      before, and its pass's docstring shows those edits leave the decision valid.
+    - A decision stands down, whole or in part, only where an earlier edit of the same invocation
+      edited a node it holds. That edit marked the invocation changed, so the group runs the pass
+      again, and the next invocation re-decides whatever the stand-down held back.
+    - A per-pass non-interference docstring of its own: which model facts the decisions read, which
+      edits of the invocation can invalidate them, and in which direction. A decision valid on the
+      tree the invocation entered on must remain valid on the tree it leaves.
+
+    The mid-invocation freshness a per-edit model rebuild would supply is not replaced by anything
+    here: its recall half comes from the group fixpoint, which re-runs a changed group, and its
+    correctness half is the non-interference contract above. The `--no-batch` differential
+    (`test/conftest.py`) runs every batched pass with `batching` off, taking each decision where the
+    edit is made and against the models the tree then warrants.
+    """
+
+    batching: bool = True
+
+
+class BatchedScopeTransformer(BatchedTransformer, ScopeProcessingTransformer, Generic[_Plan]):
+    """
+    Intermediate base for scope-processing transforms in the regime of `BatchedTransformer` whose
+    decisions are plans: each is collected as it is decided, and the whole batch is applied once
+    the traversal ends. A batched scope pass emits bindings, and a plan lands after every other
+    plan was decided, so it owes two obligations beyond the regime's:
 
     - Every binding the batch emits or exposes — the `var` and `function` declarations it installs,
       and the bare identifiers its rewrites create — is registered through `emits` at decision time,
       and a later candidate in the same scope holds a colliding key back through `name_emitted_in`.
       Without it, the later candidate decides against an entry tree that does not yet carry the
-      earlier emission and the two installs collide.
-    - Every node an applied edit holds from the decision — an anchor statement, a declarator, a
-      substitution target — is checked still attached to the live tree at apply time through
-      `refinery.lib.scripts.is_attached`. A plan that carries a node from the entry snapshot can
-      otherwise be pointed at a subtree an earlier plan already detached.
-    - A value a plan writes at a position other than where the entry tree holds it is a copy made
-      at decision. An earlier edit, another plan's or the plan's own, may rewrite the original
-      before the plan lands, and the plan would then write something its decision never checked.
-      A plan that moves a subtree instead of copying one carries the edits earlier plans made
-      inside it, and its pass's docstring shows those edits leave the decision valid.
-    - A plan stands down, whole or in part, only where an earlier plan of the same invocation
-      edited a node it holds. That edit marked the invocation changed, so the group runs the pass
-      again, and the next invocation re-decides whatever the stand-down held back, including a
-      key another candidate held back for an emission that never landed.
-    - A per-pass non-interference docstring of its own: which model facts the decisions read, which
-      batch edits can invalidate them, and in which direction. A decision valid on the pre-batch
-      tree must remain valid on the post-batch tree.
-
-    The mid-batch freshness a per-edit model rebuild would supply is not replaced by anything here:
-    its recall half comes from the group fixpoint, which re-runs a changed group, and its
-    correctness half is the non-interference contract above. The `--no-batch` differential
-    (`test/conftest.py`) runs every batched pass with `batching` off, applying each plan the moment
-    it is decided.
+      earlier emission and the two installs collide. A key held back for an emission that never
+      landed is re-decided by the next invocation like any other stand-down.
+    - The attachment the regime requires is checked: every node a plan holds from the decision is
+      tested through `refinery.lib.scripts.is_attached` when the plan is applied.
     """
-
-    batching: bool = True
 
     def __init__(self):
         super().__init__()
