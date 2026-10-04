@@ -22,7 +22,7 @@ from refinery.lib.meta import (
     check_variable_names_of_unit,
     metavars,
 )
-from refinery.lib.tools import exception_to_string, get_terminal_size
+from refinery.lib.tools import HandOver, exception_to_string, get_terminal_size
 from refinery.lib.types import Callable, Iterable, Param, buf, isbuffer
 from refinery.lib.xml import XMLNodeBase
 from refinery.units import Arg, Chunk, RefineryPartialResult, RefineryPotentialUserError, Unit
@@ -374,8 +374,7 @@ class PathExtractorUnit(Unit, abstract=True):
                 continue
             if not self.args.drop:
                 result.meta[metavar] = path
-            if (chunk := self._extract(result, release=last)) is not None:
-                yield chunk
+            yield from HandOver(self._extract(result, release=last))
 
 
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):

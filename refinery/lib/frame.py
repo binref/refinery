@@ -125,6 +125,7 @@ from typing import (
     Callable,
     Generator,
     Iterable,
+    Iterator,
     Mapping,
     SupportsIndex,
     overload,
@@ -132,6 +133,7 @@ from typing import (
 
 from refinery.lib.meta import LazyMetaOracle
 from refinery.lib.structures import MemoryFile
+from refinery.lib.tools import HandOver
 from refinery.lib.types import buf
 
 if TYPE_CHECKING:
@@ -702,6 +704,23 @@ class Framed:
             return self.nesting < 1
         return self.nesting + self.unpack.depth < 0
 
+    def _results(self, chunk: Chunk) -> Iterator[Chunk]:
+        if chunk.visible:
+            return self._generate_chunks(chunk)
+        return HandOver(chunk)
+
+    def _all_results(self) -> Iterator[Chunk]:
+        while self.unpack.nextframe():
+            yield from itertools.chain.from_iterable(map(self._results, self._apply_filter()))
+
+    @staticmethod
+    def _concatenated(pieces: Iterable[Chunk]) -> bytearray:
+        output = bytearray()
+        for piece in pieces:
+            output.extend(piece)
+            del piece
+        return output
+
     def _generate_chunks(self, parent: Chunk):
         path = list(parent.path)
         view = list(parent.view)
@@ -719,8 +738,7 @@ class Framed:
             return chunk.truncate(scope)
 
         if not self.squeeze:
-            for chunk in self.action(parent):
-                yield inherit(chunk)
+            yield from map(inherit, self.action(parent))
         else:
             it = self.action(parent)
             for header in it:
@@ -738,11 +756,8 @@ class Framed:
     def _generate_bytes(self, data: Chunk):
         if not self.squeeze:
             yield from self.action(data)
-            return
-        buffer = MemoryFile(bytearray())
-        for item in self.action(data):
-            buffer.write(item)
-        yield buffer.getvalue()
+        else:
+            yield from HandOver(self._concatenated(self.action(data)))
 
     def __iter__(self):
         nesting = self.nesting
@@ -752,51 +767,35 @@ class Framed:
             if scope:
                 yield generate_frame_header(scope)
             return
+        repeat = itertools.repeat
         if nesting > 0:
             assert scope
             yield generate_frame_header(scope)
             while self.unpack.nextframe():
-                for k, chunk in enumerate(self._apply_filter()):
-                    if not chunk.visible:
-                        yield chunk.pack(nesting, k, serialized)
-                        continue
-                    for result in self._generate_chunks(chunk):
-                        yield result.pack(nesting, k, serialized)
+                nestings = repeat(nesting)
+                serialize = repeat(serialized)
+                for position, results in enumerate(map(self._results, self._apply_filter())):
+                    yield from map(Chunk.pack, results, nestings, repeat(position), serialize)
         elif not self.unpack.framed:
-            for chunk in self._apply_filter():
-                yield from self._generate_bytes(chunk)
+            yield from itertools.chain.from_iterable(map(self._generate_bytes, self._apply_filter()))
         elif nesting == 0:
             assert scope
             yield generate_frame_header(scope)
-            while self.unpack.nextframe():
-                for chunk in self._apply_filter():
-                    if not chunk.visible:
-                        yield chunk.pack(0, 0, serialized)
-                        continue
-                    for result in self._generate_chunks(chunk):
-                        yield result.pack(0, 0, serialized)
+            yield from map(Chunk.pack, self._all_results(), repeat(0), repeat(0), repeat(serialized))
+        elif not scope:
+            yield from map(Chunk.truncate, self._all_results())
         else:
+            yield generate_frame_header(scope)
             trunk = None
             check = scope + 1
-            if scope:
-                yield generate_frame_header(scope)
-            while self.unpack.nextframe():
-                for chunk in self._apply_filter():
-                    results = self._generate_chunks(chunk) if chunk.visible else (chunk,)
-                    if not scope:
-                        for chunk in results:
-                            yield chunk.truncate()
-                        continue
-                    for result in results:
-                        if trunk is None:
-                            trunk = result
-                        elif result.path[:check] == trunk.path[:check]:
-                            trunk.intersect(result)
-                            trunk.extend(result)
-                        else:
-                            yield trunk.pack(nesting, 0, serialized)
-                            trunk = result
-                if not scope or trunk is None:
-                    continue
+            for result in self._all_results():
+                if trunk is None:
+                    trunk = result
+                elif result.path[:check] == trunk.path[:check]:
+                    trunk.intersect(result)
+                    trunk.extend(result)
+                else:
+                    yield trunk.pack(nesting, 0, serialized)
+                    trunk = result
             if trunk is not None:
                 yield trunk.pack(nesting, 0, serialized)

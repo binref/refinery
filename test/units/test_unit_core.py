@@ -141,6 +141,18 @@ class TestLogger(unittest.TestCase):
             unit.log_level = level
 
 
+class TestUnitOutput(unittest.TestCase):
+
+    def test_unit_can_return_the_outputs_of_another_unit(self):
+        from refinery.units.meta.chop import chop
+
+        class delegating_chop(chop):
+            def process(self, data):
+                return super().process(data)
+
+        self.assertEqual(B'ABCDEF' | delegating_chop(2) | [bytes], [B'AB', B'CD', B'EF'])
+
+
 class TestEntry(unittest.TestCase):
 
     def test_entry_is_instantiable(self):

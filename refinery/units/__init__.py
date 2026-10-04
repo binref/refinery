@@ -911,6 +911,10 @@ class ArgumentSpecification(_ArgumentSpecificationBase):
         self[dest] = argument
 
 
+def _chunks(outputs: Iterable[buf]) -> Generator[Chunk]:
+    yield from map(Chunk.Wrap, outputs)
+
+
 def _UnitProcessorBoilerplate(operation: ProcType[buf]) -> ProcType[Chunk]:
     @wraps(operation)
     def wrapped(self: Unit, data: buf | None) -> Chunk | Iterable[Chunk] | None:
@@ -923,7 +927,7 @@ def _UnitProcessorBoilerplate(operation: ProcType[buf]) -> ProcType[Chunk]:
             return result
         elif not inspect.isgenerator(result):
             return Chunk(cast(bytearray | None, result))
-        return (Chunk.Wrap(r) for r in result)
+        return _chunks(result)
     return wrapped
 
 
@@ -1909,13 +1913,10 @@ class Unit(UnitBase, abstract=True):
             if converter is None:
                 stream.extend(self)
                 return stream
-            return [converter(chunk) for chunk in self]
+            return list(map(converter, self))
         elif isinstance(stream, set):
             if converter := get_converter(stream):
-                def converted():
-                    for chunk in self:
-                        yield converter(chunk)
-                return set(converted())
+                return set(map(converter, self))
             else:
                 stream.update(self)
                 return stream
@@ -2054,10 +2055,8 @@ class Unit(UnitBase, abstract=True):
         the `--iff` switch which will prevent processing entirely when the input data
         does not match the unit's expected format.
         """
-        cls = self.__class__
         iff = self.args.iff
         lvl = self.log_level
-        ctr = 0
 
         if iff and not self.handles(data):
             if iff < 2:
@@ -2068,8 +2067,11 @@ class Unit(UnitBase, abstract=True):
             data = data
 
         self.log_level = lvl
+        cls = self.__class__
         logger = cls.logger
         level = logger.level
+        count = 0
+        outbox = []
 
         try:
             cls._lock_logger()
@@ -2080,25 +2082,28 @@ class Unit(UnitBase, abstract=True):
                     it = self.process(data)
                 assert it is not None
                 if isinstance(it, (bytes, bytearray, memoryview)):
-                    it = (it,)
-                it = iter(it)
+                    outbox.append(it)
+                    it = iter(())
+                else:
+                    it = iter(it)
             finally:
                 cls._unlock_logger()
             while True:
-                if logger.level != level:
-                    logger.setLevel(level)
-                cls._lock_logger()
-                try:
-                    out = next(it)
-                except StopIteration:
-                    break
-                finally:
-                    cls._unlock_logger()
-                ctr += 1
-                assert isinstance(out, Chunk)
-                yield out
+                if not outbox:
+                    if logger.level != level:
+                        logger.setLevel(level)
+                    cls._lock_logger()
+                    try:
+                        outbox.append(next(it))
+                    except StopIteration:
+                        break
+                    finally:
+                        cls._unlock_logger()
+                count += 1
+                assert isinstance(outbox[-1], Chunk)
+                yield outbox.pop()
         except BaseException:
-            if ctr > 0 or not self.args.trypass:
+            if count > 0 or not self.args.trypass:
                 raise
             yield data
 

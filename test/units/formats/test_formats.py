@@ -1,7 +1,6 @@
 import gc
 import lzma
 import tracemalloc
-import unittest
 
 from .. import TestUnitBase
 
@@ -96,7 +95,6 @@ class TestFormats(TestUnitBase):
         self.assertGreater(extracted, 0)
         self.assertLess(held - start - len(data), extracted // 8)
 
-    @unittest.expectedFailure
     def test_extracted_file_is_freed_as_soon_as_it_is_dropped(self):
         data = lzma.decompress(self.download_sample(_MALWARE_VHD))
         unit = self.ldu('xtvhd')

@@ -1,12 +1,49 @@
+import contextlib
 import copy
 import gc
 import io
 import tracemalloc
+import weakref
 
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
 
 from .. import TestBase
+
+
+class _Lifetimes:
+    def __init__(self):
+        self.tracked: list[weakref.ref] = []
+        self.notes: list[list[int]] = []
+
+    def note(self):
+        self.notes.append([k for k, ref in enumerate(self.tracked) if ref() is not None])
+
+    def track(self, chunk: Chunk) -> Chunk:
+        self.tracked.append(weakref.ref(chunk))
+        return chunk
+
+
+@contextlib.contextmanager
+def _without_cycle_collector():
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
+
+
+def _drain(pipeline):
+    for chunk in pipeline:
+        del chunk
+
+
+def _configured(unit, nesting: int = 0, squeeze: bool = False, console: bool = False):
+    unit.args.nesting = nesting
+    unit.args.squeeze = squeeze
+    unit.console = console
+    return unit
 
 
 class TestFraming(TestBase):
@@ -169,6 +206,77 @@ class TestFraming(TestBase):
         self.assertEqual(data.scope, 1)
         test = data | chop(2) | [str]
         self.assertEqual(test, ['He', 'll', 'o'])
+
+    def _alive_while_producing(self, pipeline) -> list[list[int]]:
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class source(Unit):
+            def process(self, data):
+                for _ in range(4):
+                    lifetimes.note()
+                    yield lifetimes.track(Chunk(bytes(0x100)))
+
+        with _without_cycle_collector():
+            pipeline(source)
+        return lifetimes.notes
+
+    def test_unit_outputs_are_released_before_the_next_is_produced(self):
+        from refinery import nop
+        pipelines = {
+            'loop': lambda source: _drain(B'' | source()),
+            'list of strings': lambda source: B'' | source() | [str],
+            'set of strings': lambda source: B'' | source() | {str},
+            'next unit in a frame': lambda source: _drain(B'' | source()[nop()]),
+            'squeezed': lambda source: _drain(B'' | _configured(source(), squeeze=True)),
+            'framed input, frame closed': lambda source: _drain([B''] | source()),
+            'framed input, frame kept': lambda source: _drain([B''] | _configured(source(), 1)),
+        }
+        for name, pipeline in pipelines.items():
+            with self.subTest(name):
+                self.assertEqual(self._alive_while_producing(pipeline), [[], [], [], []])
+
+    def test_unit_output_is_freed_when_its_consumer_drops_it(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class source(Unit):
+            def process(self, data):
+                for _ in range(4):
+                    yield lifetimes.track(Chunk(bytes(0x100)))
+
+        with _without_cycle_collector():
+            for chunk in B'' | source():
+                del chunk
+                lifetimes.note()
+        self.assertEqual(lifetimes.notes, [[], [], [], []])
+
+    def test_framed_output_reaches_its_consumer_without_the_original(self):
+        from refinery import Unit, nop
+        pipelines = {
+            'frame opened': lambda source, single: B'' | _configured(source(), 1),
+            'frame kept': lambda source, single: [B''] | _configured(source(), 1),
+            'next unit in a frame': lambda source, single: B'' | source()[nop()],
+            'one output for each input': lambda source, single: [B''] * 4 | _configured(single(), 1),
+        }
+        for name, pipeline in pipelines.items():
+            with self.subTest(name):
+                lifetimes = _Lifetimes()
+
+                class source(Unit):
+                    def process(self, data):
+                        for _ in range(4):
+                            yield lifetimes.track(Chunk(bytes(0x100)))
+
+                class single(Unit):
+                    def process(self, data):
+                        return lifetimes.track(Chunk(bytes(0x100)))
+
+                with _without_cycle_collector():
+                    for _ in pipeline(source, single):
+                        lifetimes.note()
+                self.assertTrue(lifetimes.notes)
+                self.assertEqual(lifetimes.notes, [[]] * len(lifetimes.notes))
 
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')

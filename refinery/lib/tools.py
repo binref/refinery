@@ -14,7 +14,7 @@ import warnings
 
 from enum import Enum, IntFlag
 from math import log
-from typing import Generator, Iterable, TypeVar, cast
+from typing import Generator, Iterable, Iterator, TypeVar, cast
 
 from refinery.lib.types import buf
 
@@ -40,6 +40,27 @@ def lookahead(iterator: Iterable[_T]) -> Generator[tuple[bool, _T]]:
         except StopIteration:
             last = True
         yield last, item
+
+
+class HandOver(Iterator[_T]):
+    """
+    An iterator over a single item, or over nothing if the item is `None`. Unlike a generator that
+    yields the item, it keeps no reference to the item once it has returned it, so the item can be
+    freed as soon as its receiver lets go of it.
+    """
+    __slots__ = '_item',
+
+    def __init__(self, item: _T | None):
+        self._item = item
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> _T:
+        if (item := self._item) is None:
+            raise StopIteration
+        self._item = None
+        return item
 
 
 def get_terminal_size(default=100):
