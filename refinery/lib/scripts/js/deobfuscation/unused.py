@@ -39,9 +39,9 @@ This transformer performs seven phases:
 """
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterable, Iterator
 
-from refinery.lib.scripts import Node, _remove_from_parent, owning_list, set_child
+from refinery.lib.scripts import ListRemoval, Node, set_child
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
@@ -499,11 +499,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         uncaptured function-local `var`/`let` qualifies (the liveness model enforces this and reports
         nothing under any reflection surface); a fully dead binding is left to the binding-level sweep.
 
-        Candidates are collected over the pristine tree before any removal, which keeps the verdicts
-        mutually consistent: removing a dead store deletes no read, so it cannot revive another store's
-        value. A dead assignment statement is dropped when its right-hand side is itself removable and
-        otherwise kept as a bare expression for its effect; a dead declarator initializer is dropped
-        only when removable, leaving `var x;` so the still-live binding keeps its declaration.
+        Candidates and their verdicts are taken over the pristine tree before any edit, which keeps
+        the verdicts mutually consistent: removing a dead store deletes no read, so it cannot revive
+        another store's value. A dead assignment statement is dropped when its right-hand side is
+        itself removable and otherwise kept as a bare expression for its effect; a dead declarator
+        initializer is dropped only when removable, leaving `var x;` so the still-live binding keeps
+        its declaration.
         """
         assignments: list[JsExpressionStatement] = []
         declarators: list[JsVariableDeclarator] = []
@@ -524,19 +525,29 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     and self._is_flow_dead_store(node.id)
                 ):
                     declarators.append(node)
+        lists = ListRemoval()
+        kept_for_effect: list[JsExpressionStatement] = []
         for stmt in assignments:
             expr = stmt.expression
             assert isinstance(expr, JsAssignmentExpression)
             if expr.right is None or self._is_removable(expr.right):
-                if _remove_from_parent(stmt):
-                    self.mark_changed()
+                lists.remove(stmt)
             else:
-                set_child(stmt, 'expression', expr.right)
-                self.mark_changed()
-        for decl in declarators:
-            if decl.init is not None and self._is_removable(decl.init):
-                set_child(decl, 'init', None)
-                self.mark_changed()
+                kept_for_effect.append(stmt)
+        cleared = [
+            decl for decl in declarators
+            if decl.init is not None and self._is_removable(decl.init)
+        ]
+        if lists.apply():
+            self.mark_changed()
+        for stmt in kept_for_effect:
+            expr = stmt.expression
+            assert isinstance(expr, JsAssignmentExpression)
+            set_child(stmt, 'expression', expr.right)
+            self.mark_changed()
+        for decl in cleared:
+            set_child(decl, 'init', None)
+            self.mark_changed()
 
     def _is_flow_dead_store(self, write: JsIdentifier) -> bool:
         """
@@ -591,9 +602,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     removals.append(stmt)
                 else:
                     stored[name] = value
-        for stmt in removals:
-            _remove_from_parent(stmt)
-            self.mark_changed()
+        self._remove_all(removals)
 
     @staticmethod
     def _statement_lists(root: JsScript) -> Iterator[list[Statement]]:
@@ -684,9 +693,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             ):
                 continue
             removals.append(node)
-        for stmt in removals:
-            _remove_from_parent(stmt)
-            self.mark_changed()
+        self._remove_all(removals)
 
     def _remove_empty_statements(self, root: JsScript):
         """
@@ -712,8 +719,16 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     and not stmt.trailing_comments
                 ):
                     removals.append(stmt)
-        for stmt in removals:
-            _remove_from_parent(stmt)
+        self._remove_all(removals)
+
+    def _remove_all(self, statements: Iterable[Statement]):
+        """
+        Remove every one of *statements* from the list holding it, each list edited once.
+        """
+        lists = ListRemoval()
+        for stmt in statements:
+            lists.remove(stmt)
+        if lists.apply():
             self.mark_changed()
 
     def _localize_pseudo_globals(self, root: JsScript):
@@ -935,11 +950,13 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         non_func_stmts = [s for s in body if not isinstance(s, JsFunctionDeclaration)]
         if not non_func_stmts:
             return set()
+        lists = ListRemoval()
         for name in unreachable:
-            _remove_from_parent(functions[name])
+            lists.remove(functions[name])
             for stmt in write_only_stmts.get(name, ()):
-                _remove_from_parent(stmt)
-        self.mark_changed()
+                lists.remove(stmt)
+        if lists.apply():
+            self.mark_changed()
         return unreachable
 
     def _referenced_outside(
@@ -1002,9 +1019,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         as a bare expression. Returns the dead target names and the statements kept for their side effects.
 
         A statement the tree refuses to give up — one standing as the unbraced body of a branch or a
-        loop, which `_remove_from_parent` cannot take out of a single-node field — keeps its binding
-        out of the returned names: the write survives, so the declaration must survive with it, and a
-        pass that changed nothing must say so or the fixpoint driver never stops rebuilding the model.
+        loop, a single-node field no `refinery.lib.scripts.ListRemoval` can take it out of — keeps
+        its binding out of the returned names: the write survives, so the declaration must survive
+        with it, and a pass that changed nothing must say so or the fixpoint driver never stops
+        rebuilding the model.
         """
         if not self._is_var_scope_root(parent):
             return set(), set()
@@ -1026,7 +1044,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 stores.setdefault(binding, []).append(node)
         if not stores:
             return set(), set()
-        dead, removable = self._dead_store_bindings(stores, defunct)
+        lists = ListRemoval()
+        dead, removable = self._dead_store_bindings(stores, defunct, lists)
         if not dead:
             return set(), set()
         preserved: set[JsExpressionStatement] = set()
@@ -1037,21 +1056,27 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 expr = stmt.expression
                 assert isinstance(expr, JsAssignmentExpression)
                 if expr.right is None or removable[id(stmt)]:
-                    if _remove_from_parent(stmt):
-                        self.mark_changed()
-                    else:
+                    if not lists.remove(stmt):
                         fully = False
                 else:
-                    set_child(stmt, 'expression', expr.right)
                     preserved.add(stmt)
-                    self.mark_changed()
             if fully:
                 eliminated.add(binding.name)
+        if lists.apply():
+            self.mark_changed()
+        for stmt in preserved:
+            expr = stmt.expression
+            assert isinstance(expr, JsAssignmentExpression)
+            set_child(stmt, 'expression', expr.right)
+            self.mark_changed()
         self._remove_empty_declarators(parent, body, eliminated)
         return eliminated, preserved
 
     def _dead_store_bindings(
-        self, stores: dict[Binding, list[JsExpressionStatement]], defunct: set[str],
+        self,
+        stores: dict[Binding, list[JsExpressionStatement]],
+        defunct: set[str],
+        lists: ListRemoval,
     ) -> tuple[set[Binding], dict[int, bool]]:
         """
         From candidate bindings mapped to their removable assignments, return those that are dead. A
@@ -1063,6 +1088,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         nothing observes the value. A read nested arbitrarily deep inside a candidate's right-hand side
         (for instance within an assigned function body) is covered by the outermost candidate, which is
         what distinguishes a read inside a dead store from one inside a live function declaration.
+        A read goes with its store only where *lists* can take that store out of a list.
         """
         candidates = set(stores)
         rhs_owner: dict[int, Binding] = {}
@@ -1075,6 +1101,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if isinstance(expr, JsAssignmentExpression) and expr.right is not None:
                     rhs_owner[id(expr.right)] = binding
                     rhs_names[id(stmt)] = frozenset(collect_identifier_names(expr.right))
+        in_a_list = {id(stmt) for stmt in all_statements if lists.owning_list(stmt) is not None}
         live: set[Binding] = set()
         removable: dict[int, bool] = {}
         rhs_verdicts: dict[int, bool] = {}
@@ -1088,7 +1115,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if expr.right is not None:
                     verdict = self._is_removable(expr.right, defunct_now)
                     removable[id(stmt)] = verdict
-                    rhs_verdicts[id(expr.right)] = verdict and owning_list(stmt) is not None
+                    rhs_verdicts[id(expr.right)] = verdict and id(stmt) in in_a_list
             grown = set(live)
             for binding in candidates - live:
                 for read in binding.reads:
@@ -1186,14 +1213,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if is_binding_site(node) or is_simple_assignment_target(node):
                 continue
             read_names.add(node.name)
+        lists = ListRemoval()
         removed: set[str] = set()
         for stmt, targets in candidates:
             if any(t in read_names for t in targets):
                 continue
-            if not _remove_from_parent(stmt):
+            if not lists.remove(stmt):
                 continue
             removed.update(targets)
-        if not removed:
+        if not lists.apply():
             return set()
         still_written = {
             node.name
@@ -1280,6 +1308,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if isinstance(p, JsMemberExpression) and p.property is node and not p.computed:
                 continue
             bare_refs.add(node.name)
+        lists = ListRemoval()
+        kept_for_effect: list[JsExpressionStatement] = []
         dead: set[str] = set()
         for name, stmts in write_stmts.items():
             if name in alias_reads or name in bare_refs:
@@ -1296,11 +1326,16 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     or expr.right is None
                     or self._is_removable(expr.right, defunct | dead)
                 ):
-                    if _remove_from_parent(stmt):
-                        self.mark_changed()
+                    lists.remove(stmt)
                 else:
-                    set_child(stmt, 'expression', expr.right)
-                    self.mark_changed()
+                    kept_for_effect.append(stmt)
+        if lists.apply():
+            self.mark_changed()
+        for stmt in kept_for_effect:
+            expr = stmt.expression
+            assert isinstance(expr, JsAssignmentExpression)
+            set_child(stmt, 'expression', expr.right)
+            self.mark_changed()
         return dead
 
     def _remove_dead_expressions(
@@ -1382,37 +1417,48 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         defunct.add(name)
                         extended = True
         statements = list(body)
+        answered_behind = [False] * len(statements)
+        for index in range(len(statements) - 1, 0, -1):
+            answered_behind[index - 1] = (
+                answered_behind[index] or definitely_answers_the_completion(statements[index])
+            )
+        lists = ListRemoval()
         prologue_intact = True
         for index, stmt in enumerate(statements):
-            if self._dead_expression_may_go(stmt, statements, index, prologue_intact, defunct):
-                _remove_from_parent(stmt)
-                self.mark_changed()
+            if self._dead_expression_may_go(
+                stmt, statements, index, answered_behind[index], prologue_intact, defunct
+            ):
+                lists.remove(stmt)
             else:
                 prologue_intact = prologue_intact and is_bare_string_statement(stmt)
         for name in defunct:
             if name in functions:
-                _remove_from_parent(functions[name])
-                self.mark_changed()
+                lists.remove(functions[name])
+        if lists.apply():
+            self.mark_changed()
 
     def _dead_expression_may_go(
         self,
         stmt: Statement,
         statements: list[Statement],
         index: int,
+        answered_behind: bool,
         prologue_intact: bool,
         defunct: set[str],
     ) -> bool:
         """
-        Whether *stmt*, a candidate from the sweep over *statements*, leaves the list without changing
-        what any statement behind it computes, answers, or declares. The value the list itself hands
-        back is one such thing — a bare read standing last is the list's completion — and it is
-        defended, so a computed value the program ends on stays. The one completion not defended is one
-        that spells `undefined`: a `void 0` a fold left where a call returned nothing carries no value a
-        reader wants, so when `preserve_script_return` does not ask for the end value it goes, clearing
-        the residue of a dropped wrapper while the program's own last value stays. *prologue_intact* is
-        whether the statements still standing ahead of it are all directives, which is what its removal
-        needs to promote the string literal behind it; a removed candidate does not disturb it, so the
-        sweep hands each statement a prefix the tree still has.
+        Whether *stmt*, a candidate from the sweep over *statements*, leaves the list without
+        changing what any statement behind it computes, answers, or declares. The value the list
+        itself hands back is one such thing — a bare read standing last is the list's completion —
+        and it is defended, so a computed value the program ends on stays. The one completion not
+        defended is one that spells `undefined`: a `void 0` a fold left where a call returned
+        nothing carries no value a reader wants, so when `preserve_script_return` does not ask for
+        the end value it goes, clearing the residue of a dropped wrapper while the program's own
+        last value stays. *answered_behind* is whether a statement behind it certainly supplies the
+        completion instead. *prologue_intact* is whether the statements still standing ahead of it
+        are all directives, which is what its removal needs to promote the string literal behind it;
+        a removed candidate does not disturb it, so the sweep hands each statement a prefix the tree
+        still has.
         """
         if not isinstance(stmt, JsExpressionStatement):
             return False
@@ -1420,10 +1466,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         if is_use_strict_directive(stmt):
             return False
-        if not any(
-            definitely_answers_the_completion(later)
-            for later in statements[index + 1:]
-        ):
+        if not answered_behind:
             if preserves_script_return(self.options):
                 return False
             answered, value = extract_literal_value(stmt.expression)

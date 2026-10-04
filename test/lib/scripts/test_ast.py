@@ -10,6 +10,7 @@ import unittest
 from dataclasses import dataclass, field
 from refinery.lib.scripts import (
     BodyEdit,
+    ListRemoval,
     Node,
     Script,
     Statement,
@@ -17,7 +18,9 @@ from refinery.lib.scripts import (
     _clone_node,
     _remove_from_parent,
     _replace_in_parent,
+    canonical,
     mutation_epoch,
+    owning_list,
     set_body,
     set_child,
     set_child_list,
@@ -40,6 +43,11 @@ class _Holder(Node):
 @dataclass(repr=False, eq=False)
 class _LateHolder(Node):
     items: list[Node] | None = None
+
+
+@dataclass(repr=False, eq=False)
+class _Clauses(Node):
+    clauses: list[tuple[Node, Node]] = field(default_factory=list)
 
 
 def _script(*names: str) -> Script:
@@ -393,6 +401,108 @@ class TestBodyEdit(unittest.TestCase):
         edit.splice(script.body[0], [])
         edit.apply()
         self.assertIs(script.body, held)
+
+
+class TestListRemoval(unittest.TestCase):
+    """
+    The batch answers what `owning_list` and `_remove_from_parent` answer for every place a node can
+    stand, while it edits each list it removes from only once.
+    """
+
+    @staticmethod
+    def _places() -> tuple[Node, dict[str, Node]]:
+        listed = _Leaf(name='listed')
+        held = _Leaf(name='held')
+        paired = _Leaf(name='paired')
+        clauses = _Clauses(clauses=[(paired, _Leaf(name='other'))])
+        holder = _Holder(child=held, items=[_Leaf(name='before'), listed, clauses])
+        places = {
+            'listed': listed,
+            'held': held,
+            'paired': paired,
+            'orphan': _Leaf(name='orphan'),
+        }
+        return holder, places
+
+    def test_the_list_holding_a_node_is_the_one_owning_list_names(self):
+        _, places = self._places()
+        lists = ListRemoval()
+        for name, node in places.items():
+            with self.subTest(name):
+                self.assertEqual(lists.owning_list(node), owning_list(node))
+
+    def test_a_removal_succeeds_exactly_where_one_from_the_parent_does(self):
+        for name in ('listed', 'held', 'paired', 'orphan'):
+            with self.subTest(name):
+                batched_tree, batched = self._places()
+                direct_tree, direct = self._places()
+                lists = ListRemoval()
+                self.assertEqual(lists.remove(batched[name]), _remove_from_parent(direct[name]))
+                lists.apply()
+                self.assertEqual(canonical(batched_tree), canonical(direct_tree))
+
+    def test_several_removals_from_one_list_advance_the_counter_once(self):
+        script = _script('a', 'b', 'c', 'd')
+        before = tree_version(script)
+        lists = ListRemoval()
+        self.assertTrue(lists.remove(script.body[0]))
+        self.assertTrue(lists.remove(script.body[2]))
+        self.assertEqual(_names(script), ['a', 'b', 'c', 'd'])
+        self.assertTrue(lists.apply())
+        self.assertEqual(_names(script), ['b', 'd'])
+        self.assertEqual(tree_version(script), before + 1)
+
+    def test_removals_from_two_lists_edit_each_list(self):
+        inner = _script('x', 'y')
+        outer = _Holder(items=[_Leaf(name='a'), inner, _Leaf(name='b')])
+        lists = ListRemoval()
+        lists.remove(inner.body[0])
+        lists.remove(outer.items[0])
+        self.assertTrue(lists.apply())
+        self.assertEqual(_names(inner), ['y'])
+        self.assertIs(outer.items[0], inner)
+        self.assertEqual(len(outer.items), 2)
+
+    def test_a_batch_with_nothing_to_remove_leaves_the_counter_alone(self):
+        script = _script('a')
+        before = tree_version(script)
+        lists = ListRemoval()
+        self.assertFalse(lists.remove(_Leaf(name='orphan')))
+        self.assertFalse(lists.apply())
+        self.assertEqual(tree_version(script), before)
+
+    def test_an_edit_by_another_route_is_refused_at_apply(self):
+        script = _script('a', 'b', 'c')
+        lists = ListRemoval()
+        lists.remove(script.body[0])
+        _remove_from_parent(script.body[1])
+        with self.assertRaises(RuntimeError):
+            lists.apply()
+
+    def test_an_edit_by_another_route_is_refused_at_the_next_question(self):
+        script = _script('a', 'b', 'c')
+        lists = ListRemoval()
+        lists.remove(script.body[0])
+        set_child_list(script, 'body', [script.body[2]])
+        with self.assertRaises(RuntimeError):
+            lists.owning_list(script.body[0])
+
+    def test_a_question_about_a_second_tree_is_refused(self):
+        first = _script('a')
+        second = _script('b')
+        lists = ListRemoval()
+        lists.remove(first.body[0])
+        with self.assertRaises(RuntimeError):
+            lists.remove(second.body[0])
+
+    def test_an_applied_batch_serves_the_edited_tree(self):
+        script = _script('a', 'b', 'c')
+        lists = ListRemoval()
+        lists.remove(script.body[0])
+        lists.apply()
+        self.assertTrue(lists.remove(script.body[0]))
+        self.assertTrue(lists.apply())
+        self.assertEqual(_names(script), ['c'])
 
 
 class TestChildrenMemo(unittest.TestCase):

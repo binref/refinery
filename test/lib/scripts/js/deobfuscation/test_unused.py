@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 import unittest
 
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
@@ -2890,3 +2891,53 @@ class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
+    """
+    Each program below grows by repeating the same lines, so a removal whose time grows with the
+    program takes about eight times as long for eight times the lines.
+    """
+
+    @staticmethod
+    def _fastest_of_three(source: str) -> tuple[float, str]:
+        # The fastest of three runs is compared, so a pause of the machine during one run cannot
+        # decide the test.
+        asts = [JsParser(source).parse() for _ in range(3)]
+        times: list[float] = []
+        for ast in asts:
+            start = time.perf_counter()
+            JsUnusedCodeRemoval().visit(ast)
+            times.append(time.perf_counter() - start)
+        return min(times), JsSynthesizer().convert(asts[0])
+
+    def test_live_stores_to_two_reused_names_are_kept_in_time_that_grows_with_the_program(self):
+        def source(count: int) -> str:
+            lines = ['var o = {};', 'var a, b;']
+            lines.extend(F'a = "p{i}"; b = a; o[b] = {i};' for i in range(count))
+            lines.append('console.log(o);')
+            return '\n'.join(lines)
+
+        small, large = source(1000), source(8000)
+        small_time, _ = self._fastest_of_three(small)
+        large_time, output = self._fastest_of_three(large)
+        self.assertEqual(output, JsSynthesizer().convert(JsParser(large).parse()))
+        # Work growing with the square of the program takes up to 64 times as long; the bound is
+        # twice the size ratio, about 17.
+        self.assertLess(large_time / small_time, 2 * len(large) / len(small))
+
+    def test_dead_stores_between_calls_are_removed_in_time_that_grows_with_the_function(self):
+        def source(count: int) -> str:
+            lines = ['(function () {', 'var x;']
+            lines.extend(F'SINK({i}); x = {i};' for i in range(count))
+            lines.append('})();')
+            return '\n'.join(lines)
+
+        small, large = source(1000), source(8000)
+        small_time, _ = self._fastest_of_three(small)
+        large_time, output = self._fastest_of_three(large)
+        calls = ''.join(F'  SINK({i});\n' for i in range(8000))
+        self.assertEqual(output, F'(function() {{\n{calls}}})();')
+        # Work growing with the square of the function takes up to 64 times as long; the bound is
+        # twice the size ratio, about 17.
+        self.assertLess(large_time / small_time, 2 * len(large) / len(small))

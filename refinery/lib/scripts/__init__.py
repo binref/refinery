@@ -922,6 +922,97 @@ class BodyEdit:
         return True
 
 
+class ListRemoval:
+    """
+    A batch of removals from whichever child lists hold the removed nodes, each list that loses an
+    entry installed once.
+
+    `_remove_from_parent` finds the list holding a node by searching every list of the parent, and
+    removes the node on the spot. A pass that removes many statements from one long list therefore
+    scans that list once per removal and advances the mutation counter once per removal. Here the
+    lists of a parent are indexed by identity on the first question about one of its children, and
+    each list that lost an entry is installed through one `BodyEdit` when `apply` runs. Until then
+    the tree is untouched, so a pass keeps asking its questions about the tree it decides on.
+
+    The index describes the tree as it stood when it was built, so the batch serves one tree, and
+    any answer or `apply` after an edit that reached the tree by another route raises instead of
+    answering for lists that may have changed since.
+    """
+
+    def __init__(self):
+        self._root: Node | None = None
+        self._version = 0
+        #: Each parent is kept beside its index, and not only its `id`, for the reason `BodyEdit`
+        #: keeps its spliced-out nodes: a recycled `id` would answer for whatever took the address.
+        self._indexes: dict[int, tuple[Node, dict[int, str]]] = {}
+        self._edits: dict[tuple[int, str], BodyEdit] = {}
+
+    def _check_unmoved(self) -> None:
+        if self._root is not None and tree_version(self._root) != self._version:
+            raise RuntimeError('the tree was edited while a list removal batch was pending')
+
+    def _index(self, parent: Node) -> dict[int, str]:
+        root = tree_root(parent)
+        if self._root is None:
+            self._root = root
+            self._version = tree_version(root)
+        elif root is not self._root:
+            raise RuntimeError('a list removal batch was asked about a second tree')
+        index: dict[int, str] = {}
+        for name, value in vars(parent).items():
+            if name in _VARS_SKIP or not isinstance(value, list):
+                continue
+            for item in value:
+                index.setdefault(id(item), name)
+        self._indexes[id(parent)] = parent, index
+        return index
+
+    def owning_list(self, node: Node) -> tuple[Node, str] | None:
+        """
+        The parent and attribute name of the child list `node` sits in, which is the answer
+        `owning_list` gives for the tree as it stands.
+        """
+        parent = node.parent
+        if parent is None:
+            return None
+        self._check_unmoved()
+        try:
+            _, index = self._indexes[id(parent)]
+        except KeyError:
+            index = self._index(parent)
+        if (name := index.get(id(node))) is None:
+            return None
+        return parent, name
+
+    def remove(self, node: Node) -> bool:
+        """
+        Register `node` for removal from the child list that holds it. The answer is the one
+        `_remove_from_parent` gives: whether a list holds the node at all.
+        """
+        if (held := self.owning_list(node)) is None:
+            return False
+        parent, name = held
+        key = id(parent), name
+        if (edit := self._edits.get(key)) is None:
+            edit = self._edits[key] = BodyEdit(parent, name)
+        edit.splice(node, [])
+        return True
+
+    def apply(self) -> bool:
+        """
+        Install every list that lost an entry and return whether any did. The batch is empty
+        afterwards and indexes the tree afresh on its next question.
+        """
+        self._check_unmoved()
+        changed = False
+        for edit in self._edits.values():
+            changed = edit.apply() or changed
+        self._root = None
+        self._indexes.clear()
+        self._edits.clear()
+        return changed
+
+
 _N = TypeVar('_N', bound='Node')
 
 
