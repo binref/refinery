@@ -238,6 +238,16 @@ class TestFraming(TestBase):
             with self.subTest(name):
                 self.assertEqual(self._alive_while_producing(pipeline), [[], [], [], []])
 
+    def test_merge_keeps_only_its_first_piece_until_the_second_arrives(self):
+        nested = Chunk(B'', path=[0, 0], view=[True, True])
+        pipelines = {
+            'squeezed in a frame': lambda source: _drain([B''] | _configured(source(), 1, squeeze=True)),
+            'frame closed into its parent': lambda source: _drain([nested] | _configured(source(), -1)),
+        }
+        for name, pipeline in pipelines.items():
+            with self.subTest(name):
+                self.assertEqual(self._alive_while_producing(pipeline), [[], [0], [], []])
+
     def test_unit_output_is_freed_when_its_consumer_drops_it(self):
         from refinery import Unit
         lifetimes = _Lifetimes()
@@ -255,11 +265,14 @@ class TestFraming(TestBase):
 
     def test_framed_output_reaches_its_consumer_without_the_original(self):
         from refinery import Unit, nop
+        nested = Chunk(B'', path=[0, 0], view=[True, True])
         pipelines = {
             'frame opened': lambda source, single: B'' | _configured(source(), 1),
             'frame kept': lambda source, single: [B''] | _configured(source(), 1),
             'next unit in a frame': lambda source, single: B'' | source()[nop()],
             'one output for each input': lambda source, single: [B''] * 4 | _configured(single(), 1),
+            'squeezed in a frame': lambda source, single: [B''] | _configured(source(), 1, squeeze=True),
+            'frame closed into its parent': lambda source, single: [nested] | _configured(source(), -1),
         }
         for name, pipeline in pipelines.items():
             with self.subTest(name):
@@ -279,6 +292,20 @@ class TestFraming(TestBase):
                         lifetimes.note()
                 self.assertTrue(lifetimes.notes)
                 self.assertEqual(lifetimes.notes, [[]] * len(lifetimes.notes))
+
+    def test_closing_a_frame_merges_a_repeated_chunk_correctly(self):
+        self.assertEqual(load_pipeline('emit AB [[| rep 3 ]| nop ]') | bytes, B'ABABAB')
+
+    def test_chunk_emitted_repeatedly_can_be_squeezed_in_a_frame(self):
+        from refinery import Unit
+
+        class thrice(Unit):
+            def process(self, data):
+                yield data
+                yield data
+                yield data
+
+        self.assertEqual([B'AB'] | thrice()[:] | [bytes], [B'ABABAB'])
 
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')

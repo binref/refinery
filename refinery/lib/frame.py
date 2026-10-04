@@ -132,7 +132,6 @@ from typing import (
 )
 
 from refinery.lib.meta import LazyMetaOracle
-from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import HandOver
 from refinery.lib.types import buf
 
@@ -714,6 +713,29 @@ class Framed:
             yield from itertools.chain.from_iterable(map(self._results, self._apply_filter()))
 
     @staticmethod
+    def _merged(pieces: Iterable[Chunk]) -> Iterator[Chunk]:
+        """
+        Concatenates the given chunks into at most one chunk, which keeps the metadata that all of
+        them share. A single chunk is passed on as it is. Otherwise, the result is a new chunk,
+        because the unit that produced the pieces may still use them, and the same chunk may occur
+        more than once.
+        """
+        it = iter(pieces)
+        for merged in it:
+            break
+        else:
+            return HandOver(None)
+        copied = False
+        for piece in it:
+            if not copied:
+                merged = merged.copy()
+                copied = True
+            merged.intersect(piece)
+            merged.extend(piece)
+            del piece
+        return HandOver(merged)
+
+    @staticmethod
     def _concatenated(pieces: Iterable[Chunk]) -> bytearray:
         output = bytearray()
         for piece in pieces:
@@ -737,21 +759,10 @@ class Framed:
             chunk._meta.inherit(meta)
             return chunk.truncate(scope)
 
-        if not self.squeeze:
-            yield from map(inherit, self.action(parent))
-        else:
-            it = self.action(parent)
-            for header in it:
-                buffer = MemoryFile(header)
-                buffer.seek(len(header))
-                break
-            else:
-                return
-            for item in it:
-                header.intersect(item)
-                buffer.write(item)
-            inherit(header)
-            yield header
+        outputs = self.action(parent)
+        if self.squeeze:
+            outputs = self._merged(outputs)
+        yield from map(inherit, outputs)
 
     def _generate_bytes(self, data: Chunk):
         if not self.squeeze:
@@ -786,16 +797,7 @@ class Framed:
             yield from map(Chunk.truncate, self._all_results())
         else:
             yield generate_frame_header(scope)
-            trunk = None
             check = scope + 1
-            for result in self._all_results():
-                if trunk is None:
-                    trunk = result
-                elif result.path[:check] == trunk.path[:check]:
-                    trunk.intersect(result)
-                    trunk.extend(result)
-                else:
-                    yield trunk.pack(nesting, 0, serialized)
-                    trunk = result
-            if trunk is not None:
-                yield trunk.pack(nesting, 0, serialized)
+            groups = itertools.groupby(self._all_results(), lambda result: result.path[:check])
+            merged = itertools.chain.from_iterable(self._merged(group) for _, group in groups)
+            yield from map(Chunk.pack, merged, repeat(nesting), repeat(0), repeat(serialized))
