@@ -125,6 +125,21 @@ class TestLogger(unittest.TestCase):
             other.log_level = level
         self.assertEqual(next(running), B'B')
 
+    def test_suspended_run_keeps_its_log_level(self):
+        from refinery import chop
+        from refinery.units import LogLevel
+        unit = chop(1)
+        level = unit.log_level
+        try:
+            unit.log_level = LogLevel.INFO
+            running = B'ABC' | unit
+            self.assertEqual(next(running), B'A')
+            chop(1).log_detach()
+            self.assertEqual(next(running), B'B')
+            self.assertEqual(unit.log_level, LogLevel.INFO)
+        finally:
+            unit.log_level = level
+
 
 class TestEntry(unittest.TestCase):
 

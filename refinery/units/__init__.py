@@ -2068,6 +2068,8 @@ class Unit(UnitBase, abstract=True):
             data = data
 
         self.log_level = lvl
+        logger = cls.logger
+        level = logger.level
 
         try:
             cls._lock_logger()
@@ -2083,6 +2085,8 @@ class Unit(UnitBase, abstract=True):
             finally:
                 cls._unlock_logger()
             while True:
+                if logger.level != level:
+                    logger.setLevel(level)
                 cls._lock_logger()
                 try:
                     out = next(it)
