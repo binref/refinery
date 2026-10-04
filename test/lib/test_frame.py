@@ -1,5 +1,7 @@
 import copy
+import gc
 import io
+import tracemalloc
 
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
@@ -316,3 +318,32 @@ class TestChunk(TestBase):
     def test_view_path_length_mismatch(self):
         with self.assertRaises(ValueError):
             Chunk(b'Data', path=[0, 1], view=[True])
+
+    def _memory_kept_by_a_dropped_chunk(self, *keys: str) -> int:
+        data = bytes(0x100000)
+        warmup = Chunk(data)
+        for key in keys:
+            warmup.meta[key]
+        del warmup
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            start, _ = tracemalloc.get_traced_memory()
+            chunk = Chunk(data)
+            for key in keys:
+                chunk.meta[key]
+            del chunk
+            end, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+            gc.enable()
+        return end - start
+
+    def test_dropped_chunk_is_freed_without_the_cycle_collector(self):
+        self.assertLess(self._memory_kept_by_a_dropped_chunk('sha256'), 0x100000 // 16)
+
+    def test_metadata_of_a_freed_chunk_refuses_to_derive_values(self):
+        meta = Chunk(B'data').meta
+        with self.assertRaises(RuntimeError):
+            meta['sha256']

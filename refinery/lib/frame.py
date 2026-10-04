@@ -208,6 +208,7 @@ class Chunk(bytearray):
         '_fill_batch',
         'temp',
         'uuid',
+        '__weakref__',
     )
 
     def __init__(
@@ -248,7 +249,7 @@ class Chunk(bytearray):
         self._fill_scope: bool | None = fill_scope
         self._fill_batch: bool | None = fill_batch
 
-        self._meta = m = LazyMetaOracle(self, scope=self.scope, seed=seed)
+        self._meta = m = LazyMetaOracle(self, scope=self.scope, seed=seed, owned=True)
         if meta is not None:
             m.update(meta)
 
@@ -325,8 +326,6 @@ class Chunk(bytearray):
         Every chunk can contain a dictionary of arbitrary metadata. Further details about this data
         are available in the module-level documetnation of `refinery.lib.meta`.
         """
-        if self._meta.chunk is not self:
-            raise RuntimeError('meta dictionary carries invalid parent reference')
         return self._meta
 
     @property

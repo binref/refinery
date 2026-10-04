@@ -119,6 +119,7 @@ import itertools
 import os
 import re
 import string
+import weakref
 
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, MutableMapping
@@ -516,7 +517,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     corresponding value on a chunk of binary input data.
     """
 
-    chunk: buf
+    _chunk: buf | weakref.ref[buf]
     cache: dict[str, str | int | float]
     index: int | None
 
@@ -524,8 +525,14 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     current: dict[str, Any]
     updated: dict[str, bool]
 
-    def __init__(self, chunk: buf, scope: int = 1, seed: dict[str, list[tuple[bool, Any]]] | None = None):
-        self.chunk = chunk
+    def __init__(
+        self,
+        chunk: buf,
+        scope: int = 1,
+        seed: dict[str, list[tuple[bool, Any]]] | None = None,
+        owned: bool = False,
+    ):
+        self._chunk = weakref.ref(chunk) if owned else chunk
         self.cache = {}
         self.index = None
         self.scope = scope
@@ -559,6 +566,21 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
             self.history = seed
         else:
             self.history = {}
+
+    @property
+    def chunk(self) -> buf:
+        """
+        The data that this metadata describes. When the metadata belongs to a chunk, it refers to that
+        chunk weakly, so the chunk has to be kept for as long as values are derived from its data.
+        """
+        chunk = self._chunk
+        if isinstance(chunk, weakref.ref):
+            if (chunk := chunk()) is None:
+                raise RuntimeError(
+                    'The chunk that this metadata belongs to no longer exists; keep a reference to the chunk to '
+                    'derive values from its data.'
+                )
+        return chunk
 
     def update(self, other=(), /, **kwds):
         if type(other) is LazyMetaOracle:
