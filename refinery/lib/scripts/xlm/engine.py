@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import dataclasses
+import hashlib
 import time
 
 from typing import Any, Iterator, NamedTuple, Protocol
@@ -25,6 +26,7 @@ from refinery.lib.excel.formula.model import (
     XlString,
 )
 from refinery.lib.scripts import TREE_RECURSION_DEPTH, BodyEdit, set_body, set_child, set_value
+from refinery.lib.scripts.xlm.blocks import XlmBlock, marker_of, pair_blocks
 from refinery.lib.scripts.xlm.commands import severity
 from refinery.lib.scripts.xlm.environment import XlmEnvironment
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
@@ -33,12 +35,12 @@ from refinery.lib.scripts.xlm.memory import XlmFiles, XlmMemory
 from refinery.lib.scripts.xlm.model import XlmCell
 from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.references import (
+    XlmArrival,
     XlmCursor,
     XlmFrame,
     XlmLoop,
     XlmReturnSlot,
     XlmSnapshot,
-    expand_range,
     resolve_reference,
 )
 from refinery.lib.scripts.xlm.trace import XlmSeverity, XlmStatus, XlmStep
@@ -70,6 +72,15 @@ _SUBROUTINE_DEPTH_LIMIT = 64
 #: answers the value the cell was stored with, which bounds a formula whose references fan out
 #: over cells that read each other.
 _READ_BUDGET = 100_000
+
+
+#: How many steps the loop detector leaves between two computations of the state digest, so
+#: that a window that repeats keeps the run cheap until a comparison can tell frozen from
+#: moving.
+_DIGEST_STEPS = 1000
+
+#: How many addresses a run observes before its window of the last ten addresses starts.
+_WINDOW_WARMUP = 20
 
 
 class _Exhausted(Exception):
@@ -351,6 +362,7 @@ class XlmEngine:
         self.aliases: dict[str, str] = {}
         self.indent_level = 0
         self.indent_current_line = False
+        self.arrival = XlmArrival.JUMP
         self.now_count = 0
         self.char_errors = 0
         self.iserror_at: XlmCursor | None = None
@@ -442,7 +454,7 @@ class XlmEngine:
             and id(cell) not in self._evaluating
             and self._reads < _READ_BUDGET
         ):
-            self._check_deadline()
+            self.check_deadline()
             self._reads += 1
             self._evaluating.add(id(cell))
             try:
@@ -492,7 +504,7 @@ class XlmEngine:
         handler an expression reads it by, where it has one. Once the deadline of the run
         passed, no call answers.
         """
-        self._check_deadline()
+        self.check_deadline()
         name = callee_name(call)
         if self.ignore_processing and name not in _LOOP_COMMANDS:
             return XlmOutcome(
@@ -586,6 +598,23 @@ class XlmEngine:
             return None
         return XlmCursor(cursor.sheet, row, cursor.col)
 
+    def column_blocks(self, cursor: XlmCursor) -> dict[int, XlmBlock]:
+        """
+        The block structure of the column of the cursor: every marker row mapped to the block
+        `IF` it belongs to, paired over the live formula rows of the column, so that cells the
+        program wrote at run time take part in the pairing.
+        """
+        sheet = cursor.sheet.lower()
+        markers: list[tuple[int, str]] = []
+        for row in self._index.formula_rows.get(sheet, {}).get(cursor.col, ()):
+            cell = self._index.find(sheet, row, cursor.col)
+            if cell is None or cell.formula is None:
+                continue
+            marker = marker_of(cell.formula)
+            if marker is not None:
+                markers.append((row, marker))
+        return pair_blocks(markers)
+
     def argument_reference(
         self,
         call: XlFunctionCall,
@@ -637,13 +666,37 @@ class XlmEngine:
 
     def range_cells(self, corners: tuple[XlmReference, XlmReference]) -> Iterator[XlmReference]:
         """
-        The addresses of the cells a range spans that the workbook holds, in row-major order.
+        The addresses of the cells a range spans that the workbook holds, in row-major order:
+        the cells the index holds on the sheet of the range, the cells of that sheet where it
+        is a worksheet, and the failed writes inside it, which read as the values the program
+        left unfinished. The walk counts the cells the workbook holds, not the coordinates the
+        rectangle spans.
         """
-        for reference in expand_range(*corners):
-            if reference.sheet is None:
-                continue
-            if self._find_cell(reference.sheet, reference.row, reference.col) is not None:
-                yield reference
+        first, last = corners
+        sheet = first.sheet
+        if sheet is None:
+            return
+        key = sheet.lower()
+        row_min = min(first.row, last.row)
+        row_max = max(first.row, last.row)
+        col_min = min(first.col, last.col)
+        col_max = max(first.col, last.col)
+        held = self._index.cells.get(key, {})
+        worksheet = self.view.worksheet(sheet)
+        coordinates = set(held) | set(worksheet or ())
+        coordinates.update(
+            (reference.row, reference.col)
+            for reference in self.failed_writes
+            if (reference.sheet or '').lower() == key
+        )
+        inside = (
+            coordinate
+            for coordinate in coordinates
+            if row_min <= coordinate[0] <= row_max
+            and col_min <= coordinate[1] <= col_max
+        )
+        for row, col in sorted(inside):
+            yield XlmReference(sheet, row, col)
 
     def snapshot(self) -> XlmSnapshot:
         """
@@ -656,6 +709,39 @@ class XlmEngine:
             tuple(loop.copy() for loop in self.while_stack),
             self.active_cell,
         )
+
+    def state_digest(self) -> bytes:
+        """
+        The digest of the whole state a run can observe: the cells its index holds, with the
+        value each holds and the formula it spells, the entries of the name table, the
+        registered aliases, the failed-write marks, the content of every open file, every
+        region of memory, and the cell the program selected. A run that returns to the digest
+        it anchored changes nothing the program can see.
+        """
+        parts: list[str] = []
+        for sheet in sorted(self._index.cells):
+            cells = self._index.cells[sheet]
+            for row, col in sorted(cells):
+                cell = cells[(row, col)]
+                held = self._index.held.get(id(cell))
+                value = held.text if held is not None else repr(cell.value)
+                formula = cell.formula
+                spelling = synthesize_formula(formula) if formula is not None else ''
+                parts.append(F'{sheet}!{row}!{col}={value}|{spelling}')
+        for entry in self.view.names.entries():
+            formula = entry.formula
+            spelling = synthesize_formula(formula) if formula is not None else ''
+            parts.append(F'name:{entry.name.lower()}@{entry.sheet}={spelling}')
+        for name in sorted(self.aliases):
+            parts.append(F'alias:{name}={self.aliases[name]}')
+        for reference in sorted(self.failed_writes):
+            parts.append(F'failed:{reference.a1()}')
+        for name, content in self.files.snapshot():
+            parts.append(F'file:{name}={content}')
+        for base, data in self.memory.snapshot():
+            parts.append(F'memory:{base}={len(data)}:{data.hex()}')
+        parts.append(F'active:{self.active_cell}')
+        return hashlib.sha256('\n'.join(parts).encode()).digest()
 
     def rollback(self, snapshot: XlmSnapshot) -> None:
         """
@@ -853,21 +939,25 @@ class XlmEngine:
         step.
         """
         observed: list[tuple[str, int, int]] = []
-        windows: set[tuple[tuple[str, int, int], ...]] = set()
+        anchors: dict[tuple[tuple[str, int, int], ...], bytes] = {}
+        digest_step = 0
         buffer: list[XlmStep] = []
         branches = self.branch_stack
         indent = 0 if caller is None else self.indent_level
         self.branch_stack = [XlmFrame(anchor, None, None, indent, '')]
         self._buffers.append(buffer)
         cursor = anchor
+        self.arrival = XlmArrival.JUMP
         try:
             while self.branch_stack:
                 frame = self.branch_stack.pop()
                 if frame.snapshot is not None:
                     self.rollback(frame.snapshot)
+                    anchors.clear()
                 cursor = frame.cursor
                 node = frame.branch
                 self.indent_level = frame.indent
+                self.arrival = XlmArrival.RESUME
                 stack_record = True
                 while cursor is not None:
                     self._steps += 1
@@ -901,11 +991,16 @@ class XlmEngine:
                     text = outcome.value.text or ''
                     if not self.while_stack and text != 'NEXT':
                         observed.append((cursor.sheet.lower(), cursor.row, cursor.col))
-                        if len(observed) >= 20:
+                        if len(observed) >= _WINDOW_WARMUP:
                             window = tuple(observed[-10:])
-                            if window in windows:
-                                break
-                            windows.add(window)
+                            if window in anchors:
+                                if self._steps - digest_step >= _DIGEST_STEPS:
+                                    digest_step = self._steps
+                                    if self.state_digest() == anchors[window]:
+                                        break
+                            else:
+                                anchors[window] = self.state_digest()
+                                digest_step = self._steps
                     if status is not XlmStatus.IGNORED:
                         self.write_value(cell, outcome.value)
                     if stack_record:
@@ -933,11 +1028,13 @@ class XlmEngine:
                     elif self._halted:
                         self._halted = False
                         break
-                    self._check_deadline()
+                    self.check_deadline()
                     if outcome.jump is not None:
                         cursor = outcome.jump
+                        self.arrival = XlmArrival.JUMP
                     elif status in _FALL_THROUGH:
                         cursor = self.next_formula_cell(cursor)
+                        self.arrival = XlmArrival.FALL
                     else:
                         break
                     node = None
@@ -988,7 +1085,12 @@ class XlmEngine:
     def _expired(self) -> bool:
         return self.deadline is not None and time.monotonic() > self.deadline
 
-    def _check_deadline(self) -> None:
+    def check_deadline(self) -> None:
+        """
+        Raise the exhaustion of the run's deadline, for the walks a command takes inside one
+        step, so that a walk over a rectangle the workbook barely fills still answers to the
+        deadline of the run.
+        """
         if self._expired():
             raise _Exhausted('the run exceeded its timeout')
 

@@ -12,7 +12,12 @@ from refinery.lib.scripts.xlm.environment import XlmEnvironment
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.model import XlmCell, XlmMacrosheet, build_xlm_model
 from refinery.lib.scripts.xlm.names import XlmNameEntry, XlmNameTable
-from refinery.lib.scripts.xlm.references import XlmCursor, expand_range, resolve_reference
+from refinery.lib.scripts.xlm.references import (
+    XlmArrival,
+    XlmCursor,
+    expand_range,
+    resolve_reference,
+)
 from refinery.lib.scripts.xlm.trace import XlmStatus, XlmStep, visible_steps
 from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
@@ -20,6 +25,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmValue,
     apply_binary,
     concat,
+    condition,
     unwrap_literal,
     wrap_literal,
 )
@@ -27,6 +33,7 @@ from refinery.lib.scripts.xlm.view import XlmView
 
 __all__ = [
     'XLM_COMMANDS',
+    'XlmArrival',
     'XlmCell',
     'XlmCursor',
     'XlmEngine',
@@ -44,6 +51,7 @@ __all__ = [
     'apply_binary',
     'build_xlm_model',
     'concat',
+    'condition',
     'deobfuscate',
     'evaluate_expression',
     'expand_range',

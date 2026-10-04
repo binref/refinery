@@ -16,12 +16,12 @@ from refinery.lib.excel.formula.model import (
     XlR1C1Reference,
 )
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
-from refinery.lib.scripts.xlm.references import XlmCursor, expand_range, resolve_reference
+from refinery.lib.scripts.xlm.references import XlmCursor, resolve_reference
 from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmReference,
     XlmValue,
-    holds,
+    condition,
     is_number,
 )
 
@@ -92,7 +92,10 @@ def _address(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
         argument = evaluate_expression(engine, call.arguments[3], cursor)
         if argument.partial:
             return _partial(spelled)
-        a1 = holds(argument)
+        truth = condition(argument)
+        if isinstance(truth, XlmValue):
+            return XlmOutcome(value=truth)
+        a1 = truth
     if len(call.arguments) >= 5:
         argument = evaluate_expression(engine, call.arguments[4], cursor)
         if argument.partial:
@@ -130,18 +133,17 @@ def _hlookup(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
     if pattern == '*':
         pattern = '.*'
     first, last = corners
-    start = XlmReference(
-        first.sheet,
-        first.row + int(float(index.value)) - 1,
-        first.col,
-    )
-    if start.row > last.row:
+    answer_row = first.row + int(float(index.value)) - 1
+    if answer_row > last.row:
         return _partial(spelled)
     try:
-        for reference in expand_range(start, last):
+        for reference in engine.range_cells(corners):
+            if reference.row != first.row:
+                break
             value = engine.read_reference(reference, cursor).value
             if value is not None and value != '' and re.match(pattern, str(value)):
-                return XlmOutcome(value=XlmValue(value=value, text=str(value)))
+                answer = XlmReference(first.sheet, answer_row, reference.col)
+                return XlmOutcome(value=engine.read_reference(answer, cursor))
     except re.error:
         return _partial(spelled)
     return _partial(spelled)
@@ -198,11 +200,7 @@ def _counta(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
     corners = _corners(engine, call.arguments[0], cursor)
     if corners is None:
         return _partial(spelled)
-    count = 0
-    for reference in expand_range(*corners):
-        value = engine.read_reference(reference, cursor).value
-        if value is not None and value != '':
-            count += 1
+    count = sum(1 for _ in engine.range_cells(corners))
     return XlmOutcome(value=XlmValue(value=count))
 
 

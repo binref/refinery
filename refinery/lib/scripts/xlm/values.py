@@ -23,9 +23,6 @@ _DATETIME_FORMATS = (
     '%H:%M:%S',
 )
 
-_TRUE_WORDS = frozenset(('y', 'yes', 't', 'true', 'on', '1'))
-_FALSE_WORDS = frozenset(('n', 'no', 'f', 'false', 'off', '0'))
-
 
 class XlmReference(NamedTuple):
     """
@@ -62,20 +59,30 @@ def is_number(value: Any) -> bool:
     return math.isfinite(number)
 
 
-def holds(value: XlmValue) -> bool:
+def condition(value: XlmValue) -> bool | XlmValue:
     """
-    Whether a value holds as a condition, as every command that reads a truth value reads it:
-    the spellings of the two truth values are theirs, a number holds when it is not zero, and
-    anything else is taken as it is.
+    The truth of a value, as every command that reads a condition reads it: the spellings of the
+    two truth values are theirs, a number holds when it is not zero — by its type, so the text
+    of a number holds nothing — a value that holds nothing answers `FALSE`, and a value that is
+    an error value is that error. Any other text is the `#VALUE!` error Excel answers for a
+    condition that spells no truth value.
     """
-    spelled = str(value.value).lower()
-    if spelled in _TRUE_WORDS:
-        return True
-    if spelled in _FALSE_WORDS:
+    if value.error:
+        return value
+    data = value.value
+    if data is None or data == '':
         return False
-    if is_number(value.value):
-        return float(value.value) != 0
-    return bool(value.value)
+    if isinstance(data, bool):
+        return data
+    if isinstance(data, (int, float)):
+        return data != 0
+    if isinstance(data, str):
+        lowered = data.lower()
+        if lowered == 'true':
+            return True
+        if lowered == 'false':
+            return False
+    return error_value('#VALUE!')
 
 
 def unwrap_literal(text: str) -> str:
@@ -113,6 +120,8 @@ def wrap_literal(data: Any, must_wrap: bool = False) -> str:
     quotes keep their own spelling — the quoted text only while the caller does not insist on
     quotes — and every other text is quoted with its quotes doubled.
     """
+    if isinstance(data, bool):
+        return 'TRUE' if data else 'FALSE'
     if is_number(data) or (
         isinstance(data, str)
         and len(data) > 1
@@ -123,7 +132,7 @@ def wrap_literal(data: Any, must_wrap: bool = False) -> str:
         return str(data)
     if isinstance(data, float) and data.is_integer():
         return str(int(data))
-    if isinstance(data, (int, bool)):
+    if isinstance(data, int):
         return str(data)
     return F'"{str(data).replace(chr(34), chr(34) * 2)}"'
 
@@ -133,6 +142,8 @@ def _default_text(value: Any) -> str:
         return ''
     if isinstance(value, XlmReference):
         return value.a1()
+    if isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
     if isinstance(value, str):
         return wrap_literal(value, must_wrap=True)
     if isinstance(value, float) and value.is_integer():
@@ -170,7 +181,12 @@ class XlmValue:
 
     def __post_init__(self):
         if self.text is None:
-            self.text = str(self.value) if self.partial else _default_text(self.value)
+            if isinstance(self.value, bool):
+                self.text = 'TRUE' if self.value else 'FALSE'
+            elif self.partial:
+                self.text = str(self.value)
+            else:
+                self.text = _default_text(self.value)
         elif not isinstance(self.value, str) and is_number(self.text):
             number = float(self.text)
             self.text = str(int(number) if number.is_integer() else number)

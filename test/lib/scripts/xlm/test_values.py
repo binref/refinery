@@ -6,9 +6,11 @@ from refinery.lib.scripts.xlm import (
     XlmValue,
     apply_binary,
     concat,
+    condition,
     unwrap_literal,
     wrap_literal,
 )
+from refinery.lib.scripts.xlm.values import error_value
 from test import TestBase
 
 
@@ -48,7 +50,7 @@ class TestValueText(TestBase):
         self.assertEqual(XlmValue(value=12.0).text, '12')
         self.assertEqual(XlmValue(value=0.5).text, '0.5')
         self.assertEqual(XlmValue(value='x').text, '"x"')
-        self.assertEqual(XlmValue(value=True).text, 'True')
+        self.assertEqual(XlmValue(value=True).text, 'TRUE')
 
     def test_a_given_numeric_text_is_normalized(self):
         self.assertEqual(XlmValue(text='1e3').text, '1000')
@@ -59,6 +61,35 @@ class TestValueText(TestBase):
     def test_unwrap_answers_the_text_without_literal_quotes(self):
         self.assertEqual(XlmValue(value='x').unwrap(), 'x')
         self.assertEqual(XlmValue().unwrap(), '')
+
+
+class TestCondition(TestBase):
+
+    def test_the_spellings_of_the_truth_values_answer_their_truth(self):
+        self.assertEqual(condition(XlmValue(value=True)), True)
+        self.assertEqual(condition(XlmValue(value=False)), False)
+        self.assertEqual(condition(XlmValue(value='TRUE')), True)
+        self.assertEqual(condition(XlmValue(value='false')), False)
+        self.assertEqual(condition(XlmValue(value='False')), False)
+
+    def test_a_number_holds_when_it_is_not_zero(self):
+        self.assertEqual(condition(XlmValue(value=1)), True)
+        self.assertEqual(condition(XlmValue(value=0)), False)
+        self.assertEqual(condition(XlmValue(value=0.0)), False)
+        self.assertEqual(condition(XlmValue(value=-2.5)), True)
+
+    def test_a_text_that_spells_a_number_is_no_truth_value(self):
+        self.assertEqual(condition(XlmValue(value='1')).text, '#VALUE!')
+        self.assertEqual(condition(XlmValue(value='yes')).text, '#VALUE!')
+        self.assertEqual(condition(XlmValue(value='A1:B2')).text, '#VALUE!')
+
+    def test_a_value_that_holds_nothing_answers_false(self):
+        self.assertEqual(condition(XlmValue()), False)
+        self.assertEqual(condition(XlmValue(value='')), False)
+
+    def test_an_error_value_answers_itself(self):
+        self.assertEqual(condition(error_value('#DIV/0!')).text, '#DIV/0!')
+        self.assertEqual(condition(error_value('#VALUE!')).error, True)
 
 
 class TestConcat(TestBase):
@@ -117,15 +148,15 @@ class TestBinaryOperators(TestBase):
     def test_comparisons_answer_true_and_false(self):
         self.assertEqual(
             apply_binary(XlBinaryOperator.EQ, XlmValue(value='a'), XlmValue(value='a')).text,
-            'True',
+            'TRUE',
         )
         self.assertEqual(
             apply_binary(XlBinaryOperator.GT, XlmValue(value=3), XlmValue(value=2)).text,
-            'True',
+            'TRUE',
         )
         self.assertEqual(
             apply_binary(XlBinaryOperator.LT, XlmValue(value='a'), XlmValue(value='b')).text,
-            'True',
+            'TRUE',
         )
 
     def test_a_failed_coercion_is_the_excel_error(self):
@@ -135,8 +166,8 @@ class TestBinaryOperators(TestBase):
     def test_the_texts_of_dates_compare_as_moments(self):
         first = XlmValue(value='2017-12-27 00:00:00.000000')
         second = XlmValue(value='2017-12-28 00:00:00.000000')
-        self.assertEqual(apply_binary(XlBinaryOperator.GT, second, first).text, 'True')
-        self.assertEqual(apply_binary(XlBinaryOperator.EQ, first, second).text, 'False')
+        self.assertEqual(apply_binary(XlBinaryOperator.GT, second, first).text, 'TRUE')
+        self.assertEqual(apply_binary(XlBinaryOperator.EQ, first, second).text, 'FALSE')
 
     def test_a_range_presents_its_corners(self):
         left = XlmValue(value=XlmReference(None, 1, 1))

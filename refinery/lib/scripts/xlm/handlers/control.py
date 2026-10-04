@@ -1,22 +1,27 @@
 """
 The control-flow commands of the macro language: the jumps that move execution between cells,
-the branches of `IF`, the loops of `WHILE` and `FOR.CELL`, and the returns of a macro call.
+the branches of `IF`, the blocks its one-argument form opens over `ELSE` and `ELSE.IF`, the
+loops of `WHILE` and `FOR.CELL`, and the returns of a macro call.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from refinery.lib.excel import synthesize_formula
-from refinery.lib.excel.formula.model import XlA1Reference, XlMissingArgument
+from refinery.lib.excel.formula.model import (
+    XlA1Reference,
+    XlBoolean,
+    XlFunctionCall,
+    XlMissingArgument,
+)
+from refinery.lib.scripts.xlm.blocks import XlmBlock
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
-from refinery.lib.scripts.xlm.references import XlmFrame, XlmLoop
+from refinery.lib.scripts.xlm.references import XlmArrival, XlmCursor, XlmFrame, XlmLoop
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue, holds
+from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue, condition
 
 if TYPE_CHECKING:
-    from refinery.lib.excel.formula.model import XlFunctionCall
     from refinery.lib.scripts.xlm.engine import XlmEngine
-    from refinery.lib.scripts.xlm.references import XlmCursor
 
 
 def _goto(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -46,6 +51,128 @@ def _run(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     )
 
 
+def _first_marker(block: XlmBlock | None) -> int | None:
+    """
+    The first marker below the head of a block: its first `ELSE` or `ELSE.IF`, or the `END.IF`
+    that closes it.
+    """
+    if block is None:
+        return None
+    if block.markers:
+        return block.markers[0]
+    return block.end_row
+
+
+def _next_marker(block: XlmBlock | None, row: int) -> int | None:
+    """
+    The first marker below the given row of the block it belongs to: the next `ELSE` or
+    `ELSE.IF` of the block, or the `END.IF` that closes it.
+    """
+    if block is None:
+        return None
+    for marker in block.markers:
+        if marker > row:
+            return marker
+    return block.end_row
+
+
+def _marker_jump(
+    engine: XlmEngine,
+    cursor: XlmCursor,
+    block: XlmBlock | None,
+    row: int | None,
+) -> XlmCursor | None:
+    """
+    The jump a false head of a block takes onto its first marker, or `None` when the block
+    spells no marker below it: a jump onto the `END.IF` of the block takes the indent
+    increment the `END.IF` decrements, because no arm above it took one.
+    """
+    if row is None:
+        return None
+    if block is not None and row == block.end_row:
+        engine.indent_level += 1
+    return engine.anchor(XlmReference(cursor.sheet, row, cursor.col))
+
+
+def _run_block_head(
+    engine: XlmEngine,
+    call: XlFunctionCall,
+    spelled: str,
+    cursor: XlmCursor,
+    block: XlmBlock | None,
+    marker: int | None,
+) -> XlmOutcome:
+    """
+    The head of a block — a one-argument `IF`, or an `ELSE.IF` a jump reached — over the marker
+    a false condition branches to. A true condition indents one level and falls through the
+    body; a false one jumps to the first marker of the block; a condition the program never
+    finished branches into both arms, the true one from the first body cell and the false one
+    from the marker, with the snapshot the false branch rolls back to; a condition that spells
+    no truth value is an error the macro halts on.
+    """
+    test = evaluate_expression(engine, call.arguments[0], cursor)
+    if test.partial:
+        if marker is not None:
+            false_indent = engine.indent_level
+            if block is not None and marker == block.end_row:
+                false_indent += 1
+            engine.branch_stack.append(XlmFrame(
+                XlmCursor(cursor.sheet, marker, cursor.col),
+                None,
+                engine.snapshot(),
+                false_indent,
+                '[FALSE]',
+            ))
+        body = engine.next_formula_cell(cursor)
+        if body is not None:
+            engine.branch_stack.append(XlmFrame(
+                body,
+                None,
+                None,
+                engine.indent_level + 1,
+                '[TRUE]',
+            ))
+        return XlmOutcome(
+            value=XlmValue(value=0, text=spelled),
+            status=XlmStatus.FullBranching,
+        )
+    truth = condition(test)
+    if isinstance(truth, XlmValue):
+        return XlmOutcome(
+            value=XlmValue(value=truth.value, text=spelled),
+            status=XlmStatus.Error,
+        )
+    if truth:
+        engine.indent_level += 1
+        return XlmOutcome(value=XlmValue(value=0, text=spelled))
+    return XlmOutcome(
+        value=XlmValue(value=0, text=spelled),
+        jump=_marker_jump(engine, cursor, block, marker),
+    )
+
+
+def _skip_to_block_end(
+    engine: XlmEngine,
+    cursor: XlmCursor,
+    block: XlmBlock | None,
+    text: str,
+) -> XlmOutcome:
+    """
+    The jump a completed arm of a block takes off its marker: the arm releases the indent it
+    took, and the jump onto the `END.IF` of the block takes the indent back for the decrement
+    the `END.IF` applies.
+    """
+    engine.indent_level = max(0, engine.indent_level - 1)
+    engine.indent_current_line = True
+    if block is None or block.end_row is None:
+        return XlmOutcome(value=XlmValue(value=0, text=text))
+    engine.indent_level += 1
+    return XlmOutcome(
+        value=XlmValue(value=0, text=text),
+        jump=engine.anchor(XlmReference(cursor.sheet, block.end_row, cursor.col)),
+    )
+
+
 def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     spelled = synthesize_formula(call)
     for frame in engine.branch_stack:
@@ -54,12 +181,22 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
                 value=XlmValue(value=0, text=F'[[LOOP]]: {spelled}'),
                 status=XlmStatus.End,
             )
-    if len(call.arguments) != 3:
+    count = len(call.arguments)
+    if count == 1:
+        block = engine.column_blocks(cursor).get(cursor.row)
+        return _run_block_head(engine, call, spelled, cursor, block, _first_marker(block))
+    if count != 2 and count != 3:
         return XlmOutcome(value=XlmValue(value=0, text=spelled))
-    condition = evaluate_expression(engine, call.arguments[0], cursor)
-    if condition.partial:
+    test = evaluate_expression(engine, call.arguments[0], cursor)
+    if test.partial:
         engine.branch_stack.append(
-            XlmFrame(cursor, call.arguments[2], engine.snapshot(), engine.indent_level, '[FALSE]'),
+            XlmFrame(
+                cursor,
+                call.arguments[2] if count == 3 else XlBoolean(value=False),
+                engine.snapshot(),
+                engine.indent_level,
+                '[FALSE]',
+            ),
         )
         engine.branch_stack.append(
             XlmFrame(cursor, call.arguments[1], None, engine.indent_level, '[TRUE]'),
@@ -68,10 +205,15 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
             value=XlmValue(value=0, text=spelled),
             status=XlmStatus.FullBranching,
         )
-    if holds(condition):
+    truth = condition(test)
+    if isinstance(truth, XlmValue):
+        return XlmOutcome(value=truth)
+    if truth:
         branch, desc = call.arguments[1], '[TRUE]'
-    else:
+    elif count == 3:
         branch, desc = call.arguments[2], '[FALSE]'
+    else:
+        return XlmOutcome(value=XlmValue(value=False, text=spelled))
     if isinstance(branch, XlMissingArgument):
         return XlmOutcome(value=XlmValue(value=0, text=spelled))
     engine.branch_stack.append(XlmFrame(cursor, branch, None, engine.indent_level, desc))
@@ -91,10 +233,13 @@ def _if_value(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     spelled = synthesize_formula(call)
     if not call.arguments:
         return XlmOutcome(value=XlmValue(value=spelled, partial=True))
-    condition = evaluate_expression(engine, call.arguments[0], cursor)
-    if condition.partial:
+    test = evaluate_expression(engine, call.arguments[0], cursor)
+    if test.partial:
         return XlmOutcome(value=XlmValue(value=spelled, partial=True))
-    index = 1 if holds(condition) else 2
+    truth = condition(test)
+    if isinstance(truth, XlmValue):
+        return XlmOutcome(value=truth)
+    index = 1 if truth else 2
     if index >= len(call.arguments):
         return XlmOutcome(value=XlmValue(value=False))
     branch = call.arguments[index]
@@ -107,6 +252,42 @@ def _end_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
     engine.indent_level = max(0, engine.indent_level - 1)
     engine.indent_current_line = True
     return XlmOutcome(value=XlmValue(value='END.IF', text='END.IF'))
+
+
+def _else(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The `ELSE` of a block: a false branch of the block jumps onto it and its arm runs,
+    indented one level; an arm that ran to its end falls onto it, and the block skips to its
+    `END.IF`.
+    """
+    if engine.arrival is XlmArrival.FALL:
+        return _skip_to_block_end(
+            engine,
+            cursor,
+            engine.column_blocks(cursor).get(cursor.row),
+            'ELSE',
+        )
+    engine.indent_level += 1
+    return XlmOutcome(value=XlmValue(value=0, text='ELSE'))
+
+
+def _else_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The `ELSE.IF` of a block: a false branch of the block jumps onto it and it branches like
+    the head of a block of its own, over the next marker below it; an arm that ran to its end
+    falls onto it, and the block skips to its `END.IF`.
+    """
+    block = engine.column_blocks(cursor).get(cursor.row)
+    if engine.arrival is XlmArrival.FALL or not call.arguments:
+        return _skip_to_block_end(engine, cursor, block, 'ELSE.IF')
+    return _run_block_head(
+        engine,
+        call,
+        'ELSE.IF',
+        cursor,
+        block,
+        _next_marker(block, cursor.row),
+    )
 
 
 def _skipped_loop(engine: XlmEngine, cursor: XlmCursor) -> XlmOutcome:
@@ -123,13 +304,19 @@ def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
     if engine.ignore_processing:
         return _skipped_loop(engine, cursor)
     spelled = synthesize_formula(call)
-    condition = evaluate_expression(engine, call.arguments[0], cursor)
+    test = evaluate_expression(engine, call.arguments[0], cursor)
     loop = XlmLoop(cursor)
-    if not condition.partial and str(condition.value).lower() == 'true':
-        loop.holds = True
-        text = F'{spelled} -> [{condition.value}]'
-    else:
-        text = spelled
+    text = spelled
+    if not test.partial:
+        truth = condition(test)
+        if isinstance(truth, XlmValue):
+            return XlmOutcome(
+                value=XlmValue(value=truth.value, text=spelled),
+                status=XlmStatus.Error,
+            )
+        if truth:
+            loop.holds = True
+            text = F'{spelled} -> [TRUE]'
     engine.while_stack.append(loop)
     engine.indent_level += 1
     return XlmOutcome(value=XlmValue(value=0, text=text))
@@ -248,6 +435,8 @@ def _on_time(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
 
 CONTROL_HANDLERS = {
     'CLOSE': _halt,
+    'ELSE': _else,
+    'ELSE.IF': _else_if,
     'END.IF': _end_if,
     'FOR.CELL': _for_cell,
     'GOTO': _goto,

@@ -25,7 +25,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmReference,
     XlmValue,
-    holds,
+    condition,
     is_number,
     unwrap_literal,
 )
@@ -131,10 +131,10 @@ def _write_formula(
         else:
             text = F'{name}({source.text},{spelled})'
     if source.partial:
-        for reference in expand_range(*corners):
+        for reference in expand_range(*corners, guard=engine.check_deadline):
             engine.mark_failed(reference)
         return XlmOutcome(value=XlmValue(value=0, text=text, partial=True))
-    for reference in expand_range(*corners):
+    for reference in expand_range(*corners, guard=engine.check_deadline):
         engine.unmark_failed(reference)
         engine.write_cell(reference, source, cursor, value_only=value_only)
     return XlmOutcome(value=XlmValue(value=0, text=text))
@@ -188,7 +188,10 @@ def _define_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
         local = evaluate_expression(engine, call.arguments[6], cursor)
         if local.partial:
             return _partial(spelled)
-        if holds(local):
+        truth = condition(local)
+        if isinstance(truth, XlmValue):
+            return XlmOutcome(value=truth)
+        if truth:
             sheet = engine.view.sheet_index(cursor.sheet)
     name = label.unwrap().lower()
     engine.define_name(XlmNameEntry(

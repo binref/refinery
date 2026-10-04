@@ -16,12 +16,11 @@ from refinery.lib.excel.common import datetime_to_serial
 from refinery.lib.excel.formula.model import XlA1Reference, XlMissingArgument, XlR1C1Reference
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.guess import guess_day
-from refinery.lib.scripts.xlm.references import expand_range
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmValue,
-    holds,
+    condition,
     is_number,
     wrap_literal,
 )
@@ -304,25 +303,35 @@ def _sum(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
 
 def _and(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     value = True
+    failure = None
     for node in call.arguments:
         argument = evaluate_expression(engine, node, cursor)
         if argument.partial:
             return XlmOutcome(value=XlmValue(value=False, partial=True))
-        if not holds(argument):
+        truth = condition(argument)
+        if isinstance(truth, XlmValue):
+            failure = failure or truth
+        elif not truth:
             value = False
-            break
+    if failure is not None:
+        return XlmOutcome(value=failure)
     return XlmOutcome(value=XlmValue(value=value))
 
 
 def _or(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     value = False
+    failure = None
     for node in call.arguments:
         argument = evaluate_expression(engine, node, cursor)
         if argument.partial:
             return XlmOutcome(value=XlmValue(value=False, partial=True))
-        if holds(argument):
+        truth = condition(argument)
+        if isinstance(truth, XlmValue):
+            failure = failure or truth
+        elif truth:
             value = True
-            break
+    if failure is not None:
+        return XlmOutcome(value=failure)
     return XlmOutcome(value=XlmValue(value=value))
 
 
@@ -330,10 +339,18 @@ def _not(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     argument = evaluate_expression(engine, call.arguments[0], cursor)
     if argument.partial:
         return XlmOutcome(value=XlmValue(value=True, partial=True))
-    return XlmOutcome(value=XlmValue(value=not holds(argument)))
+    truth = condition(argument)
+    if isinstance(truth, XlmValue):
+        return XlmOutcome(value=truth)
+    return XlmOutcome(value=XlmValue(value=not truth))
 
 
 def _isnumber(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    Whether the argument holds a number, by its type rather than its spelling: a number —
+    the serial a date cell holds included — answers `TRUE`, and a text, a boolean, an error
+    value, and an empty cell answer `FALSE`.
+    """
     argument = evaluate_expression(engine, call.arguments[0], cursor)
     if argument.partial:
         return XlmOutcome(value=XlmValue(
@@ -341,7 +358,9 @@ def _isnumber(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
             text=F'ISNUMBER({argument.text})',
             partial=True,
         ))
-    return XlmOutcome(value=XlmValue(value=is_number(argument.text)))
+    return XlmOutcome(value=XlmValue(value=(
+        isinstance(argument.value, (int, float)) and not isinstance(argument.value, bool)
+    )))
 
 
 def _iserror(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -386,7 +405,7 @@ def _count(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
             if reference is not None:
                 corners = (reference, reference)
         if corners is not None:
-            for reference in expand_range(*corners):
+            for reference in engine.range_cells(corners):
                 value = engine.read_reference(reference, cursor)
                 if value.partial:
                     return _partial(spelled)

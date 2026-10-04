@@ -99,6 +99,16 @@ class XlmFiles:
         if file is not None:
             file.content = file.content[:length]
 
+    def snapshot(self) -> tuple[tuple[str, str], ...]:
+        """
+        The content of every file the program opened, by the name each answers to, as the state
+        a comparison of the run observes.
+        """
+        return tuple(
+            (name, self._files[name].content)
+            for name in sorted(self._files)
+        )
+
 
 class XlmMemory:
     """
@@ -176,3 +186,13 @@ class XlmMemory:
                 offset = base - region.base
                 region.data[offset:offset + len(data)] = data
                 return
+
+    def snapshot(self) -> tuple[tuple[int, bytes], ...]:
+        """
+        The bytes of every region the program reserved, by the address each starts at, as the
+        state a comparison of the run observes.
+        """
+        return tuple(
+            (region.base, bytes(region.data))
+            for region in self._regions
+        )

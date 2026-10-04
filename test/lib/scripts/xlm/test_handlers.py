@@ -9,7 +9,7 @@ from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.trace import XlmStatus
 from test import TestBase
 from test.lib.excel.samples import XLM_MACRO_TEXT_XLSM
-from test.lib.scripts.xlm.modify import replace_cell_formula
+from test.lib.scripts.xlm.modify import date_cell, replace_cell_formula
 from test.lib.scripts.xlm.test_engine import _steps
 
 _CURSOR = XlmCursor('Doc1', 109, 52)
@@ -143,14 +143,14 @@ class TestNumericCommands(TestBase):
 
     def test_logic_commands_answer_the_truth_of_their_arguments(self):
         for formula, expected in [
-            ('AND(TRUE,TRUE)', 'True'),
-            ('AND(TRUE,FALSE)', 'False'),
-            ('OR(FALSE,TRUE)', 'True'),
-            ('OR(FALSE,FALSE)', 'False'),
-            ('NOT(TRUE)', 'False'),
+            ('AND(TRUE,TRUE)', 'TRUE'),
+            ('AND(TRUE,FALSE)', 'FALSE'),
+            ('OR(FALSE,TRUE)', 'TRUE'),
+            ('OR(FALSE,FALSE)', 'FALSE'),
+            ('NOT(TRUE)', 'FALSE'),
             ('COUNT(1,2,3)', '3'),
-            ('ISNUMBER(1)', 'True'),
-            ('ISNUMBER("a")', 'False'),
+            ('ISNUMBER(1)', 'TRUE'),
+            ('ISNUMBER("a")', 'FALSE'),
         ]:
             with self.subTest(formula=formula):
                 outcome = _answer(formula)
@@ -170,13 +170,42 @@ class TestNumericCommands(TestBase):
             with self.subTest(formula=formula):
                 self.assertEqual(_answer(formula).value.value, expected)
 
-    @unittest.expectedFailure
     def test_isnumber_does_not_convert_a_text_that_spells_a_number(self):
         self.assertEqual(_answer('ISNUMBER("19")').value.value, False)
 
-    @unittest.expectedFailure
+    def test_isnumber_answers_the_type_of_the_value_it_reads(self):
+        data = date_cell(XLM_MACRO_TEXT_XLSM, 'BH120', '2017-12-27T00:00:00')
+        engine = XlmEngine(XlmView(data))
+        for formula, expected in [
+            ('ISNUMBER(BH120)', True),
+            ('ISNUMBER(TRUE)', False),
+            ('ISNUMBER(AZ200)', False),
+            ('ISNUMBER(SEARCH("x","abc"))', False),
+        ]:
+            with self.subTest(formula=formula):
+                self.assertEqual(
+                    engine.call(_parsed_call(formula), _CURSOR).value.value,
+                    expected,
+                )
+
     def test_a_condition_that_spells_no_truth_value_is_the_value_error(self):
         self.assertEqual(_answer('IF("yes",1,2)').value.text, '#VALUE!')
+
+    def test_the_logic_commands_answer_the_error_of_their_conditions(self):
+        for formula in [
+            'AND("yes",TRUE)',
+            'AND(FALSE,"yes")',
+            'OR("yes",FALSE)',
+            'NOT("yes")',
+            'NOT(SEARCH("x","abc"))',
+        ]:
+            with self.subTest(formula=formula):
+                outcome = _answer(formula)
+                self.assertEqual(outcome.value.text, '#VALUE!')
+                self.assertEqual(outcome.value.error, True)
+
+    def test_an_empty_condition_answers_false(self):
+        self.assertEqual(_answer('NOT("")').value.text, 'TRUE')
 
 
 class TestStringCommands(TestBase):
@@ -197,9 +226,11 @@ class TestStringCommands(TestBase):
                 self.assertEqual(outcome.value.text, expected)
                 self.assertEqual(outcome.status, None)
 
-    def test_char_answers_an_error_for_a_code_outside_the_bytes(self):
+    def test_char_answers_the_value_error_for_a_code_outside_the_bytes(self):
         outcome = _answer('CHAR(300)')
-        self.assertEqual(outcome.status, XlmStatus.Error)
+        self.assertEqual(outcome.value.text, '#VALUE!')
+        self.assertEqual(outcome.value.error, True)
+        self.assertEqual(outcome.status, None)
 
     def test_search_answers_the_examples_excel_documents(self):
         for formula, expected in [
@@ -228,11 +259,9 @@ class TestStringCommands(TestBase):
     def test_mid_keeps_the_leading_zeros_of_the_text_it_cuts(self):
         self.assertEqual(_answer('MID("abc007",4,3)').value.text, '007')
 
-    @unittest.expectedFailure
     def test_mid_answers_the_value_error_for_a_start_below_one(self):
         self.assertEqual(_answer('MID("abc",0,1)').value.text, '#VALUE!')
 
-    @unittest.expectedFailure
     def test_char_answers_the_value_error_for_a_code_outside_one_to_255(self):
         formulas = ['CHAR(0)', 'CHAR(256)']
         self.assertEqual(
@@ -279,17 +308,32 @@ class TestLookupCommands(TestBase):
         outcome = engine.call(_parsed_call('INDIRECT("AZ113")'), _CURSOR)
         self.assertEqual(outcome.value.value, 123)
 
-    def test_hlookup_finds_the_first_match_below_its_index_row(self):
+    def test_hlookup_finds_the_column_of_its_needle_in_the_top_row(self):
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '"needle"')
+        data = replace_cell_formula(data, 'AZ114', '123')
+        engine = XlmEngine(XlmView(data))
+        call = _parsed_call('HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
+        outcome = engine.call(call, _CURSOR)
+        self.assertEqual(outcome.value.value, 123)
+        self.assertEqual(outcome.status, None)
+
+    def test_hlookup_answers_nothing_when_the_top_row_holds_no_match(self):
         data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ114', '"needle"')
         engine = XlmEngine(XlmView(data))
-        call = _parsed_call('HLOOKUP("needle",AZ112:AZ116,1,FALSE)')
+        call = _parsed_call('HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
         outcome = engine.call(call, _CURSOR)
-        self.assertEqual(outcome.value.value, 'needle')
-        self.assertEqual(outcome.status, None)
+        self.assertEqual(outcome.value.partial, True)
+        self.assertEqual(outcome.value.text, 'HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
 
     def test_counta_counts_the_cells_of_a_range_that_hold_a_value(self):
         self.assertEqual(_answer('COUNTA(AZ109:AZ109)').value.value, 1)
         self.assertEqual(_answer('COUNTA(AZ200:AZ210)').value.value, 0)
+
+    def test_counta_counts_a_cell_that_holds_empty_text(self):
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ113', '""')
+        engine = XlmEngine(XlmView(data))
+        outcome = engine.call(_parsed_call('COUNTA(AZ113:AZ113)'), _CURSOR)
+        self.assertEqual(outcome.value.value, 1)
 
 
 class TestMutationCommands(TestBase):
@@ -430,7 +474,7 @@ class TestSystemCommands(TestBase):
             ('DIRECTORY()', 'C:\\Users\\user\\Documents', 'C:\\Users\\user\\Documents'),
             ('FILES("C:")', 'C:', 'FILES("C:")'),
             ('ERROR(FALSE)', 0, 'ERROR(FALSE)'),
-            ('APP.MAXIMIZE()', True, 'True'),
+            ('APP.MAXIMIZE()', True, 'TRUE'),
         ]:
             with self.subTest(formula=formula):
                 outcome = _answer(formula)
@@ -542,3 +586,8 @@ class TestControlCommands(TestBase):
         outcome = _answer('ON.TIME(0,AZ109,1)')
         self.assertEqual(outcome.status, XlmStatus.Error)
         self.assertEqual(outcome.jump, None)
+
+    def test_a_while_on_a_condition_that_spells_no_truth_value_is_an_error_step(self):
+        outcome = _answer('WHILE("junk")')
+        self.assertEqual(outcome.status, XlmStatus.Error)
+        self.assertEqual(outcome.value.text, 'WHILE("junk")')

@@ -49,7 +49,7 @@ class TestEvaluateExpression(TestBase):
         cell = view.cell('mP9mScF1m5', 50, 19)
         assert cell is not None and isinstance(cell.formula, XlFunctionCall)
         outcome = XlmEngine(view).call(cell.formula, XlmCursor('mP9mScF1m5', 50, 19))
-        self.assertEqual(outcome.value.text, '=WORKBOOK.HIDE("mP9mScF1m5",True)')
+        self.assertEqual(outcome.value.text, '=WORKBOOK.HIDE("mP9mScF1m5",TRUE)')
         self.assertEqual(outcome.value.partial, True)
 
     def test_a_relative_reference_resolves_against_the_reading_cell(self):

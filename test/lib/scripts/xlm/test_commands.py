@@ -32,6 +32,8 @@ _EXPECTED_SEVERITIES = {
     'DAY': XlmSeverity.NORMAL,
     'DEFINE.NAME': XlmSeverity.NORMAL,
     'DIRECTORY': XlmSeverity.NORMAL,
+    'ELSE': XlmSeverity.NORMAL,
+    'ELSE.IF': XlmSeverity.NORMAL,
     'END.IF': XlmSeverity.NORMAL,
     'ERROR': XlmSeverity.NORMAL,
     'FILES': XlmSeverity.NORMAL,

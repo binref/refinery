@@ -55,6 +55,8 @@ _COMMAND_NAMES = frozenset((
     'DAY',
     'DEFINE.NAME',
     'DIRECTORY',
+    'ELSE',
+    'ELSE.IF',
     'END.IF',
     'ERROR',
     'FILES',

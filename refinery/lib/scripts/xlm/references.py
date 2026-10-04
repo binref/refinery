@@ -7,10 +7,24 @@ the run returns to — carry the cursors they continue from.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+import enum
+
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.excel.formula.model import XlA1Reference, XlR1C1Reference
 from refinery.lib.scripts.xlm.values import XlmReference, XlmValue
+
+
+class XlmArrival(enum.Enum):
+    """
+    How the engine reached the cell of the step it runs: by the jump a command asked for, by
+    the row fall-through, or by resuming the branch of a partial `IF`. A marker a frame resumes
+    counts as a jump: the frame replays a false branch onto it.
+    """
+
+    JUMP = 0
+    FALL = 1
+    RESUME = 2
 
 
 class XlmCursor(NamedTuple):
@@ -128,17 +142,30 @@ def resolve_reference(
     return XlmReference(sheet, row, col)
 
 
-def expand_range(top_left: XlmReference, bottom_right: XlmReference) -> list[XlmReference]:
+#: How many addresses a range walk yields between two runs of the guard a caller passes, so
+#: that a walk over a rectangle the workbook barely fills still answers to the run.
+_GUARD_YIELDS = 4096
+
+
+def expand_range(
+    top_left: XlmReference,
+    bottom_right: XlmReference,
+    guard: Callable[[], None] | None = None,
+) -> Iterator[XlmReference]:
     """
     Every cell address of the rectangle two corners span, in row-major order. The sheet of
-    each address is the sheet of the top left corner.
+    each address is the sheet of the top left corner. The guard a caller passes runs every so
+    many addresses, so that a walk over a rectangle the workbook barely fills still answers to
+    the deadline of the run.
     """
     row_min = min(top_left.row, bottom_right.row)
     row_max = max(top_left.row, bottom_right.row)
     col_min = min(top_left.col, bottom_right.col)
     col_max = max(top_left.col, bottom_right.col)
-    return [
-        XlmReference(top_left.sheet, row, col)
-        for row in range(row_min, row_max + 1)
-        for col in range(col_min, col_max + 1)
-    ]
+    walked = 0
+    for row in range(row_min, row_max + 1):
+        for col in range(col_min, col_max + 1):
+            walked += 1
+            if guard is not None and not walked % _GUARD_YIELDS:
+                guard()
+            yield XlmReference(top_left.sheet, row, col)

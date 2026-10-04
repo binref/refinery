@@ -68,7 +68,9 @@ class TestEmulator(TestBase):
         for name, data, expected in [
             ('rpn', XLM_MACRO_RPN_BIFF8, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('names', XLM_MACRO_NAMES_BIFF8, ['PartialEvaluation']),
-            ('assign', XLM_MACRO_ASSIGN_BIFF8, ['End', 'FullEvaluation', 'PartialEvaluation']),
+            ('assign', XLM_MACRO_ASSIGN_BIFF8, [
+                'End', 'FullBranching', 'FullEvaluation', 'PartialEvaluation',
+            ]),
             ('text', XLM_MACRO_TEXT_XLSM, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('formula', XLM_MACRO_FORMULA_XLSM, ['FullEvaluation', 'PartialEvaluation']),
             ('maldoc', self.download_sample(_MALDOC), ['FullEvaluation', 'PartialEvaluation']),
@@ -84,7 +86,7 @@ class TestEmulator(TestBase):
         for name, data, counts in [
             ('rpn', XLM_MACRO_RPN_BIFF8, [20, 19, 8, 3]),
             ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 0, 0]),
-            ('assign', XLM_MACRO_ASSIGN_BIFF8, [135, 81, 6, 4]),
+            ('assign', XLM_MACRO_ASSIGN_BIFF8, [141, 86, 8, 5]),
             ('text', XLM_MACRO_TEXT_XLSM, [22, 9, 5, 4]),
             ('formula', XLM_MACRO_FORMULA_XLSM, [11, 10, 8, 7]),
             ('maldoc', self.download_sample(_MALDOC), [27, 6, 1, 1]),

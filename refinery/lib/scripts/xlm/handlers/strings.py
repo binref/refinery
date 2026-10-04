@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.formula.model import XlMissingArgument
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
-from refinery.lib.scripts.xlm.trace import XlmStatus
 from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmValue,
@@ -67,12 +66,9 @@ def _char(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutc
     if not is_number(argument.value):
         return _partial(spelled)
     number = float(argument.value)
-    if not 0 <= number <= 255:
+    if not 1 <= number <= 255:
         engine.char_errors += 1
-        return XlmOutcome(
-            value=XlmValue(value=spelled, text=spelled),
-            status=XlmStatus.Error,
-        )
+        return XlmOutcome(value=error_value('#VALUE!'))
     character = chr(int(number))
     return XlmOutcome(value=XlmValue(value=character, text=character))
 
@@ -117,6 +113,8 @@ def _mid(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     ):
         start = int(float(base.value)) - 1
         count = int(float(length.value))
+        if start < 0 or count < 0:
+            return XlmOutcome(value=error_value('#VALUE!'))
         result = text.unwrap()[start:start + count]
         return XlmOutcome(value=XlmValue(value=result, text=result))
     fragments = ','.join(synthesize_formula(node) for node in call.arguments)
