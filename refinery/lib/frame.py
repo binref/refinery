@@ -786,9 +786,9 @@ class Framed:
         if nesting > 0:
             assert scope
             yield generate_frame_header(scope)
+            nestings = repeat(nesting)
+            serialize = repeat(serialized)
             while self.unpack.nextframe():
-                nestings = repeat(nesting)
-                serialize = repeat(serialized)
                 for position, results in enumerate(map(self._results, self._apply_filter())):
                     yield from map(Chunk.pack, results, nestings, repeat(position), serialize)
         elif not self.unpack.framed:

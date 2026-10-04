@@ -912,7 +912,7 @@ class ArgumentSpecification(_ArgumentSpecificationBase):
         self[dest] = argument
 
 
-def _chunks(outputs: Iterable[buf]) -> Generator[Chunk]:
+def _wrapped_outputs(outputs: Iterable[buf]) -> Generator[Chunk]:
     yield from map(Chunk.Wrap, outputs)
 
 
@@ -928,7 +928,7 @@ def _UnitProcessorBoilerplate(operation: ProcType[buf]) -> ProcType[Chunk]:
             return result
         elif not inspect.isgenerator(result):
             return Chunk(cast(bytearray | None, result))
-        return _chunks(result)
+        return _wrapped_outputs(result)
     return wrapped
 
 
@@ -943,6 +943,7 @@ def _UnitFilterBoilerplate(
                     yield self.args @ chunk
                     return
                 yield chunk
+                del chunk
         it = iter(chunks)
         yield from operation(self, itertools.chain(_apply_args_to_head(it), it))
     return peekfilter

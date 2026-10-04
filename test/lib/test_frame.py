@@ -28,12 +28,14 @@ class _Lifetimes:
 
 @contextlib.contextmanager
 def _without_cycle_collector():
+    enabled = gc.isenabled()
     gc.collect()
     gc.disable()
     try:
         yield
     finally:
-        gc.enable()
+        if enabled:
+            gc.enable()
 
 
 def _drain(pipeline):
@@ -321,6 +323,28 @@ class TestFraming(TestBase):
                 with _without_cycle_collector():
                     pipeline(source, spy)
                 self.assertEqual(lifetimes.notes, [[], [], [], []])
+
+    def test_invisible_inputs_are_released_before_the_next_is_read(self):
+        from refinery import Unit, scope
+        lifetimes = _Lifetimes()
+
+        class source(Unit):
+            def process(self, data):
+                for _ in range(4):
+                    lifetimes.note()
+                    yield Chunk(bytes(0x100))
+
+        class spy(Unit):
+            def filter(self, chunks):
+                for chunk in chunks:
+                    yield lifetimes.track(chunk)
+                    del chunk
+
+        last_visible = scope(slice(3, 4))
+        with _without_cycle_collector():
+            _drain(B'' | _configured(source(), 1) | last_visible | _configured(spy(), -1))
+        self.assertEqual(len(lifetimes.tracked), 4)
+        self.assertEqual(lifetimes.notes, [[], [], [], []])
 
     def test_unit_input_is_released_when_its_run_ends(self):
         from refinery import Unit
