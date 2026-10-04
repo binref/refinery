@@ -644,7 +644,8 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
         functions = '\n'.join(
             F'function f{i}(a) {{ if (false) {{ a.x = {i}; }} return a; }}' for i in range(count)
         )
-        return F'{functions}\nSINK({", ".join(F"f{i}" for i in range(count))});'
+        names = ', '.join(F'f{i}' for i in range(count))
+        return F'{functions}\nSINK({names});'
 
     @a_property_of_the_batch_itself
     def test_the_model_is_built_once_however_many_bodies_hold_a_dead_branch(self):
@@ -676,7 +677,8 @@ class TestUnusedCodeRemovalHoldsTheModelsForASweep(TestBase):
         A script with *count* functions, each holding one local nothing reads.
         """
         functions = '\n'.join(F'function f{i}() {{ var t = g; return {i}; }}' for i in range(count))
-        return F'g = 1;\n{functions}\nSINK({", ".join(F"f{i}()" for i in range(count))});'
+        calls = ', '.join(F'f{i}()' for i in range(count))
+        return F'g = 1;\n{functions}\nSINK({calls});'
 
     @staticmethod
     def _released(source: str) -> tuple[int, str]:
@@ -852,9 +854,9 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
                 if outermost:
                     entries.pop()
 
-        def audited(locator: ElementLocator, element: Node):
+        def audited(self: ElementLocator, element: Node):
             nonlocal compared
-            answer = original_locate(locator, element)
+            answer = original_locate(self, element)
             if not entries:
                 return answer
             cache, version, parents = entries[-1]
@@ -869,7 +871,7 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
                 cursor.parent = held[1]
                 cursor = held[1]
             try:
-                then = original_locate(locator, element)
+                then = original_locate(self, element)
             finally:
                 for node, parent in moved:
                     node.parent = parent

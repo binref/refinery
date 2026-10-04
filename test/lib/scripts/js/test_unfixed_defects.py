@@ -749,6 +749,52 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
         )
 
 
+#: A program that writes a global property through `globalThis` and reads it back only through the
+#: object a sloppy function called without a receiver returns as its `this`, mapped to what it
+#: prints.
+A_GLOBAL_PROPERTY_READ_THROUGH_A_RETURNED_THIS = {
+    'globalThis.x = 1;\n'
+    'var g = (function () { return this; })();\n'
+    'console.log(g.x);\n': '1\n',
+    'globalThis.x = 1;\n'
+    'function f() { return this; }\n'
+    'console.log(f().x);\n': '1\n',
+}
+
+
+class TestAGlobalObjectReturnedAsAFunctionsThisKeepsTheWritesReadThroughIt(TestBase):
+    """
+    A sloppy function called without a receiver runs with the global object as its `this`, so
+    `(function () { return this; })()` hands the global object back, and a read through what it
+    returns reads a global property without spelling any name the dead-global-property sweep of
+    `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` looks for. The sweep's
+    escape test takes only the `this` of the top level and the names the model says hold the global
+    object, and the model does not follow the object out of a call, so the write the read depends
+    on is removed.
+
+    Telling a plain call from a method call is a question about every invocation of the function,
+    which the model does not answer yet, and taking every escaping `this` of a regular function for
+    the global object would turn the sweep off wherever a method returns its receiver. The shape
+    needs the write and the read to spell the global object differently; code that takes the global
+    object this way writes through the name it reads through, and the sweep takes no write through
+    such a name for a candidate.
+    """
+
+    @unittest.expectedFailure
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_write_read_back_through_a_returned_this_is_kept(self):
+        """
+        Node prints `1` for both programs of `A_GLOBAL_PROPERTY_READ_THROUGH_A_RETURNED_THIS`: the
+        function's `this` is the global object, which `globalThis.x = 1` wrote. Their
+        deobfuscations drop that write and print `undefined`.
+        """
+        rows = A_GLOBAL_PROPERTY_READ_THROUGH_A_RETURNED_THIS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 #: Degenerate global-object finders whose body throws a `TypeError` rather than a `ReferenceError`,
 #: each mapped to the text a sound fold writes for it — the call kept in place. `null.x` reads a
 #: property off `null`, and `k = globalThis` and `k++` each write a `const`; Node answers all three

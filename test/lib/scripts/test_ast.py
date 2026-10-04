@@ -416,7 +416,7 @@ class TestListRemoval(unittest.TestCase):
         paired = _Leaf(name='paired')
         clauses = _Clauses(clauses=[(paired, _Leaf(name='other'))])
         holder = _Holder(child=held, items=[_Leaf(name='before'), listed, clauses])
-        places = {
+        places: dict[str, Node] = {
             'listed': listed,
             'held': held,
             'paired': paired,
@@ -478,6 +478,17 @@ class TestListRemoval(unittest.TestCase):
         _remove_from_parent(script.body[1])
         with self.assertRaises(RuntimeError):
             lists.apply()
+
+    def test_a_batch_that_refused_to_apply_serves_the_edited_tree(self):
+        script = _script('a', 'b', 'c')
+        lists = ListRemoval()
+        lists.remove(script.body[0])
+        _remove_from_parent(script.body[1])
+        with self.assertRaises(RuntimeError):
+            lists.apply()
+        self.assertTrue(lists.remove(script.body[0]))
+        self.assertTrue(lists.apply())
+        self.assertEqual(_names(script), ['c'])
 
     def test_an_edit_by_another_route_is_refused_at_the_next_question(self):
         script = _script('a', 'b', 'c')

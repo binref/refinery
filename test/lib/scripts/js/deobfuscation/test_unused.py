@@ -8,6 +8,7 @@ from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
 
+from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import (
@@ -2712,6 +2713,44 @@ class TestARedundantGlobalMemberStoreIsRemoved(TestJsDeobfuscator):
         source = 'global.r = "\\xZZ";\nglobal.r = "\\xYY";'
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_a_duplicate_read_through_a_base_the_host_may_lack_is_kept(self):
+        """
+        No host is pinned, so reading `window` may throw where reading `globalThis` cannot, and
+        the second store raises a `ReferenceError` the first did not raise before it.
+        """
+        source = 'globalThis.r = require;\nwindow.r = require;\nSINK(r);'
+        self.assertEqual(source, self._remove_unused(source))
+
+
+class TestADestructuredImplicitGlobalIsReadByTheWholeScript(TestJsDeobfuscator):
+    """
+    A destructuring assignment to a name nothing declares creates a property of the global object,
+    and code anywhere in the script may read it, not only the function that holds the assignment.
+    """
+
+    def test_a_read_outside_the_function_keeps_the_assignment(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              [a] = [1];
+            }
+            f();
+            console.log(a);
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
+
+    def test_an_assignment_nothing_reads_still_goes(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              [a] = [1];
+            }
+            f();
+            """
+        )
+        self.assertNotIn('[a]', self._run_transformer(source, JsUnusedCodeRemoval))
+
 
 class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
     """
@@ -2763,7 +2802,8 @@ class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):
         self.assertEqual(
             'globalThis.r = 1;\nSINK(r);',
             self._run_transformer(
-                'globalThis.r = 1; globalThis.r = 1; SINK(r);', JsUnusedCodeRemoval),
+                'globalThis.r = 1; globalThis.r = 1; SINK(r);', JsUnusedCodeRemoval
+            ),
         )
 
 
@@ -2906,6 +2946,30 @@ class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
+    """
+    The dead declarations standing in one body are taken out of it together, so the tree is edited
+    as often when sixteen of them go as when two do.
+    """
+
+    @staticmethod
+    def _edits_and_output(count: int) -> tuple[int, str]:
+        lines = ['(function () {']
+        lines.extend(F'var t{i}; SINK({i});' for i in range(count))
+        lines.append('})();')
+        ast = JsParser('\n'.join(lines)).parse()
+        before = tree_version(ast)
+        JsUnusedCodeRemoval().visit(ast)
+        return tree_version(ast) - before, JsSynthesizer().convert(ast)
+
+    def test_sixteen_dead_declarations_cost_as_many_edits_as_two(self):
+        few_edits, few_output = self._edits_and_output(2)
+        many_edits, many_output = self._edits_and_output(16)
+        self.assertNotIn('var', few_output)
+        self.assertNotIn('var', many_output)
+        self.assertEqual(few_edits, many_edits)
 
 
 class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):

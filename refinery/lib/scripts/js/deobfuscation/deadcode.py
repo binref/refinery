@@ -205,7 +205,8 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
         creating write for it.
         """
         return cache.effects.is_side_effect_free(
-            test, reads_may_throw=True, read_established=cache.read_established)
+            test, reads_may_throw=True, read_established=cache.read_established
+        )
 
     @staticmethod
     def _unwrap_branch(branch: Statement | None) -> list[Statement]:

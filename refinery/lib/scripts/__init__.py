@@ -1001,16 +1001,18 @@ class ListRemoval:
     def apply(self) -> bool:
         """
         Install every list that lost an entry and return whether any did. The batch is empty
-        afterwards and indexes the tree afresh on its next question.
+        afterwards, also when it refuses to apply, and indexes the tree afresh on its next question.
         """
-        self._check_unmoved()
-        changed = False
-        for edit in self._edits.values():
-            changed = edit.apply() or changed
-        self._root = None
-        self._indexes.clear()
-        self._edits.clear()
-        return changed
+        try:
+            self._check_unmoved()
+            changed = False
+            for edit in self._edits.values():
+                changed = edit.apply() or changed
+            return changed
+        finally:
+            self._root = None
+            self._indexes.clear()
+            self._edits.clear()
 
 
 _N = TypeVar('_N', bound='Node')

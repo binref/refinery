@@ -39,9 +39,9 @@ This transformer performs seven phases:
 """
 from __future__ import annotations
 
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, NamedTuple
 
-from refinery.lib.scripts import ListRemoval, Node, set_child
+from refinery.lib.scripts import ListRemoval, Node, set_child, tree_root
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
@@ -420,6 +420,16 @@ def _stores_the_same_value(first: Node, second: Node) -> bool:
     return left is not None and left == second.value
 
 
+class _GlobalMemberStore(NamedTuple):
+    """
+    A store-class statement `base.key = value`: the global property it stores, the value it stores
+    there, and the name it reads the global object through.
+    """
+    key: str
+    value: Node
+    base: JsIdentifier
+
+
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
     """
     Remove function declarations that are never referenced from live code, and remove assignments
@@ -433,6 +443,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self.preserve_globals = preserve_globals
         self._has_reflection = False
         self._cache: ModelCache | None = None
+        self._names_read_in_the_script: set[str] | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -462,6 +473,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             with cache.pinned():
                 cache.warm('_liveness')
                 self._cache = cache
+                self._names_read_in_the_script = None
                 self._has_reflection = cache.model.has_reflection_surface()
                 self._remove_discarded_completions(node)
                 self._remove_dead_stores(node)
@@ -589,26 +601,41 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         denotes. The run therefore retires any remembered value spelled with the store's own key,
         keeping the later store of a name that now means something else; a value spelled like a true
         local is retired too, at the cost only of a dedup no realistic run offers.
+
+        A store reads its base before it writes, and a base the host may not define — `window`
+        where no host is pinned — raises a `ReferenceError` there (`SemanticModel.read_may_throw`).
+        Such a duplicate goes only where a store the run keeps ahead of it already read the same
+        base: control reaches the duplicate only after that read succeeded, and nothing in a run
+        of stores takes a property off the global object.
         """
         if not self.effects.global_pristine:
             return
         removals: list[JsExpressionStatement] = []
         for body in self._statement_lists(root):
             stored: dict[str, Node] = {}
+            bases_read: set[str] = set()
             for stmt in body:
                 store = self._global_member_store(stmt)
                 if store is None:
                     stored = {}
+                    bases_read = set()
                     continue
-                name, value = store
                 stored = {
                     key: held for key, held in stored.items()
-                    if not (isinstance(held, JsIdentifier) and held.name == name)
+                    if not (isinstance(held, JsIdentifier) and held.name == store.key)
                 }
-                if stored.get(name) is not None and _stores_the_same_value(stored[name], value):
+                if (
+                    stored.get(store.key) is not None
+                    and _stores_the_same_value(stored[store.key], store.value)
+                    and (
+                        store.base.name in bases_read
+                        or not self.model.read_may_throw(store.base)
+                    )
+                ):
                     removals.append(stmt)
                 else:
-                    stored[name] = value
+                    stored[store.key] = store.value
+                    bases_read.add(store.base.name)
         self._remove_all(removals)
 
     @staticmethod
@@ -621,12 +648,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if isinstance(node, (JsScript, JsBlockStatement)):
                 yield node.body
 
-    def _global_member_store(self, stmt: Statement) -> tuple[str, Node] | None:
+    def _global_member_store(self, stmt: Statement) -> _GlobalMemberStore | None:
         """
-        The global property *stmt* stores and the value it stores, when it is a store-class
-        statement: an expression statement `global.key = value` whose base is spelled with a
-        same-realm global name nothing binds where it stands, whose key the text states, and whose
-        value is a bare name or a literal. `None` for any other statement, which breaks a store run.
+        The store *stmt* makes, when it is a store-class statement: an expression statement
+        `global.key = value` whose base is spelled with a same-realm global name nothing binds where
+        it stands, whose key the text states, and whose value is a bare name or a literal. `None`
+        for any other statement, which breaks a store run.
         """
         if not isinstance(stmt, JsExpressionStatement):
             return None
@@ -653,7 +680,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         name = self.model.global_alias_member_name(target)
         if name is None:
             return None
-        return name, value
+        return _GlobalMemberStore(name, value, base)
 
     def _remove_discarded_completions(self, root: JsScript):
         """
@@ -1185,14 +1212,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         Remove destructuring-assignment statements (`[a, b] = rhs`) whose every target the variable
         scope owns, that are never read, and whose right-hand side is side-effect-free. These arise from
-        CFF recovery of vestigial state variables. Reads are taken over the whole scope including nested
-        functions, so a closure reference or any use other than a plain assignment keeps a target alive.
+        CFF recovery of vestigial state variables. Reads are taken over the whole scope including
+        nested functions, so a closure reference or any use other than a plain assignment keeps a
+        target alive. An implicit global is owned by every scope that writes it and read by any code
+        in the script, so the reads of a statement with such a target are taken over the whole
+        script.
         """
         if not self._is_var_scope_root(parent):
             return set()
         scope = self.model.scope_of(parent)
         assert scope is not None
-        candidates: list[tuple[JsExpressionStatement, list[str]]] = []
+        candidates: list[tuple[JsExpressionStatement, list[str], bool]] = []
         for node in walk_scope(parent):
             if not isinstance(node, JsExpressionStatement):
                 continue
@@ -1202,27 +1232,27 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             targets = _pattern_target_idents(expr.left)
             if not targets:
                 continue
-            if any(not self._owns(scope, self.model.resolve(t)) for t in targets):
+            bindings = [self.model.resolve(t) for t in targets]
+            if any(not self._owns(scope, binding) for binding in bindings):
                 continue
-            if any(self._reflection_reachable(self.model.resolve(t)) for t in targets):
+            if any(self._reflection_reachable(binding) for binding in bindings):
                 continue
             if expr.right is None or not self._is_removable(expr.right, defunct):
                 continue
             if not _destructuring_target_safe(expr.left, expr.right):
                 continue
-            candidates.append((node, [t.name for t in targets]))
+            writes_a_global = any(
+                binding is not None and binding.kind is BindingKind.IMPLICIT_GLOBAL
+                for binding in bindings
+            )
+            candidates.append((node, [t.name for t in targets], writes_a_global))
         if not candidates:
             return set()
-        read_names: set[str] = set()
-        for node in parent.walk():
-            if not isinstance(node, JsIdentifier):
-                continue
-            if is_binding_site(node) or is_simple_assignment_target(node):
-                continue
-            read_names.add(node.name)
+        read_in_scope = self._names_read_in(parent)
         lists = ListRemoval()
         removed: set[str] = set()
-        for stmt, targets in candidates:
+        for stmt, targets, writes_a_global in candidates:
+            read_names = self._names_read_in_script(parent) if writes_a_global else read_in_scope
             if any(t in read_names for t in targets):
                 continue
             if not lists.remove(stmt):
@@ -1242,6 +1272,30 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self._remove_empty_declarators(parent, body, dead)
         self.mark_changed()
         return dead
+
+    def _names_read_in_script(self, node: Node) -> set[str]:
+        """
+        The names read anywhere in the script holding *node*, found once per sweep, the first time
+        the sweep needs them. The sweep's edits only take reads away, so an answer found earlier in
+        the sweep may still name a read that is gone, which keeps a write the next sweep takes.
+        """
+        if self._names_read_in_the_script is None:
+            self._names_read_in_the_script = self._names_read_in(tree_root(node))
+        return self._names_read_in_the_script
+
+    @staticmethod
+    def _names_read_in(root: Node) -> set[str]:
+        """
+        The name of every identifier under *root* that stands neither where a binding is declared
+        nor as the target of a plain assignment.
+        """
+        return {
+            node.name
+            for node in root.walk()
+            if isinstance(node, JsIdentifier)
+            and not is_binding_site(node)
+            and not is_simple_assignment_target(node)
+        }
 
     def _remove_dead_global_properties(
         self, parent: JsScript, defunct: set[str],
@@ -1424,16 +1478,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         defunct.add(name)
                         extended = True
         statements = list(body)
-        answered_behind = [False] * len(statements)
-        for index in range(len(statements) - 1, 0, -1):
-            answered_behind[index - 1] = (
-                answered_behind[index] or definitely_answers_the_completion(statements[index])
-            )
+        answering = (
+            index
+            for index in reversed(range(len(statements)))
+            if definitely_answers_the_completion(statements[index])
+        )
+        last_answer = next(answering, -1)
         lists = ListRemoval()
         prologue_intact = True
         for index, stmt in enumerate(statements):
             if self._dead_expression_may_go(
-                stmt, statements, index, answered_behind[index], prologue_intact, defunct
+                stmt, statements, index, index < last_answer, prologue_intact, defunct
             ):
                 lists.remove(stmt)
             else:
@@ -1502,8 +1557,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         side-effect-free. A binding still written by a surviving statement keeps its declaration, so it
         does not silently become an implicit global; a binding read across a function boundary or
         captured by a closure likewise keeps its declaration.
+
+        A declaration whose every declarator goes is taken out of *body* whole. The removals from
+        *body* and from the declarator lists are taken through one
+        `refinery.lib.scripts.ListRemoval`, so many dead declarations in one long body cost one
+        edit of it.
         """
-        for stmt in list(body):
+        lists = ListRemoval()
+        for stmt in body:
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
             load_bearing = (
@@ -1511,19 +1572,35 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if stmt.kind in (JsVarKind.LET, JsVarKind.CONST)
                 else frozenset()
             )
-            for decl in list(stmt.declarations):
-                if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
-                    continue
-                if decl.id.name in load_bearing:
-                    continue
-                binding = self.model.binding_of(decl.id)
-                if self._reflection_reachable(binding):
-                    continue
-                unreferenced = binding is not None and not binding.reads and not binding.writes
-                if decl.init is None:
-                    if decl.id.name in dead_names or unreferenced:
-                        remove_declarator(decl)
-                        self.mark_changed()
-                elif unreferenced and self._is_removable(decl.init):
-                    remove_declarator(decl)
-                    self.mark_changed()
+            dropped = [
+                decl for decl in stmt.declarations
+                if self._empty_declarator_may_go(decl, load_bearing, dead_names)
+            ]
+            if not dropped:
+                continue
+            if len(dropped) == len(stmt.declarations):
+                lists.remove(stmt)
+                continue
+            for decl in dropped:
+                lists.remove(decl)
+        if lists.apply():
+            self.mark_changed()
+
+    def _empty_declarator_may_go(
+        self, decl: Node, load_bearing: frozenset[str], dead_names: set[str],
+    ) -> bool:
+        """
+        Whether `_remove_empty_declarators` drops *decl*, a declarator of a declaration whose names
+        in *load_bearing* keep their declarators.
+        """
+        if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
+            return False
+        if decl.id.name in load_bearing:
+            return False
+        binding = self.model.binding_of(decl.id)
+        if self._reflection_reachable(binding):
+            return False
+        unreferenced = binding is not None and not binding.reads and not binding.writes
+        if decl.init is None:
+            return decl.id.name in dead_names or unreferenced
+        return unreferenced and self._is_removable(decl.init)
