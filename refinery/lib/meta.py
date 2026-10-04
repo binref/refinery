@@ -602,10 +602,11 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         if not self.history:
             self.history = parent.history
         elif self.history is not parent.history:
-            for key in parent.current.keys():
-                if key not in self.current:
+            if missing := [key for key in parent.current if key not in self.current]:
+                self.history = history = dict(self.history)
+                for key in missing:
                     self.current[key] = parent.current[key]
-                    self.history[key] = parent.history[key]
+                    history[key] = parent.history[key]
         self.scope = parent.scope
         for key in parent.keys():
             try:

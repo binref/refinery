@@ -82,6 +82,23 @@ class TestMeta(TestBase):
         self.assertDictEqual(spy.chunks[0].meta.history, {'x': [
             (False, b'alpha'), (False, b'beta')]})
 
+    def test_inheriting_into_a_copy_leaves_the_original_unchanged(self):
+        class spy(Unit):
+            chunks: List[Chunk] = []
+
+            def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
+                for chunk in inputs:
+                    spy.chunks.append(chunk)
+                    yield chunk
+
+        spy.chunks.clear()
+        B'' | U('put x alpha [') | U('nop [') | spy | U('nop ]]') | None
+        B'' | U('put y beta [') | U('nop [') | spy | U('nop ]]') | None
+        original, parent = spy.chunks
+        serialized = original.meta.serialize(2)
+        original.copy().meta.inherit(parent.meta)
+        self.assertEqual(original.meta.serialize(2), serialized)
+
     def test_regression_nulled_history(self):
         pl = L('emit FOO [[| put b [| emit BAR ]| rex . | swap k | swap b | pf {}/{k} | sep / ]]')
         self.assertEqual(pl(), B'FOO/B/FOO/A/FOO/R')
