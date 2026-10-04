@@ -152,6 +152,32 @@ class TestUnitOutput(unittest.TestCase):
 
         self.assertEqual(B'ABCDEF' | delegating_chop(2) | [bytes], [B'AB', B'CD', B'EF'])
 
+    def test_repeated_output_chunk_gets_no_trailing_line_break(self):
+        from refinery.lib.loader import load_pipeline
+        self.assertEqual(load_pipeline('emit A | rep 3') | bytes, B'A\nA\nA')
+
+    def test_terminal_line_is_complete_while_the_next_output_is_computed(self):
+        import io
+        from refinery.units import Unit
+
+        class Terminal(io.BytesIO):
+            def isatty(self):
+                return True
+
+        terminal = Terminal()
+        complete = []
+
+        class lines(Unit):
+            def process(self, data):
+                for line in (B'A', B'B', B'C'):
+                    written = terminal.getvalue()
+                    complete.append(not written or written.endswith(B'\n'))
+                    yield line
+
+        _ = B'' | lines() | terminal
+        self.assertEqual(terminal.getvalue(), B'A\nB\nC\n')
+        self.assertEqual(complete, [True, True, True])
+
 
 class TestEntry(unittest.TestCase):
 

@@ -227,6 +227,8 @@ class TestFraming(TestBase):
             'loop': lambda source: _drain(B'' | source()),
             'list of strings': lambda source: B'' | source() | [str],
             'set of strings': lambda source: B'' | source() | {str},
+            'stream': lambda source: B'' | source() | io.BytesIO(),
+            'console, frame opened': lambda source: B'' | _configured(source(), 1, console=True) | io.BytesIO(),
             'next unit in a frame': lambda source: _drain(B'' | source()[nop()]),
             'squeezed': lambda source: _drain(B'' | _configured(source(), squeeze=True)),
             'framed input, frame closed': lambda source: _drain([B''] | source()),

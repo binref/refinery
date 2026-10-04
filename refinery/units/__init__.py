@@ -1966,10 +1966,49 @@ class Unit(UnitBase, abstract=True):
 
         self._target = stream
 
+        if self.isatty():
+            self._write_to_terminal(stream)
+        else:
+            self._write_to_stream(stream)
+
+        return stream
+
+    def _log_send_failure(self, error: OSError):
+        if isinstance(error, BrokenPipeError) or error.errno != 32:
+            # This happens when the next unit does not consume everything
+            # we send. For example, this can happen when a large file is
+            # read in chunks and the pick unit is used to select only the
+            # first few of these.
+            self.log_debug(F'cannot send to next unit: {error}')
+
+    def _write_to_stream(self, stream: BinaryIO):
+        framebreak = None
+        separate = False
+        for chunk in self:
+            try:
+                if not separate:
+                    stream.write(chunk)
+                elif len(chunk) < 0x1000:
+                    stream.write(B'\n' + chunk)
+                else:
+                    stream.write(B'\n')
+                    stream.write(chunk)
+                stream.flush()
+            except AttributeError:
+                pass
+            except (BrokenPipeError, OSError) as E:
+                self._log_send_failure(E)
+                break
+            if framebreak is None:
+                framebreak = self._framehandler.framebreak
+            separate = framebreak and not chunk.endswith(B'\n')
+            del chunk
+
+    def _write_to_terminal(self, stream: BinaryIO):
         def cname(x: str):
             return x.lower().replace('-', '')
 
-        recode = self.isatty() and cname(self.codec) != cname(sys.stdout.encoding)
+        recode = cname(self.codec) != cname(sys.stdout.encoding)
         chunk = None
 
         for last, chunk in lookahead(self):
@@ -1978,9 +2017,7 @@ class Unit(UnitBase, abstract=True):
                 and self._framehandler.framebreak
                 and not chunk.endswith(B'\n')
             ):
-                if not isinstance(chunk, bytearray):
-                    chunk = bytearray(chunk)
-                chunk.extend(B'\n')
+                chunk = chunk + B'\n'
             if recode:
                 try:
                     import codecs
@@ -1994,22 +2031,15 @@ class Unit(UnitBase, abstract=True):
             except AttributeError:
                 pass
             except (BrokenPipeError, OSError) as E:
-                if isinstance(E, BrokenPipeError) or E.errno != 32:
-                    # This happens when the next unit does not consume everything
-                    # we send. For example, this can happen when a large file is
-                    # read in chunks and the pick unit is used to select only the
-                    # first few of these.
-                    self.log_debug(F'cannot send to next unit: {E}')
+                self._log_send_failure(E)
                 break
 
         try:
-            if self.isatty() and chunk and not chunk.endswith(B'\n'):
+            if chunk and not chunk.endswith(B'\n'):
                 stream.write(B'\n')
                 stream.flush()
-        except (NameError, AttributeError):
+        except AttributeError:
             pass
-
-        return stream
 
     def read(self, bytecount: int = -1) -> bytes:
         """
