@@ -2752,6 +2752,21 @@ class TestADiscardedCompletionValueIsRemoved(TestJsDeobfuscator):
         self.assertEqual(source, self._remove_unused(source))
 
 
+class TestLivenessIsHeldFromTheStartOfASweep(TestJsDeobfuscator):
+    """
+    A sweep holds its models from its start, and the first stage to read liveness may come after a
+    stage that already edited the tree. Liveness is therefore built when the sweep starts, not when
+    it is first read: built later, it would describe a tree the other held models never saw.
+    """
+
+    def test_liveness_first_read_after_a_removed_store(self):
+        self.assertEqual(
+            'globalThis.r = 1;\nSINK(r);',
+            self._run_transformer(
+                'globalThis.r = 1; globalThis.r = 1; SINK(r);', JsUnusedCodeRemoval),
+        )
+
+
 class TestAStandAloneEmptyStatementIsRemoved(TestJsDeobfuscator):
     """
     An empty statement standing in a statement list executes nothing, so removing it changes no

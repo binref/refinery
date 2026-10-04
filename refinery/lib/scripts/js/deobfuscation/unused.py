@@ -432,37 +432,44 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         super().__init__()
         self.preserve_globals = preserve_globals
         self._has_reflection = False
-        self._model: SemanticModel | None = None
-        self._effects: EffectModel | None = None
-        self._liveness: LivenessModel | None = None
-        self._reaching: ReachingModel | None = None
         self._cache: ModelCache | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
-        Rebuild the semantic model and sweep the whole script until a fixpoint. The model is computed
-        once per pass and queried by every removal below; mutations within a pass only ever delete
-        references, so a fact taken from the pass-start model can never wrongly classify a live binding
-        as dead, and the next pass — over a freshly-built model — sweeps anything the staleness held
-        back. Transitive deadness therefore falls out of the loop rather than needing the pipeline.
+        Sweep the whole script until a fixpoint, each sweep holding the models of the tree it
+        started on through `refinery.lib.scripts.modelcache.ModelCacheBase.pinned`, with every
+        model that reads the tree when it is built warmed at the sweep's start, liveness included.
+        Transitive deadness falls out of the loop rather than needing the pipeline: the next sweep,
+        over models rebuilt for the edited tree, takes whatever the held answers held back.
+
+        A held answer is never more permissive than one from models rebuilt after the sweep's own
+        edits, because those edits only take facts away. They remove statements, declarators and
+        returns, leaving an empty statement where a removed declaration was the one statement of
+        another; they put a right-hand side in place of the assignment holding it; they drop an
+        initializer; and they add a bare `var` for a name they take from the script scope. A
+        removal deletes references, so a binding the held model calls live may be dead now, never
+        the reverse, and a write it calls established still precedes every read it established.
+        None of the edits puts a node that was in the tree at the sweep's start under a node the
+        sweep creates, so the held control-flow model, which places a node by climbing its parents
+        when asked, places every such node where it was built. The tampering model enumerates
+        invocations over the live tree when asked, so it is asked only by the first stage, before
+        any edit.
         """
         while True:
             previously_changed = self.changed
             self.changed = False
             cache = model_cache(self, node)
-            self._cache = cache
-            self._model = cache.model
-            self._effects = cache.effects
-            self._liveness = cache.liveness
-            self._reaching = cache.reaching
-            self._has_reflection = self._model.has_reflection_surface()
-            self._remove_dead_stores(node)
-            self._remove_redundant_global_stores(node)
-            self._remove_discarded_completions(node)
-            self._remove_empty_statements(node)
-            self._localize_pseudo_globals(node)
-            self.generic_visit(node)
-            self._process_body(node, node.body)
+            with cache.pinned():
+                cache.warm('_liveness')
+                self._cache = cache
+                self._has_reflection = cache.model.has_reflection_surface()
+                self._remove_discarded_completions(node)
+                self._remove_dead_stores(node)
+                self._remove_redundant_global_stores(node)
+                self._remove_empty_statements(node)
+                self._localize_pseudo_globals(node)
+                self.generic_visit(node)
+                self._process_body(node, node.body)
             pass_changed = self.changed
             # Carry the cumulative change flag without going through the setter: this is bookkeeping,
             # not a tree mutation, so it must not drop the shared model cache.
@@ -473,23 +480,23 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     @property
     def model(self) -> SemanticModel:
-        assert self._model is not None
-        return self._model
+        assert self._cache is not None
+        return self._cache.model
 
     @property
     def effects(self) -> EffectModel:
-        assert self._effects is not None
-        return self._effects
+        assert self._cache is not None
+        return self._cache.effects
 
     @property
     def liveness(self) -> LivenessModel:
-        assert self._liveness is not None
-        return self._liveness
+        assert self._cache is not None
+        return self._cache.liveness
 
     @property
     def reaching(self) -> ReachingModel:
-        assert self._reaching is not None
-        return self._reaching
+        assert self._cache is not None
+        return self._cache.reaching
 
     def _remove_dead_stores(self, root: JsScript):
         """

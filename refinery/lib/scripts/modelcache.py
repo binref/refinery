@@ -169,7 +169,7 @@ class ModelCacheBase:
     def _warm_slots(self) -> tuple[str, ...]:
         return self._root_slots() if self._WARM_SLOTS is None else self._WARM_SLOTS
 
-    def warm(self) -> None:
+    def warm(self, *also: str) -> None:
         """
         Build the tree-reading models a pinned block reads, at the current tree version. A block
         that both edits the tree and reads models calls this at its entry, so no such model is first
@@ -177,16 +177,17 @@ class ModelCacheBase:
         derived only from held bases needs no warming: built late, it reads those bases and yields
         the entry answer. The set is the cache's `_WARM_SLOTS`, declared once beside the model
         definitions, so a call site cannot drift from the models it must hold the way a hand-copied
-        pre-build list did. A tree reader the pinned passes do not read is left out of it and out of
-        this build; the guard still refuses it if some pass reads it late, so leaving it out of the
-        warm set cannot go silently wrong.
+        pre-build list did. A tree reader most pinned passes do not read is left out of it and out
+        of this build; the one pass that reads it names its slot in *also*, and the guard still
+        refuses it if some other pass reads it late, so leaving it out of the warm set cannot go
+        silently wrong.
 
         This holds only for models that read the tree at build. A model that reads the tree lazily
         at query time — its walk happening on first use, not on construction — is not made
         consistent by warming its slot, and a pass that queries such a model across its edits owns
         that consistency itself.
         """
-        for slot in self._warm_slots():
+        for slot in (*self._warm_slots(), *also):
             getattr(self, slot[1:])
 
     def _lazy(self, slot: str, build: Callable[[], _T]) -> _T:

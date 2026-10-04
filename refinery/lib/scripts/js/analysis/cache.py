@@ -96,9 +96,9 @@ class ModelCache(ModelCacheBase):
         '_liveness',
     )
 
-    # The tree readers a pinned pass actually reads, warmed at entry. `liveness` is a tree reader
-    # but no pinned pass reads it (`unused` runs unpinned), so it stays in the guard set above yet
-    # out of the warm build — warming it would solve liveness in pinned blocks that never ask.
+    # The tree readers every pinned pass reads, warmed at entry. `liveness` is a tree reader only
+    # `unused` reads, which names it to `warm`, so it stays in the guard set above yet out of the
+    # warm build — warming it would solve liveness in pinned blocks that never ask.
     _WARM_SLOTS = (
         '_model',
         '_intrinsic_writes',

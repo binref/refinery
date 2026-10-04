@@ -9,6 +9,7 @@ from test.lib.scripts.js.analysis.jsgen import generate
 
 import refinery.lib.scripts.js.analysis.cache as cache_module
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, canonical, tree_version
+from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
@@ -16,6 +17,7 @@ from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
+from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
@@ -661,11 +663,53 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
         self.assertGreater(unbatched_builds, 1)
 
 
+class TestUnusedCodeRemovalHoldsTheModelsForASweep(TestBase):
+    """
+    Unused-code removal sweeps the script until a sweep changes nothing, and every sweep holds the
+    models of the tree it started on. Released, each removal of a sweep moves the tree under the
+    next read, and the models are rebuilt once per body that holds a dead local.
+    """
+
+    @staticmethod
+    def _bodies(count: int) -> str:
+        """
+        A script with *count* functions, each holding one local nothing reads.
+        """
+        functions = '\n'.join(F'function f{i}() {{ var t = g; return {i}; }}' for i in range(count))
+        return F'g = 1;\n{functions}\nSINK({", ".join(F"f{i}()" for i in range(count))});'
+
+    @staticmethod
+    def _released(source: str) -> tuple[int, str]:
+        original = ModelCache.pinned
+        ModelCache.pinned = _no_pin
+        try:
+            return _transform_root_builds(JsUnusedCodeRemoval, source)
+        finally:
+            ModelCache.pinned = original
+
+    @a_property_of_the_pin_itself
+    def test_the_models_are_built_as_often_for_sixteen_bodies_as_for_two(self):
+        self.assertEqual(
+            _transform_root_builds(JsUnusedCodeRemoval, self._bodies(2))[0],
+            _transform_root_builds(JsUnusedCodeRemoval, self._bodies(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_released_models_are_built_more_often_for_sixteen_bodies_than_for_two(self):
+        self.assertLess(self._released(self._bodies(2))[0], self._released(self._bodies(16))[0])
+
+    def test_holding_the_models_does_not_change_the_result(self):
+        source = self._bodies(8)
+        held = _transform_root_builds(JsUnusedCodeRemoval, source)[1]
+        self.assertNotIn('var t', held)
+        self.assertEqual(held, self._released(source)[1])
+
+
 #: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
 #: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
-#: fold, a string respelling, a call wrapper and a pruned branch whose kept test assigns what a
-#: later test reads — beside a few plain shapes and the generated corpus, which exercise the rest
-#: of the pipeline.
+#: fold, a string respelling, a call wrapper, a pruned branch whose kept test assigns what a later
+#: test reads, a dead store, a discarded completion and a global only one function uses — beside a
+#: few plain shapes and the generated corpus, which exercise the rest of the pipeline.
 _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var q = 1; var t = (q + 1) * 2; f(t);',
     'var x = 5; var t = delete x; g(); f(t);',
@@ -681,6 +725,9 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var g = String.fromCharCode(65); SINK(g);',
     'function w(a, b) { return target(a, b); } var r = w(1, 2); SINK(r);',
     'function main(c) { var o; if (c) { if ([o = {}, f()]) { A(); } } if (o) { X(); } else { Y(); } } SINK(main);',
+    'function f(a) { var x = [a]; x = a.c; return x; } SINK(f);',
+    '(function () { function g() { h(); return 0; } g(); })();',
+    'var t; function f(a) { t = a.b; SINK(t); } f(SRC);',
 )
 
 
@@ -772,3 +819,78 @@ class TestAKeptModelDescribesTheProgramItOutlivedThePinOn(TestBase):
         for index, source in enumerate(_CORPUS):
             with self.subTest(sample=index):
                 self.assertEqual(0, self._models_kept_past_a_changed_program(source))
+
+
+@a_property_of_the_pin_itself
+class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
+    """
+    A held control-flow model answers where a node stands by climbing the parents the node has at
+    the moment it is asked. A pass whose edit puts a node that was in the tree when the pin was
+    entered under a node the pass creates would have that model place it somewhere it was never
+    built for. Every such answer the corpus asks a held model for after the tree moved is compared
+    with the answer the same model gives once the parents of the pin's entry are put back: the held
+    answer is either unknown or the same place.
+    """
+
+    def _held_answers(self, source: str) -> tuple[int, list[str]]:
+        entries: list[tuple[ModelCache, int, dict[int, tuple[Node, Node | None]]]] = []
+        compared = 0
+        misplaced: list[str] = []
+        original_pinned = ModelCache.pinned
+        original_locate = ElementLocator.locate
+
+        @contextmanager
+        def recorded(self: ModelCache):
+            outermost = not self._pins
+            if outermost:
+                parents = {id(node): (node, node.parent) for node in self.root.walk()}
+                entries.append((self, tree_version(self.root), parents))
+            try:
+                with original_pinned(self) as pinned:
+                    yield pinned
+            finally:
+                if outermost:
+                    entries.pop()
+
+        def audited(locator: ElementLocator, element: Node):
+            nonlocal compared
+            answer = original_locate(locator, element)
+            if not entries:
+                return answer
+            cache, version, parents = entries[-1]
+            entry = parents.get(id(element))
+            if entry is None or entry[0] is not element or tree_version(cache.root) == version:
+                return answer
+            compared += 1
+            moved: list[tuple[Node, Node | None]] = []
+            cursor: Node | None = element
+            while cursor is not None and (held := parents.get(id(cursor))) is not None:
+                moved.append((cursor, cursor.parent))
+                cursor.parent = held[1]
+                cursor = held[1]
+            try:
+                then = original_locate(locator, element)
+            finally:
+                for node, parent in moved:
+                    node.parent = parent
+            if answer is not None and (then is None or then[1] is not answer[1]):
+                misplaced.append(type(element).__name__)
+            return answer
+
+        ModelCache.pinned = recorded
+        ElementLocator.locate = audited
+        try:
+            deobfuscate_source(source)
+        finally:
+            ModelCache.pinned = original_pinned
+            ElementLocator.locate = original_locate
+        return compared, misplaced
+
+    def test_no_held_model_in_the_corpus_places_a_node_elsewhere(self):
+        compared = 0
+        for index, source in enumerate(_CORPUS):
+            with self.subTest(sample=index):
+                count, misplaced = self._held_answers(source)
+                compared += count
+                self.assertEqual([], misplaced)
+        self.assertGreater(compared, 0)
