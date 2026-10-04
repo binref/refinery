@@ -22,6 +22,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmReference,
     XlmValue,
     condition,
+    error_outcome,
     is_number,
 )
 
@@ -94,7 +95,7 @@ def _address(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
             return _partial(spelled)
         truth = condition(argument)
         if isinstance(truth, XlmValue):
-            return XlmOutcome(value=truth)
+            return error_outcome(truth)
         a1 = truth
     if len(call.arguments) >= 5:
         argument = evaluate_expression(engine, call.arguments[4], cursor)
@@ -134,7 +135,7 @@ def _hlookup(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
         pattern = '.*'
     first, last = corners
     answer_row = first.row + int(float(index.value)) - 1
-    if answer_row > last.row:
+    if answer_row < first.row or answer_row > last.row:
         return _partial(spelled)
     try:
         for reference in engine.range_cells(corners):

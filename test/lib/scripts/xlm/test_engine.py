@@ -518,6 +518,23 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(_value(engine, 209, 56), 'arm')
         self.assertEqual(_value(engine, 108, 56), 'URLMo')
 
+    @unittest.expectedFailure
+    def test_a_partial_block_if_with_an_empty_true_arm_skips_to_its_end_if(self):
+        steps = _steps(
+            ('AZ110', 'IF(AZ113)'),
+            ('AZ112', 'ELSE()'),
+            ('AZ115', 'SET.VALUE(BD209,"arm")'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual(
+            [step.text for step in steps if (step.row, step.col) == (112, 52)],
+            ['ELSE', '[FALSE] ELSE'],
+        )
+        self.assertEqual(
+            [step.text for step in steps if (step.row, step.col) == (115, 52)],
+            ['[FALSE] SET.VALUE(BD209,"arm")'],
+        )
+
     def test_the_assign_samples_partial_block_if_runs_both_of_its_arms(self):
         steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
         self.assertEqual(
@@ -529,13 +546,29 @@ class TestXlmEngineControl(TestBase):
             + [25277, 25278, 25279, 25280, 25281, 25282],
         )
         self.assertEqual(
-            [step.text for step in steps if (step.sheet, step.row, step.col) == ('sod', 25277, 148)],
+            [
+                step.text
+                for step in steps
+                if (step.sheet, step.row, step.col) == ('sod', 25277, 148)
+            ],
             ['END.IF', '[FALSE] END.IF'],
         )
 
     def test_a_while_on_a_number_other_than_zero_holds(self):
         steps = _steps(('AZ110', 'WHILE(1)'), ('AZ112', 'NEXT()'), max_steps=6)
         self.assertEqual([step.row for step in steps[:6]], [109, 110, 112, 110, 112, 110])
+
+    @unittest.expectedFailure
+    def test_a_next_inside_the_arm_of_a_block_continues_the_loop_of_its_while(self):
+        steps, engine = _run(
+            ('AZ110', 'WHILE(BD210&lt;2)'),
+            ('AZ112', 'IF(TRUE)'),
+            ('AZ113', 'SET.VALUE(BD210,BD210+1)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual([step.row for step in steps if step.row == 110], [110, 110, 110])
+        self.assertEqual(_value(engine, 210, 56), 2)
 
     def test_a_count_over_the_whole_sheet_answers_the_count_over_its_used_cells(self):
         _, engine = _run(

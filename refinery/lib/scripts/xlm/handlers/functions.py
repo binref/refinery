@@ -21,6 +21,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmValue,
     condition,
+    error_outcome,
     is_number,
     wrap_literal,
 )
@@ -341,7 +342,7 @@ def _not(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
         return XlmOutcome(value=XlmValue(value=True, partial=True))
     truth = condition(argument)
     if isinstance(truth, XlmValue):
-        return XlmOutcome(value=truth)
+        return error_outcome(truth)
     return XlmOutcome(value=XlmValue(value=not truth))
 
 

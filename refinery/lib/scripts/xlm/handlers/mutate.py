@@ -26,6 +26,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmReference,
     XlmValue,
     condition,
+    error_outcome,
     is_number,
     unwrap_literal,
 )
@@ -190,7 +191,7 @@ def _define_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
             return _partial(spelled)
         truth = condition(local)
         if isinstance(truth, XlmValue):
-            return XlmOutcome(value=truth)
+            return error_outcome(truth)
         if truth:
             sheet = engine.view.sheet_index(cursor.sheet)
     name = label.unwrap().lower()

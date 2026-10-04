@@ -18,7 +18,13 @@ from refinery.lib.scripts.xlm.blocks import XlmBlock
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.references import XlmArrival, XlmCursor, XlmFrame, XlmLoop
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue, condition
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmReference,
+    XlmValue,
+    condition,
+    error_outcome,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.xlm.engine import XlmEngine
@@ -138,10 +144,7 @@ def _run_block_head(
         )
     truth = condition(test)
     if isinstance(truth, XlmValue):
-        return XlmOutcome(
-            value=XlmValue(value=truth.value, text=spelled),
-            status=XlmStatus.Error,
-        )
+        return error_outcome(truth, spelled, halts=True)
     if truth:
         engine.indent_level += 1
         return XlmOutcome(value=XlmValue(value=0, text=spelled))
@@ -207,7 +210,7 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
         )
     truth = condition(test)
     if isinstance(truth, XlmValue):
-        return XlmOutcome(value=truth)
+        return error_outcome(truth)
     if truth:
         branch, desc = call.arguments[1], '[TRUE]'
     elif count == 3:
@@ -238,7 +241,7 @@ def _if_value(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
         return XlmOutcome(value=XlmValue(value=spelled, partial=True))
     truth = condition(test)
     if isinstance(truth, XlmValue):
-        return XlmOutcome(value=truth)
+        return error_outcome(truth)
     index = 1 if truth else 2
     if index >= len(call.arguments):
         return XlmOutcome(value=XlmValue(value=False))
@@ -310,10 +313,7 @@ def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
     if not test.partial:
         truth = condition(test)
         if isinstance(truth, XlmValue):
-            return XlmOutcome(
-                value=XlmValue(value=truth.value, text=spelled),
-                status=XlmStatus.Error,
-            )
+            return error_outcome(truth, spelled, halts=True)
         if truth:
             loop.holds = True
             text = F'{spelled} -> [TRUE]'

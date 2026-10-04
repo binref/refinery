@@ -194,5 +194,5 @@ class XlmMemory:
         """
         return tuple(
             (region.base, bytes(region.data))
-            for region in self._regions
+            for region in sorted(self._regions, key=lambda region: region.base)
         )

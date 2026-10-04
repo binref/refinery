@@ -325,6 +325,15 @@ class TestLookupCommands(TestBase):
         self.assertEqual(outcome.value.partial, True)
         self.assertEqual(outcome.value.text, 'HLOOKUP("needle",AZ112:AZ116,3,FALSE)')
 
+    def test_hlookup_answers_nothing_for_an_index_below_one(self):
+        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ112', '"leaked"')
+        data = replace_cell_formula(data, 'AZ113', '"needle"')
+        engine = XlmEngine(XlmView(data))
+        call = _parsed_call('HLOOKUP("needle",AZ113:AZ116,0,FALSE)')
+        outcome = engine.call(call, _CURSOR)
+        self.assertEqual(outcome.value.partial, True)
+        self.assertEqual(outcome.value.text, 'HLOOKUP("needle",AZ113:AZ116,0,FALSE)')
+
     def test_counta_counts_the_cells_of_a_range_that_hold_a_value(self):
         self.assertEqual(_answer('COUNTA(AZ109:AZ109)').value.value, 1)
         self.assertEqual(_answer('COUNTA(AZ200:AZ210)').value.value, 0)
@@ -591,3 +600,14 @@ class TestControlCommands(TestBase):
         outcome = _answer('WHILE("junk")')
         self.assertEqual(outcome.status, XlmStatus.Error)
         self.assertEqual(outcome.value.text, 'WHILE("junk")')
+
+    def test_a_while_on_a_condition_that_spells_no_truth_value_keeps_the_error_flag(self):
+        outcome = _answer('WHILE(SEARCH("x","abc"))')
+        self.assertEqual(outcome.value.error, True)
+        self.assertEqual(outcome.value.value, '#VALUE!')
+
+    def test_a_block_if_on_a_condition_that_spells_no_truth_value_keeps_the_error_flag(self):
+        outcome = _answer('IF("junk")')
+        self.assertEqual(outcome.status, XlmStatus.Error)
+        self.assertEqual(outcome.value.error, True)
+        self.assertEqual(outcome.value.value, '#VALUE!')

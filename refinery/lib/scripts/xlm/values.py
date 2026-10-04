@@ -8,7 +8,7 @@ import datetime
 import math
 import operator
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from refinery.lib.excel.common import column_letters
@@ -83,6 +83,21 @@ def condition(value: XlmValue) -> bool | XlmValue:
         if lowered == 'false':
             return False
     return error_value('#VALUE!')
+
+
+def error_outcome(
+    truth: XlmValue,
+    spelled: str | None = None,
+    halts: bool = False,
+) -> XlmOutcome:
+    """
+    The outcome a command that reads a condition answers for one that spells no truth value:
+    the error value the condition is, spelled as the command when it names one, and an error
+    the macro halts on when its grammar makes the condition fatal.
+    """
+    if spelled is not None:
+        truth = replace(truth, text=spelled)
+    return XlmOutcome(value=truth, status=XlmStatus.Error if halts else None)
 
 
 def unwrap_literal(text: str) -> str:
