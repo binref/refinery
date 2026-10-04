@@ -134,24 +134,30 @@ class XlmMemory:
 
     def write(self, base: int, data: bytes | bytearray, size: int) -> bool:
         """
-        Write bytes at an address, reporting whether the whole write fits inside one reserved
-        region; a write that straddles a region boundary does not happen at all.
+        Write at most the given count of bytes at an address, reporting whether the whole slice
+        fits inside one reserved region; a slice that straddles a region boundary or counts
+        fewer than zero bytes is not written at all, and a region keeps its length.
         """
+        if size < 0:
+            return False
         for region in self._regions:
             if not region.base <= base <= region.base + region.size:
                 continue
             if not region.base <= base + size <= region.base + region.size:
                 return False
             offset = base - region.base
-            region.data[offset:offset + size] = data[:size]
+            chunk = data[:size]
+            region.data[offset:offset + len(chunk)] = chunk
             return True
         return False
 
     def peek(self, base: int, size: int) -> bytes | None:
         """
-        The bytes a region holds at an address, or `None` when the slice does not fit inside
-        one reserved region.
+        The bytes a region holds at an address, or `None` when the slice counts fewer than zero
+        bytes or does not fit inside one reserved region.
         """
+        if size < 0:
+            return None
         for region in self._regions:
             if not region.base <= base <= region.base + region.size:
                 continue

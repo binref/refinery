@@ -119,7 +119,7 @@ class BiffRpnDecoder(RpnDecoder):
         if self._version >= BiffVersion.BIFF8:
             row_word = self._read_u16()
             col_word = self._read_u16()
-            return self._compose_reference(row_word, col_word & 0x3FFF, col_word, relative)
+            return self._compose_reference(row_word, col_word & 0xFF, col_word, relative)
         row_word = self._read_u16()
         col = self._read_u8()
         return self._compose_reference(row_word, col, row_word, relative)
@@ -136,13 +136,13 @@ class BiffRpnDecoder(RpnDecoder):
             second_col_word = self._read_u16()
             first = self._compose_reference(
                 first_row,
-                first_col_word & 0x3FFF,
+                first_col_word & 0xFF,
                 first_col_word,
                 relative,
             )
             second = self._compose_reference(
                 second_row,
-                second_col_word & 0x3FFF,
+                second_col_word & 0xFF,
                 second_col_word,
                 relative,
             )
@@ -201,8 +201,9 @@ class BiffRpnDecoder(RpnDecoder):
     ) -> Expression:
         """
         Compose one cell reference from its raw words. BIFF8 keeps the relative flags in the
-        column word and fourteen column bits; the earlier versions keep the flags in the row
-        word, fourteen row bits, and eight column bits.
+        column word and the column in its low byte, the six bits between them unused; the earlier
+        versions keep the flags in the row word, fourteen row bits, and eight column bits. A
+        relative column is a signed byte in every version.
         """
         if self._version >= BiffVersion.BIFF8:
             row = row_word
@@ -219,14 +220,11 @@ class BiffRpnDecoder(RpnDecoder):
                 relative_row=row_relative,
                 relative_col=col_relative,
             )
-        if self._version >= BiffVersion.BIFF8:
-            row_bits, col_bits = 0x8000, 0x80
-        else:
-            row_bits, col_bits = 0x2000, 0x80
+        row_bits = 0x8000 if self._version >= BiffVersion.BIFF8 else 0x2000
         if row_relative and row >= row_bits:
             row -= 2 * row_bits
-        if col_relative and col >= col_bits:
-            col -= 2 * col_bits
+        if col_relative and col >= 0x80:
+            col -= 0x100
         return XlR1C1Reference(
             row=row if row_relative else row + 1,
             col=col if col_relative else col + 1,

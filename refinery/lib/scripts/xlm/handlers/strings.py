@@ -4,12 +4,22 @@ strings the macro program assembles.
 """
 from __future__ import annotations
 
+import re
+
 from typing import TYPE_CHECKING
 
 from refinery.lib.excel import synthesize_formula
+from refinery.lib.excel.formula.model import XlMissingArgument
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmValue, is_number, wrap_literal
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmValue,
+    ansi_bytes,
+    error_value,
+    is_number,
+    wrap_literal,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.excel.formula.model import XlFunctionCall
@@ -17,8 +27,33 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.xlm.references import XlmCursor
 
 
+#: The wildcards of a search pattern, and the tilde that makes the one after it literal.
+_WILDCARDS = re.compile(r'~([?*~])|([?*])')
+
+
 def _partial(spelled: str) -> XlmOutcome:
     return XlmOutcome(value=XlmValue(value=spelled, partial=True))
+
+
+def _wildcard_pattern(pattern: str) -> str:
+    """
+    The regular expression a search pattern spells: a question mark matches any one character,
+    an asterisk any run of characters, and a tilde makes the wildcard or tilde after it literal.
+    """
+    parts = []
+    position = 0
+    for match in _WILDCARDS.finditer(pattern):
+        parts.append(re.escape(pattern[position:match.start()]))
+        literal, wildcard = match.groups()
+        if literal:
+            parts.append(re.escape(literal))
+        elif wildcard == '?':
+            parts.append('.')
+        else:
+            parts.append('.*')
+        position = match.end()
+    parts.append(re.escape(pattern[position:]))
+    return ''.join(parts)
 
 
 def _char(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -50,13 +85,7 @@ def _code(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutc
     unwrapped = argument.unwrap()
     if not unwrapped:
         return XlmOutcome(value=XlmValue(value=0))
-    code = ord(unwrapped[0])
-    if code > 256:
-        try:
-            code = unwrapped[0].encode('cp1252')[0]
-        except UnicodeEncodeError:
-            pass
-    return XlmOutcome(value=XlmValue(value=code))
+    return XlmOutcome(value=XlmValue(value=ansi_bytes(unwrapped[0])[0]))
 
 
 def _concatenate(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -88,26 +117,40 @@ def _mid(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     ):
         start = int(float(base.value)) - 1
         count = int(float(length.value))
-        result = str(text.value)[start:start + count]
-        return XlmOutcome(value=XlmValue(value=result, text=str(result)))
+        result = text.unwrap()[start:start + count]
+        return XlmOutcome(value=XlmValue(value=result, text=result))
     fragments = ','.join(synthesize_formula(node) for node in call.arguments)
     return XlmOutcome(value=XlmValue(value=F'MID({fragments})', partial=True))
 
 
 def _search(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The position of the first match of a pattern in a text, counted from one and ignoring case,
+    from the position the third argument names on. A pattern spells wildcards, and a pattern
+    the text does not hold, or a position outside the text, answers `#VALUE!`.
+    """
     needle = evaluate_expression(engine, call.arguments[0], cursor)
     haystack = evaluate_expression(engine, call.arguments[1], cursor)
-    if not needle.partial and not haystack.partial:
-        try:
-            position = str(haystack.value).lower().index(str(needle.value).lower())
-        except ValueError:
-            return XlmOutcome(value=XlmValue(value=None, text=''))
-        return XlmOutcome(value=XlmValue(value=position))
-    return XlmOutcome(value=XlmValue(
-        value=0,
-        text=F'SEARCH({needle.text},{haystack.text})',
-        partial=True,
-    ))
+    start = XlmValue(value=1)
+    if len(call.arguments) > 2 and not isinstance(call.arguments[2], XlMissingArgument):
+        start = evaluate_expression(engine, call.arguments[2], cursor)
+    if needle.partial or haystack.partial or start.partial:
+        return XlmOutcome(value=XlmValue(
+            value=0,
+            text=F'SEARCH({needle.text},{haystack.text})',
+            partial=True,
+        ))
+    for argument in (needle, haystack, start):
+        if argument.error:
+            return XlmOutcome(value=argument)
+    within = haystack.unwrap()
+    if not is_number(start.value) or not 1 <= float(start.value) <= len(within):
+        return XlmOutcome(value=error_value('#VALUE!'))
+    pattern = re.compile(_wildcard_pattern(needle.unwrap()), re.IGNORECASE | re.DOTALL)
+    match = pattern.search(within, int(float(start.value)) - 1)
+    if match is None:
+        return XlmOutcome(value=error_value('#VALUE!'))
+    return XlmOutcome(value=XlmValue(value=match.start() + 1))
 
 
 def _t(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:

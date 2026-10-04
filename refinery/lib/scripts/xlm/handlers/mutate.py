@@ -25,6 +25,7 @@ from refinery.lib.scripts.xlm.values import (
     XlmOutcome,
     XlmReference,
     XlmValue,
+    holds,
     is_number,
     unwrap_literal,
 )
@@ -38,6 +39,19 @@ def _partial(spelled: str) -> XlmOutcome:
     return XlmOutcome(value=XlmValue(value=spelled, partial=True))
 
 
+def _absolute_reference(reference: XlmReference) -> XlA1Reference:
+    """
+    The reference node that names an address absolutely.
+    """
+    return XlA1Reference(
+        sheets=(reference.sheet,) if reference.sheet is not None else None,
+        row=reference.row,
+        col=reference.col,
+        relative_row=False,
+        relative_col=False,
+    )
+
+
 def _name_formula(node, value: XlmValue):
     """
     The formula a defined name stands for once a command stores a value under it: numbers,
@@ -46,37 +60,17 @@ def _name_formula(node, value: XlmValue):
     """
     if isinstance(node, (XlA1Reference, XlR1C1Reference, XlArrayConstant)):
         return node
-    reference = value.reference
     if isinstance(value.value, XlmReference):
-        reference = value.value
-    if reference is not None:
-        return XlA1Reference(
-            sheets=(reference.sheet,) if reference.sheet is not None else None,
-            row=reference.row,
-            col=reference.col,
-            relative_row=False,
-            relative_col=False,
-        )
+        return _absolute_reference(value.value)
+    if value.reference is not None:
+        return _absolute_reference(value.reference)
     if value.cells is not None and len(value.cells) == 2:
         first, second = value.cells
         if first.reference is not None and second.reference is not None:
             return XlBinaryExpression(
-                left=XlA1Reference(
-                    sheets=(first.reference.sheet,) if first.reference.sheet is not None else None,
-                    row=first.reference.row,
-                    col=first.reference.col,
-                    relative_row=False,
-                    relative_col=False,
-                ),
+                left=_absolute_reference(first.reference),
                 operator=XlBinaryOperator.RANGE,
-                right=XlA1Reference(
-                    sheets=(second.reference.sheet,)
-                    if second.reference.sheet is not None else None,
-                    row=second.reference.row,
-                    col=second.reference.col,
-                    relative_row=False,
-                    relative_col=False,
-                ),
+                right=_absolute_reference(second.reference),
             )
     if value.cells is not None:
         return XlArrayConstant(rows=[tuple(
@@ -86,7 +80,7 @@ def _name_formula(node, value: XlmValue):
     if isinstance(value.value, bool):
         return XlBoolean(value=value.value)
     if is_number(value.value):
-        number = float(value.unwrap())
+        number = float(value.value)
         return XlNumber(value=int(number) if number.is_integer() else number)
     return XlString(value=value.unwrap())
 
@@ -100,36 +94,49 @@ def _write_formula(
 ) -> XlmOutcome:
     """
     Write what a command's source argument evaluates to into the cells its destination argument
-    names. A source the program never finishes marks the destination cells as failed instead of
-    writing them — a later reference to one of them reads its own address. The command spells
-    its own name, because the trace keeps the distinction the spellings of the write commands
-    carry even though they share one behavior.
+    names; a command that names no destination writes into the cell the program selected. A
+    source the program never finishes marks the destination cells as failed instead of writing
+    them — a later reference to one of them reads its own address. The command spells its own
+    name, because the trace keeps the distinction the spellings of the write commands carry even
+    though they share one behavior.
     """
     name = call.callee if isinstance(call.callee, str) else 'FORMULA'
     if not call.arguments or isinstance(call.arguments[0], XlMissingArgument):
         return XlmOutcome(value=XlmValue(value=False, text=F'{name}()'))
-    source_node, destination_node = call.arguments[0], call.arguments[1]
+    destination_node = None
     if swapped:
-        source_node, destination_node = destination_node, source_node
-    source = evaluate_expression(engine, source_node, cursor)
-    spelled = synthesize_formula(destination_node)
-    corners = engine.range_corners(destination_node, cursor)
-    if corners is None:
-        reference = engine.node_reference(destination_node, cursor)
-        if reference is None:
+        if len(call.arguments) < 2:
             return _partial(synthesize_formula(call))
-        corners = (reference, reference)
-    if swapped:
-        text = F'{name}({spelled},{source.text})'
+        destination_node, source_node = call.arguments[0], call.arguments[1]
     else:
-        text = F'{name}({source.text},{spelled})'
+        source_node = call.arguments[0]
+        if len(call.arguments) > 1 and not isinstance(call.arguments[1], XlMissingArgument):
+            destination_node = call.arguments[1]
+    source = evaluate_expression(engine, source_node, cursor)
+    if destination_node is None:
+        if engine.active_cell is None:
+            return _partial(synthesize_formula(call))
+        corners = (engine.active_cell, engine.active_cell)
+        text = F'{name}({source.text})'
+    else:
+        corners = engine.range_corners(destination_node, cursor)
+        if corners is None:
+            reference = engine.node_reference(destination_node, cursor)
+            if reference is None:
+                return _partial(synthesize_formula(call))
+            corners = (reference, reference)
+        spelled = synthesize_formula(destination_node)
+        if swapped:
+            text = F'{name}({spelled},{source.text})'
+        else:
+            text = F'{name}({source.text},{spelled})'
     if source.partial:
         for reference in expand_range(*corners):
             engine.mark_failed(reference)
         return XlmOutcome(value=XlmValue(value=0, text=text, partial=True))
     for reference in expand_range(*corners):
         engine.unmark_failed(reference)
-        engine.write_cell(reference, str(source.value), cursor, value_only=value_only)
+        engine.write_cell(reference, source, cursor, value_only=value_only)
     return XlmOutcome(value=XlmValue(value=0, text=text))
 
 
@@ -138,15 +145,18 @@ def _set_value(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xl
 
 
 def _set_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    Define a name as `SET.NAME` does: a reference is stored as it is spelled, any other value
+    as the literal it computes, and a call that names no value deletes the name.
+    """
     spelled = synthesize_formula(call)
     label = unwrap_literal(synthesize_formula(call.arguments[0])).lower()
+    if len(call.arguments) < 2 or isinstance(call.arguments[1], XlMissingArgument):
+        engine.assign_name(label, None, cursor)
+        return XlmOutcome(value=XlmValue(value=0, text=F'SET.NAME({label})'))
     node = call.arguments[1]
     if isinstance(node, (XlA1Reference, XlR1C1Reference)):
-        engine.define_name(XlmNameEntry(
-            name=label,
-            sheet=None,
-            formula=node,
-        ))
+        engine.assign_name(label, node, cursor)
         return XlmOutcome(value=XlmValue(
             value=0,
             text=F'SET.NAME({label},{synthesize_formula(node)})',
@@ -154,11 +164,7 @@ def _set_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     value = evaluate_expression(engine, node, cursor)
     if value.partial:
         return _partial(spelled)
-    engine.define_name(XlmNameEntry(
-        name=label,
-        sheet=None,
-        formula=_name_formula(node, value),
-    ))
+    engine.assign_name(label, _name_formula(node, value), cursor)
     return XlmOutcome(value=XlmValue(
         value=0,
         text=F'SET.NAME({label},{value.unwrap()})',
@@ -166,6 +172,10 @@ def _set_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
 
 
 def _define_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    Define a name as `DEFINE.NAME` does: for the whole workbook, or for the sheet of the cell
+    that runs the command when its seventh argument asks for a local name.
+    """
     spelled = synthesize_formula(call)
     label = evaluate_expression(engine, call.arguments[0], cursor)
     if label.partial:
@@ -173,10 +183,17 @@ def _define_name(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
     value = evaluate_expression(engine, call.arguments[1], cursor)
     if value.partial:
         return _partial(spelled)
+    sheet = None
+    if len(call.arguments) > 6 and not isinstance(call.arguments[6], XlMissingArgument):
+        local = evaluate_expression(engine, call.arguments[6], cursor)
+        if local.partial:
+            return _partial(spelled)
+        if holds(local):
+            sheet = engine.view.sheet_index(cursor.sheet)
     name = label.unwrap().lower()
     engine.define_name(XlmNameEntry(
         name=name,
-        sheet=None,
+        sheet=sheet,
         formula=_name_formula(call.arguments[1], value),
     ))
     return XlmOutcome(value=XlmValue(

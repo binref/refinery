@@ -704,9 +704,10 @@ class BiffWorkbook(ExcelWorkbook):
         no reader consumes. The name follows without its length, which the header already
         carried: the option byte of a unicode string and the characters after it in BIFF8,
         plain codepage characters in the earlier versions. A builtin name carries its one-byte
-        code in place of the name, which the builtin flag of the option word announces; a code
-        without a canonical spelling still produces a name, because every record must keep its
-        position in the list that `ptgName` indexes.
+        code in place of the first characters of the name, which the builtin flag of the option
+        word announces, and any characters after the code are a suffix of the builtin spelling;
+        a code without a canonical spelling still produces a name, because every record must keep
+        its position in the list that `ptgName` indexes.
         """
         grbit, _kbd, name_len, formula_len, _extsht, scope = struct.unpack_from('<HBBHHH', body)
         if self.version >= BiffVersion.BIFF8:
@@ -729,9 +730,13 @@ class BiffWorkbook(ExcelWorkbook):
         else:
             name = bytes(body[14:14 + name_len]).decode(self._codepage)
             end = 14 + name_len
-        if grbit & _NAME_BUILTIN and len(name) == 1:
-            code = ord(name)
-            name = _BUILTIN_DEFINED_NAMES.get(code, F'__builtin_{code:#04x}')
+        if grbit & _NAME_BUILTIN and name:
+            code = ord(name[0])
+            spelled = _BUILTIN_DEFINED_NAMES.get(code)
+            if spelled is not None:
+                name = spelled + name[1:]
+            elif len(name) == 1:
+                name = F'__builtin_{code:#04x}'
         return DefinedName(
             name=name,
             formula=bytes(body[end:end + formula_len]),

@@ -73,7 +73,7 @@ class TestEvaluateExpression(TestBase):
         value = XlmEngine(view).resolve_name(
             XlDefinedName(name='NEVR3'), XlmCursor('PCWV', 1, 7),
         )
-        self.assertEqual(value.value, None)
+        self.assertEqual(value.value, '')
         self.assertEqual(value.text, '')
         self.assertEqual(value.reference, XlmReference('PCWV', 17, 7))
 

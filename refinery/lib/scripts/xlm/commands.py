@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import enum
 
+from typing import NamedTuple
+
 
 class XlmSeverity(enum.Enum):
     """
@@ -135,9 +137,10 @@ XLM_COMMANDS: dict[str, XlmSeverity] = {
 
 
 #: The commands that only compute from their arguments and the values the workbook stores —
-#: never the clock, randomness, the environment, or the state a run mutates. The constant
-#: folding of the deobfuscation evaluates their calls statically; every command outside the
-#: set reads or writes something no listing can decide.
+#: never the clock, randomness, or the environment — and write nothing. The constant folding of
+#: the deobfuscation evaluates their calls statically, as long as the cells they read keep the
+#: content the workbook stores; every command outside the set reads or writes something no
+#: listing can decide.
 PURE_COMMANDS = frozenset((
     'ABS',
     'ABSREF',
@@ -174,6 +177,28 @@ PURE_COMMANDS = frozenset((
     'VALUE',
     '_xlfn.ARABIC',
 ))
+
+
+class XlmCellWrite(NamedTuple):
+    """
+    How a command writes into cells: the positions of the argument it writes and of the
+    argument that names the cells it writes, and whether it enters what it writes the way a
+    typed entry does, so that a text which starts with `=` installs a formula. A call that
+    names no cells writes the selected cell.
+    """
+
+    source: int
+    destination: int
+    installs: bool
+
+
+#: The commands that write into the cells of a macrosheet, as the mutation handlers write them.
+CELL_WRITERS = {
+    'FORMULA': XlmCellWrite(0, 1, True),
+    'FORMULA.ARRAY': XlmCellWrite(0, 1, True),
+    'FORMULA.FILL': XlmCellWrite(0, 1, True),
+    'SET.VALUE': XlmCellWrite(1, 0, False),
+}
 
 
 def severity(command_name: str) -> XlmSeverity:

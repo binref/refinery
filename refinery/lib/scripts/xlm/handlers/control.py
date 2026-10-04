@@ -9,34 +9,14 @@ from typing import TYPE_CHECKING
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.formula.model import XlA1Reference, XlMissingArgument
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
-from refinery.lib.scripts.xlm.names import XlmNameEntry
 from refinery.lib.scripts.xlm.references import XlmFrame, XlmLoop
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue
+from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue, holds
 
 if TYPE_CHECKING:
     from refinery.lib.excel.formula.model import XlFunctionCall
     from refinery.lib.scripts.xlm.engine import XlmEngine
     from refinery.lib.scripts.xlm.references import XlmCursor
-
-_TRUE_WORDS = frozenset(('y', 'yes', 't', 'true', 'on', '1'))
-_FALSE_WORDS = frozenset(('n', 'no', 'f', 'false', 'off', '0'))
-
-
-def _holds(value: XlmValue) -> bool:
-    """
-    Whether a condition value decides a branch: the spellings of the two truth values are
-    theirs, a number holds when it is not zero, and anything else is taken as it is.
-    """
-    spelled = str(value.value).lower()
-    if spelled in _TRUE_WORDS:
-        return True
-    if spelled in _FALSE_WORDS:
-        return False
-    try:
-        return int(spelled) != 0
-    except ValueError:
-        return bool(value.value)
 
 
 def _goto(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -88,7 +68,7 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
             value=XlmValue(value=0, text=spelled),
             status=XlmStatus.FullBranching,
         )
-    if _holds(condition):
+    if holds(condition):
         branch, desc = call.arguments[1], '[TRUE]'
     else:
         branch, desc = call.arguments[2], '[FALSE]'
@@ -101,13 +81,47 @@ def _if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
     )
 
 
+def _if_value(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The `IF` an expression reads rather than runs: the value of the branch its condition selects,
+    evaluated in place. A condition the program never finished leaves the whole call unfinished,
+    a branch the call leaves empty answers zero, and a false branch the call does not spell at
+    all answers `FALSE`.
+    """
+    spelled = synthesize_formula(call)
+    if not call.arguments:
+        return XlmOutcome(value=XlmValue(value=spelled, partial=True))
+    condition = evaluate_expression(engine, call.arguments[0], cursor)
+    if condition.partial:
+        return XlmOutcome(value=XlmValue(value=spelled, partial=True))
+    index = 1 if holds(condition) else 2
+    if index >= len(call.arguments):
+        return XlmOutcome(value=XlmValue(value=False))
+    branch = call.arguments[index]
+    if isinstance(branch, XlMissingArgument):
+        return XlmOutcome(value=XlmValue(value=0))
+    return XlmOutcome(value=evaluate_expression(engine, branch, cursor))
+
+
 def _end_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     engine.indent_level = max(0, engine.indent_level - 1)
     engine.indent_current_line = True
     return XlmOutcome(value=XlmValue(value='END.IF', text='END.IF'))
 
 
+def _skipped_loop(engine: XlmEngine, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The head of a loop inside the body of a loop the engine skips: it opens a loop that never
+    holds, so that the `NEXT` of its own body pairs with it rather than with the skipped loop.
+    """
+    engine.while_stack.append(XlmLoop(cursor))
+    engine.indent_level += 1
+    return XlmOutcome(value=XlmValue(value=0, text='', partial=True), status=XlmStatus.IGNORED)
+
+
 def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    if engine.ignore_processing:
+        return _skipped_loop(engine, cursor)
     spelled = synthesize_formula(call)
     condition = evaluate_expression(engine, call.arguments[0], cursor)
     loop = XlmLoop(cursor)
@@ -117,13 +131,18 @@ def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
     else:
         text = spelled
     engine.while_stack.append(loop)
-    if not loop.holds:
-        engine.ignore_processing = True
     engine.indent_level += 1
     return XlmOutcome(value=XlmValue(value=0, text=text))
 
 
 def _for_cell(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    One pass through the head of a `FOR.CELL` loop: the loop variable names the next cell of
+    the range, and once the range ran out, the loop no longer holds and its body is skipped to
+    the `NEXT` that pairs with it.
+    """
+    if engine.ignore_processing:
+        return _skipped_loop(engine, cursor)
     spelled = synthesize_formula(call)
     variable = evaluate_expression(engine, call.arguments[0], cursor)
     corners = engine.range_corners(call.arguments[1], cursor)
@@ -132,41 +151,37 @@ def _for_cell(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
     if engine.while_stack and engine.while_stack[-1].cursor == cursor:
         loop = engine.while_stack[-1]
     else:
-        cells = engine.range_cells(corners) if corners is not None else ()
-        loop = XlmLoop(cursor, holds=True)
-        loop.iterator = iter(cells)
+        cells = tuple(engine.range_cells(corners)) if corners is not None else ()
+        loop = XlmLoop(cursor, holds=True, cells=cells)
         engine.while_stack.append(loop)
-    if loop.iterator is not None:
-        try:
-            reference = next(loop.iterator)
-        except StopIteration:
-            loop.holds = False
-        else:
-            engine.define_name(XlmNameEntry(
-                name=variable.unwrap().lower(),
-                sheet=None,
-                formula=XlA1Reference(
-                    sheets=(reference.sheet or cursor.sheet,),
-                    row=reference.row,
-                    col=reference.col,
-                    relative_row=False,
-                    relative_col=False,
-                ),
-            ))
+    reference = loop.advance()
+    if reference is None:
+        loop.holds = False
+    else:
+        engine.assign_name(variable.unwrap().lower(), XlA1Reference(
+            sheets=(reference.sheet or cursor.sheet,),
+            row=reference.row,
+            col=reference.col,
+            relative_row=False,
+            relative_col=False,
+        ), cursor)
     engine.indent_level += 1
     return XlmOutcome(value=XlmValue(value=0, text=spelled))
 
 
 def _next(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The end of the body of the loop the indentation pairs it with: a loop that holds continues
+    at its head, and any other loop is closed, which ends the skipping of its body.
+    """
     jump = None
     if engine.indent_level == len(engine.while_stack):
-        engine.ignore_processing = False
         if engine.while_stack:
             top = engine.while_stack.pop()
             if top.holds:
                 jump = top.cursor
-            if top.iterator is not None:
-                engine.while_stack.append(top)
+                if top.cells is not None:
+                    engine.while_stack.append(top)
         engine.indent_level = max(0, engine.indent_level - 1)
         engine.indent_current_line = True
     if jump is None:
@@ -179,21 +194,23 @@ def _return(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
         value = evaluate_expression(engine, call.arguments[0], cursor)
     else:
         value = XlmValue()
-    jump = None
-    if engine.call_stack:
-        caller = engine.call_stack.pop()
-        cell = engine._find_cell(caller.sheet, caller.row, caller.col)
-        if cell is not None:
-            engine.write_value(cell, value.value)
-        jump = engine.next_formula_cell(caller)
+    jump, ended = engine.return_value(value)
     text = value.text if value.text else 'RETURN()'
-    return XlmOutcome(value=XlmValue(value=value.value, text=text), jump=jump)
+    return XlmOutcome(
+        value=XlmValue(value=value.value, text=text),
+        jump=jump,
+        status=XlmStatus.End if ended else None,
+    )
 
 
 def _halt(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     engine.indent_level = max(0, engine.indent_level - 1)
     spelled = synthesize_formula(call)
-    return XlmOutcome(value=XlmValue(value=spelled, text=spelled), status=XlmStatus.End)
+    return XlmOutcome(
+        value=XlmValue(value=spelled, text=spelled),
+        status=XlmStatus.End,
+        halts=True,
+    )
 
 
 def _offset(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -242,4 +259,10 @@ CONTROL_HANDLERS = {
     'RETURN': _return,
     'RUN': _run,
     'WHILE': _while,
+}
+
+#: The commands an expression reads by another handler than the step whose whole formula they
+#: are: such a step runs the command, and an expression only takes the value it computes.
+EXPRESSION_HANDLERS = {
+    'IF': _if_value,
 }

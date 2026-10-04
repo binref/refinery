@@ -14,7 +14,7 @@ from refinery.lib.excel import (
     detect_format,
     open_workbook,
 )
-from refinery.lib.excel.common import datetime_to_serial, decode_xstring, serial_to_datetime
+from refinery.lib.excel.common import decode_xstring, serial_to_datetime
 from refinery.lib.excel.formula import synthesize_formula
 
 from ... import TestBase
@@ -194,6 +194,27 @@ class TestWorkbookStructure(TestBase):
             _cells(data)[('Sheet1', 2, 1)],
             Cell(2, 1, CellKind.DATE, 43096, None),
         )
+
+    def test_iso_date_cells_that_name_a_time_zone_count_by_their_wall_clock(self):
+        spellings = (
+            '2017-12-27T00:00:00Z',
+            '2017-12-27T00:00:00.000Z',
+            '2017-12-27T00:00:00+02:00',
+        )
+        for spelling in spellings:
+            data = _replace_part(
+                SHARED_STRINGS_ALT_LOCATION,
+                'xl/worksheets/sheet1.xml',
+                [(
+                    b'<c r="A2" s="0" t="n"><v>1</v></c>',
+                    F'<c r="A2" s="0" t="d"><v>{spelling}</v></c>'.encode(),
+                )],
+            )
+            with self.subTest(spelling=spelling):
+                self.assertEqual(
+                    _cells(data)[('Sheet1', 2, 1)],
+                    Cell(2, 1, CellKind.DATE, 43096, None),
+                )
 
     def test_workbook_openpyxl_cannot_load(self):
         # openpyxl rejects the styles part of this workbook over an unsupported `builtinId`

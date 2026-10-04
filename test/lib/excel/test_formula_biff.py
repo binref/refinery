@@ -150,6 +150,18 @@ class TestBiffFormulaDecoding(TestBase):
             'CHAR(RC[-1])',
         )
 
+    def test_a_relative_column_reads_its_low_byte_whatever_the_unused_bits_hold(self):
+        stream = bytes(OleFile(XLM_MACRO_RPN_BIFF8).openstream('Workbook'))
+        # a ptgRefN to RC[-1] in the shared formula templates, its column word written as the
+        # fourteen-bit offset rather than the byte that Excel writes
+        stored = bytes.fromhex('4c0000ffc0416f00')
+        widened = bytes.fromhex('4c0000ffff416f00')
+        self.assertEqual(stream.count(stored), 3)
+        self.assertEqual(
+            _formula_texts(stream.replace(stored, widened))[('mP9mScF1m5', 66, 12)],
+            'CHAR(RC[-1])',
+        )
+
 
 class TestBiffFormulaAgainstXlrd(TestBase):
     """

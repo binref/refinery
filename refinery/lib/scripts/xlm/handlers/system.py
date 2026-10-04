@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmValue, is_number, wrap_literal
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmValue,
+    ansi_bytes,
+    is_number,
+    wrap_literal,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.excel.formula.model import XlFunctionCall
@@ -231,7 +237,7 @@ def _write_process_memory(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCu
     if any(argument.partial for argument in arguments):
         return _partial(spelled)
     base = int(float(arguments[1].value))
-    data = bytes(ord(char) for char in str(arguments[2].value))
+    data = ansi_bytes(str(arguments[2].value))
     size = int(float(arguments[3].value))
     if not engine.write_memory(base, data, size):
         return XlmOutcome(
@@ -253,7 +259,7 @@ def _rtl_copy_memory(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor)
     size = evaluate_expression(engine, call.arguments[2], cursor)
     if destination.partial or source.partial:
         return _partial(spelled)
-    data = bytes(ord(char) for char in str(source.value))
+    data = ansi_bytes(str(source.value))
     if not engine.write_memory(int(float(destination.value)), data, len(data)):
         return XlmOutcome(
             value=XlmValue(value=0, text=spelled),

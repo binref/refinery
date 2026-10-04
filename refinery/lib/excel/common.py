@@ -198,13 +198,15 @@ def datetime_to_serial(
     epoch before March 1, 1900 counts from December 31, 1899, so the spurious leap day that
     Excel inherited from Lotus 1-2-3 keeps serial 60 out of the round trip: February 29,
     1900 does not exist, and the February 28 that serials 59 and 60 both resolve to converts
-    back to 59 only.
+    back to 59 only. A serial number carries no time zone, so a datetime that names one counts
+    by the wall-clock time it spells.
     """
     if isinstance(value, datetime.time):
         milliseconds = (value.hour * 60 + value.minute) * 60000 + value.second * 1000
         milliseconds += value.microsecond // 1000
         serial = milliseconds / _MILLISECONDS_PER_DAY
     else:
+        value = value.replace(tzinfo=None)
         if date_mode_1904:
             epoch = _EPOCH_1904
         elif value < _MARCH_FIRST_1900:

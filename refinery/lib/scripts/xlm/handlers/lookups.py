@@ -17,7 +17,13 @@ from refinery.lib.excel.formula.model import (
 )
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.references import XlmCursor, expand_range, resolve_reference
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmReference, XlmValue, is_number
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmReference,
+    XlmValue,
+    holds,
+    is_number,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.excel.formula.model import XlFunctionCall
@@ -86,7 +92,7 @@ def _address(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
         argument = evaluate_expression(engine, call.arguments[3], cursor)
         if argument.partial:
             return _partial(spelled)
-        a1 = argument.unwrap().lower() != 'false'
+        a1 = holds(argument)
     if len(call.arguments) >= 5:
         argument = evaluate_expression(engine, call.arguments[4], cursor)
         if argument.partial:
@@ -134,7 +140,7 @@ def _hlookup(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
     try:
         for reference in expand_range(start, last):
             value = engine.read_reference(reference, cursor).value
-            if value is not None and re.match(pattern, str(value)):
+            if value is not None and value != '' and re.match(pattern, str(value)):
                 return XlmOutcome(value=XlmValue(value=value, text=str(value)))
     except re.error:
         return _partial(spelled)

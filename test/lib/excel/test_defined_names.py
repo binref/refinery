@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import io
+import struct
 import zipfile
 
 from refinery.lib.excel import open_workbook
 from refinery.lib.excel.formula import synthesize_formula
+from refinery.lib.ole.file import OleFile
 
 from ... import TestBase
 from .samples import (
@@ -12,6 +14,7 @@ from .samples import (
     ISSUE20,
     REVENG1,
     XLM_MACRO_FORMULA_XLSM,
+    XLM_MACRO_RPN_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
 
@@ -46,6 +49,36 @@ def _blanked_name_formula(data: bytes) -> bytes:
     return buffer.getvalue()
 
 
+def _suffixed_builtin_name(data: bytes, suffix: bytes) -> bytes:
+    """
+    The workbook stream of a BIFF8 workbook whose one-character builtin name carries a suffix
+    after its code, with the stream positions of the sheets behind the name moved along.
+    """
+    stream = bytes(OleFile(data).openstream('Workbook'))
+    records = []
+    offset = 0
+    growth = 0
+    grown_at = len(stream)
+    while offset + 4 <= len(stream):
+        opcode, length = struct.unpack_from('<HH', stream, offset)
+        body = bytearray(stream[offset + 4:offset + 4 + length])
+        if opcode == 0x18 and body[0] & 0x20 and body[3] == 1:
+            body[3] += len(suffix)
+            body[16:16] = suffix
+            growth = len(suffix)
+            grown_at = offset
+        records.append((opcode, body))
+        offset += 4 + length
+    output = bytearray()
+    for opcode, body in records:
+        if opcode == 0x85:
+            position, = struct.unpack_from('<I', body)
+            if position > grown_at:
+                struct.pack_into('<I', body, 0, position + growth)
+        output += struct.pack('<HH', opcode, len(body)) + body
+    return bytes(output)
+
+
 class TestBiffDefinedNames(TestBase):
 
     def test_global_names_and_their_formulas(self):
@@ -68,6 +101,13 @@ class TestBiffDefinedNames(TestBase):
             ('print_area', 2, '#REF!'),
             ('sheet_title', 2, '"Sheet3"'),
         ])
+
+    def test_a_builtin_name_keeps_the_suffix_after_its_code(self):
+        self.assertEqual(_names(XLM_MACRO_RPN_BIFF8)[1], ('auto_open', None, 'mP9mScF1m5!$S$41'))
+        self.assertEqual(
+            _names(_suffixed_builtin_name(XLM_MACRO_RPN_BIFF8, b'Rz'))[1],
+            ('auto_openRz', None, 'mP9mScF1m5!$S$41'),
+        )
 
 
 class TestOoxmlDefinedNames(TestBase):

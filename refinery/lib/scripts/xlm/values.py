@@ -5,6 +5,7 @@ the trace spells them with, and the operations the evaluator applies to them.
 from __future__ import annotations
 
 import datetime
+import math
 import operator
 
 from dataclasses import dataclass
@@ -21,6 +22,9 @@ _DATETIME_FORMATS = (
     '%Y-%m-%d %H:%M:%S.%f',
     '%H:%M:%S',
 )
+
+_TRUE_WORDS = frozenset(('y', 'yes', 't', 'true', 'on', '1'))
+_FALSE_WORDS = frozenset(('n', 'no', 'f', 'false', 'off', '0'))
 
 
 class XlmReference(NamedTuple):
@@ -45,14 +49,33 @@ class XlmReference(NamedTuple):
 
 def is_number(value: Any) -> bool:
     """
-    Whether a value reads as a number, as the macro language reads one: a number is one, and
-    so is the text of a number.
+    Whether a value reads as a number, as the macro language reads one: a finite number is one,
+    and so is the text of one. The digit separators, the infinities, and the missing number
+    that Python reads in a text spell no number of the macro language.
     """
-    try:
-        float(value)
-    except (ValueError, TypeError):
+    if isinstance(value, str) and '_' in value:
         return False
-    return True
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return False
+    return math.isfinite(number)
+
+
+def holds(value: XlmValue) -> bool:
+    """
+    Whether a value holds as a condition, as every command that reads a truth value reads it:
+    the spellings of the two truth values are theirs, a number holds when it is not zero, and
+    anything else is taken as it is.
+    """
+    spelled = str(value.value).lower()
+    if spelled in _TRUE_WORDS:
+        return True
+    if spelled in _FALSE_WORDS:
+        return False
+    if is_number(value.value):
+        return float(value.value) != 0
+    return bool(value.value)
 
 
 def unwrap_literal(text: str) -> str:
@@ -65,6 +88,25 @@ def unwrap_literal(text: str) -> str:
     return text
 
 
+def ansi_bytes(text: str) -> bytes:
+    """
+    The bytes a text occupies in the ANSI code page the macro language writes: a character
+    `CHAR` answers is the byte it was made from, any other character its byte in code page
+    1252, and a character that code page cannot spell is the question mark Windows writes
+    instead.
+    """
+    data = bytearray()
+    for char in text:
+        code = ord(char)
+        if code > 0xFF:
+            try:
+                code = char.encode('cp1252')[0]
+            except UnicodeEncodeError:
+                code = 0x3F
+        data.append(code)
+    return bytes(data)
+
+
 def wrap_literal(data: Any, must_wrap: bool = False) -> str:
     """
     The spelling the trace gives a value: a number, a boolean, and a text that already carries
@@ -72,7 +114,8 @@ def wrap_literal(data: Any, must_wrap: bool = False) -> str:
     quotes — and every other text is quoted with its quotes doubled.
     """
     if is_number(data) or (
-        len(data) > 1
+        isinstance(data, str)
+        and len(data) > 1
         and data.startswith('"')
         and data.endswith('"')
         and not must_wrap
@@ -91,14 +134,18 @@ def _default_text(value: Any) -> str:
     if isinstance(value, XlmReference):
         return value.a1()
     if isinstance(value, str):
-        return wrap_literal(value)
+        return wrap_literal(value, must_wrap=True)
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)
 
 
-def _error(text: str) -> XlmValue:
-    return XlmValue(value=text, text=text)
+def error_value(text: str) -> XlmValue:
+    """
+    The error value Excel spells with the given text, such as the `#VALUE!` of a coercion that
+    failed.
+    """
+    return XlmValue(value=text, text=text, error=True)
 
 
 @dataclass(repr=False, eq=False)
@@ -107,8 +154,10 @@ class XlmValue:
     One value of the macro language as the emulator computes it: `value` is the Python object
     behind it, `text` the spelling the trace prints, `partial` marks a value whose computation
     the program never finished, `date` marks a value that came from a date cell, `reference`
-    names the cell address the value stands for, and `cells` holds the elements of an array or
-    the corners of a range.
+    names the cell address the value stands for, `cells` holds the elements of an array or the
+    corners of a range, and `error` marks an error value such as the `#DIV/0!` of a division
+    by zero. A given spelling of a number is normalized unless the value is a text, whose
+    spelling is its content.
     """
 
     value: Any = None
@@ -117,19 +166,27 @@ class XlmValue:
     date: bool = False
     reference: XlmReference | None = None
     cells: tuple[XlmValue, ...] | None = None
+    error: bool = False
 
     def __post_init__(self):
         if self.text is None:
             self.text = str(self.value) if self.partial else _default_text(self.value)
-        elif is_number(self.text):
+        elif not isinstance(self.value, str) and is_number(self.text):
             number = float(self.text)
             self.text = str(int(number) if number.is_integer() else number)
 
     def unwrap(self) -> str:
         """
-        The text of the value without the quotes of a string literal.
+        The content of the value as a text. A text the program finished computing is its own
+        content, and any other finished value is spelled as itself, whatever spelling the trace
+        gives the command that computed it; a value the program never finished is the spelling
+        of what it left unfinished, without the quotes of a string literal.
         """
-        return unwrap_literal(self.text or '')
+        if self.partial:
+            return unwrap_literal(self.text or '')
+        if isinstance(self.value, str):
+            return self.value
+        return _default_text(self.value)
 
     def unwrap_date(self) -> datetime.datetime | None:
         """
@@ -191,9 +248,20 @@ def _operand(value: XlmValue) -> Any:
     return value.value
 
 
+_ARITHMETIC_OPERATORS = frozenset((
+    XlBinaryOperator.ADD,
+    XlBinaryOperator.SUB,
+    XlBinaryOperator.MUL,
+    XlBinaryOperator.DIV,
+    XlBinaryOperator.POW,
+))
+
+
 def _numeric_result(result: Any) -> XlmValue:
     if isinstance(result, bool):
-        return XlmValue(value=str(result), text=str(result))
+        return XlmValue(value=result)
+    if isinstance(result, complex) or (isinstance(result, float) and not math.isfinite(result)):
+        return error_value('#NUM!')
     if isinstance(result, float) and result.is_integer():
         return XlmValue(value=int(result))
     if isinstance(result, float):
@@ -203,12 +271,17 @@ def _numeric_result(result: Any) -> XlmValue:
 
 def concat(left: XlmValue, right: XlmValue) -> XlmValue:
     """
-    The `&` of two values: their joined texts when both are complete, and the two texts joined
-    by the operator itself when either side is partial.
+    The `&` of two values: their joined texts when both are complete, the two texts joined by
+    the operator itself when either side is partial, and the error of the first side that is
+    an error value.
     """
     if left.partial or right.partial:
         fragment = F'{left.unwrap()}&{right.unwrap()}'
         return XlmValue(value=fragment, partial=True)
+    if left.error:
+        return left
+    if right.error:
+        return right
     joined = left.unwrap() + right.unwrap()
     return XlmValue(value=joined)
 
@@ -216,10 +289,12 @@ def concat(left: XlmValue, right: XlmValue) -> XlmValue:
 def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) -> XlmValue:
     """
     The value of a binary operation. A partial operand leaves the operation unevaluated,
-    spelled as its two operands around the operator; complete operands apply the operator
-    table to numbers, compare the moments an ISO-spelled text names, and compare anything else
-    as text. A division by zero degrades to `#DIV/0!` and a coercion that fails to
-    `#VALUE!`, the errors Excel displays for them.
+    spelled as its two operands around the operator, and an operand that is an error value is
+    the value of the whole operation. Complete operands apply the operator table to numbers,
+    compare the moments an ISO-spelled text names, and compare anything else as text. A
+    division by zero degrades to `#DIV/0!`, a result no finite number holds to `#NUM!`, and an
+    arithmetic operand or a coercion that fails to `#VALUE!`, the errors Excel displays for
+    them.
     """
     if operator is XlBinaryOperator.CONCAT:
         return concat(left, right)
@@ -238,6 +313,10 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
     if left.partial or right.partial:
         fragment = F'{left.unwrap()}{_OPERATOR_SYMBOLS[operator]}{right.unwrap()}'
         return XlmValue(value=fragment, partial=True)
+    if left.error:
+        return left
+    if right.error:
+        return right
     operand_left = _operand(left)
     operand_right = _operand(right)
     if is_number(operand_left) and is_number(operand_right):
@@ -245,7 +324,9 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
         try:
             return _numeric_result(function(float(operand_left), float(operand_right)))
         except ZeroDivisionError:
-            return _error('#DIV/0!')
+            return error_value('#DIV/0!')
+        except OverflowError:
+            return error_value('#NUM!')
     moment_left = left.unwrap_date()
     moment_right = right.unwrap_date()
     if moment_left is not None and moment_right is not None:
@@ -253,19 +334,21 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
         try:
             return _numeric_result(function(moment_left, moment_right))
         except TypeError:
-            return _error('#VALUE!')
+            return error_value('#VALUE!')
+    if operator in _ARITHMETIC_OPERATORS:
+        return error_value('#VALUE!')
     function = _OPERATOR_FUNCTIONS[operator]
     try:
         return _numeric_result(function(left.unwrap(), right.unwrap()))
     except TypeError:
-        return _error('#VALUE!')
+        return error_value('#VALUE!')
 
 
 class XlmOutcome:
     """
     What one macro command produced: the value it computed, the jump it asks the engine to
-    take, and the status that overrides the one its value derives. A handler that neither
-    jumps nor overrides a status leaves both empty.
+    take, the status that overrides the one its value derives, and whether it halts the
+    program. A handler that neither jumps nor overrides a status leaves both empty.
     """
 
     def __init__(
@@ -273,7 +356,9 @@ class XlmOutcome:
         value: XlmValue | None = None,
         jump: XlmCursor | None = None,
         status: XlmStatus | None = None,
+        halts: bool = False,
     ):
         self.value = XlmValue() if value is None else value
         self.jump = jump
         self.status = status
+        self.halts = halts

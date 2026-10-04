@@ -5,6 +5,7 @@ conditions, the counting of arguments, and the Roman numerals of `_xlfn.ARABIC`.
 from __future__ import annotations
 
 import datetime
+import decimal
 import math
 import random
 
@@ -12,10 +13,18 @@ from typing import TYPE_CHECKING
 
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.common import datetime_to_serial
+from refinery.lib.excel.formula.model import XlA1Reference, XlMissingArgument, XlR1C1Reference
 from refinery.lib.scripts.xlm.evaluate import evaluate_expression
 from refinery.lib.scripts.xlm.guess import guess_day
+from refinery.lib.scripts.xlm.references import expand_range
 from refinery.lib.scripts.xlm.trace import XlmStatus
-from refinery.lib.scripts.xlm.values import XlmOutcome, XlmValue, is_number, wrap_literal
+from refinery.lib.scripts.xlm.values import (
+    XlmOutcome,
+    XlmValue,
+    holds,
+    is_number,
+    wrap_literal,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.excel.formula.model import XlFunctionCall
@@ -63,15 +72,61 @@ def _from_roman(spelled: str) -> int:
     return result
 
 
-def _numeric(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmValue | None:
+def _numeric(
+    engine: XlmEngine,
+    call: XlFunctionCall,
+    cursor: XlmCursor,
+    index: int = 0,
+) -> XlmValue | None:
     """
-    The one numeric operand of a command, or `None` when the command cannot compute: an operand
+    One numeric operand of a command, or `None` when the command cannot compute: an operand
     the program never finished, or one that spells no number, leaves the command unevaluated.
     """
-    argument = evaluate_expression(engine, call.arguments[0], cursor)
+    argument = evaluate_expression(engine, call.arguments[index], cursor)
     if argument.partial or not is_number(argument.value):
         return None
     return argument
+
+
+def _rounded(number: float, digits: int, rounding: str) -> float:
+    """
+    The number rounded to the given count of decimal digits in the direction a rounding mode of
+    `decimal` names; a negative count rounds to the left of the decimal point. The rounding
+    applies to the shortest decimal spelling of the number, the spelling Excel rounds, so that
+    a tie that spelling shows is a tie.
+    """
+    spelled = decimal.Decimal(repr(number))
+    exponent = spelled.as_tuple().exponent
+    if isinstance(exponent, int) and exponent >= -digits:
+        return number
+    return float(spelled.quantize(decimal.Decimal(1).scaleb(-digits), rounding=rounding))
+
+
+def _round_to_digits(
+    engine: XlmEngine,
+    call: XlFunctionCall,
+    cursor: XlmCursor,
+    rounding: str,
+) -> XlmOutcome:
+    """
+    The rounding commands: the number of the first argument rounded to the count of decimal
+    digits the second argument names, zero when the call names none.
+    """
+    spelled = synthesize_formula(call)
+    number = _numeric(engine, call, cursor)
+    if number is None:
+        return _partial(spelled)
+    digits = 0
+    if len(call.arguments) > 1 and not isinstance(call.arguments[1], XlMissingArgument):
+        count = _numeric(engine, call, cursor, 1)
+        if count is None:
+            return _partial(spelled)
+        digits = int(float(count.value))
+    try:
+        result = _rounded(float(number.value), digits, rounding)
+    except decimal.DecimalException:
+        return _partial(spelled)
+    return XlmOutcome(value=XlmValue(value=result))
 
 
 def _abs(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -84,12 +139,13 @@ def _abs(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
 
 
 def _int(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The greatest integer that does not exceed the number, as `INT` rounds down.
+    """
     argument = _numeric(engine, call, cursor)
     if argument is None:
         return _partial(synthesize_formula(call))
-    if isinstance(argument.value, bool):
-        return XlmOutcome(value=XlmValue(value=int(argument.value)))
-    return XlmOutcome(value=XlmValue(value=int(float(argument.value))))
+    return XlmOutcome(value=XlmValue(value=math.floor(float(argument.value))))
 
 
 def _sqrt(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -97,14 +153,17 @@ def _sqrt(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutc
     if argument is None:
         return _partial(synthesize_formula(call))
     try:
-        result = math.floor(math.sqrt(float(argument.value)))
+        result = math.sqrt(float(argument.value))
     except ValueError:
         return _partial(synthesize_formula(call))
     return XlmOutcome(value=XlmValue(value=result))
 
 
 def _trunc(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    return _int(engine, call, cursor)
+    """
+    The number cut toward zero to the count of decimal digits the call names.
+    """
+    return _round_to_digits(engine, call, cursor, decimal.ROUND_DOWN)
 
 
 def _value(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -154,22 +213,17 @@ def _mod(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
 
 
 def _round(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    spelled = synthesize_formula(call)
-    operands = _pair(engine, call, cursor)
-    if operands is None:
-        return _partial(spelled)
-    left, right = operands
-    return XlmOutcome(value=XlmValue(value=round(
-        float(left.value),
-        int(float(right.value)),
-    )))
+    """
+    The number rounded to the count of decimal digits the call names, a tie away from zero.
+    """
+    return _round_to_digits(engine, call, cursor, decimal.ROUND_HALF_UP)
 
 
 def _round_up(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    argument = _numeric(engine, call, cursor)
-    if argument is None:
-        return _partial(synthesize_formula(call))
-    return XlmOutcome(value=XlmValue(value=math.ceil(float(argument.value))))
+    """
+    The number rounded away from zero to the count of decimal digits the call names.
+    """
+    return _round_to_digits(engine, call, cursor, decimal.ROUND_UP)
 
 
 def _randbetween(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
@@ -186,14 +240,17 @@ def _randbetween(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> 
 
 
 def _quotient(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    The integer part of the division of the two operands, the remainder discarded toward zero.
+    """
     spelled = synthesize_formula(call)
     operands = _pair(engine, call, cursor)
     if operands is None:
         return _partial(spelled)
     left, right = operands
     try:
-        result = float(left.value) // float(right.value)
-    except ZeroDivisionError:
+        result = math.trunc(float(left.value) / float(right.value))
+    except (ZeroDivisionError, OverflowError):
         return _partial(spelled)
     return XlmOutcome(value=XlmValue(value=result))
 
@@ -251,7 +308,7 @@ def _and(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
         argument = evaluate_expression(engine, node, cursor)
         if argument.partial:
             return XlmOutcome(value=XlmValue(value=False, partial=True))
-        if argument.unwrap().lower() != 'true':
+        if not holds(argument):
             value = False
             break
     return XlmOutcome(value=XlmValue(value=value))
@@ -263,7 +320,7 @@ def _or(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcom
         argument = evaluate_expression(engine, node, cursor)
         if argument.partial:
             return XlmOutcome(value=XlmValue(value=False, partial=True))
-        if argument.unwrap().lower() == 'true':
+        if holds(argument):
             value = True
             break
     return XlmOutcome(value=XlmValue(value=value))
@@ -273,24 +330,28 @@ def _not(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutco
     argument = evaluate_expression(engine, call.arguments[0], cursor)
     if argument.partial:
         return XlmOutcome(value=XlmValue(value=True, partial=True))
-    value = argument.unwrap().lower() != 'true'
-    return XlmOutcome(value=XlmValue(value=value))
+    return XlmOutcome(value=XlmValue(value=not holds(argument)))
 
 
 def _isnumber(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     argument = evaluate_expression(engine, call.arguments[0], cursor)
     if argument.partial:
         return XlmOutcome(value=XlmValue(
-            value=1,
+            value=True,
             text=F'ISNUMBER({argument.text})',
             partial=True,
         ))
-    return XlmOutcome(value=XlmValue(value=1 if is_number(argument.text) else 0))
+    return XlmOutcome(value=XlmValue(value=is_number(argument.text)))
 
 
 def _iserror(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
+    """
+    Whether the argument is an error value, or a value that computes nothing. The answer flips
+    once it repeated at one cell often enough, to free a program stuck waiting on a condition
+    that never changes.
+    """
     argument = evaluate_expression(engine, call.arguments[0], cursor)
-    result = argument.value is None
+    result = argument.value is None or argument.error
     if engine.iserror_at is None:
         engine.iserror_flag = result
         engine.iserror_at = cursor
@@ -311,7 +372,39 @@ def _iserror(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
 
 
 def _count(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
-    return XlmOutcome(value=XlmValue(value=len(call.arguments)))
+    """
+    How many of the arguments are numbers: a reference or a range counts the cells that hold a
+    number, and any other argument counts when it is a number, a truth value, or a text that
+    spells a number. A value the program never finished leaves the count unevaluated.
+    """
+    spelled = synthesize_formula(call)
+    count = 0
+    for node in call.arguments:
+        corners = engine.range_corners(node, cursor)
+        if corners is None and isinstance(node, (XlA1Reference, XlR1C1Reference)):
+            reference = engine.node_reference(node, cursor)
+            if reference is not None:
+                corners = (reference, reference)
+        if corners is not None:
+            for reference in expand_range(*corners):
+                value = engine.read_reference(reference, cursor)
+                if value.partial:
+                    return _partial(spelled)
+                if (
+                    not value.error
+                    and not isinstance(value.value, (str, bool))
+                    and is_number(value.value)
+                ):
+                    count += 1
+            continue
+        if isinstance(node, XlMissingArgument):
+            continue
+        argument = evaluate_expression(engine, node, cursor)
+        if argument.partial:
+            return _partial(spelled)
+        if not argument.error and is_number(argument.value):
+            count += 1
+    return XlmOutcome(value=XlmValue(value=count))
 
 
 def _day(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:

@@ -27,7 +27,12 @@ from refinery.lib.excel.formula.model import (
     XlUnparsedFormula,
 )
 from refinery.lib.scripts.xlm.references import XlmCursor, resolve_reference
-from refinery.lib.scripts.xlm.values import XlmReference, XlmValue, apply_binary
+from refinery.lib.scripts.xlm.values import (
+    XlmReference,
+    XlmValue,
+    apply_binary,
+    error_value,
+)
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.xlm.engine import XlmEngine
@@ -41,7 +46,8 @@ def evaluate_expression(
     """
     The value one formula node computes. A function call contributes only its value — the jump
     a control command asks for is a question of the step the engine is running, not of the
-    expression it reads. A node the evaluator does not know computes nothing.
+    expression it reads — and it is nested, because the expression reads it rather than a step
+    running it. A node the evaluator does not know computes nothing.
     """
     if node is None:
         return XlmValue()
@@ -52,7 +58,7 @@ def evaluate_expression(
     if isinstance(node, XlBoolean):
         return XlmValue(value=node.value)
     if isinstance(node, XlError):
-        return XlmValue(value=node.value, text=node.value)
+        return error_value(node.value)
     if isinstance(node, XlParenExpression):
         return evaluate_expression(engine, node.operand, cursor)
     if isinstance(node, XlUnaryExpression):
@@ -68,7 +74,7 @@ def evaluate_expression(
     if isinstance(node, XlDefinedName):
         return engine.resolve_name(node, cursor)
     if isinstance(node, XlFunctionCall):
-        return engine.call(node, cursor).value
+        return engine.call(node, cursor, nested=True).value
     if isinstance(node, XlArrayConstant):
         cells = tuple(
             evaluate_expression(engine, literal, cursor)

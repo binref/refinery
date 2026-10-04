@@ -6,10 +6,11 @@ from refinery.units.formats import Arg, Unit
 
 class xlmdeobf(Unit):
     """
-    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. The macrosheets
-    are cleaned of the cells no run can reach; an extraction also folds every statically
-    computable formula into the value it computes, while the trace emulates the program as it
-    was stored, because a trace that folded its input would hide the program it exists to show.
+    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. By default, the
+    program is emulated as the workbook stores it, and every cell the run executes is listed in
+    the order it ran. An extraction lists the macrosheet cells instead: every statically
+    computable formula is folded into the value it computes, and the cells that no formula or
+    entry point leads to are left out.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
@@ -22,7 +23,10 @@ class xlmdeobf(Unit):
     def __init__(
         self,
         extract_only: Param[bool, Arg.Switch(
-            '-x', help='Only extract cells without any emulation.'
+            '-x', help=(
+                'List the macrosheet cells instead of emulating the program, with every '
+                'statically computable formula folded and the cells nothing leads to left out.'
+            )
         )] = False,
         sort_formulas: Param[bool, Arg.Switch(
             '-s', '--sort-formulas',
@@ -83,7 +87,6 @@ class xlmdeobf(Unit):
         from refinery.lib.excel.common import column_letters
         from refinery.lib.excel.formula import synthesize_formula
         from refinery.lib.scripts.xlm import XlmEngine, XlmView, deobfuscate
-        from refinery.lib.scripts.xlm.deobfuscation import sweep
         from refinery.lib.scripts.xlm.trace import visible_steps
 
         view = XlmView(data)
@@ -104,7 +107,6 @@ class xlmdeobf(Unit):
                     line = line.replace('[[CELL-VALUE]]', str(cell.value))
                     lines.append(line)
         else:
-            sweep(view, self.args.start_point)
             engine = XlmEngine(
                 view,
                 output_level=self.args.output_level,

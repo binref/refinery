@@ -2,9 +2,25 @@ from test.lib.excel.samples import (
     XLM_MACRO_NAMES_BIFF8,
     XLM_MACRO_TEXT_XLSM,
 )
-from test.lib.scripts.xlm.modify import date_cell, drop_defined_names, replace_cell_formula
+from test.lib.scripts.xlm.modify import (
+    date_cell,
+    drop_defined_names,
+    replace_cell_element,
+    replace_cell_formula,
+)
 
 from ... import TestUnitBase
+
+
+def _looping() -> bytes:
+    data = XLM_MACRO_TEXT_XLSM
+    for cell, formula in (
+        ('AZ109', 'FOR.CELL("x",BJ116:BJ117)'),
+        ('AZ110', 'SET.VALUE(BD108,x)'),
+        ('AZ112', 'NEXT()'),
+    ):
+        data = replace_cell_formula(data, cell, formula)
+    return data
 
 
 class TestXLMMacroDeobfuscator(TestUnitBase):
@@ -82,20 +98,30 @@ class TestXLMMacroDeobfuscator(TestUnitBase):
             str(XLM_MACRO_TEXT_XLSM | self.load(extract_only=True, sort_formulas=True)),
         )
 
-    def test_the_body_of_a_while_loop_indents_the_trace(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ110', 'WHILE(FALSE)')
+    def test_the_body_of_a_loop_indents_the_trace(self):
         self.assertEqual(
-            sum('\t' in line for line in str(data | self.load()).splitlines()),
-            6,
+            [line for line in str(_looping() | self.load()).splitlines() if '\t' in line],
+            [
+                'CELL:AZ110     , FullEvaluation      , \tSET.VALUE(BD108,"ieclb.com.br/ds/3103.")',
+                'CELL:AZ110     , FullEvaluation      , \tSET.VALUE(BD108,"maharaniworld.com/ds/3103.")',
+            ],
         )
 
     def test_the_no_indent_flag_drops_the_loop_indentation(self):
-        data = replace_cell_formula(XLM_MACRO_TEXT_XLSM, 'AZ110', 'WHILE(FALSE)')
         self.assertEqual(
-            sum('\t' in line for line in str(
-                data | self.load(no_indent=True)
-            ).splitlines()),
-            0,
+            str(_looping() | self.load(no_indent=True)),
+            str(_looping() | self.load()).replace('\t', ''),
+        )
+
+    def test_the_trace_reaches_a_cell_only_a_computed_address_names(self):
+        data = replace_cell_element(XLM_MACRO_TEXT_XLSM, 'BH120', '<c r="BH120"><f>HALT()</f></c>')
+        data = replace_cell_formula(data, 'AZ109', 'GOTO(OFFSET(BG120,0,1))')
+        self.assertEqual(
+            str(data | self.load()).splitlines(),
+            [
+                'CELL:AZ109     , FullEvaluation      , GOTO(OFFSET(BG120,0,1))',
+                'CELL:BH120     , End                 , HALT()',
+            ],
         )
 
     def test_the_output_format_flag_replaces_the_parts_of_a_trace_line(self):
