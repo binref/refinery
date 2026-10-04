@@ -320,11 +320,11 @@ class TestChunk(TestBase):
             Chunk(b'Data', path=[0, 1], view=[True])
 
     def _memory_kept_by_a_dropped_chunk(self, *keys: str) -> int:
-        data = bytes(0x100000)
-        warmup = Chunk(data)
+        warmup = Chunk(B'\0' * 0x100000)
         for key in keys:
             warmup.meta[key]
         del warmup
+        data = B'\1' * 0x100000
         gc.collect()
         gc.disable()
         tracemalloc.start()
@@ -342,6 +342,9 @@ class TestChunk(TestBase):
 
     def test_dropped_chunk_is_freed_without_the_cycle_collector(self):
         self.assertLess(self._memory_kept_by_a_dropped_chunk('sha256'), 0x100000 // 16)
+
+    def test_chunk_whose_file_type_was_read_is_freed(self):
+        self.assertLess(self._memory_kept_by_a_dropped_chunk('magic', 'ext', 'mime'), 0x100000 // 16)
 
     def test_metadata_of_a_freed_chunk_refuses_to_derive_values(self):
         meta = Chunk(B'data').meta

@@ -125,7 +125,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, MutableMapping
 
 from refinery.lib.environment import environment
-from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.mime import FileMagicInfo
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import entropy, index_of_coincidence
 from refinery.lib.types import buf, isbuffer, typename
@@ -518,6 +518,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     """
 
     _chunk: buf | weakref.ref[buf]
+    _magic: FileMagicInfo | None
     cache: dict[str, str | int | float]
     index: int | None
 
@@ -533,6 +534,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         owned: bool = False,
     ):
         self._chunk = weakref.ref(chunk) if owned else chunk
+        self._magic = None
         self.cache = {}
         self.index = None
         self.scope = scope
@@ -1055,17 +1057,22 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
     def derive(self, key):
         self[key] = self[key]
 
+    def _file_type_info(self) -> FileMagicInfo:
+        if (info := self._magic) is None:
+            self._magic = info = FileMagicInfo(self.chunk)
+        return info
+
     @_derivation('mime')
     def _derive_mime(self):
-        return get_cached_file_magic_info(self.chunk).mime
+        return self._file_type_info().mime
 
     @_derivation('ext')
     def _derive_ext(self):
-        return get_cached_file_magic_info(self.chunk).extension
+        return self._file_type_info().extension
 
     @_derivation('magic')
     def _derive_magic(self):
-        return get_cached_file_magic_info(self.chunk).description
+        return self._file_type_info().description
 
     @_derivation('size', wrap=SizeInt)
     def _derive_size(self):

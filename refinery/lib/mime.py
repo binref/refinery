@@ -3,7 +3,6 @@ File type related functions.
 """
 from __future__ import annotations
 
-import functools
 import re
 
 from refinery.lib.id import get_pe_type, get_structured_data_type
@@ -313,8 +312,3 @@ class FileMagicInfo:
         self.description = description
         self.mime = mime
         self.blob = blob
-
-
-@functools.lru_cache(maxsize=None)
-def get_cached_file_magic_info(data):
-    return FileMagicInfo(data)

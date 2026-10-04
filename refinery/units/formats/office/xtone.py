@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.mime import FileMagicInfo
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -26,7 +26,7 @@ class xtone(PathExtractorUnit):
             try:
                 extension = file['extension']
             except KeyError:
-                extension = F'.{get_cached_file_magic_info(chunk).extension}'
+                extension = F'.{FileMagicInfo(chunk).extension}'
             yield UnpackResult(F'{guid}{extension}', chunk)
 
     @classmethod

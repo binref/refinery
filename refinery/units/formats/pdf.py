@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from refinery.lib import json
 from refinery.lib.meta import MV
-from refinery.lib.mime import get_cached_file_magic_info
+from refinery.lib.mime import FileMagicInfo
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
 from refinery.units.formats.archive import ArchiveUnit, UnpackResult
@@ -257,7 +257,7 @@ class xtpdf(ArchiveUnit):
                 xref = image[0]
                 base = mu.extract_image(xref)
                 data = base['image']
-                info = get_cached_file_magic_info(data)
+                info = FileMagicInfo(data)
                 yield UnpackResult(F'parsed/page{k}/img{j}.{info.extension}', data)
 
     @classmethod
