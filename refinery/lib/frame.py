@@ -730,22 +730,16 @@ class Framed:
         else:
             return HandOver(None)
         copied = False
+        shared = True
         for piece in it:
             if not copied:
                 merged = merged.copy()
                 copied = True
-            merged.intersect(piece)
+            if shared:
+                shared = bool(merged.intersect(piece).meta)
             merged.extend(piece)
             del piece
         return HandOver(merged)
-
-    @staticmethod
-    def _concatenated(pieces: Iterable[Chunk]) -> bytearray:
-        output = bytearray()
-        for piece in pieces:
-            output.extend(piece)
-            del piece
-        return output
 
     def _generate_chunks(self, parent: Chunk):
         path = list(parent.path)
@@ -769,10 +763,10 @@ class Framed:
         yield from map(inherit, outputs)
 
     def _generate_bytes(self, data: Chunk):
-        if not self.squeeze:
-            yield from self.action(data)
-        else:
-            yield from HandOver(self._concatenated(self.action(data)))
+        outputs = self.action(data)
+        if self.squeeze:
+            outputs = self._merged(outputs)
+        yield from outputs
 
     def __iter__(self):
         nesting = self.nesting

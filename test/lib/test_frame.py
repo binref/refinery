@@ -235,7 +235,6 @@ class TestFraming(TestBase):
             'console, frame opened': lambda source: B'' | _configured(source(), 1, console=True) | io.BytesIO(),
             'next unit': lambda source: _drain(B'' | source() | nop()),
             'next unit in a frame': lambda source: _drain(B'' | source()[nop()]),
-            'squeezed': lambda source: _drain(B'' | _configured(source(), squeeze=True)),
             'framed input, frame closed': lambda source: _drain([B''] | source()),
             'framed input, frame kept': lambda source: _drain([B''] | _configured(source(), 1)),
         }
@@ -246,6 +245,7 @@ class TestFraming(TestBase):
     def test_merge_keeps_only_its_first_piece_until_the_second_arrives(self):
         nested = Chunk(B'', path=[0, 0], view=[True, True])
         pipelines = {
+            'squeezed': lambda source: _drain(B'' | _configured(source(), squeeze=True)),
             'squeezed in a frame': lambda source: _drain([B''] | _configured(source(), 1, squeeze=True)),
             'frame closed into its parent': lambda source: _drain([nested] | _configured(source(), -1)),
         }
@@ -403,6 +403,27 @@ class TestFraming(TestBase):
                 yield data
 
         self.assertEqual([B'AB'] | thrice()[:] | [bytes], [B'ABABAB'])
+
+    def test_squeezed_unframed_output_converts_to_a_string(self):
+        from refinery import chop
+        self.assertEqual(B'ABC' | chop(1)[:] | [str], ['ABC'])
+
+    def test_squeezing_no_output_gives_no_output_with_and_without_a_frame(self):
+        from refinery import rex
+        self.assertEqual(B'ABC' | rex('X')[:] | [bytes], [])
+        self.assertEqual([B'ABC'] | rex('X')[:] | [bytes], [])
+
+    def test_squeezing_a_single_output_hands_it_on_without_a_copy(self):
+        from refinery import Unit
+        outputs = []
+
+        class source(Unit):
+            def process(self, data):
+                outputs.append(Chunk(B'output'))
+                yield outputs[-1]
+
+        squeezed, = B'' | _configured(source(), squeeze=True)
+        self.assertIs(squeezed, outputs[0])
 
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')
