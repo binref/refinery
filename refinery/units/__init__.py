@@ -961,6 +961,9 @@ class MissingFunction:
         return cast('_F', wraps(_)(cls()))
 
 
+_logger_locks: dict[Executable, int] = {}
+
+
 class Executable(ABCMeta):
     """
     This is the metaclass for refinery units. A class which is of this type is
@@ -1190,14 +1193,18 @@ class Executable(ABCMeta):
 
     @property
     def logger_locked(cls) -> bool:
-        try:
-            return cls._logger_locked
-        except AttributeError:
-            return False
+        """
+        This property is `True` while a unit of this class runs its own code. During that time,
+        changes to the log level of the class are ignored.
+        """
+        return cls in _logger_locks
 
-    @logger_locked.setter
-    def logger_locked(cls, value):
-        cls._logger_locked = value
+    def _lock_logger(cls):
+        _logger_locks[cls] = _logger_locks.get(cls, 0) + 1
+
+    def _unlock_logger(cls):
+        if (count := _logger_locks.pop(cls) - 1) > 0:
+            _logger_locks[cls] = count
 
 
 class DelayedArgumentProxy:
@@ -2061,17 +2068,28 @@ class Unit(UnitBase, abstract=True):
             data = data
 
         self.log_level = lvl
-        cls.logger_locked = True
 
         try:
-            if self.args.reverse:
-                it = self.reverse(data)
-            else:
-                it = self.process(data)
-            assert it is not None
-            if isinstance(it, (bytes, bytearray, memoryview)):
-                it = (it,)
-            for out in it:
+            cls._lock_logger()
+            try:
+                if self.args.reverse:
+                    it = self.reverse(data)
+                else:
+                    it = self.process(data)
+                assert it is not None
+                if isinstance(it, (bytes, bytearray, memoryview)):
+                    it = (it,)
+                it = iter(it)
+            finally:
+                cls._unlock_logger()
+            while True:
+                cls._lock_logger()
+                try:
+                    out = next(it)
+                except StopIteration:
+                    break
+                finally:
+                    cls._unlock_logger()
                 ctr += 1
                 assert isinstance(out, Chunk)
                 yield out
@@ -2079,8 +2097,6 @@ class Unit(UnitBase, abstract=True):
             if ctr > 0 or not self.args.trypass:
                 raise
             yield data
-        finally:
-            cls.logger_locked = False
 
     def __call__(self, data: buf | Chunk | None = None) -> buf:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:

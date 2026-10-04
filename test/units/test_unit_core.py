@@ -110,6 +110,21 @@ class TestLogger(unittest.TestCase):
         self.assertEqual(carve.logger.name, 'carve')
         self.assertEqual(csd.logger.name, 'csd')
 
+    def test_abandoned_run_does_not_block_the_log_level(self):
+        from refinery import chop
+        from refinery.units import LogLevel
+        running = B'ABC' | chop(1)
+        self.assertEqual(next(running), B'A')
+        other = chop(1)
+        level = other.log_level
+        target = LogLevel.INFO if level != LogLevel.INFO else LogLevel.WARNING
+        try:
+            other.log_level = target
+            self.assertEqual(other.log_level, target)
+        finally:
+            other.log_level = level
+        self.assertEqual(next(running), B'B')
+
 
 class TestEntry(unittest.TestCase):
 
