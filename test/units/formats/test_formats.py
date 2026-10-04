@@ -1,3 +1,7 @@
+import gc
+import lzma
+import tracemalloc
+
 from .. import TestUnitBase
 
 from refinery.units.formats import PathPattern
@@ -68,3 +72,23 @@ class TestFormats(TestUnitBase):
                     ancestor = '/'.join(parts[:k])
                     self.assertTrue(pattern.reach(ancestor),
                         F'{query} pruned {ancestor} but matches {path}')
+
+    def test_extracted_files_are_freed_once_handed_out(self):
+        data = lzma.decompress(self.download_sample('2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'))
+        unit = self.ldu('xtvhd')
+        extracted = 0
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            start, _ = tracemalloc.get_traced_memory()
+            held = start
+            for chunk in data | unit:
+                extracted += len(chunk)
+                del chunk
+                held, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+            gc.enable()
+        self.assertGreater(extracted, 0)
+        self.assertLess(held - start - len(data), extracted // 8)

@@ -39,14 +39,22 @@ def pathspec(expression):
 class UnpackResult:
 
     def get_data(self) -> buf:
-        if callable(self.data):
-            self.data = self.data()
-        return self.data
+        if (data := self.data) is None:
+            raise RuntimeError(F'The data of {self.path} was already handed out.')
+        if callable(data):
+            self.data = data = data()
+        return data
+
+    def release(self):
+        """
+        Drops the data of this result; it cannot be retrieved afterwards.
+        """
+        self.data = None
 
     def __init__(self, _br__path: str, _br__data: buf | Callable[[], buf], **_br__meta):
         check_variable_names_of_unit(_br__meta)
         self.path = _br__path
-        self.data = _br__data
+        self.data: buf | Callable[[], buf] | None = _br__data
         self.meta = _br__meta
         for key in [key for key, value in _br__meta.items() if value is None]:
             del _br__meta[key]
@@ -234,7 +242,20 @@ class PathExtractorUnit(Unit, abstract=True):
     def unpack(self, data: Chunk) -> Iterable[UnpackResult]:
         raise NotImplementedError
 
-    def process(self, data: Chunk) -> buf:
+    def _get_data(self, result: UnpackResult) -> buf:
+        try:
+            return result.get_data()
+        except RefineryPartialResult as error:
+            if not self.args.lenient:
+                raise
+            result.data = data = error.partial
+            return data
+
+    def _selection(self, data: Chunk) -> collections.deque[UnpackResult]:
+        """
+        Unpacks the input and returns the results that the path patterns select, in the order in
+        which they are extracted. A result appears once for every pattern that selects it.
+        """
         meta = metavars(data)
         results: list[UnpackResult] = list(self.unpack(data))
 
@@ -245,15 +266,6 @@ class PathExtractorUnit(Unit, abstract=True):
         checksums = collections.defaultdict(set)
         root = ''
         uuid = 0
-
-        def get_data(result: UnpackResult):
-            try:
-                data = result.get_data()
-            except RefineryPartialResult as error:
-                if not self.args.lenient:
-                    raise
-                result.data = data = error.partial
-            return data
 
         def _uuid():
             nonlocal uuid
@@ -293,7 +305,7 @@ class PathExtractorUnit(Unit, abstract=True):
             if not path:
                 from refinery.lib.mime import FileMagicInfo
                 path = _uuid()
-                ext = FileMagicInfo(get_data(result)).extension
+                ext = FileMagicInfo(self._get_data(result)).extension
                 if ext != 'bin':
                     path = F'{path}.{ext}'
                 self.log_warn(F'read chunk with empty path; using generated name {path}')
@@ -303,7 +315,7 @@ class PathExtractorUnit(Unit, abstract=True):
         for result in results:
             path = result.path
             if occurrences[path] > 1:
-                checksum = adler32(get_data(result))
+                checksum = adler32(self._get_data(result))
                 if checksum in checksums[path]:
                     continue
                 checksums[path].add(checksum)
@@ -327,26 +339,44 @@ class PathExtractorUnit(Unit, abstract=True):
                 discard.update(self._select(x, results))
             results = [r for r in results if r not in discard]
 
-        for p in includes:
-            for result in self._select(p, results):
-                path = result.path
-                if self.args.list:
-                    yield self.labelled(path.encode(self.codec), **result.meta)
-                    continue
-                if not self.args.drop:
-                    result.meta[metavar] = path
-                try:
-                    chunk = get_data(result)
-                except Exception as error:
-                    if self.log_debug():
-                        raise
-                    message = exception_to_string(error)
-                    if path not in message:
-                        message = F'extraction failure for {path}: {exception_to_string(error)}'
-                    self.log_warn(message)
-                else:
-                    self.log_debug(F'extraction success for {path}')
-                    yield self.labelled(chunk, **result.meta)
+        return collections.deque(result for p in includes for result in self._select(p, results))
+
+    def _extract(self, result: UnpackResult, release: bool) -> Chunk | None:
+        path = result.path
+        try:
+            data = self._get_data(result)
+        except Exception as error:
+            if self.log_debug():
+                raise
+            message = exception_to_string(error)
+            if path not in message:
+                message = F'extraction failure for {path}: {message}'
+            self.log_warn(message)
+            return None
+        self.log_debug(F'extraction success for {path}')
+        if release:
+            result.release()
+        return self.labelled(data, **result.meta)
+
+    def process(self, data: Chunk):
+        selection = self._selection(data)
+        remaining = Counter(selection)
+        metavar = self.args.path.decode(self.codec)
+        while selection:
+            result = selection.popleft()
+            last = remaining[result] == 1
+            if last:
+                del remaining[result]
+            else:
+                remaining[result] -= 1
+            path = result.path
+            if self.args.list:
+                yield self.labelled(path.encode(self.codec), **result.meta)
+                continue
+            if not self.args.drop:
+                result.meta[metavar] = path
+            if (chunk := self._extract(result, release=last)) is not None:
+                yield chunk
 
 
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
