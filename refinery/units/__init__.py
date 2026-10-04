@@ -977,6 +977,7 @@ class Executable(ABCMeta):
     """
 
     _argument_specification: dict[str, Arg]
+    _logger: Logger | None
 
     def _infer_argspec(cls, parameters: Mapping[str, inspect.Parameter], args: ArgumentSpecification | None, module: str):
 
@@ -1049,6 +1050,7 @@ class Executable(ABCMeta):
     def __init__(cls, name: str, bases: tuple[type, ...], nmspc: dict[str, Any], abstract=False, docs='{}'):
         super().__init__(name, bases, nmspc)
         cls._argument_specification = args = ArgumentSpecification()
+        cls._logger = None
 
         cls_init = cls.__init__
         sig_init = inspect.signature(cls_init)
@@ -1182,11 +1184,8 @@ class Executable(ABCMeta):
         """
         The debug logger instance for the unit.
         """
-        try:
-            return cls._logger
-        except AttributeError:
-            pass
-        cls._logger = _logger = logger(cls.name)
+        if (_logger := cls._logger) is None:
+            cls._logger = _logger = logger(cls.name)
         return _logger
 
     @property

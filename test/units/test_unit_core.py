@@ -103,6 +103,14 @@ class TestAutoinvoke(unittest.TestCase):
         self.assertEqual(result, (10, 20, 30))
 
 
+class TestLogger(unittest.TestCase):
+
+    def test_unit_derived_from_another_unit_has_its_own_logger(self):
+        from refinery.units.pattern.carve import carve, csd
+        self.assertEqual(carve.logger.name, 'carve')
+        self.assertEqual(csd.logger.name, 'csd')
+
+
 class TestEntry(unittest.TestCase):
 
     def test_entry_is_instantiable(self):
