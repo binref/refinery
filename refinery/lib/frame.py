@@ -553,9 +553,11 @@ class FrameUnpacker(Iterable[Chunk]):
             self.next_chunk = Chunk()
             while buffer:
                 self.next_chunk.extend(buffer)
+                del buffer
                 buffer = stream.read()
 
     def _advance(self) -> bool:
+        self.next_chunk = None
         while not self.finished:
             try:
                 self.next_chunk = chunk = Chunk.unpack(self.unpacker)
@@ -573,6 +575,7 @@ class FrameUnpacker(Iterable[Chunk]):
             if not recv:
                 break
             self.unpacker.feed(recv)
+            del recv
         self.finished = True
         return False
 
@@ -597,6 +600,7 @@ class FrameUnpacker(Iterable[Chunk]):
                 self._advance()
         else:
             self.unpacker = None
+            self.next_chunk = None
             self.finished = True
 
     @property
@@ -605,6 +609,15 @@ class FrameUnpacker(Iterable[Chunk]):
         Specifies whether the current frame was fully consumed.
         """
         return self.trunk != self.peek
+
+    @property
+    def scopable(self) -> bool:
+        """
+        Whether the chunks of the next frame can be made visible; see `Chunk.scopable`.
+        """
+        chunk = self.next_chunk
+        assert chunk is not None
+        return chunk.scopable
 
     @property
     def peek(self) -> tuple[int, ...]:
@@ -618,11 +631,17 @@ class FrameUnpacker(Iterable[Chunk]):
             return
         if not self.framed:
             yield self.next_chunk
+            self.next_chunk = None
             self.finished = True
             return
         while not self.finished and self.trunk == self.check:
             yield self.next_chunk
             self._advance()
+
+
+def _indexed(index: int, chunk: Chunk) -> Chunk:
+    chunk.meta.index = index
+    return chunk
 
 
 class Framed:
@@ -658,23 +677,8 @@ class Framed:
         self.squeeze = squeeze
 
     def _apply_filter(self) -> Iterable[Chunk]:
-
-        def autoindex(it: Iterable[Chunk]):
-            for k, chunk in enumerate(it):
-                chunk.meta.index = k
-                yield chunk
-
-        chunks = iter(self.unpack)
-        header = list(itertools.islice(chunks, 0, 2))
-        if not header:
-            return
-        elif len(header) > 1:
-            chunks = itertools.chain(header, chunks)
-            chunks = autoindex(chunks)
-        else:
-            header[0].meta.index = 0
-            chunks = iter(header)
-        if header[0].scopable or self.filter_all:
+        chunks = map(_indexed, itertools.count(), self.unpack)
+        if self.unpack.scopable or self.filter_all:
             chunks = self.filter(chunks)
         yield from chunks
 

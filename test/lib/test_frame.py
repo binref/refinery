@@ -2,7 +2,9 @@ import contextlib
 import copy
 import gc
 import io
+import itertools
 import tracemalloc
+import unittest
 import weakref
 
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
@@ -229,6 +231,7 @@ class TestFraming(TestBase):
             'set of strings': lambda source: B'' | source() | {str},
             'stream': lambda source: B'' | source() | io.BytesIO(),
             'console, frame opened': lambda source: B'' | _configured(source(), 1, console=True) | io.BytesIO(),
+            'next unit': lambda source: _drain(B'' | source() | nop()),
             'next unit in a frame': lambda source: _drain(B'' | source()[nop()]),
             'squeezed': lambda source: _drain(B'' | _configured(source(), squeeze=True)),
             'framed input, frame closed': lambda source: _drain([B''] | source()),
@@ -292,6 +295,76 @@ class TestFraming(TestBase):
                         lifetimes.note()
                 self.assertTrue(lifetimes.notes)
                 self.assertEqual(lifetimes.notes, [[]] * len(lifetimes.notes))
+
+    def test_unit_inputs_are_released_before_the_next_is_read(self):
+        from refinery import Unit
+        pipelines = {
+            'frame closed': lambda source, spy: _drain(B'' | source()[spy()]),
+            'frame kept': lambda source, spy: _drain(B'' | source()[_configured(spy(), 1)]),
+            'frame opened': lambda source, spy: _drain(B'' | source()[_configured(spy(), 2)]),
+            'stream': lambda source, spy: B'' | source()[spy()] | io.BytesIO(),
+        }
+        for name, pipeline in pipelines.items():
+            with self.subTest(name):
+                lifetimes = _Lifetimes()
+
+                class source(Unit):
+                    def process(self, data):
+                        for _ in range(4):
+                            lifetimes.note()
+                            yield Chunk(bytes(0x100))
+
+                class spy(Unit):
+                    def process(self, data):
+                        return lifetimes.track(data)
+
+                with _without_cycle_collector():
+                    pipeline(source, spy)
+                self.assertEqual(lifetimes.notes, [[], [], [], []])
+
+    def test_unit_input_is_released_when_its_run_ends(self):
+        from refinery import Unit
+        inputs = {
+            'unframed input': (B'data', False),
+            'framed input': ([B'data', B'more'], False),
+            'framed input, filter stops early': ([B'data', B'more'], True),
+        }
+        for name, (data, stop_early) in inputs.items():
+            with self.subTest(name):
+                lifetimes = _Lifetimes()
+
+                class spy(Unit):
+                    def filter(self, chunks):
+                        if stop_early:
+                            chunks = itertools.islice(chunks, 1)
+                        yield from chunks
+
+                    def process(self, data):
+                        return lifetimes.track(data)
+
+                with _without_cycle_collector():
+                    unit = spy()
+                    _drain(data | unit)
+                    lifetimes.note()
+                self.assertEqual(lifetimes.notes, [[]])
+
+    @unittest.expectedFailure
+    def test_abandoned_run_releases_its_input(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class halves(Unit):
+            def process(self, data):
+                lifetimes.track(data)
+                yield data[:1]
+                yield data[1:]
+
+        with _without_cycle_collector():
+            unit = B'AB' | halves()
+            next(unit)
+            del unit
+            lifetimes.note()
+        self.assertEqual(lifetimes.notes, [[]])
 
     def test_closing_a_frame_merges_a_repeated_chunk_correctly(self):
         self.assertEqual(load_pipeline('emit AB [[| rep 3 ]| nop ]') | bytes, B'ABABAB')

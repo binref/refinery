@@ -144,6 +144,7 @@ from __future__ import annotations
 import abc
 import copy
 import inspect
+import itertools
 import os
 import sys
 
@@ -936,16 +937,14 @@ def _UnitFilterBoilerplate(
 ) -> Callable[[Any, Iterable[Chunk]], Iterable[Chunk]]:
     @wraps(operation)
     def peekfilter(self, chunks: Iterable[Chunk]) -> Iterable[Chunk]:
-        def _apply_args_to_head():
-            it = iter(chunks)
+        def _apply_args_to_head(it: Iterator[Chunk]):
             for chunk in it:
                 if chunk.visible:
                     yield self.args @ chunk
-                    break
-                else:
-                    yield chunk
-            yield from it
-        yield from operation(self, _apply_args_to_head())
+                    return
+                yield chunk
+        it = iter(chunks)
+        yield from operation(self, itertools.chain(_apply_args_to_head(it), it))
     return peekfilter
 
 
