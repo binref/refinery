@@ -253,17 +253,12 @@ class FileMagicInfo:
     _GZIP_DC_CHUNK_LEN = 16
 
     def __init__(self, data, default='bin', decompress=True):
-        extension = default
-        description = 'data'
-        mime = 'application/octet-stream'
-        blob = True
-
         if not isinstance(data, bytes):
             data = bytes(data)
-        mime = magicparse(data, mime=True)
+        mime, description = magicparse(data)
         mime = mime.split(';')[0].lower()
         extension = FileTypeMap.get(mime, default)
-        description = magicparse(data).strip()
+        description = description.strip()
         if description == 'Microsoft OOXML':
             extension = 'docx'
         elif extension == 'exe' and (t := get_pe_type(data)):
