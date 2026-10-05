@@ -386,7 +386,7 @@ class Chunk(bytearray):
         assert len(view) == scope
         return path, view, self._meta.serialize(scope), fs
 
-    def serialize(self, nest: int = 0, position: int = 0) -> tuple[buf, ...]:
+    def serialize(self, nest: int = 0, position: int = 0) -> tuple[bytes | bytearray, ...]:
         """
         Returns the serialized form of this chunk, moved by the given nesting and placed at the
         given position, as a sequence of buffers to be written in order. Their concatenation is a
@@ -406,17 +406,25 @@ class Chunk(bytearray):
         head.extend(_bin_header(size))
         return head, self
 
-    def pack(self, nest: int = 0, position: int = 0, serialize: bool = True):
+    def pack(self, nest: int = 0, position: int = 0) -> bytes:
         """
-        If `serialize` is true, this function returns the serialized form of the chunk as a single
-        byte string; see `refinery.lib.frame.Chunk.serialize`. Otherwise, it creates a copy of the
-        chunk whose location in the frame tree has been adjusted based on the given nesting and
-        position.
+        Returns the serialized form of this chunk as a single byte string; see
+        `refinery.lib.frame.Chunk.serialize`.
         """
-        if serialize:
-            return B''.join(self.serialize(nest, position))
+        return B''.join(self.serialize(nest, position))
+
+    def transfer(self, nest: int = 0, position: int = 0) -> Chunk:
+        """
+        Returns the chunk that a unit in the same process receives when this chunk is passed on,
+        moved by the given nesting and placed at the given position. The data is copied, and the
+        values of the metadata are shared. A value that cannot be serialized raises the same error
+        as it does in `refinery.lib.frame.Chunk.serialize`.
+        """
         path, view, meta, fs = self._relocated(nest, position)
-        return Chunk(self, path, view, None, meta, fs, self._fill_batch, ignore_chunk_properties=True)
+        for stack in meta.values():
+            for _, value in stack:
+                _check_serializable(value)
+        return Chunk(self, path, view, None, meta, fs, None, ignore_chunk_properties=True)
 
     def __repr__(self) -> str:
         layer = '/'.join(str(p) if s else F'!{p}' for p, s in zip(self._path, self._view))
@@ -507,6 +515,28 @@ class Chunk(bytearray):
 _INLINE = 0x4000
 _READ = 0x10000
 _BIN_WIDTH = {0xC4: 1, 0xC5: 2, 0xC6: 4}
+
+
+def _check_serializable(value):
+    """
+    Raises the error that serializing the given metadata value would raise, if any.
+    """
+    if value is None or isinstance(value, (str, bytes, bytearray, memoryview, float)):
+        return
+    if isinstance(value, int):
+        if not -0x8000000000000000 <= value <= 0xFFFFFFFFFFFFFFFF:
+            raise OverflowError('Integer value out of range')
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _check_serializable(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _check_serializable(key)
+            _check_serializable(item)
+        return
+    raise TypeError(F'can not serialize {type(value).__name__!r} object')
 
 
 def _bin_header(size: int) -> bytes:
@@ -614,6 +644,62 @@ def _read_chunks(stream: BinaryIO) -> Iterator[Chunk]:
         yield box.pop()
 
 
+def _read_stream(stream: BinaryIO | None) -> Iterator[buf]:
+    """
+    Reads a byte stream and yields its frame header and chunks if it is framed. Otherwise, it
+    yields the pieces of its entire content, the first of which is a chunk.
+    """
+    if stream is None or not (head := _read_exactly(stream, len(MAGIC))):
+        yield Chunk()
+    elif head != MAGIC:
+        yield Chunk(head)
+        while piece := stream.read():
+            yield piece
+            del piece
+    elif not (depth := stream.read(1)):
+        raise ValueError('The frame stream ended after the frame magic.')
+    else:
+        yield head + depth
+        yield from _read_chunks(stream)
+
+
+class Placement:
+    """
+    A chunk of framed output, together with the change of nesting and the position at which it
+    enters the frame tree of the next unit. The chunk is moved only once its receiver is known:
+    it is serialized for a stream, and transferred to a unit in the same process.
+    """
+    __slots__ = 'chunk', 'nesting', 'position'
+
+    def __init__(self, chunk: Chunk, nesting: int, position: int):
+        self.chunk = chunk
+        self.nesting = nesting
+        self.position = position
+
+    def serialize(self) -> tuple[bytes | bytearray, ...]:
+        return self.chunk.serialize(self.nesting, self.position)
+
+    def transfer(self) -> Chunk:
+        return self.chunk.transfer(self.nesting, self.position)
+
+
+class ChunkFeed:
+    """
+    The input of a `refinery.lib.frame.FrameUnpacker` when it comes from the same process: the
+    output of a unit or a list of chunks. A framed feed begins with a frame header, as generated by
+    `refinery.lib.frame.generate_frame_header`, and continues with chunks or placements of chunks.
+    An unframed feed consists of the pieces of one input: a chunk followed by more chunks or byte
+    strings.
+    """
+    __slots__ = 'items',
+
+    def __init__(self, items: Iterable[buf | Placement]):
+        self.items = iter(items)
+
+    def close(self):
+        self.items = iter(())
+
+
 class FrameUnpacker(Iterable[Chunk]):
     """
     Provides a unified interface to read both framed and raw input data from a stream. After
@@ -631,39 +717,47 @@ class FrameUnpacker(Iterable[Chunk]):
     depth: int
     trunk: tuple[int, ...]
     check: tuple[int, ...]
-    items: Iterator[Chunk] | None
+    items: Iterator[buf | Placement] | None
     finished: bool
     framed: bool
 
-    def __init__(self, stream: BinaryIO | None):
+    def __init__(self, stream: BinaryIO | ChunkFeed | None):
         self.finished = False
         self.trunk = ()
         self.check = ()
         self.items = None
         self.depth = 0
         self.next_chunk = None
-        buffer = stream and _read_exactly(stream, len(MAGIC)) or None
-        if buffer == MAGIC:
-            assert stream is not None
-            if not (depth := stream.read(1)):
-                raise ValueError('The frame stream ended after the frame magic.')
-            self.depth, = depth
-            self.framed = True
-            self.items = _read_chunks(stream)
-            self._advance()
-        else:
-            self.framed = False
-            self.depth = 0
+        self.framed = False
+        items = stream.items if isinstance(stream, ChunkFeed) else _read_stream(stream)
+        first = next(items, None)
+        if first is None:
             self.next_chunk = Chunk()
-            while buffer:
-                self.next_chunk.extend(buffer)
-                del buffer
-                buffer = stream.read()
+        elif isinstance(first, Chunk):
+            chunk = Chunk(first, ignore_chunk_properties=True)
+            del first
+            for item in items:
+                if isinstance(item, Placement):
+                    raise ValueError('An unframed input contained a chunk of framed output.')
+                chunk.extend(item)
+                del item
+            self.next_chunk = chunk
+        elif isinstance(first, Placement) or len(first) != MSIZE or first[:len(MAGIC)] != MAGIC:
+            raise ValueError('The input began with an object that is neither a chunk nor a frame header.')
+        else:
+            self.depth = first[~0]
+            self.framed = True
+            self.items = items
+            self._advance()
 
     def _advance(self) -> bool:
         self.next_chunk = None
         if not self.finished and (items := self.items) is not None:
             if (chunk := next(items, None)) is not None:
+                if isinstance(chunk, Placement):
+                    chunk = chunk.transfer()
+                elif not isinstance(chunk, Chunk):
+                    raise ValueError('A frame contained an object that is not a chunk.')
                 self.next_chunk = chunk
                 self.check = tuple(chunk.path)
                 if chunk.scope != self.depth:
@@ -745,26 +839,24 @@ class Framed:
     by the interface. This parameter should either be `1` if the interface should output
     the results at an additional layer, `0` if the nesting depth of the data should
     remain unchanged, and a negative amount if frame layers are to be collapsed. After
-    initialization, the `refinery.lib.frame.Framed` object is an iterator that yields
-    bytestrings which can be forwarded as the output of the operation with all framing
-    already taken care of.
+    initialization, the `refinery.lib.frame.Framed` object is an iterator over the output of the
+    operation with all framing already taken care of: Framed output is a frame header followed by
+    one `refinery.lib.frame.Placement` for each chunk, and unframed output consists of chunks.
     """
     def __init__(
         self,
         action : Callable[[Chunk], Iterable[Chunk]],
-        stream : BinaryIO | None,
+        stream : BinaryIO | ChunkFeed | None,
         filter : Callable[[Iterable[Chunk]], Iterable[Chunk]],
         finish : Callable[[], Iterable[Chunk]],
         nesting: int = 0,
         squeeze: bool = False,
-        serialized: bool = True,
         filter_all: bool = False,
     ):
         self.unpack = FrameUnpacker(stream)
         self.action = action
         self.filter = filter
         self.finish = finish
-        self.serialized = serialized
         self.filter_all = filter_all
         self.nesting = nesting
         self.squeeze = squeeze
@@ -861,21 +953,6 @@ class Framed:
             outputs = self._merged(outputs)
         yield from outputs
 
-    def _packed(self, chunks: Iterable[Chunk], nesting: int, position: int) -> Iterator[buf]:
-        """
-        Moves the given chunks by the given nesting and places them at the given position. If the
-        output is serialized, the pieces of their serialized form are generated.
-        """
-        if not self.serialized:
-            repeat = itertools.repeat
-            yield from map(Chunk.pack, chunks, repeat(nesting), repeat(position), repeat(False))
-            return
-        for chunk in chunks:
-            pieces = chunk.serialize(nesting, position)
-            del chunk
-            yield from pieces
-            del pieces
-
     def __iter__(self):
         nesting = self.nesting
         scope = max(self.unpack.depth + nesting, 0)
@@ -883,18 +960,20 @@ class Framed:
             if scope:
                 yield generate_frame_header(scope)
             return
+        repeat = itertools.repeat
         if nesting > 0:
             assert scope
             yield generate_frame_header(scope)
+            nestings = repeat(nesting)
             while self.unpack.nextframe():
                 for position, results in enumerate(map(self._results, self._apply_filter())):
-                    yield from self._packed(results, nesting, position)
+                    yield from map(Placement, results, nestings, repeat(position))
         elif not self.unpack.framed:
             yield from itertools.chain.from_iterable(map(self._generate_bytes, self._apply_filter()))
         elif nesting == 0:
             assert scope
             yield generate_frame_header(scope)
-            yield from self._packed(self._all_results(), 0, 0)
+            yield from map(Placement, self._all_results(), repeat(0), repeat(0))
         elif not scope:
             yield from map(Chunk.truncate, self._all_results())
         else:
@@ -902,4 +981,4 @@ class Framed:
             check = scope + 1
             groups = itertools.groupby(self._all_results(), lambda result: result.path[:check])
             merged = itertools.chain.from_iterable(self._merged(group) for _, group in groups)
-            yield from self._packed(merged, nesting, 0)
+            yield from map(Placement, merged, repeat(nesting), repeat(0))

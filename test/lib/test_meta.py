@@ -356,6 +356,67 @@ class TestLazyMetaOracle(TestBase):
         self.assertEqual(restored.meta['k'], {1: 2, B'k': 3})
         self.assertEqual(L('emit A [| put x e:-2**70 | nop | pf {x} ]')(), str(-2 ** 70).encode())
 
+    def test_metadata_survives_a_hop_like_serialization(self):
+        import datetime
+        import enum
+
+        class Flags(enum.IntFlag):
+            A = 1
+            B = 2
+
+        class Count(int):
+            pass
+
+        def serialized_hop(chunk: Chunk) -> Chunk:
+            unpacked = FrameUnpacker(io.BytesIO(generate_frame_header(1) + chunk.pack()))
+            unpacked.nextframe()
+            restored, = unpacked
+            return restored
+
+        values = {
+            'datetime': datetime.datetime(2020, 1, 2, 3, 4, 5, 678),
+            'date': datetime.date(2020, 1, 2),
+            'set': {3, 1, 2},
+            'mixed set': {1, 'a'},
+            'tuple': (1, (2, 3)),
+            'range': range(3),
+            'flags': Flags.A | Flags.B,
+            'int subclass': Count(5),
+            'member': MV.START,
+            'int keys': {1: (2,)},
+            'byte string keys': {B'k': 1},
+            'nested buffers': [bytearray(B'ab'), memoryview(B'cd')],
+            'negative big integer': -2 ** 70,
+            'big integer': 2 ** 70,
+            'float': 1.5,
+            'bool': True,
+            'bytes': B'\x00\xFF',
+            'str': 'text',
+            'list of dicts': [{'a': (1,)}],
+        }
+        for name, value in values.items():
+            with self.subTest(name):
+                chunk = Chunk(B'data', path=[0], view=[True])
+                chunk.meta['x'] = value
+                moved = chunk.transfer().meta['x']
+                read = serialized_hop(chunk).meta['x']
+                self.assertIs(type(moved), type(read))
+                self.assertEqual(moved, read)
+        for name, value in {
+            'generator': (k for k in range(3)),
+            'object': object(),
+            'nested big integer': [2 ** 70],
+        }.items():
+            with self.subTest(name):
+                chunk = Chunk(B'data', path=[0], view=[True])
+                chunk.meta['x'] = value
+                with self.assertRaises((TypeError, OverflowError)) as moved:
+                    chunk.transfer()
+                with self.assertRaises((TypeError, OverflowError)) as read:
+                    serialized_hop(chunk)
+                self.assertIs(type(moved.exception), type(read.exception))
+                self.assertEqual(str(moved.exception), str(read.exception))
+
 
 class TestMV(TestBase):
     """

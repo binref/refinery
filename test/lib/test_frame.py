@@ -491,6 +491,39 @@ class TestFraming(TestBase):
         self.assertGreater(sink.size, size)
         self.assertLess(peak, size * 1.5)
 
+    def test_unit_reading_another_unit_gets_the_line_breaks_between_its_outputs(self):
+        self.assertEqual(load_pipeline('emit A B | nop') | bytes, B'A\nB')
+
+    def test_output_that_looks_like_a_frame_header_is_kept(self):
+        from refinery import emit, nop
+        header = generate_frame_header(1)
+        self.assertEqual(B'' | emit(header) | [bytes], [header])
+        self.assertEqual(B'' | emit(header) | nop() | [bytes], [header])
+
+    def test_framed_hop_in_python_copies_the_data_once(self):
+        from refinery import nop
+        data = bytes(0x1000000)
+        self.assertLess(_peak_memory(lambda: _drain(data | nop()[nop()])), len(data) * 2.5)
+
+    def test_list_input_is_copied_once(self):
+        from refinery import nop
+        data = bytes(0x1000000)
+        self.assertLess(_peak_memory(lambda: _drain([data] | nop())), len(data) * 1.5)
+
+    def test_list_input_is_taken_when_piped(self):
+        from refinery import nop
+        first = Chunk(B'A')
+        first.meta['x'] = 1
+        items = [first, 'B']
+        unit = items | nop()
+        items.clear()
+        first.meta['x'] = 2
+        outputs = list(unit)
+        self.assertEqual(outputs, [B'A', B'B'])
+        self.assertEqual(outputs[0].meta['x'], 1)
+        with self.assertRaises(UnicodeEncodeError):
+            ['\udc80'] | nop()
+
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')
         self.assertEqual(0 | pipe | int, 0)

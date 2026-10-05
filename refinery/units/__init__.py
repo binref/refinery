@@ -190,7 +190,7 @@ from refinery.lib.exceptions import (
     RefineryPartialResult,
     RefineryPotentialUserError,
 )
-from refinery.lib.frame import MAGIC, MSIZE, Chunk, Framed, generate_frame_header
+from refinery.lib.frame import Chunk, ChunkFeed, Framed, Placement, generate_frame_header
 from refinery.lib.meta import MV, check_variable_names_of_unit
 from refinery.lib.structures import MemoryFile
 from refinery.lib.types import asbuffer, buf, isbuffer, isstream
@@ -226,7 +226,6 @@ from refinery.lib.argformats import (
 from refinery.lib.tools import (
     documentation,
     exception_to_string,
-    lookahead,
     normalize_to_display,
     normalize_to_identifier,
     one,
@@ -1388,7 +1387,7 @@ class Unit(UnitBase, abstract=True):
     _source: BinaryIO | None
     _target: BinaryIO | None
     _framed: Framed | None
-    _chunks: Iterator[buf | Chunk] | None
+    _chunks: Iterator[buf | Placement] | None
     console: bool
 
     @property
@@ -1599,20 +1598,89 @@ class Unit(UnitBase, abstract=True):
             self._chunks = iter(self._framehandler)
         return self._chunks
 
+    def _next_output(self, place: Callable[[Placement], Any] | None = None) -> Any:
+        """
+        Returns the next item of `output`, or `None` at its end or after an error, which is handled
+        by the unit's exception handler. If a function is given, a placement is replaced by its
+        result: the placement is transferred or serialized under the same error handling.
+        """
+        try:
+            item = next(self.output())
+            if place is not None and isinstance(item, Placement):
+                item = place(item)
+            return item
+        except StopIteration:
+            return None
+        except RefineryCriticalException:
+            return None
+        except BaseException as B:
+            self._exception_handler(B, None)
+            return None
+
     def __next__(self) -> bytes | bytearray | Chunk:
-        while True:
-            try:
-                chunk = next(self.output())
-            except StopIteration:
-                raise
-            except RefineryCriticalException as R:
-                raise StopIteration from R
-            except BaseException as B:
-                self._exception_handler(B, None)
-                raise StopIteration from B
-            if not self.console and len(chunk) == MSIZE and chunk[:len(MAGIC)] == MAGIC:
+        console = self.console
+        place = (lambda p: B''.join(p.serialize())) if console else Placement.transfer
+        while (item := self._next_output(place)) is not None:
+            if console or isinstance(item, Chunk):
+                return item
+        raise StopIteration
+
+    @overload
+    def _stream(self, serialize: bool, terminal: bool = False) -> Generator[bytes | bytearray]:
+        ...
+
+    @overload
+    def _stream(self, serialize: None = None, terminal: bool = False) -> Generator[bytes | bytearray | Placement]:
+        ...
+
+    def _stream(self, serialize: bool | None = None, terminal: bool = False):
+        """
+        Generates the output of this unit in the order in which it is written. Framed output
+        consists of the frame header and one placement for each chunk; if `serialize` is true,
+        the placements are serialized, and if it is false, the header is omitted and only the data
+        of each chunk is generated. Unframed output consists of the chunks, with line breaks
+        between them where the command line puts them; a short chunk is joined with its line break.
+        For a terminal, the line break follows each chunk immediately, so that a line is complete
+        while the next is computed.
+        """
+        separate = False
+        framebreak = None
+        outbox: list[buf | Placement] = []
+        place = Placement.serialize if serialize else None
+        while (item := self._next_output(place)) is not None:
+            trailer = False
+            if isinstance(item, tuple):
+                pieces = item
+                del item
+                yield from pieces
+                del pieces
                 continue
-            return chunk
+            if isinstance(item, Placement):
+                if serialize is not None:
+                    item = item.chunk
+            elif isinstance(item, Chunk):
+                if framebreak is None:
+                    framebreak = self._framehandler.framebreak
+                last = separate
+                separate = framebreak and not item.endswith(B'\n')
+                if terminal:
+                    if separate:
+                        if len(item) < 0x1000:
+                            item = item + B'\n'
+                        else:
+                            trailer = True
+                elif last:
+                    if len(item) < 0x1000:
+                        item = B'\n' + item
+                    else:
+                        yield B'\n'
+            elif serialize is False:
+                continue
+            outbox.append(item)
+            del item
+            yield outbox.pop()
+            if trailer:
+                yield B'\n'
 
     @property
     def _framehandler(self) -> Framed:
@@ -1630,14 +1698,17 @@ class Unit(UnitBase, abstract=True):
                 if result is not None:
                     yield self.labelled(result, error=message)
 
+        source = self.source
+        if isinstance(source, Unit) and not source.console and not source._buffer:
+            source = ChunkFeed(source._stream())
+
         self._framed = Framed(
             normalized_action,
-            self.source,
+            source,
             self.filter,
             self.finish,
             self.args.nesting,
             self.args.squeeze,
-            self.console,
             self.FilterEverything,
         )
         return self._framed
@@ -1680,7 +1751,7 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, self.__class__.__class__):
             stream = stream()
         if not isinstance(stream, self.__class__):
-            if not isstream(stream):
+            if not isinstance(stream, ChunkFeed) and not isstream(stream):
                 raise TypeError(F'Cannot connect object of type {type(stream).__name__} to unit.')
             self.reset()
         self._source = cast(BinaryIO, stream)
@@ -1757,24 +1828,32 @@ class Unit(UnitBase, abstract=True):
         if isinstance(stream, Chunk):
             stream = [stream]
         if isinstance(stream, (list, tuple)):
-            def tochunk(t: str | buf | Chunk):
-                if isinstance(t, str):
-                    t = t.encode(self.codec)
-                return t if isinstance(t, Chunk) else Chunk(t)
-            chunks = [tochunk(t) for t in stream]
-            scopes = {t.scope for t in chunks}
-            stream = MemoryFile()
+            codec = self.codec
+            scopes = {t.scope if isinstance(t, Chunk) else 0 for t in stream}
             if len(scopes) != 1:
                 raise ValueError('Inconsistent scopes in iterable input')
-            chunk_scope = next(iter(scopes))
+            chunk_scope, = scopes
             frame_scope = max(chunk_scope, 1)
             delta = frame_scope - chunk_scope
-            stream.write(generate_frame_header(frame_scope))
-            for chunk in chunks:
-                stream.write(chunk.pack(delta))
+            plain = Chunk()
+
+            def taken(t: str | buf | Chunk):
+                if isinstance(t, Chunk):
+                    return t, t._relocated(delta, 0)
+                if isinstance(t, str):
+                    t = t.encode(codec)
+                return t, plain._relocated(delta, 0)
+
+            def transported(t: buf, location: tuple[list[int], list[bool], dict, bool | None]):
+                path, view, meta, fs = location
+                return Chunk(t, path, view, None, meta, fs, None, ignore_chunk_properties=True)
+
+            header = generate_frame_header(frame_scope)
+            items = [taken(t) for t in stream]
+            stream = ChunkFeed(itertools.chain((header,), itertools.starmap(transported, items)))
+            del items
             if delta:
                 self.args.nesting -= delta
-            stream.seekset(0)
         elif not isstream(stream):
             if isinstance(stream, str):
                 stream = stream.encode(self.codec)
@@ -1982,60 +2061,47 @@ class Unit(UnitBase, abstract=True):
             self.log_debug(F'cannot send to next unit: {error}')
 
     def _write_to_stream(self, stream: BinaryIO):
-        framebreak = None
-        separate = False
-        for chunk in self:
+        for piece in self._stream(self.console):
             try:
-                if not separate:
-                    stream.write(chunk)
-                elif len(chunk) < 0x1000:
-                    stream.write(B'\n' + chunk)
-                else:
-                    stream.write(B'\n')
-                    stream.write(chunk)
+                stream.write(piece)
                 stream.flush()
             except AttributeError:
                 pass
             except (BrokenPipeError, OSError) as E:
                 self._log_send_failure(E)
                 break
-            if framebreak is None:
-                framebreak = self._framehandler.framebreak
-            separate = framebreak and not chunk.endswith(B'\n')
-            del chunk
+            del piece
 
     def _write_to_terminal(self, stream: BinaryIO):
         def cname(x: str):
             return x.lower().replace('-', '')
 
         recode = cname(self.codec) != cname(sys.stdout.encoding)
-        chunk = None
+        linebreak = True
 
-        for last, chunk in lookahead(self):
-            if (
-                not last
-                and self._framehandler.framebreak
-                and not chunk.endswith(B'\n')
-            ):
-                chunk = chunk + B'\n'
+        for piece in self._stream(self.console, True):
+            if not piece:
+                continue
+            linebreak = piece.endswith(B'\n')
             if recode:
                 try:
                     import codecs
-                    chunk = codecs.encode(codecs.decode(
-                        chunk, self.codec, errors='backslashreplace'), sys.stdout.encoding)
+                    piece = codecs.encode(codecs.decode(
+                        piece, self.codec, errors='backslashreplace'), sys.stdout.encoding)
                 except Exception:
                     pass
             try:
-                stream.write(chunk)
+                stream.write(piece)
                 stream.flush()
             except AttributeError:
                 pass
             except (BrokenPipeError, OSError) as E:
                 self._log_send_failure(E)
                 break
+            del piece
 
         try:
-            if chunk and not chunk.endswith(B'\n'):
+            if not linebreak:
                 stream.write(B'\n')
                 stream.flush()
         except AttributeError:
@@ -2066,8 +2132,8 @@ class Unit(UnitBase, abstract=True):
         """
         try:
             out = self._buffer or next(self.output())
-            if isinstance(out, Chunk) and out.scope > 0 and not self.console:
-                out = out.pack()
+            if isinstance(out, Placement):
+                out = B''.join(out.serialize())
             if bytecount and bytecount > 0:
                 out, self._buffer = out[:bytecount], out[bytecount:]
             elif self._buffer:
