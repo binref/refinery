@@ -1660,9 +1660,11 @@ class Unit(UnitBase, abstract=True):
         of each chunk is generated. Unframed output consists of the chunks, with line breaks
         between them where the command line puts them; a short chunk is joined with its line break.
         For a terminal, the line break follows each chunk immediately, so that a line is complete
-        while the next is computed.
+        while the next is computed; the line break of an empty chunk follows once another chunk
+        does, so that a last empty chunk adds no empty line.
         """
         separate = False
+        owed = False
         framebreak = None
         outbox: list[buf | Placement] = []
         place = Placement.serialize if serialize else None
@@ -1683,8 +1685,13 @@ class Unit(UnitBase, abstract=True):
                 last = separate
                 separate = framebreak and not item.endswith(B'\n')
                 if terminal:
+                    if owed:
+                        owed = False
+                        yield B'\n'
                     if separate:
-                        if len(item) < 0x1000:
+                        if not item:
+                            owed = True
+                        elif len(item) < 0x1000:
                             item = item + B'\n'
                         else:
                             trailer = True

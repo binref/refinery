@@ -103,6 +103,18 @@ class _Sink:
         pass
 
 
+class _Terminal(_Sink):
+    def __init__(self):
+        super().__init__()
+        self.data = bytearray()
+
+    def isatty(self):
+        return True
+
+    def write(self, data):
+        self.data.extend(data)
+
+
 class TestFraming(TestBase):
 
     def test_simple_frame(self):
@@ -559,6 +571,20 @@ class TestFraming(TestBase):
         self.assertEqual(list(iter(unit.read1, B'')), [B'A', B'\n', B'\nB'])
         written = B'' | _configured(emit(B'A', B'B'), 1, console=True) | io.BytesIO()
         self.assertEqual((B'' | _configured(emit(B'A', B'B'), 1)).read(), written.getvalue())
+
+    def test_terminal_shows_an_empty_last_output_without_an_empty_line(self):
+        from refinery import emit
+        for outputs, shown in (
+            ([B'A', B''], B'A\n'),
+            ([B'A', B'', B'B'], B'A\n\nB\n'),
+            ([B''], B''),
+            ([B'A\n', B'B'], B'A\nB\n'),
+            ([B'A' * 0x1000, B'B'], B'A' * 0x1000 + B'\nB\n'),
+        ):
+            with self.subTest(outputs=outputs):
+                terminal = _Terminal()
+                B'' | emit(*outputs) | terminal
+                self.assertEqual(terminal.data, shown)
 
     def test_partly_read_unit_continues_when_piped(self):
         from refinery import emit, nop
