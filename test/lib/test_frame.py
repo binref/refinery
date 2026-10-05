@@ -179,10 +179,13 @@ class TestFraming(TestBase):
         self.assertEqual(decoded, pl(encoded))
 
     def test_nonblocking(self):
-        with io.BytesIO(bytes(range(20))) as stream:
+        with io.BytesIO(B'ABCDEFGHIJKLMNOPQRST') as stream:
             slow = stream | L('rex .')
-            for k in range(20):
-                self.assertEqual(slow.read1(20), bytes((k,)))
+            for k, letter in enumerate(B'ABCDEFGHIJKLMNOPQRST'):
+                expected = bytes((letter,))
+                if k > 0:
+                    expected = B'\n' + expected
+                self.assertEqual(slow.read1(20), expected)
 
     def test_nonblocking_frame_collapse(self):
         with io.BytesIO(bytes(range(20))) as stream:
@@ -548,6 +551,57 @@ class TestFraming(TestBase):
         result, = B'' | keeper() | nop()
         self.assertIsNot(result, kept[0])
         self.assertEqual(result, kept[0])
+
+    def test_reading_a_unit_gives_the_bytes_it_writes(self):
+        from refinery import emit
+        self.assertEqual((B'' | emit(B'A', B'', B'B')).read(), B'A\n\nB')
+        unit = B'' | emit(B'A', B'', B'B')
+        self.assertEqual(list(iter(unit.read1, B'')), [B'A', B'\n', B'\nB'])
+        written = B'' | _configured(emit(B'A', B'B'), 1, console=True) | io.BytesIO()
+        self.assertEqual((B'' | _configured(emit(B'A', B'B'), 1)).read(), written.getvalue())
+
+    def test_partly_read_unit_continues_when_piped(self):
+        from refinery import emit, nop
+        unit = B'' | emit(B'ABCDEF', B'GHI')
+        self.assertEqual(unit.read(2), B'AB')
+        self.assertEqual(unit | nop() | bytes, B'CDEF\nGHI')
+        unit = B'' | emit(B'header\nbody one', B'body two')
+        self.assertEqual(unit.readline(), B'header\n')
+        self.assertEqual(unit | nop() | bytes, B'body one\nbody two')
+
+    def test_partial_read_of_a_unit_does_not_copy_the_rest(self):
+        from refinery import nop
+        size = 0x1000000
+        unit = bytes(size) | nop()
+        self.assertEqual(unit.read(1), B'\0')
+
+        def read_on():
+            for _ in range(100):
+                unit.read(1)
+
+        self.assertLess(_peak_memory(read_on), size // 16)
+        self.assertEqual(len(unit.read()), size - 101)
+
+    def test_readline_is_linear(self):
+        import time
+        from refinery import nop
+        line = B'x' * 0x100000 + B'\n'
+        unit = line + B'rest' | nop()
+        start = time.perf_counter()
+        self.assertEqual(unit.readline(), line)
+        self.assertLess(time.perf_counter() - start, 1)
+        self.assertEqual(unit.readline(), B'rest')
+        self.assertEqual(unit.readline(), B'')
+        unit = line | nop()
+        self.assertEqual(unit.readline(3), B'xxx')
+        self.assertEqual(len(unit.readline()), len(line) - 3)
+
+    def test_read_with_size_allocates_only_what_arrives(self):
+        from refinery import nop
+        unit = B'abc' | nop()
+        data = []
+        self.assertLess(_peak_memory(lambda: data.append(unit.read(1 << 30))), 0x100000)
+        self.assertEqual(data, [B'abc'])
 
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')

@@ -1383,7 +1383,9 @@ class Unit(UnitBase, abstract=True):
     required_dependencies: set[str] | None = None
     optional_dependencies: dict[int, set[str]] | None = None
 
-    _buffer: buf
+    _buffer: bytes | bytearray
+    _offset: int
+    _reader: Iterator[bytes | bytearray] | None
     _source: BinaryIO | None
     _target: BinaryIO | None
     _framed: Framed | None
@@ -1439,10 +1441,25 @@ class Unit(UnitBase, abstract=True):
             lines.append(line)
         return lines
 
-    def readline(self, limit: int = -1) -> bytes:
+    def readline(self, limit: int | None = -1) -> bytes:
+        if limit is None:
+            limit = -1
         line = bytearray()
-        while not line.endswith(B'\n') and (char := self.read1(1)):
-            line.extend(char)
+        while limit < 0 or len(line) < limit:
+            if not self._load():
+                break
+            buffer = self._buffer
+            start = self._offset
+            end = len(buffer)
+            if limit >= 0:
+                end = min(end, start + limit - len(line))
+            if (lf := buffer.find(B'\n', start, end)) >= 0:
+                end = lf + 1
+            with memoryview(buffer) as view:
+                line.extend(view[start:end])
+            self._offset = end
+            if lf >= 0:
+                break
         return line
 
     def __enter__(self):
@@ -1618,10 +1635,12 @@ class Unit(UnitBase, abstract=True):
             return None
 
     def __next__(self) -> bytes | bytearray | Chunk:
-        console = self.console
-        place = (lambda p: B''.join(p.serialize())) if console else Placement.transfer
-        while (item := self._next_output(place)) is not None:
-            if console or isinstance(item, Chunk):
+        if self.console:
+            if piece := self.read1():
+                return piece
+            raise StopIteration
+        while (item := self._next_output(Placement.transfer)) is not None:
+            if isinstance(item, Chunk):
                 return item
         raise StopIteration
 
@@ -1699,7 +1718,7 @@ class Unit(UnitBase, abstract=True):
                     yield self.labelled(result, error=message)
 
         source = self.source
-        if isinstance(source, Unit) and not source.console and not source._buffer:
+        if isinstance(source, Unit) and not source.console and source._reader is None:
             source = ChunkFeed(source._stream())
 
         self._framed = Framed(
@@ -1734,6 +1753,9 @@ class Unit(UnitBase, abstract=True):
             pass
         self._framed = None
         self._chunks = None
+        self._buffer = B''
+        self._offset = 0
+        self._reader = None
 
     @property
     def source(self):
@@ -2107,40 +2129,58 @@ class Unit(UnitBase, abstract=True):
         except AttributeError:
             pass
 
-    def read(self, bytecount: int = -1) -> bytes:
+    def read(self, bytecount: int | None = -1) -> bytearray:
         """
-        Reads bytes from the output stream of this unit.
+        Reads bytes from the output stream of this unit; without a size, it reads to the end. The
+        stream contains the bytes that the unit writes on the command line; see `Unit.read1`.
         """
-        if not bytecount or bytecount < 0:
-            return self.read1()
-        bfr = bytearray(bytecount)
-        offset = 0
-        while offset < bytecount:
-            tmp = self.read1(bytecount - offset)
-            if not tmp:
-                del bfr[offset:]
-                break
-            end = offset + len(tmp)
-            bfr[offset:end] = tmp
-            offset = end
-        return bytes(bfr)
+        if bytecount is None or bytecount < 0:
+            bytecount = -1
+        elif bytecount == 0:
+            return bytearray()
+        data = bytearray()
+        while (rest := bytecount - len(data)) != 0 and (piece := self.read1(rest)):
+            data.extend(piece)
+            del piece
+        return data
 
-    def read1(self, bytecount: int = -1) -> bytes:
+    def _load(self) -> bool:
         """
-        Performs a single read against the output stream of this unit and returns
-        the result.
+        Makes sure that the unread rest of the output stream begins in the buffer, unless the
+        stream has ended.
         """
-        try:
-            out = self._buffer or next(self.output())
-            if isinstance(out, Placement):
-                out = B''.join(out.serialize())
-            if bytecount and bytecount > 0:
-                out, self._buffer = out[:bytecount], out[bytecount:]
-            elif self._buffer:
-                self._buffer = B''
-            return out
-        except StopIteration:
+        if self._offset < len(self._buffer):
+            return True
+        if (reader := self._reader) is None:
+            self._reader = reader = self._stream(True)
+        self._buffer = B''
+        self._offset = 0
+        for piece in reader:
+            if piece:
+                self._buffer = piece
+                return True
+        return False
+
+    def read1(self, bytecount: int | None = -1) -> bytes | bytearray:
+        """
+        Performs a single read against the output stream of this unit and returns the result. The
+        stream contains the bytes that the unit writes on the command line: its outputs, separated
+        by line breaks where the command line separates them, or the serialized frame.
+        """
+        if bytecount == 0 or not self._load():
             return B''
+        buffer = self._buffer
+        start = self._offset
+        end = len(buffer)
+        if bytecount is not None and bytecount > 0:
+            end = min(end, start + bytecount)
+        self._offset = end
+        if start == 0 and end == len(buffer):
+            self._buffer = B''
+            self._offset = 0
+            return buffer
+        with memoryview(buffer) as view:
+            return bytes(view[start:end])
 
     def act(self, data: Chunk) -> Generator[Chunk]:
         """
@@ -2476,11 +2516,16 @@ class Unit(UnitBase, abstract=True):
         clone._target = None
         clone._framed = None
         clone._chunks = None
+        clone._buffer = B''
+        clone._offset = 0
+        clone._reader = None
         clone.args = copy.copy(self.args)
         return clone
 
     def __init__(self, **keywords):
         self._buffer = B''
+        self._offset = 0
+        self._reader = None
         self._source = None
         self._target = None
         self._framed = None
