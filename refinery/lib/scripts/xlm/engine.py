@@ -923,6 +923,8 @@ class XlmEngine:
                 continue
             self._steps = 0
             self._halted = False
+            self.while_stack.clear()
+            self.call_stack.clear()
             yield from self._run_entry(anchor)
 
     def _run_entry(
@@ -957,7 +959,9 @@ class XlmEngine:
                 cursor = frame.cursor
                 node = frame.branch
                 self.indent_level = frame.indent
-                self.arrival = XlmArrival.RESUME
+                self.arrival = (
+                    XlmArrival.REPLAY if frame.snapshot is not None else XlmArrival.RESUME
+                )
                 stack_record = True
                 while cursor is not None:
                     self._steps += 1

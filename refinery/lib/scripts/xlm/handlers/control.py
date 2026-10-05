@@ -259,29 +259,30 @@ def _end_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
 
 def _else(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     """
-    The `ELSE` of a block: a false branch of the block jumps onto it and its arm runs,
-    indented one level; an arm that ran to its end falls onto it, and the block skips to its
-    `END.IF`.
+    The `ELSE` of a block: its arm runs for a jump onto the marker and for the replay of a
+    false branch onto it, indented one level; an arm that ran to its end falls onto it, a
+    frame whose true arm is empty resumes onto it, and both skip to the `END.IF` of the block.
     """
-    if engine.arrival is XlmArrival.FALL:
-        return _skip_to_block_end(
-            engine,
-            cursor,
-            engine.column_blocks(cursor).get(cursor.row),
-            'ELSE',
-        )
-    engine.indent_level += 1
-    return XlmOutcome(value=XlmValue(value=0, text='ELSE'))
+    if engine.arrival in (XlmArrival.JUMP, XlmArrival.REPLAY):
+        engine.indent_level += 1
+        return XlmOutcome(value=XlmValue(value=0, text='ELSE'))
+    return _skip_to_block_end(
+        engine,
+        cursor,
+        engine.column_blocks(cursor).get(cursor.row),
+        'ELSE',
+    )
 
 
 def _else_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     """
-    The `ELSE.IF` of a block: a false branch of the block jumps onto it and it branches like
-    the head of a block of its own, over the next marker below it; an arm that ran to its end
-    falls onto it, and the block skips to its `END.IF`.
+    The `ELSE.IF` of a block: it branches like the head of a block of its own for a jump onto
+    the marker and for the replay of a false branch onto it, when it names a condition, over
+    the next marker below it; an arm that ran to its end falls onto it, a frame whose true arm
+    is empty resumes onto it, and both skip to the `END.IF` of the block.
     """
     block = engine.column_blocks(cursor).get(cursor.row)
-    if engine.arrival is XlmArrival.FALL or not call.arguments:
+    if engine.arrival not in (XlmArrival.JUMP, XlmArrival.REPLAY) or not call.arguments:
         return _skip_to_block_end(engine, cursor, block, 'ELSE.IF')
     return _run_block_head(
         engine,
@@ -298,7 +299,7 @@ def _skipped_loop(engine: XlmEngine, cursor: XlmCursor) -> XlmOutcome:
     The head of a loop inside the body of a loop the engine skips: it opens a loop that never
     holds, so that the `NEXT` of its own body pairs with it rather than with the skipped loop.
     """
-    engine.while_stack.append(XlmLoop(cursor))
+    engine.while_stack.append(XlmLoop(cursor, base=engine.indent_level))
     engine.indent_level += 1
     return XlmOutcome(value=XlmValue(value=0, text='', partial=True), status=XlmStatus.IGNORED)
 
@@ -308,7 +309,7 @@ def _while(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOut
         return _skipped_loop(engine, cursor)
     spelled = synthesize_formula(call)
     test = evaluate_expression(engine, call.arguments[0], cursor)
-    loop = XlmLoop(cursor)
+    loop = XlmLoop(cursor, base=engine.indent_level)
     text = spelled
     if not test.partial:
         truth = condition(test)
@@ -339,7 +340,7 @@ def _for_cell(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
         loop = engine.while_stack[-1]
     else:
         cells = tuple(engine.range_cells(corners)) if corners is not None else ()
-        loop = XlmLoop(cursor, holds=True, cells=cells)
+        loop = XlmLoop(cursor, holds=True, cells=cells, base=engine.indent_level)
         engine.while_stack.append(loop)
     reference = loop.advance()
     if reference is None:
@@ -358,22 +359,22 @@ def _for_cell(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> Xlm
 
 def _next(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     """
-    The end of the body of the loop the indentation pairs it with: a loop that holds continues
-    at its head, and any other loop is closed, which ends the skipping of its body.
+    The end of the body of the loop on top of the loop stack — the innermost open loop, no
+    matter the blocks its body left open, which Excel 4.0 counts transparent for the pairing:
+    a loop that holds continues at its head, from the indentation the loop started at, and any
+    other loop is closed, which ends the skipping of its body. A `NEXT` with no loop open runs
+    as an ignored step.
     """
-    jump = None
-    if engine.indent_level == len(engine.while_stack):
-        if engine.while_stack:
-            top = engine.while_stack.pop()
-            if top.holds:
-                jump = top.cursor
-                if top.cells is not None:
-                    engine.while_stack.append(top)
-        engine.indent_level = max(0, engine.indent_level - 1)
-        engine.indent_current_line = True
-    if jump is None:
+    if not engine.while_stack:
         return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.IGNORED)
-    return XlmOutcome(value=XlmValue(value=0, text='NEXT'), jump=jump)
+    top = engine.while_stack.pop()
+    engine.indent_level = top.base
+    engine.indent_current_line = True
+    if not top.holds:
+        return XlmOutcome(value=XlmValue(value=0, text='NEXT'), status=XlmStatus.IGNORED)
+    if top.cells is not None:
+        engine.while_stack.append(top)
+    return XlmOutcome(value=XlmValue(value=0, text='NEXT'), jump=top.cursor)
 
 
 def _return(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:

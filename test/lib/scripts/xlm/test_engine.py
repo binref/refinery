@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-import unittest
 
 from refinery.lib.excel import synthesize_formula
 from refinery.lib.excel.formula.model import XlNumber
@@ -88,6 +87,20 @@ class TestXlmEngineEntries(TestBase):
             (steps[0].sheet, steps[0].row, steps[0].col, steps[0].text),
             ('Tiposa', 25, 7, 'GOTO(Vtreytr!F17)'),
         )
+
+    def test_a_loop_one_entry_left_open_does_not_reach_into_the_next(self):
+        steps, engine = _run(
+            ('AZ109', 'WHILE(TRUE)'),
+            ('AZ110', 'HALT()'),
+            ('AZ112', 'NEXT()'),
+            ('AZ113', 'SET.VALUE(BD214,"closed")'),
+            ('AZ114', 'HALT()'),
+            data=add_defined_name(XLM_MACRO_TEXT_XLSM, 'auto_close', "'Doc1'!$AZ$112"),
+        )
+        self.assertEqual(_rows(steps), [109, 110, 113, 114])
+        self.assertEqual(_value(engine, 214, 56), 'closed')
+        self.assertEqual(steps[-1].status, XlmStatus.End)
+        self.assertEqual(steps[-1].text, 'HALT()')
 
 
 class TestXlmEngineTraces(TestBase):
@@ -476,6 +489,52 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(_value(engine, 206, 56), 'first')
         self.assertEqual(engine.view.cell('Doc1', 207, 56), None)
 
+    def test_an_entry_anchored_on_an_else_skips_the_arm(self):
+        steps = _steps(
+            ('AZ110', 'IF(TRUE)'),
+            ('AZ112', 'ELSE()'),
+            ('AZ113', 'SET.VALUE(BD217,"arm")'),
+            ('AZ116', 'END.IF()'),
+            ('AZ118', 'HALT()'),
+            data=drop_defined_names(XLM_MACRO_TEXT_XLSM),
+            start='Doc1!AZ112',
+        )
+        self.assertEqual(_rows(steps), [112, 116, 118])
+        self.assertEqual(steps[-1].status, XlmStatus.End)
+        self.assertEqual(steps[-1].text, 'HALT()')
+
+    def test_an_entry_anchored_on_an_else_if_skips_the_arm(self):
+        steps = _steps(
+            ('AZ110', 'IF(TRUE)'),
+            ('AZ112', 'ELSE.IF(TRUE)'),
+            ('AZ113', 'SET.VALUE(BD217,"arm")'),
+            ('AZ116', 'END.IF()'),
+            ('AZ118', 'HALT()'),
+            data=drop_defined_names(XLM_MACRO_TEXT_XLSM),
+            start='Doc1!AZ112',
+        )
+        self.assertEqual(_rows(steps), [112, 116, 118])
+        self.assertEqual(steps[-1].status, XlmStatus.End)
+        self.assertEqual(steps[-1].text, 'HALT()')
+
+    def test_a_macro_call_anchored_on_a_marker_skips_the_arm(self):
+        steps, engine = _run(
+            ('AZ109', 'SET.VALUE(BD108,BF111()&amp;"x")'),
+            ('BF109', 'IF(TRUE)'),
+            ('BF111', 'ELSE()'),
+            ('BF112', 'SET.VALUE(BD218,"arm")'),
+            ('BF113', 'END.IF()'),
+        )
+        self.assertEqual(
+            [(step.row, step.col, step.text) for step in steps[:2]],
+            [(111, 58, 'ELSE'), (113, 58, 'END.IF')],
+        )
+        self.assertEqual(
+            [(step.row, step.col) for step in steps if (step.row, step.col) == (112, 58)],
+            [],
+        )
+        self.assertEqual(engine.view.cell('Doc1', 218, 56), None)
+
     def test_a_block_if_nests_inside_the_body_of_another(self):
         steps, engine = _run(
             ('AZ110', 'IF(TRUE)'),
@@ -518,7 +577,6 @@ class TestXlmEngineControl(TestBase):
         self.assertEqual(_value(engine, 209, 56), 'arm')
         self.assertEqual(_value(engine, 108, 56), 'URLMo')
 
-    @unittest.expectedFailure
     def test_a_partial_block_if_with_an_empty_true_arm_skips_to_its_end_if(self):
         steps = _steps(
             ('AZ110', 'IF(AZ113)'),
@@ -528,12 +586,36 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(
             [step.text for step in steps if (step.row, step.col) == (112, 52)],
-            ['ELSE', '[FALSE] ELSE'],
+            ['[TRUE] ELSE', '[FALSE] ELSE'],
         )
         self.assertEqual(
             [step.text for step in steps if (step.row, step.col) == (115, 52)],
-            ['[FALSE] SET.VALUE(BD209,"arm")'],
+            ['SET.VALUE(BD209,"arm")'],
         )
+
+    def test_a_partial_block_if_with_an_empty_true_arm_over_an_else_if_chain(self):
+        steps, engine = _run(
+            ('AZ110', 'IF(AZ113)'),
+            ('AZ112', 'ELSE.IF(TRUE)'),
+            ('AZ114', 'SET.VALUE(BD209,"arm")'),
+            ('AZ116', 'ELSE()'),
+            ('AZ118', 'SET.VALUE(BD208,"other")'),
+            ('AZ121', 'END.IF()'),
+        )
+        self.assertEqual(
+            _rows(steps),
+            [109, 110, 112, 121, 112, 113, 114, 115, 116, 121],
+        )
+        self.assertEqual(
+            [step.text for step in steps if (step.row, step.col) == (112, 52)],
+            ['[TRUE] ELSE.IF', '[FALSE] ELSE.IF'],
+        )
+        self.assertEqual(
+            [step.text for step in steps if (step.row, step.col) == (114, 52)],
+            ['SET.VALUE(BD209,"arm")'],
+        )
+        self.assertEqual(_value(engine, 209, 56), 'arm')
+        self.assertEqual(engine.view.cell('Doc1', 208, 56), None)
 
     def test_the_assign_samples_partial_block_if_runs_both_of_its_arms(self):
         steps = list(XlmEngine(XlmView(XLM_MACRO_ASSIGN_BIFF8)).run())
@@ -558,7 +640,123 @@ class TestXlmEngineControl(TestBase):
         steps = _steps(('AZ110', 'WHILE(1)'), ('AZ112', 'NEXT()'), max_steps=6)
         self.assertEqual([step.row for step in steps[:6]], [109, 110, 112, 110, 112, 110])
 
-    @unittest.expectedFailure
+    def test_a_while_head_inside_the_arm_of_a_block_counts_to_two(self):
+        steps, engine = _run(
+            ('AZ110', 'IF(TRUE)'),
+            ('AZ112', 'WHILE(BD211&lt;2)'),
+            ('AZ113', 'SET.VALUE(BD211,BD211+1)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 114, 115,
+            112, 113, 114, 115,
+            112, 116, 118, 120, 121,
+        ])
+        self.assertEqual(_value(engine, 211, 56), 2)
+
+    def test_a_for_cell_inside_the_arm_of_a_block_walks_its_range(self):
+        steps, engine = _run(
+            ('AZ110', 'IF(TRUE)'),
+            ('AZ112', 'FOR.CELL("probe",BJ116:BJ117)'),
+            ('AZ113', 'SET.VALUE(BD212,BD212&amp;probe)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 114, 115,
+            112, 113, 114, 115,
+            112, 116, 118, 120, 121,
+        ])
+        self.assertEqual(
+            _value(engine, 212, 56),
+            'ieclb.com.br/ds/3103.maharaniworld.com/ds/3103.',
+        )
+        entry = engine.view.names.resolve('probe')
+        assert entry is not None and entry.formula is not None
+        self.assertEqual(synthesize_formula(entry.formula), 'Doc1!$BJ$117')
+
+    def test_the_indent_of_a_loop_body_inside_a_block_stays_level_across_passes(self):
+        steps = _steps(
+            ('AZ110', 'WHILE(BD210&lt;2)'),
+            ('AZ112', 'IF(TRUE)'),
+            ('AZ113', 'SET.VALUE(BD210,BD210+1)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual(
+            [step.indent for step in steps if (step.row, step.col) == (113, 52)],
+            [2, 2],
+        )
+        self.assertEqual(
+            [step.indent for step in steps if (step.row, step.col) == (115, 52)],
+            [0, 0],
+        )
+
+    def test_a_partial_block_if_whose_true_arm_holds_the_next_of_a_while(self):
+        steps, engine = _run(
+            ('AZ110', 'WHILE(BD213&lt;2)'),
+            ('AZ112', 'IF(AZ113)'),
+            ('AZ114', 'SET.VALUE(BD213,BD213+1)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+        )
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 114, 115,
+            110, 112, 113, 114, 115,
+            110, 116, 118, 120, 121,
+            116, 118, 120, 121,
+            116, 118, 120, 121,
+        ])
+        self.assertEqual(engine.view.cell('Doc1', 213, 56), None)
+
+    def test_a_next_inside_a_macro_called_from_the_arm_of_a_block_pairs_with_the_callers_loop(
+        self,
+    ):
+        steps, engine = _run(
+            ('AZ110', 'WHILE(BD216&lt;2)'),
+            ('AZ112', 'IF(TRUE)'),
+            ('AZ113', 'SET.VALUE(BD216,BD216+1)'),
+            ('AZ114', 'BF109()'),
+            ('AZ115', 'END.IF()'),
+            ('AZ116', 'NEXT()'),
+            ('AZ118', 'RETURN()'),
+            ('AZ120', 'HALT()'),
+            ('BF109', 'NEXT()'),
+        )
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 114,
+            110, 112, 113, 114,
+            110, 118, 115, 118, 115, 118, 120,
+        ])
+        self.assertEqual(
+            [(step.row, step.col) for step in steps if step.col == 58],
+            [(109, 58), (109, 58)],
+        )
+        self.assertEqual(_value(engine, 216, 56), 2)
+        self.assertEqual(steps[-1].status, XlmStatus.End)
+        self.assertEqual(steps[-1].text, 'HALT()')
+
+    def test_a_goto_that_escapes_a_loop_body_with_a_block_open_leaves_the_loop_open(self):
+        steps = _steps(
+            ('AZ110', 'WHILE(TRUE)'),
+            ('AZ112', 'IF(TRUE)'),
+            ('AZ113', 'GOTO(AZ118)'),
+            ('AZ115', 'NEXT()'),
+            ('AZ116', 'END.IF()'),
+            ('AZ118', 'NEXT()'),
+            ('AZ120', 'HALT()'),
+            max_steps=10,
+        )
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 118,
+            110, 112, 113, 118,
+            110, 112,
+        ])
+        self.assertEqual(steps[-1].status, XlmStatus.Error)
+        self.assertEqual(steps[-1].text, 'step budget of 10 exhausted')
+        self.assertEqual([step.text for step in steps if step.text == 'HALT()'], [])
+
     def test_a_next_inside_the_arm_of_a_block_continues_the_loop_of_its_while(self):
         steps, engine = _run(
             ('AZ110', 'WHILE(BD210&lt;2)'),
@@ -567,7 +765,11 @@ class TestXlmEngineControl(TestBase):
             ('AZ115', 'NEXT()'),
             ('AZ116', 'END.IF()'),
         )
-        self.assertEqual([step.row for step in steps if step.row == 110], [110, 110, 110])
+        self.assertEqual(_rows(steps), [
+            109, 110, 112, 113, 114, 115,
+            110, 112, 113, 114, 115,
+            110, 116, 118, 120, 121,
+        ])
         self.assertEqual(_value(engine, 210, 56), 2)
 
     def test_a_count_over_the_whole_sheet_answers_the_count_over_its_used_cells(self):
