@@ -323,6 +323,39 @@ class TestLazyMetaOracle(TestBase):
         oracle['var2'] = 'b'
         self.assertEqual(len(oracle), initial_len + 2)
 
+    def test_metadata_is_converted_when_set(self):
+        import datetime
+        import enum
+
+        class Method(enum.IntEnum):
+            X = 7
+
+        oracle = LazyMetaOracle(b'data')
+        oracle['t'] = (1, (2, 3))
+        oracle['s'] = {3, 1, 2}
+        oracle['d'] = datetime.datetime(2020, 1, 2, 3, 4, 5)
+        oracle['e'] = Method.X
+        oracle['b'] = [bytearray(B'ab'), memoryview(B'cd')]
+        self.assertEqual(oracle['t'], [1, [2, 3]])
+        self.assertEqual(oracle['s'], [1, 2, 3])
+        self.assertEqual(str(oracle['d']), '2020-01-02T03:04:05')
+        self.assertIs(type(oracle['e']), int)
+        self.assertEqual(oracle['e'], 7)
+        self.assertEqual([type(b) for b in oracle['b']], [bytes, bytes])
+        self.assertEqual(oracle['b'], [B'ab', B'cd'])
+
+    def test_negative_big_integers_and_integer_keys_survive_a_hop(self):
+        chunk = Chunk(b'data', path=[0], view=[True])
+        chunk.meta['n'] = -2 ** 70
+        chunk.meta['k'] = {1: 2, B'k': 3}
+        stream = io.BytesIO(generate_frame_header(1) + chunk.pack())
+        unpacked = FrameUnpacker(stream)
+        unpacked.nextframe()
+        restored, = unpacked
+        self.assertEqual(restored.meta['n'], -2 ** 70)
+        self.assertEqual(restored.meta['k'], {1: 2, B'k': 3})
+        self.assertEqual(L('emit A [| put x e:-2**70 | nop | pf {x} ]')(), str(-2 ** 70).encode())
+
 
 class TestMV(TestBase):
     """

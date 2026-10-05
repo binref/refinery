@@ -114,6 +114,7 @@ from __future__ import annotations
 import abc
 import codecs
 import contextlib
+import datetime
 import inspect
 import itertools
 import os
@@ -197,6 +198,7 @@ class MV(str, Enum):
 _INDEX = 'index'
 _TEMPVAL = '_'
 _BIGINT = '__bi__'
+_BIGNEG = '__bn__'
 
 _HIGH_ASCII = '¹²³«»¡¿¼½¾¢£¥§©®±µ·÷øÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöùúûüýþÿ'
 _8BIT_ASCII = string.printable + _HIGH_ASCII
@@ -215,6 +217,48 @@ def is_print_safe(string: str):
     return string.isprintable() or not any(
         (code := ord(letter)) < len(_PT) and not _PT[code] for letter in string
     )
+
+
+def normalized(value, nested: bool = False):
+    """
+    Converts a metadata value to the form in which a unit receives it after serialization. Tuples,
+    sets, and ranges become lists, the items of containers are converted, and subclasses of basic
+    types become those types. A datetime, date, or time becomes its ISO representation. Byte
+    strings and the wrapper types of this module are left to `LazyMetaOracle.autowrap` unless
+    they are nested. Other values are kept, and serialization reports them.
+    """
+    if type(value) in (str, bytes, int, float, bool) or value is None:
+        return value
+    if isinstance(value, CustomStringRepresentation) and not nested:
+        return value
+    if isinstance(value, Enum):
+        return normalized(value.value, nested)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value) if nested else value
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (set, frozenset)):
+        items = [normalized(v, True) for v in value]
+        with contextlib.suppress(TypeError):
+            items = sorted(items)
+        return items
+    if isinstance(value, (list, tuple, range)):
+        return [normalized(v, True) for v in value]
+    if isinstance(value, dict):
+        return {_normalized_key(k): normalized(v, True) for k, v in value.items()}
+    return value
+
+
+def _normalized_key(key):
+    if isinstance(normal := normalized(key, True), list):
+        return key
+    return normal
 
 
 class ByteStringWrapper(bytearray, CustomStringRepresentation):
@@ -553,12 +597,11 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
                 for is_link, value in reversed(stack):
                     while is_link:
                         is_link, value = stack[value]
-                    try:
-                        bigint: bytes = value[_BIGINT]
-                    except Exception:
-                        pass
-                    else:
-                        value = int.from_bytes(bigint)
+                    if isinstance(value, dict) and len(value) == 1:
+                        if (bigint := value.get(_BIGINT)) is not None:
+                            value = int.from_bytes(bigint)
+                        elif (bigint := value.get(_BIGNEG)) is not None:
+                            value = -int.from_bytes(bigint)
                     if value is not None:
                         self.current[key] = self.autowrap(key, value)
                         self.updated[key] = False
@@ -669,10 +712,10 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         for key, value in self.current.items():
             if value is None:
                 raise RuntimeError(F'Meta variable "{key}" was set to None.')
-            elif isinstance(value, int) and value > 0xFFFFFFFFFFFFFFFF:
+            elif isinstance(value, int) and not -0x8000000000000000 <= value <= 0xFFFFFFFFFFFFFFFF:
                 q, r = divmod(value.bit_length(), 8)
                 q += int(bool(r))
-                value = {_BIGINT: value.to_bytes(q)}
+                value = {_BIGINT: value.to_bytes(q)} if value > 0 else {_BIGNEG: (-value).to_bytes(q)}
             try:
                 item_scope = self.rescope[key]
             except KeyError:
@@ -970,7 +1013,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         return value
 
     def __setitem__(self, key, value):
-        new = self.autowrap(key, value)
+        new = self.autowrap(key, normalized(value))
         if not is_valid_variable_name(key) or key == _TEMPVAL:
             self.tempval[key] = new
             return

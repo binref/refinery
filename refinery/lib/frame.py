@@ -544,7 +544,7 @@ class FrameUnpacker(Iterable[Chunk]):
             self.depth, = stream.read(1)
             self.framed = True
             self.stream = stream
-            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=True)
+            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=True, strict_map_key=False)
             self._advance()
         else:
             self.unpacker = None
