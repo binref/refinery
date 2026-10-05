@@ -50,6 +50,59 @@ def _configured(unit, nesting: int = 0, squeeze: bool = False, console: bool = F
     return unit
 
 
+def _peak_memory(function) -> int:
+    gc.collect()
+    tracemalloc.start()
+    try:
+        result = function()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    del result
+    return peak
+
+
+def _read_frames(stream) -> list[Chunk]:
+    unpacker = FrameUnpacker(stream)
+    chunks = []
+    while unpacker.nextframe():
+        chunks.extend(unpacker)
+    return chunks
+
+
+class _Trickle(io.RawIOBase):
+    def __init__(self, data: bytes):
+        self.data = memoryview(data)
+        self.offset = 0
+        self.sizes = itertools.cycle(range(1, 8))
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        size = min(len(buffer), next(self.sizes), len(self.data) - self.offset)
+        buffer[:size] = self.data[self.offset:self.offset + size]
+        self.offset += size
+        return size
+
+
+class _Sink:
+    def __init__(self):
+        self.size = 0
+
+    def writable(self):
+        return True
+
+    def isatty(self):
+        return False
+
+    def write(self, data):
+        self.size += len(data)
+
+    def flush(self):
+        pass
+
+
 class TestFraming(TestBase):
 
     def test_simple_frame(self):
@@ -425,6 +478,19 @@ class TestFraming(TestBase):
         squeezed, = B'' | _configured(source(), squeeze=True)
         self.assertIs(squeezed, outputs[0])
 
+    def test_console_writes_a_large_framed_chunk_without_copying_it(self):
+        from refinery import Unit
+        size = 0x1000000
+
+        class source(Unit):
+            def process(self, data):
+                yield Chunk(size)
+
+        sink = _Sink()
+        peak = _peak_memory(lambda: B'' | _configured(source(), 1, console=True) | sink)
+        self.assertGreater(sink.size, size)
+        self.assertLess(peak, size * 1.5)
+
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')
         self.assertEqual(0 | pipe | int, 0)
@@ -438,6 +504,51 @@ class TestFrameHeader(TestBase):
         header = generate_frame_header(0)
         self.assertEqual(len(header), MSIZE)
         self.assertTrue(header.startswith(MAGIC))
+
+
+class TestFrameStream(TestBase):
+
+    def _chunks(self, *sizes: int) -> list[Chunk]:
+        chunks = []
+        for position, size in enumerate(sizes):
+            chunk = Chunk(bytes(range(256)) * (size // 256) + bytes(range(size % 256)), path=[position], view=[True])
+            chunk.meta['x'] = position
+            chunks.append(chunk)
+        return chunks
+
+    def _stream(self, chunks: list[Chunk]) -> bytes:
+        return generate_frame_header(1) + B''.join(chunk.pack() for chunk in chunks)
+
+    def assertChunksEqual(self, read: list[Chunk], chunks: list[Chunk]):
+        self.assertEqual(read, chunks)
+        self.assertEqual([c.path for c in read], [c.path for c in chunks])
+        self.assertEqual([c.meta['x'] for c in read], [c.meta['x'] for c in chunks])
+
+    def test_large_framed_chunk_is_read_with_one_copy(self):
+        size = 0x1000000
+        stream = io.BytesIO(generate_frame_header(1) + Chunk(size, path=[0], view=[True]).pack())
+        peak = _peak_memory(lambda: FrameUnpacker(stream).next_chunk)
+        self.assertLess(peak, size * 1.2)
+
+    def test_frame_stream_read_in_small_pieces(self):
+        chunks = self._chunks(0, 1, 0x3FFF, 0x4000, 0x10001)
+        chunks[2].meta['large'] = bytes(0x20000)
+        self.assertChunksEqual(_read_frames(_Trickle(self._stream(chunks))), chunks)
+
+    def test_large_chunk_is_read_with_pure_python_msgpack(self):
+        import msgpack
+        import msgpack.fallback
+        from unittest.mock import patch
+        chunks = self._chunks(0x30000, 3, 0x10000)
+        with patch.object(msgpack, 'Unpacker', msgpack.fallback.Unpacker):
+            self.assertChunksEqual(_read_frames(io.BytesIO(self._stream(chunks))), chunks)
+
+    def test_truncated_frame_stream_raises(self):
+        data = self._stream(self._chunks(0x20000))
+        for end in (MSIZE - 1, MSIZE + 1, MSIZE + 20, len(data) - 0x10000, len(data) - 1):
+            with self.subTest(end=end):
+                with self.assertRaises(ValueError):
+                    _read_frames(io.BytesIO(data[:end]))
 
 
 class TestChunk(TestBase):
@@ -573,6 +684,18 @@ class TestChunk(TestBase):
     def test_view_path_length_mismatch(self):
         with self.assertRaises(ValueError):
             Chunk(b'Data', path=[0, 1], view=[True])
+
+    def test_serialized_chunk_equals_msgpack_of_its_items(self):
+        import msgpack
+        for size in (0, 1, 0x3FFF, 0x4000, 0x4001, 0xFFFF, 0x10000, 0x10001):
+            with self.subTest(size=size):
+                chunk = Chunk(bytes(range(256)) * (size // 256) + bytes(range(size % 256)), path=[3], view=[True])
+                chunk.meta['x'] = 'value'
+                pieces = chunk.serialize()
+                items = (chunk.path, chunk.view, chunk.meta.serialize(1), None, bytes(chunk))
+                self.assertEqual(B''.join(pieces), msgpack.packb(items))
+                if size >= 0x4000:
+                    self.assertIs(pieces[~0], chunk)
 
     def _memory_kept_by_a_dropped_chunk(self, *keys: str) -> int:
         warmup = Chunk(B'\0' * 0x100000)

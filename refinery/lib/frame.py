@@ -119,7 +119,6 @@ import uuid
 import zlib
 
 from typing import (
-    TYPE_CHECKING,
     Any,
     BinaryIO,
     Callable,
@@ -134,9 +133,6 @@ from typing import (
 from refinery.lib.meta import LazyMetaOracle
 from refinery.lib.tools import HandOver
 from refinery.lib.types import buf
-
-if TYPE_CHECKING:
-    from msgpack.fallback import Unpacker
 
 try:
     import msgpack
@@ -214,7 +210,7 @@ class Chunk(bytearray):
 
     def __init__(
         self,
-        data: buf | None = None,
+        data: buf | int | None = None,
         path: list[int] | None = None,
         view: list[bool] | None = None,
         meta: Mapping[str, Any] | None = None,
@@ -356,28 +352,10 @@ class Chunk(bytearray):
         else:
             view[~0] = value
 
-    @classmethod
-    def unpack(cls, stream):
+    def _relocated(self, nest: int, position: int) -> tuple[list[int], list[bool], dict, bool | None]:
         """
-        Classmethod to read a serialized chunk from an unpacker stream.
-        """
-        item = next(stream)
-        path, view, meta, fs, data = item
-        return cls(data, path=path, view=view, seed=meta, fill_scope=fs)
-
-    def pack(self, nest: int = 0, position: int = 0, serialize: bool = True):
-        """
-        This function is equivalent to `refinery.lib.frame.Chunk.pack` if `serialize` is `True`.
-        Otherwise, the function creates a copy of the chunk whose location in the frame tree has
-        been adjusted based on the given nesting and position. With the default arguments, the
-        value of all the following expressions is the same:
-
-        - `chunk.pack(nesting, position)`
-        - `chunk.gift(nesting, position, True)`
-        - `chunk.gift(nesting, position).pack()`
-
-        The difference, however, is that the first two options require one less copy operation
-        than the latter.
+        Returns the path, view, serialized metadata, and fill scope of this chunk after it has been
+        moved by the given nesting and placed at the given position.
         """
         scope = self.scope + nest
         fs = self._fill_scope
@@ -385,44 +363,60 @@ class Chunk(bytearray):
         if nest > 0:
             view = list(self._view)
             path = list(self._path)
-            if nest > 0:
-                if fs is not None:
-                    view.extend(itertools.repeat(self.visible, nest - 1))
-                    view.append(fs)
-                    fs = None
-                else:
-                    view.extend(itertools.repeat(self.visible, nest))
-                if fb is not None and nest > 1:
-                    path.append(position)
-                    path.append(fb)
-                    path.extend(itertools.repeat(0, nest - 2))
-                else:
-                    path.append(position)
-                    path.extend(itertools.repeat(0, nest - 1))
+            if fs is not None:
+                view.extend(itertools.repeat(self.visible, nest - 1))
+                view.append(fs)
+                fs = None
+            else:
+                view.extend(itertools.repeat(self.visible, nest))
+            if fb is not None and nest > 1:
+                path.append(position)
+                path.append(fb)
+                path.extend(itertools.repeat(0, nest - 2))
+            else:
+                path.append(position)
+                path.extend(itertools.repeat(0, nest - 1))
         elif nest < 0:
             view = self._view[:nest]
             path = self._path[:nest]
         else:
-            view = self._view
-            path = self._path
-            if not serialize:
-                view = list(view)
-                path = list(path)
-
+            view = list(self._view)
+            path = list(self._path)
         assert len(path) == scope
         assert len(view) == scope
+        return path, view, self._meta.serialize(scope), fs
 
-        meta = self._meta.serialize(self.scope + nest)
+    def serialize(self, nest: int = 0, position: int = 0) -> tuple[buf, ...]:
+        """
+        Returns the serialized form of this chunk, moved by the given nesting and placed at the
+        given position, as a sequence of buffers to be written in order. Their concatenation is a
+        msgpack array of the path, view, metadata, fill scope, and data. For a large chunk, the
+        first buffer ends with the header of the data, and the chunk itself follows uncopied.
+        """
+        assert msgpack
+        path, view, meta, fs = self._relocated(nest, position)
+        if (size := len(self)) < _INLINE:
+            packed = msgpack.packb((path, view, meta, fs, self))
+            assert isinstance(packed, bytes)
+            return packed,
+        packed = msgpack.packb((path, view, meta, fs))
+        assert isinstance(packed, bytes)
+        head = bytearray(packed)
+        head[0] += 1
+        head.extend(_bin_header(size))
+        return head, self
 
+    def pack(self, nest: int = 0, position: int = 0, serialize: bool = True):
+        """
+        If `serialize` is true, this function returns the serialized form of the chunk as a single
+        byte string; see `refinery.lib.frame.Chunk.serialize`. Otherwise, it creates a copy of the
+        chunk whose location in the frame tree has been adjusted based on the given nesting and
+        position.
+        """
         if serialize:
-            assert msgpack
-            item = (path, view, meta, fs, self)
-            item = msgpack.packb(item)
-            assert isinstance(item, bytes)
-            return item
-        else:
-            return Chunk(self, path, view, None, meta, fs, fb,
-                ignore_chunk_properties=True)
+            return B''.join(self.serialize(nest, position))
+        path, view, meta, fs = self._relocated(nest, position)
+        return Chunk(self, path, view, None, meta, fs, self._fill_batch, ignore_chunk_properties=True)
 
     def __repr__(self) -> str:
         layer = '/'.join(str(p) if s else F'!{p}' for p, s in zip(self._path, self._view))
@@ -510,6 +504,116 @@ class Chunk(bytearray):
         raise NotImplementedError
 
 
+_INLINE = 0x4000
+_READ = 0x10000
+_BIN_WIDTH = {0xC4: 1, 0xC5: 2, 0xC6: 4}
+
+
+def _bin_header(size: int) -> bytes:
+    if size < 0x100:
+        return bytes((0xC4, size))
+    if size < 0x10000:
+        return B'\xC5' + size.to_bytes(2, 'big')
+    if size < 0x100000000:
+        return B'\xC6' + size.to_bytes(4, 'big')
+    raise ValueError(F'A chunk of size {size} is too large to be serialized.')
+
+
+def _read_exactly(stream: BinaryIO, size: int) -> bytes | None:
+    """
+    Reads the given number of bytes from the stream, or fewer if it ends.
+    """
+    data = stream.read(size)
+    while data and len(data) < size and (more := stream.read(size - len(data))):
+        data += more
+    return data
+
+
+def _readinto(stream: BinaryIO, view: memoryview) -> int:
+    """
+    Reads from the stream into the view until the view is full or the stream ends, and returns the
+    number of bytes read.
+    """
+    total = 0
+    size = len(view)
+    readinto = getattr(stream, 'readinto', None)
+    while total < size:
+        if readinto is not None:
+            count = readinto(view[total:])
+        elif count := len(data := stream.read(size - total)):
+            view[total:total + count] = data
+            del data
+        if not count:
+            break
+        total += count
+    return total
+
+
+def _truncated():
+    return ValueError('The frame stream ended in the middle of a chunk.')
+
+
+def _read_chunks(stream: BinaryIO) -> Iterator[Chunk]:
+    """
+    Reads the serialized chunks of a framed stream after its header. The first four items of each
+    msgpack array are unpacked, then the data is read directly into the chunk.
+    """
+    assert msgpack
+    unpacker = msgpack.Unpacker(use_list=True, max_buffer_size=0xFFFFFFFF, strict_map_key=False)
+    read = getattr(stream, 'read1', stream.read)
+    fed = 0
+    box: list[Chunk] = []
+
+    def fill() -> bool:
+        nonlocal fed
+        if not (data := read(_READ) or stream.read(_READ)):
+            return False
+        unpacker.feed(data)
+        fed += len(data)
+        return True
+
+    def take(count: int) -> bytes:
+        while fed - unpacker.tell() < count:
+            if not fill():
+                raise _truncated()
+        return unpacker.read_bytes(count)
+
+    while True:
+        items: list | None = None
+        while True:
+            try:
+                if items is None:
+                    if unpacker.read_array_header() != 5:
+                        raise ValueError('The frame stream contains an item that is not a serialized chunk.')
+                    items = []
+                while len(items) < 4:
+                    items.append(unpacker.unpack())
+            except msgpack.OutOfData:
+                if not fill():
+                    if items is None and fed == unpacker.tell():
+                        return
+                    raise _truncated()
+            else:
+                break
+        path, view, meta, fs = items
+        del items
+        code, = take(1)
+        if (width := _BIN_WIDTH.get(code)) is None:
+            raise ValueError('The frame stream contains a chunk whose data is not a byte string.')
+        size = int.from_bytes(take(width), 'big')
+        if (buffered := fed - unpacker.tell()) >= size:
+            yield Chunk(unpacker.read_bytes(size), path=path, view=view, seed=meta, fill_scope=fs)
+            continue
+        chunk = Chunk(size, path=path, view=view, seed=meta, fill_scope=fs)
+        with memoryview(chunk) as target:
+            target[:buffered] = unpacker.read_bytes(buffered)
+            if _readinto(stream, target[buffered:]) < size - buffered:
+                raise _truncated()
+        box.append(chunk)
+        del chunk
+        yield box.pop()
+
+
 class FrameUnpacker(Iterable[Chunk]):
     """
     Provides a unified interface to read both framed and raw input data from a stream. After
@@ -527,27 +631,27 @@ class FrameUnpacker(Iterable[Chunk]):
     depth: int
     trunk: tuple[int, ...]
     check: tuple[int, ...]
-    stream: BinaryIO | None
+    items: Iterator[Chunk] | None
     finished: bool
     framed: bool
-    unpacker: Unpacker | None
 
     def __init__(self, stream: BinaryIO | None):
         self.finished = False
         self.trunk = ()
         self.check = ()
-        self.stream = None
+        self.items = None
         self.depth = 0
         self.next_chunk = None
-        buffer = stream and stream.read(len(MAGIC)) or None
+        buffer = stream and _read_exactly(stream, len(MAGIC)) or None
         if buffer == MAGIC:
-            self.depth, = stream.read(1)
+            assert stream is not None
+            if not (depth := stream.read(1)):
+                raise ValueError('The frame stream ended after the frame magic.')
+            self.depth, = depth
             self.framed = True
-            self.stream = stream
-            self.unpacker = msgpack.Unpacker(max_buffer_size=0xFFFFFFFF, use_list=True, strict_map_key=False)
+            self.items = _read_chunks(stream)
             self._advance()
         else:
-            self.unpacker = None
             self.framed = False
             self.depth = 0
             self.next_chunk = Chunk()
@@ -558,24 +662,13 @@ class FrameUnpacker(Iterable[Chunk]):
 
     def _advance(self) -> bool:
         self.next_chunk = None
-        while not self.finished:
-            try:
-                self.next_chunk = chunk = Chunk.unpack(self.unpacker)
+        if not self.finished and (items := self.items) is not None:
+            if (chunk := next(items, None)) is not None:
+                self.next_chunk = chunk
                 self.check = tuple(chunk.path)
                 if chunk.scope != self.depth:
                     raise RuntimeError(F'Frame of depth {self.depth} contained chunk of scope {chunk.scope}.')
                 return True
-            except StopIteration:
-                pass
-            try:
-                recv = self.stream.read1()
-            except TypeError:
-                raise
-            recv = recv or self.stream.read()
-            if not recv:
-                break
-            self.unpacker.feed(recv)
-            del recv
         self.finished = True
         return False
 
@@ -599,7 +692,7 @@ class FrameUnpacker(Iterable[Chunk]):
             while not self.finished and self.trunk == self.check:
                 self._advance()
         else:
-            self.unpacker = None
+            self.items = None
             self.next_chunk = None
             self.finished = True
 
@@ -768,29 +861,40 @@ class Framed:
             outputs = self._merged(outputs)
         yield from outputs
 
+    def _packed(self, chunks: Iterable[Chunk], nesting: int, position: int) -> Iterator[buf]:
+        """
+        Moves the given chunks by the given nesting and places them at the given position. If the
+        output is serialized, the pieces of their serialized form are generated.
+        """
+        if not self.serialized:
+            repeat = itertools.repeat
+            yield from map(Chunk.pack, chunks, repeat(nesting), repeat(position), repeat(False))
+            return
+        for chunk in chunks:
+            pieces = chunk.serialize(nesting, position)
+            del chunk
+            yield from pieces
+            del pieces
+
     def __iter__(self):
         nesting = self.nesting
-        serialized = self.serialized
         scope = max(self.unpack.depth + nesting, 0)
         if self.unpack.finished:
             if scope:
                 yield generate_frame_header(scope)
             return
-        repeat = itertools.repeat
         if nesting > 0:
             assert scope
             yield generate_frame_header(scope)
-            nestings = repeat(nesting)
-            serialize = repeat(serialized)
             while self.unpack.nextframe():
                 for position, results in enumerate(map(self._results, self._apply_filter())):
-                    yield from map(Chunk.pack, results, nestings, repeat(position), serialize)
+                    yield from self._packed(results, nesting, position)
         elif not self.unpack.framed:
             yield from itertools.chain.from_iterable(map(self._generate_bytes, self._apply_filter()))
         elif nesting == 0:
             assert scope
             yield generate_frame_header(scope)
-            yield from map(Chunk.pack, self._all_results(), repeat(0), repeat(0), repeat(serialized))
+            yield from self._packed(self._all_results(), 0, 0)
         elif not scope:
             yield from map(Chunk.truncate, self._all_results())
         else:
@@ -798,4 +902,4 @@ class Framed:
             check = scope + 1
             groups = itertools.groupby(self._all_results(), lambda result: result.path[:check])
             merged = itertools.chain.from_iterable(self._merged(group) for _, group in groups)
-            yield from map(Chunk.pack, merged, repeat(nesting), repeat(0), repeat(serialized))
+            yield from self._packed(merged, nesting, 0)

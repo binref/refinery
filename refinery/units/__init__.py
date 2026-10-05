@@ -2066,7 +2066,7 @@ class Unit(UnitBase, abstract=True):
         """
         try:
             out = self._buffer or next(self.output())
-            if isinstance(out, Chunk) and out.scope > 0:
+            if isinstance(out, Chunk) and out.scope > 0 and not self.console:
                 out = out.pack()
             if bytecount and bytecount > 0:
                 out, self._buffer = out[:bytecount], out[bytecount:]
