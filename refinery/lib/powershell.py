@@ -266,6 +266,18 @@ class PS1InputWrapper(Ps1Wrapper):
     sequence, it will hex-decode the remaining data and forward the binary result.
     """
     _init = True
+    _digits = B''
+
+    def seekable(self):
+        return False
+
+    def readinto(self, buffer) -> int:
+        if not self._init and not Ps1Wrapper.WRAPPED and (readinto := getattr(self.stream, 'readinto', None)):
+            return readinto(buffer)
+        data = self.read1(len(buffer))
+        size = len(data)
+        buffer[:size] = data
+        return size
 
     def read(self, size=None):
         return self.read1(size)
@@ -285,10 +297,18 @@ class PS1InputWrapper(Ps1Wrapper):
                 return header + self.stream.read(max(size - length, -1))
             Ps1Wrapper.WRAPPED = True
         if Ps1Wrapper.WRAPPED:
-            if size > 0:
-                size *= 2
             import base64
-            return base64.b16decode(self.stream.read(size).translate(None, b' \t\r\n\v\f'))
+            digits = self._digits
+            while True:
+                data = self.stream.read(2 * size if size > 0 else -1)
+                digits += data.translate(None, b' \t\r\n\v\f')
+                if size < 0 or not data or len(digits) > 1:
+                    break
+            end = len(digits)
+            if size > 0 and data:
+                end &= ~1
+            self._digits = digits[end:]
+            return base64.b16decode(digits[:end])
         else:
             return self.stream.read(size)
 

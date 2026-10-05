@@ -286,7 +286,6 @@ class TestFraming(TestBase):
             'set of strings': lambda source: B'' | source() | {str},
             'stream': lambda source: B'' | source() | io.BytesIO(),
             'console, frame opened': lambda source: B'' | _configured(source(), 1, console=True) | io.BytesIO(),
-            'next unit': lambda source: _drain(B'' | source() | nop()),
             'next unit in a frame': lambda source: _drain(B'' | source()[nop()]),
             'framed input, frame closed': lambda source: _drain([B''] | source()),
             'framed input, frame kept': lambda source: _drain([B''] | _configured(source(), 1)),
@@ -294,6 +293,12 @@ class TestFraming(TestBase):
         for name, pipeline in pipelines.items():
             with self.subTest(name):
                 self.assertEqual(self._alive_while_producing(pipeline), [[], [], [], []])
+
+    def test_next_unit_keeps_only_the_first_output_it_takes_as_its_input(self):
+        from refinery import nop
+        self.assertEqual(
+            self._alive_while_producing(lambda source: _drain(B'' | source() | nop())),
+            [[], [0], [0], [0]])
 
     def test_merge_keeps_only_its_first_piece_until_the_second_arrives(self):
         nested = Chunk(B'', path=[0, 0], view=[True, True])
@@ -524,6 +529,26 @@ class TestFraming(TestBase):
         with self.assertRaises(UnicodeEncodeError):
             ['\udc80'] | nop()
 
+    def test_bytes_input_is_copied_once(self):
+        from refinery import nop
+        data = bytes(0x1000000)
+        self.assertLess(_peak_memory(lambda: _drain(data | nop())), len(data) * 1.5)
+
+    def test_single_unshared_output_is_not_copied(self):
+        from refinery import Unit, nop
+        data = bytes(0x1000000)
+        self.assertLess(_peak_memory(lambda: _drain(data | nop() | nop())), len(data) * 1.5)
+        kept = []
+
+        class keeper(Unit):
+            def process(self, data):
+                kept.append(Chunk(B'kept'))
+                return kept[-1]
+
+        result, = B'' | keeper() | nop()
+        self.assertIsNot(result, kept[0])
+        self.assertEqual(result, kept[0])
+
     def test_auto_index_regression(self):
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| max index | pf {index} ]')
         self.assertEqual(0 | pipe | int, 0)
@@ -556,6 +581,37 @@ class TestFrameStream(TestBase):
         self.assertEqual(read, chunks)
         self.assertEqual([c.path for c in read], [c.path for c in chunks])
         self.assertEqual([c.meta['x'] for c in read], [c.meta['x'] for c in chunks])
+
+    def test_input_from_a_file_is_read_into_a_chunk_of_its_size(self):
+        import os
+        import tempfile
+        size = 0x1000000
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'input')
+            with open(path, 'wb') as stream:
+                stream.write(bytes(size))
+            with open(path, 'rb') as stream:
+                peak = _peak_memory(lambda: FrameUnpacker(stream).next_chunk)
+        self.assertLess(peak, size * 1.2)
+
+    def test_input_from_a_pipe_is_read_completely(self):
+        import os
+        import threading
+        data = B''.join(k.to_bytes(4, 'little') for k in range(0x100000))
+        r, w = os.pipe()
+
+        def feed():
+            with os.fdopen(w, 'wb') as stream:
+                for k in range(0, len(data), 0x10000):
+                    stream.write(data[k:k + 0x10000])
+                    stream.flush()
+
+        thread = threading.Thread(target=feed)
+        thread.start()
+        with os.fdopen(r, 'rb') as stream:
+            chunk = FrameUnpacker(stream).next_chunk
+        thread.join()
+        self.assertEqual(chunk, data)
 
     def test_large_framed_chunk_is_read_with_one_copy(self):
         size = 0x1000000

@@ -341,9 +341,11 @@ class MemoryFileMethods(Generic[T, B]):
         return [bytes(t) for t in it]
 
     def readinto1(self, b) -> int:
-        data = self.read(len(b))
-        size = len(data)
-        b[:size] = data
+        cursor = self._cursor
+        with memoryview(b) as view, view.cast('B') as target, memoryview(self._data) as data:
+            size = max(0, min(len(target), len(data) - cursor))
+            target[:size] = data[cursor:cursor + size]
+        self._cursor = cursor + size
         return size
 
     def readinto(self, b) -> int:

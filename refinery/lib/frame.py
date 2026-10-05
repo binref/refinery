@@ -114,7 +114,11 @@ above example would not be separated by a dash.
 """
 from __future__ import annotations
 
+import io
 import itertools
+import os
+import stat
+import sys
 import uuid
 import zlib
 
@@ -583,6 +587,62 @@ def _truncated():
     return ValueError('The frame stream ended in the middle of a chunk.')
 
 
+def _references(chunk: Chunk) -> int:
+    return sys.getrefcount(chunk)
+
+
+def _calibrate() -> int:
+    chunk = Chunk()
+    return _references(chunk)
+
+
+_UNSHARED = _calibrate()
+"""
+The reference count of a chunk that only a local variable of the calling function refers to.
+"""
+
+
+def _remaining_size(stream: BinaryIO) -> int | None:
+    """
+    Returns the number of bytes that remain in the stream if it can be determined reliably. This is
+    only the case for regular files and for streams in memory; pipes claim to be seekable on some
+    platforms.
+    """
+    try:
+        if not stream.seekable():
+            return None
+        if not hasattr(stream, 'getbuffer') and not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            return None
+        position = stream.tell()
+        end = stream.seek(0, io.SEEK_END)
+        stream.seek(position)
+    except Exception:
+        return None
+    return max(end - position, 0)
+
+
+def _read_unframed(stream: BinaryIO, head: bytes) -> Chunk:
+    """
+    Reads the rest of an unframed input stream into a chunk that begins with the given head. When
+    the stream can tell how much remains, the data is read directly into a chunk of that size;
+    otherwise, the chunk grows with every piece that is read.
+    """
+    if (size := _remaining_size(stream)) is not None:
+        start = len(head)
+        chunk = Chunk(start + size)
+        with memoryview(chunk) as view:
+            view[:start] = head
+            done = start + _readinto(stream, view[start:])
+        del chunk[done:]
+    else:
+        chunk = Chunk(head)
+    read = getattr(stream, 'read1', stream.read)
+    while piece := read(0x100000):
+        chunk.extend(piece)
+        del piece
+    return chunk
+
+
 def _read_chunks(stream: BinaryIO) -> Iterator[Chunk]:
     """
     Reads the serialized chunks of a framed stream after its header. The first four items of each
@@ -647,15 +707,12 @@ def _read_chunks(stream: BinaryIO) -> Iterator[Chunk]:
 def _read_stream(stream: BinaryIO | None) -> Iterator[buf]:
     """
     Reads a byte stream and yields its frame header and chunks if it is framed. Otherwise, it
-    yields the pieces of its entire content, the first of which is a chunk.
+    yields its entire content as one chunk.
     """
     if stream is None or not (head := _read_exactly(stream, len(MAGIC))):
         yield Chunk()
     elif head != MAGIC:
-        yield Chunk(head)
-        while piece := stream.read():
-            yield piece
-            del piece
+        yield _read_unframed(stream, head)
     elif not (depth := stream.read(1)):
         raise ValueError('The frame stream ended after the frame magic.')
     else:
@@ -734,8 +791,17 @@ class FrameUnpacker(Iterable[Chunk]):
         if first is None:
             self.next_chunk = Chunk()
         elif isinstance(first, Chunk):
-            chunk = Chunk(first, ignore_chunk_properties=True)
+            second = None
+            if _references(first) > _UNSHARED:
+                second = next(items, None)
+            if second is None and _references(first) <= _UNSHARED:
+                _adopt(chunk := first)
+            else:
+                chunk = Chunk(first, ignore_chunk_properties=True)
             del first
+            if second is not None:
+                items = itertools.chain((second,), items)
+                del second
             for item in items:
                 if isinstance(item, Placement):
                     raise ValueError('An unframed input contained a chunk of framed output.')
@@ -824,6 +890,19 @@ class FrameUnpacker(Iterable[Chunk]):
         while not self.finished and self.trunk == self.check:
             yield self.next_chunk
             self._advance()
+
+
+def _adopt(chunk: Chunk):
+    """
+    Makes the given chunk, which nothing else refers to, the unframed input of a unit.
+    """
+    chunk.uuid = uuid.uuid4()
+    chunk.temp = None
+    chunk._path = []
+    chunk._view = []
+    chunk._fill_scope = None
+    chunk._fill_batch = None
+    chunk._meta = LazyMetaOracle(chunk, scope=0, owned=True)
 
 
 def _indexed(index: int, chunk: Chunk) -> Chunk:

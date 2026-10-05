@@ -154,3 +154,26 @@ class TestPowerShellDetection(TestBase):
         Ps1Wrapper.WRAPPED = False
         result = wrapper.read1(-1)
         self.assertEqual(result, payload)
+
+    def test_powershell_input_wrapper_decodes_into_buffers(self):
+        import base64
+        from refinery.lib.frame import FrameUnpacker
+        payload = bytes(range(256)) * 0x40
+        encoded = base64.b16encode(payload)
+        encoded = B'\r\n'.join(encoded[k:k + 7] for k in range(0, len(encoded), 7))
+
+        def wrapped():
+            Ps1Wrapper.WRAPPED = False
+            text = io.TextIOWrapper(io.BytesIO(_PS1_MAGIC + encoded))
+            self.addCleanup(text.close)
+            return PS1InputWrapper(text)
+
+        wrapper = wrapped()
+        self.assertFalse(wrapper.seekable())
+        self.assertEqual(FrameUnpacker(wrapper).next_chunk, payload)
+        wrapper = wrapped()
+        decoded = bytearray()
+        buffer = bytearray(9)
+        while size := wrapper.readinto(buffer):
+            decoded.extend(buffer[:size])
+        self.assertEqual(decoded, payload)

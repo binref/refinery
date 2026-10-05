@@ -225,6 +225,27 @@ class TestStructuresExtended(TestBase):
             view = mem.getbuffer()
             self.assertEqual(bytes(view), b'Hello')
 
+    def test_memory_file_readinto_copies_once(self):
+        import gc
+        import tracemalloc
+        size = 0x1000000
+        data = bytearray(range(256)) * (size // 256)
+        target = bytearray(size)
+        with MemoryFile(data) as mem:
+            mem.seek(1)
+            gc.collect()
+            tracemalloc.start()
+            try:
+                count = mem.readinto(target)
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            self.assertEqual(mem.tell(), size)
+        self.assertEqual(count, size - 1)
+        self.assertEqual(target[:count], data[1:])
+        self.assertLess(peak, size // 16)
+        data.append(0)
+
     def test_memoryfile_len(self):
         buffer = bytearray(b'Hello World')
         with MemoryFile(buffer) as mem:
