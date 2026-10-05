@@ -18,11 +18,13 @@ from refinery.lib.scripts.xlm.values import XlmReference, XlmValue
 class XlmArrival(enum.Enum):
     """
     How the engine reached the cell of the step it runs: by the jump a command asked for, by
-    the row fall-through, by resuming a branch of a partial `IF`, or by the replay of a false
-    branch onto the marker of its block. A marker that carries an arm — an `ELSE`, or an
-    `ELSE.IF` that names a condition — runs it for a jump and for a replay, and skips to the
-    `END.IF` of the block for a fall from a completed arm and for a resume, which an empty true
-    arm and an anchor the run started at arrive by.
+    the row fall-through or the continuation below the cell a return hands its value to, by
+    resuming a branch of a partial `IF` or the anchor a run or a call starts at, or by the
+    replay of a false branch onto the marker of its block. A marker that carries an arm — an
+    `ELSE`, or an `ELSE.IF` that names a condition — runs it for a jump and for a replay, and
+    skips to the `END.IF` of the block for a fall — an arm that ran to its end, or the cell
+    below one a macro call returned to — and for a resume, which an empty true arm and an
+    anchor a run or a call starts at arrive by.
     """
 
     JUMP = 0
@@ -54,9 +56,10 @@ class XlmFrame(NamedTuple):
     is the base the relative references of the branch resolve against — the expression the
     branch runs instead of the cell's own formula, the snapshot a false branch rolls back to,
     the indentation the branch reports, and the label the first step of the branch carries. A
-    frame that carries a snapshot is by definition the replay of a false branch onto its
-    marker, and any other frame is a resume: the arrival a pop derives from the frame follows
-    this rule, it is not an inference about where the run came from.
+    frame that replays a false branch onto the marker of its block, and any other frame — the
+    branch of a partial `IF`, or the anchor a run or a call starts at — is a resume: the
+    arrival a pop derives from the frame follows this rule, it is not an inference about where
+    the run came from.
     """
 
     cursor: XlmCursor
@@ -64,6 +67,14 @@ class XlmFrame(NamedTuple):
     snapshot: XlmSnapshot | None
     indent: int
     desc: str
+
+    @property
+    def replays(self) -> bool:
+        """
+        Whether a pop of the frame replays a false branch onto the marker of its block: it
+        rolls a snapshot back and runs the cell it resumes at as its own formula.
+        """
+        return self.snapshot is not None and self.branch is None
 
 
 class XlmLoop:

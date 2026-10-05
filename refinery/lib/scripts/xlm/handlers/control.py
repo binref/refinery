@@ -257,13 +257,19 @@ def _end_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
     return XlmOutcome(value=XlmValue(value='END.IF', text='END.IF'))
 
 
+#: The arrivals a marker that carries an arm runs it for: the jump a command asked for, and the
+#: replay of a false branch onto the marker of its block. Any other arrival skips to the `END.IF`
+#: of the block the marker belongs to.
+_ARM_ARRIVALS = frozenset((XlmArrival.JUMP, XlmArrival.REPLAY))
+
+
 def _else(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOutcome:
     """
     The `ELSE` of a block: its arm runs for a jump onto the marker and for the replay of a
     false branch onto it, indented one level; an arm that ran to its end falls onto it, a
     frame whose true arm is empty resumes onto it, and both skip to the `END.IF` of the block.
     """
-    if engine.arrival in (XlmArrival.JUMP, XlmArrival.REPLAY):
+    if engine.arrival in _ARM_ARRIVALS:
         engine.indent_level += 1
         return XlmOutcome(value=XlmValue(value=0, text='ELSE'))
     return _skip_to_block_end(
@@ -282,7 +288,7 @@ def _else_if(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmO
     is empty resumes onto it, and both skip to the `END.IF` of the block.
     """
     block = engine.column_blocks(cursor).get(cursor.row)
-    if engine.arrival not in (XlmArrival.JUMP, XlmArrival.REPLAY) or not call.arguments:
+    if engine.arrival not in _ARM_ARRIVALS or not call.arguments:
         return _skip_to_block_end(engine, cursor, block, 'ELSE.IF')
     return _run_block_head(
         engine,
@@ -388,6 +394,7 @@ def _return(engine: XlmEngine, call: XlFunctionCall, cursor: XlmCursor) -> XlmOu
         value=XlmValue(value=value.value, text=text),
         jump=jump,
         status=XlmStatus.End if ended else None,
+        arrival=XlmArrival.FALL if jump is not None else None,
     )
 
 

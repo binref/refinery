@@ -949,7 +949,6 @@ class XlmEngine:
         self.branch_stack = [XlmFrame(anchor, None, None, indent, '')]
         self._buffers.append(buffer)
         cursor = anchor
-        self.arrival = XlmArrival.JUMP
         try:
             while self.branch_stack:
                 frame = self.branch_stack.pop()
@@ -959,9 +958,7 @@ class XlmEngine:
                 cursor = frame.cursor
                 node = frame.branch
                 self.indent_level = frame.indent
-                self.arrival = (
-                    XlmArrival.REPLAY if frame.snapshot is not None else XlmArrival.RESUME
-                )
+                self.arrival = XlmArrival.REPLAY if frame.replays else XlmArrival.RESUME
                 stack_record = True
                 while cursor is not None:
                     self._steps += 1
@@ -1035,7 +1032,9 @@ class XlmEngine:
                     self.check_deadline()
                     if outcome.jump is not None:
                         cursor = outcome.jump
-                        self.arrival = XlmArrival.JUMP
+                        self.arrival = (
+                            XlmArrival.JUMP if outcome.arrival is None else outcome.arrival
+                        )
                     elif status in _FALL_THROUGH:
                         cursor = self.next_formula_cell(cursor)
                         self.arrival = XlmArrival.FALL
@@ -1169,6 +1168,7 @@ class XlmEngine:
         return XlmOutcome(
             value=XlmValue(value=0, text=spelled),
             jump=self.anchor(reference),
+            arrival=XlmArrival.RESUME,
         )
 
     def _resolve_entry(self, name: str, sheet: str | None, cursor: XlmCursor):

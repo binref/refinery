@@ -535,6 +535,39 @@ class TestXlmEngineControl(TestBase):
         )
         self.assertEqual(engine.view.cell('Doc1', 218, 56), None)
 
+    def test_a_step_call_anchored_on_a_marker_skips_the_arm(self):
+        steps, engine = _run(
+            ('AZ109', 'BF111()'),
+            ('AZ110', 'HALT()'),
+            ('BF109', 'IF(TRUE)'),
+            ('BF111', 'ELSE()'),
+            ('BF112', 'SET.VALUE(BD218,"arm")'),
+            ('BF113', 'END.IF()'),
+        )
+        self.assertEqual(
+            [(step.row, step.col, step.text) for step in steps],
+            [(109, 52, 'BF111()'), (111, 58, 'ELSE'), (113, 58, 'END.IF')],
+        )
+        self.assertEqual(engine.view.cell('Doc1', 218, 56), None)
+
+    def test_a_return_below_a_step_call_skips_the_else_of_the_completed_arm(self):
+        steps = _steps(
+            ('AZ110', 'IF(TRUE)'),
+            ('AZ112', 'BF109()'),
+            ('AZ113', 'ELSE()'),
+            ('AZ114', 'SET.VALUE(BD209,"arm")'),
+            ('AZ116', 'END.IF()'),
+            ('BF109', 'RETURN()'),
+        )
+        self.assertEqual(
+            _rows(steps),
+            [109, 110, 112, 113, 116, 118, 120, 121],
+        )
+        self.assertEqual(
+            [(step.row, step.col) for step in steps if (step.row, step.col) == (114, 52)],
+            [],
+        )
+
     def test_a_block_if_nests_inside_the_body_of_another(self):
         steps, engine = _run(
             ('AZ110', 'IF(TRUE)'),

@@ -16,7 +16,7 @@ from refinery.lib.excel.formula.model import XlBinaryOperator
 from refinery.lib.scripts.xlm.trace import XlmStatus
 
 if TYPE_CHECKING:
-    from refinery.lib.scripts.xlm.references import XlmCursor
+    from refinery.lib.scripts.xlm.references import XlmArrival, XlmCursor
 
 _DATETIME_FORMATS = (
     '%Y-%m-%d %H:%M:%S.%f',
@@ -378,8 +378,10 @@ def apply_binary(operator: XlBinaryOperator, left: XlmValue, right: XlmValue) ->
 class XlmOutcome:
     """
     What one macro command produced: the value it computed, the jump it asks the engine to
-    take, the status that overrides the one its value derives, and whether it halts the
-    program. A handler that neither jumps nor overrides a status leaves both empty.
+    take, the status that overrides the one its value derives, whether it halts the program,
+    and the arrival the engine lands the jump by, for a jump the command that asks for it
+    does not name — the step a macro call jumps to and the cell a return continues at. A
+    handler that neither jumps nor overrides a status leaves both empty.
     """
 
     def __init__(
@@ -388,8 +390,10 @@ class XlmOutcome:
         jump: XlmCursor | None = None,
         status: XlmStatus | None = None,
         halts: bool = False,
+        arrival: XlmArrival | None = None,
     ):
         self.value = XlmValue() if value is None else value
         self.jump = jump
         self.status = status
         self.halts = halts
+        self.arrival = arrival
