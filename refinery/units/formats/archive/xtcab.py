@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from refinery.lib.cab import CabDisk, Cabinet, CabSequenceMismatch
+from refinery.lib.types import buf
 from refinery.units import Chunk
 from refinery.units.formats.archive import ArchiveUnit
 
 
 class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from CAB (cabinet) archives.
+    Extract files from Microsoft CAB (cabinet) archives.
 
-    Multi-volume archives can be extracted if all required disks are present as chunks
-    within the current frame.
+    Multi-volume archives can be extracted if all required disks are present as chunks within the
+    current frame.
     """
-    def unpack(self, data: Chunk):
-        if (arc := data.temp) is None:
+    def unpack(self, data: buf | Chunk):
+        if not isinstance(data, Chunk) or (arc := data.temp) is None:
             arc = Cabinet()
             arc.append(memoryview(data))
         try:

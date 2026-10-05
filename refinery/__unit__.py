@@ -175,6 +175,7 @@ UNITS = {
     'xtdmg'                                      : 'refinery.units.formats.archive.xtdmg',
     'xtdmp'                                      : 'refinery.units.formats.archive.xtdmp',
     'xtgz'                                       : 'refinery.units.formats.archive.xtgz',
+    'xtiex'                                      : 'refinery.units.formats.archive.xtiex',
     'xtinno'                                     : 'refinery.units.formats.archive.xtinno',
     'xtiso'                                      : 'refinery.units.formats.archive.xtiso',
     'xtiss'                                      : 'refinery.units.formats.archive.xtiss',

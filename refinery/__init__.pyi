@@ -176,6 +176,7 @@ from refinery.units.formats.archive.xtcpio import xtcpio as xtcpio
 from refinery.units.formats.archive.xtdmg import xtdmg as xtdmg
 from refinery.units.formats.archive.xtdmp import xtdmp as xtdmp
 from refinery.units.formats.archive.xtgz import xtgz as xtgz
+from refinery.units.formats.archive.xtiex import xtiex as xtiex
 from refinery.units.formats.archive.xtinno import xtinno as xtinno
 from refinery.units.formats.archive.xtiso import xtiso as xtiso
 from refinery.units.formats.archive.xtiss import xtiss as xtiss
