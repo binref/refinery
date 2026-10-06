@@ -555,6 +555,11 @@ class TestFraming(TestBase):
         with self.assertRaises(TypeError):
             [chunk] | nop()
 
+    def test_copy_of_a_unit_keeps_its_list_input_when_the_original_is_dropped(self):
+        from refinery import cca, ccp, chop
+        self.assertEqual(([B'abcd', B'ef'] | chop(2))[:] | [bytes], [B'abcd', B'ef'])
+        self.assertEqual(([B'a', B'b'] | ccp(B'x'))[cca(B'y')] | [bytes], [B'xay', B'xby'])
+
     def test_metadata_changed_in_place_by_a_unit_reaches_no_other_chunk(self):
         from refinery import Unit
 
