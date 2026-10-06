@@ -2204,8 +2204,8 @@ class SemanticModel:
         self.root = root
         self.environment = environment
         self.trust_eval = trust_eval
-        self._node_scope: dict[int, Scope] = {}
-        self._binding_of: dict[int, Binding] = {}
+        self._node_scope: dict[Node, Scope] = {}
+        self._binding_of: dict[Node, Binding] = {}
         self._reflection_surface: bool | None = None
         self._opaque_surface_sites: list[Node] | None = None
         self._opaque_global_write: bool | None = None
@@ -2229,7 +2229,14 @@ class SemanticModel:
         The innermost scope that lexically contains *node*, or `None` if the node was not part of the
         script the model was built from.
         """
-        return self._node_scope.get(id(node))
+        return self._node_scope.get(node)
+
+    def knows(self, node: Node) -> bool:
+        """
+        Whether the model was built over *node*. The model holds every node it maps, so a node made
+        after the build is never taken for one it mapped.
+        """
+        return node in self._node_scope
 
     def function_scope(self, func: Node) -> Scope | None:
         """
@@ -2266,7 +2273,7 @@ class SemanticModel:
         class name, catch parameter, or import local), or `None` if the identifier is not a binding
         site.
         """
-        return self._binding_of.get(id(decl_id))
+        return self._binding_of.get(decl_id)
 
     def lookup(
         self,
@@ -2306,7 +2313,7 @@ class SemanticModel:
         property, key, label, or import/export specifier. The binding-aware companion to the syntactic
         `is_use_position`; `resolve` resolves exactly the identifiers for which this holds.
         """
-        return is_use_position(node) and id(node) not in self._binding_of
+        return is_use_position(node) and node not in self._binding_of
 
     def resolve(self, ref: JsIdentifier) -> Binding | None:
         """
@@ -2317,7 +2324,7 @@ class SemanticModel:
         """
         if not self.is_reference(ref):
             return None
-        return self.lookup(ref.name, self._node_scope.get(id(ref)))
+        return self.lookup(ref.name, self._node_scope.get(ref))
 
     def references(
         self, binding: Binding, *, exclude: Node | None = None,
@@ -2360,7 +2367,7 @@ class SemanticModel:
         """
         if not isinstance(node, JsIdentifier) or not self.is_reference(node):
             return False
-        return crosses_dynamic_scope(self._node_scope.get(id(node)))
+        return crosses_dynamic_scope(self._node_scope.get(node))
 
     def read_may_throw(self, node: JsIdentifier) -> bool:
         """
@@ -2404,7 +2411,7 @@ class SemanticModel:
             return False
         if tolerates_unresolvable(node):
             return False
-        scope = self._node_scope.get(id(node))
+        scope = self._node_scope.get(node)
         binding = self.lookup(node.name, scope, cross_dynamic=True)
         return binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL
 
@@ -2451,7 +2458,7 @@ class SemanticModel:
                 continue
             if base.name not in GLOBAL_OBJECT_ALIASES:
                 continue
-            if self.lookup(base.name, self._node_scope.get(id(base))) is not None:
+            if self.lookup(base.name, self._node_scope.get(base)) is not None:
                 continue
             name = static_property_key(target)
             if name is not None:
@@ -2517,7 +2524,7 @@ class SemanticModel:
                 if not isinstance(target, JsIdentifier):
                     return False
                 binding = self.binding_of(target)
-                if binding is None or crosses_dynamic_scope(self._node_scope.get(id(target))):
+                if binding is None or crosses_dynamic_scope(self._node_scope.get(target)):
                     return False
                 init = declarator.init
                 if (
@@ -3043,7 +3050,7 @@ class SemanticModel:
         rather than in *outer* itself or an enclosing scope. This replaces the various hand-rolled
         shadowing checks: a name shadowed below *outer* does not refer to *outer*'s binding.
         """
-        binding = self.lookup(name, self._node_scope.get(id(at)))
+        binding = self.lookup(name, self._node_scope.get(at))
         if binding is None:
             return False
         return outer.contains(binding.scope, strict=True)
@@ -3067,7 +3074,7 @@ class SemanticModel:
         names, not the one this capture rule asks of a use the tree still holds.
         """
         for node in name_uses_in_scope(names, scope):
-            binding = self.lookup(node.name, self._node_scope.get(id(node)))
+            binding = self.lookup(node.name, self._node_scope.get(node))
             if binding in exclude:
                 continue
             if binding is None:
@@ -3566,7 +3573,7 @@ class SemanticModel:
             return False
         if reference_role(node) is not Role.READ:
             return False
-        return self.lookup(node.name, self._node_scope.get(id(node))) is None
+        return self.lookup(node.name, self._node_scope.get(node)) is None
 
     def _computed_read_aliases_a_global(self, member: JsMemberExpression) -> bool:
         """
@@ -3824,7 +3831,7 @@ class SemanticModel:
             seen.add(id(node))
             if not self.is_reference(node):
                 continue
-            ref_scope = self._node_scope.get(id(node))
+            ref_scope = self._node_scope.get(node)
             binding = self.lookup(node.name, ref_scope)
             if binding is None:
                 self._attribute_dynamic_reference(node, ref_scope)
@@ -3885,7 +3892,7 @@ class SemanticModel:
                 continue
             if not isinstance(node, JsIdentifier) or not self.is_reference(node):
                 continue
-            scope = self._node_scope.get(id(node))
+            scope = self._node_scope.get(node)
             if reference_role(node) is Role.READ:
                 continue
             if self.lookup(node.name, scope) is not None or crosses_dynamic_scope(scope):
@@ -3949,7 +3956,7 @@ class SemanticModel:
         name = member_property_name(member)
         if name is None:
             return None
-        if crosses_dynamic_scope(self._node_scope.get(id(member))):
+        if crosses_dynamic_scope(self._node_scope.get(member)):
             return None
         return name
 
@@ -3997,7 +4004,7 @@ class SemanticModel:
     def _is_bound_here(self, node: Node | None) -> bool:
         return (
             isinstance(node, JsIdentifier)
-            and self.lookup(node.name, self._node_scope.get(id(node))) is not None
+            and self.lookup(node.name, self._node_scope.get(node)) is not None
         )
 
     def names_the_global_object(self, node: Node | None) -> bool:
@@ -4113,7 +4120,7 @@ class SemanticModel:
             binding.reads.append(member)
         if role is not Role.READ:
             binding.writes.append(member)
-        binding.note_reference_from(self._node_scope.get(id(member)))
+        binding.note_reference_from(self._node_scope.get(member))
 
     def _record_arguments_alias_references(self):
         """
@@ -4173,7 +4180,7 @@ class SemanticModel:
                 continue
             if not has_mapped_arguments(fn, strict=False) or strict_mode_at(fn):
                 continue
-            own = self.lookup('arguments', self._node_scope.get(id(fn.body)))
+            own = self.lookup('arguments', self.function_scope(fn))
             if own is None or own.kind not in (BindingKind.ARGUMENTS, BindingKind.FUNC_NAME):
                 continue
             if _displaces_arguments(own, fn):
@@ -4576,7 +4583,7 @@ class SemanticModel:
             binding.reads.append(node)
         if role is not Role.READ:
             binding.indefinite_writes.append(node)
-        binding.note_reference_from(self._node_scope.get(id(node)))
+        binding.note_reference_from(self._node_scope.get(node))
 
 
 class _ScopeBuilder:
@@ -4592,7 +4599,7 @@ class _ScopeBuilder:
 
     def build(self, root: JsScript) -> Scope:
         scope = Scope(kind=ScopeKind.SCRIPT, node=root)
-        self.model._node_scope[id(root)] = scope
+        self.model._node_scope[root] = scope
         self._hoist(root.body, scope)
         self._collect_imports(root.body, scope)
         self._collect_lexical(root.body, scope)
@@ -4614,7 +4621,7 @@ class _ScopeBuilder:
             scope.bindings[name] = binding
         if decl_id is not None:
             binding.declarations.append(decl_id)
-            self.model._binding_of[id(decl_id)] = binding
+            self.model._binding_of[decl_id] = binding
         return binding
 
     def _hoist(self, stmts: list, func_scope: Scope):
@@ -4678,7 +4685,7 @@ class _ScopeBuilder:
                     self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)
 
     def _visit(self, node: Node, scope: Scope):
-        self.model._node_scope[id(node)] = scope
+        self.model._node_scope[node] = scope
         if isinstance(node, (
             JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
         )):
@@ -4722,7 +4729,7 @@ class _ScopeBuilder:
         if split and isinstance(node, JsFunctionExpression) and node.id is not None:
             outer = self._new_scope(ScopeKind.NAME, node, outer)
             self._declare(outer, node.id.name, BindingKind.FUNC_NAME, node.id)
-            self.model._node_scope[id(node.id)] = outer
+            self.model._node_scope[node.id] = outer
         pscope = self._new_scope(ScopeKind.PARAMS, node, outer) if split else None
         fscope = self._new_scope(ScopeKind.FUNCTION, node, pscope or outer)
         params = pscope or fscope
@@ -4733,9 +4740,9 @@ class _ScopeBuilder:
         is_arrow = isinstance(node, JsArrowFunctionExpression)
         if not split and isinstance(node, JsFunctionExpression) and node.id is not None:
             self._declare(fscope, node.id.name, BindingKind.FUNC_NAME, node.id)
-            self.model._node_scope[id(node.id)] = fscope
+            self.model._node_scope[node.id] = fscope
         if isinstance(node, JsFunctionDeclaration) and node.id is not None:
-            self.model._node_scope[id(node.id)] = enclosing
+            self.model._node_scope[node.id] = enclosing
         for param in node.params:
             for ident in pattern_identifiers(param):
                 self._declare(params, ident.name, BindingKind.PARAM, ident)
@@ -4751,7 +4758,7 @@ class _ScopeBuilder:
         for param in node.params:
             self._visit(param, params)
         if isinstance(body, JsBlockStatement):
-            self.model._node_scope[id(body)] = fscope
+            self.model._node_scope[body] = fscope
             for stmt in body.body:
                 self._visit(stmt, fscope)
         elif body is not None:
@@ -4813,7 +4820,7 @@ class _ScopeBuilder:
         for case in cases:
             self._collect_lexical(case.body, sscope)
         for case in cases:
-            self.model._node_scope[id(case)] = sscope
+            self.model._node_scope[case] = sscope
             if case.test is not None:
                 self._visit(case.test, sscope)
             for stmt in case.body:
@@ -4846,12 +4853,12 @@ class _ScopeBuilder:
         cscope = self._new_scope(ScopeKind.CLASS, node, enclosing)
         if isinstance(node, JsClassExpression) and node.id is not None:
             self._declare(cscope, node.id.name, BindingKind.CLASS, node.id)
-            self.model._node_scope[id(node.id)] = cscope
+            self.model._node_scope[node.id] = cscope
         if isinstance(node, JsClassDeclaration) and node.id is not None:
-            self.model._node_scope[id(node.id)] = enclosing
+            self.model._node_scope[node.id] = enclosing
         body = node.body
         if body is not None:
-            self.model._node_scope[id(body)] = cscope
+            self.model._node_scope[body] = cscope
             for member in body.body:
                 self._visit(member, cscope)
 

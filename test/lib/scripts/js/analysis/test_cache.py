@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+
 from contextlib import contextmanager
 
 from test import TestBase, a_property_of_the_batch_itself, a_property_of_the_pin_itself
@@ -8,7 +10,7 @@ from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.analysis.jsgen import generate
 
 import refinery.lib.scripts.js.analysis.cache as cache_module
-from refinery.lib.scripts import Node, Transformer, _remove_from_parent, canonical, tree_version
+from refinery.lib.scripts import Node, Transformer, _remove_from_parent, canonical, set_body, tree_version
 from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
@@ -418,6 +420,25 @@ class TestPinnedModels(TestBase):
                 cache.warm()
                 _remove_from_parent(self._first_declaration(script))
                 cache.liveness
+
+    def test_a_node_made_after_an_edit_has_no_scope_in_the_held_model(self):
+        """
+        A held model outlives the code an edit frees. A node made after the edit is not one the
+        model was built over, wherever it is allocated.
+        """
+        statements = ' '.join(F'g.p{k}.q;' for k in range(300))
+        script = self._script(F'function f() {{ var a = 1; {statements} }}')
+        function = script.body[0]
+        assert isinstance(function, JsFunctionDeclaration) and function.body is not None
+        cache = ModelCache(script)
+        with cache.pinned():
+            model = cache.model
+            set_body(function.body, [])
+            list(script.walk())
+            gc.collect()
+            made = [JsIdentifier(name='a') for _ in range(20000)]
+            self.assertTrue(all(model.scope_of(node) is None for node in made))
+            self.assertFalse(any(model.knows(node) for node in made))
 
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
