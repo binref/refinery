@@ -965,6 +965,7 @@ class MissingFunction:
 
 
 _logger_locks: dict[Executable, int] = {}
+_logger_locks_guard = Lock()
 
 
 class Executable(ABCMeta):
@@ -1203,11 +1204,13 @@ class Executable(ABCMeta):
         return cls in _logger_locks
 
     def _lock_logger(cls):
-        _logger_locks[cls] = _logger_locks.get(cls, 0) + 1
+        with _logger_locks_guard:
+            _logger_locks[cls] = _logger_locks.get(cls, 0) + 1
 
     def _unlock_logger(cls):
-        if (count := _logger_locks.pop(cls) - 1) > 0:
-            _logger_locks[cls] = count
+        with _logger_locks_guard:
+            if (count := _logger_locks.pop(cls) - 1) > 0:
+                _logger_locks[cls] = count
 
 
 class DelayedArgumentProxy:

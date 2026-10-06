@@ -140,6 +140,32 @@ class TestLogger(unittest.TestCase):
         finally:
             unit.log_level = level
 
+    def test_units_of_one_class_run_in_parallel_threads(self):
+        import sys
+        import threading
+        from refinery import chop
+        errors = []
+
+        def run():
+            try:
+                for _ in range(100):
+                    B'ABCDEFGH' | chop(1) | [bytes]
+            except Exception as error:
+                errors.append(error)
+
+        interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            threads = [threading.Thread(target=run) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        finally:
+            sys.setswitchinterval(interval)
+        self.assertEqual(errors, [])
+        self.assertFalse(chop.logger_locked)
+
 
 class TestUnitOutput(unittest.TestCase):
 
