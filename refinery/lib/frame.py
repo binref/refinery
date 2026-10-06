@@ -582,19 +582,13 @@ def _truncated():
     return ValueError('The frame stream ended in the middle of a chunk.')
 
 
-def _references(chunk: Chunk) -> int:
-    return sys.getrefcount(chunk)
-
-
-def _calibrate() -> int:
-    chunk = Chunk()
-    return _references(chunk)
-
-
-_UNSHARED = _calibrate()
-"""
-The reference count of a chunk that only a local variable of the calling function refers to.
-"""
+def _references(item: object) -> int:
+    """
+    Returns the reference count of the given object. An object that only a local variable of the
+    calling function refers to has the same count as a new object that is assigned to a local
+    variable of that function.
+    """
+    return sys.getrefcount(item)
 
 
 def _remaining_size(stream: BinaryIO) -> int | None:
@@ -800,17 +794,15 @@ class FrameUnpacker(Iterable[Chunk]):
         if first is None:
             self.next_chunk = Chunk()
         elif isinstance(first, Chunk):
-            second = None
-            if _references(first) > _UNSHARED:
-                second = next(items, None)
-            if second is None and _references(first) <= _UNSHARED:
-                _adopt(chunk := first)
-            else:
-                chunk = Chunk(first, ignore_chunk_properties=True)
-            del first
-            if second is not None:
+            probe = object()
+            if _references(first) > _references(probe) and (second := next(items, None)) is not None:
                 items = itertools.chain((second,), items)
                 del second
+            if _references(first) > _references(probe):
+                chunk = Chunk(first, ignore_chunk_properties=True)
+            else:
+                _adopt(chunk := first)
+            del first
             for item in items:
                 chunk.extend(item)
                 del item

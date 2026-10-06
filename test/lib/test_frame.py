@@ -602,6 +602,41 @@ class TestFraming(TestBase):
         self.assertIsNot(result, kept[0])
         self.assertEqual(result, kept[0])
 
+    def test_next_unit_takes_the_first_output_uncopied_once_its_producer_drops_it(self):
+        from refinery import Unit, nop
+        size = 0x1000000
+
+        class outputs(Unit):
+            def process(self, data):
+                for length in (size, 1):
+                    output = Chunk(length)
+                    yield output
+
+        self.assertLess(_peak_memory(lambda: _drain(B'' | outputs() | nop())), size * 1.5)
+
+    def test_kept_output_is_copied_even_if_frame_locals_were_read_during_import(self):
+        import importlib.util
+        import sys
+        from refinery.lib import frame
+
+        def read_locals(current, event, arg):
+            if event == 'call':
+                current.f_locals
+
+        spec = importlib.util.spec_from_file_location('frame_imported_under_a_tracer', frame.__file__)
+        assert spec is not None and spec.loader is not None
+        traced = importlib.util.module_from_spec(spec)
+        tracer = sys.gettrace()
+        sys.settrace(read_locals)
+        try:
+            spec.loader.exec_module(traced)
+        finally:
+            sys.settrace(tracer)
+        kept = [traced.Chunk(B'kept')]
+        received = traced.FrameUnpacker(traced.ChunkFeed(kept)).next_chunk
+        self.assertIsNot(received, kept[0])
+        self.assertEqual(received, kept[0])
+
     def test_reading_a_unit_gives_the_bytes_it_writes(self):
         from refinery import emit
         self.assertEqual((B'' | emit(B'A', B'', B'B')).read(), B'A\n\nB')
