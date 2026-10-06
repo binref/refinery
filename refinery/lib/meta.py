@@ -255,6 +255,18 @@ def normalized(value, nested: bool = False):
     return value
 
 
+def _serializable(value):
+    """
+    Returns a metadata value in the form in which it is serialized. An integer that does not fit
+    into 64 bits becomes a dictionary that stores its magnitude under a key for its sign.
+    """
+    if isinstance(value, int) and not -0x8000000000000000 <= value <= 0xFFFFFFFFFFFFFFFF:
+        q, r = divmod(value.bit_length(), 8)
+        q += int(bool(r))
+        return {_BIGINT: value.to_bytes(q)} if value > 0 else {_BIGNEG: (-value).to_bytes(q)}
+    return value
+
+
 def _normalized_key(key):
     if isinstance(normal := normalized(key, True), list):
         return key
@@ -649,7 +661,8 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
                 self.history = history = dict(self.history)
                 for key in missing:
                     self.current[key] = parent.current[key]
-                    history[key] = parent.history[key]
+                    if (stack := parent.history.get(key)) is not None:
+                        history[key] = stack
         self.scope = parent.scope
         for key in parent.keys():
             try:
@@ -697,7 +710,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         current_scope = self.scope
         if current_scope == 0:
             padding = [(True, 0)] * (target_scope - 1)
-            return {key: [(False, value)] + padding for key, value in self.current.items()}
+            return {key: [(False, _serializable(value))] + padding for key, value in self.current.items()}
         serializable = {key: list(stack) for key, stack in self.history.items()}
         if target_scope > current_scope:
             padding = target_scope - current_scope
@@ -712,10 +725,7 @@ class LazyMetaOracle(MutableMapping[str, Any], metaclass=_LazyMetaMeta):
         for key, value in self.current.items():
             if value is None:
                 raise RuntimeError(F'Meta variable "{key}" was set to None.')
-            elif isinstance(value, int) and not -0x8000000000000000 <= value <= 0xFFFFFFFFFFFFFFFF:
-                q, r = divmod(value.bit_length(), 8)
-                q += int(bool(r))
-                value = {_BIGINT: value.to_bytes(q)} if value > 0 else {_BIGNEG: (-value).to_bytes(q)}
+            value = _serializable(value)
             try:
                 item_scope = self.rescope[key]
             except KeyError:

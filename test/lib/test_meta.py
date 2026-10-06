@@ -84,7 +84,7 @@ class TestMeta(TestBase):
 
     def test_inheriting_into_a_copy_leaves_the_original_unchanged(self):
         class spy(Unit):
-            chunks: List[Chunk] = []
+            chunks: list[Chunk] = []
 
             def filter(self, inputs: Iterable[Chunk]) -> Iterable[Chunk]:
                 for chunk in inputs:
@@ -416,6 +416,20 @@ class TestLazyMetaOracle(TestBase):
                     serialized_hop(chunk)
                 self.assertIs(type(moved.exception), type(read.exception))
                 self.assertEqual(str(moved.exception), str(read.exception))
+
+    def test_big_integers_set_outside_a_frame_survive_entering_it(self):
+        self.assertEqual(L('emit A | put x e:2**70 [| pf {x} ]')(), str(2 ** 70).encode())
+        self.assertEqual(L('emit A | put x e:-2**70 [| pf {x} ]')(), str(-2 ** 70).encode())
+
+    def test_inheriting_a_variable_that_the_parent_has_just_set(self):
+        parent = Chunk(B'parent', path=[0], view=[True], seed={'a': [(False, 1)]})
+        parent.meta['fresh'] = 5
+        child = Chunk(B'child', path=[0], view=[True], seed={'b': [(False, 2)]})
+        child.meta.inherit(parent.meta)
+        self.assertEqual(
+            {key: child.meta[key] for key in ('a', 'b', 'fresh')},
+            {'a': 1, 'b': 2, 'fresh': 5},
+        )
 
 
 class TestMV(TestBase):
