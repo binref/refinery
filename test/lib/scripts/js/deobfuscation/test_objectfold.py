@@ -7,6 +7,7 @@ from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
     before_and_after,
+    before_and_after_in_a_host,
     each_program_still_prints,
 )
 
@@ -1324,4 +1325,74 @@ class TestNodePrintsTheSameAboutArgumentsTheFoldOwes(TestJsDeobfuscator):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+#: Programs in which folding one object changes what is true of another, mapped to what Node prints
+#: for each: a call argument reads the other object, at the top level, inside a function, and with
+#: the object of helpers first; a fold gives `Object` a name the other object's prototype is then
+#: written through, from a literal and through a one-line method; a literal reads the folded object;
+#: and a copy names another object.
+A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS = {
+    'var B = {f: function (p) { return p + 1; }};'
+    ' var C = {y: 2};'
+    ' console.log(B.f(C.y));': '3\n',
+    'function main(n) {'
+    ' var H = {add: function (a, b) { return a + b; }, neg: function (a) { return -a; }};'
+    ' var K = {base: 40, step: 2};'
+    ' return H.add(K.base, H.neg(K.step)) + n; }'
+    ' console.log(main(0));': '38\n',
+    'function decode(s) {'
+    ' var U = {xor: function (a, b) { return a ^ b; }};'
+    ' var T = {key: 7};'
+    " var out = '';"
+    ' for (var i = 0; i < s.length; i++) { out += String.fromCharCode(U.xor(s.charCodeAt(i), T.key)); }'
+    ' return out; }'
+    " console.log(decode('abc'));": 'fed\n',
+    'var A = {o: Object};'
+    ' var q = A.o;'
+    ' q.prototype.k = 1;'
+    ' var B = {x: 1};'
+    ' console.log(B.k);': '1\n',
+    'var A = {f: function (p) { return p; }};'
+    ' var q = A.f(Object);'
+    ' q.prototype.k = 1;'
+    ' var B = {x: 1};'
+    ' console.log(B.k);': '1\n',
+    "var A = {k: 'x'};"
+    ' var B = {m: A.k};'
+    ' console.log(B.m);': 'x\n',
+    'var B = {x: 1};'
+    ' function f() { var A = {b: B}; return A.b.x; }'
+    ' console.log(f(), B.x);': '1 1\n',
+}
+
+
+#: A fold that gives the global object a name a later object is then replaced through, a property
+#: of the global object only where the script runs as a classic script.
+A_FOLD_NAMING_THE_GLOBAL_OBJECT = inspect.cleandoc(
+    """
+    var A = {g: globalThis};
+    var w = A.g;
+    var C = {x: 1};
+    w.C = {x: 5};
+    console.log(C.x);
+    """
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameWhereOneFoldChangesAnotherObject(TestJsDeobfuscator):
+
+    def test_each_program_prints_what_it_printed(self):
+        rows = A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_an_object_replaced_through_a_folded_name_of_the_global_object(self):
+        self.assertEqual(
+            before_and_after_in_a_host(A_FOLD_NAMING_THE_GLOBAL_OBJECT),
+            (('5\n', None), ('5\n', None)),
         )

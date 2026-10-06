@@ -8,18 +8,17 @@ an expression using only parameters) are inlined at the call site.
 """
 from __future__ import annotations
 
-from typing import Callable, Iterator
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     Node,
     Statement,
-    Transformer,
     _clone_node,
     _replace_in_parent,
 )
-from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     Scope,
@@ -28,9 +27,12 @@ from refinery.lib.scripts.js.analysis.model import (
     walk_receiver_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    PinnedTransformer,
     ScopeProcessingTransformer,
     a_host_reaches_the_binding,
     access_key,
+    expression_a_call_answers,
+    lands_in_binding,
     make_undefined_expression,
     property_key,
     property_provably_absent,
@@ -175,23 +177,126 @@ def _resolves_consistently(
     return all(binding is model.lookup(node.name, dest) for node, binding in free)
 
 
-class JsObjectFold(ScopeProcessingTransformer):
+def _statement_holding(node: Node) -> Node | None:
+    """
+    The innermost statement *node* stands in, or `None` where it stands in none.
+    """
+    cursor: Node | None = node
+    while cursor is not None and not isinstance(cursor, Statement):
+        cursor = cursor.parent
+    return cursor
+
+
+def _arguments_an_inlined_call_answers(func: JsFunctionExpression, call: JsCallExpression) -> list[Node]:
+    """
+    The arguments of *call* that the inlined call of *func* may evaluate to: those passed for a
+    parameter among the `denoting_leaves` of the expression the call answers.
+    """
+    answered = expression_a_call_answers(func)
+    if answered is None:
+        return []
+    expression, names = answered
+    answers = {
+        leaf.name for leaf in denoting_leaves(expression) if isinstance(leaf, JsIdentifier)
+    } & set(names)
+    return [
+        argument for parameter, argument in zip(func.params, call.arguments)
+        if isinstance(parameter, JsIdentifier) and parameter.name in answers
+    ]
+
+
+class _Folded(NamedTuple):
+    """
+    What folding the references of one object did: whether it replaced any, whether every one was
+    folded away so the declaration can go, and whether a copy put a value a write through which the
+    models record only once a binding holds it where a binding holds it.
+    """
+    changed: bool
+    can_remove: bool
+    reveals: bool
+
+
+class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
     """
     Inline properties of locally-defined constant objects. Processes at function-scope and
     script-scope boundaries because JavaScript `var` declarations are function-scoped.
+
+    The pass holds the models for an invocation
+    (`refinery.lib.scripts.js.deobfuscation.helpers.PinnedTransformer`). A fold replaces the
+    references of one object with copies of its values and removes its declaration, and leaves the
+    answers about the next object no more permissive than rebuilt ones:
+
+    - Every edit goes through `_replace`, which records the names the inserted code spells and the
+      statement the replaced code stood in. A fold adds a reference to a binding only through
+      inserted code, which spells its name, and the references of an object it detaches from the
+      tree stand in a statement it edited. Before deciding an object whose name, or a name its
+      literal reads, inserted code spells, whose literal holds code the model does not know, or one
+      of whose references stands in an edited statement, the pass renews.
+    - Removing a declarator only takes facts away.
+    - A copy that puts a value a write through which the models record only once a binding holds
+      it where a binding holds it shows a write the held models do not record; after such a fold,
+      the pass renews. A copy reaches a binding by no other route: a copied value names what it
+      reads, and an inlined call answers an expression of its parameters and literals.
     """
 
     def __init__(self):
         super().__init__()
-        self._root: JsScript | None = None
+        self._inserted_names: set[str] = set()
+        self._edited_statements: set[Node] = set()
 
     def visit_JsScript(self, node: JsScript):
-        self._root = node
-        return super().visit_JsScript(node)
+        with self.holding_models(node):
+            return super().visit_JsScript(node)
+
+    def _forget_edits(self) -> None:
+        self._inserted_names = set()
+        self._edited_statements = set()
+
+    def _replace(self, old: Node, new: Node) -> None:
+        """
+        Replace *old* with *new*, recording the names *new* spells and the statement *old* stood in.
+        """
+        statement = _statement_holding(old)
+        if not _replace_in_parent(old, new):
+            return
+        if statement is not None:
+            self._edited_statements.add(statement)
+        for node in new.walk():
+            if isinstance(node, JsIdentifier) and is_use_position(node):
+                self._inserted_names.add(node.name)
+
+    def _edited_around(
+        self,
+        model: SemanticModel,
+        binding: Binding,
+        name: JsIdentifier,
+        init: JsObjectExpression,
+        prop_map: dict[str, Node],
+    ) -> bool:
+        """
+        Whether an edit since the last renewal touched what the held models say about the object
+        *name* declares with *init*: inserted code spells its name or a name its literal reads, its
+        literal holds code the model does not know, or one of its references stands in a statement
+        an edit replaced code in.
+        """
+        if not self._inserted_names and not self._edited_statements:
+            return False
+        if name.name in self._inserted_names:
+            return True
+        if not all(model.knows(node) for node in init.walk()):
+            return True
+        if any(
+            identifier.name in self._inserted_names
+            for value in prop_map.values()
+            for identifier, _ in _free_external_bindings(model, value)
+        ):
+            return True
+        return any(
+            _statement_holding(reference) in self._edited_statements
+            for reference in model.references(binding)
+        )
 
     def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
-        assert self._root is not None
-        cache = model_cache(self, self._root)
         for declarator in list(self._find_candidates(body)):
             name = declarator.id
             init = declarator.init
@@ -200,8 +305,13 @@ class JsObjectFold(ScopeProcessingTransformer):
             prop_map = _build_property_map(init)
             if prop_map is None or _object_binds_this(prop_map) or object_sets_prototype(init):
                 continue
+            cache = self.held_models()
             model = cache.model
             binding = model.binding_of(name)
+            if binding is None or self._edited_around(model, binding, name, init, prop_map):
+                self.renew_models()
+                model = cache.model
+                binding = model.binding_of(name)
             if binding is None or binding.writes or model.singular_value(binding) is not init:
                 continue
             if a_host_reaches_the_binding(model, binding, self.options):
@@ -226,21 +336,23 @@ class JsObjectFold(ScopeProcessingTransformer):
                 for value in prop_map.values()
             ):
                 continue
-            changed, can_remove = self._inline_references(
-                model, cache.effects, binding, prop_map, self, cache.read_established
+            folded = self._inline_references(
+                model, cache.effects, cache.intrinsic_writes, binding, prop_map, cache.read_established
             )
-            if changed:
-                if can_remove:
+            if folded.changed:
+                if folded.can_remove:
                     remove_declarator(declarator)
                 self.mark_changed()
+                if folded.reveals:
+                    self.renew_models()
 
     @staticmethod
     def _find_candidates(body: list[Statement]) -> Iterator[JsVariableDeclarator]:
         """
         Yield each variable declarator in *body* that initializes a variable to an object literal — the
         syntactic precondition for folding. Whether the literal is actually foldable (every key static,
-        the name a single immutable binding) is decided per candidate by the caller against a model
-        rebuilt after any earlier fold in the same body, and its property map is read from the live
+        the name a single immutable binding) is decided per candidate by the caller against models
+        renewed after any earlier fold that touched it, and its property map is read from the live
         initializer at that point, so an earlier fold into this initializer is reflected.
         """
         for stmt in body:
@@ -385,15 +497,15 @@ class JsObjectFold(ScopeProcessingTransformer):
         """
         return any(ref.is_descendant_of(init) for ref in model.references(binding))
 
-    @staticmethod
     def _inline_references(
+        self,
         model: SemanticModel,
         effects: EffectModel,
+        scan: IntrinsicWrites,
         binding: Binding,
         prop_map: dict[str, Node],
-        transformer: Transformer,
         read_established: Callable[[JsIdentifier], bool],
-    ) -> tuple[bool, bool]:
+    ) -> _Folded:
         """
         Replace each `obj['key']` access through *binding* with the corresponding property value. For
         function-valued properties called as `obj['key'](args)`, inline the call. A key the property
@@ -413,8 +525,8 @@ class JsObjectFold(ScopeProcessingTransformer):
         read inside a nested function that rebinds one of those names — a parameter, a block `let`, or
         that function's own `arguments` — is not silently recaptured.
 
-        Returns a pair `(changed, can_remove)` where *changed* is True when any replacement was made and
-        *can_remove* is True when every reference was folded away, so no use of the binding survives — a
+        Returns `changed`, True when any replacement was made, and `can_remove`, True when every
+        reference was folded away, so no use of the binding survives — a
         bare reference (an alias such as `var b = obj`), a retained inherited-member access, or a
         reference one of the two conditions above kept leaves *can_remove* False so the declaration is
         kept. A reference a dynamic scope resolves at runtime — a name inside a `with` body, held in the
@@ -433,8 +545,14 @@ class JsObjectFold(ScopeProcessingTransformer):
         constraint. Relocating that read does move it past any statement between the literal and the
         use, so a throw it carries is reordered past those statements' effects — a separate,
         unpinned defect (`test_unfixed_defects.TestARelocatedMayThrowReadIsReorderedPastAnEffect`).
+
+        It also returns `reveals`, True when a copy puts a value the *scan* says a write through
+        which is recorded only once a binding holds it
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.follows_only_through_bindings`)
+        where a binding holds it.
         """
         changed = False
+        reveals = False
         can_remove = not binding.dynamic_refs
         consistent: dict[tuple[int, int], bool] = {}
         free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
@@ -455,7 +573,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 if not property_provably_absent(effects, dict, key):
                     can_remove = False
                     continue
-                _replace_in_parent(member, make_undefined_expression())
+                self._replace(member, make_undefined_expression())
                 changed = True
                 continue
             value = prop_map[key]
@@ -463,12 +581,14 @@ class JsObjectFold(ScopeProcessingTransformer):
             parent = member.parent
             call = parent if isinstance(parent, JsCallExpression) and parent.callee is member else None
             if call is not None and isinstance(value, JsFunctionExpression):
-                replacement = try_inline_trivial_function(
-                    value, call.arguments, transformer=transformer
-                )
+                replacement = try_inline_trivial_function(value, call.arguments, transformer=self)
                 if replacement is not None:
-                    _replace_in_parent(
-                        call, spelled_for_the_callee_position(call, replacement))
+                    if lands_in_binding(call) and any(
+                        scan.follows_only_through_bindings(argument)
+                        for argument in _arguments_an_inlined_call_answers(value, call)
+                    ):
+                        reveals = True
+                    self._replace(call, spelled_for_the_callee_position(call, replacement))
                     changed = True
                     continue
                 if _function_observes_its_identity(value):
@@ -490,7 +610,9 @@ class JsObjectFold(ScopeProcessingTransformer):
             if not cached:
                 can_remove = False
                 continue
-            _replace_in_parent(member, _clone_node(value))
+            if lands_in_binding(member) and scan.follows_only_through_bindings(value):
+                reveals = True
+            self._replace(member, _clone_node(value))
             changed = True
         if can_remove and any(
             key not in accessed_keys
@@ -499,4 +621,4 @@ class JsObjectFold(ScopeProcessingTransformer):
             for key, value in prop_map.items()
         ):
             can_remove = False
-        return changed, can_remove
+        return _Folded(changed, can_remove, reveals)

@@ -20,6 +20,7 @@ from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
+from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
@@ -910,12 +911,81 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
             self.assertEqual(held, self._released(source)[1])
 
 
+class TestObjectFoldingHoldsTheModelsForARun(TestBase):
+    """
+    Object folding folds one object at a time and holds the models of the tree it started on,
+    renewing them only where a fold touched the next object or can show a write they do not
+    record. Released, each fold moves the tree under the next read, and the models are rebuilt once
+    per object.
+    """
+
+    @staticmethod
+    def _scopes(count: int, declaration: str, value: str) -> str:
+        """
+        A script with *count* functions, each declaring one object with *declaration* and returning
+        *value*.
+        """
+        functions = '\n'.join(
+            F'function f{index}() {{ var O = {declaration}; return {value}; }}'.replace('INDEX', str(index))
+            for index in range(count)
+        )
+        calls = ', '.join(F'f{index}()' for index in range(count))
+        return F'{functions}\nconsole.log({calls});'
+
+    @classmethod
+    def _independent(cls, count: int) -> str:
+        return cls._scopes(count, '{a: INDEX, b: 2}', 'O.a + O.b')
+
+    @classmethod
+    def _comparing_the_global_object(cls, count: int) -> str:
+        return cls._scopes(
+            count,
+            '{eq: function (a, b) { return a === b; }}',
+            'O.eq(this, window) || O.eq(globalThis, INDEX)',
+        )
+
+    @staticmethod
+    def _held(source: str) -> tuple[int, str]:
+        return _transform_root_builds(JsObjectFold, source)
+
+    @staticmethod
+    def _released(source: str) -> tuple[int, str]:
+        original = ModelCache.pinned
+        ModelCache.pinned = _no_pin
+        try:
+            return _transform_root_builds(JsObjectFold, source)
+        finally:
+            ModelCache.pinned = original
+
+    @a_property_of_the_pin_itself
+    def test_the_models_are_built_as_often_for_sixteen_objects_as_for_two(self):
+        self.assertEqual(self._held(self._independent(2))[0], self._held(self._independent(16))[0])
+
+    @a_property_of_the_pin_itself
+    def test_an_inlined_call_comparing_the_global_object_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._comparing_the_global_object(2))[0],
+            self._held(self._comparing_the_global_object(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_released_models_are_built_more_often_for_sixteen_objects_than_for_two(self):
+        self.assertLess(self._released(self._independent(2))[0], self._released(self._independent(16))[0])
+
+    def test_holding_the_models_does_not_change_the_result(self):
+        for source in (self._independent(8), self._comparing_the_global_object(8)):
+            held = self._held(source)[1]
+            self.assertNotIn('var O', held)
+            self.assertEqual(held, self._released(source)[1])
+
+
 #: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
 #: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
 #: fold, a string respelling, a call wrapper, a pruned branch whose kept test assigns what a later
-#: test reads, a dead store, a discarded completion, a global only one function uses, and two
-#: machines whose recoveries renew the models generator unflattening holds — beside a few plain
-#: shapes and the generated corpus, which exercise the rest of the pipeline.
+#: test reads, a dead store, a discarded completion, a global only one function uses, two machines
+#: whose recoveries renew the models generator unflattening holds, and objects whose folds renew the
+#: models object folding holds — beside a few plain shapes and the generated corpus, which exercise
+#: the rest of the pipeline.
 _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var q = 1; var t = (q + 1) * 2; f(t);',
     'var x = 5; var t = delete x; g(); f(t);',
@@ -936,6 +1006,9 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var t; function f(a) { t = a.b; SINK(t); } f(SRC);',
     generator_fixtures.TestGeneratorCFFUnflattening.PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF,
     generator_fixtures.TestGeneratorCFFUnflattening.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF,
+    'var B = {f: function (p) { return p + 1; }}; var C = {y: 2}; console.log(B.f(C.y));',
+    'var A = {g: globalThis}; var w = A.g; var C = {x: 1}; w.C = {x: 5}; console.log(C.x);',
+    'var B = {x: 1}; function f() { var A = {b: B}; return A.b.x; } console.log(f(), B.x);',
 )
 
 
