@@ -204,6 +204,20 @@ class TestUnitOutput(unittest.TestCase):
         self.assertEqual(terminal.getvalue(), B'A\nB\nC\n')
         self.assertEqual(complete, [True, True, True])
 
+    def test_interrupt_in_a_unit_reaches_the_caller_through_the_next_unit(self):
+        from refinery import nop
+        from refinery.units import LogLevel, Unit
+
+        class interrupted(Unit):
+            def process(self, data):
+                yield B'A'
+                raise KeyboardInterrupt
+
+        source = interrupted()
+        source.log_level = LogLevel.WARNING
+        with self.assertRaises(KeyboardInterrupt):
+            B'' | source | nop() | bytes
+
 
 class TestEntry(unittest.TestCase):
 

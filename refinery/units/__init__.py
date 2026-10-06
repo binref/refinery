@@ -1633,6 +1633,8 @@ class Unit(UnitBase, abstract=True):
             return None
         except RefineryCriticalException:
             return None
+        except KeyboardInterrupt:
+            raise
         except BaseException as B:
             self._exception_handler(B, None)
             return None
