@@ -1640,7 +1640,7 @@ class Unit(UnitBase, abstract=True):
             return None
 
     def __next__(self) -> bytes | bytearray | Chunk:
-        if self.console:
+        if self.console or self._reader is not None:
             if piece := self.read1():
                 return piece
             raise StopIteration
@@ -2078,14 +2078,22 @@ class Unit(UnitBase, abstract=True):
 
     def _log_send_failure(self, error: OSError):
         if isinstance(error, BrokenPipeError) or error.errno != 32:
-            # This happens when the next unit does not consume everything
-            # we send. For example, this can happen when a large file is
-            # read in chunks and the pick unit is used to select only the
-            # first few of these.
+            # This happens when the next unit does not consume everything we send. For example, this
+            # can happen when a large file is read in chunks and the pick unit is used to select
+            # only the first few of these.
             self.log_debug(F'cannot send to next unit: {error}')
 
+    def _pieces_to_write(self, terminal: bool = False) -> Iterator[bytes | bytearray]:
+        """
+        Returns the pieces that this unit writes to a stream. When this unit was already read as a
+        stream, they continue that stream from its read position.
+        """
+        if self._reader is not None:
+            return iter(self.read1, B'')
+        return self._stream(self.console, terminal)
+
     def _write_to_stream(self, stream: BinaryIO):
-        for piece in self._stream(self.console):
+        for piece in self._pieces_to_write():
             try:
                 stream.write(piece)
                 stream.flush()
@@ -2103,15 +2111,17 @@ class Unit(UnitBase, abstract=True):
         recode = cname(self.codec) != cname(sys.stdout.encoding)
         linebreak = True
 
-        for piece in self._stream(self.console, True):
+        for piece in self._pieces_to_write(True):
             if not piece:
                 continue
             linebreak = piece.endswith(B'\n')
             if recode:
                 try:
                     import codecs
-                    piece = codecs.encode(codecs.decode(
-                        piece, self.codec, errors='backslashreplace'), sys.stdout.encoding)
+                    piece = codecs.encode(
+                        codecs.decode(piece, self.codec, errors='backslashreplace'),
+                        sys.stdout.encoding,
+                    )
                 except Exception:
                     pass
             try:

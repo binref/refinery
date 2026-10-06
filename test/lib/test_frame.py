@@ -668,6 +668,18 @@ class TestFraming(TestBase):
         self.assertEqual(unit.readline(), B'header\n')
         self.assertEqual(unit | nop() | bytes, B'body one\nbody two')
 
+    def test_partly_read_unit_continues_when_written(self):
+        from refinery import emit
+        unit = B'' | emit(B'ABCDEF', B'GHI')
+        self.assertEqual(unit.read(2), B'AB')
+        self.assertEqual(unit | bytes, B'CDEF\nGHI')
+        unit = B'' | emit(B'header\nbody one', B'body two')
+        self.assertEqual(unit.readline(), B'header\n')
+        self.assertEqual((unit | io.BytesIO()).getvalue(), B'body one\nbody two')
+        unit = B'' | emit(B'ABCDEF', B'GHI')
+        self.assertEqual(unit.read(2), B'AB')
+        self.assertEqual(B''.join(unit), B'CDEF\nGHI')
+
     def test_unit_handles_errors_in_passing_on_its_own_output(self):
         from refinery import Unit, nop
         from refinery.units import LogLevel
