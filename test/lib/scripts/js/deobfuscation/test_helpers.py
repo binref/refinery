@@ -13,9 +13,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     JS_NULL,
     JsBuffer,
     binding_has_references,
+    declares_a_watched_name,
     escape_js_string,
     extract_literal_value,
     insert_after_prologue,
+    lands_in_binding,
     make_numeric_literal,
     make_string_literal,
     substitute_params,
@@ -753,3 +755,86 @@ class TestExtractLiteralValueRefusesAStringDenotingNothing(TestJsDeobfuscator):
              for source in A_STRING_AND_THE_VALUE_IT_HOLDS},
             A_STRING_AND_THE_VALUE_IT_HOLDS,
         )
+
+
+class TestWhereAValueLandsInABinding(TestJsDeobfuscator):
+
+    @staticmethod
+    def _lands(source: str) -> bool:
+        value = next(
+            node for node in JsParser(source).parse().walk()
+            if isinstance(node, JsIdentifier) and node.name == 'VALUE'
+        )
+        return lands_in_binding(value)
+
+    def test_a_value_a_binding_receives(self):
+        for source in (
+            'var x = VALUE;',
+            'x = VALUE;',
+            '[x] = VALUE;',
+            'var {x} = VALUE;',
+            'var x = (VALUE);',
+            'var x = y || VALUE;',
+            'var x = c ? 1 : VALUE;',
+            'var x = (0, VALUE);',
+            'var x = VALUE.prototype;',
+            'var x = VALUE.a.b;',
+            'x = o.p = VALUE;',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self._lands(source))
+
+    def test_a_value_no_binding_receives(self):
+        for source in (
+            'f(VALUE);',
+            'o.p = VALUE;',
+            'x = VALUE == 1;',
+            'x = {k: VALUE};',
+            'x = [VALUE];',
+            'var x = c[VALUE];',
+            'var x = VALUE ? 1 : 2;',
+            'var x = (VALUE, 1);',
+            'var x = VALUE();',
+            'x += (o.p = VALUE, 1);',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._lands(source))
+
+
+class TestCodeThatDeclaresANameTheIntrinsicWriteScanWatches(TestJsDeobfuscator):
+
+    @staticmethod
+    def _declares(source: str) -> bool:
+        return declares_a_watched_name(JsParser(source).parse().body)
+
+    def test_a_declaration_or_an_assignment_of_the_name(self):
+        for source in (
+            'var Object;',
+            'let {Math} = o;',
+            'function Object() {}',
+            'function f(Math) {}',
+            'var f = function (a, [Object]) {};',
+            'var f = (Math) => 1;',
+            'class Object {}',
+            'try {} catch (Math) {}',
+            'Object = 1;',
+            'Object++;',
+            '[Math] = o;',
+            'for (Object in o);',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self._declares(source))
+
+    def test_a_read_of_the_name_or_a_name_it_does_not_watch(self):
+        for source in (
+            'Object.keys(o);',
+            'Object.prototype.p = 1;',
+            'var o = {Object: 1};',
+            'o.Object = 1;',
+            'var window = this;',
+            'var globalThis = 1;',
+            'var local = Object;',
+            'function f(a) { return Math; }',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._declares(source))

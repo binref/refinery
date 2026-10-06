@@ -189,8 +189,7 @@ KEYED_WRITE_ROOTS = (
     | frozenset(PROTOTYPE_OWNERS.values())
 )
 """
-The global names whose written property keys
-`refinery.lib.scripts.js.analysis.effects.EffectModel.global_key_written` bounds. A name outside
+The global names whose written property keys `IntrinsicWrites.key_written` bounds. A name outside
 this set is one the scan records no key for, so answering `False` about it would read an absence of
 evidence as evidence of absence; that predicate answers `True` for every key of such a name instead.
 
@@ -223,7 +222,8 @@ class IntrinsicWrites(NamedTuple):
     """
     What one scan of a program says about the globals it writes: *names*, the set a caller asks
     about a whole name with, and *keys*, the properties each of the watched names was written at —
-    or `None` for a name whose written keys this scan cannot bound.
+    or `None` for a name whose written keys this scan cannot bound. *aliases* is the relation the
+    scan resolved write targets through, kept for `follows_only_through_bindings`.
 
     The two are produced together because they are read off the same nodes and must not disagree:
     a name recorded in one for a reason the other cannot express is a name one caller refuses and
@@ -232,6 +232,45 @@ class IntrinsicWrites(NamedTuple):
     """
     names: frozenset[str]
     keys: dict[str, frozenset[str] | None]
+    aliases: _IntrinsicAliases
+
+    def key_written(self, name: str, key: str) -> bool:
+        """
+        Whether the program writes the property *key* on a chain rooted at the global *name*:
+        `Object.prototype.constructor = C`, `delete Object.getPrototypeOf`, or a descriptor
+        installed for that key. A name whose written keys cannot be bounded answers `True` for
+        every key, and so does a name outside `KEYED_WRITE_ROOTS`, which the scan records nothing
+        about at all. See `refinery.lib.scripts.js.analysis.effects.EffectModel.global_key_written`
+        for why the question is asked of a name rather than of a receiver.
+        """
+        if name not in KEYED_WRITE_ROOTS:
+            return True
+        keys = self.keys.get(name, frozenset())
+        return keys is None or key in keys
+
+    def follows_only_through_bindings(self, value: Node) -> bool:
+        """
+        Whether a write through what *value* evaluates to is one this scan or the semantic model it
+        read records only once a binding holds that value. The scan follows a value through the
+        bindings that hold it and trusts `Object`, `Function`, `Boolean` and `Buffer` when they
+        escape (`ESCAPE_RECORDED_ROOTS`), and the semantic model finds a write to a global through
+        a name holding the global object, not through a property holding it. Stored in a property,
+        `scope.P = Object.prototype` lets `scope.P.p = 1` write `Object.prototype` unrecorded;
+        stored in a binding, `var P = Object.prototype` makes `P.p = 1` a recorded write.
+
+        A value may carry what any of its `denoting_leaves` evaluates to, and one of them qualifies
+        where the scan's aliases resolve it to a root the scan watches, where it may be the global
+        object, or where the model was not built over it and so cannot say.
+        """
+        model = self.aliases.model
+        for leaf in denoting_leaves(value):
+            if not model.knows(leaf):
+                return True
+            if isinstance(leaf, JsIdentifier) and self.aliases.names_denoted_by(leaf) & ESCAPE_WATCHED_ROOTS:
+                return True
+            if model.may_be_the_global_object(leaf):
+                return True
+        return False
 
     def roots_unwritten(self, owner: str, roots: frozenset[str]) -> bool:
         """
@@ -357,6 +396,7 @@ def build_intrinsic_writes(model: SemanticModel) -> IntrinsicWrites:
     return IntrinsicWrites(
         frozenset(names),
         {name: None if written is None else frozenset(written) for name, written in keys.items()},
+        aliases,
     )
 
 
@@ -805,36 +845,59 @@ def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
         yield from _denoted_roots(call.arguments[0])
 
 
-def _denoted_roots(node: Node | None, depth: int = 0) -> Iterator[JsIdentifier]:
+def denoting_leaves(node: Node | None, depth: int = 0) -> Iterator[Node]:
     """
-    Every name *node* may denote, looking through the value-preserving forms a constant fold
-    collapses: parentheses, the operands of `||`/`&&`/`??` and the branches of a conditional (either
-    side may be the value), the last expression of a sequence, and the right side of an assignment.
+    Every node whose value *node* may evaluate to, looking through the value-preserving forms a
+    constant fold collapses: parentheses, the operands of `||`/`&&`/`??` and the branches of a
+    conditional (either side may be the value), the last expression of a sequence, and the right
+    side of an assignment. A member access yields the foot of its chain, `Object` for
+    `Object.prototype.x`, which is what a write through the access is attributed to.
 
-    Resolving only the syntactic form would make this analysis change its answer as folds fire —
-    `Math || 0` names nothing until it collapses to `Math` — which is precisely what a consumer
-    holding the answer across a pass cannot tolerate.
+    Resolving only the syntactic form would make an answer read off these leaves change as folds
+    fire — `Math || 0` names nothing until it collapses to `Math` — which is precisely what a
+    consumer holding the answer across a pass cannot tolerate.
     """
     if depth > _DENOTED_ROOT_DEPTH_LIMIT:
         return
     cursor = strip_parens(node)
-    if isinstance(cursor, JsIdentifier):
-        yield cursor
-    elif isinstance(cursor, JsMemberExpression):
-        root = _member_chain_root(cursor)
-        if root is not None:
-            yield root
+    if cursor is None:
+        return
+    if isinstance(cursor, JsMemberExpression):
+        foot = _member_chain_foot(cursor)
+        if foot is not None:
+            yield foot
     elif isinstance(cursor, JsLogicalExpression):
-        yield from _denoted_roots(cursor.left, depth + 1)
-        yield from _denoted_roots(cursor.right, depth + 1)
+        yield from denoting_leaves(cursor.left, depth + 1)
+        yield from denoting_leaves(cursor.right, depth + 1)
     elif isinstance(cursor, JsConditionalExpression):
-        yield from _denoted_roots(cursor.consequent, depth + 1)
-        yield from _denoted_roots(cursor.alternate, depth + 1)
+        yield from denoting_leaves(cursor.consequent, depth + 1)
+        yield from denoting_leaves(cursor.alternate, depth + 1)
     elif isinstance(cursor, JsSequenceExpression):
         if cursor.expressions:
-            yield from _denoted_roots(cursor.expressions[-1], depth + 1)
+            yield from denoting_leaves(cursor.expressions[-1], depth + 1)
     elif isinstance(cursor, JsAssignmentExpression):
-        yield from _denoted_roots(cursor.right, depth + 1)
+        yield from denoting_leaves(cursor.right, depth + 1)
+    else:
+        yield cursor
+
+
+def _denoted_roots(node: Node | None) -> Iterator[JsIdentifier]:
+    """
+    Every name *node* may denote: the identifiers among its `denoting_leaves`.
+    """
+    for leaf in denoting_leaves(node):
+        if isinstance(leaf, JsIdentifier):
+            yield leaf
+
+
+def _member_chain_foot(node: JsMemberExpression) -> Node | None:
+    """
+    The node at the foot of the member-access chain *node*, looking through parentheses.
+    """
+    cursor: Node | None = node
+    while isinstance(cursor, JsMemberExpression):
+        cursor = strip_parens(cursor.object)
+    return cursor
 
 
 def _member_chain_root(node: Node | None) -> JsIdentifier | None:
@@ -847,6 +910,5 @@ def _member_chain_root(node: Node | None) -> JsIdentifier | None:
     cursor = strip_parens(node)
     if not isinstance(cursor, JsMemberExpression):
         return None
-    while isinstance(cursor, JsMemberExpression):
-        cursor = strip_parens(cursor.object)
-    return cursor if isinstance(cursor, JsIdentifier) else None
+    foot = _member_chain_foot(cursor)
+    return foot if isinstance(foot, JsIdentifier) else None

@@ -56,7 +56,6 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dom
 from refinery.lib.scripts.js.analysis.intrinsics import (
     GLOBAL_OBJECT,
     INHERITED_CHAIN_ROOTS,
-    KEYED_WRITE_ROOTS,
     PROTOTYPE_OWNERS,
     PURE_GLOBAL_FUNCTIONS,
     PURE_INTRINSIC_METHODS,
@@ -943,7 +942,7 @@ class EffectModel:
         if intrinsic_writes is None:
             intrinsic_writes = build_intrinsic_writes(model)
         self.intrinsic_writes = intrinsic_writes
-        self._globals_written, self._global_keys_written = intrinsic_writes
+        self._globals_written = intrinsic_writes.names
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
@@ -2173,10 +2172,7 @@ class EffectModel:
         `refinery.lib.scripts.js.analysis.intrinsics.KEYED_WRITE_ROOTS`, which the scan records
         nothing about at all.
         """
-        if name not in KEYED_WRITE_ROOTS:
-            return True
-        keys = self._global_keys_written.get(name, frozenset())
-        return keys is None or key in keys
+        return self.intrinsic_writes.key_written(name, key)
 
     def _prototypes_intact(self, owner: str, roots: frozenset[str], region: list[Node] | None = None) -> bool:
         """

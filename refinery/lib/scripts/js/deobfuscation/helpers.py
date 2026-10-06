@@ -23,6 +23,7 @@ from typing import (
     Callable,
     Collection,
     Generic,
+    Iterable,
     Iterator,
     NamedTuple,
     Sequence,
@@ -55,6 +56,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
+from refinery.lib.scripts.js.analysis.intrinsics import ESCAPE_WATCHED_ROOTS
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
@@ -65,6 +67,7 @@ from refinery.lib.scripts.js.analysis.model import (
     build_semantic_model,
     is_invocation_target,
     is_use_position,
+    pattern_identifiers,
     reference_role,
     tolerates_unresolvable,
     walk_receiver_scope,
@@ -79,6 +82,7 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsBreakStatement,
     JsCallExpression,
+    JsCatchClause,
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
@@ -2754,6 +2758,80 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
             if any(id(ref) not in inside for ref in model.dynamic_references(binding)):
                 return False
     return True
+
+
+def lands_in_binding(node: Node) -> bool:
+    """
+    Whether the value at *node* is what a binding receives: the initializer of a declarator, or the
+    right side of an assignment to a name or a pattern. The value is followed outward through the
+    forms `refinery.lib.scripts.js.analysis.intrinsics.denoting_leaves` looks through, and through
+    the object of a member access, whose chain that walk attributes to its foot: in
+    `var P = (0, s.v).prototype`, the value at `s.v` lands in `P`.
+    """
+    cursor = node
+    while (parent := cursor.parent) is not None:
+        if isinstance(parent, JsMemberExpression):
+            if parent.object is not cursor:
+                return False
+        elif isinstance(parent, JsConditionalExpression):
+            if parent.test is cursor:
+                return False
+        elif isinstance(parent, JsSequenceExpression):
+            if not parent.expressions or parent.expressions[-1] is not cursor:
+                return False
+        elif isinstance(parent, JsVariableDeclarator):
+            return parent.init is cursor
+        elif isinstance(parent, JsAssignmentExpression):
+            if parent.right is not cursor:
+                return False
+            if not isinstance(strip_parens(parent.left), JsMemberExpression):
+                return True
+        elif not isinstance(parent, (JsParenthesizedExpression, JsLogicalExpression)):
+            return False
+        cursor = parent
+    return False
+
+
+def declares_a_watched_name(roots: Iterable[Node]) -> bool:
+    """
+    Whether code under *roots* declares or assigns a name in
+    `refinery.lib.scripts.js.analysis.intrinsics.ESCAPE_WATCHED_ROOTS`. The scan behind
+    `refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites` records every binding of every
+    scope by name, the one an assignment to an undeclared name creates among them, so code doing
+    either changes what a rebuilt scan says of the name. A name of the global object is not one: a
+    local of that name only takes a reading of the global object away.
+    """
+    for root in roots:
+        for node in root.walk():
+            if isinstance(node, JsIdentifier):
+                if (
+                    node.name in ESCAPE_WATCHED_ROOTS
+                    and is_use_position(node)
+                    and reference_role(node) is not Role.READ
+                ):
+                    return True
+            elif any(name.name in ESCAPE_WATCHED_ROOTS for name in _declared_identifiers(node)):
+                return True
+    return False
+
+
+def _declared_identifiers(node: Node) -> Iterator[JsIdentifier]:
+    """
+    The identifiers the construct *node* itself declares: the targets of a declarator, the own name
+    and the parameters of a function, the own name of a class, and the parameter of a catch clause.
+    """
+    if isinstance(node, JsVariableDeclarator):
+        yield from pattern_identifiers(node.id)
+    elif isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        if not isinstance(node, JsArrowFunctionExpression) and node.id is not None:
+            yield node.id
+        for param in node.params:
+            yield from pattern_identifiers(param)
+    elif isinstance(node, (JsClassDeclaration, JsClassExpression)):
+        if node.id is not None:
+            yield node.id
+    elif isinstance(node, JsCatchClause):
+        yield from pattern_identifiers(node.param)
 
 
 class BodyProcessingTransformer(Transformer):
