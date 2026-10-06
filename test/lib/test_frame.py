@@ -70,6 +70,10 @@ def _read_frames(stream) -> list[Chunk]:
     return chunks
 
 
+def _unpacked(stream) -> Chunk | None:
+    return FrameUnpacker(stream).next_chunk
+
+
 class _Trickle(io.RawIOBase):
     def __init__(self, data: bytes):
         self.data = memoryview(data)
@@ -544,6 +548,11 @@ class TestFraming(TestBase):
         with self.assertRaises(UnicodeEncodeError):
             ['\udc80'] | nop()
 
+    def test_framed_input_in_a_memoryview(self):
+        from refinery import nop
+        framed = generate_frame_header(1) + Chunk(B'A', path=[0], view=[True]).pack()
+        self.assertEqual(memoryview(framed) | nop() | [bytes], [B'A'])
+
     def test_bytes_input_is_copied_once(self):
         from refinery import nop
         data = bytes(0x1000000)
@@ -673,6 +682,57 @@ class TestFrameStream(TestBase):
             with open(path, 'rb') as stream:
                 peak = _peak_memory(lambda: FrameUnpacker(stream).next_chunk)
         self.assertLess(peak, size * 1.2)
+
+    def test_input_from_a_compressed_file_is_decompressed_once(self):
+        import gzip
+        import os
+        import tempfile
+
+        class CountingFile(io.FileIO):
+            total = 0
+
+            def read(self, size: int | None = -1, /) -> bytes:
+                data = super().read(size)
+                self.total += len(data)
+                return data
+
+        data = bytes(range(256)) * 0x1000
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'input.gz')
+            with gzip.open(path, 'wb') as stream:
+                stream.write(data)
+            with CountingFile(path) as file, gzip.GzipFile(fileobj=file) as stream:
+                self.assertEqual(_unpacked(stream), data)
+                self.assertEqual(file.total, os.path.getsize(path))
+
+    def test_input_from_a_damaged_compressed_file_is_not_cut_short(self):
+        import gzip
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'input.gz')
+            with gzip.open(path, 'wb') as stream:
+                stream.write(bytes(range(256)) * 0x1000)
+            with open(path, 'ab') as stream:
+                stream.write(B'\n')
+            with gzip.open(path) as stream:
+                with self.assertRaises(gzip.BadGzipFile):
+                    _unpacked(stream)
+
+    def test_input_that_arrives_in_tiny_pieces_is_read_about_as_fast_as_it_arrives(self):
+        import time
+        data = bytes(range(256)) * 0x1000
+        piece = bytearray(8)
+        trickle = _Trickle(data)
+        start = time.perf_counter()
+        while trickle.readinto(piece):
+            pass
+        arrival = time.perf_counter() - start
+        start = time.perf_counter()
+        chunk = _unpacked(_Trickle(data))
+        reading = time.perf_counter() - start
+        self.assertLess(reading, arrival * 4)
+        self.assertEqual(chunk, data)
 
     def test_input_from_a_pipe_is_read_completely(self):
         import os

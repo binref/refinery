@@ -518,6 +518,7 @@ class Chunk(bytearray):
 
 _INLINE = 0x4000
 _READ = 0x10000
+_UNSIZED_READ = 0x100000
 _BIN_WIDTH = {0xC4: 1, 0xC5: 2, 0xC6: 4}
 
 
@@ -553,13 +554,13 @@ def _bin_header(size: int) -> bytes:
     raise ValueError(F'A chunk of size {size} is too large to be serialized.')
 
 
-def _read_exactly(stream: BinaryIO, size: int) -> bytes | None:
+def _read_exactly(stream: BinaryIO, size: int) -> bytearray:
     """
     Reads the given number of bytes from the stream, or fewer if it ends.
     """
-    data = stream.read(size)
-    while data and len(data) < size and (more := stream.read(size - len(data))):
-        data += more
+    data = bytearray()
+    while (rest := size - len(data)) > 0 and (more := stream.read(rest)):
+        data.extend(more)
     return data
 
 
@@ -605,14 +606,18 @@ The reference count of a chunk that only a local variable of the calling functio
 def _remaining_size(stream: BinaryIO) -> int | None:
     """
     Returns the number of bytes that remain in the stream if it can be determined reliably. This is
-    only the case for regular files and for streams in memory; pipes claim to be seekable on some
-    platforms.
+    only the case for regular files and for streams in memory: Pipes claim to be seekable on some
+    platforms, and a stream that decodes a file, like a decompressing one, has to decode all of it
+    to seek to its end.
     """
     try:
         if not stream.seekable():
             return None
-        if not hasattr(stream, 'getbuffer') and not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-            return None
+        if not hasattr(stream, 'getbuffer'):
+            if not isinstance(getattr(stream, 'raw', stream), io.FileIO):
+                return None
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
         position = stream.tell()
         end = stream.seek(0, io.SEEK_END)
         stream.seek(position)
@@ -621,11 +626,12 @@ def _remaining_size(stream: BinaryIO) -> int | None:
     return max(end - position, 0)
 
 
-def _read_unframed(stream: BinaryIO, head: bytes) -> Chunk:
+def _read_unframed(stream: BinaryIO, head: buf) -> Chunk:
     """
     Reads the rest of an unframed input stream into a chunk that begins with the given head. When
     the stream can tell how much remains, the data is read directly into a chunk of that size;
-    otherwise, the chunk grows with every piece that is read.
+    otherwise, the chunk grows with every piece that is read. A stream that can read into a buffer
+    reads every piece into the same one.
     """
     if (size := _remaining_size(stream)) is not None:
         start = len(head)
@@ -634,12 +640,19 @@ def _read_unframed(stream: BinaryIO, head: bytes) -> Chunk:
             view[:start] = head
             done = start + _readinto(stream, view[start:])
         del chunk[done:]
+        piece_size = _READ
     else:
         chunk = Chunk(head)
-    read = getattr(stream, 'read1', stream.read)
-    while piece := read(0x100000):
-        chunk.extend(piece)
-        del piece
+        piece_size = _UNSIZED_READ
+    if (readinto := getattr(stream, 'readinto', None)) is None:
+        read = getattr(stream, 'read1', stream.read)
+        while piece := read(piece_size):
+            chunk.extend(piece)
+            del piece
+        return chunk
+    with memoryview(bytearray(piece_size)) as buffer:
+        while count := readinto(buffer):
+            chunk.extend(buffer[:count])
     return chunk
 
 
@@ -716,7 +729,7 @@ def _read_stream(stream: BinaryIO | None) -> Iterator[buf]:
     elif not (depth := stream.read(1)):
         raise ValueError('The frame stream ended after the frame magic.')
     else:
-        yield head + depth
+        yield generate_frame_header(depth[0])
         yield from _read_chunks(stream)
 
 
