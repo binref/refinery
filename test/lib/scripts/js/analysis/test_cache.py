@@ -440,6 +440,97 @@ class TestPinnedModels(TestBase):
             self.assertTrue(all(model.scope_of(node) is None for node in made))
             self.assertFalse(any(model.knows(node) for node in made))
 
+    def test_a_renewal_answers_about_the_edited_tree(self):
+        script = self._script('var a = 1; var b = 2;')
+        cache = ModelCache(script)
+        with cache.pinned():
+            self.assertIn('a', cache.model.root_scope.bindings)
+            _remove_from_parent(self._first_declaration(script))
+            cache.renew()
+            self.assertNotIn('a', cache.model.root_scope.bindings)
+
+    def test_a_renewal_builds_the_models_it_names_and_no_others(self):
+        script = self._script('var a = 1; function f(){ var x = 1; return x; } f();')
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.warm()
+            _remove_from_parent(self._first_declaration(script))
+            cache.renew('_model', '_intrinsic_writes')
+            self.assertIsNotNone(cache._model)
+            self.assertIsNotNone(cache._intrinsic_writes)
+            self.assertIsNone(cache._control_flow)
+            self.assertIsNone(cache._effects)
+            self.assertIsNone(cache._dominance)
+
+    def test_a_renewal_over_the_tree_the_pin_was_entered_on_keeps_the_held_models(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        with cache.pinned():
+            held = cache.model
+            cache.renew()
+            self.assertIs(cache.model, held)
+
+    def test_a_renewal_after_an_announced_change_builds_the_models_again(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        with cache.pinned():
+            held = cache.model
+            cache.invalidate()
+            cache.renew()
+            self.assertIsNot(cache.model, held)
+
+    def test_a_renewal_outside_a_pin_builds_nothing(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        cache.renew()
+        self.assertIsNone(cache._model)
+
+    def test_a_renewal_under_a_nested_pin_is_refused(self):
+        cache = ModelCache(self._script('var a = 1; var b = 2;'))
+        with cache.pinned():
+            held = cache.model
+            with cache.pinned():
+                with self.assertRaises(RuntimeError):
+                    cache.renew()
+            self.assertIs(cache.model, held)
+
+    def test_a_model_read_after_a_renewal_and_before_the_next_edit_is_not_refused(self):
+        script = self._script('var a = 1; var b = 2; function f(){ return b; } f();')
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.warm()
+            _remove_from_parent(self._first_declaration(script))
+            cache.renew('_model')
+            cache.control_flow
+
+    def test_a_model_the_renewal_did_not_name_and_read_after_the_next_edit_is_refused(self):
+        script = self._script('var a = 1; var b = 2; function f(){ return b; } f();')
+        cache = ModelCache(script)
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                cache.warm()
+                _remove_from_parent(self._first_declaration(script))
+                cache.renew('_model')
+                _remove_from_parent(self._first_declaration(script))
+                cache.control_flow
+
+    def test_a_late_build_before_a_renewal_is_still_refused(self):
+        script = self._script('var a = 1; var b = 2; function f(){ return b; } f();')
+        cache = ModelCache(script)
+        with self.assertRaises(RuntimeError):
+            with cache.pinned():
+                cache.model
+                _remove_from_parent(self._first_declaration(script))
+                cache.control_flow
+                cache.renew()
+
+    def test_a_renewal_over_the_final_tree_keeps_its_models_past_the_block(self):
+        script = self._script('var a = 1; var b = 2;')
+        cache = ModelCache(script)
+        with cache.pinned():
+            cache.model
+            _remove_from_parent(self._first_declaration(script))
+            cache.renew()
+            renewed = cache.model
+        self.assertIs(cache.model, renewed)
+
 
 class TestSimplificationDoesNotRebuildPerFold(TestBase):
     """

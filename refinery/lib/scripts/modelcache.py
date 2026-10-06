@@ -190,6 +190,33 @@ class ModelCacheBase:
         for slot in (*self._warm_slots(), *also):
             getattr(self, slot[1:])
 
+    def renew(self, *slots: str) -> None:
+        """
+        Inside the outermost pin, hold the models in *slots* of the current tree, by default the
+        warm set, as leaving the pin and entering it again would: where the block changed the tree
+        since the pin was entered or last renewed, every held model is dropped first. A pass inside
+        a walk it cannot leave calls this after an edit that may have made a held answer more
+        permissive than a rebuilt one, naming the models it reads. The pin's entry version moves
+        here, so a model the pass did not name and first reads after a later edit is still refused
+        on exit, and so is a late build noted before the renewal.
+
+        Outside a pin nothing is held and nothing happens. Under a nested pin it raises: the outer
+        holder reads the models it would replace.
+        """
+        if not self._pins:
+            return
+        if self._pins > 1:
+            raise RuntimeError('a nested pin cannot renew the models an outer pin holds')
+        version = tree_version(self.root)
+        if self._invalidation_requested or version != self._pin_entry:
+            for slot in self._SLOTS:
+                setattr(self, slot, None)
+            self._version = version
+            self._pin_entry = version
+            self._invalidation_requested = False
+        for slot in slots or self._warm_slots():
+            getattr(self, slot[1:])
+
     def _lazy(self, slot: str, build: Callable[[], _T]) -> _T:
         """
         The value memoized in *slot*, built through *build* on first access after construction or
