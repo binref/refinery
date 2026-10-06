@@ -1990,6 +1990,104 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
         )
 
 
+#: A function flattened into a generator whose `with` statement reads its scope object, and whose
+#: code reads `label` bare, as the obfuscator leaves every name the function does not declare.
+A_FLATTENED_READER_OF_A_BARE_NAME = inspect.cleandoc(
+    """
+    function reader() {
+      function* gen(a, b, scope = {}, args) {
+        while (a + b !== 100) {
+          with (scope) {
+            switch (a + b) {
+              case 10:
+                return done = true, label;
+            }
+          }
+        }
+      }
+      var done;
+      var result = gen(5, 5)["next"]()["value"];
+      if (done) { return result; }
+    }
+    """
+)
+
+#: A function flattened the same way that puts `label` on every object through a copy of
+#: `Object.prototype` it keeps in its scope object, as `var proto = Object.prototype` becomes once the
+#: function's locals are slots of that object.
+A_FLATTENED_WRITER_OF_THAT_NAME_ON_EVERY_OBJECT = inspect.cleandoc(
+    """
+    function writer() {
+      function* gen(a, b, scope = {}, args) {
+        while (a + b !== 100) {
+          with (scope) {
+            switch (a + b) {
+              case 10:
+                scope.proto = Object.prototype;
+                scope.proto.label = "the label every object inherits";
+                return done = true, 0;
+            }
+          }
+        }
+      }
+      var done;
+      var result = gen(5, 5)["next"]()["value"];
+      if (done) { return result; }
+    }
+    """
+)
+
+
+#: The reader and then the writer, called in the other order, mapped to what Node prints: the scope
+#: object finds `label` on its prototype, which the writer has put it on by the time the reader runs,
+#: before the `with` statement would look past the object to the global.
+A_NAME_PUT_ON_EVERY_OBJECT_BY_A_LATER_FLATTENED_WRITER = {
+    '\n'.join((
+        'var label = "the global label";',
+        A_FLATTENED_READER_OF_A_BARE_NAME,
+        A_FLATTENED_WRITER_OF_THAT_NAME_ON_EVERY_OBJECT,
+        'writer();',
+        'console.log(reader());',
+    )): 'the label every object inherits\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameAFlattenedWriterPutsOnEveryObjectStaysInheritedInTheReader(TestBase):
+    """
+    Generator unflattening removes the reader's `with` statement only where no name its code reads
+    bare is one a plain object may inherit, since inside the statement the scope object finds such a
+    name before the global (`JsGeneratorCFFUnflattening._provably_absent`). That answer comes from
+    the writes the effect model sees to `Object.prototype`, and the writer's is made through a copy
+    of the prototype kept in its scope object. The write scan follows a value only while a name holds
+    it, and it trusts `Object` wherever it escapes (`ESCAPE_RECORDED_ROOTS` leaves it out), so it
+    sees the write only once the writer is recovered and the copy has become a local. A reader the
+    pass reaches first is recovered on the answer from before that, its `label` turns into the
+    global, and the program prints `the global label`. A correct implementation declines the reader
+    while a copy of `Object.prototype` the scan cannot follow may write `label`; the root cause is
+    the one `TestAPrototypeHandedToAWriterIsStillWritten` pins for a prototype handed to a call.
+    """
+
+    @wontfix(
+        'the obfuscator flattens the top level as well: a global the program declares becomes a slot '
+        'the reader reads under a generated key, and a global it leaves bare is read inside the '
+        'machine wrapping the whole program, whose recovery shows the write before the reader is '
+        'decided; every obfuscation of this program by 2.0.0, 2.0.1 and 2.1.3 deobfuscates to one '
+        'that prints what its input prints'
+    )
+    def test_a_reader_placed_before_the_writer_reads_the_inherited_name(self):
+        """
+        Node prints `the label every object inherits` for the program of
+        `A_NAME_PUT_ON_EVERY_OBJECT_BY_A_LATER_FLATTENED_WRITER`. Its deobfuscation recovers the
+        reader and prints `the global label`.
+        """
+        rows = A_NAME_PUT_ON_EVERY_OBJECT_BY_A_LATER_FLATTENED_WRITER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 #: Programs that disable one of the mechanisms a prototype spelling goes through by writing it
 #: through another such spelling, mapped to what Node prints for each. The first replaces the
 #: `constructor` every plain object inherits, and the second replaces the `__proto__` accessor with
