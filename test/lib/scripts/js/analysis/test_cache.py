@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import inspect
 
 from contextlib import contextmanager
 
@@ -8,6 +9,7 @@ from test import TestBase, a_property_of_the_batch_itself, a_property_of_the_pin
 
 from test.lib.scripts.js.analysis.differential import deobfuscate_source
 from test.lib.scripts.js.analysis.jsgen import generate
+from test.lib.scripts.js.deobfuscation import test_cff_statemachine as generator_fixtures
 
 import refinery.lib.scripts.js.analysis.cache as cache_module
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, canonical, set_body, tree_version
@@ -16,6 +18,7 @@ from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
+from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
@@ -819,11 +822,100 @@ class TestUnusedCodeRemovalHoldsTheModelsForASweep(TestBase):
         self.assertEqual(held, self._released(source)[1])
 
 
+class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
+    """
+    Generator unflattening recovers one machine at a time and holds the models of the tree it
+    started on, renewing them only where a recovery can show a write they do not record. Released,
+    each recovery moves the tree under the next read, and the models are rebuilt once per machine.
+    """
+
+    _MACHINE = inspect.cleandoc(
+        """
+        function fINDEX() {
+          function* gen(a, b, scope = SCOPE, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    STATE
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    @classmethod
+    def _machines(
+        cls,
+        count: int,
+        state: str = 'scope.v = INDEX; return done = true, scope.v;',
+        scope: str = '{}',
+    ) -> str:
+        """
+        A script with *count* functions, each holding one machine whose one state runs *state*.
+        """
+        return '\n'.join(
+            cls._MACHINE.replace('SCOPE', scope).replace('STATE', state).replace('INDEX', str(index))
+            for index in range(count)
+        )
+
+    @classmethod
+    def _keeping_the_global_object_in_a_namespace(cls, count: int) -> str:
+        return cls._machines(
+            count,
+            'scope.NS.g = globalThis; return done = true, scope.NS.g === globalThis;',
+            '{NS: {}}',
+        )
+
+    @staticmethod
+    def _held(source: str) -> tuple[int, str]:
+        return _transform_root_builds(JsGeneratorCFFUnflattening, source)
+
+    @staticmethod
+    def _released(source: str) -> tuple[int, str]:
+        original = ModelCache.pinned
+        ModelCache.pinned = _no_pin
+        try:
+            return _transform_root_builds(JsGeneratorCFFUnflattening, source)
+        finally:
+            ModelCache.pinned = original
+
+    @a_property_of_the_pin_itself
+    def test_the_models_are_built_as_often_for_sixteen_machines_as_for_two(self):
+        self.assertEqual(
+            self._held(self._machines(2))[0],
+            self._held(self._machines(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_a_namespace_member_holding_the_global_object_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._keeping_the_global_object_in_a_namespace(2))[0],
+            self._held(self._keeping_the_global_object_in_a_namespace(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_released_models_are_built_more_often_for_sixteen_machines_than_for_two(self):
+        self.assertLess(self._released(self._machines(2))[0], self._released(self._machines(16))[0])
+
+    def test_holding_the_models_does_not_change_the_result(self):
+        for source in (self._machines(8), self._keeping_the_global_object_in_a_namespace(8)):
+            held = self._held(source)[1]
+            self.assertNotIn('function*', held)
+            self.assertEqual(held, self._released(source)[1])
+
+
 #: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
 #: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
 #: fold, a string respelling, a call wrapper, a pruned branch whose kept test assigns what a later
-#: test reads, a dead store, a discarded completion and a global only one function uses — beside a
-#: few plain shapes and the generated corpus, which exercise the rest of the pipeline.
+#: test reads, a dead store, a discarded completion, a global only one function uses, and two
+#: machines whose recoveries renew the models generator unflattening holds — beside a few plain
+#: shapes and the generated corpus, which exercise the rest of the pipeline.
 _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'var q = 1; var t = (q + 1) * 2; f(t);',
     'var x = 5; var t = delete x; g(); f(t);',
@@ -842,6 +934,8 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     'function f(a) { var x = [a]; x = a.c; return x; } SINK(f);',
     '(function () { function g() { h(); return 0; } g(); })();',
     'var t; function f(a) { t = a.b; SINK(t); } f(SRC);',
+    generator_fixtures.TestGeneratorCFFUnflattening.PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF,
+    generator_fixtures.TestGeneratorCFFUnflattening.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF,
 )
 
 
@@ -905,28 +999,39 @@ class TestAKeptModelDescribesTheProgramItOutlivedThePinOn(TestBase):
     A pin's exit keeps the models when neither change channel reported an edit. `canonical` reads
     the program the tree spells and answers the same question independently of both channels: a
     model kept past a block whose program changed is stale whatever the counters said, and the
-    program is the models' only input beside the run's fixed options.
+    program is the models' only input beside the run's fixed options. A renewal holds the models of
+    the program it renews on, which is then the one the exit compares with.
     """
 
     def _models_kept_past_a_changed_program(self, source: str) -> int:
         kept_stale = 0
+        programs: dict[ModelCache, object] = {}
         original = ModelCache.pinned
+        original_renew = ModelCache.renew
 
         @contextmanager
         def audited(self: ModelCache):
             nonlocal kept_stale
             outermost = not self._pins
-            program = canonical(self.root) if outermost else None
+            if outermost:
+                programs[self] = canonical(self.root)
             with original(self) as pinned:
                 yield pinned
-            if outermost and self._model is not None and canonical(self.root) != program:
+            if outermost and self._model is not None and canonical(self.root) != programs.pop(self):
                 kept_stale += 1
 
+        def renewed(self: ModelCache, *slots: str):
+            original_renew(self, *slots)
+            if self._pins and self in programs:
+                programs[self] = canonical(self.root)
+
         ModelCache.pinned = audited
+        ModelCache.renew = renewed
         try:
             deobfuscate_source(source)
         finally:
             ModelCache.pinned = original
+            ModelCache.renew = original_renew
         return kept_stale
 
     def test_no_model_in_the_corpus_is_kept_past_a_program_change(self):
@@ -943,7 +1048,8 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
     entered under a node the pass creates would have that model place it somewhere it was never
     built for. Every such answer the corpus asks a held model for after the tree moved is compared
     with the answer the same model gives once the parents of the pin's entry are put back: the held
-    answer is either unknown or the same place.
+    answer is either unknown or the same place. A renewal is an entry of its own, whose parents the
+    answers after it are compared with.
     """
 
     def _held_answers(self, source: str) -> tuple[int, list[str]]:
@@ -951,6 +1057,7 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
         compared = 0
         misplaced: list[str] = []
         original_pinned = ModelCache.pinned
+        original_renew = ModelCache.renew
         original_locate = ElementLocator.locate
 
         @contextmanager
@@ -965,6 +1072,12 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
             finally:
                 if outermost:
                     entries.pop()
+
+        def renewed(self: ModelCache, *slots: str):
+            original_renew(self, *slots)
+            if self._pins and entries and entries[-1][0] is self:
+                parents = {id(node): (node, node.parent) for node in self.root.walk()}
+                entries[-1] = (self, tree_version(self.root), parents)
 
         def audited(self: ElementLocator, element: Node):
             nonlocal compared
@@ -992,11 +1105,13 @@ class TestAHeldModelPlacesEveryNodeWhereItWasBuilt(TestBase):
             return answer
 
         ModelCache.pinned = recorded
+        ModelCache.renew = renewed
         ElementLocator.locate = audited
         try:
             deobfuscate_source(source)
         finally:
             ModelCache.pinned = original_pinned
+            ModelCache.renew = original_renew
             ElementLocator.locate = original_locate
         return compared, misplaced
 

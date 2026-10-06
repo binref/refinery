@@ -17,11 +17,13 @@ import operator
 import re
 
 from collections import Counter
+from contextlib import contextmanager
 from enum import Enum, auto
 from typing import (
     TYPE_CHECKING,
     Callable,
     Collection,
+    Generator,
     Generic,
     Iterable,
     Iterator,
@@ -2950,6 +2952,85 @@ class BatchedTransformer(Transformer):
     """
 
     batching: bool = True
+
+
+class PinnedTransformer(Transformer):
+    """
+    Intermediate base for transforms that hold the models of the tree an invocation entered on
+    across their own edits, through `refinery.lib.scripts.modelcache.ModelCacheBase.pinned`, and
+    renew them in place where an edit may have made a held answer more permissive than a rebuilt
+    one. It is the pin's regime for a pass whose walk it cannot leave and enter again: a renewal
+    (`refinery.lib.scripts.modelcache.ModelCacheBase.renew`) holds the models of the current tree,
+    as leaving the pin and entering it again would, and the walk goes on where it was.
+
+    A subclass owes the regime four obligations:
+
+    - It names the models it reads in `reads`, empty for the cache's warm set, and reads no other.
+      It holds them through `holding_models` and takes them from `held_models`, whose first call it
+      makes at its first decision, before its first edit.
+    - It renews (`renew_models`) before a decision that reads code the invocation made or edited
+      since the last renewal: a held model knows that code as it was, or not at all.
+    - It renews after an edit that puts a value a write through which the models record only once
+      a binding holds it
+      (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.follows_only_through_bindings`)
+      where a binding holds it (`lands_in_binding`), or that declares or assigns a name the
+      intrinsic-write scan watches (`declares_a_watched_name`): rebuilt models record a write
+      through it, and the held ones do not.
+    - A per-pass docstring of its own shows that every other edit leaves the answers it reads no
+      more permissive than rebuilt ones.
+
+    What the pass records of its edits to decide the second obligation is forgotten at every
+    renewal, through `_forget_edits`. The `--no-pin` differential (`test/conftest.py`) runs every
+    such pass with the pin neutralized, where every read is answered by models of the current tree.
+    """
+
+    reads: tuple[str, ...] = ()
+
+    def __init__(self):
+        super().__init__()
+        self._held_cache: ModelCache | None = None
+        self._models_built = False
+
+    @contextmanager
+    def holding_models(self, root: JsScript) -> Generator[None, None, None]:
+        """
+        Hold the models of *root* for the block, which a subclass wraps around its walk.
+        """
+        models = model_cache(self, root)
+        with models.pinned():
+            self._held_cache = models
+            self._models_built = False
+            try:
+                yield
+            finally:
+                self._held_cache = None
+
+    def held_models(self) -> ModelCache:
+        """
+        The models the invocation holds. The first call builds the models in `reads` over the
+        tree as it stands, which is the tree the invocation entered on.
+        """
+        if not self._models_built:
+            self.renew_models()
+        models = self._held_cache
+        assert models is not None, 'models are held only inside holding_models'
+        return models
+
+    def renew_models(self) -> None:
+        """
+        Hold the models in `reads` of the current tree, and forget the edits recorded since the
+        last renewal.
+        """
+        models = self._held_cache
+        assert models is not None, 'models are held only inside holding_models'
+        models.renew(*self.reads)
+        self._models_built = True
+        self._forget_edits()
+
+    def _forget_edits(self) -> None:
+        """
+        Forget what the pass recorded of its edits since the last renewal.
+        """
 
 
 class BatchedScopeTransformer(BatchedTransformer, ScopeProcessingTransformer, Generic[_Plan]):

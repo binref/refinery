@@ -4531,6 +4531,112 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF = inspect.cleandoc(
+        """
+        function writer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.P = Object.prototype;
+                    scope.P.p = -10;
+                    return done = true, "written";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        function reader() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.p + 20:
+                    return done = true, "the inherited value";
+                  case 10:
+                    [scope.NS.q] = [15];
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.q + 20:
+                    return done = true, "the routed value";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(writer(), reader());
+        """
+    )
+
+    RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF = inspect.cleandoc(
+        """
+        function both() {
+          function* first(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.F = function () { var X = 1; return X; };
+                    a = 50, b = 50;
+                    break;
+                }
+              }
+            }
+          }
+          var done1;
+          var result1 = first(5, 5)["next"]()["value"];
+          if (done1) { return result1; }
+          function* second(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.X = 2;
+                    return done2 = true, scope.X;
+                }
+              }
+            }
+          }
+          var done2;
+          var result2 = second(5, 5)["next"]()["value"];
+          if (done2) { return result2; }
+        }
+        console.log(both());
+        """
+    )
+
+    def test_generator_cff_name_a_recovered_function_declares_for_itself_does_not_stop_the_next_machine(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function both() {
+                  var F;
+                  F = function() {
+                    var X = 1;
+                    return X;
+                  };
+                  var X;
+                  X = 2;
+                  return X;
+                }
+                console.log(both());
+                """
+            ),
+            self._run_transformer(
+                self.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
     def test_generator_cff_condition_of_branches_to_one_block_in_a_loop_runs_each_turn(self):
         self.assertEqual(
             inspect.cleandoc(
@@ -4719,6 +4825,8 @@ ENTRY_POINTS = {
     'CONDITION_OF_BRANCHES_TO_ONE_BLOCK_IN_A_LOOP_CFF': 'console.log(outer([1, 0, 1, 1]));',
     'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
     'GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
+    'PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF': '',
+    'RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF': '',
 }
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
