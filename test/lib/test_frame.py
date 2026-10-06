@@ -548,6 +548,30 @@ class TestFraming(TestBase):
         with self.assertRaises(UnicodeEncodeError):
             ['\udc80'] | nop()
 
+    def test_list_input_whose_metadata_cannot_be_serialized_is_refused_when_piped(self):
+        from refinery import nop
+        chunk = Chunk(B'data')
+        chunk.meta['x'] = object()
+        with self.assertRaises(TypeError):
+            [chunk] | nop()
+
+    def test_metadata_changed_in_place_by_a_unit_reaches_no_other_chunk(self):
+        from refinery import Unit
+
+        class twice(Unit):
+            def process(self, data):
+                data.meta['x'] = [0]
+                yield data
+                yield data
+
+        class appender(Unit):
+            def process(self, data):
+                data.meta['x'].append(1)
+                return data
+
+        outputs = B'' | _configured(twice(), 1) | appender() | [...]
+        self.assertEqual([chunk.meta['x'] for chunk in outputs], [[0, 1], [0, 1]])
+
     def test_framed_input_in_a_memoryview(self):
         from refinery import nop
         framed = generate_frame_header(1) + Chunk(B'A', path=[0], view=[True]).pack()
@@ -603,6 +627,19 @@ class TestFraming(TestBase):
         unit = B'' | emit(B'header\nbody one', B'body two')
         self.assertEqual(unit.readline(), B'header\n')
         self.assertEqual(unit | nop() | bytes, B'body one\nbody two')
+
+    def test_unit_handles_errors_in_passing_on_its_own_output(self):
+        from refinery import Unit, nop
+        from refinery.units import LogLevel
+
+        class unserializable(Unit):
+            def process(self, data):
+                data.meta['x'] = object()
+                return data
+
+        producer = _configured(unserializable(), 1)
+        producer.log_level = LogLevel.WARNING
+        self.assertEqual(B'' | producer | nop() | [], [])
 
     def test_partial_read_of_a_unit_does_not_copy_the_rest(self):
         from refinery import nop

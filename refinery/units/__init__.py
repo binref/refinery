@@ -1649,30 +1649,28 @@ class Unit(UnitBase, abstract=True):
                 return item
         raise StopIteration
 
-    @overload
-    def _stream(self, serialize: bool, terminal: bool = False) -> Generator[bytes | bytearray]:
-        ...
-
-    @overload
-    def _stream(self, serialize: None = None, terminal: bool = False) -> Generator[bytes | bytearray | Placement]:
-        ...
-
-    def _stream(self, serialize: bool | None = None, terminal: bool = False):
+    def _stream(self, serialize: bool | None = None, terminal: bool = False) -> Generator[bytes | bytearray]:
         """
         Generates the output of this unit in the order in which it is written. Framed output
-        consists of the frame header and one placement for each chunk; if `serialize` is true,
-        the placements are serialized, and if it is false, the header is omitted and only the data
-        of each chunk is generated. Unframed output consists of the chunks, with line breaks
-        between them where the command line puts them; a short chunk is joined with its line break.
-        For a terminal, the line break follows each chunk immediately, so that a line is complete
-        while the next is computed; the line break of an empty chunk follows once another chunk
-        does, so that a last empty chunk adds no empty line.
+        consists of the frame header and one chunk for each output: If `serialize` is true, the
+        chunks are serialized; if it is false, the header is omitted and only the data of each
+        chunk is generated; otherwise, each chunk is transferred to a unit in the same process.
+        Unframed output consists of the chunks, with line breaks between them where the command
+        line puts them; a short chunk is joined with its line break. For a terminal, the line
+        break follows each chunk immediately, so that a line is complete while the next is
+        computed; the line break of an empty chunk follows once another chunk does, so that a last
+        empty chunk adds no empty line.
         """
         separate = False
         owed = False
         framebreak = None
-        outbox: list[buf | Placement] = []
-        place = Placement.serialize if serialize else None
+        outbox: list[bytes | bytearray] = []
+        if serialize is None:
+            place = Placement.transfer
+        elif serialize:
+            place = Placement.serialize
+        else:
+            place = None
         while (item := self._next_output(place)) is not None:
             trailer = False
             if isinstance(item, tuple):
@@ -1682,8 +1680,7 @@ class Unit(UnitBase, abstract=True):
                 del pieces
                 continue
             if isinstance(item, Placement):
-                if serialize is not None:
-                    item = item.chunk
+                item = item.chunk
             elif isinstance(item, Chunk):
                 if framebreak is None:
                     framebreak = self._framehandler.framebreak
@@ -1872,20 +1869,13 @@ class Unit(UnitBase, abstract=True):
             plain = Chunk()
 
             def taken(t: str | buf | Chunk):
-                if isinstance(t, Chunk):
-                    return t, t._relocated(delta, 0)
                 if isinstance(t, str):
                     t = t.encode(codec)
-                return t, plain._relocated(delta, 0)
-
-            def transported(t: buf, location: tuple[list[int], list[bool], dict, bool | None]):
-                path, view, meta, fs = location
-                return Chunk(t, path, view, None, meta, fs, None, ignore_chunk_properties=True)
+                return t, (t if isinstance(t, Chunk) else plain)._moved(delta, 0)
 
             header = generate_frame_header(frame_scope)
             items = [taken(t) for t in stream]
-            stream = ChunkFeed(itertools.chain((header,), itertools.starmap(transported, items)))
-            del items
+            stream = ChunkFeed(itertools.chain((header,), itertools.starmap(Chunk._received, items)))
             if delta:
                 self.args.nesting -= delta
         elif not isstream(stream):

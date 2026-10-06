@@ -406,13 +406,15 @@ class TestLazyMetaOracle(TestBase):
             'generator': (k for k in range(3)),
             'object': object(),
             'nested big integer': [2 ** 70],
+            'tuple key': {(1, 2): 3},
+            'nested lone surrogate': ['\udc80'],
         }.items():
             with self.subTest(name):
                 chunk = Chunk(B'data', path=[0], view=[True])
                 chunk.meta['x'] = value
-                with self.assertRaises((TypeError, OverflowError)) as moved:
+                with self.assertRaises((TypeError, ValueError, OverflowError)) as moved:
                     chunk.transfer()
-                with self.assertRaises((TypeError, OverflowError)) as read:
+                with self.assertRaises((TypeError, ValueError, OverflowError)) as read:
                     serialized_hop(chunk)
                 self.assertIs(type(moved.exception), type(read.exception))
                 self.assertEqual(str(moved.exception), str(read.exception))
