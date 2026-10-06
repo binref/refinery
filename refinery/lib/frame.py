@@ -983,29 +983,37 @@ class Framed:
         Concatenates the given chunks into at most one chunk, which keeps the metadata that all of
         them share. A single chunk is passed on as it is. Otherwise, the result is a new chunk,
         because the unit that produced the pieces may still use them, and the same chunk may occur
-        more than once.
+        more than once. The metadata of each piece is taken when the piece arrives, because a unit
+        may label the same chunk again before passing it on once more.
         """
         it = iter(pieces)
-        for merged in it:
+        for first in it:
             break
         else:
             return HandOver(None)
-        copied = False
+        merged = first.copy(data=False)
         shared = True
         for piece in it:
-            if not copied:
-                merged = merged.copy()
-                copied = True
+            if first is not None:
+                merged.extend(first)
+                first = None
             if shared:
                 shared = bool(merged.intersect(piece).meta)
             merged.extend(piece)
             del piece
-        return HandOver(merged)
+        return HandOver(merged if first is None else first)
 
     def _generate_chunks(self, parent: Chunk):
+        """
+        Generates the outputs of the unit for the given input, placed where the input is and with
+        its metadata. A squeezed output is merged once the unit has produced all of its pieces, so
+        it inherits the metadata that the input had before the unit ran: The unit may have labelled
+        its input in the meantime.
+        """
         path = list(parent.path)
         view = list(parent.view)
-        meta = parent.meta
+        origin = parent.copy(data=False) if self.squeeze else parent
+        meta = origin.meta
         scope = parent.scope
 
         def inherit(chunk: Chunk):

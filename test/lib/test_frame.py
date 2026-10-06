@@ -491,11 +491,15 @@ class TestFraming(TestBase):
         self.assertEqual(B'ABC' | rex('X')[:] | [bytes], [])
         self.assertEqual([B'ABC'] | rex('X')[:] | [bytes], [])
 
-    @unittest.expectedFailure
     def test_squeezing_one_chunk_passed_on_with_different_labels_keeps_no_label(self):
         merged, = load_pipeline('emit A [| bruteforce x 1 -a AB []') | [...]
         self.assertEqual(merged, B'AA')
         self.assertNotIn('x', merged.meta.variable_names())
+
+    def test_squeezed_output_has_the_label_that_its_input_had_before_the_unit_ran(self):
+        merged, = load_pipeline('emit A [| put x P | bruteforce x 1 -a AB []') | [...]
+        self.assertEqual(merged, B'AA')
+        self.assertEqual(merged.meta['x'], B'P')
 
     def test_squeezing_a_single_output_hands_it_on_without_a_copy(self):
         from refinery import Unit
