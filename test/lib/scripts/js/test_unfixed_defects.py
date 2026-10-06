@@ -1933,7 +1933,9 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
 #: argument in each: to `Object.assign`, to `Reflect.set`, to `Reflect.deleteProperty`, and to a
 #: function the file declares itself. The last row hands over `Object` rather than its prototype,
 #: which reaches the same chain through one more member access and is a route of its own: the write
-#: is spelled inside the callee, so nothing at the call site names the property it replaces.
+#: is spelled inside the callee, so nothing at the call site names the property it replaces. One
+#: row hands the prototype the other way: a method returns it, and the caller writes it through the
+#: call's result.
 A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT = {
     'Object.assign(Object.prototype, {z: 9}); var o = {}; console.log(o.z);':
         '9\n',
@@ -1944,6 +1946,9 @@ A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT = {
         'false\n',
     'function patch(p) { p.z = 9; } patch(Object.prototype); var o = {}; console.log(o.z);':
         '9\n',
+    'var A = {f: function () { return Object.prototype; }};'
+    ' var P = A.f(); P.p = 1; var B = {q: 2}; console.log(B.p);':
+        '1\n',
     'function patch(o) { o.prototype.zz = 9; }\npatch(Object);\n'
     + evaluated_in_a_body('{a: 1}', 'v.zz'):
         '9\n',
@@ -1978,9 +1983,9 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     @unittest.expectedFailure
     def test_a_prototype_handed_to_a_writer_answers_the_read(self):
         """
-        Node prints `9`, `9`, `false`, `9`, `9`, and `tampered` before `ran`, for the six programs
-        of `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as if the
-        call it was handed to had not written it; the last folds a line-break check that the
+        Node prints `9`, `9`, `false`, `9`, `1`, `9`, and `tampered` before `ran`, for the seven
+        programs of `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as
+        if the call it was handed to had not written it; the last folds a line-break check that the
         conversion the call installed makes trip.
         """
         rows = A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT
