@@ -89,7 +89,8 @@ The following rules contradict common Python conventions. Check them explicitly:
 - Use the `temp` subdirectory of the project root for creating temporary scripts and files.
   When generating samples for testing, create a subfolder in `temp` with an appropriate name for this.
 - When making commits on my behalf, do not include a comment about AI co-authorship.
-- When asked to commit changes to git, only use one-line commit messages.
+- When asked to commit changes to git, only use one-line commit messages;
+  each commit message must fit within 140 characters.
 
 # Architecture is P0
 
