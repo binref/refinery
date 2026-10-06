@@ -204,6 +204,135 @@ class TestIDLib(TestBase):
         assert enc is not None
         self.assertEqual(text, codecs.decode(data[enc.bom:], enc.codec))
 
+    def test_text_holding_astral_plane_characters(self):
+        text = F'the sample drops {chr(0x1F4F8) * 10} in every note it writes, and nothing else.'
+        enc = idlib.guess_text_encoding(text.encode('utf8'))
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf8')
+
+    def test_short_private_use_run_at_the_end_of_a_clean_document(self):
+        note = (
+            'the analyst notes every address the sample would have contacted, and writes it down. '
+        )
+        text = note * 5000 + chr(0xE000) * 1400
+        data = text.encode('utf8')
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf8')
+        self.assertEqual(text, codecs.decode(data[enc.bom:], enc.codec))
+
+    def test_null_region_wider_than_the_window_gaps(self):
+        note = (
+            'the analyst notes every address the sample would have contacted, and writes it down. '
+        )
+        notes = (note * 5000).encode('ascii')
+        damaged = notes[:len(notes) - 0x10000] + b'\x00' * 0x10000
+        self.assertIsNone(idlib.guess_text_encoding(damaged))
+        clean = idlib.guess_text_encoding(notes)
+        assert clean is not None
+        self.assertEqual(clean.codec, 'utf8')
+
+    def test_format_gates_reject_a_binary_body_behind_the_header(self):
+        body = bytes(range(0x100)) * 0x40
+        self.assertTrue(idlib.is_likely_xml(B'<?xml version="1.0"?><root/>'))
+        self.assertFalse(idlib.is_likely_xml(B'<?xml version="1.0"?><root/>' + body))
+        self.assertTrue(idlib.is_likely_htm(B'<html><body>hello world</body></html>'))
+        self.assertFalse(idlib.is_likely_htm(B'<html><body>' + body))
+        self.assertTrue(idlib.is_likely_plist(B'<?xml version="1.0"?><!DOCTYPE plist'))
+        self.assertFalse(idlib.is_likely_plist(B'<?xml version="1.0"?><!DOCTYPE plist' + body))
+
+    def test_utf16_document_with_a_null_padded_tail(self):
+        note = (
+            'the analyst notes every address the sample would have contacted, and writes it down. '
+        )
+        data = B'\xFF\xFE' + (note * 1000).encode('utf-16le') + b'\x00' * 0x4000
+        self.assertIsNone(idlib.guess_text_encoding(data))
+
+    def test_utf16_document_with_lone_surrogate_halves(self):
+        line = 'var greeting = "hello there"; console.log(greeting); '
+        text = (line * 3000).replace('hello', F'{chr(0xD800)}hello', 40)
+        data = B'\xFF\xFE' + text.encode('utf-16le', 'surrogatepass')
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf-16le')
+        self.assertEqual(text, codecs.decode(data[enc.bom:], 'utf-16le', 'surrogatepass'))
+
+    def test_sample_count_zero_reads_only_the_first_window(self):
+        note = (
+            'the analyst notes every address the sample would have contacted, and writes it down. '
+        )
+        damaged = (note * 200).encode('ascii') + b'\x00' * 0x10000
+        head_only = idlib.guess_text_encoding(damaged, sample_count=0)
+        assert head_only is not None
+        self.assertEqual(head_only.codec, 'utf8')
+        self.assertIsNone(idlib.guess_text_encoding(damaged))
+
+    def test_window_size_zero_raises(self):
+        with self.assertRaises(ValueError):
+            idlib.guess_text_encoding(b'anything', window_size=0)
+
+    def test_sample_count_above_the_span_reads_every_position(self):
+        span = 0xF00
+        self.assertListEqual(
+            idlib._window_offsets(span + 0x100, 0x100, 0x1000000, 1),
+            list(range(span + 1)))
+
+    def test_utf7_mark_offset_skips_the_dash_that_closes_it(self):
+        text = 'hello world, said the analyst, and wrote it down.'
+        data = F'{chr(0xFEFF)}{text}'.encode('utf7')
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf7')
+        self.assertEqual(text, codecs.decode(data[enc.bom:], enc.codec))
+
+    def test_damage_over_the_budget_at_the_end_of_the_document(self):
+        damaged = b'A' * 97000 + b'\x00' * 3000
+        self.assertIsNone(idlib.guess_text_encoding(damaged))
+
+    def test_utf7_document_whose_first_window_ends_inside_a_shifted_run(self):
+        text = 'Hello plain text here. ' + '你好' * 3000 + ' more plain text.'
+        data = F'{chr(0xFEFF)}{text}'.encode('utf7')
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf7')
+        self.assertEqual(F'{chr(0xFEFF)}{text}', codecs.decode(data, 'utf7'))
+
+    def test_utf7_document_with_a_shifted_run_under_a_middle_window(self):
+        text = 'plain ascii notes. ' * 6000 + '你好' * 6000 + 'plain ascii notes again. ' * 6000
+        data = F'{chr(0xFEFF)}{text}'.encode('utf7')
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf7')
+        self.assertEqual(text, codecs.decode(data[enc.bom:], enc.codec))
+
+    def test_utf7_document_with_a_binary_tail(self):
+        data = b'+/v8-' + b'analysis of the sample follows. ' * 200 + bytes(range(0x100)) * 64
+        self.assertIsNone(idlib.guess_text_encoding(data))
+
+    def test_window_size_that_is_not_a_multiple_of_the_character_size(self):
+        utf16 = B'\xFF\xFE' + ('word ' * 2000).encode('utf-16le')
+        utf32 = B'\xFF\xFE\x00\x00' + ('word ' * 2000).encode('utf-32le')
+        for data, window_size, codec in (
+            (utf16, 4096, 'utf-16le'),
+            (utf16, 4097, 'utf-16le'),
+            (utf16, 4098, 'utf-16le'),
+            (utf16, 4100, 'utf-16le'),
+            (utf32, 4097, 'utf-32le'),
+            (utf32, 4098, 'utf-32le'),
+            (utf32, 4100, 'utf-32le'),
+        ):
+            with self.subTest(codec=codec, window_size=window_size):
+                enc = idlib.guess_text_encoding(data, window_size=window_size)
+                assert enc is not None
+                self.assertEqual(enc.codec, codec)
+
+    def test_utf32_document_with_invalid_values_at_the_starts_of_its_windows(self):
+        data = bytearray(B'\xFF\xFE\x00\x00' + ('a' * 48000).encode('utf-32le'))
+        invalid = (0x110000).to_bytes(4, 'little')
+        for offset in idlib._window_offsets(len(data), 0x1000, 10, 4)[1:]:
+            data[offset:offset + 4] = invalid
+        self.assertIsNone(idlib.guess_text_encoding(bytes(data)))
+
     def test_dropping_format_characters_does_not_admit_a_byte_dense_blob_as_text(self):
         """
         A legacy codec maps almost every byte to a letter, so the evidence that a byte dense blob
