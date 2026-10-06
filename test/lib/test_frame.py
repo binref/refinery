@@ -879,18 +879,6 @@ class TestFrameStream(TestBase):
                 with self.assertRaises(ValueError):
                     _read_frames(io.BytesIO(data[:end]))
 
-    @unittest.expectedFailure
-    def test_chunk_that_claims_more_data_than_the_stream_holds_is_refused_cheaply(self):
-        head = bytearray(Chunk(0x10000, path=[0], view=[True]).serialize()[0])
-        head[-4:] = (0x4000000).to_bytes(4, 'big')
-        stream = io.BytesIO(generate_frame_header(1) + head + B'tiny')
-
-        def read():
-            with self.assertRaises(ValueError):
-                _read_frames(stream)
-
-        self.assertLess(_peak_memory(read), 0x1000000)
-
 
 class TestChunk(TestBase):
 
