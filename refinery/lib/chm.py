@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import codecs
 import math
+import weakref
 
 from dataclasses import dataclass, field
-from functools import cached_property
-from typing import ClassVar
+from functools import cached_property, partial
+from typing import Callable, ClassVar, Iterator
 from uuid import UUID
 
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.seven.lzx import LzxDecoder
+from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import Struct, StructReader
+from refinery.lib.types import buf
 
 _LZX_HLP = UUID('0a9007c6-4076-11d3-8789-0000f8105754')
 _LZX_CHM = UUID('7fc28940-9d31-11d0-9b27-00a0c91e9c7c')
@@ -258,36 +261,62 @@ class ContentSection:
 
 class CHM(Struct):
 
-    def read_section(self, index: int) -> memoryview:
-        try:
-            return self.section_data[index]
-        except KeyError:
-            cs = self.sections[index]
+    def _stored(self, index: int) -> memoryview:
+        cs = self.sections[index]
         if cs.base_section is None:
             with self.reader.detour(cs.offset):
-                data = self.reader.read(cs.length)
-        else:
-            data = self.read_section(cs.base_section)[cs.offset:][:cs.length]
-        if cs.window_size and cs.block_offsets:
-            lzx = LzxDecoder()
-            out = bytearray()
-            lzx.set_params_and_alloc(cs.window_size)
-            for nr, offset in enumerate(cs.block_offsets):
-                if nr % cs.reset_interval == 0:
-                    lzx.keep_history = False
-                if nr < len(cs.block_offsets) - 1:
-                    length = cs.block_offsets[nr + 1] - offset
-                else:
-                    length = len(data) - offset
-                out.extend(lzx.decompress(data[offset:][:length], cs.block_size))
-                lzx.keep_history = True
-            data = memoryview(out)
-        self.section_data[index] = data
-        return data
+                return self.reader.read(cs.length)
+        return self._stored(cs.base_section)[cs.offset:][:cs.length]
 
-    def read(self, entry: DirectoryListingEntry):
-        data = self.read_section(entry.section_index)
-        return data[entry.offset:][:entry.length]
+    def _restart(self, index: int, offset: int) -> int:
+        cs = self.sections[index]
+        block = offset // cs.block_size
+        return (block - block % cs.reset_interval) * cs.block_size
+
+    def _decode(self, index: int, origin: int) -> Iterator[tuple[int, buf]]:
+        cs = self.sections[index]
+        data = self._stored(index)
+        lzx = LzxDecoder()
+        lzx.set_params_and_alloc(cs.window_size)
+        offsets = cs.block_offsets
+        for nr in range(origin // cs.block_size, len(offsets)):
+            lzx.keep_history = nr % cs.reset_interval != 0
+            start = offsets[nr]
+            end = offsets[nr + 1] if nr + 1 < len(offsets) else len(data)
+            yield nr * cs.block_size, lzx.decompress(data[start:end], cs.block_size)
+
+    def extractor(self, entry: DirectoryListingEntry) -> Callable[[], buf]:
+        """
+        Return a function that returns the data of the given entry. A compressed section is
+        decompressed as far as necessary; it keeps the data of other entries only while the
+        functions returned for them are alive. Data that the section does not contain is missing
+        from the result.
+        """
+        index = entry.section_index
+        cs = self.sections[index]
+        if not cs.window_size or not cs.block_offsets:
+            return lambda: self._stored(index)[entry.offset:][:entry.length]
+        if (stream := self._streams.get(index)) is None:
+            stream = self._streams[index] = SolidStream(
+                partial(self._decode, index),
+                partial(self._restart, index),
+                volatile=True,
+            )
+        claim = stream.claim(entry.offset, entry.length)
+
+        def extract() -> buf:
+            try:
+                return claim()
+            except SolidStreamTruncated as truncated:
+                return truncated.partial
+
+        return extract
+
+    def read(self, entry: DirectoryListingEntry) -> buf:
+        """
+        Return the data of the given entry; see `refinery.lib.chm.CHM.extractor`.
+        """
+        return self.extractor(entry)()
 
     def seekto(self, reader: StructReader, path: str):
         if content := self.filesystem.get(path):
@@ -299,7 +328,7 @@ class CHM(Struct):
     def __init__(self, reader: StructReader[memoryview], *args, **kwargs):
         self.filesystem: dict[str, DirectoryListingEntry] = {}
         self.sections: list[ContentSection] = []
-        self.section_data: dict[int, memoryview] = {}
+        self._streams: weakref.WeakValueDictionary[int, SolidStream] = weakref.WeakValueDictionary()
 
         self.reader = reader
         self.header = header = ChmHeader(reader)
