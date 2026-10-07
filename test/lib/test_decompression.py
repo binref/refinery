@@ -1,12 +1,17 @@
+import bz2
 import lzma
+import zlib
 
 from test import TestBase
+from test.units.compression import KADATH1
 from refinery.lib.decompression import (
     MAKE_DECODE_TABLE_ENTRY,
     DECODE_TABLE_SYMBOL_SHIFT,
     DECODE_TABLE_LENGTH_MASK,
     s32shift,
     BitBufferedReader,
+    decompress_pieces,
+    inflate_pieces,
     parse_lzma_properties,
     make_huffman_decode_table,
 )
@@ -99,3 +104,43 @@ class TestDecompression(TestBase):
         result = make_huffman_decode_table(table_data, table_bits, max_codeword_len)
         self.assertEqual(len(result), 1 << table_bits)
         self.assertTrue(all(v == 0 for v in result))
+
+
+class TestDecompressionPieces(TestBase):
+
+    TEXT = KADATH1.encode('utf8') * 400
+
+    def pieces(self, method, data, size):
+        if method == 'zlib':
+            return list(inflate_pieces(data, size))
+        decompressor = lzma.LZMADecompressor() if method == 'xz' else bz2.BZ2Decompressor()
+        return list(decompress_pieces(decompressor, data, size))
+
+    def compressed(self, method):
+        return {
+            'xz': lzma.compress,
+            'bz2': lambda data: bz2.compress(data, 1),
+            'zlib': zlib.compress,
+        }[method](self.TEXT)
+
+    def test_pieces_join_to_the_whole_output_and_respect_their_size(self):
+        for method in ('xz', 'bz2', 'zlib'):
+            for size in (1, 1000, 0x100000):
+                with self.subTest(method=method, size=size):
+                    pieces = self.pieces(method, self.compressed(method), size)
+                    self.assertEqual(B''.join(pieces), self.TEXT)
+                    self.assertLessEqual(max(len(piece) for piece in pieces), size)
+
+    def test_a_cut_stream_yields_a_prefix_of_the_output(self):
+        for method in ('xz', 'bz2', 'zlib'):
+            with self.subTest(method=method):
+                data = self.compressed(method)
+                output = B''.join(self.pieces(method, data[:len(data) // 2], 1000))
+                self.assertGreater(len(output), 0)
+                self.assertEqual(output, self.TEXT[:len(output)])
+
+    def test_data_after_the_end_of_the_stream_is_ignored(self):
+        for method in ('xz', 'bz2', 'zlib'):
+            with self.subTest(method=method):
+                output = B''.join(self.pieces(method, self.compressed(method) + B'junk', 1000))
+                self.assertEqual(output, self.TEXT)

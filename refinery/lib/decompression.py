@@ -3,12 +3,20 @@ A module with common functions used by decompression units.
 """
 from __future__ import annotations
 
+import bz2
 import lzma
+import zlib
 
 from collections import Counter
 from itertools import repeat
+from typing import TYPE_CHECKING
 
 from refinery.lib.structures import StructReader
+
+if TYPE_CHECKING:
+    from typing import Iterator
+
+    from refinery.lib.types import buf
 
 DECODE_TABLE_SYMBOL_SHIFT = 4
 DECODE_TABLE_MAX_SYMBOL = ((1 << (16 - DECODE_TABLE_SYMBOL_SHIFT)) - 1)
@@ -239,3 +247,42 @@ def parse_lzma_properties(data: memoryview | bytes | bytearray, version: int, mi
     if ds < min_dict:
         raise ValueError(F'Dictionary size is less than 0x{min_dict:08X}.')
     return df
+
+
+def decompress_pieces(
+    decompressor: lzma.LZMADecompressor | bz2.BZ2Decompressor,
+    data: buf,
+    size: int = 0x100000,
+) -> Iterator[buf]:
+    """
+    Feed the given data to the given decompressor and generate its output in pieces of at most the
+    given size. The output ends where the decompressor reaches the end of its stream or where the
+    data ends.
+    """
+    view = memoryview(data)
+    position = 0
+    while not decompressor.eof:
+        if decompressor.needs_input:
+            if position >= len(view):
+                return
+            chunk = view[position:position + size]
+            position += len(chunk)
+        else:
+            chunk = B''
+        if piece := decompressor.decompress(chunk, size):
+            yield piece
+
+
+def inflate_pieces(data: buf, size: int = 0x100000) -> Iterator[buf]:
+    """
+    Inflate the given zlib stream and generate the output in pieces of at most the given size. The
+    output ends where the stream or the data ends.
+    """
+    inflate = zlib.decompressobj()
+    tail = memoryview(data)
+    while tail and not inflate.eof:
+        if piece := inflate.decompress(tail, size):
+            yield piece
+        tail = inflate.unconsumed_tail
+    if rest := inflate.flush():
+        yield rest
