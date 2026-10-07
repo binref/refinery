@@ -239,7 +239,11 @@ class SolidStream:
             except BaseException:
                 self._pieces = None
                 raise
-            self._distribute(position, piece)
+            try:
+                self._distribute(position, piece)
+            except BaseException:
+                self._pieces = None
+                raise
 
     def _enqueue(self, claim: SolidClaim):
         heapq.heappush(self._queue, (claim.next, next(self._order), weakref.ref(claim)))
@@ -250,9 +254,7 @@ class SolidStream:
             heapq.heappop(queue)
 
     def _begin(self, origin: int):
-        self._pieces = iter(self._decode(origin))
-        self._position = origin
-        self._start = None
+        self._resume(origin)
         self._queue.clear()
         for claim in self._claims:
             if (
@@ -264,12 +266,17 @@ class SolidStream:
             ):
                 self._enqueue(claim)
 
+    def _resume(self, origin: int):
+        self._pieces = iter(self._decode(origin))
+        self._position = origin
+        self._start = None
+
     def _skip(self):
         if self._restart is None:
             return
         self._prune()
         if (queue := self._queue) and (origin := self._origin(queue[0][0])) > self._position:
-            self._begin(origin)
+            self._resume(origin)
 
     @staticmethod
     def _pending(entry: tuple[int, int, weakref.ref[SolidClaim]]) -> SolidClaim | None:
@@ -286,9 +293,6 @@ class SolidStream:
         self._pieces = None
 
     def _fail(self, error: Exception):
-        for entry in self._queue:
-            if (claim := self._pending(entry)) is not None:
-                claim._reset()
         self._queue.clear()
         self._pieces = None
         position = self._position

@@ -1,7 +1,9 @@
 import gc
 import tracemalloc
 
-from refinery.lib.solid import SolidStream, SolidStreamTruncated
+from unittest import mock
+
+from refinery.lib.solid import SolidClaim, SolidStream, SolidStreamTruncated
 
 from .. import TestBase
 
@@ -226,6 +228,24 @@ class TestSolidStream(TestBase):
             file()
         self.assertEqual(bytes(file()), B'A' * 10)
 
+    def test_running_out_of_memory_while_a_piece_is_handed_out_cuts_no_file_short(self):
+        decoder = Decoder(B'A' * 10 + B'B' * 10 + B'C' * 10, B'D' * 10)
+        stream = decoder.stream()
+        a, b, c, d = (stream.claim(k * 10, 10) for k in range(4))
+        feed = SolidClaim._feed
+
+        def scarce(claim, *args):
+            if claim is b:
+                raise MemoryError
+            return feed(claim, *args)
+
+        with mock.patch.object(SolidClaim, '_feed', autospec=True, side_effect=scarce):
+            with self.assertRaises(MemoryError):
+                a()
+        self.assertEqual(bytes(d()), B'D' * 10)
+        self.assertEqual(bytes(c()), B'C' * 10)
+        self.assertEqual(bytes(b()), B'B' * 10)
+
     def test_pieces_that_the_decoder_overwrites_are_copied(self):
         window = bytearray(10)
 
@@ -281,3 +301,27 @@ class TestSolidStream(TestBase):
         self.assertEqual(bytes(middle()), B'B' * 10)
         self.assertEqual(bytes(last()), B'C' * 10)
         self.assertEqual(decoder.starts, [0])
+
+    def test_a_file_that_spans_restart_points_is_decoded_once_before_it_fails(self):
+        decoder = Decoder(*(bytes([k]) * 10 for k in range(10)), restarts=range(0, 100, 10), broken=90)
+        stream = decoder.stream()
+        with self.assertRaises(ValueError):
+            stream.claim(0, 100)()
+        self.assertEqual(decoder.decoded, list(range(0, 90, 10)))
+
+    def test_skipping_ahead_to_the_next_file_does_not_look_at_every_waiting_file(self):
+        lookups = []
+
+        def restart(offset):
+            lookups.append(offset)
+            return offset - offset % 4
+
+        def decode(origin):
+            for position in range(origin, 8000, 4):
+                yield position, bytes(4)
+
+        stream = SolidStream(decode, restart)
+        files = [stream.claim(position, 4) for position in range(0, 8000, 8)]
+        for file in files:
+            file()
+        self.assertLess(len(lookups), 10 * len(files))
