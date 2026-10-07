@@ -494,8 +494,6 @@ class ZipFileRecord(Struct):
         read_data: bool = True,
         dir: ZipDirEntry | None = None,
     ):
-        self._unpacked = None
-        self._decrypted = None
         self.offset = reader.tell()
         self.dir = dir
 
@@ -695,9 +693,6 @@ class ZipFileRecord(Struct):
 
         if (d := self.data) is None:
             raise ValueError(F'The data for this {self.__class__.__name__} was not read.')
-        if (u := self._unpacked) is not None:
-            return _checked(u)
-
         if e := self.encryption:
             if password is None:
                 raise PasswordRequired
@@ -710,8 +705,7 @@ class ZipFileRecord(Struct):
         if (decompress := _DECOMPRESSORS.get(m)) is None:
             raise UnsupportedCompressionMethod(m, compressed)
 
-        self._unpacked = u = decompress(self, compressed)
-        return _checked(u)
+        return _checked(decompress(self, compressed))
 
 
 def _store(record: ZipFileRecord, data: buf) -> buf:
