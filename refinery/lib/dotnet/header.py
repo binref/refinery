@@ -956,17 +956,20 @@ class NetMetaDataTables(DotNetStruct):
         0x2C: GenericParamConstraint,
     }
 
-    @functools.lru_cache(maxsize=None)
     def _read_index_info(self, *options: type):
+        if (info := self._index_info.get(options)) is not None:
+            return info
         rows = tuple(NetTable[t.__name__] for t in options)
         row_count = self.Header.RowCount
         row_max_len = max(row_count.get(t, 0) for t in rows)
         bits_index = max(len(rows) - 1, 0).bit_length()
         mask = (1 << bits_index) - 1
         large = (row_max_len << bits_index) > 0xFFFF
-        return _IndexInfo(rows, bits_index, mask, large)
+        info = self._index_info[options] = _IndexInfo(rows, bits_index, mask, large)
+        return info
 
     def __init__(self, reader: DotNetStructReader, streams: NetMetaDataStreams):
+        self._index_info: dict[tuple[type, ...], _IndexInfo] = {}
         self.Header: NetMetaDataTablesHeader = NetMetaDataTablesHeader(reader)
         if self.Header.Flags.ExtraData:
             self.ExtraData = reader.u32()

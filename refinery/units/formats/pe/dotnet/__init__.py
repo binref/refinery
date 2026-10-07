@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
 from refinery.lib.dotnet.header import DotNetHeader
 
 
@@ -16,6 +14,7 @@ class CodePath:
         memo = [tr.MethodList.Index - 1 for tr in tables.TypeDef]
         memo.append(len(tables.MethodDef))
         self.ranges = [range(*memo[k:k + 2]) for k in range(len(memo) - 1)]
+        self._methods: dict[int, tuple[str | None, str | None, str]] = {}
 
     def method_path(self, offset: int):
         ns, tn, spec = self.method(offset)
@@ -30,8 +29,12 @@ class CodePath:
             spec = F'{ns}::{tn}.{spec}'
         return spec
 
-    @lru_cache(maxsize=None)
     def method(self, offset: int):
+        if (method := self._methods.get(offset)) is None:
+            method = self._methods[offset] = self._method(offset)
+        return method
+
+    def _method(self, offset: int):
         def printable(name: str):
             return name.replace('.', '').isidentifier()
         ranges = self.ranges

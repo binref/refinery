@@ -568,6 +568,41 @@ class TestNoSubstitutionDropsARedirection(TestBase):
             'ask substitution.may_substitute before deciding, not after installing')
 
 
+class TestCacheDiscipline(TestBase):
+    """
+    A cache decorator on a method keys its entries by the instance, so it keeps every instance it
+    has seen, and everything that instance refers to, alive for the life of the process.
+    """
+
+    @staticmethod
+    def _name(decorator: ast.expr) -> str | None:
+        if isinstance(decorator, ast.Call):
+            decorator = decorator.func
+        if isinstance(decorator, ast.Attribute):
+            return decorator.attr
+        if isinstance(decorator, ast.Name):
+            return decorator.id
+        return None
+
+    def test_no_method_is_decorated_with_a_cache(self):
+        cached = []
+        for path, tree in _sources('refinery'):
+            if 'thirdparty' in path:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                for method in node.body:
+                    if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    names = {self._name(decorator) for decorator in method.decorator_list}
+                    if names & {'staticmethod', 'classmethod'}:
+                        continue
+                    if names & {'cache', 'lru_cache'}:
+                        cached.append(F'{os.path.relpath(path, _project_root())}:{method.lineno}')
+        self.assertListEqual(cached, [])
+
+
 class TestStyleGuides(TestUnitBase):
 
     @pytest.mark.cosmetics

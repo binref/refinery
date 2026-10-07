@@ -4,7 +4,6 @@ import io
 import os
 import os.path
 
-from functools import lru_cache
 from itertools import cycle
 from pathlib import Path
 from string import Formatter
@@ -86,6 +85,7 @@ class dump(Unit):
         super().__init__(files=files, tee=tee, stream=stream, force=force)
         self.stream = None
         self._formatted = not plain and any(_has_format(f) for f in files)
+        self._fixed_paths: dict[Path, Path] = {}
         self._reset()
 
     def _reset(self):
@@ -97,8 +97,12 @@ class dump(Unit):
     def _clipcopy(self):
         return not self.args.files
 
-    @lru_cache(maxsize=None)
     def _fix_path_part(self, base: Path) -> Path:
+        if (fixed := self._fixed_paths.get(base)) is None:
+            fixed = self._fixed_paths[base] = self._fixed_path_part(base)
+        return fixed
+
+    def _fixed_path_part(self, base: Path) -> Path:
         if not _is_path_obstruction(base):
             return base
         if self.args.force:

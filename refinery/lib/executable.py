@@ -14,7 +14,6 @@ import itertools
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from functools import lru_cache
 from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib import lief
@@ -346,6 +345,7 @@ class Executable(ABC):
         self._head = head
         self._base = base
         self._tree = None
+        self._disassembler: Cs | None = None
 
     def subroutines(self) -> Generator[Sub, None, None]:
         from refinery.lib.intervals import IntIntervalUnion
@@ -687,11 +687,15 @@ class Executable(ABC):
         data = self[address:address + 0x20]
         return next(cs.disasm(data, address, 1))
 
-    @lru_cache
     def disassembler(self) -> Cs:
         """
-        Create a capstone disassembler that matches the emulator's architecture.
+        Return a capstone disassembler that matches the emulator's architecture.
         """
+        if (cs := self._disassembler) is None:
+            cs = self._disassembler = self._create_disassembler()
+        return cs
+
+    def _create_disassembler(self) -> Cs:
         from refinery.lib.shared.capstone import capstone as cs
 
         cs_arch, cs_mode = {

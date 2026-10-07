@@ -1,5 +1,7 @@
 import base64
+import gc
 import os
+import weakref
 import io
 import tempfile
 import time
@@ -347,3 +349,12 @@ class TestDump(TestUnitBase):
                 self.assertTrue(os.path.exists(result_path))
                 with open(result_path, 'rb') as result:
                     self.assertEqual(result.read(), data)
+
+    def test_a_run_does_not_keep_the_unit_alive(self):
+        with tempfile.TemporaryDirectory() as root:
+            dump = self.load(os.path.join(root, 'foo', 'bar'))
+            dump(b'Waffles')
+            alive = weakref.ref(dump)
+            del dump
+            gc.collect()
+            self.assertIsNone(alive())

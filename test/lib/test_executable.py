@@ -1,3 +1,6 @@
+import gc
+import weakref
+
 from .. import TestBase
 
 from refinery.lib.executable import (
@@ -376,3 +379,14 @@ class TestExecutableAscii(TestBase):
     def test_bytearray_input(self):
         result = Executable.ascii(bytearray(b'test\x00junk'))
         self.assertEqual(result, 'test')
+
+
+class TestExecutableLifetime(TestBase):
+
+    def test_disassembler_does_not_keep_its_executable_alive(self):
+        exe = Executable.Load(self.download_sample('82831deadbb41d00df1f45c1b1e7cb89901531ab784a55171f11c891f92fffaf'))
+        exe.disassembler()
+        alive = weakref.ref(exe)
+        del exe
+        gc.collect()
+        self.assertIsNone(alive())

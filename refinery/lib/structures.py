@@ -14,7 +14,6 @@ import itertools
 import re
 import struct
 import sys
-import weakref
 
 from typing import (
     TYPE_CHECKING,
@@ -1070,31 +1069,24 @@ AttrType = TypeVar('AttrType')
 
 
 class PerInstanceAttribute(Generic[AttrType]):
+    """
+    An attribute whose assigned value is stored on the instance and resolved when it is read.
+    """
     def resolve(self, parent, value: Any) -> AttrType:
         return value
 
-    def __init__(self):
-        self.__set: dict[int, Any] = {}
-        self.__get: dict[int, AttrType] = {}
+    def __set_name__(self, owner: type, name: str):
+        self._name = name
 
     def __set__(self, parent: Any, value: Any) -> None:
-        pid = id(parent)
-        if pid not in self.__set:
-            def cleanup(self, pid):
-                self.__set.pop(pid, None)
-                self.__get.pop(pid, None)
-            self.__set[pid] = value
-            weakref.finalize(parent, cleanup, self, id(parent))
+        parent.__dict__[self._name] = value
 
     def __get__(self, parent, tp=None) -> AttrType:
-        pid = id(parent)
-        if pid not in self.__get:
-            try:
-                seed = self.__set[pid]
-            except KeyError as K:
-                raise AttributeError from K
-            self.__get[pid] = self.resolve(parent, seed)
-        return self.__get[pid]
+        try:
+            seed = parent.__dict__[self._name]
+        except KeyError as K:
+            raise AttributeError from K
+        return self.resolve(parent, seed)
 
 
 def struct_to_json(
