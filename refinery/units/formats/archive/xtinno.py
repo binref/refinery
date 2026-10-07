@@ -97,11 +97,11 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
             if file.dupe:
                 continue
 
-            def _read(inno=inno, file=file, pwd=password):
+            def _read(inno=inno, file=file, pwd=password, read=inno.extractor(file, password)):
                 if pwd is None:
                     inno.guess_password(10)
                 try:
-                    return inno.read_file_and_check(file, pwd)
+                    return inno.check_file(file, read())
                 except InnoChecksumMismatch as mismatch:
                     raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
 

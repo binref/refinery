@@ -1,4 +1,6 @@
 # flake8: noqa
+import hashlib
+
 from ... import TestUnitBase
 
 from refinery.lib.inno.archive import InnoArchive
@@ -73,6 +75,46 @@ class TestInnoExtractor(TestUnitBase):
         data = self.download_sample('cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c')
         ifps = data | self.load('script.ps') | str
         self.assertIn('LocalVar3 := &RADIOBUTTONQUICKONCLICK', ifps)
+
+    def test_the_archive_does_not_keep_the_uninstaller_after_reading_it(self):
+        inno = InnoArchive(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+        uninstaller = inno.read_stream(inno.streams.Uninstaller)
+        self.assertEqual(uninstaller[:2], B'MZ')
+        self.assertIsNone(inno.streams.Uninstaller.data)
+
+    @staticmethod
+    def _checked_digests_of_the_chunk(data: bytearray, chunk_offset: int) -> list[bytes | None]:
+        """
+        The digests of the files in the given chunk in the order of their data, where a file that
+        cannot be read or fails its checksum has the digest `None`.
+        """
+        inno = InnoArchive(data)
+        files = sorted((f for f in inno.files if f.chunk_offset == chunk_offset and f.size), key=lambda f: f.offset)
+        extractors = [inno.extractor(file) for file in files]
+        digests = []
+        for file, extract in zip(files, extractors):
+            try:
+                digests.append(hashlib.sha256(inno.check_file(file, extract())).digest())
+            except Exception:
+                digests.append(None)
+        return digests
+
+    def test_damage_in_a_solid_bzip2_or_zlib_chunk_fails_only_the_files_from_the_damage_on(self):
+        for sample in (
+            'd1a18cc03c1ca8901a2521e448acb5074fca2511e51044a028989ecb116a332b',
+            '0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c',
+        ):
+            with self.subTest(sample=sample):
+                data = bytearray(self.download_sample(sample))
+                chunk = max(InnoArchive(data).files, key=lambda f: f.chunk_length)
+                intact = self._checked_digests_of_the_chunk(data, chunk.chunk_offset)
+                self.assertNotIn(None, intact)
+                data[data.index(B'zlb\x1a') + 4 + chunk.chunk_offset + chunk.chunk_length * 3 // 10] ^= 0xFF
+                damaged = self._checked_digests_of_the_chunk(data, chunk.chunk_offset)
+                extracted = damaged.index(None)
+                self.assertGreater(extracted, 0)
+                self.assertEqual(damaged[:extracted], intact[:extracted])
+                self.assertEqual(damaged[extracted:], [None] * (len(damaged) - extracted))
 
     DAMAGED_FILE = 'data/{app}/FBDF14B7-BF8D-A74F-A843-5F22543F7A88'
 

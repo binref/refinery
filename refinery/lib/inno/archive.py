@@ -18,16 +18,18 @@ import functools
 import lzma
 import re
 import struct
+import weakref
 import zlib
 
 from functools import cached_property
 from hashlib import md5, pbkdf2_hmac, sha1, sha256
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple
 
-from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.decompression import decompress_pieces, inflate_pieces, parse_lzma_properties
 from refinery.lib.dt import filetime
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
+from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import Struct, StructReader, StructReaderBits
 from refinery.lib.tools import exception_to_string, one
 from refinery.lib.types import buf
@@ -2585,7 +2587,8 @@ class InnoArchive:
         base = meta.base
         inno = StructReader(view[base:base + meta.total_size])
 
-        self._decompressed: dict[tuple[int, int], buf] = {}
+        self._chunks: weakref.WeakValueDictionary[tuple[int, int, str | None], SolidStream] = (
+            weakref.WeakValueDictionary())
 
         blobsize = meta.info_offset - meta.data_offset
         inno.seek(meta.data_offset)
@@ -2809,14 +2812,16 @@ class InnoArchive:
                 to_read -= len(block)
 
         self._log_verbose(F'{version!s} parsing stream 1 (TData)')
-        stream1 = TData.Parse(memoryview(self.read_stream(streams[1])), version)
+        streams[1].data = self.read_stream(streams[1])
+        stream1 = TData.Parse(memoryview(streams[1].data), version)
 
         for meta in stream1.DataEntries:
             file = InnoFile(blobs, version, meta)
             files.append(file)
 
         self._log_verbose(F'{version!s} parsing stream 0 (TSetup)')
-        stream0 = TSetup.Parse(memoryview(self.read_stream(streams[0])), version, encryption)
+        streams[0].data = self.read_stream(streams[0])
+        stream0 = TSetup.Parse(memoryview(streams[0].data), version, encryption)
         path_dedup: dict[str, list[SetupFile]] = {}
 
         for file in files:
@@ -2890,8 +2895,6 @@ class InnoArchive:
         failures = []
         nonempty = [f for f in files if f.size > 0]
 
-        self._decompressed.clear()
-
         for file in nonempty:
             if len(failures) >= max_failures:
                 break
@@ -2914,8 +2917,6 @@ class InnoArchive:
         """
         Decompress and read the input stream.
         """
-        if stream.data is not None:
-            return stream.data
         result = bytearray()
         it = iter(stream.blocks)
         if stream.compression == StreamCompressionMethod.Store:
@@ -2937,7 +2938,6 @@ class InnoArchive:
             raise ValueError(F'Invalid compression value {stream.compression}')
         for block in it:
             result.extend(dec.decompress(block.BlockData))
-        stream.data = result
         return result
 
     def check_password(self, file: InnoFile, password: str):
@@ -2951,18 +2951,20 @@ class InnoArchive:
         else:
             return True
 
-    def read_chunk(self, file: InnoFile, password: str | None = None, check_only: bool = False):
+    def read_chunk(
+        self,
+        file: InnoFile,
+        password: str | None = None,
+        check_only: bool = False,
+    ):
         """
-        Decompress and read the chunk containing the given file. If the chunk is encrypted, the
-        function requires the correct password. If the `check_only` parameter is set, then only
-        a password check is performed, but the chunk is not actually decompressed.
+        Read the compressed chunk containing the given file. If the chunk is encrypted, the function
+        requires the correct password and decrypts it. If the `check_only` parameter is set, then
+        only a password check is performed, but the chunk is not actually read.
         """
         reader = file.reader
         offset = file.chunk_offset
         length = file.chunk_length
-        method = file.compression
-
-        self._log_verbose(F'decompressing chunk at {file.chunk_offset:#010x} using {method.name}')
 
         if password is None:
             password = self._password
@@ -3001,32 +3003,63 @@ class InnoArchive:
             assert file.crypto
             data = file.crypto.decrypt(password_bytes, data, file.chunk_offset, file.first_slice)
 
-        if method is None:
+        return data
+
+    def extractor(self, file: InnoFile, password: str | None = None) -> Callable[[], buf]:
+        """
+        Return a function that returns the contents of the given file record without performing
+        any checks. The chunk that holds the file is decompressed when the function is first called;
+        it keeps the data of other files only while the functions returned for them are alive.
+        """
+        key = file.chunk_offset, file.chunk_length, password
+        if (stream := self._chunks.get(key)) is None:
+            stream = self._chunks[key] = SolidStream(lambda _: self._chunk_pieces(file, password))
+        claim = stream.claim(file.offset, file.size)
+
+        def extract() -> buf:
+            try:
+                data = claim()
+            except SolidStreamTruncated as truncated:
+                data = truncated.partial
+            if file.filtered:
+                if file.version >= (5, 2, 0):
+                    flip = (file.version >= (5, 3, 9))
+                    data = self._filter_new(data, flip_high_byte=flip)
+                else:
+                    data = self._filter_old(data)
             return data
 
+        return extract
+
+    def _chunk_pieces(self, file: InnoFile, password: str | None) -> Iterator[tuple[int, buf]]:
+        data = memoryview(self.read_chunk(file, password))
+        method = file.compression
+        self._log_verbose(F'decompressing chunk at {file.chunk_offset:#010x} using {method.name}')
         try:
-            if method == CompressionMethod.Store:
-                chunk = data
+            if method is None or method == CompressionMethod.Store:
+                pieces = iter((data,))
             elif method == CompressionMethod.LZMA1:
                 props = parse_lzma_properties(data[0:5], 1)
-                dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
-                chunk = dec.decompress(data[5:])
+                lzma1 = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
+                pieces = decompress_pieces(lzma1, data[5:])
             elif method == CompressionMethod.LZMA2:
                 props = parse_lzma_properties(data[0:1], 2)
-                dec = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
-                chunk = dec.decompress(data[1:])
+                lzma2 = lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[props])
+                pieces = decompress_pieces(lzma2, data[1:])
             elif method == CompressionMethod.BZip2:
-                chunk = bz2.decompress(data)
+                pieces = decompress_pieces(bz2.BZ2Decompressor(), data)
             elif method == CompressionMethod.Flate:
-                chunk = zlib.decompress(data)
+                pieces = inflate_pieces(data)
             else:
-                chunk = data
+                pieces = iter((data,))
+            position = 0
+            for piece in pieces:
+                yield position, piece
+                position += len(piece)
         except Exception as E:
             if not file.encrypted:
                 raise
             raise InvalidPassword(password) from E
-
-        return chunk
 
     def read_file(
         self,
@@ -3037,25 +3070,7 @@ class InnoArchive:
         Read the contents of the given file record from the archive without performing any checks.
         See also `refinery.lib.inno.InnoArchive.read_file_and_check`.
         """
-        offset = file.chunk_offset
-        length = file.chunk_length
-
-        try:
-            chunk = self._decompressed[offset, length]
-        except KeyError:
-            chunk = self._decompressed[offset, length] = self.read_chunk(file, password)
-
-        view = memoryview(chunk)
-        data = view[file.offset:file.offset + file.size]
-
-        if file.filtered:
-            if file.version >= (5, 2, 0):
-                flip = (file.version >= (5, 3, 9))
-                data = self._filter_new(data, flip_high_byte=flip)
-            else:
-                data = self._filter_old(data)
-
-        return data
+        return self.extractor(file, password)()
 
     def read_file_and_check(
         self,
