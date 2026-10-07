@@ -302,3 +302,21 @@ class TestCabExtractor(TestUnitBase):
         self.assertEqual(
             str(ctx.exception),
             'Quantum block is truncated; the decoder ran past the end of input.')
+
+    def test_a_block_that_fails_its_checksum_fails_only_the_files_from_its_start_on(self):
+        from refinery.lib.cab import Cabinet
+        data = bytearray(self.download_sample('36ef84b0a20d122e3d68c78f93dcf362639d09a68575b734e28c3b3855918ff2'))
+        intact = [chunk['sha256'] for chunk in data | self.load() | [...]]
+        files = Cabinet(memoryview(data)).process().get_files()
+        folder = files[0].folder
+        middle = len(folder.blocks) // 2
+        damaged_block = folder.blocks[middle]
+        damage_start = sum(block.decompressed_size for block in folder.blocks[:middle])
+        before = sum(file.offset + file.size <= damage_start for file in files)
+        data[data.find(bytes(damaged_block.data)) + len(damaged_block.data) // 2] ^= 0xFF
+        with self.load_logged() as (unit, log):
+            result = [chunk['sha256'] for chunk in data | unit | [...]]
+        self.assertGreater(before, 0)
+        self.assertEqual(result, intact[:before])
+        self.assertEqual(len(log), len(intact) - before)
+        self.assertTrue(all(F'block {middle} of the folder fails its checksum' in message for message in log))
