@@ -10,6 +10,7 @@ import pytest
 from .. import TestBase
 
 from refinery.lib.lnk.flags import FileAttributeFlags
+from refinery.lib.lzms import lzms_decompress
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.wim import (
     WimArchive,
@@ -166,6 +167,18 @@ class TestWimCapturesOfOneFolder(TestBase):
             tracemalloc.stop()
         self.assertEqual(bytes(data), TIMES_TABLE)
         self.assertLess(retained, 1.5 * len(TIMES_TABLE))
+
+    def test_two_files_with_the_same_data_in_a_solid_resource_decompress_it_once(self):
+        wim = WimArchive(self.download_sample('bc256467e8a453fd7ced99d297dbcbc13184d17f5cefd78dfe3fea99a8416b0b'))
+        blob = wim.blobs[hashlib.sha1(TIMES_TABLE).digest()]
+        first = blob.extractor()
+        second = blob.extractor()
+        with mock.patch('refinery.lib.wim.lzms_decompress', wraps=lzms_decompress) as decompress:
+            self.assertEqual(bytes(first()), TIMES_TABLE)
+            calls = decompress.call_count
+            self.assertEqual(bytes(second()), TIMES_TABLE)
+        self.assertGreater(calls, 0)
+        self.assertEqual(decompress.call_count, calls)
 
     def test_out_of_memory_is_not_reported_as_a_corrupt_chunk(self):
         wim = WimArchive(self.download_sample('81cf3d5732adfa64d48d2d87fbfa7e37abaa7b18a3c93cda980ee22b253026b3'))
@@ -363,10 +376,3 @@ class TestWimlibTestSuiteFiles(TestBase):
             stream, = link.streams
             self.assertEqual(bytes(wim.blobs[stream.hash].data()), B'5\n')
 
-
-    def test_data_of_hard_linked_files_is_read_once(self):
-        wim = WimArchive(self.download_sample('5b07128c6fc36c1e19746b9feba8d54f7dd34ae954e3c55e1468c41fd9db276a'))
-        link, = (entry for entry in entries(wim) if entry.path == ('link',))
-        stream, = link.streams
-        blob = wim.blobs[stream.hash]
-        self.assertIs(blob.data(), blob.data())

@@ -159,11 +159,15 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
     @staticmethod
     def _extractor(wim: WimArchive, stream: WimStream) -> Callable[[], buf]:
+        if not any(digest := stream.hash):
+            return bytes
+        if (blob := wim.blobs.get(digest)) is None:
+            return lambda: wim.blob(digest).data()
+        read = blob.extractor()
+
         def extract():
-            if not any(digest := stream.hash):
-                return B''
             try:
-                return wim.blob(digest).data()
+                return read()
             except WimHashMismatch as mismatch:
                 raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
         return extract

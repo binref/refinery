@@ -11,10 +11,11 @@ from __future__ import annotations
 import codecs
 import hashlib
 import itertools
+import weakref
 
 from datetime import datetime
 from enum import IntEnum, IntFlag
-from typing import Iterable, Iterator, NamedTuple
+from typing import Callable, Iterable, Iterator, NamedTuple
 from uuid import UUID
 
 from refinery.lib.dt import filetime
@@ -22,6 +23,7 @@ from refinery.lib.fast.xpress import xpress_huffman_decompress
 from refinery.lib.lnk.flags import FileAttributeFlags
 from refinery.lib.lzms import lzms_decompress
 from refinery.lib.seven.lzx import LzxDecoder
+from refinery.lib.solid import SolidStream
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import buf
 
@@ -290,8 +292,8 @@ class WimResource:
         self.method = method
         self.chunk_size = chunk_size
         self._chunk_bounds: list[tuple[int, int]] | None = None
-        self._chunks: dict[int, buf] = {}
         self._errors: dict[int, Exception] = {}
+        self._stream: weakref.ref[SolidStream] | None = None
         self._decoders = decoders
 
     @classmethod
@@ -359,8 +361,6 @@ class WimResource:
         return [(base + starts[k], base + starts[k + 1]) for k in range(count)]
 
     def _chunk(self, index: int) -> buf:
-        if (chunk := self._chunks.get(index)) is not None:
-            return chunk
         if (error := self._errors.get(index)) is not None:
             raise WimDecompressionError(self.offset, index, error) from error
         if (bounds := self._chunk_bounds) is None:
@@ -377,15 +377,40 @@ class WimResource:
         except Exception as error:
             self._errors[index] = error
             raise WimDecompressionError(self.offset, index, error) from error
-        if self.layout == WimResourceLayout.SOLID:
-            self._chunks[index] = chunk
         return chunk
+
+    def _restart(self, offset: int) -> int:
+        return offset - offset % self.chunk_size
+
+    def _decode(self, origin: int) -> Iterator[tuple[int, buf]]:
+        chunk_size = self.chunk_size
+        count = -(-self.size // chunk_size)
+        for index in range(origin // chunk_size, count):
+            yield index * chunk_size, self._chunk(index)
+
+    def claim(self, offset: int, size: int) -> Callable[[], buf]:
+        """
+        Claim the given range of the decompressed resource; calling the claim returns the data.
+        The resource keeps decompressed chunks only for claims that are alive and still need them.
+        A claim on a raw resource, an empty claim, and a claim outside the resource are read with
+        `refinery.lib.wim.WimResource.read` when they are called.
+        """
+        if (
+            self.layout == WimResourceLayout.RAW
+            or size <= 0
+            or offset < 0
+            or offset + size > self.size
+        ):
+            return lambda: self.read(offset, size)
+        if (ref := self._stream) is None or (stream := ref()) is None:
+            stream = SolidStream(self._decode, self._restart)
+            self._stream = weakref.ref(stream)
+        return stream.claim(offset, size)
 
     def read(self, offset: int, size: int) -> buf:
         """
         Read the given range of the decompressed resource. Chunks are decompressed only when a read
-        covers them. The chunks of a solid resource are kept for later reads because they hold the
-        data of several blobs; any other resource holds the data of a single blob.
+        covers them, and they are not kept.
         """
         if offset < 0 or size < 0 or offset + size > self.size:
             raise ValueError(
@@ -431,21 +456,28 @@ class WimBlob:
         self.references = references
         self.resource = resource
         self.offset = offset
-        self._data: buf | None = None
 
-    def data(self) -> buf:
+    def extractor(self) -> Callable[[], buf]:
         """
-        Return the data of the blob and keep it for later calls. Raises `WimHashMismatch` when the
+        Return a function that returns the data of the blob. It raises `WimHashMismatch` when the
         data does not match the hash of the blob, and `WimDecompressionError` when the data cannot
         be decompressed.
         """
-        if (data := self._data) is not None:
+        claim = self.resource.claim(self.offset, self.size)
+
+        def extract() -> buf:
+            data = claim()
+            if hashlib.sha1(data).digest() != self.hash:
+                raise WimHashMismatch(self, data)
             return data
-        data = self.resource.read(self.offset, self.size)
-        if hashlib.sha1(data).digest() != self.hash:
-            raise WimHashMismatch(self, data)
-        self._data = data
-        return data
+
+        return extract
+
+    def data(self) -> buf:
+        """
+        Return the data of the blob; see `WimBlob.extractor`.
+        """
+        return self.extractor()()
 
 
 class _WimTableEntry(Struct[memoryview]):
