@@ -96,3 +96,27 @@ class TestCabFolders(TestBase):
         finally:
             tracemalloc.stop()
         self.assertLess(peak, 64 << 20)
+
+    def test_a_damaged_block_fails_the_files_from_its_start_on_and_shifts_no_data(self):
+        data = self.download_sample(STDLIB_SOURCES_IN_ONE_MSZIP_FOLDER)
+        files = self.files(data)
+        extractors = [file.extractor() for file in files]
+        intact = [hashlib.sha256(extract()).digest() for extract in extractors]
+        folder = files[0].folder
+        middle = len(folder.blocks) // 2
+        damaged_block = folder.blocks[middle]
+        damage_start = sum(block.decompressed_size for block in folder.blocks[:middle])
+        damaged = bytearray(data)
+        offset = damaged.find(bytes(damaged_block.data))
+        damaged[offset + len(damaged_block.data) // 2] ^= 0xFF
+        seed, = struct.unpack_from('<I', damaged, offset - 4)
+        checksum = cab_data_checksum(memoryview(damaged)[offset:offset + len(damaged_block.data)], seed)
+        struct.pack_into('<I', damaged, offset - 8, checksum)
+        files = self.files(damaged)
+        extractors = [file.extractor() for file in files]
+        for file, extract, digest in zip(files, extractors, intact):
+            if file.offset + file.size <= damage_start:
+                self.assertEqual(hashlib.sha256(extract()).digest(), digest, file.name)
+            else:
+                with self.assertRaises(RuntimeError, msg=file.name):
+                    extract()

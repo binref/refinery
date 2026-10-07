@@ -159,6 +159,11 @@ class CabFolder(Struct):
             raise ValueError(F'Unknown decompression method: {cm!r}')
         for k, (size, data) in enumerate(self.iter_block_data()):
             out = decompress(data, size, k)
+            if len(out) != size:
+                raise RuntimeError(
+                    F'Data block {k} of the folder decompressed to {len(out)} bytes, but its header '
+                    F'states {size} bytes.'
+                )
             yield pos, out
             pos += len(out)
 
