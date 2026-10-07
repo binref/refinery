@@ -729,6 +729,7 @@ _UNICODE_NONTEXT_CATEGORIES_LEGACY = _UNICODE_NONTEXT_CATEGORIES | {'Cf'}
 # that a legacy codec had no better home for.
 _TEXT_FORMAT_CODECS = frozenset({'utf8', 'utf7', 'utf-16le', 'utf-16be', 'utf-32le', 'utf-32be'})
 
+
 @functools.lru_cache(maxsize=None)
 def _get_nontext_pattern(categories: frozenset[str]) -> re.Pattern[str]:
     """
