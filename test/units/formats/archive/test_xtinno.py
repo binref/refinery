@@ -1,9 +1,11 @@
 # flake8: noqa
 import hashlib
 
+from unittest import mock
+
 from ... import TestUnitBase
 
-from refinery.lib.inno.archive import InnoArchive
+from refinery.lib.inno.archive import InnoArchive, InvalidPassword
 
 
 class TestInnoExtractor(TestUnitBase):
@@ -82,6 +84,12 @@ class TestInnoExtractor(TestUnitBase):
         self.assertEqual(uninstaller[:2], B'MZ')
         self.assertIsNone(inno.streams.Uninstaller.data)
 
+    def test_a_chunk_is_read_decompressed(self):
+        inno = InnoArchive(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+        file = next(file for file in inno.files if file.size and not file.filtered)
+        chunk = inno.read_chunk(file)
+        self.assertEqual(chunk[file.offset:file.offset + file.size], inno.read_file(file))
+
     @staticmethod
     def _checked_digests_of_the_chunk(data: bytearray, chunk_offset: int) -> list[bytes | None]:
         """
@@ -149,3 +157,37 @@ class TestInnoExtractor(TestUnitBase):
             paths = [chunk['path'] for chunk in data | unit | [...]]
         self.assertIn(self.DAMAGED_FILE, paths)
         self.assertEqual(log, [])
+
+    PASSWORD_FOUND_BY_EMULATION = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
+
+    def test_a_read_before_the_password_is_known_does_not_fail_the_reads_after_it_was_guessed(self):
+        inno = InnoArchive(self.download_sample(self.PASSWORD_FOUND_BY_EMULATION))
+        first, second = (file for file in inno.files if file.encrypted and file.size)
+        read_first, read_second = inno.extractor(first), inno.extractor(second)
+        with self.assertRaises(InvalidPassword):
+            read_first()
+        self.assertTrue(inno.guess_password(10))
+        data = read_second()
+        self.assertIs(inno.check_file(second, data), data)
+
+    def test_running_out_of_memory_in_an_encrypted_chunk_is_not_remembered_as_a_wrong_password(self):
+        inno = InnoArchive(self.download_sample(self.PASSWORD_FOUND_BY_EMULATION))
+        self.assertTrue(inno.guess_password(10))
+        first, second = (file for file in inno.files if file.encrypted and file.size)
+        read_first, read_second = inno.extractor(first), inno.extractor(second)
+        with mock.patch('refinery.lib.inno.archive.decompress_pieces', side_effect=MemoryError):
+            with self.assertRaises(MemoryError):
+                read_first()
+        data = read_second()
+        self.assertIs(inno.check_file(second, data), data)
+
+    def test_a_damaged_chunk_read_with_the_guessed_password_is_not_reported_as_missing_a_password(self):
+        data = bytearray(self.download_sample(self.PASSWORD_FOUND_BY_EMULATION))
+        chunk = max((file for file in InnoArchive(data).files if file.encrypted), key=lambda f: f.chunk_length)
+        data[data.index(B'zlb\x1a') + 4 + chunk.chunk_offset + chunk.chunk_length // 2] ^= 0xFF
+        inno = InnoArchive(data)
+        self.assertTrue(inno.guess_password(10))
+        file = next(file for file in inno.files if file.path == chunk.path)
+        with self.assertRaises(InvalidPassword) as error:
+            inno.read_file(file)
+        self.assertNotEqual(str(error.exception), str(InvalidPassword()))

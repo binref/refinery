@@ -2956,11 +2956,28 @@ class InnoArchive:
         file: InnoFile,
         password: str | None = None,
         check_only: bool = False,
-    ):
+    ) -> buf:
         """
-        Read the compressed chunk containing the given file. If the chunk is encrypted, the function
-        requires the correct password and decrypts it. If the `check_only` parameter is set, then
-        only a password check is performed, but the chunk is not actually read.
+        Decompress and read the chunk containing the given file. If the chunk is encrypted, the
+        function requires the correct password. If the `check_only` parameter is set, then only a
+        password check is performed, but the chunk is not actually decompressed.
+        """
+        if check_only:
+            return self._read_stored_chunk(file, password, check_only=True)
+        chunk = bytearray()
+        for _, piece in self._chunk_pieces(file, password):
+            chunk.extend(piece)
+        return chunk
+
+    def _read_stored_chunk(
+        self,
+        file: InnoFile,
+        password: str | None = None,
+        check_only: bool = False,
+    ) -> buf:
+        """
+        Read the compressed chunk containing the given file and decrypt it if it is encrypted. If
+        the `check_only` parameter is set, then only a password check is performed.
         """
         reader = file.reader
         offset = file.chunk_offset
@@ -3010,6 +3027,7 @@ class InnoArchive:
         Return a function that returns the contents of the given file record without performing
         any checks. The chunk that holds the file is decompressed when the function is first called;
         it keeps the data of other files only while the functions returned for them are alive.
+        Without a password, the function uses the password that the archive has when it is called.
         """
         key = file.chunk_offset, file.chunk_length, password
         if (stream := self._chunks.get(key)) is None:
@@ -3017,6 +3035,8 @@ class InnoArchive:
         claim = stream.claim(file.offset, file.size)
 
         def extract() -> buf:
+            if file.encrypted and password is None and self._password is None:
+                raise InvalidPassword
             try:
                 data = claim()
             except SolidStreamTruncated as truncated:
@@ -3032,7 +3052,9 @@ class InnoArchive:
         return extract
 
     def _chunk_pieces(self, file: InnoFile, password: str | None) -> Iterator[tuple[int, buf]]:
-        data = memoryview(self.read_chunk(file, password))
+        if password is None:
+            password = self._password
+        data = memoryview(self._read_stored_chunk(file, password))
         method = file.compression
         self._log_verbose(F'decompressing chunk at {file.chunk_offset:#010x} using {method.name}')
         try:
@@ -3056,6 +3078,8 @@ class InnoArchive:
             for piece in pieces:
                 yield position, piece
                 position += len(piece)
+        except MemoryError:
+            raise
         except Exception as E:
             if not file.encrypted:
                 raise
