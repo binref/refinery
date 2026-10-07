@@ -59,7 +59,7 @@ class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         extractors = [rar.extractor(entry, password) for entry in files]
         probed = None
         if not self.args.list and not password:
-            encrypted = next((k for k, entry in enumerate(files) if entry.is_encrypted), None)
+            encrypted = next((k for k, entry in enumerate(files) if entry.is_encrypted and entry.size), None)
             if encrypted is not None:
                 for pwd in self.CommonPasswords:
                     trial = [rar.extractor(entry, pwd) for entry in files]
@@ -69,6 +69,7 @@ class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         RarMissingPassword,
                         RarInvalidPassword,
                         RarInvalidChecksum,
+                        RarCorruptArchive,
                     ):
                         continue
                     except Exception:
@@ -89,7 +90,9 @@ class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 except RarInvalidChecksum as check:
                     raise RefineryPartialResult(str(check), check.data) from check
                 except RarCorruptArchive as exc:
-                    raise RefineryPartialResult(str(exc), exc.partial or b'') from exc
+                    if exc.partial is None:
+                        raise
+                    raise RefineryPartialResult(str(exc), exc.partial) from exc
                 except RarInvalidPassword as E:
                     raise ValueError(F'invalid password: {entry.name}') from E
                 except RarMissingPassword as E:

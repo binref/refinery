@@ -81,11 +81,18 @@ class RarInvalidChecksum(RarException):
 class RarCorruptArchive(RarException):
     """
     Raised when the archive structure is corrupted. When the corruption is detected while
-    decompressing an entry, the partial attribute carries the output decoded up to that point.
+    decompressing an entry, the `entry` attribute is that entry, and the `partial` attribute carries
+    the output decoded for it up to that point.
     """
-    def __init__(self, message: str = 'The archive structure is corrupted.', partial: bytes | None = None):
+    def __init__(
+        self,
+        message: str = 'The archive structure is corrupted.',
+        partial: bytes | None = None,
+        entry: RarFileEntry | None = None,
+    ):
         super().__init__(message)
         self.partial = partial
+        self.entry = entry
 
 
 class RarVolumeMissing(RarException):
@@ -236,12 +243,15 @@ class RarFile:
     def _layout(self):
         """
         Place the members in one decompressed stream and find the members where decompression can
-        start, which are all members that do not continue the decompression of a previous one.
+        start, which are all members that do not continue the decompression of a previous one. An
+        empty member that no later member continues is never decompressed, because nothing depends
+        on it; it shares its position with the next member, whose decompression it must not fail.
         """
         self._index: dict[int, int] = {}
         self._positions: list[int] = []
         self._starts: list[int] = []
         self._start_positions: list[int] = []
+        self._idle: set[int] = set()
         position = 0
         for k, entry in enumerate(self._file_entries):
             self._index[id(entry)] = k
@@ -252,6 +262,13 @@ class RarFile:
                 self._starts.append(k)
                 self._start_positions.append(position)
             position += entry.size
+        continued = False
+        for k in reversed(range(len(self._file_entries))):
+            if (entry := self._file_entries[k]).is_dir:
+                continue
+            if not entry.size and not continued:
+                self._idle.add(k)
+            continued = entry.solid
 
     @property
     def entries(self) -> list[RarFileEntry]:
@@ -337,6 +354,12 @@ class RarFile:
                 data = claim()
             except SolidStreamTruncated as truncated:
                 data = truncated.partial
+            except RarCorruptArchive as error:
+                if (corrupt := error.entry) is None or corrupt is fe:
+                    raise
+                raise RarCorruptArchive(
+                    F'The member {corrupt.name} that this one continues is corrupt: {error}', entry=corrupt
+                ) from error
             self._verify(data, fe, pw)
             return data
 
@@ -349,26 +372,42 @@ class RarFile:
         return self._positions[self._chain(offset)]
 
     def _decode(self, password: str | None, origin: int) -> Iterator[tuple[int, buf]]:
+        """
+        Decompress the members from the start of the chain that holds the given origin onward. An
+        empty piece announces the position of each member before it is decompressed, so that a
+        member which decompressed to fewer bytes than its size ends there and does not fail with
+        the member after it.
+        """
         entries = self._file_entries
         engine = None
         for k in range(self._chain(origin), len(entries)):
             entry = entries[k]
-            if entry.is_dir:
+            if entry.is_dir or k in self._idle:
                 continue
-            data = self._get_compressed_data(entry)
-            if entry.is_encrypted:
-                if password is None:
-                    raise RarMissingPassword(entry.name)
-                data = self._decrypt(data, entry, password)
-            output, engine = self._decompress(data, entry, engine)
-            yield self._positions[k], output
+            position = self._positions[k]
+            yield position, B''
+            try:
+                data = self._get_compressed_data(entry)
+                if entry.is_encrypted:
+                    if password is None:
+                        raise RarMissingPassword(entry.name)
+                    data = self._decrypt(data, entry, password)
+                output, engine = self._decompress(data, entry, engine)
+            except RarCorruptArchive as error:
+                raise RarCorruptArchive(str(error), error.partial, entry) from error
+            yield position, output
 
     def _resolve_entry(self, entry: str | int | RarFileEntry) -> RarFileEntry:
         """
         Resolve a user-provided entry reference to a RarFileEntry.
         """
         if isinstance(entry, RarFileEntry):
-            return entry
+            if id(entry) in self._index:
+                return entry
+            try:
+                return self._file_entries[self._file_entries.index(entry)]
+            except ValueError:
+                raise KeyError(F'Entry not found: {entry.name}') from None
         if isinstance(entry, int):
             if 0 <= entry < len(self._file_entries):
                 return self._file_entries[entry]

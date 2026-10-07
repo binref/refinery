@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import struct
+
 from ... import TestUnitBase
 
 from unittest import mock
 
 from test.units.compression import KADATH1, KADATH2
 from refinery.lib.frame import Chunk
-from refinery.lib.unrar import RarCorruptArchive, RarFile, RarInvalidPassword, RarMissingPassword
+from refinery.lib.unrar import (
+    RarCorruptArchive,
+    RarFile,
+    RarInvalidChecksum,
+    RarInvalidPassword,
+    RarMissingPassword,
+)
 
 import pytest
 
@@ -287,6 +295,33 @@ TEST_JTR_RAR3 = {
 }
 
 
+def _rar3_file_blocks(data: bytes) -> list[bytes]:
+    """
+    The file blocks of an authentic RAR 3 archive, each with its header and its packed data.
+    """
+    blocks = []
+    position = 7
+    while position + 7 <= len(data):
+        _, kind, flags, size = struct.unpack_from('<HBHH', data, position)
+        if flags & 0x8000:
+            size += struct.unpack_from('<I', data, position + 7)[0]
+        if kind == 0x74:
+            blocks.append(data[position:position + size])
+        position += size
+    return blocks
+
+
+def _rar3_archive_of(*file_blocks: bytes) -> bytes:
+    """
+    An archive of file blocks taken from authentic RAR 3 archives, joined under the signature, the
+    main header, and the end block of `testfile.rar3.rar`.
+    """
+    template = bytes(TEST_RAR_ARCHIVES['testfile.rar3.rar'])
+    first, = _rar3_file_blocks(template)
+    head = template.index(first)
+    return template[:head] + B''.join(file_blocks) + template[head + len(first):]
+
+
 @pytest.mark.cythonized
 class TestJohnTheRipperRAR(TestUnitBase):
 
@@ -339,6 +374,10 @@ class TestJohnTheRipperRAR(TestUnitBase):
             '1': b'test',
             '2': b'test',
         })
+
+    def test_a_common_password_is_found_after_wrong_ones_made_decompression_fail(self):
+        results = TEST_JTR_RAR3['first-file-plain.rar'] | self.load() | {'path': bytes}
+        self.assertDictEqual(results, {'1': b'test', '2': b'test'})
 
     def test_hp0_rar(self):
         self._run_jtr_test('hp0.rar', 'password', {'test.txt': b''})
@@ -641,3 +680,71 @@ class TestRarExtractors(TestUnitBase):
         del intact['YuLv.Net.url']
         self.assertEqual(result, intact)
         self.assertEqual(log, [])
+
+    @staticmethod
+    def _solid_archive_with_a_byte_of_the_first_member_flipped(offset: int) -> RarFile:
+        data = bytearray(TEST_RAR_ARCHIVES['testfile.rar5.solid.cbr'])
+        first, _ = RarFile(bytes(data)).entries
+        data[first._data_offset + offset] ^= 0xFF
+        return RarFile(bytes(data))
+
+    def test_a_member_that_decompresses_short_fails_with_its_own_data_when_the_next_member_is_corrupt(self):
+        rar = self._solid_archive_with_a_byte_of_the_first_member_flipped(0)
+        first, second = rar.entries
+        with self.assertRaises(RarCorruptArchive) as corrupt:
+            rar.read(second)
+        self.assertIs(corrupt.exception.entry, second)
+        with self.assertRaises(RarInvalidChecksum) as check:
+            rar.read(first)
+        self.assertEqual(check.exception.name, first.name)
+        self.assertEqual(bytes(check.exception.data), B'')
+
+    def test_a_member_after_a_corrupt_member_of_its_solid_chain_carries_none_of_its_data(self):
+        rar = self._solid_archive_with_a_byte_of_the_first_member_flipped(40)
+        first, second = rar.entries
+        with self.assertRaises(RarCorruptArchive) as own:
+            rar.read(first)
+        self.assertTrue(own.exception.partial)
+        with self.assertRaises(RarCorruptArchive) as relayed:
+            rar.read(second)
+        self.assertIs(relayed.exception.entry, first)
+        self.assertIsNone(relayed.exception.partial)
+
+    def test_an_entry_listed_by_another_reader_of_the_same_archive_can_be_read(self):
+        data = bytes(TEST_RAR_ARCHIVES['testfile.rar5.solid.cbr'])
+        listed = RarFile(data).entries
+        rar = RarFile(data)
+        self.assertEqual(
+            [bytes(rar.read(entry)) for entry in listed],
+            [bytes(rar.read(entry)) for entry in rar.entries],
+        )
+
+    def test_an_empty_member_that_needs_a_password_does_not_fail_the_member_after_it(self):
+        rar = RarFile(_rar3_archive_of(
+            *_rar3_file_blocks(TEST_RAR_ARCHIVES['testfile.rar3.rar']),
+            *_rar3_file_blocks(TEST_JTR_RAR3['p0.rar']),
+            _rar3_file_blocks(TEST_JTR_RAR3['first-file-plain.rar'])[0],
+        ))
+        plain, empty, last = rar.entries
+        self.assertEqual((empty.size, empty.is_encrypted, last.solid), (0, True, False))
+        read_plain, read_last = rar.extractor(plain), rar.extractor(last)
+        self.assertEqual(bytes(read_plain()), B'Testing 123\n')
+        self.assertEqual(bytes(read_last()), B'test')
+
+    def test_the_password_probe_passes_over_an_empty_encrypted_member(self):
+        data = _rar3_archive_of(
+            *_rar3_file_blocks(TEST_JTR_RAR3['p0.rar']),
+            _rar3_file_blocks(TEST_JTR_RAR3['first-file-plain.rar'])[1],
+        )
+        self.assertDictEqual(data | self.load() | {'path': bytes}, {'test.txt': B'', '2': B'test'})
+
+    def test_lenience_hands_out_no_data_for_a_member_that_continues_a_corrupt_one(self):
+        data = bytearray(TEST_RAR_ARCHIVES['testfile.rar5.solid.cbr'])
+        first, second = RarFile(bytes(data)).entries
+        data[first._data_offset + 40] ^= 0xFF
+        with self.load_logged('-L') as (unit, log):
+            paths = [chunk['path'] for chunk in data | unit | [...]]
+        self.assertEqual(paths, [first.name])
+        self.assertEqual(len(log), 2)
+        self.assertTrue(log[1].startswith(
+            F'extraction failure for {second.name}: The member {first.name} that this one continues is corrupt'))
