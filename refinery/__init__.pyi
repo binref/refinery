@@ -368,6 +368,7 @@ from refinery.units.scripting.bat import bat as bat
 from refinery.units.scripting.bat import batev as batev
 from refinery.units.scripting.bat import batfs as batfs
 from refinery.units.scripting.cmdarg import cmdarg as cmdarg
+from refinery.units.scripting.dau3 import dau3 as dau3
 from refinery.units.scripting.deobfuscate import defu as defu
 from refinery.units.scripting.js import js as js
 from refinery.units.scripting.php import php as php

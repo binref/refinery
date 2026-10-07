@@ -367,6 +367,7 @@ UNITS = {
     'batev'                                      : 'refinery.units.scripting.bat',
     'batfs'                                      : 'refinery.units.scripting.bat',
     'cmdarg'                                     : 'refinery.units.scripting.cmdarg',
+    'dau3'                                       : 'refinery.units.scripting.dau3',
     'defu'                                       : 'refinery.units.scripting.deobfuscate',
     'js'                                         : 'refinery.units.scripting.js',
     'php'                                        : 'refinery.units.scripting.php',
