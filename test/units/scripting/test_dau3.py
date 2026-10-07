@@ -109,6 +109,35 @@ class TestDAu3(TestUnitBase):
         result = B'If $x Then\r\n    $y = 1\r\nEndIf\r\n' | self.load() | str
         self.assertEqual(result, 'If $x Then\n    $y = 1\nEndIf\n')
 
+    def test_comments_survive_every_position(self):
+        """
+        A comment the header line of a block carries, one standing between a `Select` and its
+        first `Case`, and one standing alone in a body no statement follows: each was dropped
+        from the output or corrupted the parse around it before the round trip kept them.
+        """
+        data = (
+            b'Select\n; pick one\nCase $x\n$y = 1\nEndSelect\n'
+            b'While $x ; loop\n$y = 2\nWend\n'
+            b'Func F() ; setup\n; only a comment\nEndFunc\n'
+        )
+        result = data | self.load() | str
+        self.assertEqual(result, (
+            'Select\n'
+            '; pick one\n'
+            'Case $x\n'
+            '    $y = 1\n'
+            'EndSelect\n'
+            'While $x\n'
+            '    $y = 2\n'
+            'Wend ; loop\n'
+            'Func F()\n'
+            'EndFunc ; setup ; only a comment\n'
+        ))
+
+    def test_comment_only_file(self):
+        result = B'; nothing but a comment\n' | self.load() | str
+        self.assertEqual(result, '; nothing but a comment\n')
+
     def test_bom_input(self):
         result = B'\xEF\xBB\xBF$x = 1\n' | self.load() | str
         self.assertEqual(result, '$x = 1\n')

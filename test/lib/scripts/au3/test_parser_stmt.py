@@ -365,6 +365,62 @@ class TestAu3ParserStmt(TestBase):
         func = script.body[0]
         self.assertEqual(func.body[0].leading_comments, ['; setup'])
 
+    def test_comment_line_between_select_and_first_case(self):
+        script = self._parse('Select\n; pick one\nCase $x\n$y = 1\nEndSelect\n')
+        select = script.body[0]
+        self.assertEqual(len(select.cases), 1)
+        self.assertEqual(select.cases[0].leading_comments, ['; pick one'])
+        self.assertEqual(select.cases[0].body[0].expression.target.name, 'y')
+
+    def test_comment_line_between_switch_and_first_case(self):
+        script = self._parse('Switch $x\n; pick one\nCase 1\n$y = 1\nEndSwitch\n')
+        switch = script.body[0]
+        self.assertEqual(len(switch.cases), 1)
+        self.assertEqual(switch.cases[0].leading_comments, ['; pick one'])
+
+    def test_comment_line_before_terminator_with_no_cases(self):
+        script = self._parse('Select\n; note\nEndSelect\n')
+        self.assertEqual(script.body[0].trailing_comments, ['; note'])
+        script = self._parse('Switch $x\n; note\nEndSwitch\n')
+        self.assertEqual(script.body[0].trailing_comments, ['; note'])
+
+    def test_trailing_comment_on_block_header_lines(self):
+        for source in (
+            'While $x ; note\n$y = 1\nWend\n',
+            'Do ; note\n$y = 1\nUntil $x\n',
+            'If $x Then ; note\n$y = 1\nEndIf\n',
+            'For $i = 0 To 9 ; note\n$y = 1\nNext\n',
+            'For $x In $a ; note\n$y = 1\nNext\n',
+            'Select ; note\nCase $x\n$y = 1\nEndSelect\n',
+            'Switch $x ; note\nCase 1\n$y = 1\nEndSwitch\n',
+            'With $o ; note\n$y = 1\nEndWith\n',
+            'Func F() ; note\n$y = 1\nEndFunc\n',
+        ):
+            with self.subTest(source=source):
+                script = self._parse(source)
+                self.assertEqual(script.body[0].trailing_comments, ['; note'])
+
+    def test_trailing_comment_on_elseif_and_case_lines(self):
+        script = self._parse('If $x Then\n$y = 1\nElseIf $z Then ; note\n$y = 2\nEndIf\n')
+        self.assertEqual(script.body[0].elseifs[0].trailing_comments, ['; note'])
+        script = self._parse('Select\nCase $x ; note\n$y = 1\nEndSelect\n')
+        self.assertEqual(script.body[0].cases[0].trailing_comments, ['; note'])
+        script = self._parse('Switch $x\nCase 1 ; note\n$y = 1\nEndSwitch\n')
+        self.assertEqual(script.body[0].cases[0].trailing_comments, ['; note'])
+
+    def test_comment_in_empty_body_is_kept_by_the_block(self):
+        script = self._parse('Func F()\n; note\nEndFunc\n')
+        self.assertEqual(script.body[0].trailing_comments, ['; note'])
+        script = self._parse('If $x Then\n; note\nEndIf\n')
+        self.assertEqual(script.body[0].trailing_comments, ['; note'])
+        script = self._parse('While $x\n; note\nWend\n')
+        self.assertEqual(script.body[0].trailing_comments, ['; note'])
+
+    def test_comment_only_script(self):
+        script = self._parse('; only a comment\n')
+        self.assertEqual(script.body, [])
+        self.assertEqual(script.trailing_comments, ['; only a comment'])
+
     def test_expression_statement_call(self):
         stmt = self._one('MsgBox(0, "t", "m")\n')
         self.assertEqual(stmt.expression.callee.name, 'msgbox')

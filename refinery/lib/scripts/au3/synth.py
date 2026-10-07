@@ -94,12 +94,15 @@ class Au3Synthesizer(Synthesizer):
             self._newline()
             self._write(comment)
 
+    def _emit_trailing_comments(self, node: Node):
+        for comment in node.trailing_comments:
+            self._write(F' {comment}')
+
     def _emit_statement(self, stmt: Statement):
         self._emit_leading_comments(stmt)
         self._newline()
         self.visit(stmt)
-        for comment in stmt.trailing_comments:
-            self._write(F' {comment}')
+        self._emit_trailing_comments(stmt)
 
     def _emit_statements(self, body: list[Statement]):
         self._depth += 1
@@ -137,7 +140,10 @@ class Au3Synthesizer(Synthesizer):
     def visit_Au3Script(self, node: Au3Script):
         for stmt in node.body:
             self._emit_statement(stmt)
-        if node.body:
+        for comment in node.trailing_comments:
+            self._newline()
+            self._write(comment)
+        if self._parts.tell():
             self._write('\n')
 
     def visit_Au3ErrorNode(self, node: Au3ErrorNode):
@@ -261,6 +267,7 @@ class Au3Synthesizer(Synthesizer):
         self._emit_child(node.test, node)
         self._write(F' {_SPELL[_K.THEN]}')
         self._emit_statements(node.body)
+        self._emit_trailing_comments(node)
 
     def visit_Au3WhileStatement(self, node: Au3WhileStatement):
         self._write(F'{_SPELL[_K.WHILE]} ')
@@ -307,6 +314,7 @@ class Au3Synthesizer(Synthesizer):
         self._write(_SPELL[_K.ENDSELECT])
 
     def _visit_select_case(self, node: Au3SelectCase):
+        self._emit_leading_comments(node)
         self._newline()
         if node.test is None:
             self._write(F'{_SPELL[_K.CASE]} {_SPELL[_K.ELSE]}')
@@ -314,6 +322,7 @@ class Au3Synthesizer(Synthesizer):
             self._write(F'{_SPELL[_K.CASE]} ')
             self._emit_child(node.test, node)
         self._emit_statements(node.body)
+        self._emit_trailing_comments(node)
 
     def visit_Au3SwitchStatement(self, node: Au3SwitchStatement):
         self._write(F'{_SPELL[_K.SWITCH]} ')
@@ -324,10 +333,12 @@ class Au3Synthesizer(Synthesizer):
         self._write(_SPELL[_K.ENDSWITCH])
 
     def _visit_switch_case(self, node: Au3SwitchCase):
+        self._emit_leading_comments(node)
         self._newline()
         if node.values is None:
             self._write(F'{_SPELL[_K.CASE]} {_SPELL[_K.ELSE]}')
             self._emit_statements(node.body)
+            self._emit_trailing_comments(node)
             return
         self._write(F'{_SPELL[_K.CASE]} ')
         for i, value in enumerate(node.values):
@@ -335,6 +346,7 @@ class Au3Synthesizer(Synthesizer):
                 self._write(', ')
             self._visit_switch_value(value)
         self._emit_statements(node.body)
+        self._emit_trailing_comments(node)
 
     def _visit_switch_value(self, node: Node):
         if isinstance(node, Au3CaseRange):

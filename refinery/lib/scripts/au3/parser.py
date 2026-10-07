@@ -236,10 +236,17 @@ class Au3Parser:
                 pending.append(tok.value)
                 continue
             if tok.kind is K.NEWLINE:
-                self._tokens.append(tok)
-                if pending and not at_line_start:
-                    self._trailing[len(self._tokens) - 1] = pending
-                    pending = []
+                if pending and at_line_start:
+                    # The break follows a comment standing on a line of its own, so it ends no
+                    # statement: leaving it out keeps a comment line invisible to the token
+                    # stream the way a blank line already is, and the comment travels as trivia
+                    # to whatever token follows it.
+                    pass
+                else:
+                    self._tokens.append(tok)
+                    if pending:
+                        self._trailing[len(self._tokens) - 1] = pending
+                        pending = []
                 at_line_start = True
                 continue
             if pending:
@@ -290,10 +297,17 @@ class Au3Parser:
         return node
 
     def parse(self) -> Au3Script:
-        body = self._parse_statement_list()
-        return Au3Script(body=body, errors=self._errors, offset=0)
+        body, comments = self._parse_statement_list()
+        script = Au3Script(body=body, errors=self._errors, offset=0)
+        script.trailing_comments.extend(comments)
+        return script
 
-    def _parse_statement_list(self, *stop: K) -> list[Statement]:
+    def _parse_statement_list(self, *stop: K) -> tuple[list[Statement], list[str]]:
+        """
+        Read statements until one of *stop* appears. The second return value holds the comments
+        that stood between the last statement and the stop token: with no statement left to carry
+        them, the construct the list belongs to holds them instead.
+        """
         body: list[Statement] = []
         while True:
             while self._at(K.NEWLINE):
@@ -317,10 +331,11 @@ class Au3Parser:
             if comments:
                 stmt.leading_comments[:0] = comments
             body.append(stmt)
-        trailing = self._trivia.pop(self._index, None)
+        trailing = self._trivia.pop(self._index, None) or []
         if trailing and body:
             body[-1].trailing_comments.extend(trailing)
-        return body
+            trailing = []
+        return body, trailing
 
     def _terminate_statement(self, stmt: Statement):
         if self._at(K.NEWLINE):
@@ -414,18 +429,21 @@ class Au3Parser:
         test = self._parse_expression()
         self._expect(K.THEN)
         if self._at(K.NEWLINE, K.EOF):
-            self._expect_eol()
-            body = self._parse_statement_list(K.ELSEIF, K.ELSE, K.ENDIF)
+            comments = self._expect_eol()
+            body, orphaned = self._parse_statement_list(K.ELSEIF, K.ELSE, K.ENDIF)
             elseifs: list[Au3ElseIf] = []
             while self._at(K.ELSEIF):
                 elseifs.append(self._parse_elseif())
             else_body = None
             if self._eat(K.ELSE):
-                self._expect_eol()
-                else_body = self._parse_statement_list(K.ENDIF)
+                comments.extend(self._expect_eol())
+                else_body, else_orphaned = self._parse_statement_list(K.ENDIF)
+                orphaned.extend(else_orphaned)
             self._expect(K.ENDIF)
-            return Au3IfStatement(
+            node = Au3IfStatement(
                 test=test, body=body, elseifs=elseifs, else_body=else_body, offset=offset)
+            node.trailing_comments.extend([*comments, *orphaned])
+            return node
         stmt = self._parse_inline_statement()
         return Au3IfStatement(test=test, body=[stmt], elseifs=[], else_body=None, offset=offset)
 
@@ -434,9 +452,11 @@ class Au3Parser:
         self._expect(K.ELSEIF)
         test = self._parse_expression()
         self._expect(K.THEN)
-        self._expect_eol()
-        body = self._parse_statement_list(K.ELSEIF, K.ELSE, K.ENDIF)
-        return Au3ElseIf(test=test, body=body, offset=offset)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.ELSEIF, K.ELSE, K.ENDIF)
+        node = Au3ElseIf(test=test, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_inline_statement(self) -> Statement:
         if self._at(*_BLOCK_OPENERS):
@@ -447,19 +467,23 @@ class Au3Parser:
         offset = self._current.offset
         self._expect(K.WHILE)
         test = self._parse_expression()
-        self._expect_eol()
-        body = self._parse_statement_list(K.WEND)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.WEND)
         self._expect(K.WEND)
-        return Au3WhileStatement(test=test, body=body, offset=offset)
+        node = Au3WhileStatement(test=test, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_do_until(self) -> Au3DoUntilStatement:
         offset = self._current.offset
         self._expect(K.DO)
-        self._expect_eol()
-        body = self._parse_statement_list(K.UNTIL)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.UNTIL)
         self._expect(K.UNTIL)
         test = self._parse_expression()
-        return Au3DoUntilStatement(body=body, test=test, offset=offset)
+        node = Au3DoUntilStatement(body=body, test=test, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_for(self) -> Statement:
         offset = self._current.offset
@@ -467,11 +491,13 @@ class Au3Parser:
         variable = self._parse_variable()
         if self._eat(K.IN):
             iterable = self._parse_expression()
-            self._expect_eol()
-            body = self._parse_statement_list(K.NEXT)
+            comments = self._expect_eol()
+            body, orphaned = self._parse_statement_list(K.NEXT)
             self._expect(K.NEXT)
-            return Au3ForInStatement(
+            node = Au3ForInStatement(
                 variable=variable, iterable=iterable, body=body, offset=offset)
+            node.trailing_comments.extend([*comments, *orphaned])
+            return node
         self._expect(K.ASSIGN_OR_EQ)
         start = self._parse_expression()
         self._expect(K.TO)
@@ -479,21 +505,33 @@ class Au3Parser:
         step = None
         if self._eat(K.STEP):
             step = self._parse_expression()
-        self._expect_eol()
-        body = self._parse_statement_list(K.NEXT)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.NEXT)
         self._expect(K.NEXT)
-        return Au3ForStatement(
+        node = Au3ForStatement(
             variable=variable, start=start, limit=limit, step=step, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_select(self) -> Au3SelectStatement:
         offset = self._current.offset
         self._expect(K.SELECT)
-        self._expect_eol()
+        comments = self._expect_eol()
+        pending = self._trivia.pop(self._index, None) or []
         cases: list[Au3SelectCase] = []
-        while self._at(K.CASE):
-            cases.append(self._parse_select_case())
+        if self._at(K.CASE):
+            first = self._parse_select_case()
+            first.leading_comments.extend(pending)
+            cases.append(first)
+            while self._at(K.CASE):
+                cases.append(self._parse_select_case())
         self._expect(K.ENDSELECT)
-        return Au3SelectStatement(cases=cases, offset=offset)
+        node = Au3SelectStatement(cases=cases, offset=offset)
+        if not cases:
+            pending.extend(comments)
+            comments = pending
+        node.trailing_comments.extend(comments)
+        return node
 
     def _parse_select_case(self) -> Au3SelectCase:
         offset = self._current.offset
@@ -501,20 +539,32 @@ class Au3Parser:
         test = None
         if not self._eat(K.ELSE):
             test = self._parse_expression()
-        self._expect_eol()
-        body = self._parse_statement_list(K.CASE, K.ENDSELECT)
-        return Au3SelectCase(test=test, body=body, offset=offset)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.CASE, K.ENDSELECT)
+        node = Au3SelectCase(test=test, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_switch(self) -> Au3SwitchStatement:
         offset = self._current.offset
         self._expect(K.SWITCH)
         discriminant = self._parse_expression()
-        self._expect_eol()
+        comments = self._expect_eol()
+        pending = self._trivia.pop(self._index, None) or []
         cases: list[Au3SwitchCase] = []
-        while self._at(K.CASE):
-            cases.append(self._parse_switch_case())
+        if self._at(K.CASE):
+            first = self._parse_switch_case()
+            first.leading_comments.extend(pending)
+            cases.append(first)
+            while self._at(K.CASE):
+                cases.append(self._parse_switch_case())
         self._expect(K.ENDSWITCH)
-        return Au3SwitchStatement(discriminant=discriminant, cases=cases, offset=offset)
+        node = Au3SwitchStatement(discriminant=discriminant, cases=cases, offset=offset)
+        if not cases:
+            pending.extend(comments)
+            comments = pending
+        node.trailing_comments.extend(comments)
+        return node
 
     def _parse_switch_case(self) -> Au3SwitchCase:
         offset = self._current.offset
@@ -526,9 +576,11 @@ class Au3Parser:
             values = [self._parse_switch_value()]
             while self._eat(K.COMMA):
                 values.append(self._parse_switch_value())
-        self._expect_eol()
-        body = self._parse_statement_list(K.CASE, K.ENDSWITCH)
-        return Au3SwitchCase(values=values, body=body, offset=offset)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.CASE, K.ENDSWITCH)
+        node = Au3SwitchCase(values=values, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_switch_value(self):
         start = self._parse_expression()
@@ -541,14 +593,16 @@ class Au3Parser:
         offset = self._current.offset
         self._expect(K.WITH)
         obj = self._parse_expression()
-        self._expect_eol()
+        comments = self._expect_eol()
         self._with_depth += 1
         try:
-            body = self._parse_statement_list(K.ENDWITH)
+            body, orphaned = self._parse_statement_list(K.ENDWITH)
         finally:
             self._with_depth -= 1
         self._expect(K.ENDWITH)
-        return Au3WithStatement(object=obj, body=body, offset=offset)
+        node = Au3WithStatement(object=obj, body=body, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_declaration(self) -> Statement:
         offset = self._current.offset
@@ -668,11 +722,13 @@ class Au3Parser:
             while self._eat(K.COMMA):
                 params.append(self._parse_parameter())
         self._expect(K.RPAREN)
-        self._expect_eol()
-        body = self._parse_statement_list(K.ENDFUNC)
+        comments = self._expect_eol()
+        body, orphaned = self._parse_statement_list(K.ENDFUNC)
         self._expect(K.ENDFUNC)
-        return Au3FunctionDeclaration(
+        node = Au3FunctionDeclaration(
             name=name, params=params, body=body, is_volatile=is_volatile, offset=offset)
+        node.trailing_comments.extend([*comments, *orphaned])
+        return node
 
     def _parse_parameter(self) -> Au3Parameter:
         offset = self._current.offset
@@ -923,8 +979,16 @@ class Au3Parser:
         self._advance()
         return Au3Identifier(name=tok.value.lower(), raw=tok.value, offset=tok.offset)
 
-    def _expect_eol(self):
+    def _expect_eol(self) -> list[str]:
+        """
+        Consume the end of a header line and return whatever comment trailed it. Such a comment
+        belongs to no statement a list will read, so it travels with the construct the header
+        opens.
+        """
         if self._at(K.NEWLINE):
+            index = self._index
             self._advance()
-        elif not self._at(K.EOF):
+            return self._trailing.pop(index, [])
+        if not self._at(K.EOF):
             self._error(self._current, 'expected end of line')
+        return []
