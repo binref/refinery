@@ -42,12 +42,25 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             return SzArchive(chunk, password=password)
 
         archive: SzArchive | None = None
+        extractors: list = []
+        probed = None
+
+        def prepare(archive: SzArchive, password):
+            return [(info, info.extractor(password)) for info in archive.files if not info.is_dir]
+
+        def checked(read):
+            try:
+                return read()
+            except SzChecksumMismatch as mismatch:
+                raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
 
         if pwd:
+            pwd = pwd.decode(self.codec)
             try:
-                archive = try_open(pwd.decode(self.codec))
+                archive = try_open(pwd)
             except SzCorruptArchive:
                 raise ValueError('corrupt archive; the password is likely invalid.')
+            extractors = prepare(archive, pwd)
         else:
             def passwords():
                 yield None
@@ -58,14 +71,13 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     self.log_debug('trying empty password')
                 else:
                     self.log_debug(F'trying password: {pwd}')
+                trial = None
                 try:
-                    archive = try_open(pwd)
+                    trial = try_open(pwd)
+                    extractors = prepare(trial, pwd)
                     if pwd is None:
-                        unlocked = archive
-                    for f in archive.files:
-                        if f.encrypted:
-                            f.decompress(password=pwd)
-                            break
+                        unlocked = trial, extractors
+                    probed = next(((k, read()) for k, (info, read) in enumerate(extractors) if info.encrypted), None)
                     problem = False
                 except SzUnsupportedMethod as E:
                     raise ValueError(str(E))
@@ -76,29 +88,22 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         raise
                     problem = True
                 if not problem:
+                    archive = trial
                     break
             else:
                 if unlocked is None:
                     raise ValueError('a password is required and none of the default passwords worked.')
                 self.log_info('none of the default passwords worked; extracting the files that are not encrypted')
-                archive, pwd = unlocked, None
+                archive, extractors = unlocked
+                probed = None
 
         assert archive is not None
 
-        for info in archive.files:
-            if info.is_dir:
-                continue
-
-            def extract(f=info, p=pwd):
-                try:
-                    return f.decompress(password=p)
-                except SzChecksumMismatch as mismatch:
-                    raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
-
+        for k, (info, extract) in enumerate(extractors):
             yield self._pack(
                 info.name,
                 info.mtime or info.ctime,
-                extract,
+                probed[1] if probed is not None and probed[0] == k else lambda read=extract: checked(read),
                 checksum=info.crc,
                 uncompressed=info.size,
             )

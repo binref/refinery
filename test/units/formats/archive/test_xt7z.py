@@ -3,6 +3,8 @@ import codecs
 import struct
 import zlib
 
+from unittest import mock
+
 from ... import TestUnitBase
 
 
@@ -345,6 +347,13 @@ class Test7zipFileExtractor(TestUnitBase):
         self.assertEqual(files, {'a.txt': B'plain text file\n'})
         self.assertEqual(len(log), 1)
         self.assertIn('b.txt', log[0])
+
+    def test_a_folder_that_the_password_probe_decompresses_is_not_decompressed_again(self):
+        data = self.download_sample('ce970ff0f1d20ad7471f224dafd7a7beef82713ea67a0278d94e8a38a92132fe', key='OKFR20ALOEN23UPS')
+        with mock.patch.object(SzArchive, '_decompress_folder', autospec=True, side_effect=SzArchive._decompress_folder) as decompress:
+            paths = [chunk['path'] for chunk in data | self.load() | [...]]
+        self.assertEqual(paths, ['FlareSay.exe'])
+        self.assertEqual(decompress.call_count, 1)
 
     def test_a_file_that_fails_its_checksum_fails_with_a_hint_to_use_lenience(self):
         data = bytearray(base64.b64decode(TestUn7zDirect.COPY_ARCHIVE))
