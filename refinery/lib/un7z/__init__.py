@@ -20,6 +20,7 @@ from refinery.lib.un7z.headers import (
     PropertyID,
     SignatureHeader,
     SzCannotUnpack,
+    SzChecksumMismatch,
     SzCorruptArchive,
     SzException,
     SzInvalidPassword,
@@ -34,6 +35,7 @@ __all__ = [
     'SIGNATURE',
     'SIGNATURE_HEADER_SIZE',
     'SzArchive',
+    'SzChecksumMismatch',
     'SzCorruptArchive',
     'SzException',
     'SzFile',
@@ -292,9 +294,9 @@ class SzArchive:
             if entry_crc is not None:
                 computed = zlib.crc32(data) & 0xFFFFFFFF
                 if computed != entry_crc:
-                    raise SzCorruptArchive(
+                    raise SzChecksumMismatch(
                         F'CRC mismatch for stream {stream_index} in folder {folder_index}:'
-                        F' expected {entry_crc:#010x}, computed {computed:#010x}.')
+                        F' expected {entry_crc:#010x}, computed {computed:#010x}.', bytes(data))
             return bytes(data)
         raise SzCorruptArchive(
             F'Stream index {stream_index} out of range for folder {folder_index}.')

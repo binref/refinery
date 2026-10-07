@@ -8,9 +8,13 @@ import enum
 import zlib
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from refinery.lib.dt import filetime
 from refinery.lib.structures import EOF, StructReader
+
+if TYPE_CHECKING:
+    from refinery.lib.types import buf
 
 SIGNATURE = B'7z\xBC\xAF\x27\x1C'
 SIGNATURE_HEADER_SIZE = 32
@@ -34,6 +38,16 @@ class SzInvalidPassword(SzCannotUnpack):
 
 class SzCorruptArchive(SzCannotUnpack):
     pass
+
+
+class SzChecksumMismatch(SzCorruptArchive):
+    """
+    Raised when the data of a file does not match its CRC. The data is available as the attribute
+    `data` of the exception.
+    """
+    def __init__(self, message: str, data: buf):
+        super().__init__(message)
+        self.data = data
 
 
 class SzUnsupportedMethod(SzException):

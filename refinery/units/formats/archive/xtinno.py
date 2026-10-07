@@ -3,12 +3,13 @@ from __future__ import annotations
 from refinery.lib import json
 from refinery.lib.inno.archive import (
     InnoArchive,
-    InvalidPassword,
+    InnoChecksumMismatch,
     SetupFileFlags,
     is_inno_setup,
 )
 from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.structures import struct_to_json
+from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 
 
@@ -99,14 +100,10 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
             def _read(inno=inno, file=file, pwd=password):
                 if pwd is None:
                     inno.guess_password(10)
-                if self.leniency > 0:
-                    return inno.read_file(file, pwd)
                 try:
                     return inno.read_file_and_check(file, pwd)
-                except InvalidPassword:
-                    raise
-                except Exception as E:
-                    raise ValueError(F'{E!s} [ignore this check with -L]') from E
+                except InnoChecksumMismatch as mismatch:
+                    raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
 
             yield self._pack(file.path, file.date, _read,
                 tags=[t.name for t in SetupFileFlags if t & file.tags])

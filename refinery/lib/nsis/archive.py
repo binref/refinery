@@ -1219,7 +1219,7 @@ class NSArchive(Struct):
             entry = next(dc)
         if entry.decompression_error:
             err = exception_to_string(entry.decompression_error)
-            msg = F'decompression failed ({err}); lenient mode will extract uncompressed item'
+            msg = F'decompression failed ({err}); the item is still compressed'
             raise RefineryPartialResult(msg, entry.data)
         else:
             return entry

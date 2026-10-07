@@ -328,7 +328,7 @@ class Test7zipFileExtractor(TestUnitBase):
         # the packed data of the first file starts right after the signature header
         data[SIGNATURE_HEADER_SIZE + 16] ^= 0xFF
         with self.load_logged() as (unit, log):
-            paths = [chunk.meta['path'] for chunk in data | unit]
+            paths = [chunk['path'] for chunk in data | unit | [...]]
         self.assertEqual(len(paths), 262)
         self.assertNotIn('abc.py', paths)
         self.assertEqual(log, ['extraction failure for abc.py: Corrupt input data'])
@@ -341,10 +341,35 @@ class Test7zipFileExtractor(TestUnitBase):
             'DICOCgH2z3lvAAA='
         )
         with self.load_logged() as (unit, log):
-            files = {chunk.meta['path']: bytes(chunk) for chunk in data | unit}
+            files = {chunk['path']: bytes(chunk) for chunk in data | unit | [...]}
         self.assertEqual(files, {'a.txt': B'plain text file\n'})
         self.assertEqual(len(log), 1)
         self.assertIn('b.txt', log[0])
+
+    def test_a_file_that_fails_its_checksum_fails_with_a_hint_to_use_lenience(self):
+        data = bytearray(base64.b64decode(TestUn7zDirect.COPY_ARCHIVE))
+        data[SIGNATURE_HEADER_SIZE + 8] ^= 0xFF
+        with self.load_logged() as (unit, log):
+            files = {chunk['path']: bytes(chunk) for chunk in data | unit | [...]}
+        self.assertEqual(files, {'testfile2.txt': self.TESTFILE2_CONTENT.encode()})
+        self.assertEqual(len(log), 1)
+        self.assertIn('testfile.txt', log[0])
+        self.assertTrue(log[0].endswith('(use -L to extract it anyway)'))
+
+    def test_a_file_that_fails_its_checksum_comes_out_under_lenience_with_a_warning_unless_quiet(self):
+        data = bytearray(base64.b64decode(TestUn7zDirect.COPY_ARCHIVE))
+        data[SIGNATURE_HEADER_SIZE + 8] ^= 0xFF
+        damaged = bytearray(self.TESTFILE1_CONTENT.encode())
+        damaged[8] ^= 0xFF
+        with self.load_logged('-L') as (unit, log):
+            files = {chunk['path']: bytes(chunk) for chunk in data | unit | [...]}
+        self.assertEqual(files['testfile.txt'], damaged)
+        self.assertEqual(len(log), 1)
+        self.assertTrue(log[0].startswith('extracting testfile.txt despite an error: CRC mismatch'))
+        with self.load_logged('-L', '-Q') as (unit, log):
+            files = {chunk['path']: bytes(chunk) for chunk in data | unit | [...]}
+        self.assertEqual(files['testfile.txt'], damaged)
+        self.assertEqual(log, [])
 
 
 class TestUn7zDirect(TestUnitBase):

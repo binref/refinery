@@ -248,6 +248,7 @@ class PathExtractorUnit(Unit, abstract=True):
         except RefineryPartialResult as error:
             if not self.args.lenient:
                 raise
+            self.log_warn(F'extracting {result.path} despite an error: {error!s}')
             result.data = data = error.partial
             return data
 
@@ -350,6 +351,8 @@ class PathExtractorUnit(Unit, abstract=True):
             message = exception_to_string(error)
             if path not in message:
                 message = F'extraction failure for {path}: {message}'
+            if isinstance(error, RefineryPartialResult):
+                message = F'{message} (use -L to extract it anyway)'
             self.log_warn(message)
             return None
         self.log_debug(F'extraction success for {path}')

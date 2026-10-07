@@ -1,6 +1,8 @@
 # flake8: noqa
 from ... import TestUnitBase
 
+from refinery.lib.inno.archive import InnoArchive
+
 
 class TestInnoExtractor(TestUnitBase):
 
@@ -71,3 +73,37 @@ class TestInnoExtractor(TestUnitBase):
         data = self.download_sample('cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c')
         ifps = data | self.load('script.ps') | str
         self.assertIn('LocalVar3 := &RADIOBUTTONQUICKONCLICK', ifps)
+
+    DAMAGED_FILE = 'data/{app}/FBDF14B7-BF8D-A74F-A843-5F22543F7A88'
+
+    def _installer_with_one_damaged_file(self) -> bytearray:
+        """
+        An installer whose largest LZMA chunk has one byte flipped in its middle. The decompressor
+        does not notice; the file `DAMAGED_FILE` of that chunk fails its checksum.
+        """
+        data = bytearray(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+        chunk = max(InnoArchive(data).files, key=lambda f: f.chunk_length)
+        data[data.index(B'zlb\x1a') + 4 + chunk.chunk_offset + chunk.chunk_length // 2] ^= 0xFF
+        return data
+
+    def test_a_file_that_fails_its_checksum_fails_with_a_hint_to_use_lenience(self):
+        data = self._installer_with_one_damaged_file()
+        with self.load_logged() as (unit, log):
+            paths = [chunk['path'] for chunk in data | unit | [...]]
+        self.assertIn('data/{tmp}/idp.dll', paths)
+        self.assertNotIn(self.DAMAGED_FILE, paths)
+        self.assertEqual(len(log), 1)
+        self.assertIn(self.DAMAGED_FILE, log[0])
+        self.assertTrue(log[0].endswith('(use -L to extract it anyway)'))
+
+    def test_a_file_that_fails_its_checksum_comes_out_under_lenience_with_a_warning_unless_quiet(self):
+        data = self._installer_with_one_damaged_file()
+        with self.load_logged('-L') as (unit, log):
+            paths = [chunk['path'] for chunk in data | unit | [...]]
+        self.assertIn(self.DAMAGED_FILE, paths)
+        self.assertEqual(len(log), 1)
+        self.assertTrue(log[0].startswith(F'extracting {self.DAMAGED_FILE} despite an error: checksum error'))
+        with self.load_logged('-L', '-Q') as (unit, log):
+            paths = [chunk['path'] for chunk in data | unit | [...]]
+        self.assertIn(self.DAMAGED_FILE, paths)
+        self.assertEqual(log, [])

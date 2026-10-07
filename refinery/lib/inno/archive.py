@@ -50,6 +50,16 @@ class InvalidPassword(ValueError):
             super().__init__('The given password is not correct.')
 
 
+class InnoChecksumMismatch(ValueError):
+    """
+    Raised when the data of a file does not match its checksum. The data is available as the
+    attribute `data` of the exception.
+    """
+    def __init__(self, message: str, data: buf):
+        super().__init__(message)
+        self.data = data
+
+
 class IncorrectVersion(RuntimeError):
     pass
 
@@ -3056,8 +3066,13 @@ class InnoArchive:
         Read the contents of the given file record from the archive. Raises a `ValueError` if the
         checksum is invalid.
         """
-        data = self.read_file(file, password)
+        return self.check_file(file, self.read_file(file, password))
 
+    def check_file(self, file: InnoFile, data: buf) -> buf:
+        """
+        Return the given contents of the file record, or raise `InnoChecksumMismatch` if they do
+        not match its checksum.
+        """
         if (cs := file.check(data)) is not None and cs != file.checksum:
             if isinstance(cs, int):
                 computed = F'{cs:08X}'
@@ -3065,7 +3080,7 @@ class InnoArchive:
             else:
                 computed = cs.hex().upper()
                 expected = file.checksum.hex().upper()
-            raise ValueError(F'checksum error; computed:{computed} expected:{expected}')
+            raise InnoChecksumMismatch(F'checksum error; computed:{computed} expected:{expected}', data)
 
         return data
 

@@ -7,9 +7,11 @@ from refinery.lib.un7z import (
     SIGNATURE,
     SzArchive,
     SzCannotUnpack,
+    SzChecksumMismatch,
     SzCorruptArchive,
     SzUnsupportedMethod,
 )
+from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 from refinery.units.formats.pe import get_pe_size
 
@@ -88,7 +90,10 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 continue
 
             def extract(f=info, p=pwd):
-                return f.decompress(password=p)
+                try:
+                    return f.decompress(password=p)
+                except SzChecksumMismatch as mismatch:
+                    raise RefineryPartialResult(str(mismatch), mismatch.data) from mismatch
 
             yield self._pack(
                 info.name,
