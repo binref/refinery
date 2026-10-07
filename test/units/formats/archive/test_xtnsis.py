@@ -1,6 +1,29 @@
+import hashlib
 import json
+import lzma
+import struct
+
+from unittest import mock
+
+from refinery.lib.frame import Chunk
+from refinery.lib.nsis.archive import NSArchive, NSHeader, NSMethod
+from refinery.units.formats.archive.xtnsis import xtnsis
 
 from ... import TestUnitBase
+
+SOLID_LZMA_INSTALLER = '19ccf1d4389f624fb166c5828c1633ea4234c976e044e5b61e53000f4a098be8'
+INSTALLERS_WITH_EVERY_METHOD = 'bf777a9a51cbea4b27b97c9dd81076e68aceb22edb535fdd0c16321d5ac2f6f8'
+ARCHIVE_SIZE = 24
+
+
+def contents(data):
+    result = {}
+    for item in list(xtnsis().unpack(Chunk(data))):
+        try:
+            result[item.path] = hashlib.sha256(item.get_data()).digest()
+        except Exception as error:
+            result[item.path] = error
+    return result
 
 
 class TestNSISExtractor(TestUnitBase):
@@ -51,3 +74,44 @@ class TestNSISExtractor(TestUnitBase):
             'RCWidgetPlugin.dll' : '14ef3bf106392331c8c1fb6dfaf460df89d2f934f9584ba6083185ae82ef7ccc',
             'FileInfo.dll'       : 'ab3d7b37215753a48ed60cf59a080bb8b92cf535c35ccd435c57c954073b8a2e',
         })
+
+    def test_items_after_the_end_of_a_cut_solid_stream_fail_without_decoding_it_again(self):
+        data = self.download_sample(SOLID_LZMA_INSTALLER)
+        intact = contents(data)
+        offset = xtnsis._find_archive_offset(bytearray(data))
+        assert offset is not None
+        size, = struct.unpack_from('<I', data, offset + ARCHIVE_SIZE)
+        end = offset + size * 6 // 10
+        cut = bytearray(data[:end])
+        struct.pack_into('<I', cut, offset + ARCHIVE_SIZE, end - offset)
+        with mock.patch('refinery.lib.nsis.archive.lzma.LZMAFile', wraps=lzma.LZMAFile) as decoder:
+            result = contents(cut)
+        self.assertEqual(decoder.call_count, 1)
+        failed = [path for path, digest in result.items() if isinstance(digest, EOFError)]
+        self.assertGreater(len(failed), 1)
+        for path, digest in result.items():
+            if path not in failed:
+                self.assertEqual(digest, intact[path], path)
+
+    def test_every_pass_over_a_solid_stream_uses_the_decompressor_that_decoded_its_header(self):
+        """
+        The header of an NSIS 2 installer selects a different decompressor for separately
+        compressed items; the header classification is forced on an authentic installer.
+        """
+        data = self.download_sample(INSTALLERS_WITH_EVERY_METHOD) | self.ldu('xtzip', 'zlib_solid.exe') | bytes
+        methods = []
+        decompress_items = NSArchive._decompress_items
+
+        def recorded(archive, reader, method):
+            methods.append(method)
+            return decompress_items(archive, reader, method)
+
+        with (
+            mock.patch.object(NSHeader, 'nsis_deflate', new=property(lambda _: True)),
+            mock.patch.object(NSArchive, '_decompress_items', autospec=True, side_effect=recorded),
+        ):
+            from_xtnsis = {chunk['path']: chunk['sha256'] for chunk in data | self.load() | [...]}
+            from_xt = {chunk['path']: chunk['sha256'] for chunk in data | self.ldu('xt') | [...]}
+        self.assertEqual(from_xt, from_xtnsis)
+        self.assertGreater(methods.count(NSMethod.Deflate), 1)
+        self.assertEqual(set(methods), {NSMethod.Deflate})

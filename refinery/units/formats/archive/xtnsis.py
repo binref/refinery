@@ -84,7 +84,7 @@ class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
         for item in arc.header.items:
             path = item.path or F'item-0x{item.offset:X}'
-            yield self._pack(path, item.mtime, lambda i=item: arc._extract_item(i).data)
+            yield self._pack(path, item.mtime, arc.extractor(item))
 
         yield self._pack('setup.bin', None, arc.header_data)
         yield self._pack('setup.nsis', None, arc.script.encode(self.codec))

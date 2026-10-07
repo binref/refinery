@@ -5,6 +5,7 @@ import enum
 import io
 import lzma
 import struct
+import weakref
 import zlib
 
 from datetime import datetime
@@ -18,9 +19,11 @@ from typing import (
 
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.dt import filetime
+from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import MemoryFile, StreamDetour, Struct, StructReader
 from refinery.lib.thirdparty.pyflate import BZip2File, GZipFile
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import buf
 from refinery.units import RefineryPartialResult
 
 
@@ -1120,9 +1123,10 @@ class NSArchive(Struct):
         self.lzma_options: LZMAOptions | None = None
         self.method = NSMethod.Deflate
 
-        self.entries: dict[int, bytearray] = {}
         self.entry_offset_delta = 4
         self._solid_iter = None
+        self._solid_method = self.method
+        self._stream: weakref.ref[SolidStream] | None = None
 
         log('header preview:', lambda: reader.peek(16).hex(' ', 1).upper())
 
@@ -1164,7 +1168,8 @@ class NSArchive(Struct):
         reader.seekset(self.archive_offset)
 
         if header_data is None:
-            it = self._decompress_items(reader)
+            self._solid_method = self.method
+            it = self._decompress_items(reader, self.method)
             header_entry = next(it)
             if header_entry.decompression_error:
                 raise NotImplementedError(
@@ -1199,24 +1204,41 @@ class NSArchive(Struct):
     def offset_items(self):
         return self.archive_offset + self.entry_offset_delta
 
+    def extractor(self, item: NSItem) -> Callable[[], buf]:
+        """
+        Return a function that returns the data of the given item. In a solid archive, the
+        decompressed stream keeps the data of an item that is passed before its turn only while
+        the function returned for it is alive.
+        """
+        if not self.solid:
+            return lambda: self._extract_item(item).data
+        if (ref := self._stream) is None or (stream := ref()) is None:
+            stream = SolidStream(self._solid_pieces)
+            self._stream = weakref.ref(stream)
+        claim = stream.claim(item.offset)
+
+        def extract() -> buf:
+            try:
+                return claim()
+            except SolidStreamTruncated:
+                raise LookupError(F'The solid stream has no data for item {item!s}.') from None
+
+        return extract
+
+    def _solid_pieces(self, origin: int) -> Iterator[tuple[int, buf]]:
+        if (entries := self._solid_iter) is None:
+            self.reader.seekset(self.archive_offset)
+            entries = self._decompress_items(self.reader, self._solid_method)
+            next(entries)
+        self._solid_iter = None
+        delta = self.entry_offset_delta
+        for entry in entries:
+            yield entry.offset - delta, entry.data
+
     def _extract_item(self, item: NSItem) -> Entry:
-        if self.solid:
-            while True:
-                try:
-                    entry = self.entries[item.offset]
-                except KeyError:
-                    try:
-                        entry = next(self._solid_iter)
-                    except StopIteration:
-                        raise LookupError(
-                            F'No data for item {item!s} could not be found.')
-                    self.entries[entry.offset - self.entry_offset_delta] = entry
-                else:
-                    break
-        else:
-            self.reader.seek(self.offset_items + item.offset)
-            dc = self._decompress_items(self.reader)
-            entry = next(dc)
+        self.reader.seek(self.offset_items + item.offset)
+        dc = self._decompress_items(self.reader, self.method)
+        entry = next(dc)
         if entry.decompression_error:
             err = exception_to_string(entry.decompression_error)
             msg = F'decompression failed ({err}); the item is still compressed'
@@ -1293,7 +1315,7 @@ class NSArchive(Struct):
             return out
 
     def _decompress_items(
-        self, reader: StructReader[bytearray],
+        self, reader: StructReader[bytearray], method: NSMethod,
     ) -> Iterator[NSArchive.Entry]:
         def NSISLZMAFile(d: StructReader[bytearray]):
             if use_filter := self.lzma_options.filter_flag:
@@ -1318,7 +1340,7 @@ class NSArchive(Struct):
             NSMethod.NSGzip  : GZipFile,
             NSMethod.LZMA    : NSISLZMAFile,
             NSMethod.BZip2   : BZip2File,
-        }[self.method]
+        }[method]
         prefix_length = 8 if self.extended else 4
         if self.solid:
             return self.SolidReader(decompressor(reader), prefix_length)
