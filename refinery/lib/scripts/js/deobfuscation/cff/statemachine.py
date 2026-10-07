@@ -12,7 +12,7 @@ import math
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple
+from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import (
     Expression,
@@ -131,6 +131,7 @@ _UNDEFINED = _Undefined.VALUE
 
 
 if TYPE_CHECKING:
+    from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites
     from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 
     _StateEnv = dict[str, float]
@@ -4132,7 +4133,7 @@ def _is_a_function_body(node: Node) -> bool:
 
 def _values_the_recovery_binds(
     model: SemanticModel,
-    roots: list[Node],
+    roots: Sequence[Node],
     match: _GeneratorCFFMatch,
 ) -> Iterator[Node]:
     """
@@ -4165,9 +4166,7 @@ def _values_the_recovery_binds(
                 if isinstance(target, (JsIdentifier, JsMemberExpression)):
                     if _stores_into_the_scope(model, target, match):
                         yield node.right
-                elif target is not None and any(
-                    _stores_into_the_scope(model, position, match) for position in target.walk()
-                ):
+                elif _stores_into_the_scope_through(model, target, match):
                     yield from (
                         value for value in node.right.walk()
                         if isinstance(value, (JsIdentifier, JsThisExpression, JsMemberExpression))
@@ -4201,6 +4200,65 @@ def _stores_into_the_scope(model: SemanticModel, target: Node, match: _Generator
     )
 
 
+def _stores_into_the_scope_through(
+    model: SemanticModel,
+    pattern: Node | None,
+    match: _GeneratorCFFMatch,
+) -> bool:
+    """
+    Whether the pattern *pattern* stores into a slot of the scope object of *match* at one of its
+    positions (`_stores_into_the_scope`).
+    """
+    if pattern is None:
+        return False
+    return any(_stores_into_the_scope(model, position, match) for position in pattern.walk())
+
+
+def _bindings_past_the_with(model: SemanticModel, roots: Sequence[Node]) -> Iterator[Binding]:
+    """
+    The bindings outside a `with` statement under *roots* that a name the statement may resolve
+    reaches past it (`refinery.lib.scripts.js.analysis.model.SemanticModel.lookup` across it).
+    While the statement stands, a write through such a name is attributed to the name alone; the
+    recovery removes the statement, after which the name resolves to the binding and a write
+    through it is attributed to what the binding holds. A name the model does not know stands in
+    code an earlier recovery of the invocation made, which judged it.
+    """
+    for root in roots:
+        for node in root.walk():
+            if isinstance(node, JsIdentifier) and model.read_has_dynamic_effect(node):
+                binding = model.lookup(node.name, model.scope_of(node), cross_dynamic=True)
+                if binding is not None:
+                    yield binding
+
+
+def _recovery_reveals(
+    model: SemanticModel,
+    scan: IntrinsicWrites,
+    removed: list[Statement],
+    recovered: list[Statement],
+    match: _GeneratorCFFMatch,
+) -> bool:
+    """
+    Whether replacing the scaffolding *removed* of *match* with *recovered* shows the models a
+    write the held ones do not record: a store the recovery turns into a binding store hands the
+    binding a value the scan follows only through bindings (`_values_the_recovery_binds`), the
+    removed `with` statement stood between a name and a binding whose values denote a root the scan
+    watches (`_bindings_past_the_with`), or the recovered code declares or assigns a name the scan
+    watches (`refinery.lib.scripts.js.deobfuscation.helpers.declares_a_watched_name`).
+    """
+    return (
+        any(
+            scan.follows_only_through_bindings(value)
+            for value in _values_the_recovery_binds(model, removed, match)
+        )
+        or any(
+            scan.denotes_a_watched_root(binding)
+            for binding in _bindings_past_the_with(model, removed)
+        )
+        or declares_a_watched_name(recovered)
+    )
+
+
 class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
     """
     Recover original code from generator-based state-machine CFF dispatchers. Handles the pattern
@@ -4221,22 +4279,34 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
       since the last renewal, the pass renews.
     - Whether a plain object inherits a routing key (`_provably_absent`) is read off the scan, which
       a recovery changes only where it turns a store of a value the scan follows only through
-      bindings into a binding store (`_values_the_recovery_binds`), or where its code declares or
-      assigns a name the scan watches. After such a recovery, the pass renews.
+      bindings into a binding store, where it removes the `with` statement between a name and a
+      binding whose values denote a root the scan watches, or where its code declares or assigns a
+      name the scan watches (`_recovery_reveals`). After such a recovery, the pass renews.
     """
 
     reads = ('_model', '_intrinsic_writes')
 
     def __init__(self):
         super().__init__()
-        self._edited: list[Node] = []
+        self._edited: dict[Node, list[Node]] = {}
 
     def visit_JsScript(self, node: JsScript):
         with self.holding_models(node):
             return super().visit_JsScript(node)
 
     def _forget_edits(self) -> None:
-        self._edited = []
+        self._edited = {}
+
+    def _note_edit(self, body: Node) -> None:
+        """
+        Record that the invocation edited *body*, under the script and every function that holds it,
+        which are the places `_edited_around` asks about.
+        """
+        cursor: Node | None = body
+        while cursor is not None:
+            if isinstance(cursor, (JsScript, *FUNCTION_NODES)):
+                self._edited.setdefault(cursor, []).append(body)
+            cursor = cursor.parent
 
     def _edited_around(self, parent: Node, removed: list[Statement]) -> bool:
         """
@@ -4244,23 +4314,22 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
         machine, or lies in the function holding it outside the scaffolding *removed*.
         """
         function = parent if isinstance(parent, JsScript) else parent.parent
-        for body in self._edited:
-            if body is parent:
-                return True
-            if function is None or not body.is_descendant_of(function):
-                continue
-            if any(body.is_descendant_of(statement) for statement in removed):
-                continue
-            return True
-        return False
+        if function is None:
+            return False
+        return any(
+            body is parent or not any(body.is_descendant_of(statement) for statement in removed)
+            for body in self._edited.get(function, ())
+        )
 
     def _provably_absent(self, key: str) -> bool:
         """
         Whether a plain object that does not own *key* reads `undefined` under it, and a store there
         makes a property of data: no prototype the language installs holds the key, and the program
-        writes no prototype of a plain object (`IntrinsicWrites.chain_roots_unwritten`), or at least
-        not this key (`IntrinsicWrites.key_written`), as a file patching another key of `Object`,
-        such as a polyfill, does not.
+        writes no prototype of a plain object
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.chain_roots_unwritten`), or
+        at least not this key
+        (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.key_written`), as a file
+        patching another key of `Object`, such as a polyfill, does not.
         """
         scan = self.held_models().intrinsic_writes
         return property_absent_from_written_chain(None, dict, key) and (
@@ -4319,16 +4388,6 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
             if wrappers is None or not _bind_main_arguments(recovered, match):
                 i += 1
                 continue
-            wrapper_functions = [a.function for a in wrappers if a.function is not None]
-            scan = models.intrinsic_writes
-            binds_what_a_binding_reveals = any(
-                scan.follows_only_through_bindings(value)
-                for value in _values_the_recovery_binds(
-                    model,
-                    [*removed, *(f for f in wrapper_functions if model.knows(f))],
-                    match,
-                )
-            )
             for activation in wrappers:
                 if activation.function is not None:
                     _declare_wrapper_scope_vars(activation)
@@ -4353,14 +4412,10 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
                 s.parent = parent
             start = match.gen_decl_index
             end = match.scaffolding_end
-            reveals = (
-                binds_what_a_binding_reveals
-                or declares_a_watched_name([*recovered, *wrapper_functions])
-            )
+            reveals = _recovery_reveals(model, models.intrinsic_writes, removed, recovered, match)
             replacement = body[:start] + recovered + body[end + 1:]
             self._replace_body(parent, replacement)
-            self._edited.append(parent)
-            self._edited.extend(f.body for f in wrapper_functions if f.body is not None)
+            self._note_edit(parent)
             if reveals:
                 self.renew_models()
             i = start + len(recovered)

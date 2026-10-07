@@ -40,7 +40,7 @@ class TestValuesAWriteThroughIsRecordedOnlyOnceABindingHoldsThem(TestBase):
     def test_a_value_that_is_neither(self):
         for value in (
             '1',
-            "'Object'",
+            '"Object"',
             'local',
             'local.prototype',
             'String.fromCharCode(1)',
@@ -51,6 +51,45 @@ class TestValuesAWriteThroughIsRecordedOnlyOnceABindingHoldsThem(TestBase):
             with self.subTest(value=value):
                 self.assertFalse(self._stored(value))
 
+    def test_a_property_of_the_global_object(self):
+        for value in (
+            'window.document',
+            'globalThis.location.href',
+            'this.x',
+            'self.navigator',
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(self._stored(value))
+
     def test_a_value_the_model_was_not_built_over(self):
         cache = ModelCache(JsParser('var local = 1; s.v = local;').parse())
         self.assertTrue(cache.intrinsic_writes.follows_only_through_bindings(JsIdentifier(name='local')))
+
+
+class TestBindingsWhoseValuesDenoteARootTheScanWatches(TestBase):
+
+    @staticmethod
+    def _denotes(source: str) -> bool:
+        cache = ModelCache(JsParser(source).parse())
+        binding = cache.model.root_scope.bindings['P']
+        return cache.intrinsic_writes.denotes_a_watched_root(binding)
+
+    def test_a_binding_holding_an_intrinsic_directly_or_through_another_name(self):
+        for source in (
+            'var P = Object.prototype;',
+            'var P; P = Object;',
+            'var Q = Math; var P = Q;',
+            'var P = local || Array;',
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self._denotes(source))
+
+    def test_a_binding_holding_something_else(self):
+        for source in (
+            'var P = 1;',
+            'var P = {};',
+            'var P = String.fromCharCode(1);',
+            'var P = window;',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(self._denotes(source))

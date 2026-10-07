@@ -12,16 +12,17 @@ from refinery.lib.scripts.js.analysis.model import build_semantic_model, is_use_
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     JS_NULL,
     JsBuffer,
+    Landing,
     binding_has_references,
     declares_a_watched_name,
     escape_js_string,
     extract_literal_value,
     insert_after_prologue,
-    lands_in_binding,
     make_numeric_literal,
     make_string_literal,
     substitute_params,
     substitute_use_position,
+    value_landing,
     value_to_node,
 )
 from refinery.lib.scripts.js.lexer import decode_js_string_body
@@ -34,6 +35,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsObjectExpression,
     JsProperty,
+    JsReturnStatement,
     JsStaticBlock,
     JsStringLiteral,
     JsVariableDeclaration,
@@ -757,18 +759,23 @@ class TestExtractLiteralValueRefusesAStringDenotingNothing(TestJsDeobfuscator):
         )
 
 
-class TestWhereAValueLandsInABinding(TestJsDeobfuscator):
+class TestWhereAValueLands(TestJsDeobfuscator):
 
     @staticmethod
-    def _lands(source: str) -> bool:
+    def _landing(source: str) -> Landing | None:
         value = next(
             node for node in JsParser(source).parse().walk()
             if isinstance(node, JsIdentifier) and node.name == 'VALUE'
         )
-        return lands_in_binding(value)
+        return value_landing(value)
+
+    def _assert_lands(self, landing: Landing, sources: tuple[str, ...]):
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(self._landing(source), landing)
 
     def test_a_value_a_binding_receives(self):
-        for source in (
+        self._assert_lands(Landing.BINDING, (
             'var x = VALUE;',
             'x = VALUE;',
             '[x] = VALUE;',
@@ -777,28 +784,90 @@ class TestWhereAValueLandsInABinding(TestJsDeobfuscator):
             'var x = y || VALUE;',
             'var x = c ? 1 : VALUE;',
             'var x = (0, VALUE);',
+            'x ||= VALUE;',
+        ))
+
+    def test_a_value_a_member_receives(self):
+        self._assert_lands(Landing.PROPERTY, (
+            'o.p = VALUE;',
+            'x = o.p = VALUE;',
+            'x += (o.p = VALUE, 1);',
+            'globalThis.q = VALUE;',
+            'arguments[0] = VALUE;',
+        ))
+
+    def test_a_value_a_member_access_is_made_on(self):
+        self._assert_lands(Landing.MEMBER, (
             'var x = VALUE.prototype;',
             'var x = VALUE.a.b;',
-            'x = o.p = VALUE;',
-        ):
-            with self.subTest(source=source):
-                self.assertTrue(self._lands(source))
+            'VALUE.prototype.k = 1;',
+            'f(VALUE.k);',
+            'VALUE[k]("code");',
+            '(y || VALUE).C;',
+            'delete VALUE.k;',
+            'VALUE.__defineGetter__("k", f);',
+        ))
 
-    def test_a_value_no_binding_receives(self):
-        for source in (
+    def test_a_value_that_names_the_property_an_access_or_an_install_reaches(self):
+        self._assert_lands(Landing.KEY, (
+            'var x = o[VALUE];',
+            'globalThis[VALUE] = 1;',
+            'Object[VALUE](o, "k", d);',
+            'Object.defineProperty(o, VALUE, d);',
+            'o.__defineGetter__(VALUE, f);',
+        ))
+
+    def test_a_value_a_descriptor_is_installed_on(self):
+        self._assert_lands(Landing.INSTALL, (
+            'Object.defineProperty(VALUE, "k", d);',
+            'Object.defineProperties(VALUE, d);',
+            'Reflect.defineProperty(VALUE, "k", d);',
+        ))
+
+    def test_a_value_handed_to_a_call(self):
+        self._assert_lands(Landing.ARGUMENT, (
             'f(VALUE);',
-            'o.p = VALUE;',
+            'f(1, VALUE);',
+            'new F(VALUE);',
+            'f(...VALUE);',
+            'Object.defineProperties(o, VALUE);',
+            'Object.defineProperty(o, "k", VALUE);',
+        ))
+
+    def test_a_value_a_call_invokes(self):
+        self._assert_lands(Landing.CALLEE, (
+            'VALUE("code");',
+            '(0, VALUE)("code");',
+            'new VALUE();',
+        ))
+
+    def test_a_value_no_position_reads(self):
+        self._assert_lands(Landing.ELSEWHERE, (
             'x = VALUE == 1;',
             'x = {k: VALUE};',
             'x = [VALUE];',
-            'var x = c[VALUE];',
+            'x = [...VALUE];',
             'var x = VALUE ? 1 : 2;',
             'var x = (VALUE, 1);',
-            'var x = VALUE();',
-            'x += (o.p = VALUE, 1);',
-        ):
-            with self.subTest(source=source):
-                self.assertFalse(self._lands(source))
+            'typeof VALUE;',
+            'VALUE;',
+            'function f() { return VALUE; }',
+            'var x = o.VALUE;',
+        ))
+
+    def test_a_value_reaching_the_root_it_is_followed_to_lands_nowhere_yet(self):
+        script = JsParser('function f(p, q) { return c ? p : (q, p).k; }').parse()
+        function = script.body[0]
+        assert isinstance(function, JsFunctionDeclaration) and function.body is not None
+        statement = function.body.body[0]
+        assert isinstance(statement, JsReturnStatement) and statement.argument is not None
+        expression = statement.argument
+        names = [node for node in expression.walk() if isinstance(node, JsIdentifier)]
+        answered = next(node for node in names if node.name == 'p' and node.parent is expression)
+        read = next(node for node in names if node.name == 'p' and node.parent is not expression)
+        self.assertIsNone(value_landing(answered, expression))
+        self.assertEqual(value_landing(read, expression), Landing.MEMBER)
+        self.assertEqual(value_landing(expression), Landing.ELSEWHERE)
 
 
 class TestCodeThatDeclaresANameTheIntrinsicWriteScanWatches(TestJsDeobfuscator):

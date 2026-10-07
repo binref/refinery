@@ -4578,6 +4578,53 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    PROTOTYPE_WRITTEN_THROUGH_A_NAME_FROM_OUTSIDE_BEFORE_A_SIBLING_READS_IT_CFF = inspect.cleandoc(
+        """
+        var P = Object.prototype;
+        function writer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    P.p = -10;
+                    return done = true, "written";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        function reader() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case scope.NS.p + 20:
+                    return done = true, "the inherited value";
+                  case 10:
+                    [scope.NS.q] = [15];
+                    scope.RV = scope.NS;
+                    a = 20, b = 15;
+                    break;
+                  case scope.NS.q + 20:
+                    return done = true, "the routed value";
+                  default:
+                    return done = true, "default";
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        console.log(writer(), reader());
+        """
+    )
+
     RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF = inspect.cleandoc(
         """
         function both() {
@@ -4826,6 +4873,7 @@ ENTRY_POINTS = {
     'PAYLOAD_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
     'GLOBAL_CALLED_BY_A_NAME_THE_SCOPE_OBJECT_INHERITS_CFF': 'console.log(outer());',
     'PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF': '',
+    'PROTOTYPE_WRITTEN_THROUGH_A_NAME_FROM_OUTSIDE_BEFORE_A_SIBLING_READS_IT_CFF': '',
     'RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF': '',
 }
 

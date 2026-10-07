@@ -121,6 +121,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     JsVarKind,
     JsWhileStatement,
+    accessor_install_method,
     callee_form_sensitive,
     strip_parens,
     wraps_return,
@@ -2762,36 +2763,108 @@ def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:
     return True
 
 
-def lands_in_binding(node: Node) -> bool:
+class Landing(Enum):
     """
-    Whether the value at *node* is what a binding receives: the initializer of a declarator, or the
-    right side of an assignment to a name or a pattern. The value is followed outward through the
-    forms `refinery.lib.scripts.js.analysis.intrinsics.denoting_leaves` looks through, and through
-    the object of a member access, whose chain that walk attributes to its foot: in
-    `var P = (0, s.v).prototype`, the value at `s.v` lands in `P`.
+    Where a value lands, named for what the semantic model and the intrinsic-write scan read off
+    the position that receives it (`value_landing`).
+    """
+    BINDING = auto()
+    PROPERTY = auto()
+    MEMBER = auto()
+    KEY = auto()
+    INSTALL = auto()
+    ARGUMENT = auto()
+    CALLEE = auto()
+    ELSEWHERE = auto()
+
+
+def value_landing(node: Node, root: Node | None = None) -> Landing | None:
+    """
+    Where the value at *node* lands. It is followed outward through the forms that hand it on
+    unchanged, those `refinery.lib.scripts.js.analysis.intrinsics.denoting_leaves` looks through
+    and a spread, to the first position that receives it:
+
+    - `Landing.BINDING`: the initializer of a declarator, or the right side of an assignment to a
+      name or a pattern. The scan follows a value through the bindings that hold it, and the
+      semantic model finds the names holding the global object among them.
+    - `Landing.PROPERTY`: the right side of an assignment to a member. The models follow it into a
+      binding where the member is one of the global object or of an `arguments` object.
+    - `Landing.MEMBER`: the object of a member access. A write, `delete` or descriptor install
+      through the access is attributed to the foot of its chain, and an access on the global object
+      reads, writes or reflects on a global.
+    - `Landing.KEY`: the computed key of a member access, or the key a descriptor install is handed.
+      A string there makes the access or the install one of the property it names.
+    - `Landing.INSTALL`: the object a descriptor install is handed, the first argument of
+      `Object.defineProperty` and of its kin.
+    - `Landing.ARGUMENT`: any other argument of a call or `new`. The scan reads an intrinsic handed
+      over as one that escapes, and the semantic model reads the global object as one the callee
+      may write a global through.
+    - `Landing.CALLEE`: the function a call or `new` invokes, which the semantic model reads by
+      its name where that name runs a string of code.
+    - `Landing.ELSEWHERE`: anywhere else, such as an operand, a test, an element of a literal, or a
+      value returned or discarded.
+
+    A value that reaches *root* still being handed on lands nowhere yet, which is `None`: the
+    caller places what *root* stands for, as an inlined call puts the expression it answers where
+    the call stood.
     """
     cursor = node
-    while (parent := cursor.parent) is not None:
+    while cursor is not root and (parent := cursor.parent) is not None:
         if isinstance(parent, JsMemberExpression):
-            if parent.object is not cursor:
-                return False
-        elif isinstance(parent, JsConditionalExpression):
+            if parent.object is cursor:
+                return Landing.MEMBER
+            return Landing.KEY if parent.computed else Landing.ELSEWHERE
+        if isinstance(parent, (JsCallExpression, JsNewExpression)):
+            return _call_landing(parent, cursor)
+        if isinstance(parent, JsVariableDeclarator):
+            return Landing.BINDING if parent.init is cursor else Landing.ELSEWHERE
+        if isinstance(parent, JsAssignmentExpression):
+            if parent.right is not cursor:
+                return Landing.ELSEWHERE
+            if isinstance(strip_parens(parent.left), JsMemberExpression):
+                return Landing.PROPERTY
+            return Landing.BINDING
+        if isinstance(parent, JsConditionalExpression):
             if parent.test is cursor:
-                return False
+                return Landing.ELSEWHERE
         elif isinstance(parent, JsSequenceExpression):
             if not parent.expressions or parent.expressions[-1] is not cursor:
-                return False
-        elif isinstance(parent, JsVariableDeclarator):
-            return parent.init is cursor
-        elif isinstance(parent, JsAssignmentExpression):
-            if parent.right is not cursor:
-                return False
-            if not isinstance(strip_parens(parent.left), JsMemberExpression):
-                return True
-        elif not isinstance(parent, (JsParenthesizedExpression, JsLogicalExpression)):
-            return False
+                return Landing.ELSEWHERE
+        elif not isinstance(parent, (
+            JsParenthesizedExpression,
+            JsLogicalExpression,
+            JsSpreadElement,
+        )):
+            return Landing.ELSEWHERE
         cursor = parent
-    return False
+    return None if cursor is root else Landing.ELSEWHERE
+
+
+def _call_landing(call: JsCallExpression | JsNewExpression, part: Node) -> Landing:
+    """
+    Where the value at *part*, the callee or an argument of *call*, lands. An install is read the
+    way `refinery.lib.scripts.js.analysis.intrinsics` reads one: `defineProperty` and
+    `defineProperties` install on their first argument, and `defineProperty` under the key its
+    second one names, whatever object the method is read off; `__defineGetter__` and
+    `__defineSetter__` install on the object they are read off, under the key their first argument
+    names.
+    """
+    arguments = call.arguments
+    if all(argument is not part for argument in arguments):
+        return Landing.CALLEE
+    callee = strip_parens(call.callee)
+    if not isinstance(call, JsCallExpression) or not isinstance(callee, JsMemberExpression):
+        return Landing.ARGUMENT
+    method = accessor_install_method(callee)
+    if method is None:
+        return Landing.ARGUMENT
+    if method.startswith('__define'):
+        return Landing.KEY if arguments[0] is part else Landing.ARGUMENT
+    if arguments[0] is part:
+        return Landing.INSTALL
+    if method == 'defineProperty' and len(arguments) > 1 and arguments[1] is part:
+        return Landing.KEY
+    return Landing.ARGUMENT
 
 
 def declares_a_watched_name(roots: Iterable[Node]) -> bool:
@@ -2970,12 +3043,14 @@ class PinnedTransformer(Transformer):
       makes at its first decision, before its first edit.
     - It renews (`renew_models`) before a decision that reads code the invocation made or edited
       since the last renewal: a held model knows that code as it was, or not at all.
-    - It renews after an edit that puts a value a write through which the models record only once
-      a binding holds it
+    - It renews after an edit that shows the models a fact the held ones do not record, and before
+      it decides anything more on them: an edit that puts a value the models follow only through
+      bindings
       (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.follows_only_through_bindings`)
-      where a binding holds it (`lands_in_binding`), or that declares or assigns a name the
-      intrinsic-write scan watches (`declares_a_watched_name`): rebuilt models record a write
-      through it, and the held ones do not.
+      where they read one (`value_landing`), a string where it names a property, a name where it
+      makes a call run a string of code, that removes the `with` statement between a name and a
+      binding holding such a value, or that declares or assigns a name the intrinsic-write scan
+      watches (`declares_a_watched_name`).
     - A per-pass docstring of its own shows that every other edit leaves the answers it reads no
       more permissive than rebuilt ones.
 

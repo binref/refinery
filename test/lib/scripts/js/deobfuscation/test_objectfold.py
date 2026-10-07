@@ -1345,10 +1345,10 @@ A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS = {
     'function decode(s) {'
     ' var U = {xor: function (a, b) { return a ^ b; }};'
     ' var T = {key: 7};'
-    " var out = '';"
+    ' var out = "";'
     ' for (var i = 0; i < s.length; i++) { out += String.fromCharCode(U.xor(s.charCodeAt(i), T.key)); }'
     ' return out; }'
-    " console.log(decode('abc'));": 'fed\n',
+    ' console.log(decode("abc"));': 'fed\n',
     'var A = {o: Object};'
     ' var q = A.o;'
     ' q.prototype.k = 1;'
@@ -1359,7 +1359,7 @@ A_FOLD_THAT_CHANGES_WHAT_ANOTHER_OBJECT_MEANS = {
     ' q.prototype.k = 1;'
     ' var B = {x: 1};'
     ' console.log(B.k);': '1\n',
-    "var A = {k: 'x'};"
+    'var A = {k: "x"};'
     ' var B = {m: A.k};'
     ' console.log(B.m);': 'x\n',
     'var B = {x: 1};'
@@ -1395,4 +1395,133 @@ class TestNodePrintsTheSameWhereOneFoldChangesAnotherObject(TestJsDeobfuscator):
         self.assertEqual(
             before_and_after_in_a_host(A_FOLD_NAMING_THE_GLOBAL_OBJECT),
             (('5\n', None), ('5\n', None)),
+        )
+
+
+#: Programs in which a fold puts a copy where the models read what it evaluates to, mapped to what
+#: Node prints for each: an intrinsic as the object a descriptor is installed on, at the top level
+#: and inside a function, as the foot of a chain an inlined call answers and a write goes through,
+#: and in an `arguments` object a parameter shares; a string naming the method a call installs a
+#: descriptor through; and a function reaching the argument a fold hands it through its own
+#: `arguments` object, where the fold wrote that function in place of the call's callee.
+A_COPY_THE_MODELS_READ_WHERE_IT_LANDS = {
+    'var A = {o: Object};'
+    ' Object.defineProperty(A.o.prototype, "k", {value: 1});'
+    ' var B = {x: 1};'
+    ' console.log(B.k);': '1\n',
+    'function f() {'
+    ' var A = {o: Object};'
+    ' Object.defineProperty(A.o.prototype, "k", {value: 1});'
+    ' var B = {x: 1};'
+    ' return B.k; }'
+    ' console.log(f());': '1\n',
+    'var A = {f: function (p) { return p; }};'
+    ' A.f(Object).prototype.k = 1;'
+    ' var B = {x: 1};'
+    ' console.log(B.k);': '1\n',
+    'function f(p) {'
+    ' var A = {o: Object};'
+    ' arguments[0] = A.o;'
+    ' p.prototype.k = 1;'
+    ' var B = {x: 1};'
+    ' return B.k; }'
+    ' console.log(f(0));': '1\n',
+    'var A = {k: "defineProperty"};'
+    ' var B = {x: 1};'
+    ' Object[A.k](Object.prototype, "k", {value: 1});'
+    ' console.log(B.k);': '1\n',
+    'var A = {f: function () { var a = arguments; a[0].x = 5; return 1; }};'
+    ' var C = {x: 1};'
+    ' console.log(A.f(C), C.x);': '1 5\n',
+}
+
+
+#: Programs in which a fold puts a copy of the global object, or of a string naming a global, where
+#: the models read it, mapped to what a host running them as classic scripts prints: a member access
+#: on the copy, a descriptor installed on it, a function it is handed to, a key naming a global, and
+#: `eval` read through a key off a receiver a plain call supplies.
+A_COPY_OF_THE_GLOBAL_OBJECT_OR_OF_A_GLOBAL_NAME = {
+    'var A = {g: globalThis};'
+    ' var C = {x: 1};'
+    ' console.log(A.g.C.x);'
+    ' console.log(C.x);': '1\n1\n',
+    'var A = {g: globalThis};'
+    ' var C = {x: 1};'
+    ' Object.defineProperty(A.g, "C", {value: {x: 5}});'
+    ' console.log(C.x);': '5\n',
+    'var D = {g: globalThis};'
+    ' var C = {x: 1};'
+    ' function out(g) { g.C = {x: 5}; }'
+    ' out(D.g);'
+    ' console.log(C.x);': '5\n',
+    'var A = {k: "C"};'
+    ' var C = {x: 1};'
+    ' globalThis[A.k] = {x: 5};'
+    ' console.log(C.x);': '5\n',
+    'var A = {k: "eval"};'
+    ' function G() { return this; }'
+    ' var B = {x: 1};'
+    ' G()[A.k]("Object.prototype.k = 1");'
+    ' console.log(B.k);': '1\n',
+}
+
+
+#: Programs in which a fold removes, together with the literal or the argument that held it, the
+#: one read of a property another object holds, whose value is a name nothing declares. Building
+#: that object throws a `ReferenceError`, which the deobfuscation has to keep.
+A_FOLD_DROPPING_THE_ONE_READ_OF_A_THROWING_VALUE = (
+    'var A = {f: function () { return B.x; }, c: 2};'
+    ' var B = {x: g, y: 1};'
+    ' console.log(A.c);'
+    ' console.log(B.y);',
+    'var A = {f: function (cb) { return 1; }};'
+    ' var B = {x: g, y: 2};'
+    ' console.log(A.f(function () { return B.x; }));'
+    ' console.log(B.y);',
+)
+
+
+#: Programs that call a value an object holds, mapped to what Node prints for each: `eval` itself,
+#: which the call reaches as an indirect `eval` reading the global scope, and a function running a
+#: direct `eval`, which reads the scope it was written in.
+A_CALLED_VALUE_THAT_EVALUATES_CODE = {
+    'var A = {e: eval};'
+    ' function f() { var x = "local"; return A.e("typeof x"); }'
+    ' console.log(f());': 'undefined\n',
+    'var A = {f: function (p) { return eval(p); }};'
+    ' function main(s) { var x = "local"; return A.f(s); }'
+    ' var x = "global";'
+    ' console.log(main("x"));': 'global\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscator):
+
+    def test_each_program_prints_what_it_printed(self):
+        rows = A_COPY_THE_MODELS_READ_WHERE_IT_LANDS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_each_program_prints_what_it_printed_in_a_host(self):
+        rows = A_COPY_OF_THE_GLOBAL_OBJECT_OR_OF_A_GLOBAL_NAME
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            {source: ((prints, None), (prints, None)) for source, prints in rows.items()},
+        )
+
+    def test_a_throwing_value_whose_one_read_a_fold_removed_still_throws(self):
+        rows = A_FOLD_DROPPING_THE_ONE_READ_OF_A_THROWING_VALUE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (('', 'ReferenceError'), ('', 'ReferenceError')) for source in rows},
+        )
+
+    def test_a_called_value_evaluates_code_in_the_scope_it_did(self):
+        rows = A_CALLED_VALUE_THAT_EVALUATES_CODE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
         )

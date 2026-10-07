@@ -251,16 +251,20 @@ class IntrinsicWrites(NamedTuple):
     def follows_only_through_bindings(self, value: Node) -> bool:
         """
         Whether a write through what *value* evaluates to is one this scan or the semantic model it
-        read records only once a binding holds that value. The scan follows a value through the
-        bindings that hold it and trusts `Object`, `Function`, `Boolean` and `Buffer` when they
-        escape (`ESCAPE_RECORDED_ROOTS`), and the semantic model finds a write to a global through
-        a name holding the global object, not through a property holding it. Stored in a property,
-        `scope.P = Object.prototype` lets `scope.P.p = 1` write `Object.prototype` unrecorded;
-        stored in a binding, `var P = Object.prototype` makes `P.p = 1` a recorded write.
+        read records where the value is spelled or a binding holds it, and never through a property
+        holding it. The scan follows a value through the bindings that hold it and trusts `Object`,
+        `Function`, `Boolean` and `Buffer` when they escape (`ESCAPE_RECORDED_ROOTS`), and the
+        semantic model finds a write to a global through a name holding the global object, not
+        through a property holding it. Stored in a property, `scope.P = Object.prototype` lets
+        `scope.P.p = 1` write `Object.prototype` unrecorded; stored in a binding,
+        `var P = Object.prototype` makes `P.p = 1` a recorded write.
 
         A value may carry what any of its `denoting_leaves` evaluates to, and one of them qualifies
         where the scan's aliases resolve it to a root the scan watches, where it may be the global
-        object, or where the model was not built over it and so cannot say.
+        object, or where the model was not built over it and so cannot say. The foot of a member
+        chain is no value the chain evaluates to: it qualifies through the root it names, as
+        `Object` does for `Object.prototype`, and never as the global object, since what
+        `window.document` evaluates to is a property of that object.
         """
         model = self.aliases.model
         for leaf in denoting_leaves(value):
@@ -268,9 +272,16 @@ class IntrinsicWrites(NamedTuple):
                 return True
             if isinstance(leaf, JsIdentifier) and self.aliases.names_denoted_by(leaf) & ESCAPE_WATCHED_ROOTS:
                 return True
-            if model.may_be_the_global_object(leaf):
+            if not _is_member_object(leaf) and model.may_be_the_global_object(leaf):
                 return True
         return False
+
+    def denotes_a_watched_root(self, binding: Binding) -> bool:
+        """
+        Whether a value *binding* may hold denotes a root the scan watches, so that a write through
+        a name resolving to the binding is one the scan attributes to that root.
+        """
+        return bool(self.aliases.names_of(binding) & ESCAPE_WATCHED_ROOTS)
 
     def roots_unwritten(self, owner: str, roots: frozenset[str]) -> bool:
         """
@@ -898,6 +909,17 @@ def _member_chain_foot(node: JsMemberExpression) -> Node | None:
     while isinstance(cursor, JsMemberExpression):
         cursor = strip_parens(cursor.object)
     return cursor
+
+
+def _is_member_object(node: Node) -> bool:
+    """
+    Whether *node* is the object a member access reads its property off, looking through
+    parentheses.
+    """
+    cursor = node
+    while isinstance(parent := cursor.parent, JsParenthesizedExpression):
+        cursor = parent
+    return isinstance(parent, JsMemberExpression) and parent.object is cursor
 
 
 def _member_chain_root(node: Node | None) -> JsIdentifier | None:

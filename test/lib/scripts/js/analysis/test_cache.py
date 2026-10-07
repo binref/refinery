@@ -901,6 +901,14 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
         )
 
     @a_property_of_the_pin_itself
+    def test_a_slot_holding_a_property_of_the_global_object_needs_no_new_models(self):
+        state = 'scope.d = window.document; return done = true, scope.d.title;'
+        self.assertEqual(
+            self._held(self._machines(2, state))[0],
+            self._held(self._machines(16, state))[0],
+        )
+
+    @a_property_of_the_pin_itself
     def test_released_models_are_built_more_often_for_sixteen_machines_than_for_two(self):
         self.assertLess(self._released(self._machines(2))[0], self._released(self._machines(16))[0])
 
@@ -909,6 +917,11 @@ class TestGeneratorUnflatteningHoldsTheModelsForARun(TestBase):
             held = self._held(source)[1]
             self.assertNotIn('function*', held)
             self.assertEqual(held, self._released(source)[1])
+
+    def test_a_write_through_a_name_from_outside_the_with_does_not_change_the_result(self):
+        fixtures = generator_fixtures.TestGeneratorCFFUnflattening
+        source = fixtures.PROTOTYPE_WRITTEN_THROUGH_A_NAME_FROM_OUTSIDE_BEFORE_A_SIBLING_READS_IT_CFF
+        self.assertEqual(self._held(source)[1], self._released(source)[1])
 
 
 class TestObjectFoldingHoldsTheModelsForARun(TestBase):
@@ -945,6 +958,69 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         )
 
     @staticmethod
+    def _reading_a_parameter(count: int, declarations: str, value: str) -> str:
+        """
+        A script with *count* functions of one parameter `e`, each declaring objects with
+        *declarations* and returning *value*.
+        """
+        functions = '\n'.join(
+            F'function f{index}(e) {{ {declarations} return {value}; }}'.replace('INDEX', str(index))
+            for index in range(count)
+        )
+        calls = ', '.join(F'f{index}(1)' for index in range(count))
+        return F'{functions}\nconsole.log({calls});'
+
+    @classmethod
+    def _holding_the_parameter(cls, count: int) -> str:
+        return cls._reading_a_parameter(count, 'var O = {a: e, b: INDEX};', 'O.a + O.b')
+
+    @classmethod
+    def _holding_the_parameter_beside_an_array(cls, count: int) -> str:
+        return cls._reading_a_parameter(
+            count,
+            'var A = {v: e}; var B = {w: e, z: [INDEX]};',
+            'A.v + B.w + B.z[0]',
+        )
+
+    #: Programs in which a fold puts a copy where the models read it — a member access on the
+    #: global object, the object or the key of a descriptor install, the global object handed to a
+    #: call, an `arguments` object holding an intrinsic, a write through what an inlined call
+    #: answers, a string naming a global, an install or `eval`, a name running a string of code —
+    #: or edits what another object's reference stands in, by dropping a function that read it or
+    #: by writing the callee of the call it is handed to.
+    _FOLDS_THE_MODELS_READ = (
+        'var A = {g: globalThis}; var C = {x: 1}; console.log(A.g.C.x); console.log(C.x);',
+        'var A = {g: globalThis}; var C = {x: 1};'
+        ' Object.defineProperty(A.g, "C", {value: {x: 5}}); console.log(C.x);',
+        'var D = {g: globalThis}; var C = {x: 1};'
+        ' function out(g) { g.C = {x: 5}; } out(D.g); console.log(C.x);',
+        'var A = {g: globalThis}; A.g["ev" + "al"]("Object.prototype.k = 1");'
+        ' var B = {x: 1}; console.log(B.k);',
+        'var A = {o: Object}; Object.defineProperty(A.o.prototype, "k", {value: 1});'
+        ' var B = {x: 1}; console.log(B.k);',
+        'var A = {f: function (p) { return p; }}; A.f(Object).prototype.k = 1;'
+        ' var B = {x: 1}; console.log(B.k);',
+        'function f(p) { var A = {o: Object}; arguments[0] = A.o; p.prototype.k = 1;'
+        ' var B = {x: 1}; return B.k; } console.log(f(0));',
+        'var A = {k: "C"}; var C = {x: 1}; globalThis[A.k] = {x: 5}; console.log(C.x);',
+        'var A = {k: "defineProperty"}; var B = {x: 1};'
+        ' Object[A.k](Object.prototype, "k", {value: 1}); console.log(B.k);',
+        'var A = {k: "eval"}; function G() { return this; } var B = {x: 1};'
+        ' G()[A.k]("Object.prototype.k = 1"); console.log(B.k);',
+        'var A = {t: setTimeout}; A.t("Object.prototype.k = 1", 0); var B = {x: 1};'
+        ' setTimeout(function () { console.log(B.k); }, 10);',
+        'var A = {f: function () { return B.x; }, c: 2}; var B = {x: g, y: 1};'
+        ' console.log(A.c); console.log(B.y);',
+        'var A = {f: function (cb) { return 1; }}; var B = {x: g, y: 2};'
+        ' console.log(A.f(function () { return B.x; })); console.log(B.y);',
+        'var A = {f: function () { var a = arguments; a[0].x = 5; return 1; }};'
+        ' var C = {x: 1}; console.log(A.f(C), C.x);',
+        'var B = {o: Object, f: function (p) { return 1; }}; function g() { return ({}).x; }'
+        ' function run() { console.log(B.f(g())); } var q = B.o;'
+        ' Object.defineProperty(q.prototype, "x", {get: function () { return 2; }}); run();',
+    )
+
+    @staticmethod
     def _held(source: str) -> tuple[int, str]:
         return _transform_root_builds(JsObjectFold, source)
 
@@ -969,6 +1045,20 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         )
 
     @a_property_of_the_pin_itself
+    def test_a_name_each_function_binds_anew_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._holding_the_parameter(2))[0],
+            self._held(self._holding_the_parameter(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_an_object_declined_for_a_value_it_allocates_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._holding_the_parameter_beside_an_array(2))[0],
+            self._held(self._holding_the_parameter_beside_an_array(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
     def test_released_models_are_built_more_often_for_sixteen_objects_than_for_two(self):
         self.assertLess(self._released(self._independent(2))[0], self._released(self._independent(16))[0])
 
@@ -978,11 +1068,16 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self.assertNotIn('var O', held)
             self.assertEqual(held, self._released(source)[1])
 
+    def test_holding_the_models_does_not_change_the_result_of_a_fold_the_models_read(self):
+        for source in self._FOLDS_THE_MODELS_READ:
+            with self.subTest(source=source):
+                self.assertEqual(self._held(source)[1], self._released(source)[1])
+
 
 #: Programs that run every pinned or batched pass through its rewriting arm — a reflective site at
 #: statement and at expression position, a string timer, a consumed `Function` temporary, a gated
 #: fold, a string respelling, a call wrapper, a pruned branch whose kept test assigns what a later
-#: test reads, a dead store, a discarded completion, a global only one function uses, two machines
+#: test reads, a dead store, a discarded completion, a global only one function uses, three machines
 #: whose recoveries renew the models generator unflattening holds, and objects whose folds renew the
 #: models object folding holds — beside a few plain shapes and the generated corpus, which exercise
 #: the rest of the pipeline.
@@ -1005,10 +1100,14 @@ _CORPUS = tuple(generate(seed) for seed in range(16)) + (
     '(function () { function g() { h(); return 0; } g(); })();',
     'var t; function f(a) { t = a.b; SINK(t); } f(SRC);',
     generator_fixtures.TestGeneratorCFFUnflattening.PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF,
+    generator_fixtures.TestGeneratorCFFUnflattening.PROTOTYPE_WRITTEN_THROUGH_A_NAME_FROM_OUTSIDE_BEFORE_A_SIBLING_READS_IT_CFF,
     generator_fixtures.TestGeneratorCFFUnflattening.RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF,
     'var B = {f: function (p) { return p + 1; }}; var C = {y: 2}; console.log(B.f(C.y));',
     'var A = {g: globalThis}; var w = A.g; var C = {x: 1}; w.C = {x: 5}; console.log(C.x);',
     'var B = {x: 1}; function f() { var A = {b: B}; return A.b.x; } console.log(f(), B.x);',
+    'var A = {g: globalThis}; var C = {x: 1}; console.log(A.g.C.x); console.log(C.x);',
+    'var A = {o: Object}; Object.defineProperty(A.o.prototype, "k", {value: 1}); var B = {x: 1}; console.log(B.k);',
+    'var A = {k: "C"}; var C = {x: 1}; globalThis[A.k] = {x: 5}; console.log(C.x);',
 )
 
 
