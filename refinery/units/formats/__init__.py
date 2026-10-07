@@ -252,6 +252,16 @@ class PathExtractorUnit(Unit, abstract=True):
             result.data = data = error.partial
             return data
 
+    def _data_unless_unreadable(self, result: UnpackResult) -> buf | None:
+        """
+        The data of the given result, or `None` if reading it fails; the failure is reported when
+        the result is extracted.
+        """
+        try:
+            return self._get_data(result)
+        except Exception:
+            return None
+
     def _selection(self, data: Chunk, metavar: str) -> collections.deque[UnpackResult]:
         """
         Unpacks the input and returns the results that the path patterns select, in the order in
@@ -264,6 +274,7 @@ class PathExtractorUnit(Unit, abstract=True):
 
         occurrences = collections.defaultdict(int)
         checksums = collections.defaultdict(set)
+        versions = collections.defaultdict(int)
         root = ''
         uuid = 0
 
@@ -305,7 +316,9 @@ class PathExtractorUnit(Unit, abstract=True):
             if not path:
                 from refinery.lib.mime import FileMagicInfo
                 path = _uuid()
-                ext = FileMagicInfo(self._get_data(result)).extension
+                ext = 'bin'
+                if (content := self._data_unless_unreadable(result)) is not None:
+                    ext = FileMagicInfo(content).extension
                 if ext != 'bin':
                     path = F'{path}.{ext}'
                 self.log_warn(F'read chunk with empty path; using generated name {path}')
@@ -315,11 +328,12 @@ class PathExtractorUnit(Unit, abstract=True):
         for result in results:
             path = result.path
             if occurrences[path] > 1:
-                checksum = adler32(self._get_data(result))
-                if checksum in checksums[path]:
-                    continue
-                checksums[path].add(checksum)
-                counter = len(checksums[path])
+                if (content := self._data_unless_unreadable(result)) is not None:
+                    if (checksum := adler32(content)) in checksums[path]:
+                        continue
+                    checksums[path].add(checksum)
+                versions[path] += 1
+                counter = versions[path]
                 slash = self._get_path_separator()
                 if any(F'{result.path}{slash}{c}' in occurrences for c in range(occurrences[path])):
                     counter = _uuid()

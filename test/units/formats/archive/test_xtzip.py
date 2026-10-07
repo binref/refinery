@@ -1,5 +1,7 @@
 from ... import TestUnitBase
 
+import struct
+
 import pytest
 
 from refinery.lib.zip import ZipCompressionMethod
@@ -120,3 +122,20 @@ class TestZipFileExtractor(TestUnitBase):
         data = self.download_sample('f36d9551c1917a7990db2b4582191656d748179ea2bd15499294388e9c4fa458')
         chunks = {chunk['path']: repr(chunk['sha256']) for chunk in data | self.ldu('xt')}
         self.assertEqual(chunks['DEDICATE.DOC'], 'edc82bf30189cccb2c5ab3a18d212149ba82e3c14c700ea58433389a3d1e8f7e')
+
+    def test_a_damaged_file_whose_path_another_file_shares_fails_alone(self):
+        data = bytearray(self.download_sample('dd8d2293bd1afa4a99ec161c150415ecd270f3b40e640cd556a19890e6c52c4d'))
+        count = len(data | self.load() | [...])
+        # the name occurs once in the local header and once in the central directory
+        self.assertEqual(data.count(B'_ios_support.py'), 2)
+        local = data.index(B'_ios_support.py') - 30
+        compressed_size, = struct.unpack_from('<I', data, local + 18)
+        name_size, extra_size = struct.unpack_from('<HH', data, local + 26)
+        data[local + 30 + name_size + extra_size + compressed_size // 2] ^= 0xFF
+        data[:] = data.replace(B'_ios_support.py', B'_compression.py')
+        with self.load_logged() as (unit, log):
+            paths = [str(chunk['path']) for chunk in data | unit | [...]]
+        self.assertEqual(len(paths), count - 1)
+        self.assertIn('_compression.py/1', paths)
+        self.assertEqual(len(log), 1)
+        self.assertIn('_compression.py/2', log[0])
