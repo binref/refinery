@@ -1933,9 +1933,7 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
 #: argument in each: to `Object.assign`, to `Reflect.set`, to `Reflect.deleteProperty`, and to a
 #: function the file declares itself. The last row hands over `Object` rather than its prototype,
 #: which reaches the same chain through one more member access and is a route of its own: the write
-#: is spelled inside the callee, so nothing at the call site names the property it replaces. One
-#: row hands the prototype the other way: a method returns it, and the caller writes it through the
-#: call's result.
+#: is spelled inside the callee, so nothing at the call site names the property it replaces.
 A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT = {
     'Object.assign(Object.prototype, {z: 9}); var o = {}; console.log(o.z);':
         '9\n',
@@ -1946,9 +1944,6 @@ A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT = {
         'false\n',
     'function patch(p) { p.z = 9; } patch(Object.prototype); var o = {}; console.log(o.z);':
         '9\n',
-    'var A = {f: function () { return Object.prototype; }};'
-    ' var P = A.f(); P.p = 1; var B = {q: 2}; console.log(B.p);':
-        '1\n',
     'function patch(o) { o.prototype.zz = 9; }\npatch(Object);\n'
     + evaluated_in_a_body('{a: 1}', 'v.zz'):
         '9\n',
@@ -1983,12 +1978,114 @@ class TestAPrototypeHandedToAWriterIsStillWritten(TestBase):
     @unittest.expectedFailure
     def test_a_prototype_handed_to_a_writer_answers_the_read(self):
         """
-        Node prints `9`, `9`, `false`, `9`, `1`, `9`, and `tampered` before `ran`, for the seven
-        programs of `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as
-        if the call it was handed to had not written it; the last folds a line-break check that the
+        Node prints `9`, `9`, `false`, `9`, `9`, and `tampered` before `ran`, for the six programs
+        of `A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT`. Each deobfuscation answers as if the
+        call it was handed to had not written it; the last folds a line-break check that the
         conversion the call installed makes trip.
         """
         rows = A_PROTOTYPE_HANDED_TO_SOMETHING_THAT_WRITES_IT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program that reaches `Object.prototype` through a method returning it, and writes it through
+#: the call's result, mapped to what Node prints.
+A_PROTOTYPE_A_METHOD_RETURNS = {
+    'var A = {f: function () { return Object.prototype; }};'
+    ' var P = A.f(); P.p = 1; var B = {q: 2}; console.log(B.p);':
+        '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPrototypeAMethodReturnsIsStillWrittenByItsCaller(TestBase):
+    """
+    The prototype leaves the method the way `TestAPrototypeHandedToAWriterIsStillWritten` has it
+    leave through an argument: `return` is an escape, which the intrinsic-write scan records against
+    the keys of `Object` and not against the name. The caller then holds it in a name whose value is
+    a call result the scan does not follow, so the write through that name is attributed to nothing,
+    and the chain questions read `Object.prototype` as unwritten. The fix is the one that entry
+    names: follow the escaped value to its writes, here from the `return` to the call's result.
+    """
+
+    @unittest.expectedFailure
+    def test_a_prototype_a_method_returns_answers_the_read(self):
+        """
+        Node prints `1` for the program of `A_PROTOTYPE_A_METHOD_RETURNS`; its deobfuscation folds
+        the inherited read to `undefined`.
+        """
+        rows = A_PROTOTYPE_A_METHOD_RETURNS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program that writes `Object.prototype` through the property of the global object that holds
+#: `Object`, spelled with a name Node gives the global object, mapped to what Node prints.
+A_PROTOTYPE_WRITTEN_THROUGH_THE_GLOBAL_OBJECT = {
+    'global.Object.prototype.k = 1; var B = {x: 1}; console.log(B.k);':
+        '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPrototypeWrittenThroughTheGlobalObjectIsStillWritten(TestBase):
+    """
+    The intrinsic-write scan attributes a write through a member chain to the name at the chain's
+    foot, which for `global.Object.prototype.k = 1` is `global`, and `Object` is never named. The
+    spelling `globalThis.Object` is respelled as `Object` before the scan reads it, which a name
+    the run does not guarantee to be the global object, such as `global`, `window` or `self`, is
+    not; the chain questions then read `Object.prototype` as unwritten. The fix: where the foot of a
+    written chain may be the global object
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.may_be_the_global_object`), the scan
+    attributes the write to the property read off it, as it would to that name spelled bare.
+    """
+
+    @unittest.expectedFailure
+    def test_a_prototype_written_through_the_global_object_answers_the_read(self):
+        """
+        Node prints `1` for the program of `A_PROTOTYPE_WRITTEN_THROUGH_THE_GLOBAL_OBJECT`; its
+        deobfuscation folds the inherited read to `undefined`.
+        """
+        rows = A_PROTOTYPE_WRITTEN_THROUGH_THE_GLOBAL_OBJECT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program that installs a getter where a built-in keeps one of its methods and reads the method
+#: bare, mapped to what Node prints.
+AN_ACCESSOR_ON_A_BUILT_IN_READ_BARE = {
+    'Object.defineProperty(Math, "floor", {get: function () { console.log("ran"); return Math.round; }});'
+    ' Math.floor; console.log(1);':
+        'ran\n1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAccessorInstalledOnABuiltInRunsWhereItIsRead(TestBase):
+    """
+    The effect model trusts a built-in's value under one program-wide flag
+    (`refinery.lib.scripts.js.analysis.effects._intrinsics_pristine`) that looks for assignments to
+    the built-ins and to their properties, and not for descriptors installed on them. A read of a
+    property the program has turned into a getter is then taken for one that runs nothing, and the
+    bare read is dropped together with what the getter does.
+    """
+
+    @wontfix(
+        'programs and obfuscators replace a built-in method by assigning it, which the flag sees; '
+        'none installs a getter on a built-in and reads the method bare for what the getter does'
+    )
+    def test_a_getter_installed_on_a_built_in_runs_where_it_is_read(self):
+        """
+        Node prints `ran` and then `1` for the program of `AN_ACCESSOR_ON_A_BUILT_IN_READ_BARE`;
+        its deobfuscation drops the read and prints only `1`.
+        """
+        rows = AN_ACCESSOR_ON_A_BUILT_IN_READ_BARE
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
