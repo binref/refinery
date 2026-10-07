@@ -292,7 +292,8 @@ class CHM(Struct):
         functions returned for them are alive. Data that the section does not contain is missing
         from the result.
         """
-        index = entry.section_index
+        if (index := entry.section_index) >= len(self.sections):
+            return partial(self._missing_section, index)
         cs = self.sections[index]
         if not cs.window_size or not cs.block_offsets:
             return lambda: self._stored(index)[entry.offset:][:entry.length]
@@ -311,6 +312,9 @@ class CHM(Struct):
                 return truncated.partial
 
         return extract
+
+    def _missing_section(self, index: int) -> buf:
+        raise IndexError(F'The archive has no section {index}.')
 
     def read(self, entry: DirectoryListingEntry) -> buf:
         """

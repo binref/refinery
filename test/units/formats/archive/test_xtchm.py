@@ -63,3 +63,17 @@ class TestChmExtractor(TestUnitBase):
 
     def test_damage_in_the_first_reset_interval_fails_only_the_files_up_to_the_next_reset(self):
         self._assert_damage_fails_only_the_files_up_to_the_next_reset(HP_HELP, 1)
+
+    def test_an_entry_that_names_a_section_which_does_not_exist_fails_alone(self):
+        data = bytearray(self.download_sample(FARMANAGER_HELP))
+        chm, intact = contents(data)
+        path = next(p for p, e in chm.filesystem.items() if p.endswith('.html') and e.section_index == 1)
+        name = path.encode('utf8')
+        # a listing entry stores the length of its name, the name, and then its section index
+        entry = bytes([len(name)]) + name + B'\x01'
+        data[data.index(entry) + len(entry) - 1] = len(chm.sections)
+        damaged, result = contents(data)
+        self.assertEqual(damaged.filesystem[path].section_index, len(chm.sections))
+        self.assertIsInstance(result.pop(path), IndexError)
+        del intact[path]
+        self.assertEqual(result, intact)
