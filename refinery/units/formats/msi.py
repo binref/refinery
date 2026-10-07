@@ -401,7 +401,7 @@ class xtmsi(xtdoc, docs=(
                 for result in unpacked:
                     sub_path = file_names.get(result.name, result.name)
                     sub_path = self._get_path_separator().join((path, sub_path))
-                    streams[sub_path] = UnpackResult(sub_path, lambda r=result: r.decompress())
+                    streams[sub_path] = UnpackResult(sub_path, result.extractor())
 
         streams = {fix_msi_path(path): item for path, item in streams.items()}
         ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME, json.dumps(processed_table_data))

@@ -3,16 +3,21 @@ Parsing of CAB archives.
 """
 from __future__ import annotations
 
+import weakref
 import zlib
 
 from datetime import date, datetime, time
 from enum import IntEnum, IntFlag
-from typing import Iterable, NamedTuple
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, NamedTuple
 
 from refinery.lib.fast.cab import cab_data_checksum
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.seven.quantum import QuantumDecoder
+from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import Struct, StructReader
+
+if TYPE_CHECKING:
+    from refinery.lib.types import buf
 
 
 class CabVolumeMissing(LookupError):
@@ -85,7 +90,7 @@ class CabFolder(Struct):
         reader.seekrel(parent.skip_per_fldr)
         with reader.detour(start):
             self.blocks = [CabCompressedBlock(reader, parent, compute_checksums) for _ in range(count)]
-        self.decompressed = None
+        self._stream: weakref.ref[SolidStream] | None = None
 
     def __repr__(self):
         return F'<fldr:{self.compression.name}({self.method[1]}):{len(self.blocks)}>'
@@ -106,22 +111,30 @@ class CabFolder(Struct):
                 size = tail.decompressed_size
             yield size, memoryview(merged)
 
-    def decompress(self):
-        if self.decompressed is not None:
-            return memoryview(self.decompressed)
+    def stream(self) -> SolidStream:
+        """
+        The decompressed folder as a stream from which the files in it are read. The folder keeps
+        the stream only while a claim on it is alive.
+        """
+        if (ref := self._stream) is None or (stream := ref()) is None:
+            volatile = self.compression in (CabMethod.LZX, CabMethod.Quantum)
+            stream = SolidStream(self._pieces, volatile=volatile)
+            self._stream = weakref.ref(stream)
+        return stream
 
+    def _pieces(self, origin: int) -> Iterator[tuple[int, buf]]:
         cm = self.compression
-        dst = bytearray(sum(block.decompressed_size for block in self.blocks))
         pos = 0
-
         if cm == CabMethod.Nothing:
             for block in self.blocks:
-                chunk = block.data
-                pos += len(chunk)
-                dst[pos - len(chunk):pos] = chunk
-        elif cm == CabMethod.Deflate:
+                yield pos, block.data
+                pos += len(block.data)
+            return
+        if cm == CabMethod.Deflate:
             zdict = B''
-            for _, data in self.iter_block_data():
+
+            def decompress(data: memoryview, size: int, k: int) -> buf:
+                nonlocal zdict
                 if data[:2] != B'CK':
                     raise ValueError('Corrupted MSZip block with invalid header.')
                 try:
@@ -129,29 +142,25 @@ class CabFolder(Struct):
                     zdict = inflate.decompress(data[2:]) + inflate.flush()
                 except zlib.error:
                     raise RuntimeError('Failed to inflate CAB data block.')
-                pos += len(zdict)
-                dst[pos - len(zdict):pos] = zdict
+                return zdict
         elif cm == CabMethod.LZX:
             lzx = LzxDecoder(False)
             lzx.set_params_and_alloc(self.method[1])
-            for size, data in self.iter_block_data():
-                out = lzx.decompress(data, size)
-                pos += len(out)
-                dst[pos - len(out):pos] = out
-                lzx.keep_history = True
+
+            def decompress(data: memoryview, size: int, k: int) -> buf:
+                lzx.keep_history = k > 0
+                return lzx.decompress(data, size)
         elif cm == CabMethod.Quantum:
             qd = QuantumDecoder(self.method[1] & 0x1F)
-            for k, (size, data) in enumerate(self.iter_block_data()):
-                out = qd.decompress(data, size, keep_history=k > 0)
-                pos += len(out)
-                dst[pos - len(out):pos] = out
+
+            def decompress(data: memoryview, size: int, k: int) -> buf:
+                return qd.decompress(data, size, keep_history=k > 0)
         else:
             raise ValueError(F'Unknown decompression method: {cm!r}')
-
-        if pos != len(dst):
-            dst = dst[:pos]
-        self.decompressed = dst
-        return memoryview(dst)
+        for k, (size, data) in enumerate(self.iter_block_data()):
+            out = decompress(data, size, k)
+            yield pos, out
+            pos += len(out)
 
 
 class CabFile(Struct):
@@ -200,15 +209,31 @@ class CabFile(Struct):
         t = t.isoformat('seconds') if (t := self.time) else '??:??:??'
         return F'<file:{index}:{d}T{t}:{self.name}>'
 
-    def decompress(self):
-        folder = self.folder
-        if folder is None:
-            raise RuntimeError(F'CAB file entry is missing a link to its folder: {self!r}')
-        folder_data = folder.decompress()
-        data = folder_data[self.offset:self.end]
-        if len(data) != self.size:
-            raise RuntimeError(F'The extracted file does not have the correct size: {self!r}')
-        return data
+    def extractor(self) -> Callable[[], buf]:
+        """
+        Return a function that returns the data of this file. The folder is decompressed when the
+        function is first called; it keeps the data of other files only while the functions returned
+        for them are alive.
+        """
+        if (folder := self.folder) is None:
+            return self._missing_folder
+        claim = folder.stream().claim(self.offset, self.size)
+
+        def extract() -> buf:
+            try:
+                return claim()
+            except SolidStreamTruncated:
+                raise RuntimeError(
+                    F'The extracted file does not have the correct size: {self!r}'
+                ) from None
+
+        return extract
+
+    def decompress(self) -> buf:
+        return self.extractor()()
+
+    def _missing_folder(self) -> buf:
+        raise RuntimeError(F'CAB file entry is missing a link to its folder: {self!r}')
 
     @property
     def codec(self):

@@ -226,7 +226,7 @@ class xtsim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         if sim.runtime_is_cab:
             runtime_cab = Cabinet(runtime.read(), no_magic=True)
             for file in runtime_cab.process().get_files():
-                yield self._pack(runtime_path(file.name), file.timestamp, lambda f=file: f.decompress())
+                yield self._pack(runtime_path(file.name), file.timestamp, file.extractor())
         else:
             for _ in range(sim.nr_of_runtime):
                 name = decode(runtime.read_c_string(), codec)
@@ -263,7 +263,7 @@ class xtsim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 except Exception:
                     path = file.name
                 path = F'content/{no_abs_path(path)}'
-                yield self._pack(path, file.timestamp, lambda f=file: f.decompress())
+                yield self._pack(path, file.timestamp, file.extractor())
 
         check_empty_reader(content, 'content')
 

@@ -29,7 +29,7 @@ class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 path = file.name
                 if not one:
                     path = F'CAB{id:04X}/{path}'
-                yield self._pack(path, file.timestamp, lambda f=file: f.decompress())
+                yield self._pack(path, file.timestamp, file.extractor())
 
     def filter(self, chunks):
         box = None

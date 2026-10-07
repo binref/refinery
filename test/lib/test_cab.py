@@ -1,7 +1,19 @@
+import hashlib
 import random
+import struct
+import tracemalloc
 
-from refinery.lib.cab import cab_data_checksum
+from unittest import mock
+
+from refinery.lib.cab import Cabinet, cab_data_checksum
+from refinery.lib.seven.lzx import LzxDecoder
 from .. import TestBase
+
+THREE_FILES_IN_ONE_LZX_FOLDER = '55e0e9167fa3612135815ed01119a91281373c08c257efc8f7cc36bcc08734d2'
+STDLIB_SOURCES_IN_ONE_MSZIP_FOLDER = '36ef84b0a20d122e3d68c78f93dcf362639d09a68575b734e28c3b3855918ff2'
+FIRST_FOLDER_BLOCK_COUNT = 40
+FILE_ENTRIES_OFFSET = 16
+FILE_ENTRY_NAME = 16
 
 
 def _reference(content: bytes, checksum: int = 0) -> int:
@@ -35,3 +47,52 @@ class TestCabChecksum(TestBase):
             data = bytes(rng.getrandbits(8) for _ in range(n))
             seed = rng.getrandbits(32)
             self.assertEqual(cab_data_checksum(memoryview(data), seed), _reference(data, seed))
+
+
+class TestCabFolders(TestBase):
+
+    def files(self, data):
+        return Cabinet(memoryview(data)).process().get_files()
+
+    def test_files_of_one_folder_read_in_reverse_decompress_each_block_once(self):
+        files = self.files(self.download_sample(THREE_FILES_IN_ONE_LZX_FOLDER))
+        folder, = {id(file.folder): file.folder for file in files}.values()
+        extractors = [file.extractor() for file in files]
+        with mock.patch.object(LzxDecoder, 'decompress', autospec=True, side_effect=LzxDecoder.decompress) as lzx:
+            sizes = [len(extract()) for extract in reversed(extractors)]
+        self.assertEqual(sizes, [file.size for file in reversed(files)])
+        self.assertEqual(lzx.call_count, len(folder.blocks))
+
+    def test_file_cut_short_by_the_end_of_its_folder_reports_its_size(self):
+        data = self.download_sample(THREE_FILES_IN_ONE_LZX_FOLDER)
+        intact = [hashlib.sha256(file.decompress()).hexdigest() for file in self.files(data)]
+        cut = bytearray(data)
+        blocks, = struct.unpack_from('<H', cut, FIRST_FOLDER_BLOCK_COUNT)
+        struct.pack_into('<H', cut, FIRST_FOLDER_BLOCK_COUNT, blocks - 1)
+        first, second, third = (file.extractor() for file in self.files(cut))
+        self.assertEqual(hashlib.sha256(first()).hexdigest(), intact[0])
+        self.assertEqual(hashlib.sha256(second()).hexdigest(), intact[1])
+        with self.assertRaisesRegex(RuntimeError, 'does not have the correct size'):
+            third()
+
+    def test_a_file_whose_stated_size_is_far_too_large_holds_no_more_than_the_decoded_data(self):
+        data = bytearray(self.download_sample(STDLIB_SOURCES_IN_ONE_MSZIP_FOLDER))
+        intact = [hashlib.sha256(file.decompress()).digest() for file in self.files(data)]
+        oversized = len(intact) // 2
+        position, = struct.unpack_from('<I', data, FILE_ENTRIES_OFFSET)
+        for _ in range(oversized):
+            position = data.index(0, position + FILE_ENTRY_NAME) + 1
+        struct.pack_into('<I', data, position, 1 << 30)
+        extractors = [file.extractor() for file in self.files(data)]
+        tracemalloc.start()
+        try:
+            for k, (extract, digest) in enumerate(zip(extractors, intact)):
+                if k == oversized:
+                    with self.assertRaisesRegex(RuntimeError, 'does not have the correct size'):
+                        extract()
+                else:
+                    self.assertEqual(hashlib.sha256(extract()).digest(), digest)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 64 << 20)
