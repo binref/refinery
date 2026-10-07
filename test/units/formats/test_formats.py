@@ -8,6 +8,14 @@ from refinery.units.formats import PathPattern
 
 _MALWARE_VHD = '2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'
 
+#: The same 263 Python standard library sources (6 MB) in three archives: a CAB made with makecab,
+#: and a 7z and a ZIP made with 7-Zip.
+_STDLIB_ARCHIVES = {
+    'xtcab': '36ef84b0a20d122e3d68c78f93dcf362639d09a68575b734e28c3b3855918ff2',
+    'xt7z': '4950524235e3e594afe8b60ec3a7dc7ca9431b27e5c4bb728d166f403ef83131',
+    'xtzip': 'dd8d2293bd1afa4a99ec161c150415ecd270f3b40e640cd556a19890e6c52c4d',
+}
+
 
 class TestFormats(TestUnitBase):
 
@@ -94,6 +102,28 @@ class TestFormats(TestUnitBase):
             gc.enable()
         self.assertGreater(extracted, 0)
         self.assertLess(held - start - len(data), extracted // 8)
+
+    def test_archive_keeps_no_file_after_handing_it_out(self):
+        for name, sample in _STDLIB_ARCHIVES.items():
+            with self.subTest(unit=name):
+                data = self.download_sample(sample)
+                unit = self.ldu(name)
+                extracted = 0
+                gc.collect()
+                gc.disable()
+                tracemalloc.start()
+                try:
+                    start, _ = tracemalloc.get_traced_memory()
+                    held = start
+                    for chunk in data | unit:
+                        extracted += len(chunk)
+                        del chunk
+                        held = max(held, tracemalloc.get_traced_memory()[0])
+                finally:
+                    tracemalloc.stop()
+                    gc.enable()
+                self.assertGreater(extracted, 0)
+                self.assertLess(held - start - len(data), extracted // 3)
 
     def test_extracted_file_is_freed_as_soon_as_it_is_dropped(self):
         data = lzma.decompress(self.download_sample(_MALWARE_VHD))
