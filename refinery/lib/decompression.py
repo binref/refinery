@@ -279,8 +279,15 @@ def inflate_pieces(data: buf, size: int = 0x100000) -> Iterator[buf]:
     output ends where the stream or the data ends.
     """
     inflate = zlib.decompressobj()
-    tail = memoryview(data)
-    while tail and not inflate.eof:
+    view = memoryview(data)
+    position = 0
+    tail: buf = B''
+    while not inflate.eof:
+        if not tail:
+            if position >= len(view):
+                break
+            tail = view[position:position + size]
+            position += len(tail)
         if piece := inflate.decompress(tail, size):
             yield piece
         tail = inflate.unconsumed_tail

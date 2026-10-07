@@ -1,5 +1,7 @@
 import bz2
 import lzma
+import random
+import tracemalloc
 import zlib
 
 from test import TestBase
@@ -144,3 +146,14 @@ class TestDecompressionPieces(TestBase):
             with self.subTest(method=method):
                 output = B''.join(self.pieces(method, self.compressed(method) + B'junk', 1000))
                 self.assertEqual(output, self.TEXT)
+
+    def test_inflating_in_pieces_keeps_no_copy_of_the_unread_input(self):
+        data = zlib.compress(random.Random(0).randbytes(0x400000), 1)
+        tracemalloc.start()
+        try:
+            for _ in inflate_pieces(data, 0x10000):
+                pass
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, len(data) // 4)
