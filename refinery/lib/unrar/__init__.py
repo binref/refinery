@@ -13,8 +13,14 @@ Supports all RAR format versions (1.4, 1.5-4.x, 5.0) with:
 from __future__ import annotations
 
 import dataclasses
+import weakref
 import zlib
 
+from bisect import bisect_right
+from functools import partial
+from typing import Callable, Iterator
+
+from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.types import buf
 from refinery.lib.unrar.headers import (
     RAR_HEADER_V14,
@@ -149,10 +155,11 @@ class RarFile:
         self._crypt_header: RarCryptHeader | None = None
         self._raw_entries: list[RarFileEntry] = []
         self._file_entries: list[RarFileEntry] = []
-        self._solid_engine = None
-        self._solid_index: int = -1
+        self._streams: weakref.WeakValueDictionary[str | None, SolidStream]
+        self._streams = weakref.WeakValueDictionary()
 
         self._parse()
+        self._layout()
 
     def _parse(self):
         """
@@ -226,6 +233,26 @@ class RarFile:
 
         self._file_entries = merged
 
+    def _layout(self):
+        """
+        Place the members in one decompressed stream and find the members where decompression can
+        start, which are all members that do not continue the decompression of a previous one.
+        """
+        self._index: dict[int, int] = {}
+        self._positions: list[int] = []
+        self._starts: list[int] = []
+        self._start_positions: list[int] = []
+        position = 0
+        for k, entry in enumerate(self._file_entries):
+            self._index[id(entry)] = k
+            self._positions.append(position)
+            if entry.is_dir:
+                continue
+            if not entry.solid or not self._starts:
+                self._starts.append(k)
+                self._start_positions.append(position)
+            position += entry.size
+
     @property
     def entries(self) -> list[RarFileEntry]:
         """
@@ -281,44 +308,60 @@ class RarFile:
             entry: File name, index, or RarFileEntry object
             password: Optional password override for encrypted entries
         """
+        return self.extractor(entry, password)()
+
+    def extractor(
+        self,
+        entry: str | int | RarFileEntry,
+        password: str | None = None,
+    ) -> Callable[[], buf]:
+        """
+        Return a function that returns the contents of an archive member. Members of a solid archive
+        are decompressed in order; the archive keeps the contents of a member that was decompressed
+        before its turn only while the function returned for it is alive.
+        """
         fe = self._resolve_entry(entry)
         if fe.is_dir:
-            return b''
-
+            return bytes
         pw = password or self._password
-
         if fe.is_encrypted and not pw:
-            raise RarMissingPassword(fe.name)
+            def missing() -> buf:
+                raise RarMissingPassword(fe.name)
+            return missing
+        if (stream := self._streams.get(pw)) is None:
+            stream = self._streams[pw] = SolidStream(partial(self._decode, pw), self._restart)
+        claim = stream.claim(self._positions[self._index[id(fe)]], fe.size)
 
-        entry_index = self._file_entries.index(fe)
+        def extract() -> buf:
+            try:
+                data = claim()
+            except SolidStreamTruncated as truncated:
+                data = truncated.partial
+            self._verify(data, fe, pw)
+            return data
 
-        if fe.solid and entry_index > 0:
-            if self._solid_index >= entry_index:
-                self._solid_engine = None
-                self._solid_index = -1
-            for i in range(self._solid_index + 1, entry_index):
-                prev = self._file_entries[i]
-                if prev.is_dir:
-                    continue
-                prev_data = self._get_compressed_data(prev)
-                if prev.is_encrypted:
-                    if pw is None:
-                        raise RarMissingPassword(prev.name)
-                    prev_data = self._decrypt(prev_data, prev, pw)
-                self._decompress(prev_data, prev)
+        return extract
 
-        data = self._get_compressed_data(fe)
+    def _chain(self, offset: int) -> int:
+        return self._starts[bisect_right(self._start_positions, offset) - 1]
 
-        if fe.is_encrypted:
-            assert pw is not None
-            data = self._decrypt(data, fe, pw)
+    def _restart(self, offset: int) -> int:
+        return self._positions[self._chain(offset)]
 
-        result = self._decompress(data, fe)
-        self._solid_index = entry_index
-
-        self._verify(result, fe, pw)
-
-        return result
+    def _decode(self, password: str | None, origin: int) -> Iterator[tuple[int, buf]]:
+        entries = self._file_entries
+        engine = None
+        for k in range(self._chain(origin), len(entries)):
+            entry = entries[k]
+            if entry.is_dir:
+                continue
+            data = self._get_compressed_data(entry)
+            if entry.is_encrypted:
+                if password is None:
+                    raise RarMissingPassword(entry.name)
+                data = self._decrypt(data, entry, password)
+            output, engine = self._decompress(data, entry, engine)
+            yield self._positions[k], output
 
     def _resolve_entry(self, entry: str | int | RarFileEntry) -> RarFileEntry:
         """
@@ -382,18 +425,16 @@ class RarFile:
         result: buf = decryptor.decrypt(data)
         return result
 
-    def _decompress(self, data: bytes | memoryview, entry: RarFileEntry) -> buf:
+    def _decompress(self, data: bytes | memoryview, entry: RarFileEntry, engine=None):
         """
         Decompress data based on the compression method and format version.
         """
         if entry.method == 0:
-            return data[:entry.size] if len(data) > entry.size else data
-
-        engine = self._solid_engine
+            return (data[:entry.size] if len(data) > entry.size else data), engine
 
         if entry.solid and engine is not None:
             engine.init_solid(data, entry.size)
-            return engine.decompress()
+            return engine.decompress(), engine
 
         unp_ver = entry.unp_ver
 
@@ -415,8 +456,7 @@ class RarFile:
             raise RarCorruptArchive(
                 F'Unsupported compression version {unp_ver} for {entry.name}')
 
-        self._solid_engine = engine
-        return engine.decompress()
+        return engine.decompress(), engine
 
     def _verify(self, data: buf, entry: RarFileEntry, password: str | None = None):
         """

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from ... import TestUnitBase
 
+from unittest import mock
+
 from test.units.compression import KADATH1, KADATH2
+from refinery.lib.frame import Chunk
 from refinery.lib.unrar import RarCorruptArchive, RarFile, RarInvalidPassword, RarMissingPassword
 
 import pytest
@@ -590,3 +593,51 @@ class TestTruncatedStream(TestUnitBase):
     def test_rar5_truncated_stream_raises(self):
         partial, full = self._read_truncated('testfile.rar5.solid.rar')
         self.assertEqual(partial, full[:len(partial)])
+
+
+class TestRarExtractors(TestUnitBase):
+
+    def test_members_of_a_solid_chain_read_in_reverse_are_decompressed_once(self):
+        rar = RarFile(bytes(TEST_RAR_ARCHIVES['testfile.rar5.solid.cbr']))
+        first, second = rar.entries
+        self.assertTrue(second.solid)
+        extractors = [rar.extractor(first), rar.extractor(second)]
+        with mock.patch.object(RarFile, '_decompress', autospec=True, side_effect=RarFile._decompress) as decompress:
+            sizes = [len(extract()) for extract in reversed(extractors)]
+        self.assertEqual(sizes, [second.size, first.size])
+        self.assertEqual(decompress.call_count, 2)
+
+    def test_each_file_that_lacks_a_password_is_named_in_its_error(self):
+        data = self.download_sample('27e6e6b5e9d204854e4d3e1026075b3a8fb7e43b1a43f968e80fa6056a067659')
+        for item in list(self.load().unpack(Chunk(data))):
+            with self.assertRaisesRegex(ValueError, F'missing password: {item.path}$'):
+                item.get_data()
+
+    def _three_members_and_a_copy_with_the_middle_member_damaged(self) -> tuple[bytes, bytearray]:
+        data = self.download_sample('0623048c3fd16ad3376d3df28fec9f2e474c58b9583583df652f3b7717e766c9')
+        rar = RarFile(data)
+        _, middle, _ = rar.entries
+        self.assertFalse(middle.solid)
+        self.assertEqual(middle.name, 'YuLv.Net.url')
+        damaged = bytearray(data)
+        damaged[damaged.find(bytes(rar._get_compressed_data(middle)))] ^= 0xFF
+        return data, damaged
+
+    def test_damage_in_a_member_that_is_not_solid_fails_only_that_member(self):
+        data, damaged = self._three_members_and_a_copy_with_the_middle_member_damaged()
+        intact = {chunk['path']: chunk['sha256'] for chunk in data | self.load() | [...]}
+        with self.load_logged() as (unit, log):
+            result = {chunk['path']: chunk['sha256'] for chunk in damaged | unit | [...]}
+        del intact['YuLv.Net.url']
+        self.assertEqual(result, intact)
+        self.assertEqual(len(log), 1)
+        self.assertIn('YuLv.Net.url', log[0])
+
+    def test_damage_in_an_excluded_member_that_is_not_solid_fails_nothing(self):
+        data, damaged = self._three_members_and_a_copy_with_the_middle_member_damaged()
+        intact = {chunk['path']: chunk['sha256'] for chunk in data | self.load() | [...]}
+        with self.load_logged('-x', 'YuLv.Net.url') as (unit, log):
+            result = {chunk['path']: chunk['sha256'] for chunk in damaged | unit | [...]}
+        del intact['YuLv.Net.url']
+        self.assertEqual(result, intact)
+        self.assertEqual(log, [])
