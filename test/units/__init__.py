@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Generator
 
+import contextlib
 import importlib
 import functools
+import logging
 
 from .. import (
     refinery,
@@ -25,6 +27,16 @@ class MissingRequirement(property):
 
     def __get__(self, unit, tp=None):
         raise RefineryImportMissing(self.name)
+
+
+class LogRecorder(logging.Handler):
+
+    def __init__(self):
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord):
+        self.messages.append(record.getMessage())
 
 
 class TestUnitBaseMeta(type):
@@ -107,3 +119,22 @@ class TestUnitBase(TestBase, metaclass=TestUnitBaseMeta):
         unit = cls.unit().assemble(*args, **kwargs)
         unit.log_level = LogLevel.DETACHED
         return unit
+
+    @contextlib.contextmanager
+    def load_logged(self, *args, **kwargs) -> Generator[tuple[refinery.Unit, list[str]], None, None]:
+        """
+        Load the unit with the log level that its command line arguments select, as on the command
+        line, and collect the messages that it logs inside the context.
+        """
+        unit = self.unit().assemble(*args, **kwargs)
+        recorder = LogRecorder()
+        logger = unit.logger
+        logger.addHandler(recorder)
+        disabled = logging.root.manager.disable
+        logging.disable(logging.NOTSET)
+        try:
+            yield unit, recorder.messages
+        finally:
+            logging.disable(disabled)
+            logger.removeHandler(recorder)
+            unit.log_level = LogLevel.DETACHED

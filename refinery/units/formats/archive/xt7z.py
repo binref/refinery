@@ -50,6 +50,7 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             def passwords():
                 yield None
                 yield from self.CommonPasswords
+            unlocked = None
             for pwd in passwords():
                 if pwd is None:
                     self.log_debug('trying empty password')
@@ -57,8 +58,10 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     self.log_debug(F'trying password: {pwd}')
                 try:
                     archive = try_open(pwd)
+                    if pwd is None:
+                        unlocked = archive
                     for f in archive.files:
-                        if not f.is_dir:
+                        if f.encrypted:
                             f.decompress(password=pwd)
                             break
                     problem = False
@@ -73,7 +76,10 @@ class xt7z(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 if not problem:
                     break
             else:
-                raise ValueError('a password is required and none of the default passwords worked.')
+                if unlocked is None:
+                    raise ValueError('a password is required and none of the default passwords worked.')
+                self.log_info('none of the default passwords worked; extracting the files that are not encrypted')
+                archive, pwd = unlocked, None
 
         assert archive is not None
 

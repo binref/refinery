@@ -6,7 +6,7 @@ import zlib
 from ... import TestUnitBase
 
 
-from refinery.lib.un7z import SzArchive, SzCorruptArchive, SzPasswordRequired
+from refinery.lib.un7z import SIGNATURE_HEADER_SIZE, SzArchive, SzCorruptArchive, SzPasswordRequired
 from refinery.lib.un7z.headers import parse_signature_header, SIGNATURE
 
 
@@ -322,6 +322,29 @@ class Test7zipFileExtractor(TestUnitBase):
             str(data | self.load('testfile.txt')),
             self.TESTFILE1_CONTENT,
         )
+
+    def test_a_damaged_first_file_of_an_archive_without_encryption_fails_alone(self):
+        data = bytearray(self.download_sample('4950524235e3e594afe8b60ec3a7dc7ca9431b27e5c4bb728d166f403ef83131'))
+        # the packed data of the first file starts right after the signature header
+        data[SIGNATURE_HEADER_SIZE + 16] ^= 0xFF
+        with self.load_logged() as (unit, log):
+            paths = [chunk.meta['path'] for chunk in data | unit]
+        self.assertEqual(len(paths), 262)
+        self.assertNotIn('abc.py', paths)
+        self.assertEqual(log, ['extraction failure for abc.py: Corrupt input data'])
+
+    def test_the_plain_file_of_an_archive_with_one_plain_and_one_encrypted_file_is_extracted(self):
+        data = base64.b64decode(
+            'N3q8ryccAARWqzZTqwAAAAAAAAAhAAAAAAAAANO/gPoBAA9wbGFpbiB0ZXh0IGZpbGUKAFcRh66hrtSzOyJfww7B2B5D7oVoN3bK'
+            'g+oQzf9c9L8NAACBMweuMZmWtaOA8hqWYzvagmlFYokPXL1GKkuPUlxfxxQxGQAonYQSd4+jiGPsq/uBhmpmil4dVHEhK8s+CPfu'
+            'btAb93DFeGTTIOLysk61LtriiCj2PPbTuKOUsQf7IkD4vPAXDLOYkox/gJJi+xnEdposNeoXBjQBCXcABwsBAAEjAwEBBV0AEAAA'
+            'DICOCgH2z3lvAAA='
+        )
+        with self.load_logged() as (unit, log):
+            files = {chunk.meta['path']: bytes(chunk) for chunk in data | unit}
+        self.assertEqual(files, {'a.txt': B'plain text file\n'})
+        self.assertEqual(len(log), 1)
+        self.assertIn('b.txt', log[0])
 
 
 class TestUn7zDirect(TestUnitBase):

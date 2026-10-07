@@ -89,6 +89,10 @@ class SzFile:
     def attributes(self) -> int:
         return self._entry.attributes
 
+    @property
+    def encrypted(self) -> bool:
+        return (fi := self._folder_index) is not None and self._archive._folder_encrypted(fi)
+
     def decompress(self, password: str | bytes | None = None) -> bytes | bytearray | memoryview:
         if self.is_dir:
             return b''
@@ -206,6 +210,10 @@ class SzArchive:
             self._files.append(SzFile(entry, self, None, None))
             file_idx += 1
 
+    def _folder_encrypted(self, folder_index: int) -> bool:
+        assert self._header is not None
+        return any(coder.codec_id == CODEC_AES256SHA256 for coder in self._header.folders[folder_index].coders)
+
     def _decompress_file(
         self,
         folder_index: int,
@@ -219,11 +227,8 @@ class SzArchive:
         assert self._header is not None
         header = self._header
         folder = header.folders[folder_index]
-        for coder in folder.coders:
-            if coder.codec_id == CODEC_AES256SHA256:
-                if password is None:
-                    raise SzPasswordRequired('Password required for encrypted archive.')
-                break
+        if password is None and self._folder_encrypted(folder_index):
+            raise SzPasswordRequired('Password required for encrypted archive.')
         pack_info = header.pack_info
         if pack_info is None:
             raise SzCorruptArchive('No pack info in header.')
