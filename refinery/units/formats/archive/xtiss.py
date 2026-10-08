@@ -76,9 +76,9 @@ class xtiss(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         offset = max(data.rfind(magic) for magic in ISSReader.MAGIC)
         if offset < 0:
             raise ValueError('ISS magic not found.')
-        data[:offset] = []
 
         reader = ISSReader(data)
+        reader.seekset(offset)
         count = reader.iss_archive_header()
 
         self.log_info(F'archive contains {count} files according to header')

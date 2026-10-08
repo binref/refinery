@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from refinery.units.formats.archive.xtiss import xtiss
 from refinery.units.formats.archive.xtnuitka import xtnuitka
 from refinery.units.formats.archive.xtsql import xtsql
 
@@ -31,4 +32,12 @@ class TestAutoExtractor(TestUnitBase):
         data = self._nuitka_onefile_executable()
         with patch.object(xtnuitka, 'handles', return_value=None):
             paths = {chunk['path'] for chunk in data | self.load()}
+        self.assertIn('flake.exe', paths)
+
+    def test_an_executable_containing_the_installshield_magic_is_still_extracted_by_a_later_unit(self):
+        data = bytearray(self._nuitka_onefile_executable())
+        stub = data.find(B'This program cannot be run in DOS mode')
+        data[stub:stub + 14] = B'InstallShield\0'
+        self.assertTrue(xtiss.handles(data))
+        paths = {chunk['path'] for chunk in data | self.load() | []}
         self.assertIn('flake.exe', paths)
