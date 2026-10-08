@@ -218,6 +218,16 @@ class TestUnitOutput(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             B'' | source | nop() | bytes
 
+    def test_error_of_the_unit_before_is_handled_by_the_unit_that_reads_it(self):
+        from refinery import nop
+        from refinery.units import Unit
+
+        class fails(Unit):
+            def process(self, data):
+                raise ValueError('the input is invalid')
+
+        self.assertEqual(B'data' | fails() | nop.assemble('-T') | bytes, B'')
+
     def test_closing_a_half_read_run_under_leniency_raises_nothing(self):
         import sys
         from refinery.units import Unit

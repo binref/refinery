@@ -526,6 +526,62 @@ class TestFraming(TestBase):
                     lifetimes.note()
                 self.assertEqual(lifetimes.notes, [[]])
 
+    def test_run_whose_output_cannot_be_placed_releases_its_input(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class opaque(Unit):
+            def process(self, data):
+                lifetimes.track(data)
+                yield self.labelled(data[:1])
+                yield self.labelled(data[1:], opaque=object())
+
+        with _without_cycle_collector():
+            with self.assertRaises(TypeError):
+                _ = [B'AB'] | _configured(opaque(), 1) | []
+            lifetimes.note()
+        self.assertEqual(lifetimes.notes, [[]])
+
+    def test_unit_is_freed_when_a_conversion_of_its_output_fails(self):
+        from refinery import Unit
+
+        class halves(Unit):
+            def process(self, data):
+                yield data[:1]
+                yield data[1:]
+
+        targets = {
+            'list': [int],
+            'set': {int},
+            'dict': {'name': int},
+        }
+        for name, target in targets.items():
+            with self.subTest(name):
+                with _without_cycle_collector():
+                    unit = halves()
+                    freed = weakref.ref(unit)
+                    with self.assertRaises(ValueError):
+                        _ = B'AB' | unit | target
+                    del unit
+                    self.assertIsNone(freed())
+
+    def test_input_passed_on_after_an_error_keeps_nothing_of_the_failed_attempt(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class fails(Unit):
+            def process(self, data):
+                attempt = lifetimes.track(data.copy())
+                raise ValueError(F'the attempt on {len(attempt)} bytes failed')
+
+        unit = fails()
+        unit.args.trypass = True
+        with _without_cycle_collector():
+            with B'data' | unit as pipeline:
+                self.assertEqual(next(pipeline), B'data')
+                lifetimes.note()
+        self.assertEqual(lifetimes.notes, [[]])
+
     def test_chunk_kept_in_its_own_scratch_field_is_freed_after_processing(self):
         from refinery import Unit
         lifetimes = _Lifetimes()
@@ -1037,6 +1093,14 @@ class TestFrameStream(TestBase):
             with self.subTest(end=end):
                 with self.assertRaises(ValueError):
                     _read_frames(io.BytesIO(data[:end]))
+
+    def test_unit_handles_a_truncated_frame_stream_wherever_it_ends(self):
+        from refinery import nop
+        chunks = self._chunks(0x100, 0x100)
+        data = self._stream(chunks)
+        for end, output in ((MSIZE + 20, B''), (len(data) - 20, bytes(chunks[0]))):
+            with self.subTest(end=end):
+                self.assertEqual(data[:end] | nop.assemble('-T') | bytes, output)
 
 
 class TestChunk(TestBase):

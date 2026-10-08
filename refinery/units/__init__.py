@@ -1643,14 +1643,33 @@ class Unit(UnitBase, abstract=True):
             traceback.print_exc(file=sys.stderr)
         return None
 
-    def _start_run(self) -> _Run:
+    def _start_run(self) -> _Run | None:
         """
-        Returns the current run of this unit, and starts one if there is none.
+        Returns the current run of this unit, and starts one if there is none. Starting a run reads
+        the start of its input, so an error raised there is handled like an error of the run: When
+        the unit handles it, the unit has no run and the result is `None`.
         """
-        if (run := self._run) is None:
+        if (run := self._run) is not None:
+            return run
+        try:
             framed = self._frame_handler()
-            self._run = run = _Run(iter(framed), framed.framebreak)
+        except BaseException as B:
+            if self._escapes(B):
+                raise
+            return None
+        self._run = run = _Run(iter(framed), framed.framebreak)
         return run
+
+    def _escapes(self, error: BaseException) -> bool:
+        """
+        Handles an error that a run of this unit raised while it started or while it produced an
+        output, and returns whether the error has to reach the caller, which then re-raises it.
+        """
+        if isinstance(error, KeyboardInterrupt):
+            return True
+        if isinstance(error, RefineryCriticalException):
+            return False
+        return self._exception_handler(error, None) is _Verdict.Raise
 
     def _end_run(self, run: _Run | None) -> None:
         """
@@ -1664,8 +1683,10 @@ class Unit(UnitBase, abstract=True):
     def _next_output(self, run: _Run, place: Callable[[Placement], Any] | None = None) -> Any:
         """
         Returns the next output of the given run, or `None` at its end or after an error, which is
-        handled by the unit's exception handler. If a function is given, a placement is replaced
-        by its result: the placement is transferred or serialized under the same error handling.
+        handled by the unit's exception handler. If a function is given, a placement is replaced by
+        its result: the placement is transferred or serialized under the same error handling. An
+        error closes the output of the run, which holds no data afterwards even when the error was
+        raised while one of its outputs was placed.
         """
         try:
             item = next(run.output)
@@ -1674,12 +1695,9 @@ class Unit(UnitBase, abstract=True):
             return item
         except StopIteration:
             return None
-        except RefineryCriticalException:
-            return None
-        except KeyboardInterrupt:
-            raise
         except BaseException as B:
-            if self._exception_handler(B, None) is _Verdict.Raise:
+            run.output.close()
+            if self._escapes(B):
                 raise
             return None
 
@@ -1688,10 +1706,10 @@ class Unit(UnitBase, abstract=True):
             if piece := self.read1():
                 return piece
             raise StopIteration
-        run = self._start_run()
-        while (item := self._next_output(run, Placement.transfer)) is not None:
-            if isinstance(item, Chunk):
-                return item
+        if (run := self._start_run()) is not None:
+            while (item := self._next_output(run, Placement.transfer)) is not None:
+                if isinstance(item, Chunk):
+                    return item
         raise StopIteration
 
     def _stream(self, serialize: bool | None = None, terminal: bool = False) -> Generator[bytes | bytearray]:
@@ -1716,7 +1734,8 @@ class Unit(UnitBase, abstract=True):
             place = Placement.serialize
         else:
             place = None
-        run = self._start_run()
+        if (run := self._start_run()) is None:
+            return
         try:
             while (item := self._next_output(run, place)) is not None:
                 trailer = False
@@ -2059,10 +2078,10 @@ class Unit(UnitBase, abstract=True):
             if converter is None:
                 stream.extend(self)
                 return stream
-            return list(map(converter, self))
+            return list(map(converter, self._collected()))
         elif isinstance(stream, set):
             if converter := get_converter(stream):
-                return set(map(converter, self))
+                return set(map(converter, self._collected()))
             else:
                 stream.update(self)
                 return stream
@@ -2076,7 +2095,7 @@ class Unit(UnitBase, abstract=True):
             elif isinstance(convert, set):
                 deconflict = set
                 convert = one(convert)
-            for item in self:
+            for item in self._collected():
                 assert isinstance(item, Chunk)
                 value = item.meta.get(key)
                 if convert is not ...:
@@ -2119,6 +2138,14 @@ class Unit(UnitBase, abstract=True):
         finally:
             self._target = None
         return stream
+
+    def _collected(self) -> Generator[bytes | bytearray | Chunk]:
+        """
+        Generates the outputs of this unit for a conversion into a collection. A conversion that
+        fails before the end drops this generator, and closing it closes the unit that it delegates
+        to: Nothing else reads its outputs.
+        """
+        yield from self
 
     def _log_send_failure(self, error: OSError):
         if isinstance(error, BrokenPipeError) or error.errno != 32:
@@ -2297,7 +2324,9 @@ class Unit(UnitBase, abstract=True):
         except BaseException:
             if count > 0 or not self.args.trypass:
                 raise
-            yield data
+        else:
+            return
+        yield data
 
     def __call__(self, data: buf | Chunk | None = None) -> buf:
         with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
