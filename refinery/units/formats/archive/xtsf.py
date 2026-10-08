@@ -161,7 +161,9 @@ class xtsf(ArchiveUnit):
                 for entry in extractor(reader):
                     yield entry
                     extracted_something = True
-            except BaseException:
+            except MemoryError:
+                raise
+            except Exception:
                 if extracted_something:
                     raise
             if extracted_something:

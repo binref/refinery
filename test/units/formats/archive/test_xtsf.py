@@ -1,5 +1,10 @@
 import pytest
 
+from unittest import mock
+
+from refinery.lib.frame import Chunk
+from refinery.units.formats.archive.xtsf import xtsf
+
 from ... import TestUnitBase
 
 
@@ -59,3 +64,9 @@ class TestSetupFactoryUnpacker(TestUnitBase):
             '%AppFolder%/WTPLock.exe'  : 'd1bc7610d2f79c303bb950ba087279d820e8977231c02864cc72e09a096e2351',
             '%AppFolder%/WTPSvc.exe'   : '744d93e0d6246206cc8403e3463181d2319e8aa27f0efa57888963b6869594e6',
         })
+
+    def test_running_out_of_memory_is_not_reported_as_a_missing_archive(self):
+        data = self.download_sample('1511edf42bcaed5580ef8632aee6ceb9af23d3b1ca9bb2aba8e71fa2331dfe87')
+        with mock.patch.object(xtsf, '_unpack_sf6', side_effect=MemoryError):
+            with self.assertRaises(MemoryError):
+                list(xtsf().unpack(Chunk(data)))
