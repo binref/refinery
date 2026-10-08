@@ -965,6 +965,14 @@ class MissingFunction:
         return cast('_F', wraps(_)(cls()))
 
 
+class _Verdict(Enum):
+    """
+    The value that `refinery.units.Unit._exception_handler` returns for an exception that has to
+    reach the caller of the unit.
+    """
+    Raise = 0
+
+
 class _Run(NamedTuple):
     """
     A run of a unit: the iterator over its output, and whether its outputs are separated by line
@@ -1574,7 +1582,14 @@ class Unit(UnitBase, abstract=True):
         """
         return getattr(self.args, 'lenient', 0)
 
-    def _exception_handler(self, exception: BaseException, data: buf | None):
+    def _exception_handler(self, exception: BaseException, data: buf | None) -> buf | _Verdict | None:
+        """
+        Handles an exception that was raised while processing the given input, or while producing
+        output when no input is given. Returns the output that replaces the failed one, `None` if
+        there is none, or `_Verdict.Raise` if the exception has to propagate: The caller then
+        re-raises it from its own handler, so that no frame in its traceback keeps a reference to
+        it.
+        """
         if isinstance(exception, RefineryPartialResult):
             if self.leniency >= 1:
                 return exception.partial
@@ -1582,22 +1597,20 @@ class Unit(UnitBase, abstract=True):
                 if not self.args.trypass:
                     self.log_warn(F'A partial result was returned, use the -L switch to retrieve it: {exception}')
                 return None
-            raise exception
+            return _Verdict.Raise
         elif self.leniency >= 1 and data is not None:
             return data
         elif self.args.trypass:
             return None
         elif self.log_level >= LogLevel.DETACHED:
-            raise exception
+            return _Verdict.Raise
         elif isinstance(exception, RefineryCriticalException):
             self.log_warn(F'critical error, terminating: {exception}')
-            raise exception
+            return _Verdict.Raise
         elif isinstance(exception, RefineryPotentialUserError):
             self.log_warn(str(exception))
         elif isinstance(exception, VariableMissing):
             self.log_warn('critical error:', exception.args[0])
-        elif isinstance(exception, GeneratorExit):
-            raise exception
         elif isinstance(exception, RefineryImportError):
             if isinstance(exception, RefineryImportMissing):
                 self.log_fail(F'dependency {exception.missing} is missing; run pip install {exception.install}')
@@ -1625,6 +1638,7 @@ class Unit(UnitBase, abstract=True):
         if self.log_debug():
             import traceback
             traceback.print_exc(file=sys.stderr)
+        return None
 
     def _start_run(self) -> _Run:
         """
@@ -1653,7 +1667,8 @@ class Unit(UnitBase, abstract=True):
         except KeyboardInterrupt:
             raise
         except BaseException as B:
-            self._exception_handler(B, None)
+            if self._exception_handler(B, None) is _Verdict.Raise:
+                raise
             return None
 
     def __next__(self) -> bytes | bytearray | Chunk:
@@ -1734,13 +1749,16 @@ class Unit(UnitBase, abstract=True):
         def normalized_action(data: Chunk) -> Generator[Chunk]:
             try:
                 yield from self.act(data)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, GeneratorExit):
                 raise
             except BaseException as B:
-                result = self._exception_handler(B, data)
+                if (result := self._exception_handler(B, data)) is _Verdict.Raise:
+                    raise
                 message = str(B).strip() or 'unknown'
-                if result is not None:
-                    yield self.labelled(result, error=message)
+            else:
+                return
+            if result is not None:
+                yield self.labelled(result, error=message)
 
         source = self.source
         if isinstance(source, Unit) and not source.console and source._reader is None:

@@ -218,6 +218,27 @@ class TestUnitOutput(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             B'' | source | nop() | bytes
 
+    def test_closing_a_half_read_run_under_leniency_raises_nothing(self):
+        import sys
+        from refinery.units import Unit
+
+        class halves(Unit):
+            def process(self, data):
+                yield data[:1]
+                yield data[1:]
+
+        unraisable = []
+        hook = sys.unraisablehook
+        sys.unraisablehook = unraisable.append
+        try:
+            unit = B'AB' | halves()
+            unit.args.lenient = 1
+            self.assertEqual(next(unit), B'A')
+            unit.close()
+        finally:
+            sys.unraisablehook = hook
+        self.assertEqual(unraisable, [])
+
     def test_stream_passed_in_by_the_caller_stays_open(self):
         import gc
         import io

@@ -494,6 +494,32 @@ class TestFraming(TestBase):
                     del unit
                     self.assertIsNone(freed())
 
+    def test_failing_run_releases_its_input(self):
+        from refinery import Unit
+        from refinery.lib.environment import LogLevel
+        levels = {
+            'the error reaches the caller': LogLevel.DETACHED,
+            'the unit handles the error': LogLevel.NONE,
+        }
+        for name, level in levels.items():
+            with self.subTest(name):
+                lifetimes = _Lifetimes()
+
+                class fails(Unit):
+                    def process(self, data):
+                        lifetimes.track(data)
+                        raise ValueError('the input is invalid')
+
+                with _without_cycle_collector():
+                    unit = fails()
+                    unit.log_level = level
+                    try:
+                        B'data' | unit | bytes
+                    except ValueError:
+                        pass
+                    lifetimes.note()
+                self.assertEqual(lifetimes.notes, [[]])
+
     def test_closing_a_frame_merges_a_repeated_chunk_correctly(self):
         self.assertEqual(load_pipeline('emit AB [[| rep 3 ]| nop ]') | bytes, B'ABABAB')
 
