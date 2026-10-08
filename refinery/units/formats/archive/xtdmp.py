@@ -87,7 +87,7 @@ class xtdmp(ArchiveUnit):
                     last = va + vs
                 setattr(pe.OPTIONAL_HEADER, 'SizeOfImage', last)
                 if (unmapped := pe.write()) is None:
-                    raise RuntimeError(F'Failed to unmap module {ntpath.basename(path)}')
+                    raise RuntimeError(F'Failed to unmap module {ntpath.basename(str(m.name))}')
                 return unmapped
             drive, rest = ntpath.splitdrive(str(module.name))
             rest = rest.replace(ntpath.sep, '/').lstrip('/')
