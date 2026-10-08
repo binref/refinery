@@ -1400,7 +1400,11 @@ class Unit(UnitBase, abstract=True):
         return 'rb'
 
     def close(self) -> None:
-        if src := self.source:
+        """
+        Ends the current run of this unit and of the units in its pipeline. A stream or file
+        descriptor that the caller passed in as input is not closed.
+        """
+        if isinstance(src := self.source, Unit):
             src.close()
         self._chunks = None
 
@@ -1816,12 +1820,6 @@ class Unit(UnitBase, abstract=True):
     def __pos__(self):
         return self
 
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
-
     def __neg__(self) -> Unit:
         pipeline = []
         cursor = self
@@ -1883,9 +1881,9 @@ class Unit(UnitBase, abstract=True):
                 stream = stream.encode(self.codec)
             if isinstance(stream, int):
                 if stream > 0:
-                    stream = os.fdopen(stream, 'rb')
+                    stream = os.fdopen(stream, 'rb', closefd=False)
                 else:
-                    stream = open(os.devnull, 'rb')
+                    stream = MemoryFile(B'')
             else:
                 stream = MemoryFile(cast(buf, stream))
         self.reset()
@@ -1998,7 +1996,7 @@ class Unit(UnitBase, abstract=True):
             if not stream:
                 stream = open(os.devnull, 'wb')
             else:
-                stream = os.fdopen(stream, 'wb')
+                stream = os.fdopen(stream, 'wb', closefd=False)
             with stream:
                 _ = self | stream
             return

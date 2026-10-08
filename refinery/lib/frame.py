@@ -754,11 +754,6 @@ class ChunkFeed:
     def __init__(self, items: Iterable[buf]):
         self.items = iter(items)
 
-    def close(self):
-        """
-        Does nothing: A feed holds no resources, and copies of the unit that reads it share it.
-        """
-
 
 class FrameUnpacker(Iterable[Chunk]):
     """

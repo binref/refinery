@@ -218,6 +218,53 @@ class TestUnitOutput(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             B'' | source | nop() | bytes
 
+    def test_stream_passed_in_by_the_caller_stays_open(self):
+        import gc
+        import io
+        from refinery import nop
+        stream = io.BytesIO(B'refinery')
+        self.assertEqual(stream | nop() | bytes, B'refinery')
+        gc.collect()
+        self.assertEqual(stream.getvalue(), B'refinery')
+
+    def test_descriptor_passed_in_by_the_caller_as_input_stays_open(self):
+        import gc
+        import os
+        from refinery import nop
+        read, write = os.pipe()
+        try:
+            os.write(write, B'refinery')
+            os.close(write)
+            self.assertEqual(read | nop() | bytes, B'refinery')
+            gc.collect()
+            self.assertEqual(os.read(read, 1), B'')
+        finally:
+            os.close(read)
+
+    def test_descriptor_passed_in_by_the_caller_as_output_stays_open(self):
+        import gc
+        import os
+        from refinery import nop
+        read, write = os.pipe()
+        try:
+            B'refinery' | nop() | write
+            gc.collect()
+            os.write(write, B'!')
+            os.close(write)
+            self.assertEqual(os.read(read, 0x100), B'refinery!')
+        finally:
+            os.close(read)
+
+    def test_pipeline_without_input_leaves_no_open_file(self):
+        import gc
+        import warnings
+        from refinery import nop
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always', ResourceWarning)
+            self.assertEqual(0 | nop() | bytes, B'')
+            gc.collect()
+        self.assertEqual([w.message for w in caught if issubclass(w.category, ResourceWarning)], [])
+
 
 class TestEntry(unittest.TestCase):
 
