@@ -320,3 +320,8 @@ class TestCabExtractor(TestUnitBase):
         self.assertEqual(result, intact[:before])
         self.assertEqual(len(log), len(intact) - before)
         self.assertTrue(all(F'block {middle} of the folder fails its checksum' in message for message in log))
+
+    def test_every_cabinet_in_a_frame_is_extracted(self):
+        frame = [_QUANTUM_CAB, _MSZIP_LZX_QTM_CAB, _QUANTUM_CAB]
+        paths = [str(chunk['path']) for chunk in frame | self.load() | [...]]
+        self.assertEqual(paths, ['command.com', 'mszip.txt', 'lzx.txt', 'qtm.txt', 'command.com'])

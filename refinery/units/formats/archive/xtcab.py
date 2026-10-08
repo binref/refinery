@@ -38,16 +38,14 @@ class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             if not self.handles(chunk):
                 yield chunk
                 continue
+            if box is not None and not cab.needs_more_disks():
+                yield box
+                box = None
             if box is None:
                 box = chunk
-                box.temp = cab
-            if cab.needs_more_disks():
-                cab.append(memoryview(chunk))
-            else:
-                yield box
-                box = chunk
-                cab = box.temp = Cabinet()
-        if box:
+                box.temp = cab = Cabinet()
+            cab.append(memoryview(chunk))
+        if box is not None:
             yield box
 
     @classmethod
