@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import shutil
+import unittest
 
 from pathlib import Path
 
@@ -13,6 +14,15 @@ from .. import TestBase
 
 
 class TestLoader(TestBase):
+
+    @unittest.expectedFailure
+    def test_pipeline_loaded_twice_does_not_continue_the_first_ones_run(self):
+        from refinery.lib.loader import load_pipeline
+        first = load_pipeline('emit ABC | chop 1')
+        self.addCleanup(first.close)
+        self.assertEqual(next(first), B'A')
+        second = load_pipeline('emit ABC | chop 1')
+        self.assertEqual(second | [bytes], [B'A', B'B', B'C'])
 
     def test_load_stuff(self):
         ep = {u.name for u in get_all_entry_points()}

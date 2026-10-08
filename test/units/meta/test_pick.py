@@ -1,3 +1,5 @@
+import unittest
+
 from refinery import Unit
 from refinery.units.meta.pick import pick
 from refinery.lib.loader import load_pipeline
@@ -9,6 +11,11 @@ from . import TestMetaBase
 
 
 class TestPick(TestMetaBase):
+
+    @unittest.expectedFailure
+    def test_slice_without_a_start_after_an_index(self):
+        unit = self.load('0', '::2')
+        self.assertEqual(unit(B'A', B'B', B'C', B'D'), [B'A', B'A', B'C'])
 
     def test_selection_mixed(self):
         unit = self.load('1', '3:6', '9:')
