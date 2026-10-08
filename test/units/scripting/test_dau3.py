@@ -25,10 +25,10 @@ _PRETTY_INPUT = inspect.cleandoc(
 _PRETTY_GOAL = (
     '#include <File.au3>\n'
     'Global Const $g = 3\n'
-    'Local $x = 1 + 2 * 3\n'
-    'If $x > 4 Then\n'
+    'Local $x = 7\n'
+    'If True Then\n'
     '    MsgBox(0, "t", "m")\n'
-    'ElseIf $x = 4 Then\n'
+    'ElseIf False Then\n'
     '    $x &= "four"\n'
     'Else\n'
     '    $x = 0\n'
@@ -77,6 +77,31 @@ class TestDAu3(TestUnitBase):
     def test_a3x_decompile_style(self):
         result = _A3X_STYLE_INPUT.encode() | self.load() | str
         self.assertEqual(result, _A3X_STYLE_GOAL)
+
+    def test_execute_chain_flattens(self):
+        result = B'$x = Execute("1 + 2 * 3")\n' | self.load() | str
+        self.assertEqual(result, '$x = 7\n')
+
+    def test_alias_chain_resolves(self):
+        """
+        The distilled decoder shape: the `Execute` alias is rewritten, the second alias through
+        it resolves, the argument folds to the string literal the splice reads, and the decoded
+        string is what the decoder returned.
+        """
+        result = (
+            B'Local $e = Execute\n'
+            B'Local $b = $e("BinaryToString")\n'
+            B'$v = $e($b("0x22414243" & "4422"))\n'
+        ) | self.load() | str
+        self.assertEqual(result, (
+            'Local $e = Execute\n'
+            'Local $b = Execute("BinaryToString")\n'
+            '$v = "ABCD"\n'
+        ))
+
+    def test_constant_soup_folds(self):
+        result = B'$x = 1 + 2 * 3\nMsgBox(0, "", $x)\n' | self.load() | str
+        self.assertEqual(result, '$x = 7\nMsgBox(0, "", 7)\n')
 
     def test_idempotent(self):
         first = _PRETTY_INPUT.encode() | self.load() | bytes

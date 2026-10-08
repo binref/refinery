@@ -302,6 +302,23 @@ class Au3Parser:
         script.trailing_comments.extend(comments)
         return script
 
+    def parse_expression(self) -> Expression | None:
+        """
+        One expression spanning the whole input, or `None` when the input holds anything else: a
+        statement, a declaration, two expressions, a truncated one. This is the entry the
+        `Execute` flattening reads its argument through, because the interpreter evaluates
+        exactly one expression there — where `=` climbs as a comparison, never an assignment.
+        """
+        try:
+            expression = self._parse_expression()
+        except Exception:
+            return None
+        while self._at(K.NEWLINE):
+            self._advance()
+        if not self._at(K.EOF) or self._errors:
+            return None
+        return expression
+
     def _parse_statement_list(self, *stop: K) -> tuple[list[Statement], list[str]]:
         """
         Read statements until one of *stop* appears. The second return value holds the comments
@@ -913,7 +930,8 @@ class Au3Parser:
         kind = tok.kind
         if kind is K.INTEGER:
             self._advance()
-            return Au3IntLiteral(value=_parse_int_value(tok.value), raw=tok.value, offset=tok.offset)
+            return Au3IntLiteral(
+                value=_parse_int_value(tok.value), raw=tok.value, offset=tok.offset)
         if kind is K.FLOAT:
             self._advance()
             return Au3FloatLiteral(value=float(tok.value), raw=tok.value, offset=tok.offset)

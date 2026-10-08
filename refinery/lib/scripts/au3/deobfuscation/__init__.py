@@ -1,21 +1,62 @@
 """
 AutoIt3 AST deobfuscation transforms.
 
-This module is currently an empty skeleton: the deobfuscation framework is wired up but carries no
-passes yet. Passes will be added here as `TransformerGroup` entries once the AutoIt3 front-end is
-exercised against real samples.
+Two groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
+structurally is — an `Execute` call over a string literal becomes the expression that literal
+names, and a call through an alias variable becomes the function that variable provably names —
+and `fold` replaces what is known — an expression whose operands pin its value becomes the
+literal of that value, and a variable read the propagation walk proves a value for becomes that
+literal.
+
+`fold` depends on `normalize` and re-triggers it: folding an `Execute` call's argument into the
+string literal it always was is what makes the next `normalize` pass see a flattenable call, and
+rewriting a callee through an alias is what makes the next `fold` pass see the builtin the alias
+named. The remaining alias declarations stay behind as dead code; removing them is a later
+phase's question.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts.au3.analysis import Au3ModelCache
+from refinery.lib.scripts.au3.deobfuscation.execute import Au3ExecuteFlattening
+from refinery.lib.scripts.au3.deobfuscation.fold import Au3ConstantFolding
+from refinery.lib.scripts.au3.deobfuscation.indirect import Au3IndirectCallRewrite
+from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
 from refinery.lib.scripts.au3.model import Au3Script
-from refinery.lib.scripts.pipeline import DeobfuscationPipeline
+from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 
-_pipeline = DeobfuscationPipeline(groups=[])
+_normalize = TransformerGroup(
+    'normalize',
+    Au3ExecuteFlattening,
+    Au3IndirectCallRewrite,
+)
+
+_fold = TransformerGroup(
+    'fold',
+    Au3ConstantFolding,
+    Au3ConstantPropagation,
+)
+
+_DEPENDENCIES = {
+    'fold': {'normalize'},
+}
+
+_INVALIDATORS = {
+    'fold': {'normalize'},
+}
+
+_pipeline = DeobfuscationPipeline(
+    [_normalize, _fold],
+    dependencies=_DEPENDENCIES,
+    invalidators=_INVALIDATORS,
+)
 
 
-def deobfuscate(ast: Au3Script, max_steps: int = 0) -> int:
+def deobfuscate(ast: Au3Script, max_steps: int = 5000) -> int:
     """
-    Apply all available deobfuscators to the input. No passes are registered yet, so this is a
-    no-op that always reports zero applied transformations.
+    Apply all available deobfuscators to the input. A non-zero `max_steps` bounds the total number
+    of change-producing transformer passes and raises
+    `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is exceeded, so a set of
+    transforms that fails to converge fails loudly instead of hanging. Pass `0` to disable the
+    bound entirely.
     """
-    return _pipeline.run(ast, max_steps=max_steps)
+    return _pipeline.run(ast, max_steps=max_steps, models=Au3ModelCache(ast))

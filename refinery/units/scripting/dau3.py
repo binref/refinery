@@ -11,9 +11,9 @@ class dau3(IterativeDeobfuscator):
     """
     AST-based AutoIt3 deobfuscator and pretty-printer.
 
-    Parses the script into an abstract syntax tree, applies simplifying transformations, and
-    synthesizes clean output. No deobfuscation passes are registered yet, so this currently only
-    pretty-prints the input. This deobfuscator iterates until stable; running it twice does not
+    Parses the script into an abstract syntax tree, applies simplifying transformations —
+    `Execute` flattening, alias and indirection rewriting, constant folding and propagation — and
+    synthesizes clean output. This deobfuscator iterates until stable; running it twice does not
     change the output.
     """
 
