@@ -612,6 +612,7 @@ class TestPartialReadDiscipline(TestBase):
 
     _CONVERSIONS = {'bytes', 'bytearray', 'str', 'list', 'set', 'dict', 'tuple', 'memoryview', 'int'}
     _READERS = {'next', 'one', 'iter', 'islice', 'any', 'all', 'zip'}
+    _STREAM_READERS = {'read', 'read1', 'readline'}
 
     @classmethod
     def _is_pipeline(cls, node: ast.expr | None) -> bool:
@@ -623,7 +624,7 @@ class TestPartialReadDiscipline(TestBase):
 
     @staticmethod
     def _can_stop(loop: ast.For) -> bool:
-        return any(isinstance(node, (ast.Break, ast.Return, ast.Yield, ast.YieldFrom)) for node in ast.walk(loop))
+        return any(isinstance(node, (ast.Break, ast.Return, ast.Raise, ast.Yield, ast.YieldFrom)) for node in ast.walk(loop))
 
     @classmethod
     def _partial_reads(cls, scope: ast.AST):
@@ -638,25 +639,31 @@ class TestPartialReadDiscipline(TestBase):
         def is_pipeline(node: ast.expr) -> bool:
             return cls._is_pipeline(node) or isinstance(node, ast.Name) and node.id in bound
 
+        def iterates_pipeline(node: ast.expr) -> bool:
+            if isinstance(node, ast.GeneratorExp):
+                return any(is_pipeline(generator.iter) for generator in node.generators)
+            return is_pipeline(node)
+
         for node in ast.walk(scope):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id in cls._READERS
-                and node.args
-                and is_pipeline(node.args[0])
-            ):
-                yield node.lineno
+            if isinstance(node, ast.Call):
+                function = node.func
+                if isinstance(function, ast.Name) and function.id in cls._READERS:
+                    if any(iterates_pipeline(arg) for arg in node.args):
+                        yield node.lineno
+                if isinstance(function, ast.Attribute):
+                    if function.attr in cls._READERS and any(iterates_pipeline(arg) for arg in node.args):
+                        yield node.lineno
+                    if function.attr in cls._STREAM_READERS and is_pipeline(function.value):
+                        if function.attr != 'read' or node.args:
+                            yield node.lineno
             if isinstance(node, ast.For) and is_pipeline(node.iter) and cls._can_stop(node):
                 yield node.lineno
 
     def test_every_pipeline_that_is_read_partly_is_closed(self):
         unclosed = set()
         for path, tree in _sources('refinery'):
-            for scope in ast.walk(tree):
-                if isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
-                    for line in self._partial_reads(scope):
-                        unclosed.add(F'{os.path.relpath(path, _project_root())}:{line}')
+            for line in self._partial_reads(tree):
+                unclosed.add(F'{os.path.relpath(path, _project_root())}:{line}')
         self.assertListEqual(sorted(unclosed), [])
 
 
