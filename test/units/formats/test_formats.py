@@ -1,6 +1,7 @@
 import gc
 import lzma
 import tracemalloc
+import unittest
 
 from .. import TestUnitBase
 
@@ -15,6 +16,9 @@ _STDLIB_ARCHIVES = {
     'xt7z': '4950524235e3e594afe8b60ec3a7dc7ca9431b27e5c4bb728d166f403ef83131',
     'xtzip': 'dd8d2293bd1afa4a99ec161c150415ecd270f3b40e640cd556a19890e6c52c4d',
 }
+
+#: The same sources in one solid 7z, made with the defaults of 7-Zip.
+_STDLIB_SOLID_7Z = 'bac77b8b93f397e64a428e035b7453d0a9c115eca53ded2560b17bf237b8d573'
 
 
 class TestFormats(TestUnitBase):
@@ -103,27 +107,38 @@ class TestFormats(TestUnitBase):
         self.assertGreater(extracted, 0)
         self.assertLess(held - start - len(data), extracted // 8)
 
+    def _assert_archive_keeps_no_file_after_handing_it_out(self, name: str, sample: str):
+        data = self.download_sample(sample)
+        unit = self.ldu(name)
+        extracted = 0
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            start, _ = tracemalloc.get_traced_memory()
+            held = start
+            for chunk in data | unit:
+                extracted += len(chunk)
+                del chunk
+                held = max(held, tracemalloc.get_traced_memory()[0])
+        finally:
+            tracemalloc.stop()
+            gc.enable()
+        self.assertGreater(extracted, 0)
+        self.assertLess(held - start - len(data), extracted // 3)
+
     def test_archive_keeps_no_file_after_handing_it_out(self):
         for name, sample in _STDLIB_ARCHIVES.items():
             with self.subTest(unit=name):
-                data = self.download_sample(sample)
-                unit = self.ldu(name)
-                extracted = 0
-                gc.collect()
-                gc.disable()
-                tracemalloc.start()
-                try:
-                    start, _ = tracemalloc.get_traced_memory()
-                    held = start
-                    for chunk in data | unit:
-                        extracted += len(chunk)
-                        del chunk
-                        held = max(held, tracemalloc.get_traced_memory()[0])
-                finally:
-                    tracemalloc.stop()
-                    gc.enable()
-                self.assertGreater(extracted, 0)
-                self.assertLess(held - start - len(data), extracted // 3)
+                self._assert_archive_keeps_no_file_after_handing_it_out(name, sample)
+
+    @unittest.expectedFailure
+    def test_solid_7z_keeps_no_file_after_handing_it_out(self):
+        """
+        A solid 7z folder is decompressed as one piece, which every file of the folder refers to,
+        so the folder is kept until its last file is read.
+        """
+        self._assert_archive_keeps_no_file_after_handing_it_out('xt7z', _STDLIB_SOLID_7Z)
 
     def test_extracted_file_is_freed_as_soon_as_it_is_dropped(self):
         data = lzma.decompress(self.download_sample(_MALWARE_VHD))
