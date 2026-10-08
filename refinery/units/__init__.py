@@ -1421,12 +1421,7 @@ class Unit(UnitBase, abstract=True):
         Ends the current run of this unit and of the units in its pipeline. A stream or file
         descriptor that the caller passed in as input is not closed.
         """
-        if isinstance(src := self.source, Unit):
-            src.close()
-        self._end_run(self._run)
-        self._reader = None
-        self._buffer = B''
-        self._offset = 0
+        self.reset()
 
     @property
     def closed(self) -> bool:
@@ -1822,13 +1817,11 @@ class Unit(UnitBase, abstract=True):
 
     def reset(self):
         """
-        Clear all data from the unit's input buffers.
+        Ends the current run of this unit and of the units in its pipeline, and clears the buffer of
+        its output stream.
         """
-        try:
-            if isinstance(source := self._source, Unit):
-                source.reset()
-        except AttributeError:
-            pass
+        if isinstance(source := self.source, Unit):
+            source.reset()
         self._end_run(self._run)
         self._buffer = B''
         self._offset = 0
@@ -2329,7 +2322,7 @@ class Unit(UnitBase, abstract=True):
         yield data
 
     def __call__(self, data: buf | Chunk | None = None) -> buf:
-        with MemoryFile(data) if data else open(os.devnull, 'rb') as stdin:
+        with MemoryFile(data or B'') as stdin:
             with MemoryFile() as stdout:
                 return (stdin | self | stdout).getvalue()
         return B''
