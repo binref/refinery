@@ -66,6 +66,12 @@ class TestSubFileUnit(TestUnitBase):
         self.assertEqual(bytes(results[0]), _ZIP_WITH_STORED_PNG)
         self.assertEqual(bytes(results[1]), _ZIP_WITH_STORED_PNG[41:41 + 376])
 
+    def test_carvers_are_released_when_the_output_is_closed_early(self):
+        from refinery.units.pattern.carve_zip import carve_zip
+        with self.assertNoInstanceSurvives(carve_zip):
+            with _ZIP_WITH_STORED_PNG | self.load(recursive=True) as carved:
+                self.assertEqual(bytes(next(carved)), _ZIP_WITH_STORED_PNG)
+
     def test_a_file_following_an_archive_is_not_suppressed(self):
         """
         Coverage has to be limited to the region an item was carved from: a PNG that merely follows

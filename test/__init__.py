@@ -1,3 +1,4 @@
+import gc
 import logging
 import random
 import refinery
@@ -80,6 +81,24 @@ class TestBase(unittest.TestCase):
 
     def assertContains(self, container, member, msg=None):
         self.assertIn(member, container, msg)
+
+    @contextlib.contextmanager
+    def assertNoInstanceSurvives(self, cls: type):
+        """
+        Fails if an instance of the given class that was created inside the block is still alive
+        after it while the cycle collector is off, i.e. if only the collector could free it.
+        Instances that existed before the block, like units that a cache keeps, are ignored.
+        """
+        gc.collect()
+        existing = [obj for obj in gc.get_objects() if isinstance(obj, cls)]
+        known = {id(obj) for obj in existing}
+        gc.disable()
+        try:
+            yield
+            survivors = [obj for obj in gc.get_objects() if isinstance(obj, cls) and id(obj) not in known]
+        finally:
+            gc.enable()
+        self.assertEqual(survivors, [])
 
     @classmethod
     def load_pipeline(cls, cmd: str, clear_cache=False) -> refinery.Unit:

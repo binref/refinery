@@ -60,14 +60,15 @@ class subfiles(Unit):
 
         for extension, unit in carvers.items():
             self.log_info(F'carving: {extension}')
-            for chunk in data | unit:
-                if len(chunk) < self._MINLENGTH.get(extension, 1):
-                    continue
-                start = chunk[MV.START]
-                end = chunk[MV.END]
-                size = end - start
-                if any(a + n >= end for a, n in covered.overlap(start, size)):
-                    continue
-                if not self.args.recursive:
-                    covered.addi(start, size)
-                yield chunk
+            with data | unit as carved:
+                for chunk in carved:
+                    if len(chunk) < self._MINLENGTH.get(extension, 1):
+                        continue
+                    start = chunk[MV.START]
+                    end = chunk[MV.END]
+                    size = end - start
+                    if any(a + n >= end for a, n in covered.overlap(start, size)):
+                        continue
+                    if not self.args.recursive:
+                        covered.addi(start, size)
+                    yield chunk

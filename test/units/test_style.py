@@ -603,6 +603,63 @@ class TestCacheDiscipline(TestBase):
         self.assertListEqual(cached, [])
 
 
+class TestPartialReadDiscipline(TestBase):
+    """
+    A pipeline that is read only partly is suspended inside the code of its units, which refers to
+    them, so once it is dropped, only the cycle collector frees its input. Code that reads part of
+    a pipeline enters it in a `with` statement, which closes it.
+    """
+
+    _CONVERSIONS = {'bytes', 'bytearray', 'str', 'list', 'set', 'dict', 'tuple', 'memoryview', 'int'}
+    _READERS = {'next', 'one', 'iter', 'islice', 'any', 'all', 'zip'}
+
+    @classmethod
+    def _is_pipeline(cls, node: ast.expr | None) -> bool:
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.BitOr):
+            return False
+        if isinstance(right := node.right, (ast.Constant, ast.List, ast.Set, ast.Dict)):
+            return False
+        return not isinstance(right, ast.Name) or right.id not in cls._CONVERSIONS
+
+    @staticmethod
+    def _can_stop(loop: ast.For) -> bool:
+        return any(isinstance(node, (ast.Break, ast.Return, ast.Yield, ast.YieldFrom)) for node in ast.walk(loop))
+
+    @classmethod
+    def _partial_reads(cls, scope: ast.AST):
+        bound: set[str] = set()
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Assign) and cls._is_pipeline(node.value):
+                bound.update(target.id for target in node.targets if isinstance(target, ast.Name))
+            if isinstance(node, (ast.NamedExpr, ast.AnnAssign)) and cls._is_pipeline(node.value):
+                if isinstance(node.target, ast.Name):
+                    bound.add(node.target.id)
+
+        def is_pipeline(node: ast.expr) -> bool:
+            return cls._is_pipeline(node) or isinstance(node, ast.Name) and node.id in bound
+
+        for node in ast.walk(scope):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in cls._READERS
+                and node.args
+                and is_pipeline(node.args[0])
+            ):
+                yield node.lineno
+            if isinstance(node, ast.For) and is_pipeline(node.iter) and cls._can_stop(node):
+                yield node.lineno
+
+    def test_every_pipeline_that_is_read_partly_is_closed(self):
+        unclosed = set()
+        for path, tree in _sources('refinery'):
+            for scope in ast.walk(tree):
+                if isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for line in self._partial_reads(scope):
+                        unclosed.add(F'{os.path.relpath(path, _project_root())}:{line}')
+        self.assertListEqual(sorted(unclosed), [])
+
+
 class TestStyleGuides(TestUnitBase):
 
     @pytest.mark.cosmetics

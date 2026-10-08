@@ -713,7 +713,8 @@ class pemeta(JSONTableUnit):
         if P or S:
             with suppress(Exception):
                 from refinery.units.formats.pe.pesig import pesig
-                signature = self.parse_signature(next(data | pesig))
+                with data | pesig as signatures:
+                    signature = self.parse_signature(next(signatures))
 
         if signature:
             try:

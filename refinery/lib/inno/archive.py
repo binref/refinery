@@ -2567,7 +2567,8 @@ class InnoArchive:
         if not (meta := TSetupLdrOffsetTable.FindInBinary(data)):
             try:
                 from refinery.units.formats.pe.perc import perc
-                _meta = one(data | perc(self.OffsetsPath))
+                with data | perc(self.OffsetsPath) as resources:
+                    _meta = one(resources)
             except Exception as E:
                 raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
             else:

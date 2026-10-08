@@ -190,11 +190,12 @@ class xtmail(PathExtractorUnit):
                     self.log_warn(F'manually decoding part {k}, data might be corrupted: {path}')
                     if isinstance(payload, str):
                         payload = payload.encode('latin1')
+                    result = None
                     if payload := asbuffer(payload):
-                        result = next(payload | carve('b64', stripspace=True, single=True, decode=True))
-                    else:
+                        with payload | carve('b64', stripspace=True, single=True, decode=True) as decoded:
+                            result = next(decoded, None)
+                    if result is None:
                         error_message = str(E)
-                        result = None
             if not result:
                 if error_message is not None:
                     self.log_warn(F'could not get content of message part {k}: {error_message!s}')

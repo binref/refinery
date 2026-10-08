@@ -63,6 +63,13 @@ class TestPEMeta(TestUnitBase):
         self.assertIn('Serial', result['Signature'])
         self.assertEqual(result['Signature']['Serial'], '0ce8111784c41955f33511aeb28c9ab8')
 
+    def test_signature_reader_is_closed_after_use(self):
+        from refinery.units.formats.pe.pesig import pesig
+        data = self.download_sample('7fa4aeffba01ad34ed2fa4b77d3dee11fd881075f37a5b840e15ec86bef320ab')
+        unit = self.load()
+        with self.assertNoInstanceSurvives(pesig):
+            self.assertIn('Signature', json.loads(data | unit | str))
+
     def test_serial_overflow_and_authenticode_info(self):
         data = self.download_sample('480ca9086fd1999975c1c060a36c57a746f87e51681417d8c8b89648796f78ca')
         unit = self.load()

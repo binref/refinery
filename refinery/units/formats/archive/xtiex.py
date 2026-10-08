@@ -11,10 +11,9 @@ class xtiex(xtcab, docs='{0}{p}{PathExtractorUnit}'):
     Extract files from IExpress setup self-extracting archive.
     """
     def unpack(self, data: buf):
-        try:
-            cab = next(data | perc('RCDATA/CABINET/*'))
-        except StopIteration as SI:
-            raise ValueError('no RCDATA resource named CABINET was found') from SI
+        with data | perc('RCDATA/CABINET/*') as resources:
+            if (cab := next(resources, None)) is None:
+                raise ValueError('no RCDATA resource named CABINET was found')
         yield from super().unpack(cab)
 
     def filter(self, chunks):
