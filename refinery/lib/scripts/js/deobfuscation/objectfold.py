@@ -380,6 +380,17 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             self.renew_models()
         return self.held_models()
 
+    def _answers(self, answers: _Answers | None) -> _Answers:
+        """
+        The scope answers of the held semantic model: *answers* where they are its own. Every
+        decision takes them at its reference, so that with the models released each reference is
+        decided on the tree as it stands.
+        """
+        model = self.held_models().model
+        if answers is None or answers.model is not model:
+            answers = _Answers(model)
+        return answers
+
     def _detach(self, removed: Node) -> None:
         """
         Record the names the code *removed*, which an edit took out of the tree, spelled: a held
@@ -387,14 +398,13 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         """
         self._detached.update(node for node in removed.walk() if isinstance(node, JsIdentifier))
 
-    def _replace(self, old: Node, new: Node) -> None:
+    def _replace(self, model: SemanticModel, old: Node, new: Node) -> None:
         """
         Replace *old* with *new*, recording the statement *old* stood in, the names it spelled
-        (`_detach`), and what each name *new* spells reaches there: the binding the held model
-        resolves it to from the scope of *old*, or the name itself where the model resolves it to
-        none.
+        (`_detach`), and what each name *new* spells reaches there: the binding *model*, the one
+        the reference was decided on, resolves it to from the scope of *old*, or the name itself
+        where the model resolves it to none.
         """
-        model = self.held_models().model
         scope = model.scope_of(old)
         statement = _statement_holding(old)
         if not _replace_in_parent(old, new):
@@ -735,8 +745,9 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             else:
                 accessed_keys.add(key)
                 copies.append((member, value))
-        answers = _Answers(model)
+        answers: _Answers | None = None
         for member, value in copies:
+            answers = self._answers(answers)
             inert = self._copy(answers, member, value)
             if inert is None:
                 can_remove = False
@@ -746,11 +757,11 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 self._outdated = True
         if calls and self._outdated:
             self.renew_models()
-            answers = _Answers(self.held_models().model)
         for ref, member, key, value in calls:
-            if ref in self._detached or not answers.model.knows(ref):
+            if ref in self._detached or not self.held_models().model.knows(ref):
                 continue
             accessed_keys.add(key)
+            answers = self._answers(answers)
             inert = self._inline_call(answers, member, value)
             if inert is None:
                 can_remove = False
@@ -765,7 +776,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             if not property_provably_absent(facts.effects, dict, key):
                 can_remove = False
                 continue
-            self._replace(member, make_undefined_expression())
+            self._replace(facts.model, member, make_undefined_expression())
             changed = True
         dropped = [value for key, value in prop_map.items() if key not in accessed_keys]
         if can_remove and dropped:
@@ -796,7 +807,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         if replacement is not None:
             inert = _an_inlined_call_is_inert(value, call)
             replacement = spelled_for_the_callee_position(call, replacement)
-            self._replace(call, replacement)
+            self._replace(answers.model, call, replacement)
             return inert and not _joins_a_constant_string(replacement)
         if _function_observes_its_identity(value):
             return None
@@ -818,5 +829,5 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             return None
         inert = _copy_is_inert(value, value_landing(member), handed=False)
         copy = spelled_for_the_callee_position(member, _clone_node(value))
-        self._replace(member, copy)
+        self._replace(model, member, copy)
         return inert and not _joins_a_constant_string(copy)

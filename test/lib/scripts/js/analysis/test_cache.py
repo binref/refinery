@@ -982,6 +982,11 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             'A.v + B.w + B.z[0]',
         )
 
+    @staticmethod
+    def _one_object_read(count: int) -> str:
+        reads = ', '.join(['O.a'] * count)
+        return F'function f() {{ var O = {{a: 1, b: "s"}}; console.log({reads}); }} f();'
+
     @classmethod
     def _handing_names_on_to_a_call(cls, count: int) -> str:
         return cls._reading_a_parameter(count, 'var O = {c: function (a, b) { return a(b); }};', 'O.c(g, e)')
@@ -1145,6 +1150,13 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
     @a_property_of_the_pin_itself
     def test_released_models_are_built_more_often_for_sixteen_objects_than_for_two(self):
         self.assertLess(self._released(self._independent(2))[0], self._released(self._independent(16))[0])
+
+    @a_property_of_the_pin_itself
+    def test_released_an_object_read_eight_times_builds_the_models_seven_times_more_than_one_read_once(self):
+        self.assertEqual(
+            self._released(self._one_object_read(8))[0] - self._released(self._one_object_read(1))[0],
+            7,
+        )
 
     def test_holding_the_models_does_not_change_the_result(self):
         for source in (self._independent(8), self._comparing_the_global_object(8)):
