@@ -84,13 +84,40 @@ The following rules contradict common Python conventions. Check them explicitly:
 
 # Development
 
-- Run your tests using `pytest -n auto`.
+- Run your tests using `pytest -n 6`.
   Restricting to 6 workers ensures that not too much memory is used.
-- Use the `temp` subdirectory of the project root for creating temporary scripts and files.
-  When generating samples for testing, create a subfolder in `temp` with an appropriate name for this.
+- Put temporary scripts in a subfolder of `temp/scripts` named for the task.
+- Put samples and all other temporary files in a subfolder of `temp` with an appropriate name, never under `temp/scripts`.
 - When making commits on my behalf, do not include a comment about AI co-authorship.
 - When asked to commit changes to git, only use one-line commit messages;
   each commit message must fit within 140 characters.
+
+# Tool Permissions
+
+Sessions run in `dontAsk` mode: 
+ Every tool call that is not pre-approved is refused without a prompt.
+At the start of every session, read these files if they exist to review your allowed tools:
+- `.claude/settings.json`
+- `.claude/settings.local.json`
+
+Notes on how permissions in these files work:
+- Text before the `*` in `Bash(cmd *)` must match literally, so use flags in the order the rule shows.
+  Every part of a compound command must match on its own.
+  A leading variable assignment such as `FOO=1 pytest` never matches; use a flag instead, e.g. `python -B`.
+- Read-only commands such as `ls`, `cat`, `grep`, `find`, or `cd` into the project need no rule.
+- Any `cd {dir} && git ...` is refused. For a baseline, use
+  ```
+  git worktree add temp/{name} {commit}
+  ```
+  and run `cd temp/{name} && pytest ...`
+- A `>` redirect only works into directories that an `Edit` rule allows.
+- In path rules, `//c/...` is absolute and `/...` is relative to the project root.
+- Run Python with `-I`, so that it never imports a module from the current directory, which may hold a sample.
+- Run a unit through its module, e.g.
+  ```
+  python -I -m refinery.units.encoding.b64
+  ```
+  and note that `refinery/__unit__.py` maps unit names to modules; do not read the entire file, grep for the unit.
 
 # Architecture is P0
 
