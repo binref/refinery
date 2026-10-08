@@ -184,13 +184,9 @@ class Chunk(bytearray):
     """
     temp: Any
     """
-    Units can use this field to transport temporary data between different callbacks. For example,
-    a unit might want to transport information from `refinery.units.Unit.filter` to:
-
-    - `refinery.units.Unit.reverse`
-    - `refinery.units.Unit.process`
-
-    These methods, in turn, might want to transport information to `refinery.units.Unit.finish`.
+    Units can use this field to transport temporary data from `refinery.units.Unit.filter` to
+    `refinery.units.Unit.process` or `refinery.units.Unit.reverse` for the same chunk. The frame
+    handler clears it once the unit has processed the chunk, so that it may refer back to the chunk.
     """
     uuid: uuid.UUID
     """
@@ -1021,16 +1017,22 @@ class Framed:
             chunk._meta.inherit(meta)
             return chunk.truncate(scope)
 
-        outputs = self.action(parent)
-        if self.squeeze:
-            outputs = self._merged(outputs)
-        yield from map(inherit, outputs)
+        try:
+            outputs = self.action(parent)
+            if self.squeeze:
+                outputs = self._merged(outputs)
+            yield from map(inherit, outputs)
+        finally:
+            parent.temp = None
 
     def _generate_bytes(self, data: Chunk):
-        outputs = self.action(data)
-        if self.squeeze:
-            outputs = self._merged(outputs)
-        yield from outputs
+        try:
+            outputs = self.action(data)
+            if self.squeeze:
+                outputs = self._merged(outputs)
+            yield from outputs
+        finally:
+            data.temp = None
 
     def __iter__(self):
         nesting = self.nesting

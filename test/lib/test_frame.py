@@ -526,6 +526,25 @@ class TestFraming(TestBase):
                     lifetimes.note()
                 self.assertEqual(lifetimes.notes, [[]])
 
+    def test_chunk_kept_in_its_own_scratch_field_is_freed_after_processing(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class gathers(Unit):
+            def filter(self, chunks):
+                members = [lifetimes.track(chunk) for chunk in chunks]
+                head = members[0]
+                head.temp = members
+                yield head
+
+            def process(self, data):
+                yield from data.temp
+
+        with _without_cycle_collector():
+            self.assertEqual([B'A', B'B', B'C'] | gathers() | [bytes], [B'A', B'B', B'C'])
+            lifetimes.note()
+        self.assertEqual(lifetimes.notes, [[]])
+
     def test_upstream_input_is_released_when_the_next_unit_stops_reading(self):
         from refinery import Unit
         lifetimes = _Lifetimes()

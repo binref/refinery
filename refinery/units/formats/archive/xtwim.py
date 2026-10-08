@@ -50,7 +50,6 @@ class xtwim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 F'given without part 1, which lists the files.'
             )
         others: list[tuple[int, Chunk]] = data.temp or []
-        data.temp = None
         parts = [WimPart(data)]
         for number, chunk in others:
             try:
