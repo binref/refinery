@@ -133,8 +133,7 @@ class RPA(Struct):
                 offset ^= key
                 length ^= key
                 reader.seek(offset)
-                if len(_p) == 0:
-                    prefix = _p[0]
+                if _p and (prefix := _p[0]):
                     if isinstance(prefix, str):
                         prefix = prefix.encode('latin1')
                     out.write(prefix)
