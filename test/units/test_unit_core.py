@@ -258,7 +258,8 @@ class TestUnitOutput(unittest.TestCase):
             def process(self, data):
                 return bytes(0x100000)
 
-        B'' | grows() | bytes
+        _ = B'' | grows() | bytes
+        enabled = gc.isenabled()
         gc.collect()
         gc.disable()
         tracemalloc.start()
@@ -269,7 +270,8 @@ class TestUnitOutput(unittest.TestCase):
             held = tracemalloc.get_traced_memory()[0] - start - len(output)
         finally:
             tracemalloc.stop()
-            gc.enable()
+            if enabled:
+                gc.enable()
         self.assertLess(held, len(output) // 8)
 
     def test_stream_passed_in_by_the_caller_stays_open(self):
@@ -301,7 +303,7 @@ class TestUnitOutput(unittest.TestCase):
         from refinery import nop
         read, write = os.pipe()
         try:
-            B'refinery' | nop() | write
+            _ = B'refinery' | nop() | write
             gc.collect()
             os.write(write, B'!')
             os.close(write)
@@ -313,6 +315,7 @@ class TestUnitOutput(unittest.TestCase):
         import gc
         import warnings
         from refinery import nop
+        gc.collect()
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always', ResourceWarning)
             self.assertEqual(0 | nop() | bytes, B'')

@@ -89,6 +89,7 @@ class TestBase(unittest.TestCase):
         after it while the cycle collector is off, i.e. if only the collector could free it.
         Instances that existed before the block, like units that a cache keeps, are ignored.
         """
+        enabled = gc.isenabled()
         gc.collect()
         existing = [obj for obj in gc.get_objects() if isinstance(obj, cls)]
         known = {id(obj) for obj in existing}
@@ -97,7 +98,8 @@ class TestBase(unittest.TestCase):
             yield
             survivors = [obj for obj in gc.get_objects() if isinstance(obj, cls) and id(obj) not in known]
         finally:
-            gc.enable()
+            if enabled:
+                gc.enable()
         self.assertEqual(survivors, [])
 
     @classmethod

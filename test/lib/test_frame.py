@@ -520,7 +520,7 @@ class TestFraming(TestBase):
                     unit = fails()
                     unit.log_level = level
                     try:
-                        B'data' | unit | bytes
+                        _ = B'data' | unit | bytes
                     except ValueError:
                         pass
                     lifetimes.note()
@@ -653,7 +653,7 @@ class TestFraming(TestBase):
                 next(unit)
 
         def the_next_unit_stops_reading(unit):
-            unit | _configured(first(), -1) | []
+            _ = unit | _configured(first(), -1) | []
 
         for end in (closed_by_the_caller, closed_by_a_with_statement, the_next_unit_stops_reading):
             with self.subTest(end.__name__.replace('_', ' ')):
