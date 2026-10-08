@@ -3030,6 +3030,15 @@ A_NAME_GIVEN_THE_GLOBAL_OBJECT_BY_A_HOST_TEST = {
         prints('2'),
         Reading.SCRIPT,
     ),
+    'a wrapper is handed the spelling a conditional chooses': Program(
+        a_program("""
+            var q = 1;
+            (function (root) { root.q = 2; })(typeof self !== 'undefined' ? self : this);
+            console.log(q);
+            """),
+        prints('2'),
+        Reading.SCRIPT,
+    ),
 }
 
 
@@ -3041,7 +3050,8 @@ class TestANameGivenTheGlobalObjectByAHostTestHoldsIt(TestBase):
     whose left is, which covers `var w = window || {}`. A file meant for several hosts tests first
     and spells the object in a branch: the arms of a conditional and the right of an `&&` are not
     read, so the name is taken for one holding something else and the write through it is recorded
-    nowhere.
+    nowhere. A library's wrapper handed the conditional as an argument has the same blind spot in
+    the parameter that receives it.
 
     The rule that closes it: a value is the object when any value it may evaluate to is — either arm
     of a conditional, the right of an `&&`, either side of `||` and `??`, the last of a sequence —
@@ -3790,6 +3800,226 @@ class TestABuiltInMethodCalledOnAnObjectMayChangeIt(TestBase):
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+
+#: Programs that write `Object.prototype` through `Object` held where the models do not follow it,
+#: mapped to what Node prints: an element of an array, and a thrown value.
+AN_INTRINSIC_HELD_WHERE_THE_MODELS_DO_NOT_FOLLOW_IT = {
+    a_program("""
+        [Object][0].prototype.k = 1;
+        var B = {x: 1};
+        console.log(B.k);
+        """): '1\n',
+    a_program("""
+        try { throw Object; } catch (e) { e.prototype.k = 1; }
+        var B = {x: 1};
+        console.log(B.k);
+        """): '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnIntrinsicWrittenThroughAnElementOrAThrownValueIsSeen(TestBase):
+    """
+    The scan of what a program writes on the intrinsics follows `Object` through the names and the
+    arguments that hold it, and not through an element of an array or a thrown value. The write to
+    its prototype is not seen, and object folding reads the key `B` lacks as absent.
+    """
+
+    @wontfix(
+        'a program writes a prototype through the name of its constructor, not through an array '
+        'element or a thrown value holding the constructor'
+    )
+    def test_the_key_is_found(self):
+        rows = AN_INTRINSIC_HELD_WHERE_THE_MODELS_DO_NOT_FOLLOW_IT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Classic scripts that write one of their top-level variables through the global object held where
+#: the models do not follow it, mapped to what a host running them prints: a property of an object
+#: no fold removes, a default parameter, and an element a destructuring takes.
+THE_GLOBAL_OBJECT_HELD_WHERE_THE_MODELS_DO_NOT_FOLLOW_IT = {
+    a_program("""
+        var C = {x: 1};
+        var o = {w: globalThis};
+        o.z = 0;
+        o.w.C = {x: 5};
+        console.log(C.x);
+        """): '5\n',
+    a_program("""
+        var C = {x: 1};
+        function f(w = globalThis) { w.C = {x: 5}; }
+        f();
+        console.log(C.x);
+        """): '5\n',
+    a_program("""
+        var C = {x: 1};
+        var [w] = [globalThis];
+        w.C = {x: 5};
+        console.log(C.x);
+        """): '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheGlobalObjectInAPropertyADefaultOrAPatternIsWrittenThrough(TestBase):
+    """
+    The semantic model finds the names holding the global object among the variables it is given to
+    and the parameters a call hands it to, and not among the properties of an object, the defaults
+    of parameters, or the targets of a destructuring. The write through such a name is recorded
+    nowhere, and object folding reads `C.x` off the literal.
+    """
+
+    @wontfix(
+        'a program names the global object with a variable or hands it to a parameter, not through '
+        'an object property, a default parameter or a destructuring'
+    )
+    def test_the_write_is_seen(self):
+        rows = THE_GLOBAL_OBJECT_HELD_WHERE_THE_MODELS_DO_NOT_FOLLOW_IT
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Programs in which a copy of a string into a computed key makes a call install a key on every
+#: object, and another object reads that key, mapped to what Node prints: the reading object
+#: declared before the copying one, and declared in a function nested in its scope.
+A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT = {
+    a_program("""
+        var B = {x: 1};
+        var A = {k: "defineProperty"};
+        Object[A.k](Object.prototype, "q", {value: 1});
+        console.log(B.q);
+        """): '1\n',
+    a_program("""
+        var A = {k: "defineProperty"};
+        Object[A.k](Object.prototype, "q", {value: 1});
+        function t() { var B = {y: 1}; return B.q; }
+        console.log(t());
+        """): '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAKeyAnotherObjectReadsAfterACopyInstalledItIsFound(TestBase):
+    """
+    Object folding decides one object at a time, and reads a key an object lacks as absent where
+    the models see no install of it. The install `Object[A.k](...)` becomes readable once the copy
+    of `"defineProperty"` is made, so an object decided before `A`, declared earlier or in a nested
+    function, reads the key as absent.
+    """
+
+    @wontfix(
+        'an obfuscated file reads only keys its storage object holds, and a program reading a '
+        'key no object holds after building the call that installs it from a string is made up '
+        'for the defect'
+    )
+    def test_the_key_is_found(self):
+        rows = A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Classic scripts that read a top-level object through the global object with a value of that
+#: object, mapped to what a host running them prints: the object's own key names it, and the object
+#: holds the global object the program reads it through.
+AN_OBJECT_READ_THROUGH_THE_GLOBAL_OBJECT_WITH_ITS_OWN_VALUE = {
+    a_program("""
+        var A = {k: "A", n: 1};
+        console.log(globalThis[A.k].n);
+        """): '1\n',
+    a_program("""
+        var A = {k: globalThis, n: 1};
+        var w = A.k;
+        console.log(w.A.n);
+        """): '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnObjectReadThroughTheGlobalObjectWithItsOwnValueIsKept(TestBase):
+    """
+    Object folding removes the declaration of an object once it folded every reference the models
+    listed before its copies. A copy that names the object through the global object makes a
+    reference the list does not hold, and the declaration is removed under it.
+    """
+
+    @wontfix(
+        'a storage object holds neither its own name nor the global object it is then read '
+        'through, and a program reading it that way is made up for the defect'
+    )
+    def test_the_object_is_still_read(self):
+        rows = AN_OBJECT_READ_THROUGH_THE_GLOBAL_OBJECT_WITH_ITS_OWN_VALUE
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A classic script whose object holds the value of a global and, as a key, the name that global is
+#: then written under through the global object, mapped to what a host running it prints.
+A_GLOBAL_REWRITTEN_UNDER_A_KEY_OF_THE_OBJECT_HOLDING_ITS_VALUE = a_program("""
+    var x = 1;
+    function main() { var A = {k: "x", v: x}; globalThis[A.k] = 2; return A.v; }
+    console.log(main());
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAValueAnObjectHoldsIsReadWhereTheLiteralReadIt(TestBase):
+    """
+    Object folding checks that nothing writes a name an object's value reads before it decides the
+    object, and the write `globalThis[A.k] = 2` names `x` only once the copy of `"x"` is made. The
+    copy of `x` where `A.v` stood then reads the global after the write, which the literal read
+    before it.
+    """
+
+    @wontfix(
+        'a storage object holds strings and helper functions, not the value of a global it also '
+        'names as a key that the program then writes under'
+    )
+    def test_the_value_is_the_one_the_literal_read(self):
+        self.assertEqual(
+            before_and_after_in_a_host(A_GLOBAL_REWRITTEN_UNDER_A_KEY_OF_THE_OBJECT_HOLDING_ITS_VALUE),
+            (('1\n', None), ('1\n', None)),
+        )
+
+
+#: A program whose object holds an arrow function reading `new.target`, called from a nested
+#: function, mapped to what Node prints for it.
+AN_ARROW_READING_NEW_TARGET_CALLED_FROM_A_NESTED_FUNCTION = a_program("""
+    function g() {
+      var A = {f: () => new.target};
+      function h() { return A.f(); }
+      console.log(h() === g);
+    }
+    new g();
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnArrowReadingNewTargetReadsTheFunctionItWasWrittenIn(TestBase):
+    """
+    An arrow function reads the `new.target` of the function it is written in. Object folding
+    inlines the call `A.f()` into `h`, where `new.target` is the one of `h`, which a plain call
+    leaves undefined.
+    """
+
+    @wontfix(
+        'no obfuscator stores an arrow function reading new.target in an object, and a program '
+        'calling one from another function is made up for the defect'
+    )
+    def test_the_arrow_reads_its_own_new_target(self):
+        self.assertEqual(
+            before_and_after(AN_ARROW_READING_NEW_TARGET_CALLED_FROM_A_NESTED_FUNCTION),
+            (('true\n', None), ('true\n', None)),
         )
 
 
