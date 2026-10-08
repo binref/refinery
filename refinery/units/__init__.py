@@ -2111,12 +2111,13 @@ class Unit(UnitBase, abstract=True):
             raise ValueError('target stream is not writable')
 
         self._target = stream
-
-        if self.isatty():
-            self._write_to_terminal(stream)
-        else:
-            self._write_to_stream(stream)
-
+        try:
+            if self.isatty():
+                self._write_to_terminal(stream)
+            else:
+                self._write_to_stream(stream)
+        finally:
+            self._target = None
         return stream
 
     def _log_send_failure(self, error: OSError):

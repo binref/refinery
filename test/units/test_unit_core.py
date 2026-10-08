@@ -239,6 +239,29 @@ class TestUnitOutput(unittest.TestCase):
             sys.unraisablehook = hook
         self.assertEqual(unraisable, [])
 
+    def test_unit_keeps_no_output_after_writing(self):
+        import gc
+        import tracemalloc
+        from refinery.units import Unit
+
+        class grows(Unit):
+            def process(self, data):
+                return bytes(0x100000)
+
+        B'' | grows() | bytes
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            start, _ = tracemalloc.get_traced_memory()
+            unit = grows()
+            output = B'' | unit | bytes
+            held = tracemalloc.get_traced_memory()[0] - start - len(output)
+        finally:
+            tracemalloc.stop()
+            gc.enable()
+        self.assertLess(held, len(output) // 8)
+
     def test_stream_passed_in_by_the_caller_stays_open(self):
         import gc
         import io
