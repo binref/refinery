@@ -499,6 +499,8 @@ class DelayedArgumentDispatch:
         unit = unit and unit.assemble(*args).log_detach()
         if rev == _REVERSE_SIGN:
             unit = -unit
+        if unit is not None:
+            unit.args.squeeze = True
         self.units[uhash] = unit
         return unit
 

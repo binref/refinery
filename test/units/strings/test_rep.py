@@ -1,3 +1,5 @@
+import tracemalloc
+
 from .. import TestUnitBase
 
 
@@ -14,6 +16,16 @@ class TestRep(TestUnitBase):
     def test_rep_with_label_and_integer_argument(self):
         unit = self.load('5', 't')
         self.assertListEqual(list(chunk['t'] for chunk in B"" | unit), list(range(5)))
+
+    def test_repetition_in_an_argument_is_built_in_one_piece(self):
+        tracemalloc.start()
+        try:
+            data = self.ldu('emit', 'rep[0x100000]:A') | bytes
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(data, B'A' * 0x100000)
+        self.assertLess(peak, 8 * len(data))
 
     def __test_variables_are_known_in_prefix(self):
         test = 0 | self.load_pipeline('put a ref [| put b rep[e:len(a)]:$ | pf {a}{b} ]') | str

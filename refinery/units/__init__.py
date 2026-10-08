@@ -173,6 +173,7 @@ from typing import (
     Iterable,
     Iterator,
     Mapping,
+    NamedTuple,
     TypeVar,
     cast,
     no_type_check,
@@ -964,6 +965,15 @@ class MissingFunction:
         return cast('_F', wraps(_)(cls()))
 
 
+class _Run(NamedTuple):
+    """
+    A run of a unit: the iterator over its output, and whether its outputs are separated by line
+    breaks when they are written.
+    """
+    output: Generator[buf | Placement]
+    framebreak: bool
+
+
 _logger_locks: dict[Executable, int] = {}
 _logger_locks_guard = Lock()
 
@@ -1391,8 +1401,7 @@ class Unit(UnitBase, abstract=True):
     _reader: Iterator[bytes | bytearray] | None
     _source: BinaryIO | None
     _target: BinaryIO | None
-    _framed: Framed | None
-    _chunks: Iterator[buf | Placement] | None
+    _run: _Run | None
     console: bool
 
     @property
@@ -1406,11 +1415,11 @@ class Unit(UnitBase, abstract=True):
         """
         if isinstance(src := self.source, Unit):
             src.close()
-        self._chunks = None
+        self._run = None
 
     @property
     def closed(self) -> bool:
-        return self._chunks is None
+        return self._run is None
 
     def fileno(self) -> int:
         return 0
@@ -1617,19 +1626,23 @@ class Unit(UnitBase, abstract=True):
             import traceback
             traceback.print_exc(file=sys.stderr)
 
-    def output(self):
-        if not self._chunks:
-            self._chunks = iter(self._framehandler)
-        return self._chunks
-
-    def _next_output(self, place: Callable[[Placement], Any] | None = None) -> Any:
+    def _start_run(self) -> _Run:
         """
-        Returns the next item of `output`, or `None` at its end or after an error, which is handled
-        by the unit's exception handler. If a function is given, a placement is replaced by its
-        result: the placement is transferred or serialized under the same error handling.
+        Returns the current run of this unit, and starts one if there is none.
+        """
+        if (run := self._run) is None:
+            framed = self._frame_handler()
+            self._run = run = _Run(iter(framed), framed.framebreak)
+        return run
+
+    def _next_output(self, run: _Run, place: Callable[[Placement], Any] | None = None) -> Any:
+        """
+        Returns the next output of the given run, or `None` at its end or after an error, which is
+        handled by the unit's exception handler. If a function is given, a placement is replaced
+        by its result: the placement is transferred or serialized under the same error handling.
         """
         try:
-            item = next(self.output())
+            item = next(run.output)
             if place is not None and isinstance(item, Placement):
                 item = place(item)
             return item
@@ -1648,7 +1661,8 @@ class Unit(UnitBase, abstract=True):
             if piece := self.read1():
                 return piece
             raise StopIteration
-        while (item := self._next_output(Placement.transfer)) is not None:
+        run = self._start_run()
+        while (item := self._next_output(run, Placement.transfer)) is not None:
             if isinstance(item, Chunk):
                 return item
         raise StopIteration
@@ -1667,7 +1681,6 @@ class Unit(UnitBase, abstract=True):
         """
         separate = False
         owed = False
-        framebreak = None
         outbox: list[bytes | bytearray] = []
         if serialize is None:
             place = Placement.transfer
@@ -1675,7 +1688,8 @@ class Unit(UnitBase, abstract=True):
             place = Placement.serialize
         else:
             place = None
-        while (item := self._next_output(place)) is not None:
+        run = self._start_run()
+        while (item := self._next_output(run, place)) is not None:
             trailer = False
             if isinstance(item, tuple):
                 pieces = item
@@ -1686,10 +1700,8 @@ class Unit(UnitBase, abstract=True):
             if isinstance(item, Placement):
                 item = item.chunk
             elif isinstance(item, Chunk):
-                if framebreak is None:
-                    framebreak = self._framehandler.framebreak
                 last = separate
-                separate = framebreak and not item.endswith(B'\n')
+                separate = run.framebreak and not item.endswith(B'\n')
                 if terminal:
                     if owed:
                         owed = False
@@ -1714,11 +1726,11 @@ class Unit(UnitBase, abstract=True):
             if trailer:
                 yield B'\n'
 
-    @property
-    def _framehandler(self) -> Framed:
-        if self._framed:
-            return self._framed
-
+    def _frame_handler(self) -> Framed:
+        """
+        Returns a new frame handler for a run of this unit. Only the iterator over its output keeps
+        it, so that it releases the unit when the run ends.
+        """
         def normalized_action(data: Chunk) -> Generator[Chunk]:
             try:
                 yield from self.act(data)
@@ -1734,7 +1746,7 @@ class Unit(UnitBase, abstract=True):
         if isinstance(source, Unit) and not source.console and source._reader is None:
             source = ChunkFeed(source._stream())
 
-        self._framed = Framed(
+        return Framed(
             normalized_action,
             source,
             self.filter,
@@ -1743,7 +1755,6 @@ class Unit(UnitBase, abstract=True):
             self.args.squeeze,
             self.FilterEverything,
         )
-        return self._framed
 
     def finish(self) -> Iterable[Chunk]:
         yield from ()
@@ -1764,8 +1775,7 @@ class Unit(UnitBase, abstract=True):
                 source.reset()
         except AttributeError:
             pass
-        self._framed = None
-        self._chunks = None
+        self._run = None
         self._buffer = B''
         self._offset = 0
         self._reader = None
@@ -2524,8 +2534,7 @@ class Unit(UnitBase, abstract=True):
     #   clone._buffer = self._buffer
     #   clone._source = self._source
         clone._target = None
-        clone._framed = None
-        clone._chunks = None
+        clone._run = None
         clone._buffer = B''
         clone._offset = 0
         clone._reader = None
@@ -2538,8 +2547,7 @@ class Unit(UnitBase, abstract=True):
         self._reader = None
         self._source = None
         self._target = None
-        self._framed = None
-        self._chunks = None
+        self._run = None
         self.console = False
 
         for key, value in dict(

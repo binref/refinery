@@ -468,6 +468,32 @@ class TestFraming(TestBase):
             lifetimes.note()
         self.assertEqual(lifetimes.notes, [[]])
 
+    def test_unit_is_freed_when_its_run_ends(self):
+        from refinery import Unit
+
+        class halves(Unit):
+            def process(self, data):
+                yield data[:1]
+                yield data[1:]
+
+        runs = {
+            'converted to bytes': lambda unit: B'AB' | unit | bytes,
+            'collected in a list': lambda unit: B'AB' | unit | [],
+            'iterated': lambda unit: _drain(B'AB' | unit),
+            'called': lambda unit: unit(B'AB'),
+            'read as a stream': lambda unit: (B'AB' | unit).read(),
+            'framed': lambda unit: [B'AB', B'CD'] | unit | [],
+            'followed by another unit': lambda unit: B'AB' | unit | halves() | [],
+        }
+        for name, run in runs.items():
+            with self.subTest(name):
+                with _without_cycle_collector():
+                    unit = halves()
+                    freed = weakref.ref(unit)
+                    run(unit)
+                    del unit
+                    self.assertIsNone(freed())
+
     def test_closing_a_frame_merges_a_repeated_chunk_correctly(self):
         self.assertEqual(load_pipeline('emit AB [[| rep 3 ]| nop ]') | bytes, B'ABABAB')
 
