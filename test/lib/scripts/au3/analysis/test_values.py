@@ -295,6 +295,57 @@ class TestAu3Values(TestBase):
             with self.subTest(sources=sources):
                 self.assertEqual(self._called('mod', *sources), expected)
 
+    def test_mod_refuses_an_operand_beyond_the_exact_integers(self):
+        """
+        An integer past the double mantissa loses its low bits on the way through the remainder,
+        and the interpreter's own reading of such operands is not a fact any probe pinned.
+        """
+        self.assertIsNone(evaluate_builtin('mod', (_value('9007199254740993'), _value('2'))))
+
+    def test_hex_refuses_a_length_beyond_sixteen(self):
+        """
+        Sixteen digits is the widest int64 hex the probes pinned; a wider request would have to
+        spell a number the parser saturates, so it is refused rather than padded.
+        """
+        self.assertIsNone(self._called('hex', '255', '17'))
+
+    def test_a_non_ascii_digit_is_not_a_number_prefix(self):
+        """
+        Python's `str.isdigit` admits characters beyond the ASCII digits; AutoIt's prefix reader
+        stops at the first one, so a superscript two is the number zero and never a crash.
+        """
+        self.assertEqual(self._applied('+', '"²"', '1'), '1')
+
+    def test_an_infinite_float_literal_is_not_a_value(self):
+        """
+        A decimal literal past the double range parses as infinity in Python; no AutoIt literal
+        spells it, so the walk refuses it before any builtin sees it.
+        """
+        self.assertIsNone(_value('1e999'))
+
+    def test_case_insensitive_text_refuses_non_ascii_operands(self):
+        """
+        Python's `lower` widens U+0130 to two characters where AutoIt folds only the ASCII range,
+        so which position a search or comparison answers over non-ASCII text is not a fact any
+        probe pinned.
+        """
+        self.assertIsNone(self._called('stringinstr', '"aİb"', '"b"'))
+        self.assertIsNone(self._compared('=', '"aİ"', '"ai"'))
+
+    def test_a_trim_past_the_end_empties_the_string(self):
+        """
+        AutoIt removes the count or the whole string, whichever is smaller; a Python slice over
+        the negative remainder would wrap and keep a tail instead.
+        """
+        for name, sources, expected in (
+            ('stringtrimright', ('"abcde"', '7'), ''),
+            ('stringtrimleft', ('"abcde"', '7'), ''),
+            ('stringright', ('"abcde"', '7'), 'abcde'),
+            ('stringleft', ('"abcde"', '7'), 'abcde'),
+        ):
+            with self.subTest(name=name, sources=sources):
+                self.assertEqual(self._called(name, *sources), expected)
+
     def test_string_functions(self):
         for name, sources, expected in (
             ('stringmid', ('"Hello"', '2', '3'), 'ell'),

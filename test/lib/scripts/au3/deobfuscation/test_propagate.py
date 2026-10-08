@@ -5,6 +5,8 @@ positions where the literal that spells the value is not legal AutoIt3.
 """
 from __future__ import annotations
 
+import unittest
+
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
@@ -213,6 +215,70 @@ class TestAu3ConstantPropagation(TestAu3):
                 Au3ConstantPropagation,
             ),
             'Local $x = 5\nFunc f(ByRef $p)\n    $p = 1\nEndFunc\nf($x)\n$y = $x\n')
+
+    def test_an_indexed_store_kills_the_whole_array(self):
+        """
+        A store through an index mutates one element, so the array as a value is no longer the
+        literal it was initialized to, and no read of it is replaced afterwards.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $a[2] = [1, 2]
+                $a[0] = 5
+                Local $b[2] = [$a]
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $a[2] = [1, 2]\n$a[0] = 5\nLocal $b[2] = [$a]\n')
+
+    def test_a_member_store_kills_the_variable(self):
+        """
+        A store through a member mutates the object the variable holds, so the value the variable
+        was initialized to no longer describes it and the read stands.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $o = "abc"
+                $o.prop = "x"
+                $y = $o
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $o = "abc"\n$o.prop = "x"\n$y = $o\n')
+
+    def test_a_callee_position_read_is_not_replaced(self):
+        """
+        The call runs what the variable names, not what it holds, so the callee read stands even
+        where the walk knows the value.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $f = "MsgBox"
+                $f(0, "", "t")
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $f = "MsgBox"\n$f(0, "", "t")\n')
+
+    @unittest.expectedFailure
+    def test_an_unknown_callee_argument_is_not_replaced(self):
+        """
+        An unseen callee may hold a bare-variable argument by reference, so replacing the read
+        would divert what the callee receives. Telling an unseen function from an unemulated
+        builtin needs the builtin name universe, which no module owns yet.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+                Unknown($x)
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\nUnknown($x)\n')
 
     def test_an_array_value_splices_only_into_a_declaration_initializer(self):
         """

@@ -116,6 +116,20 @@ class TestAu3ConstantFolding(TestAu3):
             self._apply('$x = True and False', Au3ConstantFolding),
             '$x = True and False\n')
 
+    def test_an_elseif_test_folds_as_a_condition(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                If 0 Then
+                    $x = 1
+                ElseIf 1 And 2 Then
+                    $x = 2
+                EndIf
+                ''',
+                Au3ConstantFolding,
+            ),
+            'If 0 Then\n    $x = 1\nElseIf True Then\n    $x = 2\nEndIf\n')
+
     def test_and_or_with_a_call_on_either_side_does_not_fold(self):
         """
         The decided side may not be dropped while the other still does something, so a call on
@@ -147,6 +161,58 @@ class TestAu3ConstantFolding(TestAu3):
                 Au3ConstantFolding,
             ),
             'If True and $x Then\n    $x = 1\nEndIf\n')
+
+    def test_an_array_folds_only_where_a_declaration_initializes(self):
+        """
+        An array spells only as an array literal, which AutoIt accepts only where a declaration
+        initializes; everywhere else the call that builds it stands.
+        """
+        self.assertEqual(
+            self._apply('Local $x[3] = StringSplit("a,b", ",")', Au3ConstantFolding),
+            'Local $x[3] = [2, "a", "b"]\n')
+        self.assertEqual(
+            self._apply('$x = StringSplit("a,b", ",")', Au3ConstantFolding),
+            '$x = StringSplit("a,b", ",")\n')
+        self.assertEqual(
+            self._apply('MsgBox(0, "", StringSplit("a,b", ","))', Au3ConstantFolding),
+            'MsgBox(0, "", StringSplit("a,b", ","))\n')
+
+    def test_the_int64_minimum_is_not_rendered(self):
+        """
+        The minimum int64 spells only as a hex literal, which the renderer does not choose; the
+        negated decimal it would print reads back one off, so the fold leaves the expression
+        standing.
+        """
+        self.assertEqual(
+            self._apply('$x = 0x8000000000000000 + 0', Au3ConstantFolding),
+            '$x = 0x8000000000000000 + 0\n')
+
+    def test_a_string_holding_a_line_break_code_point_is_not_rendered(self):
+        """
+        The lexer ends a line on U+2028, so a literal holding one would re-parse as two
+        statements; AutoIt spells no literal for it and the fold leaves the call standing.
+        """
+        self.assertEqual(
+            self._apply('$x = ChrW(8232)', Au3ConstantFolding),
+            '$x = ChrW(8232)\n')
+
+    def test_a_negative_zero_is_not_rendered(self):
+        """
+        AutoIt prints `-0` for the negative zero, which the parser reads back as the integer
+        zero, so the fold refuses the spelling.
+        """
+        self.assertEqual(
+            self._apply('$x = 0 / -1', Au3ConstantFolding),
+            '$x = 0 / -1\n')
+
+    def test_an_empty_binary_is_not_rendered(self):
+        """
+        No literal spells the empty binary: `Binary("0x")` reads back as the two bytes `0x` holds
+        as text, so a fold that installed it would decay a step at a time.
+        """
+        self.assertEqual(
+            self._apply('$x = Binary("")', Au3ConstantFolding),
+            '$x = Binary("")\n')
 
     def test_a_loop_condition_folds(self):
         self.assertEqual(

@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import enum
 import math
-
-from typing import cast
+import re
 
 from dataclasses import dataclass
+from typing import cast
 
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.lexer import encode_au3_string
+from refinery.lib.scripts.au3.lexer import LINE_BREAKS, encode_au3_string
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
     Au3BooleanLiteral,
@@ -44,7 +44,24 @@ from refinery.lib.scripts.au3.model import (
 INT64_MIN = -0x8000000000000000
 INT64_MAX = 0x7FFFFFFFFFFFFFFF
 
-_HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
+#: The hex digits, shared with the builtin table's `Dec` reader: the one alphabet both spell and
+#: read a `0x…` payload in.
+HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
+
+#: The decimal digits of a number's text: `str.isdigit` admits the non-ASCII digits of other
+#: scripts, whose numeric value AutoIt's reader never pinned, so only these parse.
+ASCII_DIGITS = frozenset('0123456789')
+
+#: The characters no AutoIt string literal can express: `encode_au3_string` escapes only the
+#: quote, and a line break — every character the lexer ends a literal on — ends the literal
+#: itself, so a result carrying any of these never folds. A surrogate has no encoding at all and
+#: would break the synthesizer's output stream.
+_UNSPELLABLE = re.compile('[\x00\ud800-\udfff' + re.escape(''.join(LINE_BREAKS)) + ']')
+
+
+def _spellable(text: str) -> bool:
+    return _UNSPELLABLE.search(text) is None
+
 
 #: The macros that are the same in every run of every script (docs-pinned). Every other macro
 #: depends on the machine, the process, or the moment and is unknown in this domain.
@@ -82,9 +99,6 @@ class Au3Value:
     payload: object = None
 
 
-UNKNOWN = Au3Value()
-
-
 def of_int(value: int) -> Au3Value:
     return Au3Value(Kind.INT, value)
 
@@ -113,22 +127,6 @@ def of_number(value: int | float) -> Au3Value:
     if isinstance(value, bool) or isinstance(value, int):
         return of_int(value)
     return of_double(value)
-
-
-def is_known(value: Au3Value | None) -> bool:
-    return value is not None and value.kind is not Kind.UNKNOWN
-
-
-def as_int(value: Au3Value) -> int | None:
-    if value.kind is Kind.INT:
-        return cast(int, value.payload)
-    return None
-
-
-def as_double(value: Au3Value) -> float | None:
-    if value.kind is Kind.DOUBLE:
-        return cast(float, value.payload)
-    return None
 
 
 def as_string(value: Au3Value) -> str | None:
@@ -189,6 +187,7 @@ def _prefix_number(text: str) -> int | float | None:
     The number AutoIt reads off the front of `text`: whitespace skipped, optional sign, a hex
     literal `0x…` or a decimal with optional fraction and exponent, each form backtracking to the
     shorter prefix when it is incomplete (`"1e"` is 1, `"0x"` is 0), and 0 when nothing parses.
+    Only ASCII digits parse — the digits of other scripts are not a reading any probe pinned.
     Pinned by probe3 50-57 and probe 60-68.
     """
     length = len(text)
@@ -200,7 +199,7 @@ def _prefix_number(text: str) -> int | float | None:
         i += 1
     if text[i:i + 2].lower() == '0x':
         end = i + 2
-        while end < length and text[end] in _HEX_DIGITS:
+        while end < length and text[end] in HEX_DIGITS:
             end += 1
         if end > i + 2:
             value = int(text[i + 2:end], 16)
@@ -208,12 +207,12 @@ def _prefix_number(text: str) -> int | float | None:
                 return None
             return -value if text[start] == '-' else value
     j = i
-    while j < length and text[j].isdigit():
+    while j < length and text[j] in ASCII_DIGITS:
         j += 1
     k = j
-    if k < length and text[k] == '.' and k + 1 < length and text[k + 1].isdigit():
+    if k < length and text[k] == '.' and k + 1 < length and text[k + 1] in ASCII_DIGITS:
         k += 1
-        while k < length and text[k].isdigit():
+        while k < length and text[k] in ASCII_DIGITS:
             k += 1
     if k == j and k == i:
         return 0
@@ -221,8 +220,8 @@ def _prefix_number(text: str) -> int | float | None:
         peek = k + 1
         if peek < length and text[peek] in '+-':
             peek += 1
-        if peek < length and text[peek].isdigit():
-            while peek < length and text[peek].isdigit():
+        if peek < length and text[peek] in ASCII_DIGITS:
+            while peek < length and text[peek] in ASCII_DIGITS:
                 peek += 1
             k = peek
     matched = text[start:k]
@@ -317,6 +316,9 @@ def compare(operator: str, left: Au3Value, right: Au3Value) -> Au3Value | None:
       (`"a" > "B"` is false and `"10" > "9"` is false — probe3 37/38, probe 13-16); a boolean
       operand is refused (numeric and case-insensitive-string both fit every probe fact);
       otherwise numeric.
+
+    Case-insensitive string comparison is ASCII-only: how AutoIt lowercases text beyond ASCII is
+    not a fact any probe pinned, so non-ASCII operands refuse.
     """
     if left.kind in (Kind.BINARY, Kind.ARRAY) or right.kind in (Kind.BINARY, Kind.ARRAY):
         return None
@@ -333,6 +335,8 @@ def _compare_values(operator: str, left: Au3Value, right: Au3Value) -> bool | No
             two = cast(str, right.payload)
             if operator == '==':
                 return one == two
+            if not one.isascii() or not two.isascii():
+                return None
             return one.lower() == two.lower()
         if left.kind is Kind.BOOL or right.kind is Kind.BOOL:
             if operator == '==':
@@ -355,8 +359,12 @@ def _compare_values(operator: str, left: Au3Value, right: Au3Value) -> bool | No
     if left.kind is Kind.BOOL or right.kind is Kind.BOOL:
         return None
     if left.kind is Kind.STRING and right.kind is Kind.STRING:
-        one = cast(str, left.payload).lower()
-        two = cast(str, right.payload).lower()
+        one = cast(str, left.payload)
+        two = cast(str, right.payload)
+        if not one.isascii() or not two.isascii():
+            return None
+        one = one.lower()
+        two = two.lower()
         if operator == '<':
             return one < two
         if operator == '>':
@@ -470,20 +478,10 @@ def apply_unary(operator: str, operand: Au3Value) -> Au3Value | None:
     return None
 
 
-#: The characters no AutoIt string literal can express: `encode_au3_string` escapes only the
-#: quote, and a line break ends the literal, so a result carrying any of these never folds.
-#: A surrogate has no encoding at all and would break the synthesizer's output stream.
-def _spellable(text: str) -> bool:
-    return not any(
-        character == '\x00' or character == '\r' or character == '\n'
-        or 0xD800 <= ord(character) <= 0xDFFF
-        for character in text
-    )
-
-
 def literal_value(
-        expression: Expression | None,
-        functions: frozenset[str]) -> Au3Value | None:
+    expression: Expression | None,
+    functions: frozenset[str],
+) -> Au3Value | None:
     """
     The value an expression holds when it is nothing but a literal shape: a number, a string, a
     boolean, a run-time-constant macro, a unary minus over a number, an array literal of such, or
@@ -498,6 +496,8 @@ def literal_value(
     if isinstance(node, Au3IntLiteral):
         return of_int(min(node.value, INT64_MAX))
     if isinstance(node, Au3FloatLiteral):
+        if not math.isfinite(node.value):
+            return None
         return of_double(node.value)
     if isinstance(node, Au3StringLiteral):
         return of_string(node.value)
@@ -547,7 +547,7 @@ def _binary_literal(call: Au3Call, functions: frozenset[str]) -> Au3Value | None
         len(digits) < 4
         or len(digits) % 2
         or digits[:2].lower() != '0x'
-        or any(character not in _HEX_DIGITS for character in digits[2:])
+        or any(character not in HEX_DIGITS for character in digits[2:])
     ):
         return None
     return of_binary(bytes.fromhex(digits[2:]))
@@ -557,12 +557,16 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     """
     The expression node that spells `value` in AutoIt3 source, or `None` where no expression can:
 
-    - a string carrying a character no literal expresses (NUL, CR, LF, a surrogate) — `@CR` never
-      becomes a literal, while `StringLen(@CR)` still folds to 1;
-    - a non-finite double;
+    - a string carrying a character no literal expresses (NUL, a line break, a surrogate) — `@CR`
+      never becomes a literal, while `StringLen(@CR)` still folds to 1;
+    - a non-finite double, and a negative zero: AutoIt prints the latter `-0`, which the unary
+      minus over a zero literal does not spell;
+    - an int64 at its floor: it spells only as the minus over `2^63`, which re-reads as the
+      int64 ceiling;
     - a binary, spelled as the call `Binary("0x…")` it round-trips through, but only when no
       script function of that name exists — a script function shadows the builtin, so the call
-      would run foreign code;
+      would run foreign code — and never an empty one, whose spelling re-reads as the two
+      characters `0x`;
     - an array, spelled as an array literal, only when every element renders.
 
     A negative number is spelled as the unary minus over the positive literal, because the lexer
@@ -574,6 +578,8 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     if value.kind is Kind.DOUBLE:
         number = cast(float, value.payload)
         if not math.isfinite(number):
+            return None
+        if number == 0 and math.copysign(1.0, number) < 0:
             return None
         literal = Au3FloatLiteral(value=abs(number), raw=repr(abs(number)))
         if number < 0:
@@ -589,7 +595,10 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     if value.kind is Kind.BINARY:
         if 'binary' in functions:
             return None
-        digits = '0x' + cast(bytes, value.payload).hex().upper()
+        payload = cast(bytes, value.payload)
+        if not payload:
+            return None
+        digits = '0x' + payload.hex().upper()
         return Au3Call(
             callee=Au3Identifier(name='binary', raw='Binary'),
             arguments=[Au3StringLiteral(value=digits, raw=encode_au3_string(digits))],
@@ -605,7 +614,13 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     return None
 
 
-def _render_int(value: int) -> Expression:
+def _render_int(value: int) -> Expression | None:
+    """
+    The literal spelling of an int, or `None` at the int64 floor: the minus over `2^63` is the
+    only spelling, and it re-reads as the ceiling.
+    """
+    if value == INT64_MIN:
+        return None
     if value < 0:
         return Au3UnaryExpression(
             operator='-', operand=Au3IntLiteral(value=-value, raw=str(-value)))

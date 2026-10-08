@@ -116,6 +116,15 @@ class TestAu3ExecuteFlattening(TestAu3):
             ),
             'Func Execute($s)\n    Return 1\nEndFunc\n$x = Execute("1 + 1")\n')
 
+    def test_an_array_literal_inside_the_parsed_expression_is_not_spliced(self):
+        """
+        An array literal is legal AutoIt only where a declaration initializes, and no splice
+        position is one, so the call stands.
+        """
+        self.assertEqual(
+            self._apply('$x = Execute("[1, 2]")', Au3ExecuteFlattening),
+            '$x = Execute("[1, 2]")\n')
+
     def test_a_missing_or_extra_argument_is_not_flattened(self):
         self.assertEqual(
             self._apply('$x = Execute()', Au3ExecuteFlattening),

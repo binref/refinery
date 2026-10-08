@@ -11,16 +11,17 @@ layer instead.
 """
 from __future__ import annotations
 
-from typing import Iterator, TypeGuard
+from typing import Iterator
 
-from refinery.lib.scripts import Node, Statement, child_list_fields
+from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3.model import (
-    Au3Assignment,
     Au3ArrayAccess,
+    Au3ArrayLiteral,
+    Au3Assignment,
     Au3Call,
     Au3DoUntilStatement,
+    Au3ElseIf,
     Au3EnumDeclarator,
-    Au3ExpressionStatement,
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
@@ -35,12 +36,12 @@ from refinery.lib.scripts.au3.model import (
     Au3Ternary,
     Au3Variable,
     Au3VariableDeclarator,
-    Au3VariableDeclaration,
     Au3WhileStatement,
 )
 
 _CONDITION_FIELDS = (
     (Au3IfStatement, 'test'),
+    (Au3ElseIf, 'test'),
     (Au3WhileStatement, 'test'),
     (Au3DoUntilStatement, 'test'),
     (Au3SelectCase, 'test'),
@@ -73,7 +74,7 @@ def scope_bodies(root: Au3Script) -> list[tuple[Au3FunctionDeclaration | None, l
     """
     Every scope's statement list: the script body paired with `None`, then one body per function
     declaration anywhere in it. A function body is a scope of its own, so a walk over one scope
-    must not descend into another — see `scope_statements` for the walk that respects that border.
+    must not descend into another — see `scope_nodes` for the walk that respects that border.
     """
     scopes: list[tuple[Au3FunctionDeclaration | None, list[Statement]]] = [(None, root.body)]
     for node in root.walk():
@@ -82,27 +83,12 @@ def scope_bodies(root: Au3Script) -> list[tuple[Au3FunctionDeclaration | None, l
     return scopes
 
 
-def scope_statements(body: list[Statement]) -> Iterator[Statement]:
-    """
-    Every statement of one scope, in source order, descending into the control-flow constructs the
-    scope holds but not into a nested function declaration, which is a scope of its own.
-    """
-    stack = list(reversed(body))
-    while stack:
-        stmt = stack.pop()
-        yield stmt
-        if isinstance(stmt, Au3FunctionDeclaration):
-            continue
-        for items in reversed(child_statement_lists(stmt)):
-            stack.extend(reversed(items))
-
-
 def scope_nodes(body: list[Statement]) -> Iterator[Node]:
     """
     Every node of one scope's subtree, in source order, descending into the control-flow
     constructs the scope holds but not into a nested function declaration, which is a scope of
-    its own. Where `scope_statements` yields the statements, this reaches the expressions,
-    declarators, and calls inside them.
+    its own. A caller that wants only the statements of the scope can filter `Statement` out of
+    what this yields.
     """
     stack: list[Node] = list(reversed(body))
     while stack:
@@ -140,19 +126,6 @@ def is_write_occurrence(node: Au3Variable) -> bool:
     return False
 
 
-def child_statement_lists(stmt: Statement) -> list[list[Statement]]:
-    """
-    The statement lists *stmt* directly owns: the bodies of the constructs it opens. Call arguments
-    and declaration lists hold expressions and declarators rather than statements, so they are not
-    among them.
-    """
-    result = []
-    for _, items in child_list_fields(stmt):
-        if items and all(isinstance(item, Statement) for item in items):
-            result.append(items)
-    return result
-
-
 def store_target_variable(target: Node | None) -> Au3Variable | None:
     """
     The variable a store writes through: a plain variable target is itself, an indexed or member
@@ -184,25 +157,6 @@ def direct_callee(call: Au3Call) -> Au3Identifier | None:
     return None
 
 
-def is_indirect_callee(call: Au3Call) -> bool:
-    """
-    Whether the callee of `call` is anything but a plain identifier — a variable, a member access,
-    or a computed expression. Such a call dispatches to whatever the callee evaluates to, so no
-    static table can bound what it runs.
-    """
-    if call.callee is None:
-        return True
-    return not isinstance(unwrap_parens(call.callee), Au3Identifier)
-
-
-def is_declaration(node: Node) -> TypeGuard[Au3VariableDeclaration]:
-    """
-    Whether `node` is a variable declaration, the one statement that binds names through
-    declarators rather than through assignment.
-    """
-    return isinstance(node, Au3VariableDeclaration)
-
-
 def declarator_variable(node: Node) -> Au3Variable | None:
     """
     The variable a declarator, parameter, or store target declares or writes, or `None` when the
@@ -219,9 +173,9 @@ def declarator_variable(node: Node) -> Au3Variable | None:
 
 def consumed_as_condition(node: Node) -> bool:
     """
-    Whether *node* is the condition an `If`, `While`, `Do..Until`, or `Select` branch tests, or the
-    condition of a ternary. Enclosing parentheses are transparent, because a condition wrapped in
-    them is still consumed as a truth value and by nothing else.
+    Whether *node* is the condition an `If`, an `ElseIf`, a `While`, a `Do..Until`, or a `Select`
+    branch tests, or the condition of a ternary. Enclosing parentheses are transparent, because
+    a condition wrapped in them is still consumed as a truth value and by nothing else.
     """
     cursor = node
     parent = cursor.parent
@@ -236,21 +190,30 @@ def consumed_as_condition(node: Node) -> bool:
     return False
 
 
-def statement_expression(statement: Node) -> Node | None:
+def in_declaration_initializer(node: Node) -> bool:
     """
-    The expression an expression statement is nothing but, or `None` when the statement is anything
-    else or holds no expression.
+    Whether *node* sits where a declarator initializes: inside its initializer through array
+    literals alone, which are the only nesting AutoIt accepts there.
     """
-    if isinstance(statement, Au3ExpressionStatement):
-        return statement.expression
-    return None
+    cursor = node
+    parent = cursor.parent
+    while isinstance(parent, Au3ArrayLiteral):
+        cursor = parent
+        parent = cursor.parent
+    return isinstance(parent, Au3VariableDeclarator) and parent.initializer is cursor
 
 
-def is_assignment_statement(statement: Node) -> TypeGuard[Au3Assignment]:
+def inside_array_literal(node: Node) -> bool:
     """
-    Whether `statement` is an expression statement holding nothing but an assignment.
+    Whether *node* sits anywhere inside an array literal, at any depth: a value the renderer
+    spells as a call is not a legal element of one.
     """
-    return isinstance(statement_expression(statement), Au3Assignment)
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, Au3ArrayLiteral):
+            return True
+        cursor = cursor.parent
+    return False
 
 
 def contains_a_call(node: Node) -> bool:
@@ -261,3 +224,12 @@ def contains_a_call(node: Node) -> bool:
     only a call can change anything when it does not produce a value the fold needs.
     """
     return any(isinstance(item, Au3Call) for item in node.walk())
+
+
+def contains_an_array_literal(node: Node) -> bool:
+    """
+    Whether the subtree at `node` holds an `Au3ArrayLiteral`. A caller that is about to splice the
+    subtree into an arbitrary position asks this, because an array literal is legal AutoIt only
+    where a declaration initializes.
+    """
+    return any(isinstance(item, Au3ArrayLiteral) for item in node.walk())

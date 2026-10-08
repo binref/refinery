@@ -19,14 +19,13 @@ value the walk learned, so the pass's own edits cannot make its snapshot wrong.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.propagation import Au3PropagationModel
 from refinery.lib.scripts.au3.analysis.values import Kind, render_literal
 from refinery.lib.scripts.au3.model import (
-    Au3ArrayLiteral,
     Au3Script,
     Au3Variable,
-    Au3VariableDeclarator,
 )
 
 
@@ -52,30 +51,8 @@ class Au3ConstantPropagation(Transformer):
         value = self._model.value_at(node)
         if value is None:
             return None
-        if value.kind is Kind.ARRAY and not _in_declaration_initializer(node):
+        if value.kind is Kind.ARRAY and not ast.in_declaration_initializer(node):
             return None
-        if value.kind is Kind.BINARY and _inside_array_literal(node):
+        if value.kind is Kind.BINARY and ast.inside_array_literal(node):
             return None
         return render_literal(value, self._functions)
-
-
-def _in_declaration_initializer(node: Node) -> bool:
-    """
-    Whether *node* sits where a declarator initializes: inside its initializer through array
-    literals alone, which are the only nesting AutoIt accepts there.
-    """
-    cursor = node
-    parent = cursor.parent
-    while isinstance(parent, Au3ArrayLiteral):
-        cursor = parent
-        parent = cursor.parent
-    return isinstance(parent, Au3VariableDeclarator) and parent.initializer is cursor
-
-
-def _inside_array_literal(node: Node) -> bool:
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, Au3ArrayLiteral):
-            return True
-        cursor = cursor.parent
-    return False

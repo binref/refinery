@@ -10,7 +10,6 @@ only declares the model slots and their build wiring.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.modelcache import ModelCacheBase
 from refinery.lib.scripts.au3.analysis.aliases import Au3AliasModel, build_alias_model
 from refinery.lib.scripts.au3.analysis.propagation import (
     Au3PropagationModel,
@@ -18,6 +17,7 @@ from refinery.lib.scripts.au3.analysis.propagation import (
 )
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, build_scope_model
 from refinery.lib.scripts.au3.model import Au3Script
+from refinery.lib.scripts.modelcache import ModelCacheBase
 
 
 class Au3ModelCache(ModelCacheBase):
@@ -46,12 +46,12 @@ class Au3ModelCache(ModelCacheBase):
     @property
     def aliases(self) -> Au3AliasModel:
         """
-        The per-scope map of variables that provably name one function, built against the
-        script's function names so a script function shadowing a builtin or `Execute` itself is
-        known to the gate.
+        The per-scope map of variables that provably name one function, cut by every name a
+        rebinding write — an `Assign`, a code-running `Execute`, or a script function call — may
+        cost, which the propagation summaries feed.
         """
         return self._lazy('_aliases', lambda: build_alias_model(
-            self.root, self.scopes.function_names))
+            self.root, self.scopes, self.propagation.summaries))
 
     @property
     def propagation(self) -> Au3PropagationModel:

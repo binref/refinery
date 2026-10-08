@@ -17,7 +17,7 @@ class TestAu3(TestBase):
         return Au3Synthesizer().convert(ast)
 
     def _transform(self, source: str, *transforms):
-        ast = Au3Parser(source).parse()
+        ast = Au3Parser(inspect.cleandoc(source)).parse()
         for transform in transforms:
             transform().visit(ast)
         return ast

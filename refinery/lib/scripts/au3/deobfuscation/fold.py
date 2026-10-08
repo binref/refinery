@@ -12,6 +12,10 @@ neither holds a call: their value in expression position is unpinned, and whethe
 the right side of a decided `And` is not a fact any probe pinned, so a side that does anything at
 all is never dropped.
 
+A fold that lands on an array value installs only where a declaration initializes, because an
+array literal is legal AutoIt nowhere else — a `StringSplit` over constants in any other
+position stands.
+
 A replacement is installed only when it spells differently from the original: a fold that
 rewrote `-5` into `-5`, or `Binary("0x41")` into itself, would report a change the next pass
 reports again, and the pipeline would never settle.
@@ -24,6 +28,7 @@ from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES, evaluate_b
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
+    Kind,
     apply_binary,
     apply_unary,
     compare,
@@ -67,15 +72,15 @@ class Au3ConstantFolding(Transformer):
     def _folded(self, node: Node) -> Node | None:
         if isinstance(node, Au3Macro):
             value = literal_value(node, self._functions)
-            return None if value is None else self._rendered(value)
+            return None if value is None else self._rendered(node, value)
         if isinstance(node, Au3UnaryExpression):
             operand = literal_value(node.operand, self._functions)
             if operand is None:
                 return None
-            return self._rendered(apply_unary(node.operator, operand))
+            return self._rendered(node, apply_unary(node.operator, operand))
         if isinstance(node, Au3BinaryExpression):
             value = self._binary_value(node)
-            return None if value is None else self._rendered(value)
+            return None if value is None else self._rendered(node, value)
         if isinstance(node, Au3Call):
             return self._folded_call(node)
         return None
@@ -127,9 +132,16 @@ class Au3ConstantFolding(Transformer):
             if value is None:
                 return None
             arguments.append(value)
-        return self._rendered(evaluate_builtin(callee.name, tuple(arguments)))
+        return self._rendered(node, evaluate_builtin(callee.name, tuple(arguments)))
 
-    def _rendered(self, value: Au3Value | None) -> Node | None:
+    def _rendered(self, node: Node, value: Au3Value | None) -> Node | None:
+        """
+        The literal spelling of *value*, or `None` where none spells it or where the position of
+        *node* does not accept the spelling: an array literal is legal AutoIt only where a
+        declaration initializes, so an array value folds only there.
+        """
         if value is None:
+            return None
+        if value.kind is Kind.ARRAY and not ast.in_declaration_initializer(node):
             return None
         return render_literal(value, self._functions)

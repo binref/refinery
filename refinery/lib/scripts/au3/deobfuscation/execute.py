@@ -16,7 +16,9 @@ Every call inside the spliced expression must be a direct call to a script funct
 builtin: a call an unseen `#include` resolves, or one through a variable, leaves the `Execute`
 alone, because an unknown function is one of `Execute`'s pinned failure modes and the spliced
 form would make that error fatal where the original answered `""`. A literal that fails to parse
-never ran at runtime, so it is left standing for the same reason.
+never ran at runtime, so it is left standing for the same reason, and so is one that parses to
+an expression holding an array literal: an array literal is legal AutoIt only where a declaration
+initializes, which no splice position is.
 
 The accepted behavior change — a runtime error the original `Execute` would have swallowed
 becoming fatal where it happens — is bounded by these gates and owned by the Phase 2 plan.
@@ -64,7 +66,8 @@ class Au3ExecuteFlattening(Transformer):
         """
         The expression the call's literal argument names, or `None` where the call is not a
         flattenable `Execute`: a shadowed name, a non-literal or missing argument, a parse
-        failure, a bare identifier, or a call inside the expression this pass cannot resolve.
+        failure, a bare identifier, an array literal inside the parsed expression, or a call
+        inside it this pass cannot resolve.
         """
         callee = ast.direct_callee(call)
         if callee is None or callee.name != 'execute':
@@ -80,6 +83,8 @@ class Au3ExecuteFlattening(Transformer):
         if expression is None:
             return None
         if isinstance(expression, Au3Identifier):
+            return None
+        if ast.contains_an_array_literal(expression):
             return None
         if not self._calls_resolve(expression):
             return None

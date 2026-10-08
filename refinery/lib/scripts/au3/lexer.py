@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 from typing import Generator
 
 from refinery.lib.scripts.au3.token import KEYWORDS, Au3Token, Au3TokenKind
@@ -40,7 +39,10 @@ _ONE_CHAR_OPS: dict[str, Au3TokenKind] = {
     '.'  : Au3TokenKind.DOT,
 }
 
-_LINE_BREAKS = frozenset('\r\n\u2028\u2029')
+#: Every character the lexer ends a line on, and with it a comment, a directive, or a string
+#: literal: `refinery.lib.scripts.au3.analysis.values` reads the set to refuse a value no
+#: literal can spell.
+LINE_BREAKS = frozenset('\r\n\u2028\u2029')
 
 _BLOCK_COMMENT_START = ('#cs', '#comments-start')
 _BLOCK_COMMENT_END = ('#ce', '#comments-end')
@@ -84,7 +86,7 @@ class Au3Lexer:
         src = self.source
         length = len(src)
         start = self.pos
-        while self.pos < length and src[self.pos] not in _LINE_BREAKS:
+        while self.pos < length and src[self.pos] not in LINE_BREAKS:
             self.pos += 1
         return Au3Token(Au3TokenKind.COMMENT, src[start:self.pos], start)
 
@@ -120,7 +122,7 @@ class Au3Lexer:
             if depth == 0:
                 break
         end = self.pos
-        if depth != 0 and end > start and src[end - 1] in _LINE_BREAKS:
+        if depth != 0 and end > start and src[end - 1] in LINE_BREAKS:
             # A comment the file never closes runs to its end, and the break that ends that last
             # line is the one the synthesizer writes after every statement: leaving it out of the
             # comment is what makes printing one read back as itself. A terminated comment already
@@ -136,7 +138,7 @@ class Au3Lexer:
         src = self.source
         length = len(src)
         start = self.pos
-        while self.pos < length and src[self.pos] not in _LINE_BREAKS:
+        while self.pos < length and src[self.pos] not in LINE_BREAKS:
             self.pos += 1
         return Au3Token(Au3TokenKind.DIRECTIVE, src[start:self.pos], start)
 
@@ -148,7 +150,7 @@ class Au3Lexer:
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c in _LINE_BREAKS:
+            if c in LINE_BREAKS:
                 break
             if c == quote:
                 self.pos += 1
@@ -223,13 +225,13 @@ class Au3Lexer:
         """
         src = self.source
         length = len(src)
-        while self.pos < length and src[self.pos] not in _LINE_BREAKS:
+        while self.pos < length and src[self.pos] not in LINE_BREAKS:
             self.pos += 1
-        while self.pos < length and src[self.pos] in _LINE_BREAKS:
+        while self.pos < length and src[self.pos] in LINE_BREAKS:
             self.pos += 1
             while self.pos < length and src[self.pos] in ' \t':
                 self.pos += 1
-            if self.pos < length and src[self.pos] not in _LINE_BREAKS:
+            if self.pos < length and src[self.pos] not in LINE_BREAKS:
                 return
 
     def _is_blank_rest_of_line(self) -> bool:
@@ -243,9 +245,9 @@ class Au3Lexer:
         while pos < length and src[pos] in ' \t':
             pos += 1
         if pos < length and src[pos] == ';':
-            while pos < length and src[pos] not in _LINE_BREAKS:
+            while pos < length and src[pos] not in LINE_BREAKS:
                 pos += 1
-        return pos >= length or src[pos] in _LINE_BREAKS
+        return pos >= length or src[pos] in LINE_BREAKS
 
     def _read_newline(self) -> Au3Token:
         src = self.source
@@ -253,7 +255,7 @@ class Au3Lexer:
         start = self.pos
         while self.pos < length:
             c = src[self.pos]
-            if c in _LINE_BREAKS:
+            if c in LINE_BREAKS:
                 self.pos += 1
             elif c in ' \t':
                 self.pos += 1
@@ -273,7 +275,7 @@ class Au3Lexer:
             start = self.pos
             c = src[self.pos]
             c2 = src[self.pos:self.pos + 2]
-            if c in _LINE_BREAKS:
+            if c in LINE_BREAKS:
                 yield self._read_newline()
                 continue
             if c == ';':

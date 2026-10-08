@@ -8,10 +8,11 @@ The binary functions share one string→binary coercion: a `0x…`-shaped string
 (probe 100/104), any other ASCII-only string is its own bytes (probe3 43), and everything else
 refuses — a number's little-endian int64 bytes (probe3 44) and a non-ASCII string are unpinned.
 
-`Execute` is a known builtin name for the transforms' callee gates but has no evaluator: its
-argument is code rather than data, and `refinery.lib.scripts.au3.deobfuscation` owns it
-structurally. `IsDeclared` and `IsFunc` read runtime declaration state, and `Assign`, `Eval`,
-and `Call` have unpinned effects; none of the five is emulated.
+`Execute` and `Assign` are known builtin names for the transforms' callee gates and the
+may-write summaries but have no evaluator: `Execute`'s argument is code rather than data, and
+`Assign` writes rather than returns — `refinery.lib.scripts.au3.deobfuscation` owns both
+structurally. `IsDeclared` and `IsFunc` read runtime declaration state, and `Eval` and `Call`
+have unpinned effects; none of the four is emulated.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import re
 from typing import Callable
 
 from refinery.lib.scripts.au3.analysis.values import (
+    HEX_DIGITS,
     Au3Value,
     Kind,
     as_array,
@@ -43,12 +45,15 @@ from refinery.lib.scripts.au3.analysis.values import (
 _Evaluator = Callable[[tuple[Au3Value, ...]], Au3Value | None]
 
 _HEX_SHAPE = re.compile(r'0x(?:[0-9a-fA-F]{2})+')
-_HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 
 _INT32_MIN = -0x80000000
 _INT32_MAX = 0x7FFFFFFF
 _UINT32 = 0x100000000
 _UINT64 = 0x10000000000000000
+
+#: The bound beyond which an int no longer converts to a double exactly: `Mod`'s integer mode
+#: runs through one, so past it the remainder is not a value any probe pinned.
+_EXACT_INT = 9007199254740992
 
 
 def _number_argument(arguments: tuple[Au3Value, ...], index: int) -> int | float | None:
@@ -65,14 +70,13 @@ def _int_argument(arguments: tuple[Au3Value, ...], index: int) -> int | None:
 
 
 def _optional_int_argument(
-        arguments: tuple[Au3Value, ...], index: int, default: int) -> int | None:
+    arguments: tuple[Au3Value, ...],
+    index: int,
+    default: int,
+) -> int | None:
     if index >= len(arguments):
         return default
     return _int_argument(arguments, index)
-
-
-def _is_ascii(text: str) -> bool:
-    return all(ord(character) <= 0x7F for character in text)
 
 
 def _to_int32(value: int) -> int:
@@ -96,7 +100,7 @@ def _string_bytes(text: str) -> bytes | None:
     """
     if _HEX_SHAPE.fullmatch(text):
         return bytes.fromhex(text[2:])
-    if not _is_ascii(text):
+    if not text.isascii():
         return None
     return text.encode('ascii')
 
@@ -212,6 +216,8 @@ def _evaluate_mod(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     if one is None or two is None or two == 0:
         return None
     if isinstance(one, int) and isinstance(two, int):
+        if abs(one) > _EXACT_INT or abs(two) > _EXACT_INT:
+            return None
         return of_int_result(int(math.fmod(one, two)))
     return of_double_result(math.fmod(one, two))
 
@@ -274,6 +280,10 @@ def _evaluate_bitshift(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     value = _to_int32(one)
     if two >= 0:
         return of_int_result(value >> two)
+    if value == 0:
+        return of_int(0)
+    if -two >= 32:
+        return None
     result = value << -two
     if result > _INT32_MAX or result < _INT32_MIN:
         return None
@@ -343,7 +353,7 @@ def _evaluate_dec(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     flag = _optional_int_argument(arguments, 1, 0)
     if text is None or flag is None or flag not in (0, 1, 2) or not text:
         return None
-    if any(character not in _HEX_DIGITS for character in text):
+    if any(character not in HEX_DIGITS for character in text):
         return None
     value = int(text, 16)
     if value > 0xFFFFFFFFFFFFFFFF:
@@ -359,7 +369,9 @@ def _evaluate_hex(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     The unsigned 64-bit hex of a number: eight digits by default when the value fits signed
     int32 and sixteen otherwise, an explicit length zero-padding on the left or keeping the
-    rightmost digits (all seven pinned facts, probe 86-87 and probe3 20-24).
+    rightmost digits (all seven pinned facts, probe 86-87 and probe3 20-24). A length above
+    sixteen is not a reading any probe pinned, so it refuses rather than spell an unbounded
+    string of zeroes.
     """
     if not 1 <= len(arguments) <= 2:
         return None
@@ -369,13 +381,11 @@ def _evaluate_hex(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     unsigned = number & 0xFFFFFFFFFFFFFFFF
     if len(arguments) == 2:
         length = _int_argument(arguments, 1)
-        if length is None or length < 1:
+        if length is None or not 1 <= length <= 16:
             return None
     else:
         length = 8 if _INT32_MIN <= number <= _INT32_MAX else 16
-    if length <= 16:
-        return of_string(F'{unsigned:016X}'[16 - length:])
-    return of_string(F'{unsigned:0{length}X}')
+    return of_string(F'{unsigned:016X}'[16 - length:])
 
 
 def _evaluate_string(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
@@ -396,44 +406,25 @@ def _evaluate_stringlen(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     return of_int(len(text))
 
 
-def _evaluate_stringleft(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
-    if len(arguments) != 2:
-        return None
-    text = as_string(arguments[0])
-    count = _int_argument(arguments, 1)
-    if text is None or count is None or count < 0:
-        return None
-    return of_string(text[:count])
+def _slice_evaluator(take: Callable[[str, int], str]) -> _Evaluator:
+    """
+    The substring builtin family: the text and a non-negative count, answering *take* of the two.
+    """
+    def evaluator(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+        if len(arguments) != 2:
+            return None
+        text = as_string(arguments[0])
+        count = _int_argument(arguments, 1)
+        if text is None or count is None or count < 0:
+            return None
+        return of_string(take(text, count))
+    return evaluator
 
 
-def _evaluate_stringright(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
-    if len(arguments) != 2:
-        return None
-    text = as_string(arguments[0])
-    count = _int_argument(arguments, 1)
-    if text is None or count is None or count < 0:
-        return None
-    return of_string(text[max(0, len(text) - count):])
-
-
-def _evaluate_stringtrimleft(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
-    if len(arguments) != 2:
-        return None
-    text = as_string(arguments[0])
-    count = _int_argument(arguments, 1)
-    if text is None or count is None or count < 0:
-        return None
-    return of_string(text[count:])
-
-
-def _evaluate_stringtrimright(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
-    if len(arguments) != 2:
-        return None
-    text = as_string(arguments[0])
-    count = _int_argument(arguments, 1)
-    if text is None or count is None or count < 0:
-        return None
-    return of_string(text[:len(text) - count])
+_evaluate_stringleft = _slice_evaluator(lambda text, count: text[:count])
+_evaluate_stringright = _slice_evaluator(lambda text, count: text[max(0, len(text) - count):])
+_evaluate_stringtrimleft = _slice_evaluator(lambda text, count: text[count:])
+_evaluate_stringtrimright = _slice_evaluator(lambda text, count: text[:max(0, len(text) - count)])
 
 
 def _evaluate_stringmid(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
@@ -455,7 +446,7 @@ def _evaluate_stringupper(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     if len(arguments) != 1:
         return None
     text = as_string(arguments[0])
-    if text is None or not _is_ascii(text):
+    if text is None or not text.isascii():
         return None
     return of_string(text.upper())
 
@@ -464,7 +455,7 @@ def _evaluate_stringlower(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     if len(arguments) != 1:
         return None
     text = as_string(arguments[0])
-    if text is None or not _is_ascii(text):
+    if text is None or not text.isascii():
         return None
     return of_string(text.lower())
 
@@ -472,7 +463,8 @@ def _evaluate_stringlower(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
 def _evaluate_stringinstr(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     The 1-based position of a needle, 0 when absent, case-insensitive by default and under
-    flag 1 case-sensitive (probe 91-92, probe2 30-32).
+    flag 1 case-sensitive (probe 91-92, probe2 30-32). The case-insensitive search is ASCII-only:
+    how AutoIt lowercases text beyond ASCII is not a fact any probe pinned.
     """
     if not 2 <= len(arguments) <= 3:
         return None
@@ -483,8 +475,10 @@ def _evaluate_stringinstr(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
         return None
     if flag == 1:
         position = haystack.find(needle)
-    else:
+    elif haystack.isascii() and needle.isascii():
         position = haystack.lower().find(needle.lower())
+    else:
+        return None
     return of_int(position + 1)
 
 
@@ -502,9 +496,9 @@ def _evaluate_stringreplace(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
         or flag is None
         or flag not in (0, 1)
         or not search
-        or not _is_ascii(text)
-        or not _is_ascii(search)
-        or not _is_ascii(replacement)
+        or not text.isascii()
+        or not search.isascii()
+        or not replacement.isascii()
     ):
         return None
     if flag == 1:
@@ -719,9 +713,10 @@ _EVALUATORS: dict[str, _Evaluator] = {
     'isptr'           : _evaluate_never,
 }
 
-#: Every builtin the pipeline knows by name: the emulated functions above plus `Execute`, which
-#: the transforms resolve structurally and never fold as a value.
-BUILTIN_NAMES = frozenset(_EVALUATORS) | {'execute'}
+#: Every builtin the pipeline knows by name: the emulated functions above plus `Execute` and
+#: `Assign`, which the transforms resolve structurally and never fold as a value — `Execute`'s
+#: argument is code, and `Assign`'s effect is a write the may-write summaries read.
+BUILTIN_NAMES = frozenset(_EVALUATORS) | {'execute', 'assign'}
 
 
 def evaluate_builtin(name: str, arguments: tuple[Au3Value, ...]) -> Au3Value | None:

@@ -10,6 +10,19 @@ an index, a read — any of those forfeits the rewrite for that variable, becaus
 variable holds past that point is no longer pinned. The gate is per scope, so two functions
 holding same-named aliases never collide.
 
+A write that leaves no occurrence in the tree forfeits the same way. `Assign` names a variable at
+run time and `Execute` runs one expression of code, so a call to either costs the alias the name
+it may rebind — an `Assign` with a constant first argument costs that name alone, one of any
+other shape costs every alias whose write may target a global, and an `Execute` over a string
+literal that parses to code holding a call costs the same. A call to a script function costs the
+alias what that function's may-write summary says, which `Assign` and `Execute` feed; a name the
+script and the builtin table do not know, or a summary of "may write any", costs every alias
+whose write may target a global — but never a provably local one, which no other function can
+reach. Two shapes cost nothing: a call through a variable, and an `Execute` over anything but a
+string literal — the payload of either is a value this module cannot read, and forfeiting on
+either would freeze the chain of rewrites that resolve the indirection at its links, where the
+decoder's payload still sits behind an alias call.
+
 Two initializer shapes qualify: the bare builtin identifier `Execute`, and a call to the builtin
 `Execute` whose single argument is a string literal naming a script function or a table builtin.
 What `Execute` evaluates to as a value is never assumed — the rewrite is structural. A script
@@ -17,11 +30,13 @@ function named `Execute` shadows the builtin, so a script declaring one has no a
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
+from refinery.lib.scripts.au3.analysis.propagation import assign_kills, execute_kills
+from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
     Au3Call,
@@ -67,6 +82,20 @@ class _VariableUses:
     writes: int = 0
     initializer: Expression | None = None
     every_read_is_a_call: bool = True
+    binding: Binding = Binding.NONE
+
+
+@dataclass
+class _RebindThreats:
+    """
+    What a rebinding write may cost an alias: the names no scope may keep, the names no
+    global-backed alias may keep, whether any global-backed alias survives at all, and the
+    scopes where not even a provably local one does.
+    """
+    names: set[str] = field(default_factory=set)
+    global_names: set[str] = field(default_factory=set)
+    no_global_aliases: bool = False
+    forfeited_scopes: set[Au3FunctionDeclaration | None] = field(default_factory=set)
 
 
 def _written_initializer(node: Au3Variable) -> Expression | None:
@@ -111,29 +140,125 @@ def _aliased_function(initializer: Expression | None, functions: frozenset[str])
     return None
 
 
-def build_alias_model(root: Au3Script, functions: frozenset[str]) -> Au3AliasModel:
+def _pinned_execute(call: Au3Call) -> bool:
+    """
+    Whether an `Execute` call takes one string literal — the only argument shape whose executed
+    code `execute_kills` can read. Anything else the call takes is a blind spot this module
+    documents, not a threat it forfeits on.
+    """
+    if len(call.arguments) != 1:
+        return False
+    return isinstance(ast.unwrap_parens(call.arguments[0]), Au3StringLiteral)
+
+
+def _scan_rebinds(
+    root: Au3Script,
+    scope_model: Au3ScopeModel,
+    summaries: dict[str, frozenset[str] | None],
+) -> _RebindThreats:
+    """
+    Every way a call may rebind an alias without a write occurrence in the tree, collected over
+    all of *root*'s scopes: an `Assign` or a code-running `Execute` standing lexically inside a
+    scope threatens that scope's locals, and everything the calls of the whole script may write
+    threatens the globals.
+    """
+    threats = _RebindThreats()
+    for scope, body in ast.scope_bodies(root):
+        for node in ast.scope_nodes(body):
+            if not isinstance(node, Au3Call):
+                continue
+            callee = ast.direct_callee(node)
+            if callee is None:
+                continue
+            if callee.name in scope_model.functions:
+                summary = summaries.get(callee.name)
+                if summary is None:
+                    threats.no_global_aliases = True
+                else:
+                    threats.global_names |= summary
+                continue
+            if callee.name not in BUILTIN_NAMES:
+                threats.no_global_aliases = True
+                continue
+            if callee.name == 'execute':
+                if _pinned_execute(node) and execute_kills(node) is None:
+                    threats.no_global_aliases = True
+                    threats.forfeited_scopes.add(scope)
+                continue
+            if callee.name == 'assign':
+                names = assign_kills(node)
+                if names is None:
+                    threats.no_global_aliases = True
+                    threats.forfeited_scopes.add(scope)
+                else:
+                    threats.names |= names
+    return threats
+
+
+def _threatened(
+    threats: _RebindThreats,
+    scope: Au3FunctionDeclaration | None,
+    name: str,
+    binding: Binding,
+) -> bool:
+    """
+    Whether a rebinding write may have reached the variable *name* stands for in *scope*: a
+    provably local binding only inside its own scope, every other binding everywhere a global
+    write can.
+    """
+    if name in threats.names or scope in threats.forfeited_scopes:
+        return True
+    if binding is Binding.LOCAL:
+        return False
+    return threats.no_global_aliases or name in threats.global_names
+
+
+def _record_use(
+    node: Au3Variable,
+    scope: Au3FunctionDeclaration | None,
+    scope_model: Au3ScopeModel,
+    uses: dict[Au3FunctionDeclaration | None, dict[str, _VariableUses]],
+) -> None:
+    use = uses.setdefault(scope, {}).setdefault(node.name, _VariableUses())
+    if ast.is_write_occurrence(node):
+        use.writes += 1
+        use.initializer = _written_initializer(node)
+        statement = ast.owning_statement(node)
+        if statement is not None:
+            use.binding = scope_model.binding(scope, statement)
+    elif not _is_callee(node):
+        use.every_read_is_a_call = False
+
+
+def build_alias_model(
+    root: Au3Script,
+    scope_model: Au3ScopeModel,
+    summaries: dict[str, frozenset[str] | None],
+) -> Au3AliasModel:
     """
     Collect the alias-qualified variables of *root*, validating names against the script's
-    function names.
+    function names and cutting every name a rebinding write may cost.
     """
-    if 'execute' in functions:
+    if 'execute' in scope_model.functions:
         return Au3AliasModel({})
+    threats = _scan_rebinds(root, scope_model, summaries)
     uses: dict[Au3FunctionDeclaration | None, dict[str, _VariableUses]] = {}
-    for node in root.walk():
-        if not isinstance(node, Au3Variable):
-            continue
-        scope = ast.enclosing_function(node)
-        use = uses.setdefault(scope, {}).setdefault(node.name, _VariableUses())
-        if ast.is_write_occurrence(node):
-            use.writes += 1
-            use.initializer = _written_initializer(node)
-        elif not _is_callee(node):
-            use.every_read_is_a_call = False
+    for scope, body in ast.scope_bodies(root):
+        if scope is not None:
+            for parameter in scope.params:
+                if parameter.variable is not None:
+                    _record_use(parameter.variable, scope, scope_model, uses)
+        for node in ast.scope_nodes(body):
+            if isinstance(node, Au3Variable):
+                _record_use(node, scope, scope_model, uses)
+    functions = scope_model.function_names
     scopes: dict[Au3FunctionDeclaration | None, dict[str, Au3Alias]] = {}
     for scope, variables in uses.items():
         aliases = {}
         for name, use in variables.items():
             if use.writes != 1 or not use.every_read_is_a_call:
+                continue
+            if _threatened(threats, scope, name, use.binding):
                 continue
             aliased = _aliased_function(use.initializer, functions)
             if aliased is not None:

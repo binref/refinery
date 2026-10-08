@@ -169,7 +169,7 @@ def _byref_variables(call: Au3Call, function: Au3FunctionDeclaration) -> set[str
     return names
 
 
-def _execute_kills(call: Au3Call) -> set[str] | None:
+def execute_kills(call: Au3Call) -> set[str] | None:
     """
     The names an `Execute` call may write: a constant argument spells one expression, so only a
     call inside it can write anything; a parse failure answers `""` and writes nothing. Any other
@@ -188,7 +188,7 @@ def _execute_kills(call: Au3Call) -> set[str] | None:
     return set()
 
 
-def _assign_kills(call: Au3Call) -> set[str] | None:
+def assign_kills(call: Au3Call) -> set[str] | None:
     """
     The names an `Assign` call may write: a constant first argument names one variable, anything
     else may name any.
@@ -202,10 +202,10 @@ def _assign_kills(call: Au3Call) -> set[str] | None:
 
 
 def _call_kills(
-        call: Au3Call,
-        scope: Au3FunctionDeclaration | None,
-        scope_model: Au3ScopeModel,
-        summaries: dict[str, frozenset[str] | None]) -> tuple[set[str] | None, set[str]]:
+    call: Au3Call,
+    scope_model: Au3ScopeModel,
+    summaries: dict[str, frozenset[str] | None],
+) -> tuple[set[str] | None, set[str]]:
     """
     The names a call may write — `None` for every non-constant — and the argument names it may
     hold by reference. A script function kills its may-write summary; a call to any name the
@@ -223,17 +223,17 @@ def _call_kills(
     if callee.name not in BUILTIN_NAMES:
         return None, _argument_variables(call)
     if callee.name == 'execute':
-        return _execute_kills(call), set()
+        return execute_kills(call), set()
     if callee.name == 'assign':
-        return _assign_kills(call), set()
+        return assign_kills(call), set()
     return set(), set()
 
 
 def _written_names(
-        body: list[Statement],
-        scope: Au3FunctionDeclaration | None,
-        scope_model: Au3ScopeModel,
-        summaries: dict[str, frozenset[str] | None]) -> set[str] | None:
+    body: list[Statement],
+    scope_model: Au3ScopeModel,
+    summaries: dict[str, frozenset[str] | None],
+) -> set[str] | None:
     """
     The names one pass over *body* may change — written, killed, or rebound — or `None` when it
     may change any. A loop drops these at its entry and its exit, so a read inside the body sees
@@ -248,7 +248,7 @@ def _written_names(
             continue
         if not isinstance(node, Au3Call):
             continue
-        kills, byref = _call_kills(node, scope, scope_model, summaries)
+        kills, byref = _call_kills(node, scope_model, summaries)
         if kills is None:
             return None
         names |= kills
@@ -257,8 +257,9 @@ def _written_names(
 
 
 def _function_scan(
-        function: Au3FunctionDeclaration,
-        scope_model: Au3ScopeModel) -> tuple[set[str], bool, set[str]]:
+    function: Au3FunctionDeclaration,
+    scope_model: Au3ScopeModel,
+) -> tuple[set[str], bool, set[str]]:
     """
     What one function may write by itself, ignoring its calls: the global names its provable
     writes target, whether it may write any global at all, and the script functions it calls.
@@ -289,9 +290,9 @@ def _function_scan(
             everything = True
             continue
         if callee.name == 'execute':
-            kills = _execute_kills(node)
+            kills = execute_kills(node)
         elif callee.name == 'assign':
-            kills = _assign_kills(node)
+            kills = assign_kills(node)
         else:
             continue
         if kills is None:
@@ -352,8 +353,11 @@ class _Walker:
             self.visit_statement(scope, stmt, state)
 
     def visit_statement(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Statement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Statement,
+        state: _State,
+    ) -> None:
         if isinstance(stmt, Au3FunctionDeclaration):
             return
         if isinstance(stmt, Au3VariableDeclaration):
@@ -396,8 +400,11 @@ class _Walker:
                 self.visit_expression(scope, child, state)
 
     def visit_declaration(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3VariableDeclaration, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3VariableDeclaration,
+        state: _State,
+    ) -> None:
         binding = self.scope_model.binding(scope, stmt)
         for declarator in stmt.declarations:
             for dimension in declarator.dimensions:
@@ -421,8 +428,11 @@ class _Walker:
                 literal_value(declarator.initializer, self.functions))
 
     def visit_enum(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3EnumDeclaration, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3EnumDeclaration,
+        state: _State,
+    ) -> None:
         """
         The enum count: an entry with an initializer resets it, one without takes the count and
         advances it by the step. The count starts at 0 and falls to unknown past an entry whose
@@ -452,8 +462,11 @@ class _Walker:
             counter = apply_binary(stmt.step_operator, counter, step)
 
     def visit_redim(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3ReDimStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3ReDimStatement,
+        state: _State,
+    ) -> None:
         for target in stmt.targets:
             for dimension in target.dimensions:
                 self.visit_expression(scope, dimension, state)
@@ -461,12 +474,18 @@ class _Walker:
                 state.kill(target.variable.name)
 
     def visit_assignment(
-            self, scope: Au3FunctionDeclaration | None,
-            assignment: Au3Assignment, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        assignment: Au3Assignment,
+        state: _State,
+    ) -> None:
         self.visit_expression(scope, assignment.value, state)
         self.visit_target(scope, assignment.target, state)
         variable = ast.store_target_variable(assignment.target)
         if variable is None:
+            return
+        if not isinstance(ast.unwrap_parens(assignment.target), Au3Variable):
+            state.kill(variable.name)
             return
         statement = ast.owning_statement(assignment)
         if statement is None:
@@ -487,8 +506,11 @@ class _Walker:
         state.bind(variable.name, binding, apply_binary(operator, current, operand))
 
     def visit_target(
-            self, scope: Au3FunctionDeclaration | None,
-            target: Expression | None, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        target: Expression | None,
+        state: _State,
+    ) -> None:
         """
         The reads a store target holds — an index, a member's object — with the stored variable
         itself left unrecorded: a read in target position is never one a substitution may
@@ -503,8 +525,11 @@ class _Walker:
             self.visit_target(scope, node.object, state)
 
     def visit_expression(
-            self, scope: Au3FunctionDeclaration | None,
-            node: Expression | None, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        node: Expression | None,
+        state: _State,
+    ) -> None:
         if node is None:
             return
         if isinstance(node, Au3Variable):
@@ -523,13 +548,23 @@ class _Walker:
                 self.visit_expression(scope, child, state)
 
     def visit_call(
-            self, scope: Au3FunctionDeclaration | None,
-            call: Au3Call, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        call: Au3Call,
+        state: _State,
+    ) -> None:
         """
-        A `ByRef` argument is a target position — the callee receives the variable itself, not its
-        value — so its read is never recorded and a substitution may never replace it.
+        A `ByRef` argument of a declared script function is a target position — the callee
+        receives the variable itself, not its value — so its read is never recorded and a
+        substitution may never replace it, and the same holds for a bare variable in the callee
+        position: the call runs what the variable names, not what it holds. An argument of a call
+        to a name the script does not declare is still recorded and replaced — an unseen callee
+        may hold it by reference, which would divert what the callee receives; telling the two
+        apart needs the builtin name universe, which no module owns yet.
         """
-        self.visit_expression(scope, call.callee, state)
+        kills, byref = _call_kills(call, self.scope_model, self.summaries)
+        if not isinstance(ast.unwrap_parens(call.callee), Au3Variable):
+            self.visit_expression(scope, call.callee, state)
         callee = ast.direct_callee(call)
         function = self.scope_model.functions.get(callee.name) if callee is not None else None
         for index, argument in enumerate(call.arguments):
@@ -542,7 +577,6 @@ class _Walker:
             ):
                 continue
             self.visit_expression(scope, argument, state)
-        kills, byref = _call_kills(call, scope, self.scope_model, self.summaries)
         for name in byref:
             state.kill(name)
         if kills is None:
@@ -552,8 +586,11 @@ class _Walker:
                 state.kill(name)
 
     def visit_if(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3IfStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3IfStatement,
+        state: _State,
+    ) -> None:
         """
         One branch runs, reached only after every earlier test evaluated false: each branch sees
         the state after the kills of the tests up to its own, and the branches join.
@@ -570,8 +607,11 @@ class _Walker:
         self.join_into(state, outcomes)
 
     def visit_switch(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3SwitchStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3SwitchStatement,
+        state: _State,
+    ) -> None:
         self.visit_expression(scope, stmt.discriminant, state)
         outcomes = []
         has_else = False
@@ -587,8 +627,11 @@ class _Walker:
         self.join_into(state, outcomes)
 
     def visit_select(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3SelectStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3SelectStatement,
+        state: _State,
+    ) -> None:
         outcomes = []
         has_else = False
         for case in stmt.cases:
@@ -602,7 +645,11 @@ class _Walker:
         self.join_into(state, outcomes)
 
     def visit_case_value(
-            self, scope: Au3FunctionDeclaration | None, value: Node, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        value: Node,
+        state: _State,
+    ) -> None:
         if isinstance(value, Au3CaseRange):
             self.visit_expression(scope, value.start, state)
             self.visit_expression(scope, value.end, state)
@@ -610,16 +657,22 @@ class _Walker:
             self.visit_expression(scope, value, state)
 
     def visit_branch(
-            self, scope: Au3FunctionDeclaration | None,
-            body: list[Statement], state: _State) -> _State:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        body: list[Statement],
+        state: _State,
+    ) -> _State:
         branch = state.copy()
         for stmt in body:
             self.visit_statement(scope, stmt, branch)
         return branch
 
     def visit_for(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3ForStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3ForStatement,
+        state: _State,
+    ) -> None:
         self.visit_expression(scope, stmt.start, state)
         self.visit_expression(scope, stmt.limit, state)
         self.visit_expression(scope, stmt.step, state)
@@ -628,17 +681,24 @@ class _Walker:
         self.visit_loop(scope, None, stmt.body, state)
 
     def visit_forin(
-            self, scope: Au3FunctionDeclaration | None,
-            stmt: Au3ForInStatement, state: _State) -> None:
+        self,
+        scope: Au3FunctionDeclaration | None,
+        stmt: Au3ForInStatement,
+        state: _State,
+    ) -> None:
         self.visit_expression(scope, stmt.iterable, state)
         if stmt.variable is not None:
             state.kill(stmt.variable.name)
         self.visit_loop(scope, None, stmt.body, state)
 
     def visit_loop(
-            self, scope: Au3FunctionDeclaration | None,
-            test: Expression | None, body: list[Statement], state: _State) -> None:
-        written = _written_names(body, scope, self.scope_model, self.summaries)
+        self,
+        scope: Au3FunctionDeclaration | None,
+        test: Expression | None,
+        body: list[Statement],
+        state: _State,
+    ) -> None:
+        written = _written_names(body, self.scope_model, self.summaries)
         if written is None:
             state.kill_all()
         else:

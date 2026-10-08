@@ -36,18 +36,14 @@ _fold = TransformerGroup(
     Au3ConstantPropagation,
 )
 
-_DEPENDENCIES = {
-    'fold': {'normalize'},
-}
-
-_INVALIDATORS = {
+_GROUP_WIRING = {
     'fold': {'normalize'},
 }
 
 _pipeline = DeobfuscationPipeline(
     [_normalize, _fold],
-    dependencies=_DEPENDENCIES,
-    invalidators=_INVALIDATORS,
+    dependencies=_GROUP_WIRING,
+    invalidators=_GROUP_WIRING,
 )
 
 
