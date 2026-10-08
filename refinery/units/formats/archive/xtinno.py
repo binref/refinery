@@ -33,7 +33,17 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
     Extract files from InnoSetup archives.
     """
     def unpack(self, data: bytearray):
+        inno = InnoArchive(data, self)
+
+        try:
+            emulator = inno.emulator
+        except Exception as error:
+            self.log_info('constants are not expanded because the script cannot be emulated:', error)
+            emulator = None
+
         def post_process_json(doc):
+            if emulator is None:
+                return doc
             if isinstance(doc, dict):
                 return {key: post_process_json(val) for key, val in doc.items()}
             if isinstance(doc, list):
@@ -41,11 +51,9 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
             if not isinstance(doc, str):
                 return doc
             try:
-                return inno.emulator.reset().expand_constant(doc)
+                return emulator.reset().expand_constant(doc)
             except Exception:
                 return doc
-
-        inno = InnoArchive(data, self)
 
         _pwd: bytes = self.args.pwd
         password = _pwd.decode(self.codec) if _pwd else None

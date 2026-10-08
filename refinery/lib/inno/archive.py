@@ -2708,8 +2708,8 @@ class InnoArchive:
         try:
             emulator = self.emulator
         except Exception:
-            pass
-        else:
+            emulator = None
+        if emulator is not None:
             for file in self.files:
                 path = emulator.reset().expand_constant(file.path)
                 path = path.replace('\\', '/')
@@ -2720,6 +2720,11 @@ class InnoArchive:
 
     @cached_property
     def emulator(self):
+        """
+        An `refinery.lib.inno.emulator.InnoSetupEmulator` for the embedded IFPS script, if it exists.
+        """
+        if self.ifps is None:
+            return None
         from refinery.lib.inno.emulator import (
             IFPSEmulatorConfig,
             InnoSetupEmulator,
@@ -2756,7 +2761,10 @@ class InnoArchive:
             from refinery.lib.inno.emulator import NewPassword
             self._log_verbose('attempting to automatically determine password from the embedded script')
             try:
-                for p in self.emulator.reset().emulate_installation():
+                if (emulator := self.emulator) is None:
+                    self._log_comment('the archive has no script to determine the password from')
+                    return False
+                for p in emulator.reset().emulate_installation():
                     if not isinstance(p, NewPassword):
                         continue
                     if self.check_password(file, p):

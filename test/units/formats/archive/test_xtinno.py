@@ -191,3 +191,10 @@ class TestInnoExtractor(TestUnitBase):
         with self.assertRaises(InvalidPassword) as error:
             inno.read_file(file)
         self.assertNotEqual(str(error.exception), str(InvalidPassword()))
+
+    def test_the_metadata_of_an_installer_without_a_script_is_written_without_emulating_it(self):
+        data = self.download_sample('0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c')
+        with mock.patch('refinery.lib.inno.emulator.InnoSetupEmulator') as emulator:
+            paths = [chunk['path'] for chunk in data | self.load('meta/*.json') | []]
+        self.assertEqual(paths, ['meta/setup.json', 'meta/files.json'])
+        emulator.assert_not_called()
