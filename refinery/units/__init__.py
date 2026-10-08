@@ -1423,7 +1423,10 @@ class Unit(UnitBase, abstract=True):
         """
         if isinstance(src := self.source, Unit):
             src.close()
-        self._run = None
+        self._end_run(self._run)
+        self._reader = None
+        self._buffer = B''
+        self._offset = 0
 
     @property
     def closed(self) -> bool:
@@ -1490,7 +1493,7 @@ class Unit(UnitBase, abstract=True):
         return self
 
     def __exit__(self, *_) -> None:
-        pass
+        self.close()
 
     @staticmethod
     def Requires(distribution: str, level: int = 0, info: str | None = None):
@@ -1649,6 +1652,15 @@ class Unit(UnitBase, abstract=True):
             self._run = run = _Run(iter(framed), framed.framebreak)
         return run
 
+    def _end_run(self, run: _Run | None) -> None:
+        """
+        Ends the given run if it is the current run of this unit. Its output is closed, so that
+        the data it holds is released at once, and the unit has no run until it is read again.
+        """
+        if run is not None and run is self._run:
+            self._run = None
+            run.output.close()
+
     def _next_output(self, run: _Run, place: Callable[[Placement], Any] | None = None) -> Any:
         """
         Returns the next output of the given run, or `None` at its end or after an error, which is
@@ -1692,7 +1704,8 @@ class Unit(UnitBase, abstract=True):
         line puts them; a short chunk is joined with its line break. For a terminal, the line
         break follows each chunk immediately, so that a line is complete while the next is
         computed; the line break of an empty chunk follows once another chunk does, so that a last
-        empty chunk adds no empty line.
+        empty chunk adds no empty line. When the stream is closed before its end, the run that
+        produces it is closed as well: Nothing else reads its output.
         """
         separate = False
         owed = False
@@ -1704,42 +1717,46 @@ class Unit(UnitBase, abstract=True):
         else:
             place = None
         run = self._start_run()
-        while (item := self._next_output(run, place)) is not None:
-            trailer = False
-            if isinstance(item, tuple):
-                pieces = item
-                del item
-                yield from pieces
-                del pieces
-                continue
-            if isinstance(item, Placement):
-                item = item.chunk
-            elif isinstance(item, Chunk):
-                last = separate
-                separate = run.framebreak and not item.endswith(B'\n')
-                if terminal:
-                    if owed:
-                        owed = False
-                        yield B'\n'
-                    if separate:
-                        if not item:
-                            owed = True
-                        elif len(item) < 0x1000:
-                            item = item + B'\n'
+        try:
+            while (item := self._next_output(run, place)) is not None:
+                trailer = False
+                if isinstance(item, tuple):
+                    pieces = item
+                    del item
+                    yield from pieces
+                    del pieces
+                    continue
+                if isinstance(item, Placement):
+                    item = item.chunk
+                elif isinstance(item, Chunk):
+                    last = separate
+                    separate = run.framebreak and not item.endswith(B'\n')
+                    if terminal:
+                        if owed:
+                            owed = False
+                            yield B'\n'
+                        if separate:
+                            if not item:
+                                owed = True
+                            elif len(item) < 0x1000:
+                                item = item + B'\n'
+                            else:
+                                trailer = True
+                    elif last:
+                        if len(item) < 0x1000:
+                            item = B'\n' + item
                         else:
-                            trailer = True
-                elif last:
-                    if len(item) < 0x1000:
-                        item = B'\n' + item
-                    else:
-                        yield B'\n'
-            elif serialize is False:
-                continue
-            outbox.append(item)
-            del item
-            yield outbox.pop()
-            if trailer:
-                yield B'\n'
+                            yield B'\n'
+                elif serialize is False:
+                    continue
+                outbox.append(item)
+                del item
+                yield outbox.pop()
+                if trailer:
+                    yield B'\n'
+        except GeneratorExit:
+            self._end_run(run)
+            raise
 
     def _frame_handler(self) -> Framed:
         """
@@ -1793,7 +1810,7 @@ class Unit(UnitBase, abstract=True):
                 source.reset()
         except AttributeError:
             pass
-        self._run = None
+        self._end_run(self._run)
         self._buffer = B''
         self._offset = 0
         self._reader = None

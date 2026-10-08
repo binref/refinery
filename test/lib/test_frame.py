@@ -4,7 +4,6 @@ import gc
 import io
 import itertools
 import tracemalloc
-import unittest
 import weakref
 
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
@@ -450,23 +449,30 @@ class TestFraming(TestBase):
                     lifetimes.note()
                 self.assertEqual(lifetimes.notes, [[]])
 
-    @unittest.expectedFailure
-    def test_abandoned_run_releases_its_input(self):
+    def test_closed_run_releases_its_input_and_its_unit(self):
         from refinery import Unit
-        lifetimes = _Lifetimes()
+        reads = {
+            'output read as chunks': lambda unit: next(unit),
+            'output read as a stream': lambda unit: unit.read(1),
+        }
+        for name, read in reads.items():
+            with self.subTest(name):
+                lifetimes = _Lifetimes()
 
-        class halves(Unit):
-            def process(self, data):
-                lifetimes.track(data)
-                yield data[:1]
-                yield data[1:]
+                class halves(Unit):
+                    def process(self, data):
+                        lifetimes.track(data)
+                        yield data[:1]
+                        yield data[1:]
 
-        with _without_cycle_collector():
-            unit = B'AB' | halves()
-            next(unit)
-            del unit
-            lifetimes.note()
-        self.assertEqual(lifetimes.notes, [[]])
+                with _without_cycle_collector():
+                    with B'AB' | halves() as unit:
+                        self.assertEqual(read(unit), B'A')
+                    lifetimes.note()
+                    freed = weakref.ref(unit)
+                    del unit
+                    self.assertIsNone(freed())
+                self.assertEqual(lifetimes.notes, [[]])
 
     def test_unit_is_freed_when_its_run_ends(self):
         from refinery import Unit
@@ -519,6 +525,88 @@ class TestFraming(TestBase):
                         pass
                     lifetimes.note()
                 self.assertEqual(lifetimes.notes, [[]])
+
+    def test_upstream_input_is_released_when_the_next_unit_stops_reading(self):
+        from refinery import Unit
+        lifetimes = _Lifetimes()
+
+        class quarters(Unit):
+            def process(self, data):
+                lifetimes.track(data)
+                for k in range(4):
+                    yield data[k:k + 1]
+
+        class first(Unit):
+            def filter(self, chunks):
+                for chunk in chunks:
+                    yield chunk
+                    break
+
+            def process(self, data):
+                return data
+
+        with _without_cycle_collector():
+            pipeline = B'ABCD' | _configured(quarters(), 1) | _configured(first(), -1)
+            self.assertEqual(pipeline | [bytes], [B'A'])
+            lifetimes.note()
+            del pipeline
+        self.assertEqual(lifetimes.notes, [[]])
+
+    def test_unit_is_closed_after_its_run_ends_early(self):
+        from refinery import Unit
+
+        class quarters(Unit):
+            def process(self, data):
+                for k in range(4):
+                    yield data[k:k + 1]
+
+        class first(Unit):
+            def filter(self, chunks):
+                for chunk in chunks:
+                    yield chunk
+                    break
+
+            def process(self, data):
+                return data
+
+        def closed_by_the_caller(unit):
+            next(unit)
+            unit.close()
+
+        def closed_by_a_with_statement(unit):
+            with unit:
+                next(unit)
+
+        def the_next_unit_stops_reading(unit):
+            unit | _configured(first(), -1) | []
+
+        for end in (closed_by_the_caller, closed_by_a_with_statement, the_next_unit_stops_reading):
+            with self.subTest(end.__name__.replace('_', ' ')):
+                unit = B'ABCD' | _configured(quarters(), 1)
+                end(unit)
+                self.assertTrue(unit.closed)
+
+    def test_reused_unit_runs_to_the_end_after_a_dropped_pipeline_is_collected(self):
+        from refinery import Unit
+
+        class quarters(Unit):
+            def process(self, data):
+                for k in range(4):
+                    yield data[k:k + 1]
+
+        class passes(Unit):
+            def process(self, data):
+                return data
+
+        with _without_cycle_collector():
+            reused = _configured(quarters(), 1)
+            dropped = B'ABCD' | reused | _configured(passes(), -1)
+            self.assertEqual(next(dropped), B'A')
+            del dropped
+            pipeline = B'WXYZ' | reused | _configured(passes(), -1)
+            self.assertEqual(next(pipeline), B'W')
+            gc.collect()
+            self.assertEqual(pipeline | [bytes], [B'X', B'Y', B'Z'])
 
     def test_closing_a_frame_merges_a_repeated_chunk_correctly(self):
         self.assertEqual(load_pipeline('emit AB [[| rep 3 ]| nop ]') | bytes, B'ABABAB')
