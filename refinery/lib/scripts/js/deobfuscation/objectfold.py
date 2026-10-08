@@ -8,9 +8,7 @@ an expression using only parameters) are inlined at the call site.
 """
 from __future__ import annotations
 
-import enum
-
-from typing import Callable, Iterator, NamedTuple
+from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     Node,
@@ -18,18 +16,16 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
 )
-from refinery.lib.scripts.js.analysis.conversions import CONVERSION_KEYS
+from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.intrinsics import SPECIES_KEYS, IntrinsicWrites
 from refinery.lib.scripts.js.analysis.model import (
-    REFLECTIVE_INTRINSICS,
-    STRING_EVAL_NAMES,
     Binding,
     Scope,
     SemanticModel,
     is_direct_eval_call,
     is_use_position,
+    timer_callee_name,
     walk_receiver_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -39,6 +35,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     a_host_reaches_the_binding,
     access_key,
     expression_a_call_answers,
+    is_literal,
     make_undefined_expression,
     property_key,
     property_provably_absent,
@@ -50,9 +47,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
-    CONVERSION_INSTALL_METHODS,
     JsArrayExpression,
     JsArrowFunctionExpression,
+    JsBinaryExpression,
     JsCallExpression,
     JsClassExpression,
     JsFunctionExpression,
@@ -60,6 +57,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsObjectExpression,
+    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsRegExpLiteral,
@@ -196,95 +194,48 @@ def _statement_holding(node: Node) -> Node | None:
     return cursor
 
 
-#: The property names a key makes the models read as more than the name of a property: a method
-#: that installs a descriptor, a conversion or a prototype, or that reaches one, an intrinsic that
-#: compiles a string, a global that runs one, and a key that yields a prototype or names a
-#: conversion. A string written where a computed key stands shows the models a fact about the whole
-#: program where it names one of these, and otherwise at most one about the global it names.
-_NAMES_A_KEY_GIVES_A_MEANING = (
-    CONVERSION_INSTALL_METHODS
-    | CONVERSION_KEYS
-    | REFLECTIVE_INTRINSICS
-    | STRING_EVAL_NAMES
-    | SPECIES_KEYS
-    | frozenset({
-        'apply',
-        'call',
-        'getPrototypeOf',
-        'prototype',
-        'toPrimitive',
-    })
-)
-
-
-class _Shown(enum.IntEnum):
+def _copy_is_inert(value: Node, landing: Landing | None, *, handed: bool) -> bool:
     """
-    What a copy shows the models that they did not read where the value stood
-    (`_what_a_copy_shows`), ordered by what it costs the held models: a fact about the whole
-    program outdates them for every decision after it, and the name of a property outdates what
-    they say about the global it names.
-    """
-    NOTHING = 0
-    A_NAME = 1
-    A_FACT = 2
+    Whether a copy of *value* that lands at *landing* leaves the held models as true of the program
+    as they were where the value stood: in an object literal or, where it was *handed*, as an
+    argument of the call an inlined function answers. The models read a value by where it lands
+    (`refinery.lib.scripts.js.deobfuscation.helpers.value_landing`), and a copy brings no name they
+    did not read where it stood:
 
+    - Where they read nothing of the value, the copy shows them nothing.
+    - A callee shows them something where the semantic model reads the call as running a string
+      of code (`refinery.lib.scripts.js.analysis.model.timer_callee_name`).
+    - A key names a property from then on.
+    - An argument that was an argument of the inlined call is handed on as it was.
+    - Anywhere else, a literal denotes no object and shows them nothing.
 
-def _what_a_copy_shows(
-    scan: IntrinsicWrites,
-    value: Node,
-    landing: Landing | None,
-    *,
-    handed: bool,
-) -> _Shown:
+    Wherever it lands, a copy that completes a constant string shows them that string, which the
+    caller asks of the code it wrote (`_joins_a_constant_string`).
     """
-    What a copy of *value* that lands at *landing* shows the models that they did not read where
-    the value stood: in an object literal or, where it was *handed*, as the argument of a call
-    whose callee is a member no model resolves.
-
-    A string where a computed key or an install's key stands
-    (`refinery.lib.scripts.js.deobfuscation.helpers.Landing.KEY`) names a property from then on,
-    which is a fact about the whole program where `_NAMES_A_KEY_GIVES_A_MEANING` holds the name.
-    A name where a callee stands shows one where it makes the call run a string of code
-    (`refinery.lib.scripts.js.analysis.model.STRING_EVAL_NAMES`), and so does a value the models
-    follow only through bindings
-    (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.follows_only_through_bindings`)
-    wherever they read one, except as an argument where it was handed to a call already.
-    """
-    if landing is Landing.KEY:
-        name = static_string(value)
-        if name is None:
-            return _Shown.NOTHING
-        return _Shown.A_FACT if name in _NAMES_A_KEY_GIVES_A_MEANING else _Shown.A_NAME
-    if landing is Landing.CALLEE:
-        callee = strip_parens(value)
-        if isinstance(callee, JsIdentifier) and callee.name in STRING_EVAL_NAMES:
-            return _Shown.A_FACT
-        return _Shown.NOTHING
     if landing is None or landing is Landing.ELSEWHERE:
-        return _Shown.NOTHING
+        return True
+    if landing is Landing.CALLEE:
+        return timer_callee_name(value) is None
+    if landing is Landing.KEY:
+        return False
     if landing is Landing.ARGUMENT and handed:
-        return _Shown.NOTHING
-    return _Shown.A_FACT if scan.follows_only_through_bindings(value) else _Shown.NOTHING
+        return True
+    return is_literal(value)
 
 
-def _what_an_inlined_call_shows(
-    scan: IntrinsicWrites,
-    func: JsFunctionExpression,
-    call: JsCallExpression,
-) -> _Shown:
+def _an_inlined_call_is_inert(func: JsFunctionExpression, call: JsCallExpression) -> bool:
     """
-    What inlining *call* of *func* shows the models that they did not read (`_what_a_copy_shows`).
-    Each argument lands where the expression the call answers reads its parameter: inside the
-    expression, or where the call stands where the expression evaluates to it. A name the
-    expression reads other than a parameter lands there as a copy of itself.
+    Whether inlining *call* of *func* leaves the held models as true as they were
+    (`_copy_is_inert`). Each argument lands where the expression the call answers reads its
+    parameter: inside the expression, or where the call stands where the expression evaluates to
+    it. A name the expression reads other than a parameter lands there as a copy of itself.
     """
     answered = expression_a_call_answers(func)
     if answered is None:
-        return _Shown.NOTHING
+        return True
     expression, names = answered
     passed = dict(zip(names, call.arguments))
     where_the_call_lands: Landing | None = None
-    shown = _Shown.NOTHING
     for node in expression.walk():
         if not isinstance(node, JsIdentifier) or not is_use_position(node):
             continue
@@ -295,10 +246,38 @@ def _what_an_inlined_call_shows(
             landing = where_the_call_lands
         argument = passed.get(node.name)
         if argument is None:
-            shown = max(shown, _what_a_copy_shows(scan, node, landing, handed=False))
+            inert = _copy_is_inert(node, landing, handed=False)
         else:
-            shown = max(shown, _what_a_copy_shows(scan, argument, landing, handed=True))
-    return shown
+            inert = _copy_is_inert(argument, landing, handed=True)
+        if not inert:
+            return False
+    return True
+
+
+def _joins_a_constant_string(node: Node) -> bool:
+    """
+    Whether *node*, code a fold just wrote, holds or stands in a concatenation the models read as
+    the one string it spells (`refinery.lib.scripts.js.model.static_string`): as a key, and where
+    they look for a name in every string. While a piece of it was a member access, they read it as
+    no string at all.
+    """
+    joined = [n for n in node.walk() if isinstance(n, JsBinaryExpression) and n.operator == '+']
+    cursor = node
+    while isinstance(parent := cursor.parent, (JsBinaryExpression, JsParenthesizedExpression)):
+        if isinstance(parent, JsBinaryExpression):
+            if parent.operator != '+':
+                break
+            joined.append(parent)
+        cursor = parent
+    return any(static_string(n) is not None for n in joined)
+
+
+def _call_of(member: JsMemberExpression) -> JsCallExpression | None:
+    """
+    The call *member* is the callee of, if any.
+    """
+    parent = member.parent
+    return parent if isinstance(parent, JsCallExpression) and parent.callee is member else None
 
 
 def _runs_code_in_its_scope(model: SemanticModel, value: Node) -> bool:
@@ -313,13 +292,34 @@ def _runs_code_in_its_scope(model: SemanticModel, value: Node) -> bool:
 
 class _Folded(NamedTuple):
     """
-    What folding the references of one object did: whether it replaced any, whether every one was
-    folded away so the declaration can go, and whether a copy since the last renewal named a
-    property the models then read as the name of a global (`_Shown.A_NAME`).
+    What folding the references of one object did: whether it replaced any, and whether every one
+    was folded away so the declaration can go.
     """
     changed: bool
     can_remove: bool
-    named: bool
+
+
+class _Answers:
+    """
+    Whether a value's names resolve at a destination as at the literal (`_resolves_consistently`),
+    as one semantic *model* answers it, remembered per value and destination.
+    """
+
+    def __init__(self, model: SemanticModel):
+        self.model = model
+        self._free: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
+        self._consistent: dict[tuple[int, int], bool] = {}
+
+    def resolve_consistently(self, value: Node, dest: Scope | None) -> bool:
+        key = (id(value), id(dest))
+        consistent = self._consistent.get(key)
+        if consistent is None:
+            free = self._free.get(id(value))
+            if free is None:
+                free = self._free[id(value)] = list(_free_external_bindings(self.model, value))
+            consistent = _resolves_consistently(self.model, value, dest, free)
+            self._consistent[key] = consistent
+        return consistent
 
 
 class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
@@ -342,13 +342,14 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
       does not know, or one of whose references an edit detached or stands in an edited statement,
       the pass renews.
     - Removing a declarator takes facts away, but for the references in it, which it detaches.
-    - A copy that shows the models a fact about the whole program they did not read where the
-      value stood (`_what_a_copy_shows`) makes the pass renew at once, before it decides the next
-      reference: a value they follow only through bindings that lands where they read one, a
-      string that names a method or a key they read as more than a property, a name that makes a
-      call run a string of code. A string that names any other property makes it renew once the
-      object is done, before the next object is decided on what the models say of the global the
-      string may name.
+    - A copy that may show the models a fact they did not read where the value stood
+      (`_copy_is_inert`) outdates them. The pass makes an object's copies first, renews before its
+      inlined calls where a copy outdated the models, and renews again before it reads a fact that
+      an inlined call may have changed: an inherited key, the values a removed declaration drops,
+      the next object. An inlined call writes only through values handed to it, which the models
+      already read as written through. Between a copy and the next renewal, the pass compares only
+      where the names of a value resolve at the literal and at the reference. A copy changes what a
+      name resolves to only at the global scope, which both reach alike.
     """
 
     def __init__(self):
@@ -357,6 +358,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         self._inserted_names: set[str] = set()
         self._edited_statements: set[Node] = set()
         self._detached: set[Node] = set()
+        self._outdated = False
 
     def visit_JsScript(self, node: JsScript):
         with self.holding_models(node):
@@ -367,6 +369,16 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         self._inserted_names = set()
         self._edited_statements = set()
         self._detached = set()
+        self._outdated = False
+
+    def _facts(self) -> ModelCache:
+        """
+        The held models, renewed first where an edit since the last renewal outdated them: the
+        models a decision that reads a fact about the program is made on.
+        """
+        if self._outdated:
+            self.renew_models()
+        return self.held_models()
 
     def _detach(self, removed: Node) -> None:
         """
@@ -457,7 +469,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             binding = model.binding_of(name)
             if binding is None:
                 continue
-            if self._edited_around(model, binding, name, init, prop_map):
+            if self._outdated or self._edited_around(model, binding, name, init, prop_map):
                 self.renew_models()
                 model = cache.model
                 binding = model.binding_of(name)
@@ -483,16 +495,12 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 for value in prop_map.values()
             ):
                 continue
-            folded = self._inline_references(
-                model, cache.effects, cache.intrinsic_writes, binding, prop_map, cache.read_established
-            )
+            folded = self._inline_references(binding, prop_map)
             if folded.changed:
                 if folded.can_remove:
                     remove_declarator(declarator)
                     self._detach(declarator)
                 self.mark_changed()
-                if folded.named:
-                    self.renew_models()
 
     @staticmethod
     def _find_candidates(body: list[Statement]) -> Iterator[JsVariableDeclarator]:
@@ -645,15 +653,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         """
         return any(ref.is_descendant_of(init) for ref in model.references(binding))
 
-    def _inline_references(
-        self,
-        model: SemanticModel,
-        effects: EffectModel,
-        scan: IntrinsicWrites,
-        binding: Binding,
-        prop_map: dict[str, Node],
-        read_established: Callable[[JsIdentifier], bool],
-    ) -> _Folded:
+    def _inline_references(self, binding: Binding, prop_map: dict[str, Node]) -> _Folded:
         """
         Replace each `obj['key']` access through *binding* with the corresponding property value. For
         function-valued properties called as `obj['key'](args)`, inline the call. A key the property
@@ -689,9 +689,9 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         A property no access reads is dropped with the declaration when it is removed, so a value
         whose read may throw a `ReferenceError` no completed write establishes keeps the
         declaration: building the object read that value, and dropping the declaration would mute
-        the throw. A read the *read_established* proof vouches for, and every value accessed at
-        least once (relocated to its use, its read still performed there), places no such
-        constraint. Relocating that read does move it past any statement between the literal and the
+        the throw. A read the model proves established, and every value accessed at least once
+        (relocated to its use, its read still performed there), places no such constraint.
+        Relocating that read does move it past any statement between the literal and the
         use, so a throw it carries is reordered past those statements' effects — a separate,
         unpinned defect (`test_unfixed_defects.TestARelocatedMayThrowReadIsReorderedPastAnEffect`).
 
@@ -701,17 +701,18 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         (`refinery.lib.scripts.js.deobfuscation.helpers.spelled_for_the_callee_position`), so a bare
         `eval` copied there stays an indirect one.
 
-        It also returns `named`, True when a copy since the last renewal named a property the models
-        then read as the name of a global (`_Shown.A_NAME`). A copy that shows them a fact about
-        the whole program (`_Shown.A_FACT`) renews the models at once, and the references after it
-        are decided on the renewed ones.
+        Copies are decided first and read only scopes, from the held model. The calls a function
+        value may be inlined into come next, on models renewed once where a copy outdated them
+        (`_copy_is_inert`), and inherited keys and the values a removed declaration drops last, on
+        models renewed where any edit outdated them (`_facts`).
         """
         changed = False
-        named = False
         can_remove = not binding.dynamic_refs
-        consistent: dict[tuple[int, int], bool] = {}
-        free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
         accessed_keys: set[str] = set()
+        copies: list[tuple[JsMemberExpression, Node]] = []
+        calls: list[tuple[JsIdentifier, JsMemberExpression, str, JsFunctionExpression]] = []
+        inherited: list[tuple[JsIdentifier, JsMemberExpression, str]] = []
+        model = self.held_models().model
         for ref in list(model.references(binding)):
             if ref in self._detached or not model.knows(ref):
                 continue
@@ -726,80 +727,96 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             if key is None:
                 can_remove = False
                 continue
-            if key not in prop_map:
-                if not property_provably_absent(effects, dict, key):
-                    can_remove = False
-                    continue
-                self._replace(member, make_undefined_expression())
-                changed = True
-                continue
-            value = prop_map[key]
-            accessed_keys.add(key)
-            shown = self._copy(model, scan, member, value, consistent, free_external)
-            if shown is None:
+            value = prop_map.get(key)
+            if value is None:
+                inherited.append((ref, member, key))
+            elif isinstance(value, JsFunctionExpression) and _call_of(member) is not None:
+                calls.append((ref, member, key, value))
+            else:
+                accessed_keys.add(key)
+                copies.append((member, value))
+        answers = _Answers(model)
+        for member, value in copies:
+            inert = self._copy(answers, member, value)
+            if inert is None:
                 can_remove = False
                 continue
             changed = True
-            if shown is _Shown.A_FACT:
-                self.renew_models()
-                held = self.held_models()
-                model, effects, scan = held.model, held.effects, held.intrinsic_writes
-                consistent.clear()
-                free_external.clear()
-                named = False
-            elif shown is _Shown.A_NAME:
-                named = True
-        if can_remove and any(
-            key not in accessed_keys
-            and not effects.is_side_effect_free(
-                value, reads_may_throw=True, read_established=read_established)
-            for key, value in prop_map.items()
-        ):
-            can_remove = False
-        return _Folded(changed, can_remove, named)
+            if not inert:
+                self._outdated = True
+        if calls and self._outdated:
+            self.renew_models()
+            answers = _Answers(self.held_models().model)
+        for ref, member, key, value in calls:
+            if ref in self._detached or not answers.model.knows(ref):
+                continue
+            accessed_keys.add(key)
+            inert = self._inline_call(answers, member, value)
+            if inert is None:
+                can_remove = False
+                continue
+            changed = True
+            if not inert:
+                self._outdated = True
+        for ref, member, key in inherited:
+            if ref in self._detached or not self.held_models().model.knows(ref):
+                continue
+            facts = self._facts()
+            if not property_provably_absent(facts.effects, dict, key):
+                can_remove = False
+                continue
+            self._replace(member, make_undefined_expression())
+            changed = True
+        dropped = [value for key, value in prop_map.items() if key not in accessed_keys]
+        if can_remove and dropped:
+            facts = self._facts()
+            can_remove = all(
+                facts.effects.is_side_effect_free(
+                    value, reads_may_throw=True, read_established=facts.read_established)
+                for value in dropped
+            )
+        return _Folded(changed, can_remove)
 
-    def _copy(
+    def _inline_call(
         self,
-        model: SemanticModel,
-        scan: IntrinsicWrites,
+        answers: _Answers,
         member: JsMemberExpression,
-        value: Node,
-        consistent: dict[tuple[int, int], bool],
-        free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]],
-    ) -> _Shown | None:
+        value: JsFunctionExpression,
+    ) -> bool | None:
         """
-        Copy *value* where *member* reads it, or inline the call *member* is the callee of where
-        *value* is a function the call answers an expression of, and tell what the copy shows the
-        models (`_what_a_copy_shows`); `None` where the reference has to stay as it is. The two
-        caches hold `_free_external_bindings` per value and `_resolves_consistently` per value and
-        destination, for the models they were filled from.
+        Inline the call *member* is the callee of where *value* is a function the call answers an
+        expression of, or else copy *value* where the callee stood (`_copy`), and tell whether the
+        edit leaves the held models as true as they were (`_an_inlined_call_is_inert`); `None` where
+        the reference has to stay as it is. Inlining reads facts about the program from the held
+        models.
         """
-        parent = member.parent
-        call = parent if isinstance(parent, JsCallExpression) and parent.callee is member else None
-        if call is not None and isinstance(value, JsFunctionExpression):
-            replacement = try_inline_trivial_function(value, call.arguments, transformer=self)
-            if replacement is not None:
-                shown = _what_an_inlined_call_shows(scan, value, call)
-                self._replace(call, spelled_for_the_callee_position(call, replacement))
-                return shown
-            if _function_observes_its_identity(value):
-                return None
-        if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)) and call is None:
+        call = _call_of(member)
+        assert call is not None
+        replacement = try_inline_trivial_function(value, call.arguments, transformer=self)
+        if replacement is not None:
+            inert = _an_inlined_call_is_inert(value, call)
+            replacement = spelled_for_the_callee_position(call, replacement)
+            self._replace(call, replacement)
+            return inert and not _joins_a_constant_string(replacement)
+        if _function_observes_its_identity(value):
             return None
+        return self._copy(answers, member, value)
+
+    def _copy(self, answers: _Answers, member: JsMemberExpression, value: Node) -> bool | None:
+        """
+        Copy *value* where *member* reads it, and tell whether the copy leaves the held models as
+        true as they were (`_copy_is_inert`); `None` where the reference has to stay as it is. The
+        decision reads only scopes, from the model of *answers*.
+        """
+        is_function = isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression))
+        if is_function and _call_of(member) is None:
+            return None
+        model = answers.model
         if _runs_code_in_its_scope(model, value):
             return None
-        dest = model.scope_of(member)
-        ckey = (id(value), id(dest))
-        cached = consistent.get(ckey)
-        if cached is None:
-            free = free_external.get(id(value))
-            if free is None:
-                free = list(_free_external_bindings(model, value))
-                free_external[id(value)] = free
-            cached = _resolves_consistently(model, value, dest, free)
-            consistent[ckey] = cached
-        if not cached:
+        if not answers.resolve_consistently(value, model.scope_of(member)):
             return None
-        shown = _what_a_copy_shows(scan, value, value_landing(member), handed=False)
-        self._replace(member, spelled_for_the_callee_position(member, _clone_node(value)))
-        return shown
+        inert = _copy_is_inert(value, value_landing(member), handed=False)
+        copy = spelled_for_the_callee_position(member, _clone_node(value))
+        self._replace(member, copy)
+        return inert and not _joins_a_constant_string(copy)

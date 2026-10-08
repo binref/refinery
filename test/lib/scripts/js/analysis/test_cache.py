@@ -982,12 +982,41 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             'A.v + B.w + B.z[0]',
         )
 
+    @classmethod
+    def _handing_names_on_to_a_call(cls, count: int) -> str:
+        return cls._reading_a_parameter(count, 'var O = {c: function (a, b) { return a(b); }};', 'O.c(g, e)')
+
+    @classmethod
+    def _copying_strings_into_keys(cls, count: int) -> str:
+        return cls._reading_a_parameter(
+            count,
+            'var O = {k0: "log", k1: "info", k2: "warn", k3: "error"};',
+            '[e[O.k0](0), e[O.k1](1), e[O.k2](2), e[O.k3](3)]',
+        )
+
+    @classmethod
+    def _copying_strings_into_keys_between_inlined_calls(cls, count: int) -> str:
+        literal = ', '.join(F'k{i}: "m{i}", w{i}: function (x, y) {{ return x + y; }}' for i in range(8))
+        calls = ', '.join(F'e[O.k{i}](O.w{i}(e, {i}))' for i in range(8))
+        return cls._reading_a_parameter(count, F'var O = {{{literal}}};', F'[{calls}]')
+
+    @classmethod
+    def _inlining_calls_that_read_members_under_handed_strings(cls, count: int) -> str:
+        literal = '{get: function (x, y) { return x[y]; }, add: function (x, y) { return x + y; }}'
+        calls = ', '.join(F'O.get(e, "m{i}"), O.add(e, {i})' for i in range(8))
+        return cls._reading_a_parameter(count, F'var O = {literal};', F'[{calls}]')
+
     #: Programs in which a fold puts a copy where the models read it — a member access on the
     #: global object, the object or the key of a descriptor install, the global object handed to a
     #: call, an `arguments` object holding an intrinsic, a write through what an inlined call
-    #: answers, a string naming a global, an install or `eval`, a name running a string of code —
-    #: or edits what another object's reference stands in, by dropping a function that read it or
-    #: by writing the callee of the call it is handed to.
+    #: answers, a string naming a global, an install or `eval`, a name running a string of code, a
+    #: string a binding holds or a function is handed and then writes a prototype under, the global
+    #: object handed on through a call wrapper, a piece that completes the name of an install — or
+    #: edits what another object's reference stands in, by dropping a function that read it or by
+    #: writing the callee of the call it is handed to; a key the object reads after its own copy
+    #: installed it, a global a copied key rebinds before the object's call over it is inlined; and
+    #: strings copied into keys the models do not read today: of an object literal, a class member,
+    #: a pattern, and the key `Reflect.set` is handed.
     _FOLDS_THE_MODELS_READ = (
         'var A = {g: globalThis}; var C = {x: 1}; console.log(A.g.C.x); console.log(C.x);',
         'var A = {g: globalThis}; var C = {x: 1};'
@@ -1018,6 +1047,39 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         'var B = {o: Object, f: function (p) { return 1; }}; function g() { return ({}).x; }'
         ' function run() { console.log(B.f(g())); } var q = B.o;'
         ' Object.defineProperty(q.prototype, "x", {get: function () { return 2; }}); run();',
+        'var A = {k: "prototype"}; var K = A.k; Object[K].x = 1; var B = {y: 1}; console.log(B.x);',
+        'var A = {k: "prototype"}; function f(K) { Object[K].x = 1; } f(A.k);'
+        ' var B = {y: 1}; console.log(B.x);',
+        'function main() { var A = {f: function (a, b) { return a(b); }}; A.f(out, globalThis); }'
+        ' var C = {x: 1}; function out(g) { g.C = {x: 5}; } main(); console.log(C.x);',
+        'var A = {a: "define", b: "Property"}; Object[A.a + A.b](Object.prototype, "q", {value: 1});'
+        ' var B = {y: 1}; console.log(B.q);',
+        'function polyfill() { var S = {a: "define", b: "Property"};'
+        ' Object[S.a + S.b](Object.prototype, "q", {value: 7}); } polyfill();'
+        ' function main() { var cfg = {y: 1}; console.log(cfg.q); } main();',
+        'var A = {a: "define", b: "Property", f: function (x, y) { return x + y; }};'
+        ' Object[A.f(A.a, A.b)](Object.prototype, "q", {value: 1}); var B = {y: 1}; console.log(B.q);',
+        'var A = {a: "__define", b: "Getter__"};'
+        ' Object.prototype[A.a + A.b]("q", function () { console.log("got"); return 3; });'
+        ' var B = {y: 1}; console.log(B.q);',
+        'var A = {k: "defineProperty"}; function later() { return A.q; }'
+        ' Object[A.k](Object.prototype, "q", {value: 1}); console.log(later());',
+        'var A = {k: "eval"}; function G() { return this; } function later() { return A.q; }'
+        ' G()[A.k]("Object.prototype.q = 1"); console.log(later());',
+        'function g() { return 2; } function main() { var A = {k: "g", f: function (a) { return 1; }};'
+        ' function later() { return A.f(g()); }'
+        ' globalThis[A.k] = function () { console.log("side"); return 1; }; return later(); }'
+        ' console.log(main());',
+        'var A = {k: "valueOf"}; class C { [A.k]() { console.log("conv"); return 1; } }'
+        ' var c = new C(); var H = {s: c + 1, n: 2}; console.log(H.n);',
+        'var A = {k: "defineProperty"}; var {[A.k]: d} = Object; d(Object.prototype, "q", {value: 1});'
+        ' var B = {y: 1}; console.log(B.q);',
+        'var o = {}; var A = {k: "toString"};'
+        ' Reflect.set(o, A.k, function () { console.log("conv"); return "c"; });'
+        ' var H = {s: o + "", n: 2}; console.log(H.n);',
+        'var o = {}; var A = {k: "toString"};'
+        ' var p = {[A.k]: function () { console.log("conv"); return "c"; }};'
+        ' var H = {s: p + "", n: 2}; console.log(H.n);',
     )
 
     @staticmethod
@@ -1057,6 +1119,28 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
             self._held(self._holding_the_parameter_beside_an_array(2))[0],
             self._held(self._holding_the_parameter_beside_an_array(16))[0],
         )
+
+    @a_property_of_the_pin_itself
+    def test_inlined_calls_handing_names_on_to_another_call_need_no_new_models(self):
+        self.assertEqual(
+            self._held(self._handing_names_on_to_a_call(2))[0],
+            self._held(self._handing_names_on_to_a_call(16))[0],
+        )
+
+    @a_property_of_the_pin_itself
+    def test_strings_copied_into_keys_renew_the_models_at_most_once_per_object(self):
+        renewals = self._held(self._copying_strings_into_keys(16))[0] - 1
+        self.assertLessEqual(renewals, 16)
+
+    @a_property_of_the_pin_itself
+    def test_strings_copied_into_keys_between_inlined_calls_renew_the_models_at_most_once_per_object(self):
+        renewals = self._held(self._copying_strings_into_keys_between_inlined_calls(16))[0] - 1
+        self.assertLessEqual(renewals, 16)
+
+    @a_property_of_the_pin_itself
+    def test_inlined_calls_reading_members_under_handed_strings_renew_the_models_at_most_once_per_object(self):
+        renewals = self._held(self._inlining_calls_that_read_members_under_handed_strings(16))[0] - 1
+        self.assertLessEqual(renewals, 16)
 
     @a_property_of_the_pin_itself
     def test_released_models_are_built_more_often_for_sixteen_objects_than_for_two(self):

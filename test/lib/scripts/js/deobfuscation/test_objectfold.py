@@ -1495,6 +1495,46 @@ A_CALLED_VALUE_THAT_EVALUATES_CODE = {
 }
 
 
+#: Programs in which an object reads a key it does not hold after its own copy of a string made a
+#: call install that key on every object, mapped to what a host running them as classic scripts
+#: prints: `eval` read through a key off a receiver a plain call supplies, called before and after
+#: the function supplying it is declared, and the method that installs a descriptor.
+A_KEY_AN_OBJECT_READS_AFTER_ITS_OWN_COPY_INSTALLED_IT = {
+    'var A = {k: "eval", c: "Object.prototype.q = 1"};'
+    ' function G() { return this; }'
+    ' G()[A.k](A.c);'
+    ' console.log(A.q);': '1\n',
+    'var A = {k: "eval"};'
+    ' G()[A.k]("Object.prototype.q = 1");'
+    ' function G() { return this; }'
+    ' console.log(A.q);': '1\n',
+    'var A = {k: "defineProperty"};'
+    ' Object[A.k](Object.prototype, "q", {value: 1});'
+    ' console.log(A.q);': '1\n',
+}
+
+
+#: Programs in which a function value reads a name inside its own `with` and is called after a
+#: copied key created that name as a global, mapped to what a host running them as classic scripts
+#: prints: called from a function that does not bind the name, and from one whose parameter does.
+A_VALUE_READING_A_GLOBAL_A_COPIED_KEY_CREATES = {
+    'var g = 1;'
+    ' function main() {'
+    ' var A = {k: "zz", h: () => { with ({}) { return zz; } }};'
+    ' function r() { return A.h(); }'
+    ' globalThis[A.k] = 2;'
+    ' return r(); }'
+    ' console.log(main());': '2\n',
+    'var g = 1;'
+    ' function main() {'
+    ' var A = {k: "zz", h: () => { with ({}) { return zz; } }};'
+    ' function r(zz) { return A.h(); }'
+    ' globalThis[A.k] = 2;'
+    ' return r(); }'
+    ' console.log(main());': '2\n',
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscator):
 
@@ -1523,5 +1563,19 @@ class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscato
         rows = A_CALLED_VALUE_THAT_EVALUATES_CODE
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_an_object_reads_a_key_its_own_copy_installed(self):
+        rows = A_KEY_AN_OBJECT_READS_AFTER_ITS_OWN_COPY_INSTALLED_IT
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_value_reads_the_global_a_copied_key_created(self):
+        rows = A_VALUE_READING_A_GLOBAL_A_COPIED_KEY_CREATES
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
             each_program_still_prints(rows),
         )

@@ -1651,7 +1651,7 @@ def may_be_global_object_base(node: Node | None) -> bool:
 
     The readers that decide a *rewrite* keep the narrow question. `_is_reflective_member` does
     because a `this` reaches every method of every object in a file, and reporting a surface for one
-    freezes every removal in it; `_timer_callee_name` because it names a callee it will act on.
+    freezes every removal in it; `timer_callee_name` because it names a callee it will act on.
     """
     base = strip_parens(node) if node is not None else None
     if isinstance(base, JsThisExpression):
@@ -2087,7 +2087,7 @@ def element_positions(member: JsMemberExpression) -> range | None:
 def _is_a_named_global_object_base(node: Node | None) -> bool:
     """
     Whether *node* denotes the global object by one of the names written for it, which is
-    `is_global_object_base` without the positional reading of `this`. Only `_timer_callee_name`
+    `is_global_object_base` without the positional reading of `this`. Only `timer_callee_name`
     reads it, and its docstring says why. Asked of the one reading rather than spelled a second
     time, so that what counts as a named base is decided in one place.
     """
@@ -2149,7 +2149,7 @@ def is_direct_eval_call(node: Node) -> bool:
     return isinstance(callee, JsIdentifier) and callee.name == 'eval'
 
 
-def _timer_callee_name(callee: Node | None) -> str | None:
+def timer_callee_name(callee: Node | None) -> str | None:
     """
     The timer/`execScript` function *callee* names, or `None` when it is not one. A bare identifier
     names the timer directly (`setTimeout(...)`); a member access on a global-object alias
@@ -2179,9 +2179,9 @@ def _is_string_timer(call: JsCallExpression) -> bool:
     Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
     so it may evaluate a string of code. The callee may name the timer directly (`setTimeout(...)`) or
     through a global-object alias (`window.setTimeout(...)`), both of which reach the same evaluating
-    global (see `_timer_callee_name`).
+    global (see `timer_callee_name`).
     """
-    if _timer_callee_name(call.callee) is None:
+    if timer_callee_name(call.callee) is None:
         return False
     if not call.arguments:
         return False
