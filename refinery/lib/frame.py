@@ -1017,13 +1017,7 @@ class Framed:
             chunk._meta.inherit(meta)
             return chunk.truncate(scope)
 
-        try:
-            outputs = self.action(parent)
-            if self.squeeze:
-                outputs = self._merged(outputs)
-            yield from map(inherit, outputs)
-        finally:
-            parent.temp = None
+        yield from map(inherit, self._generate_bytes(parent))
 
     def _generate_bytes(self, data: Chunk):
         try:
