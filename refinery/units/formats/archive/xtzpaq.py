@@ -1401,19 +1401,21 @@ class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                         raise RuntimeError('bad frag size list')
                     # Save frag hashes and sizes. For output, save data too.
                     seg.seekset(fragsum)
-                    buffer = seg.getvalue()
+                    view = memoryview(seg.getvalue())
                     assert seg.remaining_bytes == n * 4 + 8
+                    start = 0
                     for i in range(n):
                         while len(frag) <= frag_id + i:
                             frag.append(B'')
                         if frag[frag_id + i]:
                             raise RuntimeError('duplicate frag ID')
                         f = seg.u32()
-                        h = hashlib.sha1(buffer[:f]).digest()
-                        frag[frag_id + i] = h + f.to_bytes(4, 'little') + buffer[:f]
-                        buffer = buffer[f:]
+                        fragment = view[start:start + f]
+                        start += f
+                        h = hashlib.sha1(fragment).digest()
+                        frag[frag_id + i] = h + f.to_bytes(4, 'little') + fragment
 
-                    assert len(buffer) == n * 4 + 8
+                    assert start == fragsum
                     assert seg.remaining_bytes == 8
 
                 # Test and save h block. Format is: bsize (sha1[20] size)...
