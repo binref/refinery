@@ -60,6 +60,15 @@ def _parse_descriptor(
     return retval, tuple(parse_type_list(args))
 
 
+class _NoColor:
+    """
+    Stands in for the foreground colors of `colorama` when the output is not colored: every
+    color is the empty string.
+    """
+    def __getattr__(self, _):
+        return ''
+
+
 class jvdasm(PathExtractorUnit):
     """
     Disassemble JVM bytecode from Java class files.
@@ -95,10 +104,7 @@ class jvdasm(PathExtractorUnit):
                 raise ImportError
             import colorama
         except ImportError:
-            class _FG():
-                def __getattr__(self, _):
-                    return ''
-            FG = _FG()
+            FG = _NoColor()
             RS = ''
         else:
             FG = colorama.Fore

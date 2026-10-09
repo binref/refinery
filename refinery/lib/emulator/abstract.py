@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from enum import Enum, IntFlag
 from functools import cached_property
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, overload
 
 from refinery.lib.executable import Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
@@ -335,6 +335,14 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         finally:
             self._disable_single_step()
 
+    @overload
+    def base_exe_to_emu(self, address: int) -> int:
+        ...
+
+    @overload
+    def base_exe_to_emu(self, address: None) -> None:
+        ...
+
     def base_exe_to_emu(self, address: int | None):
         """
         Rebase a virtual address from the base executable's address space to the one used by the
@@ -343,6 +351,14 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         if address is not None:
             address = address - self.exe.base + self.base
         return address
+
+    @overload
+    def base_emu_to_exe(self, address: int) -> int:
+        ...
+
+    @overload
+    def base_emu_to_exe(self, address: None) -> None:
+        ...
 
     def base_emu_to_exe(self, address: int | None):
         """

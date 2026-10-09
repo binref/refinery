@@ -87,6 +87,11 @@ class MSITableColumnInfo(NamedTuple):
 _NEGATED_MSI_SIGNATURE = B'\x2F\x30\xEE\x1F\x5E\x4E\xE5\x1E'
 
 
+class _ScriptItem(NamedTuple):
+    row_index: int
+    extension: str | None
+
+
 class MSIStringData:
     def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
@@ -212,15 +217,11 @@ class xtmsi(xtdoc, docs=(
         for name in table_names_given - table_names_known:
             self.log_warn(F'table name given but not known: {name}')
 
-        class ScriptItem(NamedTuple):
-            row_index: int
-            extension: str | None
-
         processed_table_data: dict[str, list[dict[str, str]]] = {}
         tbl_properties: dict[str, str] = {}
         tbl_files: dict[str, str] = {}
         tbl_components: dict[str, str] = {}
-        postprocessing: list[ScriptItem] = []
+        postprocessing: list[_ScriptItem] = []
 
         def format_string(string: str):
             # https://learn.microsoft.com/en-us/windows/win32/msi/formatted
@@ -304,7 +305,7 @@ class xtmsi(xtdoc, docs=(
                     t = einfo.get('Target')
                     c = {0x25: 'js', 0x26: 'vbs', 0x33: None}
                     if code in c and t and not t.is_integer:
-                        postprocessing.append(ScriptItem(r, c[code]))
+                        postprocessing.append(_ScriptItem(r, c[code]))
                 processed.append(entry)
             if processed:
                 processed_table_data[table_name] = processed

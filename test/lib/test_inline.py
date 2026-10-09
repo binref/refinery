@@ -1,6 +1,6 @@
 import itertools
 
-from refinery.lib.inline import iterspread
+from refinery.lib.inline import FunctionRefersToItself, iterspread
 
 from .. import TestBase
 
@@ -59,3 +59,9 @@ class TestIterSpread(TestBase):
         obj = cls()
         inlined = bytes(iterspread(obj.test, range(0x10), -0x55, mask=0xFF)(obj))
         self.assertEqual(inlined, bytes(b + 100 - 0x55 & 0xFF for b in range(0x10)))
+
+    def test_a_function_that_names_itself_is_not_inlined(self):
+        def test(a, b):
+            return a + b + len(test.__name__)
+        with self.assertRaises(FunctionRefersToItself):
+            iterspread(test, range(3), 10)

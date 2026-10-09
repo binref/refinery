@@ -37,23 +37,32 @@ def ForgivingParse(data: bytes, entities=None) -> ElementTree:
         raise ValueError(exception_to_string(PE)) from PE
 
 
+class _ForgivingEntityResolver(dict):
+    """
+    Resolves every unknown XML entity to a new unique identifier. When given a map, it records the
+    entity name of each identifier there.
+    """
+    def __init__(self, emap: dict | None = None):
+        super().__init__()
+        self._emap = emap
+
+    def __getitem__(self, key):
+        if key in self:
+            return dict.__getitem__(self, key)
+        uid = str(uuid.uuid4())
+        self[key] = uid
+        if (emap := self._emap) is not None:
+            emap[uid] = key
+        return uid
+
+
 class ForgivingXMLParser(et.XMLParser):
     """
     A custom XML parser that handles unknown XML entities gracefully.
     """
 
     def __init__(self, emap=None):
-        class ForgivingEntityResolver(dict):
-            def __getitem__(self, key):
-                if key in self:
-                    return dict.__getitem__(self, key)
-                uid = str(uuid.uuid4())
-                self[key] = uid
-                if emap is not None:
-                    emap[uid] = key
-                return uid
-
-        self.__entity = ForgivingEntityResolver()
+        self.__entity = _ForgivingEntityResolver(emap)
         _ParserCreate = expat.ParserCreate
 
         try:

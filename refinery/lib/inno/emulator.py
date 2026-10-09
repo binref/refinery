@@ -440,6 +440,13 @@ class ExceptionHandler:
     """
 
 
+class _CallState(NamedTuple):
+    fn: Function
+    ip: int
+    sp: int
+    eh: list[ExceptionHandler]
+
+
 class IFPSEmulatedFunction(NamedTuple):
     """
     Represents an emulated external symbol.
@@ -821,13 +828,7 @@ class IFPSEmulator:
                 raise RuntimeError('attempt to assign to an immediate')
             getvar(op).set(new)
 
-        class CallState(NamedTuple):
-            fn: Function
-            ip: int
-            sp: int
-            eh: list[ExceptionHandler]
-
-        callstack: list[CallState] = []
+        callstack: list[_CallState] = []
         exec_start = process_time()
         stack = self.stack
         _cfg_max_call_stack = self.config.max_call_stack
@@ -992,7 +993,7 @@ class IFPSEmulator:
                     elif opc == Op.Pop:
                         self.temp = stack.pop()
                     elif opc == Op.Call:
-                        callstack.append(CallState(function, ip, sp, exceptions))
+                        callstack.append(_CallState(function, ip, sp, exceptions))
                         function = insn.operands[0]
                         ip = 0
                         sp = len(stack) - 1
@@ -1041,7 +1042,7 @@ class IFPSEmulator:
                         if isinstance(call, int):
                             call = self.ifps.functions[call]
                         if isinstance(call, Function):
-                            callstack.append(CallState(function, ip, sp, exceptions))
+                            callstack.append(_CallState(function, ip, sp, exceptions))
                             function = call
                             ip = 0
                             sp = len(stack) - 1
@@ -2201,54 +2202,39 @@ class InnoSetupEmulator(IFPSEmulator):
         the script that the IFPS runtime would make during a setup install.
         """
 
-        class SetupDispatcher:
-
-            InitializeSetup: Callable
-            InitializeWizard: Callable
-            CurStepChanged: Callable
-            ShouldSkipPage: Callable
-            CurPageChanged: Callable
-            PrepareToInstall: Callable
-            CheckPassword: Callable
-            NextButtonClick: Callable
-            DeinitializeSetup: Callable
-
-            def __getattr__(_, name):
-                if pfn := self.symbols.get(name):
-                    def emulated(*a):
-                        return (yield from self.emulate_function(pfn, *a))
-                else:
-                    def emulated(*a):
-                        yield from ()
-                        return False
-                return emulated
-
-        Setup = SetupDispatcher()
-
-        yield from Setup.InitializeSetup()
-        yield from Setup.InitializeWizard()
-        yield from Setup.CurStepChanged(TSetupStep.ssPreInstall)
+        yield from self._event('InitializeSetup')
+        yield from self._event('InitializeWizard')
+        yield from self._event('CurStepChanged', TSetupStep.ssPreInstall)
 
         for page in PageID:
 
-            skip = yield from Setup.ShouldSkipPage(page)
+            skip = yield from self._event('ShouldSkipPage', page)
 
             if not skip:
-                yield from Setup.CurPageChanged(page)
+                yield from self._event('CurPageChanged', page)
                 if page == PageID.wpPreparing:
-                    yield from Setup.PrepareToInstall(False)
+                    yield from self._event('PrepareToInstall', False)
                 if page == PageID.wpPassword:
-                    yield from Setup.CheckPassword(password)
+                    yield from self._event('CheckPassword', password)
 
-            yield from Setup.NextButtonClick(page)
+            yield from self._event('NextButtonClick', page)
 
             if page == PageID.wpPreparing:
-                yield from Setup.CurStepChanged(TSetupStep.ssInstall)
+                yield from self._event('CurStepChanged', TSetupStep.ssInstall)
             if page == PageID.wpInfoAfter:
-                yield from Setup.CurStepChanged(TSetupStep.ssPostInstall)
+                yield from self._event('CurStepChanged', TSetupStep.ssPostInstall)
 
-        yield from Setup.CurStepChanged(TSetupStep.ssDone)
-        yield from Setup.DeinitializeSetup()
+        yield from self._event('CurStepChanged', TSetupStep.ssDone)
+        yield from self._event('DeinitializeSetup')
+
+    def _event(self, name: str, *args):
+        """
+        Emulates the function of the script that handles the given setup event. When the script
+        does not handle the event, the result is `False`.
+        """
+        if pfn := self.symbols.get(name):
+            return (yield from self.emulate_function(pfn, *args))
+        return False
 
     def unimplemented(self, function: Function):
         """

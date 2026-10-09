@@ -115,14 +115,13 @@ def py_json_dumps(
     This is the JSON dump method wrapper which is based on the standard library backend. It is
     exposed separately to allow testing.
     """
-    class enc(pyjson.JSONEncoder):
-        default = staticmethod(tojson or standard_conversions) # type:ignore
+    default = tojson or standard_conversions
     if checks:
         object = preprocess(object, keys=True)
     if pretty:
-        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=2)
+        out = pyjson.dumps(object, ensure_ascii=False, default=default, indent=2)
     else:
-        out = pyjson.dumps(object, ensure_ascii=False, cls=enc, indent=None, separators=(',', ':'))
+        out = pyjson.dumps(object, ensure_ascii=False, default=default, indent=None, separators=(',', ':'))
     return out.encode('utf8')
 
 

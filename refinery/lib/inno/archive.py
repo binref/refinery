@@ -2545,6 +2545,14 @@ class InnoParseResult(NamedTuple):
         return self.warnings == 0 and not self.failures
 
 
+class _Stored:
+    """
+    The decompressor of a stream that is stored without compression.
+    """
+    def decompress(self, data: buf) -> buf:
+        return data
+
+
 class InnoStreams(NamedTuple):
     TSetup: InnoStream
     TData: InnoStream
@@ -2926,10 +2934,7 @@ class InnoArchive:
         result = bytearray()
         it = iter(stream.blocks)
         if stream.compression == StreamCompressionMethod.Store:
-            class _dummy:
-                def decompress(self, b):
-                    return b
-            dec = _dummy()
+            dec = _Stored()
         elif stream.compression == StreamCompressionMethod.LZMA1:
             import lzma
             first = next(it).BlockData

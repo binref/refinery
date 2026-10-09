@@ -40,8 +40,16 @@ R = TypeVar('R')
 
 
 class Unused:
-    def __class_getitem__(cls, _):
-        return type('Unused', (), {})
+    def __class_getitem__(cls, key):
+        return _unused_type(key)
+
+
+@functools.cache
+def _unused_type(key) -> type:
+    """
+    The type that `Unused[key]` stands for; one type for each key.
+    """
+    return type('Unused', (), {})
 
 
 UInt32 = NewType('UInt32', int)

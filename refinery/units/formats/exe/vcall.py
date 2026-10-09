@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import functools
 import re
 import struct
 
 from argparse import ArgumentTypeError
 from dataclasses import dataclass
-from typing import TypeVar
 
 from refinery.lib.argformats import DelayedArgument, multibin, number
 from refinery.lib.emulator import CC, EmulationTimeout, Emulator, Hook
@@ -14,8 +14,6 @@ from refinery.lib.structures import StructReader
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk
 from refinery.units.formats.exe import Arch, EmulatingUnit, Engine
-
-T = TypeVar('T', bound=type[Emulator])
 
 
 @dataclass(frozen=True)
@@ -521,23 +519,33 @@ class Evaluator:
         return values[0] if len(values) == 1 else list(values)
 
 
-def _show_disassembly(base: T) -> T:
-    class VCallEmulator(base):
-        def disassemble(self, address: int):
-            try:
-                return self.disassemble_instruction(address)
-            except Exception:
-                return None
+class _DisassemblingEmulator(Emulator):
+    """
+    Logs each instruction that the emulator executes. The function `_show_disassembly` adds this
+    to an emulator backend.
+    """
+    def disassemble(self, address: int):
+        try:
+            return self.disassemble_instruction(address)
+        except Exception:
+            return None
 
-        def hook_code_execute(self, emu, address: int, size: int, state=None):
-            instruction = self.disassemble(address)
-            if instruction:
-                vcall.log_always(F'0x{address:08X} {instruction.mnemonic} {instruction.op_str}')
-            else:
-                self.halt()
-            return False
+    def hook_code_execute(self, emu, address: int, size: int, state=None):
+        instruction = self.disassemble(address)
+        if instruction:
+            vcall.log_always(F'0x{address:08X} {instruction.mnemonic} {instruction.op_str}')
+        else:
+            self.halt()
+        return False
 
-    return VCallEmulator # type:ignore
+
+@functools.cache
+def _show_disassembly(base: type[Emulator]) -> type[Emulator]:
+    """
+    The given emulator class, extended to log each instruction that it executes; one class for
+    each backend.
+    """
+    return type(F'Disassembling{base.__name__}', (_DisassemblingEmulator, base), {})
 
 
 class vcall(EmulatingUnit):

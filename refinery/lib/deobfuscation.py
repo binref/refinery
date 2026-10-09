@@ -41,6 +41,14 @@ _ALLOWED_NODE_TYPES = frozenset({
 })
 
 
+class _Abort(ExpressionParsingFailure):
+    """
+    Raised by `refinery.lib.deobfuscation.cautious_parse` when it refuses an expression.
+    """
+    def __init__(self, reason: str, definition: str):
+        super().__init__(F'{reason}: {definition}')
+
+
 def cautious_parse(
     definition: str,
     size_limit: int | None = None,
@@ -53,12 +61,8 @@ def cautious_parse(
     """
     definition = re.sub(R'\s+', '', definition)
 
-    class Abort(ExpressionParsingFailure):
-        def __init__(self, msg):
-            super().__init__(F'{msg}: {definition}')
-
     if size_limit and len(definition) > size_limit:
-        raise Abort(F'Size limit {size_limit} was exceeded while parsing')
+        raise _Abort(F'Size limit {size_limit} was exceeded while parsing', definition)
 
     if not allow_variables:
         test = definition
@@ -66,11 +70,11 @@ def cautious_parse(
             for symbol in environment:
                 test = re.sub(RF'\b{symbol}\b', '', test)
         if any(x not in '.^%|&~<>()-+/*0123456789xabcdefABCDEF' for x in test):
-            raise Abort('Unknown characters in expression')
+            raise _Abort('Unknown characters in expression', definition)
     try:
         expression = ast.parse(definition, mode='eval')
     except Exception:
-        raise Abort('Python AST parser failed')
+        raise _Abort('Python AST parser failed', definition)
 
     if walker is not None:
         expression = ast.fix_missing_locations(walker.visit(expression))
@@ -81,7 +85,7 @@ def cautious_parse(
         if type(next(nodes)) != ast.Expression:
             raise ValueError
     except (StopIteration, ValueError):
-        raise Abort('Not a Python expression')
+        raise _Abort('Not a Python expression', definition)
 
     nodes = list(nodes)
     types = {type(node) for node in nodes}

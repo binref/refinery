@@ -3,6 +3,7 @@ A selection of refinery-specific decorators.
 """
 from __future__ import annotations
 
+import ast
 import codecs
 import copy
 import itertools
@@ -67,6 +68,54 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
     return method_wrapper
 
 
+class _MaskingTransformer(ast.NodeTransformer):
+    """
+    Rewrites a function for `refinery.lib.decorators.masked`: the result of each arithmetic
+    operation is reduced with the given operation and mask, and the function gets a new name, which
+    is kept in the attribute `name`.
+    """
+    def __init__(self, op: type[ast.operator], mask: int):
+        self.op = op
+        self.mask = mask
+        self.name: str | None = None
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, (ast.USub, ast.Invert)):
+            return node
+        return ast.BinOp(node, self.op(), ast.Constant(self.mask))
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+            return node
+        target_load = copy.deepcopy(node.target)
+        target_load.ctx = ast.Load()
+        computation = ast.BinOp(left=target_load, op=node.op, right=node.value)
+        reduced = ast.BinOp(left=computation, op=self.op(), right=ast.Constant(self.mask))
+        return ast.Assign(targets=[node.target], value=reduced)
+
+    def visit_BinOp(self, node: ast.BinOp):
+        self.generic_visit(node)
+        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+            return node
+        return ast.BinOp(node, self.op(), ast.Constant(self.mask))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        self.generic_visit(node)
+        if self.name is None:
+            node.name = self.name = F'__wrapped_{node.name}'
+            for k in range(len(node.decorator_list)):
+                if not isinstance(decorator := node.decorator_list[k], ast.Call):
+                    continue
+                if not isinstance(decorator := decorator.func, ast.Name):
+                    continue
+                if decorator.id == masked.__name__:
+                    del node.decorator_list[:k + 1]
+                    break
+        return node
+
+
 def masked(mask: int, mod: bool = False):
     """
     Convert arithmetic operations that occur within the decorated function body in such a way that
@@ -74,7 +123,6 @@ def masked(mask: int, mod: bool = False):
     left shifts, and taking powers are augmented by introducing a binary AND. If the mod parameter
     is enabled, a modulo operation is introduced instead.
     """
-    import ast
     import inspect
 
     if mod:
@@ -87,46 +135,7 @@ def masked(mask: int, mod: bool = False):
         code = inspect.cleandoc(code)
         tree = ast.parse(code)
 
-        class Postprocessor(ast.NodeTransformer):
-            name = None
-
-            def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-                self.generic_visit(node)
-                if not isinstance(node.op, (ast.USub, ast.Invert)):
-                    return node
-                return ast.BinOp(node, op(), ast.Constant(mask))
-
-            def visit_AugAssign(self, node: ast.AugAssign) -> Any:
-                self.generic_visit(node)
-                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
-                    return node
-                target_load = copy.deepcopy(node.target)
-                target_load.ctx = ast.Load()
-                computation = ast.BinOp(left=target_load, op=node.op, right=node.value)
-                reduced = ast.BinOp(left=computation, op=op(), right=ast.Constant(mask))
-                return ast.Assign(targets=[node.target], value=reduced)
-
-            def visit_BinOp(self, node: ast.BinOp):
-                self.generic_visit(node)
-                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
-                    return node
-                return ast.BinOp(node, op(), ast.Constant(mask))
-
-            def visit_FunctionDef(self, node: ast.FunctionDef):
-                self.generic_visit(node)
-                if self.name is None:
-                    node.name = self.name = F'__wrapped_{node.name}'
-                    for k in range(len(node.decorator_list)):
-                        if not isinstance(decorator := node.decorator_list[k], ast.Call):
-                            continue
-                        if not isinstance(decorator := decorator.func, ast.Name):
-                            continue
-                        if decorator.id == masked.__name__:
-                            del node.decorator_list[:k + 1]
-                            break
-                return node
-
-        pp = Postprocessor()
+        pp = _MaskingTransformer(op, mask)
         fixed = ast.fix_missing_locations(pp.visit(tree))
         if (name := pp.name) is None:
             raise RuntimeError

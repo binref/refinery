@@ -25,7 +25,7 @@ from ast import (
     arg,
     comprehension,
 )
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, Callable, Generator, Iterable, TypeVar
 
 _R = TypeVar('_R')
 
@@ -60,6 +60,156 @@ class NoFunctionDefinitionFound(ValueError):
     When `refinery.lib.inline.iterspread` fails to find a function definition when parsing the
     source code that belongs to the input method, this error is raised.
     """
+
+
+class FunctionRefersToItself(ValueError):
+    """
+    Raised by `refinery.lib.inline.iterspread` if the body of the input method names the method:
+    The inlined function is a different function under the same name.
+    """
+
+
+def _as_arg(name: str):
+    return F'_arg_{name}'
+
+
+def _as_var(name: str):
+    return F'_var_{name}'
+
+
+def _as_tmp(name: str):
+    return F'_tmp_{name}'
+
+
+class _RenameVariables(NodeTransformer):
+    """
+    Renames every variable of the inlined function, except for the given reserved names.
+    """
+    def __init__(self, reserved_names: set[str]):
+        self.reserved_names = reserved_names
+
+    def visit_Name(self, node: Name) -> Any:
+        if node.id in self.reserved_names:
+            return node
+        node.id = _as_var(node.id)
+        return node
+
+
+class _SpreadLoop(NodeTransformer):
+    """
+    Turns the body of the inlined function into a loop over its primary iterator. Constant inline
+    arguments are placed in the given context, the other ones are read once in each step of the
+    loop.
+    """
+    def __init__(
+        self,
+        function_head: FunctionDef,
+        is_method: bool,
+        inline_args: tuple,
+        iterator: Iterable,
+        context: dict[str, Any],
+    ):
+        self.function_head = function_head
+        self.is_method = is_method
+        self.inline_args = inline_args
+        self.iterator = iterator
+        self.context = context
+
+    def visit_FunctionDef(self, node: FunctionDef):
+        context = self.context
+        inline_args = self.inline_args
+        if node is not self.function_head:
+            return node
+        function_body = []
+        function_args = [arg.arg for arg in node.args.args]
+        inlined_start = 1
+
+        if self.is_method:
+            inlined_start += 1
+
+        iterator_name = function_args[inlined_start - 1]
+        function_args[:inlined_start] = []
+        arity = len(function_args)
+
+        try:
+            vararg = _as_arg(node.args.vararg.arg)
+        except Exception:
+            if arity != len(inline_args):
+                raise ArgumentCountMismatch
+        else:
+            context[vararg] = inline_args[arity:]
+
+        for name, value in zip(function_args, inline_args):
+            targets = [Name(id=_as_var(name), ctx=Store())]
+            if isinstance(value, PassAsConstant):
+                context[_as_var(name)] = value.value
+                continue
+            if isinstance(value, (int, str, bytes)):
+                context[_as_var(name)] = value
+                continue
+            context[_as_arg(name)] = value
+            function_body.append(Assign(
+                targets=targets,
+                value=Call(
+                    func=Name(id='next', ctx=Load()),
+                    args=[Name(id=_as_arg(name), ctx=Load())],
+                    keywords=[]
+                )))
+
+        if node.args.vararg:
+            name = node.args.vararg.arg
+            function_body.append(Assign(
+                targets=[
+                    Name(id=_as_var(name), ctx=Store())
+                ],
+                value=Call(
+                    func=Name(id='tuple', ctx=Load()),
+                    args=[GeneratorExp(
+                        elt=Call(
+                            func=Name(id='next', ctx=Load()),
+                            args=[Name(id=_as_tmp(name), ctx=Load())],
+                            keywords=[]
+                        ),
+                        generators=[comprehension(
+                            is_async=0,
+                            target=Name(id=_as_tmp(name), ctx=Store()),
+                            iter=Name(id=_as_arg(name), ctx=Load()),
+                            ifs=[]
+                        )]
+                    )],
+                    keywords=[]
+                )
+            ))
+
+        function_body.extend(node.body)
+        context[_as_arg(iterator_name)] = self.iterator
+        function_body = [For(
+            target=Name(id=_as_var(iterator_name), ctx=Store()),
+            iter=Name(id=_as_arg(iterator_name), ctx=Load()),
+            body=function_body,
+            orelse=[]
+        )]
+
+        node.body = function_body
+        node.args.args = [arg(arg=_as_var('self'))]
+        node.args.vararg = None
+        node.decorator_list = []
+        return node
+
+
+class _YieldMasked(NodeTransformer):
+    """
+    Turns each return statement of the inlined function into a yield, and reduces the value with the
+    given mask.
+    """
+    def __init__(self, mask: int | None):
+        self.mask = mask
+
+    def visit_Return(self, node: Return) -> Any:
+        value = node.value
+        if (mask := self.mask) is not None:
+            value = BinOp(left=value, op=BitAnd(), right=Constant(value=mask))
+        return Expr(value=Yield(value=value))
 
 
 def iterspread(
@@ -100,7 +250,7 @@ def iterspread(
 
     code = ast.parse(getsource(method))
     closure_vars = inspect.getclosurevars(method)
-    context = closure_vars.nonlocals
+    context = dict(closure_vars.nonlocals)
     reserved_names = set(context)
     reserved_names.update(closure_vars.globals)
     reserved_names.update(closure_vars.builtins)
@@ -110,123 +260,19 @@ def iterspread(
     except StopIteration:
         raise NoFunctionDefinitionFound
 
-    function_name = None
+    if any(
+        isinstance(node, Name) and node.id == function_head.name
+        for statement in function_head.body for node in ast.walk(statement)
+    ):
+        raise FunctionRefersToItself(F'The function {function_head.name} refers to itself and cannot be inlined.')
 
-    def as_arg(name: str):
-        return F'_arg_{name}'
-
-    def as_var(name: str):
-        return F'_var_{name}'
-
-    def as_tmp(name: str):
-        return F'_tmp_{name}'
-
-    def apply_node_transformation(cls: type[NodeTransformer]):
-        nonlocal code
-        code = ast.fix_missing_locations(cls().visit(code))
-
-    def constant(value):
-        return Constant(value=value)
-
-    @apply_node_transformation
-    class _(NodeTransformer):
-        def visit_Name(self, node: Name) -> Any:
-            if node.id in reserved_names:
-                return node
-            node.id = as_var(node.id)
-            return node
-
-    @apply_node_transformation
-    class _(NodeTransformer):
-        def visit_FunctionDef(self, node: FunctionDef):
-            nonlocal function_name
-            if node is not function_head:
-                return node
-            function_body = []
-            function_name = node.name
-            function_args = [arg.arg for arg in node.args.args]
-            inlined_start = 1
-
-            if inspect.ismethod(method):
-                inlined_start += 1
-
-            iterator_name = function_args[inlined_start - 1]
-            function_args[:inlined_start] = []
-            arity = len(function_args)
-
-            try:
-                vararg = as_arg(node.args.vararg.arg)
-            except Exception:
-                if arity != len(inline_args):
-                    raise ArgumentCountMismatch
-            else:
-                context[vararg] = inline_args[arity:]
-
-            for name, value in zip(function_args, inline_args):
-                targets = [Name(id=as_var(name), ctx=Store())]
-                if isinstance(value, PassAsConstant):
-                    context[as_var(name)] = value.value
-                    continue
-                if isinstance(value, (int, str, bytes)):
-                    context[as_var(name)] = value
-                    continue
-                context[as_arg(name)] = value
-                function_body.append(Assign(
-                    targets=targets,
-                    value=Call(
-                        func=Name(id='next', ctx=Load()),
-                        args=[Name(id=as_arg(name), ctx=Load())],
-                        keywords=[]
-                    )))
-
-            if node.args.vararg:
-                name = node.args.vararg.arg
-                function_body.append(Assign(
-                    targets=[
-                        Name(id=as_var(name), ctx=Store())
-                    ],
-                    value=Call(
-                        func=Name(id='tuple', ctx=Load()),
-                        args=[GeneratorExp(
-                            elt=Call(
-                                func=Name(id='next', ctx=Load()),
-                                args=[Name(id=as_tmp(name), ctx=Load())],
-                                keywords=[]
-                            ),
-                            generators=[comprehension(
-                                is_async=0,
-                                target=Name(id=as_tmp(name), ctx=Store()),
-                                iter=Name(id=as_arg(name), ctx=Load()),
-                                ifs=[]
-                            )]
-                        )],
-                        keywords=[]
-                    )
-                ))
-
-            function_body.extend(node.body)
-            context[as_arg(iterator_name)] = iterator
-            function_body = [For(
-                target=Name(id=as_var(iterator_name), ctx=Store()),
-                iter=Name(id=as_arg(iterator_name), ctx=Load()),
-                body=function_body,
-                orelse=[]
-            )]
-
-            node.body = function_body
-            node.args.args = [arg(arg=as_var('self'))]
-            node.args.vararg = None
-            node.decorator_list = []
-            return node
-
-    @apply_node_transformation
-    class _(NodeTransformer):
-        def visit_Return(self, node: Return) -> Any:
-            value = node.value
-            if mask is not None:
-                value = BinOp(left=value, op=BitAnd(), right=constant(mask))
-            return Expr(value=Yield(value=value))
+    for transformer in (
+        _RenameVariables(reserved_names),
+        _SpreadLoop(function_head, inspect.ismethod(method), inline_args, iterator, context),
+        _YieldMasked(mask),
+    ):
+        code = ast.fix_missing_locations(transformer.visit(code))
 
     bin = compile(code, '<inlined>', 'exec', optimize=2)
     exec(bin, context, context)
-    return context[function_name]
+    return context.pop(function_head.name)

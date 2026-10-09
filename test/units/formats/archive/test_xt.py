@@ -41,3 +41,10 @@ class TestAutoExtractor(TestUnitBase):
         self.assertTrue(xtiss.handles(data))
         paths = {chunk['path'] for chunk in data | self.load() | []}
         self.assertIn('flake.exe', paths)
+
+    def test_extraction_after_a_failing_unit_leaves_nothing_to_the_collector(self):
+        data = bytearray(self._nuitka_onefile_executable())
+        stub = data.find(B'This program cannot be run in DOS mode')
+        data[stub:stub + 14] = B'InstallShield\0'
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])

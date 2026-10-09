@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import pathlib
 import typing
 
@@ -18,6 +19,37 @@ if typing.TYPE_CHECKING:
     from io import TextIOBase
 
     from pygments.token import _TokenType as TokenType
+
+
+class _ColoramaFormatting:
+    """
+    The behavior of a pygments formatter that writes each token in the color that a map from token
+    types to colorama codes assigns to it. The function `_colorama_formatter` adds it to the
+    formatter class of pygments.
+    """
+    def __init__(self, colors: dict, **options):
+        super().__init__(**options)
+        self.colors = colors
+
+    def format(self, tokensource: list[tuple[TokenType, str]], outfile: TextIOBase):
+        colors = self.colors
+        for tt, value in tokensource:
+            cc = None
+            while tt and cc is None:
+                cc = colors.get(tt)
+                tt = tt.parent
+            outfile.write(cc or colorama.Fore.WHITE)
+            outfile.write(value)
+            outfile.write(colorama.Style.RESET_ALL)
+
+
+@functools.cache
+def _colorama_formatter(base: type) -> type:
+    """
+    The colorama formatter on the given formatter class of pygments. Pygments is imported only when
+    it is needed, so the class is built then, once.
+    """
+    return type('ColoramaFormatter', (_ColoramaFormatting, base), {})
 
 
 class hl(Unit):
@@ -169,18 +201,7 @@ class hl(Unit):
                 t.Error            : R + ST.BRIGHT,
             }
 
-            class ColoramaFormatter(lib.formatter.Formatter):
-                def format(self, tokensource: list[tuple[TokenType, str]], outfile: TextIOBase):
-                    for tt, value in tokensource:
-                        cc = None
-                        while tt and cc is None:
-                            cc = ANSI_MAP.get(tt)
-                            tt = tt.parent
-                        outfile.write(cc or FG.WHITE)
-                        outfile.write(value)
-                        outfile.write(ST.RESET_ALL)
-
-            tf = ColoramaFormatter()
+            tf = _colorama_formatter(lib.formatter.Formatter)(ANSI_MAP)
 
         out = lib.highlight(data, lexer, tf)
         out = F'{out}{colorama.Style.RESET_ALL}'

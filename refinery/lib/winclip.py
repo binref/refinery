@@ -65,12 +65,11 @@ if os.name == 'nt':
     class FieldsFromTypeHints(type(ctypes.Structure)):
 
         def __new__(cls, name, bases, namespace):
+            from types import SimpleNamespace
             from typing import get_type_hints
 
-            class AnnotationDummy:
-                __annotations__ = namespace.get('__annotations__', {})
-
-            annotations = get_type_hints(AnnotationDummy)
+            fields = SimpleNamespace(__annotations__=namespace.get('__annotations__', {}))
+            annotations = get_type_hints(fields, globalns=globals())
             namespace['_fields_'] = list(annotations.items())
             namespace['_pack_'] = 1
 

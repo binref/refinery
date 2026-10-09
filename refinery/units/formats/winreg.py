@@ -28,6 +28,17 @@ class WinRegFileParser(ConfigParser):
         return optionstr
 
 
+class _Missing:
+    """
+    Names a registry value type whose exported data cannot be decoded.
+    """
+    def __init__(self, name: str):
+        self.name = name
+
+    def __str__(self):
+        return self.name
+
+
 class winreg(PathExtractorUnit):
     """
     Extract values from a Windows registry hive or from a registry export (.reg file).
@@ -87,19 +98,12 @@ class winreg(PathExtractorUnit):
             value = int.from_bytes(REG_BINARY(data), 'little')
             return F'0x{value:X}'.encode(self.codec)
 
-        class Missing:
-            def __init__(self, name: str):
-                self.name = name
-
-            def __str__(self):
-                return self.name
-
         REG_NONE = REG_EXPAND_SZ
-        REG_DWORD_BIG_ENDIAN = Missing('REG_DWORD_BIG_ENDIAN')
-        REG_LINK = Missing('REG_LINK')
-        REG_RESOURCE_LIST = Missing('REG_RESOURCE_LIST')
-        REG_FULL_RESOURCE_DESCRIPTOR = Missing('REG_FULL_RESOURCE_DESCRIPTOR')
-        REG_RESOURCE_REQUIREMENTS_LIST = Missing('REG_RESOURCE_REQUIREMENTS_LIST')
+        REG_DWORD_BIG_ENDIAN = _Missing('REG_DWORD_BIG_ENDIAN')
+        REG_LINK = _Missing('REG_LINK')
+        REG_RESOURCE_LIST = _Missing('REG_RESOURCE_LIST')
+        REG_FULL_RESOURCE_DESCRIPTOR = _Missing('REG_FULL_RESOURCE_DESCRIPTOR')
+        REG_RESOURCE_REQUIREMENTS_LIST = _Missing('REG_RESOURCE_REQUIREMENTS_LIST')
 
         prefix, _, encoded = data.partition(':')
 
@@ -124,7 +128,7 @@ class winreg(PathExtractorUnit):
             decoder = REG_SZ
             encoded = data
 
-        if isinstance(decoder, Missing):
+        if isinstance(decoder, _Missing):
             self.log_warn(F'Found registry type {decoder!s}; no decoder implemented.')
             return
         self.log_debug(F'decoding as {decoder.__name__}: {encoded}')

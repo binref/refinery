@@ -280,6 +280,45 @@ class Entry:
     """
 
 
+class _HelpFormatting(dict):
+    """
+    The fields that the help text of a `refinery.units.Arg` can refer to: its choices, its default
+    value and the name of its value.
+    """
+    def __init__(self, arg: Arg):
+        super().__init__()
+        self.arg = arg
+
+    def _pretty(self, default: bytes | int | str | slice):
+        if isinstance(default, (list, tuple, set)):
+            if not default:
+                return 'empty'
+            sentinel = next(iter(default))
+            if len(default) == 1:
+                return self._pretty(sentinel)
+            elif isinstance(sentinel, str):
+                return '"{}"'.format(' '.join((self._pretty(x) for x in default)))
+        if isinstance(default, slice):
+            parts = [default.start or '', default.stop or '', default.step or '']
+            default = ':'.join(str(x) for x in parts if x is not None)
+        if isinstance(default, int):
+            return default
+        if isinstance(default, str) or not isbuffer(default):
+            return default
+        default = bytes(default)
+        if default.isalnum():
+            return default.decode('latin-1')
+        return F'H:{default.hex()}'
+
+    def __missing__(self, key):
+        if key == 'choices':
+            return ', '.join(self.arg.kwargs['choices'])
+        if key == 'default':
+            return self._pretty(self.arg.kwargs['default'])
+        if key == 'varname':
+            return self.arg.kwargs.get('metavar', self.arg.destination)
+
+
 class Argument:
     """
     This class implements an abstract argument to a Python function, including positional
@@ -381,41 +420,9 @@ class Arg(Argument):
         Therefore, it is necessary to format the help text after all information has been
         compiled.
         """
-        class formatting(dict):
-            arg = self
-
-            def __pretty(self, default: bytes | int | str | slice):
-                if isinstance(default, (list, tuple, set)):
-                    if not default:
-                        return 'empty'
-                    sentinel = next(iter(default))
-                    if len(default) == 1:
-                        return self.__pretty(sentinel)
-                    elif isinstance(sentinel, str):
-                        return '"{}"'.format(' '.join((self.__pretty(x) for x in default)))
-                if isinstance(default, slice):
-                    parts = [default.start or '', default.stop or '', default.step or '']
-                    default = ':'.join(str(x) for x in parts if x is not None)
-                if isinstance(default, int):
-                    return default
-                if isinstance(default, str) or not isbuffer(default):
-                    return default
-                default = bytes(default)
-                if default.isalnum():
-                    return default.decode('latin-1')
-                return F'H:{default.hex()}'
-
-            def __missing__(self, key):
-                if key == 'choices':
-                    return ', '.join(self.arg.kwargs['choices'])
-                if key == 'default':
-                    return self.__pretty(self.arg.kwargs['default'])
-                if key == 'varname':
-                    return self.arg.kwargs.get('metavar', self.arg.destination)
-
         try:
             help_string: str = self.kwargs['help']
-            self.kwargs.update(help=help_string.format_map(formatting()))
+            self.kwargs.update(help=help_string.format_map(_HelpFormatting(self)))
         except Exception:
             pass
 

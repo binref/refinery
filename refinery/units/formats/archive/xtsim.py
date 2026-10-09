@@ -33,13 +33,6 @@ class SIMOffsets(NamedTuple):
         return SIMOffsets(a, s, n, r, c, p1, p2, p3, p4)
 
 
-def tojson(cls):
-    class mix(cls):
-        def json(self: NamedTuple):
-            return dict(zip(self._fields, self))
-    return mix
-
-
 _SIMNAME = b'Smart Install Maker v.'
 _SIGBYTE = 0xF1
 

@@ -535,36 +535,49 @@ def a3x_number_representation(value: float | int) -> str:
         return RF'{value!s}'
 
 
-def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]]:
-    class _decompiler(dict):
-        def __missing__(self, key):
-            if key == 's':
-                string = reader.read_length_prefixed_string()
-                return _PRETTY.get(string.lower(), string)
-            elif key == 'r':
-                string = reader.read_length_prefixed_string()
-                return '"{}"'.format(string.replace('"', '""'))
-            elif key == 'k':
-                return A3X_KEYWORDS[reader.u32()]
-            elif key == 'a':
-                return A3X_APICALLS[reader.u32()]
-            elif key == 'i':
-                number = reader.i32()
-            elif key == 'q':
-                number = reader.i64()
-            elif key == 'd':
-                number = reader.f64()
-            else:
-                raise KeyError(key)
-            if number < 0 and tokens and tokens[~0] == '+':
-                number = -number
-                tokens[~0] = '-'
-            return a3x_number_representation(number)
+class _Operands(dict):
+    """
+    Formats the operands of an AutoIt bytecode instruction: each format field reads the next
+    operand of the kind that the field names from the reader. A negative number that follows a
+    plus sign turns the sign into a minus.
+    """
+    def __init__(self, reader: A3xReader, tokens: list[str]):
+        super().__init__()
+        self.reader = reader
+        self.tokens = tokens
 
-    decompiler = _decompiler()
+    def __missing__(self, key):
+        reader = self.reader
+        tokens = self.tokens
+        if key == 's':
+            string = reader.read_length_prefixed_string()
+            return _PRETTY.get(string.lower(), string)
+        elif key == 'r':
+            string = reader.read_length_prefixed_string()
+            return '"{}"'.format(string.replace('"', '""'))
+        elif key == 'k':
+            return A3X_KEYWORDS[reader.u32()]
+        elif key == 'a':
+            return A3X_APICALLS[reader.u32()]
+        elif key == 'i':
+            number = reader.i32()
+        elif key == 'q':
+            number = reader.i64()
+        elif key == 'd':
+            number = reader.f64()
+        else:
+            raise KeyError(key)
+        if number < 0 and tokens and tokens[~0] == '+':
+            number = -number
+            tokens[~0] = '-'
+        return a3x_number_representation(number)
+
+
+def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]]:
     reader = A3xReader(memoryview(bytecode))
     num_lines = reader.u32()
     tokens: list[str] = []
+    decompiler = _Operands(reader, tokens)
     expected_terminators: list[str] = []
     line = 0
 

@@ -51,6 +51,11 @@ class TestALU(TestUnitBase):
         unit = self.load('B@S', seed=14120, prologue='U(I(S<<9)/3)', precision=4)
         self.assertEqual(data | unit | bytearray, goal)
 
+    def test_the_inlined_operation_leaves_nothing_to_the_collector(self):
+        data = self.generate_random_buffer(0x100000)
+        unit = self.load('B+1')
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)
+
 
 class TestALUAgainstOtherUnits(TestUnitBase):
 

@@ -20,6 +20,16 @@ from refinery.lib.structures import MemoryFile, MemoryFileMethods
 from refinery.lib.types import buf
 
 
+class _MappedView(bytearray, MemoryFileMethods[bytearray, bytes]):
+    """
+    A copy of a region of a virtual file that works both as a buffer and as a file, like the result
+    of `mmap.mmap`.
+    """
+    def __init__(self, view: memoryview, node: int):
+        bytearray.__init__(self, view)
+        MemoryFileMethods.__init__(self, data=self, output=bytes, fileno=node)
+
+
 class VirtualFile:
     """
     Represents a file in the virtual file system. It is linked to a `refinery.lib.vfs.VirtualFileSystem`
@@ -54,17 +64,9 @@ class VirtualFile:
         if (data := self.data) is None:
             raise ValueError('Attempt to map a virtual file with no associated data.')
         view = memoryview(data)
-        node = self.node
         if length:
             view = view[offset:offset + length]
-
-        class _MappedView(bytearray, MemoryFileMethods[bytearray, bytes]):
-            def __init__(self):
-                MemoryFileMethods.__init__(self, data=self, output=bytes, fileno=node)
-
-        mapped = _MappedView()
-        mapped[:] = view
-        return mapped
+        return _MappedView(view, self.node)
 
     def open(self, mode: str) -> MemoryFile[bytearray, bytes]:
         """

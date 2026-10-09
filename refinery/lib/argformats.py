@@ -108,12 +108,13 @@ import re
 from abc import ABC, abstractmethod
 from argparse import ArgumentTypeError
 from contextlib import suppress
-from functools import reduce, update_wrapper
+from functools import cache, reduce, update_wrapper
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    ClassVar,
     Iterable,
     Mapping,
     MutableMapping,
@@ -163,6 +164,44 @@ class LazyEvaluation:
     """
 
 
+class _ExpressionPostprocessor(ast.NodeTransformer):
+    """
+    Rewrites an expression for `refinery.lib.argformats.PythonExpression`: string constants become
+    bytes, the matrix product becomes exclusive or, and the result of each arithmetic operation is
+    reduced by the given modulus or mask.
+    """
+    def __init__(self, modulus: int | None, mask: int):
+        self.modulus = modulus
+        self.mask = mask
+
+    def _reduced(self, node: ast.expr) -> ast.expr:
+        if (modulus := self.modulus) is not None:
+            return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+        if (mask := self.mask) > 0:
+            return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+        return node
+
+    def visit_Constant(self, node: ast.Constant):
+        if not isinstance(node.value, str):
+            return node
+        return ast.Constant(value=node.value.encode('utf8'))
+
+    def visit_MatMult(self, node: ast.MatMult) -> Any:
+        return ast.BitXor()
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+            return node
+        return self._reduced(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
+            return node
+        return self._reduced(node)
+
+
 class PythonExpression:
     """
     Implements a parser for any Python expression with a prescribed set of variable names permitted
@@ -185,38 +224,7 @@ class PythonExpression:
         if mask > 0 and modulus is not None:
             raise ValueError('Cannot specify both modulus and mask.')
 
-        class Postprocessor(ast.NodeTransformer):
-            def visit_Constant(self, node: ast.Constant):
-                if not isinstance(node.value, str):
-                    return node
-                return ast.Constant(value=node.value.encode('utf8'))
-
-            def visit_MatMult(self, node: ast.MatMult) -> Any:
-                return ast.BitXor()
-
-            def visit_BinOp(self, node: ast.BinOp) -> Any:
-                self.generic_visit(node)
-                if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
-                    return node
-                if modulus is not None:
-                    return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
-                elif mask > 0:
-                    return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
-                else:
-                    return node
-
-            def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-                self.generic_visit(node)
-                if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
-                    return node
-                if modulus is not None:
-                    return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
-                elif mask > 0:
-                    return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
-                else:
-                    return node
-
-        expression = ast.fix_missing_locations(Postprocessor().visit(expression))
+        expression = ast.fix_missing_locations(_ExpressionPostprocessor(modulus, mask).visit(expression))
         nodes = ast.walk(expression)
 
         try:
@@ -1773,42 +1781,47 @@ class Option(ABC):
         return self.mode
 
 
+class _FactoryOption(Option):
+    """
+    The base of the option types that `refinery.lib.argformats.OptionFactory` makes: each type
+    accepts the names in its class attribute `options` and takes the value of the given name.
+    """
+    options: ClassVar[Mapping[str, Any]]
+    ignorecase: ClassVar[bool]
+
+    def __init__(self, name: str):
+        options = self.options
+        if self.ignorecase and name not in options:
+            needle = name.upper()
+            for key in options:
+                if needle == key.upper():
+                    name = key
+                    break
+        if name not in options:
+            raise ValueError('The option {} is not one of these: {}'.format(name, list(options)))
+        self.mode = options[name]
+        self.name = name
+
+
 def OptionFactory(options: Mapping[str, Any], ignorecase: bool = False):
     """
     The factory produces an argument parser type that accepts the keys of `options`
     as possible values and causes the parsed argument to contain the corresponding
     value from the `options` dictionary.
     """
-    try:
-        cache = getattr(OptionFactory, 'Cache')
-    except AttributeError:
-        cache = {}
-        setattr(OptionFactory, 'Cache', cache)
+    return _option_type(tuple(options.items()), ignorecase)
 
-    option_description = ','.join(sorted(options))
-    option_identifier = hash((tuple(sorted(options.items())), ignorecase))
 
-    try:
-        return cache[option_identifier]
-    except KeyError:
-        pass
-
-    class TheOption(Option):
-        def __init__(self, name: str):
-            if ignorecase and name not in options:
-                needle = name.upper()
-                for key in options:
-                    if needle == key.upper():
-                        name = key
-                        break
-            if name not in options:
-                raise ValueError('The option {} is not one of these: {}'.format(name, list(options)))
-            self.mode = options[name]
-            self.name = name
-
-    TheOption.__qualname__ = F'OptionFactory.Option[{option_description}]'
-    cache[option_identifier] = TheOption
-    return TheOption
+@cache
+def _option_type(options: tuple[tuple[str, Any], ...], ignorecase: bool) -> type[_FactoryOption]:
+    """
+    The option type of `refinery.lib.argformats.OptionFactory` for the given names and values; one
+    type for each set of options.
+    """
+    description = ','.join(sorted(name for name, _ in options))
+    option_type = type('TheOption', (_FactoryOption,), dict(options=dict(options), ignorecase=ignorecase))
+    option_type.__qualname__ = F'OptionFactory.Option[{description}]'
+    return option_type
 
 
 def extract_options(symbols, prefix: str, *exceptions: str):

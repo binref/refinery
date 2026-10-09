@@ -748,6 +748,75 @@ class TestCycleDiscipline(TestBase):
         for child in table.get_children():
             yield from cls._closure_cycles(child, lambdas)
 
+    @staticmethod
+    def _is_cached(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        for decorator in function.decorator_list:
+            name = TestCacheDiscipline._name(decorator)
+            if name == 'cache':
+                return True
+            if name != 'lru_cache' or not isinstance(decorator, ast.Call):
+                continue
+            sizes = [*decorator.args[:1], *(k.value for k in decorator.keywords if k.arg == 'maxsize')]
+            if any(isinstance(size, ast.Constant) and size.value is None for size in sizes):
+                return True
+        return False
+
+    @staticmethod
+    def _builds_a_class(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == 'type'
+            and len(node.args) == 3
+        )
+
+    @classmethod
+    def _builds_once(
+        cls,
+        function: ast.FunctionDef | ast.AsyncFunctionDef,
+        owner: ast.ClassDef | None,
+        decorators: set[str],
+    ) -> bool:
+        """
+        Whether the function builds a class only once for each argument (a cached function) or once
+        for each class definition (a class decorator of its module, or the `__new__` of a metaclass).
+        """
+        if cls._is_cached(function) or function.name in decorators:
+            return True
+        return (
+            function.name == '__new__'
+            and owner is not None
+            and any(isinstance(base, ast.Name) and base.id == 'type' for base in owner.bases)
+        )
+
+    @classmethod
+    def _classes_in_functions(cls, tree: ast.Module):
+        decorators = {
+            decorator.id
+            for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+            for decorator in node.decorator_list if isinstance(decorator, ast.Name)
+        }
+        yield from cls._classes_built_in(tree, None, None, decorators)
+
+    @classmethod
+    def _classes_built_in(
+        cls,
+        node: ast.AST,
+        function: ast.FunctionDef | ast.AsyncFunctionDef | None,
+        owner: ast.ClassDef | None,
+        decorators: set[str],
+    ):
+        for child in ast.iter_child_nodes(node):
+            if function is not None:
+                if isinstance(child, ast.ClassDef):
+                    yield child.lineno
+                elif cls._builds_a_class(child) and not cls._builds_once(function, owner, decorators):
+                    yield child.lineno
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield from cls._classes_built_in(child, child, node if isinstance(node, ast.ClassDef) else None, decorators)
+            else:
+                yield from cls._classes_built_in(child, function, owner, decorators)
+
     @classmethod
     def _carries(cls, node: ast.AST | None, name: str | None) -> bool:
         if isinstance(node, ast.Name):
@@ -847,6 +916,7 @@ class TestCycleDiscipline(TestBase):
     def _all_offenders(cls) -> dict[str, list[str]]:
         offenders: dict[str, set[str]] = {
             'closure cycle': set(),
+            'class in function': set(),
             'kept exception': set(),
             'raised parameter': set(),
             'raised attribute': set(),
@@ -854,6 +924,7 @@ class TestCycleDiscipline(TestBase):
         for path, tree, table in cls._checked_sources():
             found = {
                 'closure cycle': cls._closure_cycles(table, cls._lambda_bindings(tree)),
+                'class in function': cls._classes_in_functions(tree),
                 'kept exception': (line for f in cls._functions(tree) for line in cls._kept_exceptions(f)),
                 'raised parameter': (line for f in cls._functions(tree) for line in cls._raised_parameters(f)),
                 'raised attribute': cls._raised_attributes(tree),
@@ -868,6 +939,9 @@ class TestCycleDiscipline(TestBase):
 
     def test_no_function_or_class_defined_in_a_function_refers_to_itself(self):
         self.assertListEqual(self._offenders('closure cycle'), [])
+
+    def test_no_class_is_built_in_a_function_except_by_a_cached_call_to_type(self):
+        self.assertListEqual(self._offenders('class in function'), [])
 
     def test_no_handler_keeps_its_exception(self):
         self.assertListEqual(self._offenders('kept exception'), [])

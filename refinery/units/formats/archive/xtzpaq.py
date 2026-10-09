@@ -1218,6 +1218,33 @@ class Decompressor:
         return checksum
 
 
+def _mkdate(date) -> datetime:
+    date = int(date)
+    year = date // 1000000 // 10000
+    month = date // 100000000 % 100
+    day = date // 1000000 % 100
+    hour = date // 10000 % 100
+    minute = date // 100 % 100
+    second = date % 100
+    return datetime(year, month, day, hour, minute, second, 0)
+
+
+@dataclass
+class _JournalEntry:
+    """
+    The date, attributes, name, and fragments of a file in a journaling ZPAQ archive.
+    """
+    date: int = 0
+    attr: int = 0
+    name: str = ''
+    frag: list[int] = field(default_factory=list)
+
+    @property
+    def dt(self) -> datetime | None:
+        if self.date > 0:
+            return _mkdate(self.date)
+
+
 class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from a ZPAQ archive. A journaling archiver with deduplication and very high
@@ -1251,35 +1278,13 @@ class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return data[:len(cls._MAGIC)] == cls._MAGIC
 
     def unpack(self, data: bytearray):
-        def mkdate(date) -> datetime:
-            date = int(date)
-            year = date // 1000000 // 10000
-            month = date // 100000000 % 100
-            day = date // 1000000 % 100
-            hour = date // 10000 % 100
-            minute = date // 100 % 100
-            second = date % 100
-            return datetime(year, month, day, hour, minute, second, 0)
-
-        @dataclass
-        class DT:
-            date: int = 0
-            attr: int = 0
-            name: str = ""
-            frag: list[int] = field(default_factory=list)
-
-            @property
-            def dt(self) -> datetime | None:
-                if self.date > 0:
-                    return mkdate(self.date)
-
         # TODO: implement password-protected archives
         # key = self.args.pwd
         index = self.args.index
-        bsize: dict[int, int] = {}  # frag ID -> d block compressed size
-        dt: dict[str, DT] = {}      # filename -> date, attr, frags
-        frag: list[bytes] = []      # ID -> hash[20] size[4] data
-        csize = 0                   # expected offset of next non d block
+        bsize: dict[int, int] = {}         # frag ID -> d block compressed size
+        dt: dict[str, _JournalEntry] = {}  # filename -> date, attr, frags
+        frag: list[bytes] = []             # ID -> hash[20] size[4] data
+        csize = 0                          # expected offset of next non d block
         streaming = False
         journaling = False
 
@@ -1331,7 +1336,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     if block_type not in 'cdhi':
                         raise RuntimeError('type not c,d,h,i')
                     try:
-                        mkdate(filename[3:17])
+                        _mkdate(filename[3:17])
                     except Exception as E:
                         raise RuntimeError('invalid date') from E
                     frag_id = int(filename[18:28])
@@ -1450,7 +1455,7 @@ class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
                 if block_type == 'i':
                     while not seg.eof:
-                        f = DT(seg.u64())
+                        f = _JournalEntry(seg.u64())
                         f.name = seg.read_c_string('utf8')
                         if f.date > 0:
                             na = seg.u32()

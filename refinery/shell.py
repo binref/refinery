@@ -14,7 +14,7 @@ multibin format expressions, see `refinery.lib.argformats`.
 """
 from __future__ import annotations
 
-from functools import WRAPPER_ASSIGNMENTS, wraps
+from functools import WRAPPER_ASSIGNMENTS, cache, wraps
 
 from refinery.__unit__ import UNITS
 
@@ -30,19 +30,27 @@ class __pdoc3__:
         return ''
 
 
+def _assembled(cls, *args, **kwargs):
+    """
+    Creates an instance of the unit that the given class wraps from command line arguments.
+    """
+    return cls.__wrapped__.assemble(*args, **kwargs)
+
+
+@cache
 def __getattr__(name):
+    """
+    Loads the unit with the given name, wrapped so that it takes its arguments as they are given on
+    the command line. Each unit is wrapped once.
+    """
     import refinery
     unit = refinery.load(name)
 
     if unit is None:
         raise AttributeError(name)
 
-    class _unit(unit):
-        def __new__(cls, *args, **kwargs):
-            return unit.assemble(*args, **kwargs)
-
-    wrapped_unit = wraps(unit, updated=__WRAP_UPDATE, assigned=__WRAP_ASSIGN)(_unit)
-    return wrapped_unit
+    wrapped_unit = type('_unit', (unit,), {'__new__': _assembled})
+    return wraps(unit, updated=__WRAP_UPDATE, assigned=__WRAP_ASSIGN)(wrapped_unit)
 
 
 def __dir__():

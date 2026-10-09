@@ -20,6 +20,68 @@ _ERROR_IGNORES = {
 }
 
 
+class _EmptyScan:
+    """
+    The result of scanning a directory that cannot be scanned: it has no entries.
+    """
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_, **__):
+        pass
+
+    def __next__(self):
+        raise StopIteration
+
+    def __iter__(self):
+        return self
+
+
+class _SkipErrors:
+    """
+    A context that suppresses errors while one path is scanned, and logs the first error of each
+    kind for that path.
+    """
+    def __init__(self, unit: ef):
+        self.unit = unit
+        self._history: set[type] = set()
+        self._message: dict[type, str | None] = {
+            ValueError: (
+                None
+            ), PermissionError: (
+                'access error while scanning: {}'
+            ), OSError: (
+                'system error while scanning: {}'
+            ), FileNotFoundError: (
+                'file unexpectedly not found: {}'
+            ), Exception: (
+                'unknown error while reading: {}'
+            ),
+        }
+        self.path = None
+
+    def reset(self, path):
+        self._history.clear()
+        self.path = path
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, trace):
+        if et is None:
+            return False
+        for t, msg in self._message.items():
+            if issubclass(et, t):
+                if t not in self._history:
+                    self._history.add(t)
+                    if msg is not None:
+                        self.unit.log_info(msg.format(self.path))
+                return True
+        else:
+            return False
+
+
 class ef(Unit):
     """
     Emit files matching a glob pattern from disk.
@@ -128,19 +190,6 @@ class ef(Unit):
 
         scandir = os.scandir
 
-        class EmptyIterator:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_, **__):
-                pass
-
-            def __next__(self):
-                raise StopIteration
-
-            def __iter__(self):
-                return self
-
         if sys.version_info >= (3, 12):
             def islink(path):
                 return os.path.islink(path) or os.path.isjunction(path)
@@ -156,14 +205,14 @@ class ef(Unit):
         def _patched_scandir(path):
             if islink(path):
                 if not self.args.symlinks:
-                    return EmptyIterator()
+                    return _EmptyScan()
                 try:
                     rp = os.path.realpath(path, strict=True)
                 except OSError:
-                    return EmptyIterator()
+                    return _EmptyScan()
                 if rp in paths_scanned:
                     self.log_warn(F'file system loop at: {path!s}')
-                    return EmptyIterator()
+                    return _EmptyScan()
                 paths_scanned.add(rp)
                 path = rp
             try:
@@ -172,7 +221,7 @@ class ef(Unit):
                 ignore = _ERROR_IGNORES.get(os.name, set())
                 if not any(p.lower() in ignore for p in Path(path).parts):
                     self.log_warn(F'error calling scandir, {exception_to_string(e)}: {path}')
-                return EmptyIterator()
+                return _EmptyScan()
 
         try:
             os.scandir = _patched_scandir
@@ -190,52 +239,11 @@ class ef(Unit):
         do_meta = self.args.meta
         do_stat = size or do_meta
 
-        class SkipErrors:
-            unit = self
-
-            def __init__(self):
-                self._history: set[type] = set()
-                self._message: dict[type, str | None] = {
-                    ValueError: (
-                        None
-                    ), PermissionError: (
-                        'access error while scanning: {}'
-                    ), OSError: (
-                        'system error while scanning: {}'
-                    ), FileNotFoundError: (
-                        'file unexpectedly not found: {}'
-                    ), Exception: (
-                        'unknown error while reading: {}'
-                    ),
-                }
-                self.path = None
-
-            def reset(self, path):
-                self._history.clear()
-                self.path = path
-                return self
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, et, ev, trace):
-                if et is None:
-                    return False
-                for t, msg in self._message.items():
-                    if issubclass(et, t):
-                        if t not in self._history:
-                            self._history.add(t)
-                            if msg is not None:
-                                self.unit.log_info(msg.format(self.path))
-                        return True
-                else:
-                    return False
-
         for mask in self.args.filenames:
             mask = meta.format_str(mask, self.codec, [data])
             self.log_debug('scanning for mask:', mask)
             kwargs = dict()
-            skip_errors = SkipErrors()
+            skip_errors = _SkipErrors(self)
             for path in paths(mask):
                 skip_errors.reset(path)
                 filesize = -1
