@@ -114,6 +114,23 @@ def _formatted_name(
     return files.get(key, '')
 
 
+def _formatting_tables(
+    tables: dict[str, list[dict[str, str]]],
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """
+    The values of the properties, files, and components that bracketed names in a string of the
+    type Formatted refer to, from the Property, File, and Component tables. A file is given by its
+    name, a component by a variable for its directory.
+    """
+    def columns(table: str):
+        return (list(row.values()) for row in tables.get(table, ()))
+
+    properties = {row[0]: row[1] for row in columns('Property')}
+    files = {row[0]: row[2] for row in columns('File')}
+    components = {row[0]: F'%{row[2]}%' for row in columns('Component')}
+    return properties, files, components
+
+
 def _format(
     string: str,
     properties: dict[str, str],
@@ -270,9 +287,6 @@ class xtmsi(xtdoc, docs=(
             self.log_warn(F'table name given but not known: {name}')
 
         processed_table_data: dict[str, list[dict[str, str]]] = {}
-        tbl_properties: dict[str, str] = {}
-        tbl_files: dict[str, str] = {}
-        tbl_components: dict[str, str] = {}
         postprocessing: list[_ScriptItem] = []
 
         for table_name, table in tables.items():
@@ -300,12 +314,6 @@ class xtmsi(xtdoc, docs=(
                     elif not info[index].is_integer:
                         value = ''
                     values.append(value)
-                if table_name == 'Property':
-                    tbl_properties[values[0]] = values[1]
-                if table_name == 'File':
-                    tbl_properties[values[0]] = values[2]
-                if table_name == 'Component':
-                    tbl_properties[values[0]] = F'%{values[2]}%'
                 entry = dict(zip(keys, values))
                 einfo = {t: i for t, i in zip(keys, info)}
                 if table_name == 'MsiFileHash':
@@ -331,6 +339,7 @@ class xtmsi(xtdoc, docs=(
                 processed_table_data[table_name] = processed
 
         if ca := processed_table_data.get('CustomAction'):
+            properties, files, components = _formatting_tables(processed_table_data)
             for item in postprocessing:
                 entry = ca[item.row_index]
                 try:
@@ -343,7 +352,7 @@ class xtmsi(xtdoc, docs=(
                     action = F'{root}.{item.extension}'
                     streams[action] = UnpackResult(action, target.encode(self.codec))
                     continue
-                target = _format(target, tbl_properties, tbl_files, tbl_components)
+                target = _format(target, properties, files, components)
                 parts = [part.partition('\x02') for part in target.split('\x01')]
                 if not all(part[1] == '\x02' for part in parts):
                     continue

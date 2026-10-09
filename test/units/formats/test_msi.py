@@ -60,6 +60,17 @@ class TestMSI(TestUnitBase):
 
 class TestMSIFormattedStrings(TestUnitBase):
 
+    def test_files_and_components_are_looked_up_in_their_own_tables(self):
+        import json
+        from refinery.units.formats.msi import _formatting_tables
+        data = self.download_sample('5c698edeba5260b1eb170c375015273324b86bae82722d85d2f013b22ae52d0c')
+        tables = json.loads(data | self.load('MsiTables.json') | bytes)
+        properties, files, components = _formatting_tables(tables)
+        self.assertEqual(files['_524559CCC17A414796ED4E25309ABCED'], '1|1')
+        self.assertEqual(components['C__524559CCC17A414796ED4E25309ABCED'], '%TARGETDIR%')
+        self.assertFalse(properties.keys() & files.keys())
+        self.assertFalse(properties.keys() & components.keys())
+
     def _format(self, string: str, **properties: str) -> str:
         from refinery.units.formats.msi import _format
         return _format(string, properties, {}, {})
