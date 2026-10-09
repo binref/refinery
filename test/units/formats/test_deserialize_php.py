@@ -18,6 +18,14 @@ class TestPHPDeserializer(TestUnitBase):
             "Jane": 2.718
         })
 
+    def test_an_object_that_an_array_holds_twice_is_read_twice(self):
+        data = B'a:2:{i:0;O:8:"stdClass":1:{s:1:"x";i:7;}i:1;r:2;}'
+        self.assertEqual(json.loads(data | self.load() | bytes), {'0': {'x': 7}, '1': {'x': 7}})
+
+    def test_a_php_reference_names_the_value_it_refers_to(self):
+        data = B'a:3:{i:0;i:1;i:1;R:2;i:2;r:2;}'
+        self.assertEqual(json.loads(data | self.load() | bytes), {'0': 1, '1': 1, '2': 1})
+
     def test_null(self):
         result = B'N;' | self.load() | json.loads
         self.assertIsNone(result)

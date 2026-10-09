@@ -24,10 +24,13 @@ class _phpobject:
 
 class _PhpReader:
     """
-    Reads PHP serialized data from a stream.
+    Reads PHP serialized data from a stream. Like PHP, it numbers every value that it reads, except
+    for array keys and PHP references, so that the references `r` and `R` can name earlier values;
+    an array or object is numbered before its elements.
     """
     def __init__(self, fp: BytesIO):
         self.fp = fp
+        self.values: list[object] = []
 
     def expect(self, e: bytes):
         v = self.fp.read(len(e))
@@ -45,23 +48,41 @@ class _PhpReader:
             buf.append(char)
         return b''.join(buf)
 
-    def load_array(self) -> list[tuple]:
-        items = int(self.read_until(b':')) * 2
+    def load_array(self, result: dict):
+        """
+        Reads the elements of an array or object into the given dictionary.
+        """
+        count = int(self.read_until(b':'))
         self.expect(b'{')
-        result = []
-        last_item = Ellipsis
-        for _ in range(items):
-            item = self.unserialize()
-            if last_item is Ellipsis:
-                last_item = item
-            else:
-                result.append((last_item, item))
-                last_item = Ellipsis
+        for _ in range(count):
+            key = self.unserialize(key=True)
+            result[key] = self.unserialize()
         self.expect(b'}')
-        return result
 
-    def unserialize(self) -> object:
-        opcode = self.fp.read(1).lower()
+    def unserialize(self, key: bool = False) -> object:
+        """
+        Reads the next value; an array key is not numbered.
+        """
+        opcode = self.fp.read(1)
+        if opcode in (b'r', b'R'):
+            self.expect(b':')
+            index = int(self.read_until(b';'))
+            if not 0 < index <= len(self.values):
+                raise ValueError(F'reference to value {index}, but only {len(self.values)} values were read')
+            value = self.values[index - 1]
+            if opcode == b'r' and not key:
+                self.values.append(value)
+            return value
+        slot = None
+        if not key:
+            slot = len(self.values)
+            self.values.append(None)
+        value = self._value(opcode.lower(), slot)
+        if slot is not None:
+            self.values[slot] = value
+        return value
+
+    def _value(self, opcode: bytes, slot: int | None) -> object:
         if opcode == b'n':
             self.expect(b';')
             return None
@@ -83,14 +104,22 @@ class _PhpReader:
             return value.decode('utf-8', 'surrogateescape')
         if opcode == b'a':
             self.expect(b':')
-            return dict(self.load_array())
+            array = {}
+            if slot is not None:
+                self.values[slot] = array
+            self.load_array(array)
+            return array
         if opcode == b'o':
             self.expect(b':')
             name_length = int(self.read_until(b':'))
             self.expect(b'"')
             name = self.fp.read(name_length).decode('utf-8', 'surrogateescape')
             self.expect(b'":')
-            return _phpobject(name, dict(self.load_array()))
+            obj = _phpobject(name)
+            if slot is not None:
+                self.values[slot] = obj
+            self.load_array(obj.__php_vars__)
+            return obj
         raise ValueError(F'unexpected opcode: {opcode!r}')
 
 
