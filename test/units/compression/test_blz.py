@@ -33,3 +33,8 @@ class TestBriefLZ(TestUnitBase):
         X = next(M | C)
         self.assertEqual(next(X | D), M)
         self.assertLessEqual(len(X), 24 + 8)
+
+    def test_compression_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')[:0x10000]
+        unit = self.load(reverse=True)
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)

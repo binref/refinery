@@ -273,6 +273,13 @@ class TestBiffWorkbook(TestBase):
         with self.assertRaises(ExcelFormatError):
             open_workbook(bytes(modified))
 
+    def test_reading_the_cells_leaves_nothing_to_the_collector(self):
+        def read():
+            for sheet in open_workbook(bytearray(CORRUPTED_ERROR)).sheets():
+                list(sheet.cells())
+
+        self.assertCollectorFreesLessThan(0x40000, read)
+
 
 class TestSharedStringContinueRecords(TestBase):
     """

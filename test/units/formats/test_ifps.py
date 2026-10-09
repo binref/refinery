@@ -32,6 +32,11 @@ class TestIPFS(TestUnitBase):
         self.assertContains(test, 'kernel32::CloseHandle(Argument1)')
         self.assertContains(test, 'idp::idpFilesDownloaded()')
 
+    def test_disassembly_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf')
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | str)
+
 
 class TestIFPSStrings(TestUnitBase):
 

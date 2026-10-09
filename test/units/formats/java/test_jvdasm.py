@@ -26,3 +26,10 @@ class TestJavaDisassembler(TestUnitBase):
         before = strings()
         self.load()(data)
         self.assertEqual(strings(), before)
+
+    def test_disassembly_leaves_no_constant_to_the_collector(self):
+        from refinery.lib.java import JvString
+        data = self.download_sample('31055a528f9a139104a0ce8f4da6b4b89a37a800715292ae7f8f190b2a7b6582')
+        unit = self.load()
+        with self.assertNoInstanceSurvives(JvString):
+            data | unit | bytes

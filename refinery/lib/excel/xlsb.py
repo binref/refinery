@@ -34,7 +34,7 @@ from refinery.lib.excel.common import (
 from refinery.lib.excel.formula.model import Expression, XlDefinedName, XlUnparsedFormula
 from refinery.lib.excel.formula.ptg import RpnError
 from refinery.lib.excel.formula.xlsb import XlsbRpnDecoder
-from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook, _Package
+from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook, _Package, _SheetPart
 
 _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'
 _REL_CHARTSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet'
@@ -313,7 +313,7 @@ class XlsbWorkbook(ExcelWorkbook):
         self._shared_strings: list[str] = []
         self._formats: dict[int, str] = {}
         self._style_formats: list[int] | None = None
-        self._sheets: list[XlsbSheet] = []
+        self._sheet_table: list[_SheetPart] = []
         self._names: list[DefinedName] = []
         self._supporting_links: list[int] = []
         self._externsheet: list[tuple[int, int, int]] = []
@@ -338,7 +338,7 @@ class XlsbWorkbook(ExcelWorkbook):
                     target, rel_type = rels.get(rid, (None, None))
                     kind = _SHEET_KINDS.get(rel_type or '', SheetKind.OTHER)
                     part_name = None if target is None else self._resolve(target)
-                    self._sheets.append(XlsbSheet(name, kind, part_name, self))
+                    self._sheet_table.append(_SheetPart(name, kind, part_name))
                 elif rtype == _Record.NAME:
                     self._names.append(self._name_record(record))
                 elif rtype == _Record.EXTERN_SHEET:
@@ -351,9 +351,10 @@ class XlsbWorkbook(ExcelWorkbook):
 
     def sheets(self) -> Sequence[XlsbSheet]:
         """
-        All sheets of the workbook in document order.
+        All sheets of the workbook in document order. Every call builds new sheet objects: A sheet
+        refers to its workbook, so the workbook keeps only the table of its sheets.
         """
-        return self._sheets
+        return [XlsbSheet(*entry, self) for entry in self._sheet_table]
 
     def defined_names(self) -> Sequence[DefinedName]:
         """
@@ -420,7 +421,7 @@ class XlsbWorkbook(ExcelWorkbook):
             raise RpnError(F'the extern-sheet index {ixti} names a sheet of another document')
         if first == last == -1 or first == last == -2:
             raise RpnError('a 3-D reference names a deleted or unspecified sheet')
-        sheets = [sheet.name for sheet in self._sheets]
+        sheets = [entry.name for entry in self._sheet_table]
         if first > last or not 0 <= first < len(sheets) or not 0 <= last < len(sheets):
             raise RpnError(F'the extern-sheet index {ixti} does not span sheets of this workbook')
         if first == last:
@@ -437,9 +438,9 @@ class XlsbWorkbook(ExcelWorkbook):
         record = self._names[index - 1]
         sheet = None
         if record.sheet is not None:
-            if not 0 <= record.sheet < len(self._sheets):
+            if not 0 <= record.sheet < len(self._sheet_table):
                 raise RpnError(F'the name {record.name} is scoped to a missing sheet')
-            sheet = self._sheets[record.sheet].name
+            sheet = self._sheet_table[record.sheet].name
         return XlDefinedName(name=record.name, sheet=sheet)
 
     def _part(self, part: str) -> bytes | None:

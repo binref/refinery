@@ -16,6 +16,7 @@ from refinery.lib.excel import (
 )
 from refinery.lib.excel.common import decode_xstring, serial_to_datetime
 from refinery.lib.excel.formula import synthesize_formula
+from refinery.lib.excel.ooxml import OoxmlWorkbook
 
 from ... import TestBase
 from .samples import (
@@ -232,6 +233,14 @@ class TestWorkbookStructure(TestBase):
             ('test2', 1, 1): Cell(1, 1, CellKind.TEXT, 'three', None),
             ('test2', 1, 2): Cell(1, 2, CellKind.TEXT, 'four', None),
         })
+
+    def test_reading_the_cells_leaves_no_workbook_to_the_collector(self):
+        def read():
+            for sheet in open_workbook(XLM_MACRO_TEXT_XLSM).sheets():
+                list(sheet.cells())
+
+        with self.assertNoInstanceSurvives(OoxmlWorkbook):
+            read()
 
 
 class TestNonstandardPackages(TestBase):

@@ -51,6 +51,7 @@ from refinery.lib.inno.ifps import (
     COp,
     EHType,
     Function,
+    FunctionReference,
     IFPSFile,
     IFPSType,
     Instruction,
@@ -722,12 +723,12 @@ class IFPSEmulator:
             self.winapi_addr_to_symbol = {addr: module for module, addr in _sl.items()}
 
         if isinstance(archive, InnoArchive):
-            self.inno = archive
+            self.setup_info = archive.setup_info
             self.ifps = ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
         else:
-            self.inno = None
+            self.setup_info = None
             self.ifps = ifps = archive
         self.config = options or IFPSEmulatorConfig(**more)
         self._wizard_form = _WizardForm()
@@ -1004,7 +1005,7 @@ class IFPSEmulator:
                         stack.pop()
                     elif opc == Op.Call:
                         callstack.append(_CallState(function, ip, sp, exceptions))
-                        function = insn.operands[0]
+                        function = insn.callee()
                         ip = 0
                         sp = len(stack) - 1
                         exceptions = []
@@ -1051,6 +1052,8 @@ class IFPSEmulator:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
                             call = self.ifps.functions[call]
+                        elif isinstance(call, FunctionReference):
+                            call = call.function
                         if isinstance(call, Function):
                             callstack.append(_CallState(function, ip, sp, exceptions))
                             function = call
@@ -1420,7 +1423,7 @@ class IFPSEmulator:
             'log'               : '',
         }
 
-        if (inno := self.inno) is None or (inno.setup_info.Header.Flags & Flags.Uninstallable):
+        if (setup_info := self.setup_info) is None or (setup_info.Header.Flags & Flags.Uninstallable):
             map['uninstallexe'] = RF'{cfg.install_to}\unins000.exe'
 
         if cfg.x64:
@@ -1665,9 +1668,9 @@ class IFPSEmulator:
     @external()
     def CustomMessage(self, msg_name: str) -> str:
         by_language = {}
-        if (inno := self.inno) is None:
+        if (setup_info := self.setup_info) is None:
             return ''
-        for msg in inno.setup_info.Messages:
+        for msg in setup_info.Messages:
             if msg.EncodedName == msg_name and (lv := msg.get_language_value()):
                 lng = lv.Name
                 if lng == self.config.language:
@@ -1701,8 +1704,8 @@ class IFPSEmulator:
     @external()
     def SetupMessage(self, id: int) -> str:
         try:
-            if inno := self.inno:
-                return inno.setup_info.Messages[id].Value
+            if (setup_info := self.setup_info) is not None:
+                return setup_info.Messages[id].Value
         except IndexError:
             pass
         return ''

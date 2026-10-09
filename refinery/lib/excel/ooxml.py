@@ -27,7 +27,7 @@ from refinery.lib.excel.common import (
 )
 from refinery.lib.excel.formula.model import Expression, XlUnparsedFormula
 from refinery.lib.excel.formula.parse import parse_formula
-from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook, _Package
+from refinery.lib.excel.workbook import ExcelFormat, ExcelSheet, ExcelWorkbook, _Package, _SheetPart
 
 _REL_WORKSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet'
 _REL_CHARTSHEET = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet'
@@ -226,7 +226,7 @@ class OoxmlWorkbook(ExcelWorkbook):
         self._base = posixpath.dirname(workbook_part)
         self._rels = self._read_rels(workbook_part)
         self.date_mode_1904 = False
-        self._sheets: list[OoxmlSheet] = []
+        self._sheet_table: list[_SheetPart] = []
         self._names: list[DefinedName] = []
         self._shared_strings: list[str] = []
         self._shared_strings_loaded = False
@@ -244,15 +244,16 @@ class OoxmlWorkbook(ExcelWorkbook):
                 target, rel_type = self._rels.get(rid or '', (None, None))
                 part = None if target is None else _resolve_part(self._base, target)
                 kind = _SHEET_KINDS.get(rel_type or '', SheetKind.OTHER)
-                self._sheets.append(OoxmlSheet(name, kind, part, self))
+                self._sheet_table.append(_SheetPart(name, kind, part))
             elif local == 'definedName':
                 self._names.append(self._defined_name(element))
 
     def sheets(self) -> list[OoxmlSheet]:
         """
-        All sheets of the workbook in document order.
+        All sheets of the workbook in document order. Every call builds new sheet objects: A sheet
+        refers to its workbook, so the workbook keeps only the table of its sheets.
         """
-        return self._sheets
+        return [OoxmlSheet(*entry, self) for entry in self._sheet_table]
 
     def defined_names(self) -> Sequence[DefinedName]:
         """

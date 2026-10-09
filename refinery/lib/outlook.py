@@ -48,12 +48,15 @@ def _codepage_to_codec(cp: int) -> str:
 
 
 class MsgAttachment:
-    def __init__(self, ole, prefix: str, parent: MsgFile):
+    """
+    An attachment of a `refinery.lib.outlook.MsgFile`: it reads its streams from the message's
+    storage at the given prefix and decodes 8-bit strings with the message's codec.
+    """
+    def __init__(self, ole, prefix: str, ansi_codec: str, props: dict):
         self._ole = ole
         self._prefix = prefix
-        self._parent = parent
-        props_path = F'{prefix}/__properties_version1.0'
-        self._props = parent._parse_properties(props_path, header_size=8)
+        self._ansi_codec = ansi_codec
+        self._props = props
 
     def _stream(self, path: str) -> bytes | memoryview | None:
         full = F'{self._prefix}/{path}'
@@ -62,7 +65,7 @@ class MsgAttachment:
         return None
 
     def _read_string(self, prop_id: str) -> str | None:
-        for suffix, codec in (('001F', 'utf-16-le'), ('001E', self._parent._ansi_codec)):
+        for suffix, codec in (('001F', 'utf-16-le'), ('001E', self._ansi_codec)):
             data = self._stream(F'__substg1.0_{prop_id}{suffix}')
             if data is not None:
                 return codecs.decode(data, codec).rstrip('\0')
@@ -294,7 +297,8 @@ class MsgFile:
             full = '/'.join(prefix_parts + [dirname]) if p else dirname
             if full not in seen:
                 seen.add(full)
-                result.append(MsgAttachment(self._ole, full, self))
+                props = self._parse_properties(F'{full}/__properties_version1.0', header_size=8)
+                result.append(MsgAttachment(self._ole, full, self._ansi_codec, props))
         return result
 
     # Contact properties (IPM.Contact)

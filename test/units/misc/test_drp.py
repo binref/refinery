@@ -66,3 +66,8 @@ class TestDRP(TestUnitBase):
 
     def test_short_string_03(self):
         self.assertEqual(bytes(B'AAB' | self.load()), B'A')
+
+    def test_the_suffix_tree_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')[:0x10000]
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)

@@ -6,7 +6,7 @@ import zlib
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import IO, Iterator
+from typing import IO, Iterator, NamedTuple
 
 from defusedxml.ElementTree import fromstring
 
@@ -31,6 +31,16 @@ class ExcelFormat(enum.Enum):
     OOXML = enum.auto()
     XLSB = enum.auto()
     BIFF = enum.auto()
+
+
+class _SheetPart(NamedTuple):
+    """
+    A sheet in the sheet table of a workbook that is a package of parts: its name, its kind, and
+    the name of its part.
+    """
+    name: str
+    kind: SheetKind
+    part: str | None
 
 
 class ExcelSheet(ABC):

@@ -219,3 +219,8 @@ class TestInnoExtractor(TestUnitBase):
             paths = [chunk['path'] for chunk in data | self.load('meta/*.json') | []]
         self.assertEqual(paths, ['meta/setup.json', 'meta/files.json'])
         emulator.assert_not_called()
+
+    def test_extraction_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('9271acdc528deb7d971f742c94d772b1f408b5db00ae949f79221a3545f41314')
+        unit = self.load('History.txt')
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)

@@ -10,7 +10,7 @@ from unittest import mock
 from ... import TestUnitBase
 
 
-from refinery.lib.un7z import SIGNATURE_HEADER_SIZE, SzArchive, SzCorruptArchive, SzPasswordRequired
+from refinery.lib.un7z import SIGNATURE_HEADER_SIZE, SzArchive, SzCorruptArchive, SzPasswordRequired, _SzFolders
 from refinery.lib.un7z.headers import parse_signature_header, SIGNATURE
 
 
@@ -191,6 +191,11 @@ class Test7zipFileExtractor(TestUnitBase):
         with self.assertNoInstanceSurvives(BitLDecoder):
             extract()
 
+    def test_extraction_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('3a5a8ea5e4e45a90ac0964b92511983e663143702eb27706f714c71f447435d6', 'OKFR20ALOEN23UPS')
+        unit = self.load('flake.exe')
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)
+
     def test_archive_with_directory(self):
         data = base64.b64decode(
             'N3q8ryccAASj9eqasgAAAAAAAAAhAAAAAAAAAIrd+dzgAGcANV0AJBlJmG8WAoyLktVrywEc3aGe27pL8HOviCZKe7dipsZBOMuv'
@@ -365,7 +370,7 @@ class Test7zipFileExtractor(TestUnitBase):
 
     def test_a_folder_that_the_password_probe_decompresses_is_not_decompressed_again(self):
         data = self.download_sample('ce970ff0f1d20ad7471f224dafd7a7beef82713ea67a0278d94e8a38a92132fe', key='OKFR20ALOEN23UPS')
-        with mock.patch.object(SzArchive, '_decompress_folder', autospec=True, side_effect=SzArchive._decompress_folder) as decompress:
+        with mock.patch.object(_SzFolders, 'decompress', autospec=True, side_effect=_SzFolders.decompress) as decompress:
             paths = [chunk['path'] for chunk in data | self.load() | [...]]
         self.assertEqual(paths, ['FlareSay.exe'])
         self.assertEqual(decompress.call_count, 1)

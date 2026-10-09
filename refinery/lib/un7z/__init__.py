@@ -52,17 +52,93 @@ __all__ = [
 ]
 
 
+class _SzFolders:
+    """
+    The folders of a 7z archive. A folder is decompressed when a file in it is first read, and its
+    data is kept only while a claim on it is alive. The files of an archive refer to its folders,
+    which do not refer back to them.
+    """
+    def __init__(
+        self,
+        view: memoryview,
+        header: ArchiveHeader,
+        password: str | bytes | None,
+    ):
+        self._view = view
+        self._header = header
+        self.password = password
+        self._streams: weakref.WeakValueDictionary[tuple[int, str | bytes | None], SolidStream]
+        self._streams = weakref.WeakValueDictionary()
+
+    def stream(self, folder_index: int, password: str | bytes | None) -> SolidStream:
+        """
+        The decompressed data of the given folder; it is decompressed when it is first read.
+        """
+        key = folder_index, password
+        if (stream := self._streams.get(key)) is None:
+            def pieces(offset: int) -> Iterator[tuple[int, buf]]:
+                yield 0, self.decompress(folder_index, password)
+            stream = self._streams[key] = SolidStream(pieces)
+        return stream
+
+    def encrypted(self, folder_index: int) -> bool:
+        return any(coder.codec_id == CODEC_AES256SHA256 for coder in self._header.folders[folder_index].coders)
+
+    def decompress(
+        self,
+        folder_index: int,
+        password: str | bytes | None = None,
+    ) -> buf:
+        header = self._header
+        folder = header.folders[folder_index]
+        if password is None and self.encrypted(folder_index):
+            raise SzPasswordRequired('Password required for encrypted archive.')
+        pack_info = header.pack_info
+        if pack_info is None:
+            raise SzCorruptArchive('No pack info in header.')
+        pack_offset = SIGNATURE_HEADER_SIZE + pack_info.pack_pos
+        pack_start = 0
+        for fi in range(folder_index):
+            f = header.folders[fi]
+            for _ in range(len(f.packed_indices)):
+                if pack_start < len(pack_info.sizes):
+                    pack_start += 1
+        packed_streams: list[memoryview] = []
+        for pi in range(len(folder.packed_indices)):
+            idx = pack_start + pi
+            if idx < len(pack_info.sizes):
+                sz = pack_info.sizes[idx]
+                stream_offset = pack_offset
+                for k in range(idx):
+                    stream_offset += pack_info.sizes[k]
+                packed_streams.append(self._view[stream_offset:stream_offset + sz])
+            else:
+                packed_streams.append(memoryview(b''))
+        unpack_size = folder.main_unpack_size
+        try:
+            raw = decompress_folder(folder, packed_streams, unpack_size, password)
+        except SzPasswordRequired:
+            raise
+        except SzException:
+            raise
+        except Exception as e:
+            if password is not None:
+                raise SzInvalidPassword(str(e)) from e
+            raise SzCorruptArchive(str(e)) from e
+        return raw
+
+
 class SzFile:
     def __init__(
         self,
         entry: FileEntry,
-        archive: SzArchive,
+        folders: _SzFolders | None,
         folder_index: int | None,
         stream_index: int | None,
         offset: int = 0,
     ):
         self._entry = entry
-        self._archive = archive
+        self._folders = folders
         self._folder_index = folder_index
         self._stream_index = stream_index
         self._offset = offset
@@ -101,7 +177,7 @@ class SzFile:
 
     @property
     def encrypted(self) -> bool:
-        return (fi := self._folder_index) is not None and self._archive._folder_encrypted(fi)
+        return (fi := self._folder_index) is not None and (folders := self._folders) is not None and folders.encrypted(fi)
 
     def extractor(self, password: str | bytes | None = None) -> Callable[[], buf]:
         """
@@ -109,11 +185,10 @@ class SzFile:
         rest of its folder when the function is first called; the folder keeps the data of other
         files only while a function returned for them is alive.
         """
-        if self.is_dir or (fi := self._folder_index) is None:
+        if self.is_dir or (fi := self._folder_index) is None or (folders := self._folders) is None:
             return bytes
-        archive = self._archive
-        pw = password or archive._password
-        claim = archive._folder_stream(fi, pw).claim(self._offset, self.size)
+        pw = password or folders.password
+        claim = folders.stream(fi, pw).claim(self._offset, self.size)
         crc = self.crc
 
         def extract():
@@ -144,8 +219,7 @@ class SzArchive:
         self._sig_header: SignatureHeader | None = None
         self._header: ArchiveHeader | None = None
         self._files: list[SzFile] = []
-        self._folder_streams: weakref.WeakValueDictionary[tuple[int, str | bytes | None], SolidStream]
-        self._folder_streams = weakref.WeakValueDictionary()
+        self._folders: _SzFolders | None = None
         self._parse()
 
     @property
@@ -176,6 +250,7 @@ class SzArchive:
             self._header = self._decode_encoded_header(reader)
         else:
             raise SzCorruptArchive(F'Unexpected top-level property: {prop_id:#x}')
+        self._folders = _SzFolders(self._view, self._header, self._password)
         self._build_file_list()
 
     def _decode_encoded_header(self, reader: StructReader) -> ArchiveHeader:
@@ -219,7 +294,7 @@ class SzArchive:
             for si in range(ns):
                 while file_idx < len(files) and not files[file_idx].has_stream:
                     entry = files[file_idx]
-                    self._files.append(SzFile(entry, self, None, None))
+                    self._files.append(SzFile(entry, None, None, None))
                     file_idx += 1
                 if file_idx < len(files):
                     entry = files[file_idx]
@@ -235,67 +310,11 @@ class SzArchive:
                             entry.crc = folder.crc
                     elif ns == 1 and folder.crc is not None:
                         entry.crc = folder.crc
-                    self._files.append(SzFile(entry, self, fi, si, position))
+                    self._files.append(SzFile(entry, self._folders, fi, si, position))
                     position += entry.size
                     file_idx += 1
             stream_offset += ns
         while file_idx < len(files):
             entry = files[file_idx]
-            self._files.append(SzFile(entry, self, None, None))
+            self._files.append(SzFile(entry, None, None, None))
             file_idx += 1
-
-    def _folder_stream(self, folder_index: int, password: str | bytes | None) -> SolidStream:
-        key = folder_index, password
-        if (stream := self._folder_streams.get(key)) is None:
-            def pieces(offset: int) -> Iterator[tuple[int, buf]]:
-                yield 0, self._decompress_folder(folder_index, password)
-            stream = self._folder_streams[key] = SolidStream(pieces)
-        return stream
-
-    def _folder_encrypted(self, folder_index: int) -> bool:
-        assert self._header is not None
-        return any(coder.codec_id == CODEC_AES256SHA256 for coder in self._header.folders[folder_index].coders)
-
-    def _decompress_folder(
-        self,
-        folder_index: int,
-        password: str | bytes | None = None,
-    ) -> buf:
-        assert self._header is not None
-        header = self._header
-        folder = header.folders[folder_index]
-        if password is None and self._folder_encrypted(folder_index):
-            raise SzPasswordRequired('Password required for encrypted archive.')
-        pack_info = header.pack_info
-        if pack_info is None:
-            raise SzCorruptArchive('No pack info in header.')
-        pack_offset = SIGNATURE_HEADER_SIZE + pack_info.pack_pos
-        pack_start = 0
-        for fi in range(folder_index):
-            f = header.folders[fi]
-            for _ in range(len(f.packed_indices)):
-                if pack_start < len(pack_info.sizes):
-                    pack_start += 1
-        packed_streams: list[memoryview] = []
-        for pi in range(len(folder.packed_indices)):
-            idx = pack_start + pi
-            if idx < len(pack_info.sizes):
-                sz = pack_info.sizes[idx]
-                stream_offset = pack_offset
-                for k in range(idx):
-                    stream_offset += pack_info.sizes[k]
-                packed_streams.append(self._view[stream_offset:stream_offset + sz])
-            else:
-                packed_streams.append(memoryview(b''))
-        unpack_size = folder.main_unpack_size
-        try:
-            raw = decompress_folder(folder, packed_streams, unpack_size, password)
-        except SzPasswordRequired:
-            raise
-        except SzException:
-            raise
-        except Exception as e:
-            if password is not None:
-                raise SzInvalidPassword(str(e)) from e
-            raise SzCorruptArchive(str(e)) from e
-        return raw
