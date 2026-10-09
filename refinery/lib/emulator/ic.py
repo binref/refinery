@@ -139,7 +139,10 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 insn = None
             if mprotect:
                 ice.mem_protect(*mprotect[-1])
-            if (status := step()) == RS.InstructionLimit:
+                status = ice.step(1)
+            else:
+                status = step()
+            if status == RS.InstructionLimit:
                 stop = False
                 for addr, size, prot in mprotect:
                     ice.mem_protect(addr, size, MP.ExecuteOnly)

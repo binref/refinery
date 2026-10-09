@@ -6,6 +6,7 @@ import lzma
 from refinery.lib.emulator import (
     CC,
     Arch,
+    Emulator,
     Hook,
     EmulationError,
     EmulationTimeout,
@@ -406,3 +407,28 @@ class TestEmulator(TestBase):
         emulator.emulate(emulator.base, emulator.base + 16, timeout=1000)
         self.assertEqual(emulator.seen, 3)
         self.assertEqual(emulator.ip, emulator.base + 2)
+
+    def _test_a_memory_write_hook_receives_the_state(self, base_emu: type[Emulator]):
+        states = []
+
+        class Emu(base_emu):
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                self.map(self.align(address, down=True), self.alloc_size)
+                return True
+
+            def hook_mem_write(self, emu, access, address, size, value, state=None):
+                states.append(state)
+                return True
+
+        code = bytes.fromhex(
+            'C6 05 00 00 66 06 11'   # mov byte ptr [0x6660000], 0x11
+        )
+        state = object()
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.Memory)
+        emu.reset(state)
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertGreater(len(states), 0)
+        self.assertTrue(all(s is state for s in states))
+
+    def test_a_memory_write_hook_receives_the_state_ic(self):
+        self._test_a_memory_write_hook_receives_the_state(IcicleEmulator)
