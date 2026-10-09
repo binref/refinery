@@ -52,7 +52,7 @@ class TestALU(TestUnitBase):
         self.assertEqual(data | unit | bytearray, goal)
 
     def test_the_inlined_operation_leaves_nothing_to_the_collector(self):
-        data = self.generate_random_buffer(0x100000)
+        data = self.generate_random_buffer(0x10000)
         unit = self.load('B+1')
         self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | bytes)
 

@@ -9,7 +9,7 @@ import unittest
 
 from contextlib import ExitStack
 from glob import glob
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 from unittest.mock import patch
 
 from . import TestBase, TestUnitBase
@@ -668,6 +668,135 @@ class TestPartialReadDiscipline(TestBase):
         self.assertListEqual(sorted(unclosed), [])
 
 
+_Function = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+class _ModuleShapes:
+    """
+    The places of the shapes that `TestCycleDiscipline` checks in the syntax tree of one module,
+    found in one walk over the tree.
+    """
+    def __init__(self, tree: ast.Module):
+        self.lambdas: dict[int, str] = {}
+        self.classes: list[int] = []
+        self.kept: list[int] = []
+        self.raised_parameters: list[int] = []
+        self.raised_attributes: list[int] = []
+        self._decorators: set[str] = set()
+        self._type_calls: list[tuple[int, _Function, ast.ClassDef | None]] = []
+        self._walk(tree, None, None, None, frozenset(), ())
+        for line, function, owner in self._type_calls:
+            if not TestCycleDiscipline._builds_once(function, owner, self._decorators):
+                self.classes.append(line)
+
+    def _walk(
+        self,
+        node: ast.AST,
+        parent: ast.AST | None,
+        function: _Function | None,
+        owner: ast.ClassDef | None,
+        parameters: frozenset[str],
+        tries: tuple[ast.Try, ...],
+    ):
+        """
+        Checks the node and walks its children. The function is the innermost function around the
+        node, the owner is the class of which that function is a method, the parameters are those
+        of all functions around the node, and the tries are the try statements of the innermost
+        function whose body, handlers or else block contain the node.
+        """
+        self._check(node, function, owner, parameters, tries)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            signature = node.args
+            arguments = (*signature.posonlyargs, *signature.args, *signature.kwonlyargs)
+            names = {argument.arg for argument in arguments}
+            owner = parent if isinstance(parent, ast.ClassDef) else None
+            function, parameters, tries = node, parameters | names, ()
+        if isinstance(node, ast.Try):
+            for part in (node.body, node.handlers, node.orelse):
+                for child in part:
+                    self._walk(child, node, function, owner, parameters, (*tries, node))
+            for child in node.finalbody:
+                self._walk(child, node, function, owner, parameters, tries)
+            return
+        for child in ast.iter_child_nodes(node):
+            self._walk(child, node, function, owner, parameters, tries)
+
+    def _check(
+        self,
+        node: ast.AST,
+        function: _Function | None,
+        owner: ast.ClassDef | None,
+        parameters: frozenset[str],
+        tries: tuple[ast.Try, ...],
+    ):
+        checks = TestCycleDiscipline
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            targets = [node.target]
+        else:
+            targets = []
+        if isinstance(value := getattr(node, 'value', None), ast.Lambda):
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    self.lambdas[value.lineno] = target.id
+        if isinstance(node, ast.ClassDef):
+            decorators = node.decorator_list
+            self._decorators.update(d.id for d in decorators if isinstance(d, ast.Name))
+            if function is not None:
+                self.classes.append(node.lineno)
+        elif function is not None and checks._builds_a_class(node):
+            self._type_calls.append((node.lineno, function, owner))
+        elif isinstance(node, ast.Raise):
+            if isinstance(node.exc, (ast.Attribute, ast.Subscript)):
+                self.raised_attributes.append(node.lineno)
+            elif isinstance(node.exc, ast.Name) and node.exc.id in parameters:
+                self.raised_parameters.append(node.lineno)
+        elif isinstance(node, ast.ExceptHandler) and function is not None:
+            self.kept.extend(self._kept_exceptions(node, tries))
+
+    @staticmethod
+    def _cleared_in_finally(tries: tuple[ast.Try, ...], name: str) -> bool:
+        for node in tries:
+            for statement in node.finalbody:
+                if isinstance(statement, ast.Delete):
+                    targets = statement.targets
+                elif not isinstance(statement, ast.Assign):
+                    continue
+                elif isinstance(value := statement.value, ast.Constant) and value.value is None:
+                    targets = statement.targets
+                else:
+                    continue
+                if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                    return True
+        return False
+
+    @classmethod
+    def _kept_exceptions(cls, handler: ast.ExceptHandler, tries: tuple[ast.Try, ...]):
+        checks = TestCycleDiscipline
+        name = handler.name
+        for node in (node for statement in handler.body for node in ast.walk(statement)):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                if not checks._carries(node.value, name):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                cleared = (
+                    isinstance(target, ast.Name)
+                    and (target.id == name or cls._cleared_in_finally(tries, target.id))
+                    for target in targets
+                )
+                if not all(cleared):
+                    yield node.lineno
+            elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
+                if checks._carries(node.value, name):
+                    yield node.lineno
+            elif isinstance(node, ast.Call) and isinstance(method := node.func, ast.Attribute):
+                if method.attr not in checks._CONTAINER_METHODS:
+                    continue
+                if any(checks._carries(arg, name) for arg in node.args):
+                    yield node.lineno
+
+
 class TestCycleDiscipline(TestBase):
     """
     Objects in a reference cycle are freed only by the cycle collector, and so is everything they
@@ -706,22 +835,6 @@ class TestCycleDiscipline(TestBase):
         for child in table.get_children():
             names |= TestCycleDiscipline._free_names(child)
         return names
-
-    @staticmethod
-    def _lambda_bindings(tree: ast.Module) -> dict[int, str]:
-        bindings: dict[int, str] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-                targets = [node.target]
-            else:
-                continue
-            if isinstance(node.value, ast.Lambda):
-                for target in targets:
-                    if isinstance(target, ast.Name):
-                        bindings[node.value.lineno] = target.id
-        return bindings
 
     @classmethod
     def _closure_cycles(cls, table: symtable.SymbolTable, lambdas: dict[int, str]):
@@ -762,7 +875,7 @@ class TestCycleDiscipline(TestBase):
         return False
 
     @staticmethod
-    def _builds_a_class(node: ast.AST) -> bool:
+    def _builds_a_class(node: ast.AST) -> TypeGuard[ast.Call]:
         return (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -778,8 +891,9 @@ class TestCycleDiscipline(TestBase):
         decorators: set[str],
     ) -> bool:
         """
-        Whether the function builds a class only once for each argument (a cached function) or once
-        for each class definition (a class decorator of its module, or the `__new__` of a metaclass).
+        Whether the function builds a class only once for each argument (a cached function) or
+        once for each class definition (a class decorator of its module, or the `__new__` of a
+        metaclass).
         """
         if cls._is_cached(function) or function.name in decorators:
             return True
@@ -788,34 +902,6 @@ class TestCycleDiscipline(TestBase):
             and owner is not None
             and any(isinstance(base, ast.Name) and base.id == 'type' for base in owner.bases)
         )
-
-    @classmethod
-    def _classes_in_functions(cls, tree: ast.Module):
-        decorators = {
-            decorator.id
-            for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-            for decorator in node.decorator_list if isinstance(decorator, ast.Name)
-        }
-        yield from cls._classes_built_in(tree, None, None, decorators)
-
-    @classmethod
-    def _classes_built_in(
-        cls,
-        node: ast.AST,
-        function: ast.FunctionDef | ast.AsyncFunctionDef | None,
-        owner: ast.ClassDef | None,
-        decorators: set[str],
-    ):
-        for child in ast.iter_child_nodes(node):
-            if function is not None:
-                if isinstance(child, ast.ClassDef):
-                    yield child.lineno
-                elif cls._builds_a_class(child) and not cls._builds_once(function, owner, decorators):
-                    yield child.lineno
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                yield from cls._classes_built_in(child, child, node if isinstance(node, ast.ClassDef) else None, decorators)
-            else:
-                yield from cls._classes_built_in(child, function, owner, decorators)
 
     @classmethod
     def _carries(cls, node: ast.AST | None, name: str | None) -> bool:
@@ -845,72 +931,6 @@ class TestCycleDiscipline(TestBase):
             return cls._carries(node.value, name)
         return False
 
-    @staticmethod
-    def _cleared_in_finally(function: ast.AST, handler: ast.ExceptHandler, name: str) -> bool:
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Try):
-                continue
-            if not any(
-                inner is handler
-                for part in (node.body, node.handlers, node.orelse)
-                for statement in part
-                for inner in ast.walk(statement)
-            ):
-                continue
-            for statement in node.finalbody:
-                if isinstance(statement, ast.Delete):
-                    targets = statement.targets
-                elif isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant):
-                    targets = statement.targets if statement.value.value is None else []
-                else:
-                    continue
-                if any(isinstance(target, ast.Name) and target.id == name for target in targets):
-                    return True
-        return False
-
-    @classmethod
-    def _kept_exceptions(cls, function: ast.FunctionDef | ast.AsyncFunctionDef):
-        for handler in ast.walk(function):
-            if not isinstance(handler, ast.ExceptHandler):
-                continue
-            name = handler.name
-            for node in (node for statement in handler.body for node in ast.walk(statement)):
-                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
-                    if not cls._carries(node.value, name):
-                        continue
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    if all(
-                        isinstance(target, ast.Name) and (
-                            target.id == name or cls._cleared_in_finally(function, handler, target.id))
-                        for target in targets
-                    ):
-                        continue
-                    yield node.lineno
-                elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
-                    if cls._carries(node.value, name):
-                        yield node.lineno
-                elif isinstance(node, ast.Call) and isinstance(method := node.func, ast.Attribute):
-                    if method.attr in cls._CONTAINER_METHODS and any(cls._carries(arg, name) for arg in node.args):
-                        yield node.lineno
-
-    @staticmethod
-    def _raised_parameters(function: ast.FunctionDef | ast.AsyncFunctionDef):
-        arguments = function.args
-        parameters = {argument.arg for argument in arguments.posonlyargs + arguments.args + arguments.kwonlyargs}
-        for node in ast.walk(function):
-            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Name) and node.exc.id in parameters:
-                yield node.lineno
-
-    @staticmethod
-    def _raised_attributes(tree: ast.Module):
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Raise) and isinstance(node.exc, (ast.Attribute, ast.Subscript)):
-                yield node.lineno
-
-    @staticmethod
-    def _functions(tree: ast.Module):
-        return (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))
-
     @classmethod
     @functools.lru_cache(maxsize=None)
     def _all_offenders(cls) -> dict[str, list[str]]:
@@ -922,12 +942,13 @@ class TestCycleDiscipline(TestBase):
             'raised attribute': set(),
         }
         for path, tree, table in cls._checked_sources():
+            shapes = _ModuleShapes(tree)
             found = {
-                'closure cycle': cls._closure_cycles(table, cls._lambda_bindings(tree)),
-                'class in function': cls._classes_in_functions(tree),
-                'kept exception': (line for f in cls._functions(tree) for line in cls._kept_exceptions(f)),
-                'raised parameter': (line for f in cls._functions(tree) for line in cls._raised_parameters(f)),
-                'raised attribute': cls._raised_attributes(tree),
+                'closure cycle': cls._closure_cycles(table, shapes.lambdas),
+                'class in function': shapes.classes,
+                'kept exception': shapes.kept,
+                'raised parameter': shapes.raised_parameters,
+                'raised attribute': shapes.raised_attributes,
             }
             for shape, lines in found.items():
                 offenders[shape].update(F'{path}:{line}' for line in lines)
