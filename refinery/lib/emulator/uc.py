@@ -13,7 +13,7 @@ from refinery.lib.emulator.abstract import (
     Register,
     WeakHook,
 )
-from refinery.lib.emulator.uc_shared import get_access_map
+from refinery.lib.emulator.uc_shared import get_access_map, unmap_all
 from refinery.lib.executable import BO, Arch
 from refinery.lib.shared.unicorn import unicorn as uc
 
@@ -24,16 +24,6 @@ else:
         pass
 
 _T = TypeVar('_T')
-
-
-def _unmap_engine(engine: Uc):
-    """
-    Releases the memory of a unicorn engine, which holds a copy of the emulated data. Unicorn keeps
-    every engine that has a hook in a reference cycle, so the engine itself waits for the cycle
-    collector.
-    """
-    for begin, end, _ in list(engine.mem_regions()):
-        engine.mem_unmap(begin, end - begin + 1)
 
 
 class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
@@ -66,7 +56,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
         }[self.exe.byte_order()]
 
         self.unicorn = engine = uc.unicorn.Uc(uc_arch, uc_mode)
-        self._own_engine(_unmap_engine, engine)
+        self._own_engine(unmap_all, engine)
         self._single_step_hook = None
         self._halted = False
 

@@ -14,7 +14,7 @@ from refinery.lib.emulator.abstract import (
     Register,
     WeakHook,
 )
-from refinery.lib.emulator.uc_shared import get_access_map
+from refinery.lib.emulator.uc_shared import get_access_map, unmap_all
 from refinery.lib.executable import ET, Arch
 from refinery.lib.shared.speakeasy import speakeasy as se
 from refinery.lib.vfs import VirtualFileSystem
@@ -74,8 +74,7 @@ def _shut_down(speakeasy: Se):
     speakeasy.shutdown()
     if (emu := speakeasy.emu) is None or (eng := emu.emu_eng) is None or (engine := eng.emu) is None:
         return
-    for begin, end, _ in list(engine.mem_regions()):
-        engine.mem_unmap(begin, end - begin + 1)
+    unmap_all(engine)
 
 
 class SpeakeasyEmulator(Emulator[Se, str, _T]):
