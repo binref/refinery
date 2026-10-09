@@ -3,11 +3,7 @@ This module contains an implementation of Ukkonen's suffix tree algorithm.
 """
 from __future__ import annotations
 
-import weakref
-
 from abc import ABCMeta
-from collections import deque
-from io import BytesIO
 
 from refinery.lib.types import Iterable, Self, buf
 
@@ -18,45 +14,38 @@ class NodeMeta(ABCMeta):
         return ABCMeta.__new__(mcls, name, bases, namespace)
 
 
+class Source:
+    """
+    The data of a `refinery.lib.suffixtree.SuffixTree` and the position of the last byte that was
+    added to the tree, which is where every leaf ends. The nodes of a tree share it; it refers to
+    no node, so that the tree forms no reference cycle.
+    """
+    __slots__ = 'data', 'end'
+
+    def __init__(self, data: memoryview):
+        self.data = data
+        self.end = -1
+
+
 class Node(metaclass=NodeMeta):
     """
-    A node of a `refinery.lib.suffixtree.SuffixTree`. While the tree is built, `link` is the suffix
-    link of the node. Once it is built, a node refers to its parent only weakly, so that the tree
-    forms no reference cycle: The tree has to be kept while the paths of its nodes are read.
+    A node of a `refinery.lib.suffixtree.SuffixTree`. The edge to the node spells the data from
+    `start` to `end`. While the tree is built, `link` is the suffix link of the node.
     """
     children: dict[int, Self]
     end: int
     link: Node | None
     start: int
-    data: memoryview
-    _parent: weakref.ReferenceType[Node] | None
+    source: Source
 
-    __slots__ = ('children', 'end', 'link', 'start', 'data', '_parent', '__weakref__')
-
-    def __init__(self, data: memoryview):
-        self.data = data
+    def __init__(self, source: Source):
+        self.source = source
         self.link = None
         self.children = {}
-        self._parent = None
-
-    @property
-    def parent(self) -> Node | None:
-        if (ref := self._parent) is None:
-            return None
-        if (parent := ref()) is None:
-            raise RuntimeError('The suffix tree of this node was freed; keep the tree while reading paths of its nodes.')
-        return parent
 
     @property
     def label(self) -> buf:
-        return self.data[self.start:self.end + 1]
-
-    @property
-    def rootpath(self) -> Iterable[Node]:
-        if (parent := self.parent) is None:
-            return
-        yield from parent.rootpath
-        yield self
+        return self.source.data[self.start:self.end + 1]
 
     def visualize(self, depth=0, **kwargs):
         r = repr(self)
@@ -64,32 +53,16 @@ class Node(metaclass=NodeMeta):
         for child in self.children.values():
             child.visualize(depth + 1, **kwargs)
 
-    @property
-    def depth(self) -> int:
-        if (parent := self.parent) is None:
-            return 0
-        return 1 + parent.depth
-
-    @property
-    def suffix(self) -> bytes:
-        with BytesIO() as stream:
-            for node in self.rootpath:
-                stream.write(node.label)
-            return stream.getvalue()
-
-    def fixlinks(self):
+    def unlink(self):
         """
-        Replaces the suffix links of this node and all nodes below it by weak references to their
-        parents.
+        Drops the suffix links of this node and of all nodes below it. They are needed only while
+        the tree is built, and they would keep the tree in reference cycles.
         """
-        self.link = None
-        queue = deque([self])
-        while queue:
-            node = queue.pop()
-            for child in node.children.values():
-                queue.appendleft(child)
-                child.link = None
-                child._parent = weakref.ref(node)
+        pending = [self]
+        while pending:
+            node = pending.pop()
+            node.link = None
+            pending.extend(node.children.values())
 
     def __repr__(self) -> str:
         label = bytes(self.label).decode('utf8', errors='backslashreplace')
@@ -102,33 +75,28 @@ class Node(metaclass=NodeMeta):
 
 class Link(Node):
 
-    def __init__(self, data: memoryview, root: Root, start=None, end=None):
-        Node.__init__(self, data)
+    def __init__(self, source: Source, root: Root, start: int, end: int):
+        Node.__init__(self, source)
         self.start = start
         self.link = root
         self.end = end
 
 
 class Leaf(Node):
-    """
-    A leaf ends where the tree's cursor is: at the last byte of the data once the tree is built.
-    """
-    cursor: list[int]
 
-    def __init__(self, data: memoryview, root: Root, cursor: list[int], start=None):
-        Node.__init__(self, data)
+    def __init__(self, source: Source, root: Root, start: int):
+        Node.__init__(self, source)
         self.start = start
         self.link = root
-        self.cursor = cursor
 
     @property
     def end(self):
-        return self.cursor[0]
+        return self.source.end
 
 
 class Root(Node):
-    def __init__(self, data: memoryview):
-        Node.__init__(self, data)
+    def __init__(self, source: Source):
+        Node.__init__(self, source)
         self.start = self.end = -1
 
 
@@ -138,7 +106,8 @@ class SuffixTree:
 
     def __init__(self, data: buf):
         self.data = memoryview(data)
-        self.root = Root(self.data)
+        self.source = source = Source(self.data)
+        self.root = Root(source)
 
         self.half = None
         self.node = self.root
@@ -146,10 +115,9 @@ class SuffixTree:
         self.suffix_left = 0
         self.length_left = 0
         self.leaves: list[Leaf] = []
-        self._cursor = [0]
 
         for cursor in range(len(self.data)):
-            self._cursor[0] = cursor
+            source.end = cursor
             self.extend(cursor)
 
         del self.suffix_left
@@ -158,7 +126,7 @@ class SuffixTree:
         del self.node
         del self.half
 
-        self.root.fixlinks()
+        self.root.unlink()
 
     def __iter__(self) -> Iterable[Node]:
         yield from self.root.children.values()
@@ -173,7 +141,7 @@ class SuffixTree:
         return True
 
     def sprout(self, cursor: int) -> Leaf:
-        leaf = Leaf(self.data, self.root, self._cursor, cursor)
+        leaf = Leaf(self.source, self.root, cursor)
         self.leaves.append(leaf)
         return leaf
 
@@ -197,7 +165,7 @@ class SuffixTree:
                         self.half = None
                     self.length_left += 1
                     break
-                split = Link(self.data, self.root, bridge.start, bridge.start + self.length_left - 1)
+                split = Link(self.source, self.root, bridge.start, bridge.start + self.length_left - 1)
                 self.node.children[self.data[self.end]] = split
                 split.children[self.data[cursor]] = self.sprout(cursor)
                 bridge.start += self.length_left
