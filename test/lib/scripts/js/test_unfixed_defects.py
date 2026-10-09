@@ -4694,3 +4694,35 @@ class TestASelfCheckTrippedThroughAMadeUpRouteStillTrips(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: A function that unpacks its argument into a constant and assigns the constant inside a `try`,
+#: mapped to what Node prints for it: the assignment throws a `TypeError`, which the `catch`
+#: returns.
+AN_ASSIGNMENT_TO_A_CONSTANT_INSIDE_A_TRY = {
+    a_program("""
+        function f(q) {
+          const [a] = q;
+          try { a = 2; return 'assigned'; } catch (e) { return e.constructor.name; }
+        }
+        console.log(f([1]));
+        """): 'TypeError\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAssignmentToAConstantStillThrows(TestBase):
+    """
+    An assignment to a `const` binding throws a `TypeError` where it runs, so it is no store a pass
+    may drop for being unread, and the `catch` around it reports the error. The deobfuscation drops
+    the assignment, and the function returns from the `try`. No program assigns a constant on
+    purpose, which is why this is not held against a release.
+    """
+
+    @unittest.expectedFailure
+    def test_the_assignment_still_throws(self):
+        rows = AN_ASSIGNMENT_TO_A_CONSTANT_INSIDE_A_TRY
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
