@@ -169,7 +169,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
         if self.hooks.CodeExecute:
             emu.add_code_hook(WeakHook(self, cls._uc_hook_code))
-            emu.add_dyn_code_hook(WeakHook(self, cls._uc_hook_code))
 
         if self.hooks.MemoryRead:
             emu.add_mem_read_hook(WeakHook(self, cls._uc_hook_mem_read))

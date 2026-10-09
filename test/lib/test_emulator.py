@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import gc
+import inspect
 import lzma
+import subprocess
+import sys
+import weakref
 
 from refinery.lib.emulator import (
     CC,
@@ -461,6 +466,29 @@ class TestEmulator(TestBase):
     def test_a_memory_write_hook_receives_the_state_se(self):
         self._test_a_memory_write_hook_receives_the_state(SpeakeasyEmulator)
 
+    def test_a_memory_write_hook_receives_the_size_of_the_write_without_code_hooks_ic(self):
+        writes = []
+
+        class Emu(IcicleEmulator):
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                self.map(self.align(address, down=True), self.alloc_size)
+                return True
+
+            def hook_mem_write(self, emu, access, address, size, value, state=None):
+                writes.append((address, size, value))
+                return True
+
+        code = bytes.fromhex(
+            'C6 05 00 00 66 06 11'   # mov byte ptr [0x6660000], 0x11
+            '90'                     # nop
+            '90'                     # nop
+            'C6 05 01 00 66 06 22'   # mov byte ptr [0x6660001], 0x22
+        )
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.Memory)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(writes, [(0x6660000, 1, 0x11), (0x6660001, 1, 0x22)])
+
     def test_the_memory_of_a_unicorn_engine_is_released_with_its_emulator(self):
         code = bytes.fromhex(
             'B8 02 00 00 00'   # mov eax, 2
@@ -508,3 +536,75 @@ class TestEmulator(TestBase):
 
         with self.assertNoInstanceSurvives(Emu):
             emulate()
+
+    def test_a_code_hook_sees_all_code_that_runs_in_memory_speakeasy_marked_as_allocated(self):
+        addresses = []
+
+        class Emu(SpeakeasyEmulator):
+            def hook_code_execute(self, emu, address, size, state=None):
+                addresses.append(address)
+                return True
+
+        code = bytes.fromhex(
+            'B8 01 00 00 00'   # mov eax, 1
+            'BB 02 00 00 00'   # mov ebx, 2
+            'B9 03 00 00 00'   # mov ecx, 3
+        )
+        emu = Emu(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        assert (inner := emu.speakeasy.emu) is not None
+        inner._set_dyn_code_hook(emu.base + 5, 10)
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(emu.get_register('ecx'), 3)
+        self.assertLessEqual({emu.base + 5, emu.base + 10}, set(addresses))
+
+    def test_the_first_hook_that_fails_is_the_cause_of_the_emulation_error_uc(self):
+        class Emu(UnicornEmulator):
+            def hook_mem_write(self, emu, access, address, size, value, state=None):
+                raise ValueError('the write hook failed first')
+
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                raise LookupError('the error hook failed second')
+
+        code = bytes.fromhex(
+            'C6 05 00 00 66 06 11'   # mov byte ptr [0x6660000], 0x11
+        )
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.Memory)
+        emu.reset()
+        with self.assertRaises(EmulationError) as context:
+            emu.emulate(emu.base, emu.base + len(code))
+        self.assertIsInstance(context.exception.__cause__, ValueError)
+
+    def test_an_emulator_whose_engine_hooks_refer_to_it_is_freed_by_the_collector(self):
+        from unicorn import UC_HOOK_CODE
+
+        class Emu(UnicornEmulator):
+            def _reset(self):
+                super()._reset()
+                self.unicorn.hook_add(UC_HOOK_CODE, self.on_code)
+
+            def on_code(self, *_):
+                return True
+
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = Emu(code, arch=Arch.X64)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        alive = weakref.ref(emu)
+        del emu
+        gc.collect()
+        self.assertIsNone(alive())
+
+    def test_an_interpreter_that_exits_with_a_speakeasy_emulator_alive_reports_no_error(self):
+        script = inspect.cleandoc("""
+            from refinery.lib.emulator import Arch, SpeakeasyEmulator
+            emu = SpeakeasyEmulator(bytes.fromhex('B80200000090'), arch=Arch.X64)
+            emu.reset()
+            emu.emulate(emu.base, emu.base + 6)
+        """)
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, timeout=120)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn(B'Traceback', result.stderr)

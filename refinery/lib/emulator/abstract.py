@@ -211,6 +211,14 @@ class WeakHook:
             del emulator
 
 
+def _release_engine(release: Callable[[Any], object], engine: weakref.ref):
+    """
+    Releases the memory of the referenced engine with the given function unless the engine is gone.
+    """
+    if (alive := engine()) is not None:
+        release(alive)
+
+
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
@@ -431,9 +439,11 @@ class Emulator(ABC, Generic[_E, _R, _T]):
     def _hook_failed(self, error: BaseException):
         """
         Called by a `refinery.lib.emulator.abstract.WeakHook` whose hook raised the given error. The
-        emulation halts, and `refinery.lib.emulator.Emulator.emulate` raises the error.
+        emulation halts, and `refinery.lib.emulator.Emulator.emulate` raises the first such error of
+        the run; a hook that fails after it may only have failed because of it.
         """
-        self._hook_error = error
+        if self._hook_error is None:
+            self._hook_error = error
         self.halt()
 
     def mem_read_int(self, address: int, size: int | None = None):
@@ -460,15 +470,17 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Called as part of `refinery.lib.emulator.Emulator.reset`.
         """
 
-    def _own_engine(self, release: Callable[..., object], *engine: object):
+    def _own_engine(self, release: Callable[[Any], object], engine: object):
         """
         Called by a backend when its `_reset` has created an engine. The engines of some backends
         keep their memory, which holds a copy of the emulated data, in reference cycles that only
         the cycle collector frees. The given function releases that memory when the engine is
-        replaced or when the emulator is freed; it is called with the given arguments, which must
-        not refer to the emulator.
+        replaced or when the emulator is freed. The engine is referred to weakly, so that it may
+        refer to the emulator. Nothing is released at exit, where the engine may be closed already.
         """
-        self._engine_release = weakref.finalize(self, release, *engine)
+        engine_release = weakref.finalize(self, _release_engine, release, weakref.ref(engine))
+        engine_release.atexit = False
+        self._engine_release = engine_release
 
     def _init(self):
         """

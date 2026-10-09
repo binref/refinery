@@ -163,7 +163,9 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             ):
                 break
             elif status == RS.UnhandledException:
-                insn = insn or next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
+                ip = self.ip
+                if insn is None or insn.address != ip:
+                    insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
                 EC = ic.ExceptionCode
                 ea = ice.exception_value
                 ec = ice.exception_code
