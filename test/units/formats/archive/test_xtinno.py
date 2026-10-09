@@ -84,6 +84,27 @@ class TestInnoExtractor(TestUnitBase):
         self.assertEqual(uninstaller[:2], B'MZ')
         self.assertIsNone(inno.streams.Uninstaller.data)
 
+    def test_without_a_clean_parse_the_parse_with_the_fewest_warnings_is_used(self):
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
+        parse = InnoArchive._try_parse_as
+        warnings = iter((3, 1, 2))
+        parsed = []
+        tried = []
+
+        def parse_with_warnings(archive, inno, blobs, version, *args, **kwargs):
+            if not parsed:
+                parsed.append(parse(archive, inno, blobs, version, *args, **kwargs))
+            try:
+                count = next(warnings)
+            except StopIteration:
+                raise ValueError('no other version parses')
+            tried.append(version)
+            return parsed[0]._replace(version=version, warnings=count)
+
+        with mock.patch.object(InnoArchive, '_try_parse_as', parse_with_warnings):
+            inno = InnoArchive(data)
+        self.assertEqual(inno.version, tried[1])
+
     def test_a_chunk_is_read_decompressed(self):
         inno = InnoArchive(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
         file = next(file for file in inno.files if file.size and not file.filtered)

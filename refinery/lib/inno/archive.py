@@ -2676,7 +2676,7 @@ class InnoArchive:
                     self._log_comment(F'inno {v!s} via closest match: {header}')
                 break
             if not result.failures and (best_parse is None or result.warnings < best_score):
-                best_score = best_score
+                best_score = result.warnings
                 best_parse = result
 
         if not success:
