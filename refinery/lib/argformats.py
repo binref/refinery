@@ -236,7 +236,6 @@ class PythonExpression:
         names = {node for node in nodes if isinstance(node, ast.Name)}
         names = {node.id for node in names} - {node.id for node in names if isinstance(node.ctx, ast.Store)}
         names.difference_update(dir(builtins))
-        names.difference_update(globals())
         if not all_variables_allowed and not names <= variables:
             raise ParserVariableMissing(
                 'the following variable names are unknown: {}'.format(', '.join(names - variables)))
@@ -259,7 +258,7 @@ class PythonExpression:
             except KeyError:
                 raise ParserVariableMissing(v)
         variables.update(self.constants)
-        return eval(self.expression, None, variables)
+        return eval(self.expression, {'__builtins__': builtins}, variables)
 
     @classmethod
     def Lazy(cls, definition: str):
@@ -1819,7 +1818,8 @@ def _option_type(options: tuple[tuple[str, Any], ...], ignorecase: bool) -> type
     type for each set of options.
     """
     description = ','.join(sorted(name for name, _ in options))
-    option_type = type('TheOption', (_FactoryOption,), dict(options=dict(options), ignorecase=ignorecase))
+    namespace = dict(options=dict(options), ignorecase=ignorecase, __module__=__name__)
+    option_type = type('TheOption', (_FactoryOption,), namespace)
     option_type.__qualname__ = F'OptionFactory.Option[{description}]'
     return option_type
 

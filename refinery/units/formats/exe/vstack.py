@@ -389,7 +389,7 @@ def _vstack_emulator(base: type[Emulator]) -> type[VStackEmulator]:
     """
     The emulator class of `refinery.vstack` for the given backend; one class for each backend.
     """
-    return type(F'VStack{base.__name__}', (VStackEmulator, base), {})
+    return type(F'VStack{base.__name__}', (VStackEmulator, base), {'__module__': __name__})
 
 
 class vstack(EmulatingUnit):

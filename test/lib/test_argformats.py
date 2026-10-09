@@ -108,6 +108,15 @@ class TestArgumentFormats(TestBase):
         with self.assertRaises(ArgumentTypeError):
             p()
 
+    def test_meta_variables_named_like_helpers_of_the_argument_parser_are_read_from_the_chunk(self):
+        for name in ('cache', 'one', 'reduce'):
+            with self.subTest(name=name):
+                pl = self.load_pipeline(F'emit ABC [| put {name} 7 | xor e:{name} ]')
+                self.assertEqual(pl(), B'FED')
+
+    def test_an_option_type_belongs_to_the_module_that_builds_it(self):
+        self.assertEqual(argformats.OptionFactory({'A': 1}).__module__, argformats.__name__)
+
     def test_environment_handler(self):
         import os
         os.environ['test'] = 'foo'

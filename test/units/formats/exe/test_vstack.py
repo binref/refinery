@@ -171,3 +171,8 @@ class TestVStack(TestUnitBase):
             test = code | pipe | bytes
             self.assertEqual(test, B'REFINERY')
 
+    def test_the_emulator_classes_of_the_unit_belong_to_its_module(self):
+        from refinery.lib.emulator import IcicleEmulator, SpeakeasyEmulator, UnicornEmulator
+        from refinery.units.formats.exe import vstack
+        for backend in (IcicleEmulator, SpeakeasyEmulator, UnicornEmulator):
+            self.assertEqual(vstack._vstack_emulator(backend).__module__, vstack.__name__)

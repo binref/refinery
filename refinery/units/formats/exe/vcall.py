@@ -545,7 +545,8 @@ def _show_disassembly(base: type[Emulator]) -> type[Emulator]:
     The given emulator class, extended to log each instruction that it executes; one class for
     each backend.
     """
-    return type(F'Disassembling{base.__name__}', (_DisassemblingEmulator, base), {})
+    namespace = {'__module__': __name__}
+    return type(F'Disassembling{base.__name__}', (_DisassemblingEmulator, base), namespace)
 
 
 class vcall(EmulatingUnit):

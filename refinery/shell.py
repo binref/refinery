@@ -49,7 +49,7 @@ def __getattr__(name):
     if unit is None:
         raise AttributeError(name)
 
-    wrapped_unit = type('_unit', (unit,), {'__new__': _assembled})
+    wrapped_unit = type('_unit', (unit,), {'__new__': _assembled, '__module__': __name__})
     return wraps(unit, updated=__WRAP_UPDATE, assigned=__WRAP_ASSIGN)(wrapped_unit)
 
 
