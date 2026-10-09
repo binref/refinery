@@ -142,6 +142,7 @@ class VStackEmulator(Emulator):
         except Exception:
             return None
 
+    @_halt_on_interrupt
     def hook_api_call(self, emu, name: str, cb=None, args: tuple[int, ...] = ()):
         def _repr(x):
             if not isinstance(x, int):
@@ -306,6 +307,7 @@ class VStackEmulator(Emulator):
                 vstack.log_debug(state.log(F'{msg}; recovery, space mapped for access {access!r}'))
         return True
 
+    @_halt_on_interrupt
     def hook_code_error(self, emu, state: EmuState):
         vstack.log_debug('aborting emulation; instruction error')
         self.halt()

@@ -171,6 +171,22 @@ class TestVStack(TestUnitBase):
             test = code | pipe | bytes
             self.assertEqual(test, B'REFINERY')
 
+    def test_an_interrupt_in_an_emulated_api_call_halts_the_emulation(self):
+        from types import SimpleNamespace
+        from refinery.lib.emulator import Arch, UnicornEmulator
+        from refinery.units.formats.exe import vstack
+
+        def interrupted(args):
+            raise KeyboardInterrupt
+
+        emu = vstack._vstack_emulator(UnicornEmulator)(bytes.fromhex('90'), arch=Arch.X32)
+        emu.reset(SimpleNamespace(last_api=None, cfg=SimpleNamespace(show_apis=False)))
+        try:
+            result = emu.hook_api_call(emu, 'kernel32.Sleep', interrupted, ())
+        except KeyboardInterrupt:
+            self.fail('the interrupt left the hook')
+        self.assertIs(result, False)
+
     def test_the_emulator_classes_of_the_unit_belong_to_its_module(self):
         from refinery.lib.emulator import IcicleEmulator, SpeakeasyEmulator, UnicornEmulator
         from refinery.units.formats.exe import vstack
