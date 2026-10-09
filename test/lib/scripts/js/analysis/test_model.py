@@ -469,6 +469,18 @@ class TestSemanticModel(TestBase):
         outer_scope = model.root_scope.children[0]
         self.assertFalse(model.would_capture({'x'}, outer_scope))
 
+    def test_captured_names_are_the_names_would_capture_holds_for(self):
+        _, model = self._model(
+            'function outer(){ function inner(){ var x; return x; } var w; return y + w; }')
+        outer_scope = model.root_scope.children[0]
+        names = {'w', 'x', 'y', 'z'}
+        self.assertEqual(model.captured_names(names, outer_scope), {'w', 'y'})
+        for name in names:
+            self.assertEqual(
+                model.would_capture({name}, outer_scope),
+                name in model.captured_names(names, outer_scope),
+            )
+
     def test_implicit_global_assignment_creates_script_binding(self):
         ast, model = self._model('g = 1; g;')
         g_write, g_read = self._idents(ast, 'g')

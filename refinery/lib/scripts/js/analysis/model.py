@@ -3073,15 +3073,25 @@ class SemanticModel:
         edit, which is the question the callers below `_admit_reflected_body` ask of their free
         names, not the one this capture rule asks of a use the tree still holds.
         """
+        return next(self._capturing_uses(names, scope, exclude), None) is not None
+
+    def captured_names(
+        self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
+    ) -> set[str]:
+        """
+        Those of *names* for which `would_capture` holds, read in one walk of *scope*.
+        """
+        return {node.name for node in self._capturing_uses(names, scope, exclude)}
+
+    def _capturing_uses(
+        self, names: set[str], scope: Scope, exclude: Collection[Binding],
+    ) -> Iterator[JsIdentifier]:
         for node in name_uses_in_scope(names, scope):
             binding = self.lookup(node.name, self._node_scope.get(node))
             if binding in exclude:
                 continue
-            if binding is None:
-                return True
-            if not scope.contains(binding.scope, strict=True):
-                return True
-        return False
+            if binding is None or not scope.contains(binding.scope, strict=True):
+                yield node
 
     def has_reflection_surface(self) -> bool:
         """

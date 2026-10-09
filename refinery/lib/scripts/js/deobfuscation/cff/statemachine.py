@@ -40,6 +40,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     declares_a_watched_name,
     eval_binary_op,
+    fresh_name,
     is_literal,
     is_reference,
     is_valid_identifier,
@@ -3552,7 +3553,7 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
 
     def fresh(slot: Expression) -> str:
         base = _deepest_property_name(slot)
-        name = _fresh_arg_name(base if base and is_valid_identifier(base) else 'p', taken)
+        name = fresh_name(base if base and is_valid_identifier(base) else 'p', taken.__contains__)
         taken.add(name)
         return name
 
@@ -3587,18 +3588,6 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
 def _walk_all(stmts: list[Statement]):
     for stmt in stmts:
         yield from stmt.walk()
-
-
-def _fresh_arg_name(base: str, taken: set[str]) -> str:
-    """
-    Derive an identifier based on *base* that does not appear in *taken*.
-    """
-    candidate = base
-    suffix = 0
-    while candidate in taken:
-        suffix += 1
-        candidate = F'{base}_{suffix}'
-    return candidate
 
 
 def _rebind_wrapper_param(params: list[Expression], target: str) -> list[Expression]:
@@ -3649,7 +3638,7 @@ def _wrapper_arg_param_name(
     rest = wrapper_info.rest_param_name
     if rest is not None and rest not in match.state_var_names and rest not in taken:
         return rest
-    return _fresh_arg_name(match.arg_var_name, taken)
+    return fresh_name(match.arg_var_name, taken.__contains__)
 
 
 def _rebind_free_arg_var(

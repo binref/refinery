@@ -1397,6 +1397,18 @@ def is_valid_identifier(name: str) -> bool:
     return is_identifier_name(name) and name not in JS_RESERVED and name not in UNDECLARABLE_NAMES
 
 
+def fresh_name(base: str, taken: Callable[[str], bool]) -> str:
+    """
+    The first of *base*, `base_1`, `base_2` and so on for which *taken* is false.
+    """
+    candidate = base
+    suffix = 0
+    while taken(candidate):
+        suffix += 1
+        candidate = F'{base}_{suffix}'
+    return candidate
+
+
 def is_valid_property_key(name: str) -> bool:
     return bool(SIMPLE_IDENTIFIER.match(name))
 
