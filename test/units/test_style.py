@@ -669,6 +669,58 @@ class TestPartialReadDiscipline(TestBase):
 
 
 _Function = ast.FunctionDef | ast.AsyncFunctionDef
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+class _Context(NamedTuple):
+    """
+    Where a node of a module is: the innermost function around it, the class of which that function
+    is a method, the parameters of all functions around it, the try statements of the innermost
+    function whose body, handlers or else block contain it, and the names of the handlers of that
+    function that contain it.
+    """
+    function: _Function | None = None
+    owner: ast.ClassDef | None = None
+    parameters: frozenset[str] = frozenset()
+    tries: tuple[ast.Try, ...] = ()
+    handlers: frozenset[str] = frozenset()
+
+
+def _own_nodes(scope: ast.AST):
+    """
+    The nodes of the given scope that do not belong to a scope nested in it.
+    """
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _bound_names(scope: _Function | ast.Lambda) -> set[str]:
+    """
+    The names that the given function binds: its parameters, the names it assigns, and the
+    functions and classes it defines.
+    """
+    signature = scope.args
+    arguments = (*signature.posonlyargs, *signature.args, *signature.kwonlyargs)
+    names = {argument.arg for argument in arguments}
+    names.update(argument.arg for argument in (signature.vararg, signature.kwarg) if argument)
+    for node in _own_nodes(scope):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+    return names
+
+
+def _captured_names(scope: _Function | ast.Lambda) -> set[str]:
+    """
+    The names that the given function reads without binding them.
+    """
+    read = {node.id for node in ast.walk(scope) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    return read - _bound_names(scope)
 
 
 class _ModuleShapes:
@@ -682,54 +734,57 @@ class _ModuleShapes:
         self.kept: list[int] = []
         self.raised_parameters: list[int] = []
         self.raised_attributes: list[int] = []
+        self.raised_locals: list[int] = []
+        self.stored_closures: list[int] = []
         self._decorators: set[str] = set()
         self._type_calls: list[tuple[int, _Function, ast.ClassDef | None]] = []
-        self._walk(tree, None, None, None, frozenset(), ())
+        self._locals: dict[int, tuple[set[str], dict[str, list[_Function]]]] = {}
+        self._walk(tree, None, _Context())
         for line, function, owner in self._type_calls:
             if not TestCycleDiscipline._builds_once(function, owner, self._decorators):
                 self.classes.append(line)
 
-    def _walk(
-        self,
-        node: ast.AST,
-        parent: ast.AST | None,
-        function: _Function | None,
-        owner: ast.ClassDef | None,
-        parameters: frozenset[str],
-        tries: tuple[ast.Try, ...],
-    ):
+    def _walk(self, node: ast.AST, parent: ast.AST | None, context: _Context):
         """
-        Checks the node and walks its children. The function is the innermost function around the
-        node, the owner is the class of which that function is a method, the parameters are those
-        of all functions around the node, and the tries are the try statements of the innermost
-        function whose body, handlers or else block contain the node.
+        Checks the node and walks its children.
         """
-        self._check(node, function, owner, parameters, tries)
+        self._check(node, context)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             signature = node.args
             arguments = (*signature.posonlyargs, *signature.args, *signature.kwonlyargs)
-            names = {argument.arg for argument in arguments}
-            owner = parent if isinstance(parent, ast.ClassDef) else None
-            function, parameters, tries = node, parameters | names, ()
+            context = _Context(
+                node,
+                parent if isinstance(parent, ast.ClassDef) else None,
+                context.parameters | {argument.arg for argument in arguments},
+            )
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            context = context._replace(handlers=context.handlers | {node.name})
         if isinstance(node, ast.Try):
+            inner = context._replace(tries=(*context.tries, node))
             for part in (node.body, node.handlers, node.orelse):
                 for child in part:
-                    self._walk(child, node, function, owner, parameters, (*tries, node))
+                    self._walk(child, node, inner)
             for child in node.finalbody:
-                self._walk(child, node, function, owner, parameters, tries)
+                self._walk(child, node, context)
             return
         for child in ast.iter_child_nodes(node):
-            self._walk(child, node, function, owner, parameters, tries)
+            self._walk(child, node, context)
 
-    def _check(
-        self,
-        node: ast.AST,
-        function: _Function | None,
-        owner: ast.ClassDef | None,
-        parameters: frozenset[str],
-        tries: tuple[ast.Try, ...],
-    ):
+    def _scope(self, function: _Function) -> tuple[set[str], dict[str, list[_Function]]]:
+        """
+        The names that the function binds, and the functions defined in it by their names.
+        """
+        if (scope := self._locals.get(id(function))) is None:
+            nested: dict[str, list[_Function]] = {}
+            for node in _own_nodes(function):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    nested.setdefault(node.name, []).append(node)
+            scope = self._locals[id(function)] = _bound_names(function), nested
+        return scope
+
+    def _check(self, node: ast.AST, context: _Context):
         checks = TestCycleDiscipline
+        function = context.function
         if isinstance(node, ast.Assign):
             targets = node.targets
         elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
@@ -746,14 +801,70 @@ class _ModuleShapes:
             if function is not None:
                 self.classes.append(node.lineno)
         elif function is not None and checks._builds_a_class(node):
-            self._type_calls.append((node.lineno, function, owner))
+            self._type_calls.append((node.lineno, function, context.owner))
         elif isinstance(node, ast.Raise):
-            if isinstance(node.exc, (ast.Attribute, ast.Subscript)):
+            exc = node.exc
+            if isinstance(exc, (ast.Attribute, ast.Subscript)):
                 self.raised_attributes.append(node.lineno)
-            elif isinstance(node.exc, ast.Name) and node.exc.id in parameters:
+            elif not isinstance(exc, ast.Name):
+                pass
+            elif exc.id in context.parameters:
                 self.raised_parameters.append(node.lineno)
+            elif function is not None and self._raises_a_kept_local(exc.id, function, context):
+                self.raised_locals.append(node.lineno)
         elif isinstance(node, ast.ExceptHandler) and function is not None:
-            self.kept.extend(self._kept_exceptions(node, tries))
+            self.kept.extend(self._kept_exceptions(node, context.tries))
+        if (
+            function is not None
+            and isinstance(node, (ast.Assign, ast.Call))
+            and self._stores_a_closure(node, function)
+        ):
+            self.stored_closures.append(node.lineno)
+
+    def _raises_a_kept_local(self, name: str, function: _Function, context: _Context) -> bool:
+        """
+        Whether raising the given name raises an exception that a local variable keeps after the
+        raise: the traceback refers to the frame, which refers to the exception.
+        """
+        bound, _ = self._scope(function)
+        return (
+            name in bound
+            and name not in context.handlers
+            and not self._cleared_in_finally(context.tries, name)
+        )
+
+    def _stores_a_closure(self, node: ast.Assign | ast.Call, function: _Function) -> bool:
+        """
+        Whether the node stores a function defined in the given function, or a lambda, on an
+        attribute or item of a variable that the stored function captures.
+        """
+        if isinstance(node, ast.Assign):
+            stores = [(target, node.value) for target in node.targets]
+        elif (
+            isinstance(method := node.func, ast.Attribute)
+            and method.attr in TestCycleDiscipline._CONTAINER_METHODS
+        ):
+            stores = [(method, argument) for argument in node.args]
+        else:
+            return False
+        bound, nested = self._scope(function)
+        for target, value in stores:
+            if not isinstance(target, (ast.Attribute, ast.Subscript)):
+                continue
+            base = target.value
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                base = base.value
+            if not isinstance(base, ast.Name) or base.id not in bound:
+                continue
+            if isinstance(value, ast.Lambda):
+                stored = [value]
+            elif isinstance(value, ast.Name):
+                stored = nested.get(value.id, [])
+            else:
+                continue
+            if any(base.id in _captured_names(scope) for scope in stored):
+                return True
+        return False
 
     @staticmethod
     def _cleared_in_finally(tries: tuple[ast.Try, ...], name: str) -> bool:
@@ -940,6 +1051,8 @@ class TestCycleDiscipline(TestBase):
             'kept exception': set(),
             'raised parameter': set(),
             'raised attribute': set(),
+            'raised local': set(),
+            'stored closure': set(),
         }
         for path, tree, table in cls._checked_sources():
             shapes = _ModuleShapes(tree)
@@ -949,6 +1062,8 @@ class TestCycleDiscipline(TestBase):
                 'kept exception': shapes.kept,
                 'raised parameter': shapes.raised_parameters,
                 'raised attribute': shapes.raised_attributes,
+                'raised local': shapes.raised_locals,
+                'stored closure': shapes.stored_closures,
             }
             for shape, lines in found.items():
                 offenders[shape].update(F'{path}:{line}' for line in lines)
@@ -972,6 +1087,12 @@ class TestCycleDiscipline(TestBase):
 
     def test_no_function_raises_an_exception_kept_in_an_attribute(self):
         self.assertListEqual(self._offenders('raised attribute'), [])
+
+    def test_no_function_raises_an_exception_that_a_local_variable_keeps(self):
+        self.assertListEqual(self._offenders('raised local'), [])
+
+    def test_no_function_stores_a_closure_on_a_variable_it_captures(self):
+        self.assertListEqual(self._offenders('stored closure'), [])
 
     def test_the_unratcheted_packages_are_still_unratcheted(self):
         places = [place for shape in self._all_offenders().values() for place in shape]

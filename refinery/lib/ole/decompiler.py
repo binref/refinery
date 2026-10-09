@@ -206,6 +206,18 @@ def vba_string_literal(value: str) -> str:
     return ' & '.join(concat)
 
 
+_DISPATCH_OVERRIDES: dict[str, Callable[..., None]] = {
+    'FnCurDir$' : lambda decompiler: decompiler._stack.push('CurDir$'),
+    'FnError$'  : lambda decompiler: decompiler._stack.push('Error$'),
+    'Mid$'      : lambda decompiler: decompiler._mid_statement('Mid$'),
+    'MidB$'     : lambda decompiler: decompiler._mid_statement('MidB$'),
+}
+"""
+Handlers of the opcodes whose names do not follow the naming convention of the handler methods of
+`refinery.lib.ole.decompiler.VBADecompiler`; each takes the decompiler.
+"""
+
+
 class VBADecompiler:
     """
     Executes VBA p-code opcodes against a stack to reconstruct VBA source text. Each opcode name
@@ -267,11 +279,6 @@ class VBADecompiler:
         self._enum_lines: set[int] = set()
         self._current_line: int = 0
         self._loop_depth: int = 0
-        self._dispatch_overrides: dict[str, Callable] = {}
-        self._dispatch_overrides['FnCurDir$'] = lambda: self._stack.push('CurDir$')
-        self._dispatch_overrides['FnError$'] = lambda: self._stack.push('Error$')
-        self._dispatch_overrides['Mid$'] = lambda: self._mid_statement('Mid$')
-        self._dispatch_overrides['MidB$'] = lambda: self._mid_statement('MidB$')
 
     def _binary_op(self, operator: str) -> None:
         rhs = self._stack.pop()
@@ -1920,9 +1927,9 @@ class VBADecompiler:
         mnemonic) with getattr lookup, falling back to data-driven tables for binary ops and
         unary functions.
         """
-        handler = self._dispatch_overrides.get(opcode)
-        if handler is not None:
-            handler(*args)
+        override = _DISPATCH_OVERRIDES.get(opcode)
+        if override is not None:
+            override(self, *args)
             return
         method_name = F'_op_{opcode.lower()}'
         handler = getattr(self, method_name, None)

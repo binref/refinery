@@ -25,9 +25,12 @@ class bitrev(UnaryOperation):
             def operate(v):
                 return ((v * 0x202020202) & 0x10884422010) % 1023
         elif self.blocksize in (2, 4, 8):
+            bits = self.fbits
+            mask = self.fmask
+
             def operate(v):
-                s = self.fbits
-                m = self.fmask
+                s = bits
+                m = mask
                 w = v
                 while s > 1:
                     s >>= 1
@@ -35,9 +38,11 @@ class bitrev(UnaryOperation):
                     w = ((w << s) & ~m) | ((w >> s) & m)
                 return w
         else:
+            bits = self.fbits
+
             def operate(v):
                 w = v & 0
-                for s in range(self.fbits):
-                    w |= ((v >> s) & 1) << (self.fbits - s - 1)
+                for s in range(bits):
+                    w |= ((v >> s) & 1) << (bits - s - 1)
                 return w
         self.operate = operate # type:ignore

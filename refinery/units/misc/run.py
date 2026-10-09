@@ -132,7 +132,7 @@ class run(Unit):
                 return None
 
         errbuf = MemoryFile()
-        errobj = None
+        timed_out = False
 
         while True:
             out = queue_read(qout)
@@ -189,14 +189,14 @@ class run(Unit):
                     if recverr is not None:
                         recverr.join(_jt)
                     recvout.join(_jt)
-                    if not len(result):
-                        errobj = RuntimeError('timeout reached, process had no output')
-                    else:
-                        errobj = RefineryPartialResult(
-                            'timeout reached, returning all collected output',
-                            partial=result.getvalue())
+                    timed_out = True
 
-        if errobj is not None:
-            raise errobj
+        if timed_out:
+            assert result is not None
+            if not len(result):
+                raise RuntimeError('timeout reached, process had no output')
+            raise RefineryPartialResult(
+                'timeout reached, returning all collected output',
+                partial=result.getvalue())
         if result is not None:
             yield result.getvalue()

@@ -23,6 +23,13 @@ class TestVBAPC(TestUnitBase):
         self.assertTrue(any(
             B'http://109.94.209'B'.91/12340.txt' in c for c in code))
 
+    def test_the_decompiler_is_freed_without_the_collector(self):
+        from refinery.lib.ole.decompiler import VBADecompiler
+        data = self.download_sample('4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08')
+        unit = self.load()
+        with self.assertNoInstanceSurvives(VBADecompiler):
+            self.assertTrue(data | unit | [])
+
     def test_maldoc_02(self):
         data = self.download_sample('ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394')
         unit = self.load()

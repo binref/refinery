@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Generic, TypeVar, cast
 
 from refinery.lib.exceptions import RefineryImportError, RefineryImportMissing
+from refinery.lib.tools import copy_exception
 
 if TYPE_CHECKING:
     from refinery.units import Unit
@@ -13,19 +14,21 @@ Mod = TypeVar('Mod')
 class MissingModule:
     """
     This class can wrap a module import that is currently missing. If any attribute of the missing
-    module is accessed, it raises `refinery.units.RefineryImportMissing`.
+    module is accessed, it raises `refinery.units.RefineryImportMissing`, or a copy of the given
+    import error if that is a `refinery.lib.exceptions.RefineryImportError`. The error is kept as
+    a copy without its traceback.
     """
-    def __init__(self, name, install=None, info=None, error=None):
+    def __init__(self, name, install=None, info=None, error: ImportError | None = None):
         self.name = name
         self.install = install or [name]
         self.info = info
-        self.error = error
+        self.error = error and copy_exception(error)
 
     def __getattr__(self, key: str):
         if key.startswith('__') and key.endswith('__'):
             raise AttributeError(key)
         if (error := self.error) and isinstance(error, RefineryImportError):
-            raise error
+            raise copy_exception(error)
         raise RefineryImportMissing(self.name, self.install, info=self.info)
 
 
