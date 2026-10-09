@@ -1,4 +1,3 @@
-import contextlib
 import copy
 import gc
 import io
@@ -9,7 +8,7 @@ import weakref
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
 
-from .. import TestBase
+from .. import TestBase, without_cycle_collector
 
 
 class _Lifetimes:
@@ -23,18 +22,6 @@ class _Lifetimes:
     def track(self, chunk: Chunk) -> Chunk:
         self.tracked.append(weakref.ref(chunk))
         return chunk
-
-
-@contextlib.contextmanager
-def _without_cycle_collector():
-    enabled = gc.isenabled()
-    gc.collect()
-    gc.disable()
-    try:
-        yield
-    finally:
-        if enabled:
-            gc.enable()
 
 
 def _drain(pipeline):
@@ -292,7 +279,7 @@ class TestFraming(TestBase):
                     lifetimes.note()
                     yield lifetimes.track(Chunk(bytes(0x100)))
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             pipeline(source)
         return lifetimes.notes
 
@@ -339,7 +326,7 @@ class TestFraming(TestBase):
                 for _ in range(4):
                     yield lifetimes.track(Chunk(bytes(0x100)))
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             for chunk in B'' | source():
                 del chunk
                 lifetimes.note()
@@ -369,7 +356,7 @@ class TestFraming(TestBase):
                     def process(self, data):
                         return lifetimes.track(Chunk(bytes(0x100)))
 
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     for _ in pipeline(source, single):
                         lifetimes.note()
                 self.assertTrue(lifetimes.notes)
@@ -397,7 +384,7 @@ class TestFraming(TestBase):
                     def process(self, data):
                         return lifetimes.track(data)
 
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     pipeline(source, spy)
                 self.assertEqual(lifetimes.notes, [[], [], [], []])
 
@@ -418,7 +405,7 @@ class TestFraming(TestBase):
                     del chunk
 
         last_visible = scope(slice(3, 4))
-        with _without_cycle_collector():
+        with without_cycle_collector():
             _drain(B'' | _configured(source(), 1) | last_visible | _configured(spy(), -1))
         self.assertEqual(len(lifetimes.tracked), 4)
         self.assertEqual(lifetimes.notes, [[], [], [], []])
@@ -443,7 +430,7 @@ class TestFraming(TestBase):
                     def process(self, data):
                         return lifetimes.track(data)
 
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     unit = spy()
                     _drain(data | unit)
                     lifetimes.note()
@@ -465,7 +452,7 @@ class TestFraming(TestBase):
                         yield data[:1]
                         yield data[1:]
 
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     with B'AB' | halves() as unit:
                         self.assertEqual(read(unit), B'A')
                     lifetimes.note()
@@ -493,7 +480,7 @@ class TestFraming(TestBase):
         }
         for name, run in runs.items():
             with self.subTest(name):
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     unit = halves()
                     freed = weakref.ref(unit)
                     run(unit)
@@ -516,7 +503,7 @@ class TestFraming(TestBase):
                         lifetimes.track(data)
                         raise ValueError('the input is invalid')
 
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     unit = fails()
                     unit.log_level = level
                     try:
@@ -536,7 +523,7 @@ class TestFraming(TestBase):
                 yield self.labelled(data[:1])
                 yield self.labelled(data[1:], opaque=object())
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             with self.assertRaises(TypeError):
                 _ = [B'AB'] | _configured(opaque(), 1) | []
             lifetimes.note()
@@ -557,7 +544,7 @@ class TestFraming(TestBase):
         }
         for name, target in targets.items():
             with self.subTest(name):
-                with _without_cycle_collector():
+                with without_cycle_collector():
                     unit = halves()
                     freed = weakref.ref(unit)
                     with self.assertRaises(ValueError):
@@ -576,7 +563,7 @@ class TestFraming(TestBase):
 
         unit = fails()
         unit.args.trypass = True
-        with _without_cycle_collector():
+        with without_cycle_collector():
             with B'data' | unit as pipeline:
                 self.assertEqual(next(pipeline), B'data')
                 lifetimes.note()
@@ -596,7 +583,7 @@ class TestFraming(TestBase):
             def process(self, data):
                 yield from data.temp
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             self.assertEqual([B'A', B'B', B'C'] | gathers() | [bytes], [B'A', B'B', B'C'])
             lifetimes.note()
         self.assertEqual(lifetimes.notes, [[]])
@@ -620,7 +607,7 @@ class TestFraming(TestBase):
             def process(self, data):
                 return data
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             pipeline = B'ABCD' | _configured(quarters(), 1) | _configured(first(), -1)
             self.assertEqual(pipeline | [bytes], [B'A'])
             lifetimes.note()
@@ -673,7 +660,7 @@ class TestFraming(TestBase):
             def process(self, data):
                 return data
 
-        with _without_cycle_collector():
+        with without_cycle_collector():
             reused = _configured(quarters(), 1)
             dropped = B'ABCD' | reused | _configured(passes(), -1)
             self.assertEqual(next(dropped), B'A')

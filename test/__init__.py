@@ -22,6 +22,22 @@ def temporary_chwd(directory):
         os.chdir(old)
 
 
+@contextlib.contextmanager
+def without_cycle_collector():
+    """
+    Runs the block with the cycle collector off, after a full collection, and restores it after
+    the block.
+    """
+    enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
+
+
 class NameUnknownException(Exception):
     def __init__(self, name):
         super().__init__('could not resolve: {}'.format(name))
@@ -91,17 +107,10 @@ class TestBase(unittest.TestCase):
         after it while the cycle collector is off, i.e. if only the collector could free it.
         Instances that existed before the block, like units that a cache keeps, are ignored.
         """
-        enabled = gc.isenabled()
-        gc.collect()
-        existing = [obj for obj in gc.get_objects() if isinstance(obj, cls)]
-        known = {id(obj) for obj in existing}
-        gc.disable()
-        try:
+        with without_cycle_collector():
+            known = {id(obj) for obj in gc.get_objects() if isinstance(obj, cls)}
             yield
             survivors = [obj for obj in gc.get_objects() if isinstance(obj, cls) and id(obj) not in known]
-        finally:
-            if enabled:
-                gc.enable()
         self.assertEqual(survivors, [])
 
     def assertCollectorFreesLessThan(self, limit: int, operation: Callable[[], object]):
@@ -113,19 +122,15 @@ class TestBase(unittest.TestCase):
         the second run is not counted, so the operation creates the input it passes along.
         """
         operation()
-        enabled = gc.isenabled()
-        gc.collect()
-        gc.disable()
-        tracemalloc.start()
-        try:
-            operation()
-            kept, _ = tracemalloc.get_traced_memory()
-            gc.collect()
-            left, _ = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
-            if enabled:
-                gc.enable()
+        with without_cycle_collector():
+            tracemalloc.start()
+            try:
+                operation()
+                kept, _ = tracemalloc.get_traced_memory()
+                gc.collect()
+                left, _ = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
         self.assertLess(kept - left, limit)
 
     @classmethod
