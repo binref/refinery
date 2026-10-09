@@ -92,6 +92,58 @@ class _ScriptItem(NamedTuple):
     extension: str | None
 
 
+def _formatted_name(
+    name: str,
+    properties: dict[str, str],
+    files: dict[str, str],
+    components: dict[str, str],
+) -> str:
+    """
+    The value of a bracketed name in a string of the type Formatted.
+    """
+    if not name or name[0] in '~\\' or '{' in name or '}' in name:
+        return F'[{name}]'
+    prefix, key = name[0], name[1:]
+    if prefix not in '%$!#' or not key:
+        return properties.get(name, '')
+    if prefix == '%':
+        key = key.rstrip('%').upper()
+        return F'%{key}%'
+    if prefix == '$':
+        return components.get(key, '')
+    return files.get(key, '')
+
+
+def _format(
+    string: str,
+    properties: dict[str, str],
+    files: dict[str, str],
+    components: dict[str, str],
+) -> str:
+    """
+    Formats a string of the type Formatted like Windows Installer: Each bracketed name is replaced
+    by its value, the innermost first. A value that was substituted is not formatted again, so a
+    value that names a property stays as it is.
+    """
+    stack: list[list[str]] = [[]]
+    for token in re.finditer(r'\[\\(.)\]|\[~\]|\[|\]|[^\[\]]+', string, re.DOTALL):
+        if (escaped := token[1]) is not None:
+            stack[-1].append(escaped)
+        elif (text := token[0]) == '[~]':
+            stack[-1].append('\0')
+        elif text == '[':
+            stack.append([])
+        elif text == ']' and len(stack) > 1:
+            name = ''.join(stack.pop())
+            stack[-1].append(_formatted_name(name, properties, files, components))
+        else:
+            stack[-1].append(text)
+    while len(stack) > 1:
+        rest = ''.join(stack.pop())
+        stack[-1].append(F'[{rest}')
+    return ''.join(stack[0])
+
+
 class MSIStringData:
     def __init__(self, string_data: buf, string_pool: buf):
         data = StructReader(string_data)
@@ -223,38 +275,6 @@ class xtmsi(xtdoc, docs=(
         tbl_components: dict[str, str] = {}
         postprocessing: list[_ScriptItem] = []
 
-        def format_string(string: str):
-            # https://learn.microsoft.com/en-us/windows/win32/msi/formatted
-            def _replace(match: re.Match[str]):
-                nonlocal _replace_done
-                _replace_done = False
-                prefix, name = match.groups()
-                if not prefix:
-                    tbl = tbl_properties
-                elif prefix in '%':
-                    name = name.rstrip('%').upper()
-                    return F'%{name}%'
-                elif prefix in '!#':
-                    tbl = tbl_files
-                elif prefix in '$':
-                    tbl = tbl_components
-                else:
-                    raise ValueError
-                return tbl.get(name, '')
-            while True:
-                _replace_done = True
-                string = re.sub(R'''(?x)
-                    \[             # open square bracket
-                      (?![~\\])    # not followed by escapes
-                      ([%$!#]?)    # any of the valid prefix characters
-                      ([^[\]{}]+)  # no brackets or braces
-                    \]''', _replace, string)
-                if _replace_done:
-                    break
-            string = re.sub(r'\[\\(.)\]', r'\1', string)
-            string = string.replace('[~]', '\0')
-            return string
-
         for table_name, table in tables.items():
             stream_name = F'!{table_name}'
             if stream_name not in streams:
@@ -323,7 +343,7 @@ class xtmsi(xtdoc, docs=(
                     action = F'{root}.{item.extension}'
                     streams[action] = UnpackResult(action, target.encode(self.codec))
                     continue
-                target = format_string(target)
+                target = _format(target, tbl_properties, tbl_files, tbl_components)
                 parts = [part.partition('\x02') for part in target.split('\x01')]
                 if not all(part[1] == '\x02' for part in parts):
                     continue

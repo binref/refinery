@@ -56,3 +56,24 @@ class TestMSI(TestUnitBase):
             self.assertIn(F'{cab}/{t}', msi)
         self.assertEqual(msi[F'{cab}/1'], B'M')
         self.assertEqual(msi[F'{cab}/2'], B'Z')
+
+
+class TestMSIFormattedStrings(TestUnitBase):
+
+    def _format(self, string: str, **properties: str) -> str:
+        from refinery.units.formats.msi import _format
+        return _format(string, properties, {}, {})
+
+    def test_a_property_value_that_names_a_property_is_not_formatted_again(self):
+        self.assertEqual(self._format('[PropC]', PropA='a', PropB='[PropA]', PropC='[PropB]'), '[PropB]')
+
+    def test_a_nested_property_is_formatted_from_the_inside_out(self):
+        self.assertEqual(self._format('[[PropC]]', PropA='a', PropB='[PropA]', PropC='PropB'), '[PropA]')
+        self.assertEqual(self._format('[[A]]', A='B', B='value'), 'value')
+
+    def test_a_property_value_that_names_its_own_property_is_formatted_once(self):
+        self.assertEqual(self._format('[P]', P='x[P]'), 'x[P]')
+        self.assertEqual(self._format('[A]', A='[B]', B='[A]'), '[B]')
+
+    def test_escaped_brackets_and_the_null_character(self):
+        self.assertEqual(self._format('[\\[]P[\\]][~]', P='value'), '[P]\0')
