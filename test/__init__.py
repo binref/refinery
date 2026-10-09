@@ -6,8 +6,10 @@ import string
 import unittest
 import contextlib
 import os
+import tracemalloc
 
 from samples import SampleStore
+from typing import Callable
 
 
 @contextlib.contextmanager
@@ -101,6 +103,30 @@ class TestBase(unittest.TestCase):
             if enabled:
                 gc.enable()
         self.assertEqual(survivors, [])
+
+    def assertCollectorFreesLessThan(self, limit: int, operation: Callable[[], object]):
+        """
+        Runs the operation once, then again with the cycle collector off, and fails if the
+        collector then frees `limit` bytes or more of what the second run allocated: only the
+        collector frees memory that a reference cycle keeps. The first run imports what the
+        operation needs and fills its caches, which are not garbage. Memory that existed before
+        the second run is not counted, so the operation creates the input it passes along.
+        """
+        operation()
+        enabled = gc.isenabled()
+        gc.collect()
+        gc.disable()
+        tracemalloc.start()
+        try:
+            operation()
+            kept, _ = tracemalloc.get_traced_memory()
+            gc.collect()
+            left, _ = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+            if enabled:
+                gc.enable()
+        self.assertLess(kept - left, limit)
 
     @classmethod
     def load_pipeline(cls, cmd: str, clear_cache=False) -> refinery.Unit:
