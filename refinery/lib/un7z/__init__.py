@@ -3,6 +3,7 @@ Pure-Python 7z archive parser and extractor.
 """
 from __future__ import annotations
 
+import itertools
 import weakref
 import zlib
 
@@ -69,6 +70,7 @@ class _SzFolders:
         self.password = password
         self._streams: weakref.WeakValueDictionary[tuple[int, str | bytes | None], SolidStream]
         self._streams = weakref.WeakValueDictionary()
+        self._packed: list[list[memoryview]] | None = None
 
     def stream(self, folder_index: int, password: str | bytes | None) -> SolidStream:
         """
@@ -80,6 +82,31 @@ class _SzFolders:
                 yield 0, self.decompress(folder_index, password)
             stream = self._streams[key] = SolidStream(pieces)
         return stream
+
+    def _packed_streams(self, folder_index: int) -> list[memoryview]:
+        """
+        The packed streams of the given folder. The folders take the packed streams of the archive
+        in order, and the table of the streams of every folder is computed once.
+        """
+        if (table := self._packed) is None:
+            header = self._header
+            if (pack_info := header.pack_info) is None:
+                raise SzCorruptArchive('No pack info in header.')
+            sizes = pack_info.sizes
+            offsets = list(itertools.accumulate(sizes, initial=SIGNATURE_HEADER_SIZE + pack_info.pack_pos))
+            table = []
+            start = 0
+            for folder in header.folders:
+                streams = []
+                for index in range(start, start + len(folder.packed_indices)):
+                    if index < len(sizes):
+                        streams.append(self._view[offsets[index]:offsets[index] + sizes[index]])
+                    else:
+                        streams.append(memoryview(b''))
+                table.append(streams)
+                start = min(start + len(folder.packed_indices), len(sizes))
+            self._packed = table
+        return table[folder_index]
 
     def encrypted(self, folder_index: int) -> bool:
         return any(coder.codec_id == CODEC_AES256SHA256 for coder in self._header.folders[folder_index].coders)
@@ -93,27 +120,7 @@ class _SzFolders:
         folder = header.folders[folder_index]
         if password is None and self.encrypted(folder_index):
             raise SzPasswordRequired('Password required for encrypted archive.')
-        pack_info = header.pack_info
-        if pack_info is None:
-            raise SzCorruptArchive('No pack info in header.')
-        pack_offset = SIGNATURE_HEADER_SIZE + pack_info.pack_pos
-        pack_start = 0
-        for fi in range(folder_index):
-            f = header.folders[fi]
-            for _ in range(len(f.packed_indices)):
-                if pack_start < len(pack_info.sizes):
-                    pack_start += 1
-        packed_streams: list[memoryview] = []
-        for pi in range(len(folder.packed_indices)):
-            idx = pack_start + pi
-            if idx < len(pack_info.sizes):
-                sz = pack_info.sizes[idx]
-                stream_offset = pack_offset
-                for k in range(idx):
-                    stream_offset += pack_info.sizes[k]
-                packed_streams.append(self._view[stream_offset:stream_offset + sz])
-            else:
-                packed_streams.append(memoryview(b''))
+        packed_streams = self._packed_streams(folder_index)
         unpack_size = folder.main_unpack_size
         try:
             raw = decompress_folder(folder, packed_streams, unpack_size, password)
