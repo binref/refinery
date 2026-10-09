@@ -359,10 +359,9 @@ class VStackEmulator(Emulator):
                     state.callstack_ceiling = 0
             state.expected_address = address
         elif retaddr is not None and not state.cfg.skip_calls:
-            # The present address was moved to the stack but we did not branch.
-            # This is not quite accurate, of course: We could be calling the
-            # next instruction. However, that sort of code is usually not really
-            # a function call anyway, but rather a way to get the IP.
+            # The present address was moved to the stack but we did not branch. This is not quite
+            # accurate, of course: We could be calling the next instruction. However, that sort of
+            # code is usually not really a function call anyway, but rather a way to get the IP.
             callstack.pop()
 
         if waiting > state.wait > 0:
