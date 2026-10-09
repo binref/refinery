@@ -1848,7 +1848,7 @@ class IFPSEmulator:
 
         split = re.split(F'({formats.string!s})', fmt)
         for k in range(0, len(split), 2):
-            split[k] = re.sub('([dmyhnst]+)((?:[aA][mM]?/[pP][mM]?)?)', dt, split[k])
+            split[k] = re.sub('(d+|m+|y+|h+|n+|s+|t+)((?:[aA][mM]?/[pP][mM]?)?)', dt, split[k])
         for k in range(1, len(split), 2):
             split[k] = split[k][1:-1]
         return ''.join(split)

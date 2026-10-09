@@ -93,6 +93,9 @@ class TestIPFSEmulator(TestBase):
             pass
         return call.value
 
+    def test_a_date_format_of_adjacent_fields_is_formatted_field_by_field(self):
+        self.assertRegex(str(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')), '^[0-9]{14}$')
+
     @pytest.mark.xfail(strict=True, reason='an exception does not leave a script function for a handler of its caller')
     def test_an_exception_in_a_called_function_runs_the_handler_of_its_caller(self):
         windows = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSDIR')
