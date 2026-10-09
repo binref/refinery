@@ -4,8 +4,9 @@ This module contains an implementation of Ukkonen's suffix tree algorithm.
 from __future__ import annotations
 
 from abc import ABCMeta
+from collections.abc import Iterator
 
-from refinery.lib.types import Iterable, Self, buf
+from refinery.lib.types import Self, buf
 
 
 class NodeMeta(ABCMeta):
@@ -69,7 +70,7 @@ class Node(metaclass=NodeMeta):
         label = label and F': {label}'
         return F'<{self.__class__.__name__}{label}>'
 
-    def __iter__(self) -> Iterable[Node]:
+    def __iter__(self) -> Iterator[Node]:
         yield from self.children.values()
 
 
@@ -128,7 +129,7 @@ class SuffixTree:
 
         self.root.unlink()
 
-    def __iter__(self) -> Iterable[Node]:
+    def __iter__(self) -> Iterator[Node]:
         yield from self.root.children.values()
 
     def traversable(self, node):
