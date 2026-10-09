@@ -32,7 +32,7 @@ class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         for flaws, sig in signatures(*NSArchive.MAGICS):
             if flaws > 1:
                 search_space = search_space[:0x20_000]
-            matches = [m.start() - 4 for m in re.finditer(sig, search_space, flags=re.DOTALL)]
+            matches = [m.start() - 4 for m in re.finditer(sig, search_space, flags=re.DOTALL) if m.start() >= 4]
             if before >= 0:
                 matches = [match for match in matches if match < before]
             matches.reverse()
@@ -41,8 +41,8 @@ class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                 if match % 0x200 == 0:
                     archive = match
                     break
-            if not archive:
-                if matches and not best_guess:
+            if archive is None:
+                if matches and best_guess is None:
                     best_guess = matches[-1]
             else:
                 msg = F'Archive signature was found at offset 0x{archive:X}'
@@ -50,7 +50,7 @@ class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     msg = F'{msg}; it has {flaws} imperfections and was likely modified'
                 cls.log_info(F'{msg}.')
                 return archive
-        if best_guess:
+        if best_guess is not None:
             cls.log_info(F'A signature was found at offset 0x{best_guess:08X}; it is not properly aligned.')
             return best_guess
         return None

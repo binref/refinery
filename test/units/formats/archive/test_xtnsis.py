@@ -75,6 +75,13 @@ class TestNSISExtractor(TestUnitBase):
             'FileInfo.dll'       : 'ab3d7b37215753a48ed60cf59a080bb8b92cf535c35ccd435c57c954073b8a2e',
         })
 
+    def test_an_archive_cut_from_its_installer_is_extracted_like_the_installer(self):
+        data = self.download_sample(SOLID_LZMA_INSTALLER)
+        offset = xtnsis._find_archive_offset(bytearray(data))
+        assert offset is not None
+        self.assertEqual(xtnsis._find_archive_offset(bytearray(data[offset:])), 0)
+        self.assertEqual(contents(data[offset:]), contents(data))
+
     def test_items_after_the_end_of_a_cut_solid_stream_fail_without_decoding_it_again(self):
         data = self.download_sample(SOLID_LZMA_INSTALLER)
         intact = contents(data)
