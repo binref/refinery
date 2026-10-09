@@ -471,7 +471,8 @@ class TestSemanticModel(TestBase):
 
     def test_captured_names_are_the_names_would_capture_holds_for(self):
         _, model = self._model(
-            'function outer(){ function inner(){ var x; return x; } var w; return y + w; }')
+            'function outer(){ function inner(){ var x; return x; } var w; return y + w; }'
+        )
         outer_scope = model.root_scope.children[0]
         names = {'w', 'x', 'y', 'z'}
         self.assertEqual(model.captured_names(names, outer_scope), {'w', 'y'})

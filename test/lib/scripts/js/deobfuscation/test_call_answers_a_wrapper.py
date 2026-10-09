@@ -517,7 +517,10 @@ A_CALL_ANSWERING_A_WRAPPER = {
         a_dispatcher(outer='*', read=F'typeof {A_DISPATCH}.next').replace(
             '*function d(', 'function* d(', 1): 'function\n',
         a_dispatcher(entry='*', read=F'typeof {A_DISPATCH}.next').replace(
-            '*function ()', 'function* ()', 1): 'function\n',
+            '*function ()',
+            'function* ()',
+            1,
+        ): 'function\n',
     },
 }
 
@@ -525,8 +528,8 @@ A_CALL_ANSWERING_A_WRAPPER = {
 #: Shapes in which the keyword sits on a function whose call the pass is right to answer, so that a
 #: guard written per pass rather than per function is caught. An `async` entry of a dispatcher is
 #: recovered as an `async` function, and an async arrow immediately called is answered by the value
-#: of its own body. A generator entry is not recovered: it unpacks its arguments at its first step,
-#: where a parameter list binds them at the call.
+#: of its own body. A generator entry that unpacks its arguments is not recovered: it unpacks them
+#: at its first step, where a parameter list binds them at the call.
 #:
 #: The `async` rotation IIFE is the row that says the two kinds do not always answer together: that
 #: loop is read for its effect on the array and never for what the call answered, and an `async`

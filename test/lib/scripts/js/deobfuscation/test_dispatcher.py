@@ -286,10 +286,13 @@ THE_ROUTER_WITH_ITS_INNER_NAMES_REUSED = {
 #: The router followed by another declaration of its name, mapped to what Node prints for it: the
 #: later declaration is the function the name holds when the program runs.
 A_ROUTER_DECLARED_AGAIN = {
-    a_dispatcher(BOTH, [
-        'function d() { return "again"; }',
-        'console.log((p = [1, 2], d("k1")));',
-    ]): 'again\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'function d() { return "again"; }',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): 'again\n',
 }
 
 
@@ -333,8 +336,9 @@ class TestOnlyTheRouterIsUnwrapped(TestBase):
 #: declared or called, mapped to what Node prints for each: a key that is no name, a reserved word,
 #: `eval`, a global function, a local where it is called, a name the underscore form of which is
 #: taken too, a key spelled as a string or read as a property, a name a nested function declares,
-#: two keys whose names meet, a parameter of the enclosing function, a variable nothing reads, a
-#: free global read elsewhere, and a global the enclosing function reads.
+#: a key a variable takes beside the key its underscore form spells, two keys spelling one name, a
+#: parameter of the enclosing function, a variable nothing reads, a free global read elsewhere, and
+#: a global the enclosing function reads.
 KEYS_THAT_ARE_NOT_FREE_NAMES = {
     a_dispatcher(
         ['"3abc": function () { var [a] = p; return a * 2; }'],
@@ -353,34 +357,53 @@ KEYS_THAT_ARE_NOT_FREE_NAMES = {
         ['console.log((p = [1], d("helper")), helper());'],
         prefix_lines=['function helper() { return "H"; }'],
     ): 'D1 H\n',
-    a_dispatcher([ADD], [
-        'function g() { var k1 = 5; return (p = [k1, 1], d("k1")); }',
-        'console.log(g());',
-    ]): '6\n',
-    a_dispatcher(['"a": function () { var [x] = p; return "A" + x; }'], [
-        'var _a = "u";',
-        'function h(a) { return a + _a; }',
-        'console.log((p = [h(1)], d("a")));',
-    ]): 'A1u\n',
+    a_dispatcher(
+        [ADD],
+        [
+            'function g() { var k1 = 5; return (p = [k1, 1], d("k1")); }',
+            'console.log(g());',
+        ],
+    ): '6\n',
+    a_dispatcher(
+        ['"a": function () { var [x] = p; return "A" + x; }'],
+        [
+            'var _a = "u";',
+            'function h(a) { return a + _a; }',
+            'console.log((p = [h(1)], d("a")));',
+        ],
+    ): 'A1u\n',
     a_dispatcher([ADD], ['console.log("k1", (p = [1, 2], d("k1")));']): 'k1 3\n',
-    a_dispatcher(BOTH, [
-        'var o = { k1: "prop" };',
-        'console.log(o.k1, (p = [1, 2], d("k1")));',
-    ]): 'prop 3\n',
-    a_dispatcher([ADD], [
-        'function g() { function k1() { return "inner"; } return k1() + (p = [1, 2], d("k1")); }',
-        'console.log(g());',
-    ]): 'inner3\n',
-    a_dispatcher(['"a": function () { return "A"; },', '"_a": function () { return "B"; }'], [
-        'var a = 1;',
-        'console.log(d("a", "clearF"), d("_a", "clearF"), a);',
-    ]): 'A B 1\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'var o = { k1: "prop" };',
+            'console.log(o.k1, (p = [1, 2], d("k1")));',
+        ],
+    ): 'prop 3\n',
+    a_dispatcher(
+        [ADD],
+        [
+            'function g() { function k1() { return "inner"; } return k1() + (p = [1, 2], d("k1")); }',
+            'console.log(g());',
+        ],
+    ): 'inner3\n',
+    a_dispatcher(
+        ['"a": function () { return "A"; },', '"_a": function () { return "B"; }'],
+        [
+            'var a = 1;',
+            'console.log(d("a", "clearF"), d("_a", "clearF"), a);',
+        ],
+    ): 'A B 1\n',
+    a_dispatcher(
+        ['"3x": function () { return "A"; },', '"_3x": function () { return "B"; }'],
+        ['console.log(d("3x", "clearF"), d("_3x", "clearF"));'],
+    ): 'A B\n',
     '\n'.join((
         'function outer(k1) {',
         a_dispatcher([ADD], ['return [(p = [1, 2], d("k1")), typeof k1];']),
         '}',
         'console.log(outer(5));',
-    )): "[ 3, 'number' ]\n",
+    )): '[ 3, \'number\' ]\n',
     a_dispatcher([ADD], ['var k1 = 5;', 'console.log((p = [1, 2], d("k1")));']): '3\n',
     a_dispatcher([ADD], ['console.log(typeof k1, (p = [1, 2], d("k1")));']): 'undefined 3\n',
     '\n'.join((
@@ -397,16 +420,22 @@ KEYS_THAT_ARE_NOT_FREE_NAMES = {
 #: entry is called, a variable nothing reads, and a global a function declared later reads.
 KEYS_THAT_ARE_NOT_FREE_NAMES_IN_A_SCRIPT = {
     a_dispatcher([ADD], ['console.log(typeof k1, (p = [1, 2], d("k1")));']): ('undefined 3\n', None),
-    a_dispatcher([ADD], [
-        'function g() { var k1 = 5; return (p = [k1, 1], d("k1")); }',
-        'console.log(g());',
-    ]): ('6\n', None),
+    a_dispatcher(
+        [ADD],
+        [
+            'function g() { var k1 = 5; return (p = [k1, 1], d("k1")); }',
+            'console.log(g());',
+        ],
+    ): ('6\n', None),
     a_dispatcher([ADD], ['var k1 = 5;', 'console.log((p = [1, 2], d("k1")));']): ('3\n', None),
-    a_dispatcher([ADD], [
-        'console.log((p = [1, 2], d("k1")));',
-        'function later() { return k1; }',
-        'console.log(typeof later());',
-    ]): ('3\n', 'ReferenceError'),
+    a_dispatcher(
+        [ADD],
+        [
+            'console.log((p = [1, 2], d("k1")));',
+            'function later() { return k1; }',
+            'console.log(typeof later());',
+        ],
+    ): ('3\n', 'ReferenceError'),
 }
 
 
@@ -450,36 +479,48 @@ class TestARecoveredFunctionNeitherCapturesNorIsCaptured(TestBase):
 #: another, a dispatch inside a payload inside an entry, an entry dispatching through every form,
 #: and a router of another shape with the same keys inside a function.
 DISPATCHES_INSIDE_THE_TABLE = {
-    a_dispatcher([
-        '"k1": function () { var [a] = p; return "one" + (p = [a + 1], d("k3")); },',
-        '"k3": function () { var [b] = p; return "three" + b; }',
-    ], ['console.log((p = [1], d("k1")));']): 'onethree2\n',
-    a_dispatcher([
-        '"k1": function () { var [a] = p; return (p = [(p = [a], d("k3"))], d("k3")); },',
-        '"k3": function () { var [b] = p; return "<" + b + ">"; }',
-    ], ['console.log((p = ["x"], d("k1")));']): '<<x>>\n',
-    a_dispatcher([
-        '"k1": function () { var [a] = p; return [d("k2", "clearF"), d("k2", "clearF", "wrapF")["wk"], '
-        'new d("k2", "clearF", "wrapF")["wk"], d("k3", "createF")(a), d("k3", "createF", "wrapF")["wk"](a), '
-        'new d("k3", "createF", "wrapF")["wk"](a)].join(); },',
-        F'{SEVEN},',
-        '"k3": function () { var [b] = p; return b * 2; }',
-    ], ['console.log((p = [5], d("k1")));']): '7,7,7,10,10,10\n',
-    a_dispatcher(BOTH, [
-        'function outer() {',
-        '  var c2 = Object["create"](null);',
-        '  var q;',
-        '  function e(name, flagArg, returnTypeArg, fnLengths = {}) {',
-        '    var output;',
-        '    var fns = { "k1": function () { var [a] = q; return "inner" + a; } };',
-        '    if (flagArg === "clearG") { q = []; }',
-        '    output = fns[name]();',
-        '    return output;',
-        '  }',
-        '  return (q = [1], e("k1")) + (p = [1, 2], d("k1"));',
-        '}',
-        'console.log(outer());',
-    ]): 'inner13\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [a] = p; return "one" + (p = [a + 1], d("k3")); },',
+            '"k3": function () { var [b] = p; return "three" + b; }',
+        ],
+        ['console.log((p = [1], d("k1")));'],
+    ): 'onethree2\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [a] = p; return (p = [(p = [a], d("k3"))], d("k3")); },',
+            '"k3": function () { var [b] = p; return "<" + b + ">"; }',
+        ],
+        ['console.log((p = ["x"], d("k1")));'],
+    ): '<<x>>\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [a] = p; return [d("k2", "clearF"), d("k2", "clearF", "wrapF")["wk"], '
+            'new d("k2", "clearF", "wrapF")["wk"], d("k3", "createF")(a), d("k3", "createF", "wrapF")["wk"](a), '
+            'new d("k3", "createF", "wrapF")["wk"](a)].join(); },',
+            F'{SEVEN},',
+            '"k3": function () { var [b] = p; return b * 2; }',
+        ],
+        ['console.log((p = [5], d("k1")));'],
+    ): '7,7,7,10,10,10\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'function outer() {',
+            '  var c2 = Object["create"](null);',
+            '  var q;',
+            '  function e(name, flagArg, returnTypeArg, fnLengths = {}) {',
+            '    var output;',
+            '    var fns = { "k1": function () { var [a] = q; return "inner" + a; } };',
+            '    if (flagArg === "clearG") { q = []; }',
+            '    output = fns[name]();',
+            '    return output;',
+            '  }',
+            '  return (q = [1], e("k1")) + (p = [1, 2], d("k1"));',
+            '}',
+            'console.log(outer());',
+        ],
+    ): 'inner13\n',
 }
 
 #: Each form a dispatch is written in, mapped to what Node prints for it: a call with arguments, a
@@ -499,15 +540,21 @@ EVERY_FORM_OF_A_DISPATCH = {
     a_dispatcher(BOTH, ['console.log(d("k1", "createF") === new d("k1", "createF", "wrapF")["wk"]);']): 'true\n',
     a_dispatcher(BOTH, ['console.log(d("k1", "createF").call({}, 3, 4));']): '7\n',
     a_dispatcher(BOTH, ['console.log([1, 2].map(d("k2", "createF")).join());']): '7,7\n',
-    a_dispatcher(BOTH, [
-        'var f = d("k2", "createF");',
-        'f.tag = 1;',
-        'console.log(d("k2", "createF").tag);',
-    ]): '1\n',
-    a_dispatcher(['"k4": function () { var [v] = p; return { v: v }; }'], [
-        'var C = d("k4", "createF");',
-        'console.log(new C(9).v);',
-    ]): '9\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'var f = d("k2", "createF");',
+            'f.tag = 1;',
+            'console.log(d("k2", "createF").tag);',
+        ],
+    ): '1\n',
+    a_dispatcher(
+        ['"k4": function () { var [v] = p; return { v: v }; }'],
+        [
+            'var C = d("k4", "createF");',
+            'console.log(new C(9).v);',
+        ],
+    ): '9\n',
 }
 
 #: Dispatches whose result is called or constructed where it stands, mapped to what Node prints for
@@ -516,59 +563,104 @@ EVERY_FORM_OF_A_DISPATCH = {
 #: as a tag, optionally, and after `new`. Constructing it, or calling it through a pair or a plain
 #: call, gives it none.
 DISPATCHES_WHOSE_RESULT_IS_CALLED = {
-    a_dispatcher([
-        '"k2": function () { return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
-    ], ['console.log(d("k2", "clearF", "wrapF")["wk"](1));']): 'wrapper\n',
-    a_dispatcher([
-        '"k2": function () { return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
-    ], ['console.log(new d("k2", "clearF", "wrapF")["wk"](1));']): 'wrapper\n',
-    a_dispatcher([
-        '"k2": function () { return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
-    ], ['console.log(d("k2", "clearF", "wrapF")["wk"]`x`);']): 'wrapper\n',
-    a_dispatcher([
-        '"k2": function () { return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
-    ], ['console.log(d("k2", "clearF", "wrapF")["wk"]?.(1));']): 'wrapper\n',
-    a_dispatcher([
-        '"k1": function () { var [a] = p; return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain" + a; }; }',
-    ], ['console.log((p = [1], d("k1", "zz", "wrapF")["wk"])(1));']): 'plain1\n',
-    a_dispatcher([
-        '"k2": function () { return function () {'
-        ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
-    ], ['console.log(d("k2", "clearF")(1));']): 'plain\n',
-    a_dispatcher(['"k2": function () { return function () { return typeof this.wk; }; }'], [
-        'try { console.log(d("k2", "clearF", "wrapF")["wk"]()); } catch (e) { console.log(e.constructor.name); }',
-    ]): 'function\n',
-    a_dispatcher([
-        '"k3": function () { return function () { '
-        'return typeof this === "object" && this !== null && "wk" in this ? "wrapper" : "plain"; }; }',
-    ], ['console.log((d("k3", "clearF", "wrapF")["wk"])(1));']): 'wrapper\n',
-    a_dispatcher(['"k4": function () { return function () { console.log(typeof this); }; }'], [
-        'd("k4", "clearF", "wrapF")["wk"]();',
-    ]): 'object\n',
-    a_dispatcher([
-        '"k3": function () { return function () { '
-        'return typeof this === "object" && this !== null && "wk" in this ? "wrapper" : "plain"; }; }',
-    ], ['console.log(d("k3", "clearF", "wrapF").wk(1));']): 'wrapper\n',
-    a_dispatcher(['"k5": function () { return function () { this.made = typeof this; }; }'], [
-        'console.log(new (d("k5", "clearF", "wrapF")["wk"])().made);',
-    ]): 'object\n',
-    a_dispatcher(['"k1": function () { var [a] = p; return function () { this.v = a; }; }'], [
-        'console.log(new ((p = [7], d("k1")))().v);',
-    ]): '7\n',
-    a_dispatcher(['"k1": function () { return function () { this.v = 8; }; }'], [
-        'console.log(new (d("k1", "clearF"))().v);',
-    ]): '8\n',
-    a_dispatcher(['"k1": function () { return function () { this.v = 9; }; }'], [
-        'console.log(new (d("k1", "clearF", "wrapF")["wk"])().v);',
-    ]): '9\n',
-    a_dispatcher(['"k1": function () { return function () { this.v = 10; }; }'], [
-        'console.log(new (new d("k1", "clearF", "wrapF")["wk"])().v);',
-    ]): '10\n',
+    a_dispatcher(
+        [
+            '"k2": function () { return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(d("k2", "clearF", "wrapF")["wk"](1));'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        [
+            '"k2": function () { return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(new d("k2", "clearF", "wrapF")["wk"](1));'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        [
+            '"k2": function () { return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(d("k2", "clearF", "wrapF")["wk"]`x`);'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        [
+            '"k2": function () { return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(d("k2", "clearF", "wrapF")["wk"]?.(1));'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [a] = p; return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain" + a; }; }',
+        ],
+        ['console.log((p = [1], d("k1", "zz", "wrapF")["wk"])(1));'],
+    ): 'plain1\n',
+    a_dispatcher(
+        [
+            '"k2": function () { return function () {'
+            ' return this && typeof this.wk === "function" ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(d("k2", "clearF")(1));'],
+    ): 'plain\n',
+    a_dispatcher(
+        ['"k2": function () { return function () { return typeof this.wk; }; }'],
+        [
+            'try { console.log(d("k2", "clearF", "wrapF")["wk"]()); } catch (e) { console.log(e.constructor.name); }',
+        ],
+    ): 'function\n',
+    a_dispatcher(
+        [
+            '"k3": function () { return function () { '
+            'return typeof this === "object" && this !== null && "wk" in this ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log((d("k3", "clearF", "wrapF")["wk"])(1));'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        ['"k4": function () { return function () { console.log(typeof this); }; }'],
+        [
+            'd("k4", "clearF", "wrapF")["wk"]();',
+        ],
+    ): 'object\n',
+    a_dispatcher(
+        [
+            '"k3": function () { return function () { '
+            'return typeof this === "object" && this !== null && "wk" in this ? "wrapper" : "plain"; }; }',
+        ],
+        ['console.log(d("k3", "clearF", "wrapF").wk(1));'],
+    ): 'wrapper\n',
+    a_dispatcher(
+        ['"k5": function () { return function () { this.made = typeof this; }; }'],
+        [
+            'console.log(new (d("k5", "clearF", "wrapF")["wk"])().made);',
+        ],
+    ): 'object\n',
+    a_dispatcher(
+        ['"k1": function () { var [a] = p; return function () { this.v = a; }; }'],
+        [
+            'console.log(new ((p = [7], d("k1")))().v);',
+        ],
+    ): '7\n',
+    a_dispatcher(
+        ['"k1": function () { return function () { this.v = 8; }; }'],
+        [
+            'console.log(new (d("k1", "clearF"))().v);',
+        ],
+    ): '8\n',
+    a_dispatcher(
+        ['"k1": function () { return function () { this.v = 9; }; }'],
+        [
+            'console.log(new (d("k1", "clearF", "wrapF")["wk"])().v);',
+        ],
+    ): '9\n',
+    a_dispatcher(
+        ['"k1": function () { return function () { this.v = 10; }; }'],
+        [
+            'console.log(new (new d("k1", "clearF", "wrapF")["wk"])().v);',
+        ],
+    ): '10\n',
 }
 
 
@@ -762,7 +854,8 @@ class TestEveryDispatchThroughADispatcherIsAccountedFor(TestBase):
 #: flags behind it select the branch: emptying the payload, handing back the entry instead of what
 #: calling it returned, and wrapping that result in an object under the wrap key. A `new` dispatch
 #: hands back the object the dispatcher returned only where it returned one, which is the wrapper
-#: branch alone. The last six are each one flag away from a form this pass reads.
+#: branch alone. The last nine are each one flag away from a form this pass reads, or write to one
+#: of its forms: the access on the wrap key, or a value form, a call that throws as a target.
 A_DISPATCH_WHOSE_FLAGS_SAY_SOMETHING_ELSE = {
     a_dispatcher(
         dict_lines=['"f1": function() { var [a] = p; return "A" + a; }'],
@@ -794,20 +887,43 @@ A_DISPATCH_WHOSE_FLAGS_SAY_SOMETHING_ELSE = {
     a_dispatcher(BOTH, ['console.log(typeof d("k2", "clearF", "wrapF"));']): 'object\n',
     a_dispatcher(BOTH, ['console.log(d("k2", "clearF")["wk"]);']): 'undefined\n',
     a_dispatcher(BOTH, ['console.log(typeof new d("k2", "clearF"));']): 'object\n',
-    a_dispatcher(BOTH, [
-        'var o = d("k2", "clearF", "wrapF");',
-        'd("k2", "clearF", "wrapF")["wk"] = 5;',
-        'console.log(typeof k2, o.wk);',
-    ]): 'undefined 7\n',
-    a_dispatcher(BOTH, [
-        'var n = new d("k1", "createF", "wrapF")["wk"]++;',
-        'console.log(typeof n);',
-    ]): 'number\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'var o = d("k2", "clearF", "wrapF");',
+            'd("k2", "clearF", "wrapF")["wk"] = 5;',
+            'console.log(typeof k2, o.wk);',
+        ],
+    ): 'undefined 7\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'var n = new d("k1", "createF", "wrapF")["wk"]++;',
+            'console.log(typeof n);',
+        ],
+    ): 'number\n',
     a_dispatcher(BOTH, ['console.log(delete d("k1", "createF", "wrapF")["wk"]);']): 'true\n',
-    a_dispatcher(BOTH, [
-        'for (d("k1", "createF", "wrapF")["wk"] in { a: 1 }) ;',
-        'console.log((p = [1, 2], d("k1")));',
-    ]): '3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'for (d("k1", "createF", "wrapF")["wk"] in { a: 1 }) ;',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): '3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'try { d("k1", "createF") = 5; } catch (e) { console.log(e.constructor.name); }',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): 'ReferenceError\n3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'try { for (d("k1", "createF") in { a: 1 }) ; } catch (e) { console.log(e.constructor.name); }',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): 'ReferenceError\n3\n',
 }
 
 
@@ -827,7 +943,8 @@ A_BARE_DISPATCH_OVER_A_PAYLOAD_SOMETHING_ELSE_FILLED = {
 #: each. The dispatcher takes its arguments out of the payload, so everything the site writes after
 #: the key is read by the dispatcher alone and is gone from the call this pass builds — which makes
 #: what evaluating it did the site's to account for. The second writes a whole dispatch there, which
-#: no payload carries over.
+#: no payload carries over. The last two hand a value form a fourth argument, which runs nothing
+#: but which the router reads as its table of lengths.
 A_DISPATCH_ARGUMENT_THE_REWRITE_WOULD_DROP = {
     a_dispatcher(
         dict_lines=['"f1": function() { var [a] = p; return "A" + a; }'],
@@ -846,6 +963,13 @@ A_DISPATCH_ARGUMENT_THE_REWRITE_WOULD_DROP = {
         tail_lines=['console.log((p = ["a"], d("f1", (p = ["b"], d("f2")))));'],
     ): 'Ab\n',
     a_dispatcher(BOTH, ['var n = 0;', 'console.log(d("k2", "clearF", "zz", n++), n);']): '7 1\n',
+    a_dispatcher(BOTH, ['console.log(d("k1", "createF", "zz", { "k1": 5 }).length);']): '5\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'try { console.log(typeof d("k1", "createF", "zz", null)); } catch (e) { console.log(e.constructor.name); }',
+        ],
+    ): 'TypeError\n',
 }
 
 
@@ -919,57 +1043,103 @@ class TestADispatchIsReadPastItsKey(TestBase):
 #: `new.target`, the router's parameters and table through a direct `eval` or by name, its own name,
 #: and the names the router declares in place of the globals of the same names.
 ENTRIES_THAT_SEE_THE_ROUTER = {
-    a_dispatcher(['"k6": function () { return this && this.k6 ? "fns" : "other"; }'], [
-        'console.log(d("k6", "clearF"));',
-    ]): 'fns\n',
-    a_dispatcher(['"k6": function () { var f = () => this && this.k6 ? "fns" : "other"; return f(); }'], [
-        'console.log(d("k6", "clearF"));',
-    ]): 'fns\n',
-    a_dispatcher(['"k7": function () { var [a] = p; return arguments.length; }'], [
-        'console.log((p = [1], d("k7")));',
-    ]): '0\n',
-    a_dispatcher(['"k8": function () { return { t: typeof new.target }; }'], [
-        'var C = d("k8", "createF");',
-        'console.log(new C().t);',
-    ]): 'undefined\n',
+    a_dispatcher(
+        ['"k6": function () { return this && this.k6 ? "fns" : "other"; }'],
+        [
+            'console.log(d("k6", "clearF"));',
+        ],
+    ): 'fns\n',
+    a_dispatcher(
+        ['"k6": function () { var f = () => this && this.k6 ? "fns" : "other"; return f(); }'],
+        [
+            'console.log(d("k6", "clearF"));',
+        ],
+    ): 'fns\n',
+    a_dispatcher(
+        ['"k7": function () { var [a] = p; return arguments.length; }'],
+        [
+            'console.log((p = [1], d("k7")));',
+        ],
+    ): '0\n',
+    a_dispatcher(
+        ['"k8": function () { return { t: typeof new.target }; }'],
+        [
+            'var C = d("k8", "createF");',
+            'console.log(new C().t);',
+        ],
+    ): 'undefined\n',
     a_dispatcher(['"k9": function () { return typeof name; }'], ['console.log(d("k9", "clearF"));']): 'string\n',
     a_dispatcher(['"k9": function () { return typeof fns; }'], ['console.log(d("k9", "clearF"));']): 'object\n',
-    a_dispatcher(['"k9": function () { var [a] = p; return eval("typeof name + a"); }'], [
-        'console.log((p = [1], d("k9")));',
-    ]): 'string1\n',
-    a_dispatcher(['"k1": function () { var [x] = p; var f = () => arguments.length; return f(); }'], [
-        'console.log((p = [5], d("k1")));',
-    ]): '0\n',
-    a_dispatcher(['"k1": function () { var [x] = p; var f = () => typeof new.target; return { t: f() }; }'], [
-        'var C = d("k1", "createF");',
-        'console.log(new C(1).t);',
-    ]): 'undefined\n',
-    a_dispatcher(['"k9": function () { return typeof createFunction; }'], [
-        'console.log(d("k9", "clearF"));',
-    ], prefix_lines=['var createFunction = function () { return "G"; };']): 'undefined\n',
-    a_dispatcher(['"k9": function () { return createFunction(); }'], [
-        'try { console.log(d("k9", "clearF")); } catch (e) { console.log(e.constructor.name); }',
-    ], prefix_lines=['var createFunction = function () { return "G"; };']): 'TypeError\n',
-    a_dispatcher(['"k9": function () { return typeof fn; }'], [
-        'console.log(d("k9", "clearF"));',
-    ], prefix_lines=['var fn = 1;']): 'number\n',
+    a_dispatcher(
+        ['"k9": function () { var [a] = p; return eval("typeof name + a"); }'],
+        [
+            'console.log((p = [1], d("k9")));',
+        ],
+    ): 'string1\n',
+    a_dispatcher(
+        ['"k1": function () { var [x] = p; var f = () => arguments.length; return f(); }'],
+        [
+            'console.log((p = [5], d("k1")));',
+        ],
+    ): '0\n',
+    a_dispatcher(
+        ['"k1": function () { var [x] = p; var f = () => typeof new.target; return { t: f() }; }'],
+        [
+            'var C = d("k1", "createF");',
+            'console.log(new C(1).t);',
+        ],
+    ): 'undefined\n',
+    a_dispatcher(
+        ['"k9": function () { return typeof createFunction; }'],
+        [
+            'console.log(d("k9", "clearF"));',
+        ],
+        prefix_lines=['var createFunction = function () { return "G"; };'],
+    ): 'undefined\n',
+    a_dispatcher(
+        ['"k9": function () { return createFunction(); }'],
+        [
+            'try { console.log(d("k9", "clearF")); } catch (e) { console.log(e.constructor.name); }',
+        ],
+        prefix_lines=['var createFunction = function () { return "G"; };'],
+    ): 'TypeError\n',
+    a_dispatcher(
+        ['"k9": function () { return typeof fn; }'],
+        [
+            'console.log(d("k9", "clearF"));',
+        ],
+        prefix_lines=['var fn = 1;'],
+    ): 'number\n',
 }
 
 #: A named entry that calls itself by its name, mapped to what Node prints for it: the router calls
 #: the entry with an empty payload, so the recursion never ends.
 A_NAMED_ENTRY = {
-    a_dispatcher(['"ke": function fact() { var [n] = p; return n < 2 ? 1 : n * fact(n - 1); }'], [
-        'console.log((p = [5], d("ke")));',
-    ]): ('', 'RangeError'),
+    a_dispatcher(
+        ['"ke": function fact() { var [n] = p; return n < 2 ? 1 : n * fact(n - 1); }'],
+        [
+            'console.log((p = [5], d("ke")));',
+        ],
+    ): ('', 'RangeError'),
+}
+
+#: Entries that unpack nothing and whose call answers a wrapper around what the body does, mapped
+#: to what Node prints for each: a generator, a generator that never yields, an `async` generator,
+#: and an `async` function.
+ENTRIES_OF_EVERY_KIND = {
+    a_dispatcher(['"k1": function* () { yield 1; yield 2; }'], ['console.log([...d("k1", "clearF")].join());']): '1,2\n',
+    a_dispatcher(['"k1": function* () { return 5; }'], ['console.log(typeof d("k1", "clearF").next);']): 'function\n',
+    a_dispatcher(['"k1": async function* () { yield 3; }'], ['d("k1", "clearF").next().then(r => console.log(r.value));']): '3\n',
+    a_dispatcher(['"k1": async function () { return 4; }'], ['d("k1", "clearF").then(v => console.log(v));']): '4\n',
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnEntryMovesOutOnlyIfItCannotTell(TestBase):
     """
-    A recovered function keeps the body of its entry but is called by its own name, outside the
-    router, with its unpacking as parameters. An entry that can tell any of that apart stays in the
-    router, and the router with it.
+    A recovered function keeps the body and the kind of its entry but is called by its own name,
+    outside the router, with its unpacking as parameters. An entry that can tell any of that apart
+    stays in the router, and the router with it.
     """
 
     def test_entries_that_see_the_router_still_print(self):
@@ -986,61 +1156,146 @@ class TestAnEntryMovesOutOnlyIfItCannotTell(TestBase):
             {source: (behavior, behavior) for source, behavior in rows.items()},
         )
 
+    def test_entries_of_every_kind_still_print(self):
+        rows = ENTRIES_OF_EVERY_KIND
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
-#: Entries whose unpacking is read as their parameter list, mapped to what Node prints for each: a
-#: rest element, an object pattern, an array pattern, a computed key, a computed key that runs code,
-#: a nested default, a hole, a spread payload, a default, a rest element alone, a parameter a
-#: function declaration of the body overwrites, in a block, in a nested function, and through a
-#: value form, and a generator whose payload another dispatch fills before its first step.
+    def test_entries_of_every_kind_are_unwrapped(self):
+        rows = ENTRIES_OF_EVERY_KIND
+        self.assertEqual({source: unwrapped(source) for source in rows}, {source: True for source in rows})
+
+    @wontfix('the obfuscation never dispatches an async function or a generator')
+    def test_a_value_form_of_an_entry_of_another_kind_is_constructed(self):
+        rows = {
+            a_dispatcher(
+                ['"k1": async function () { return 1; }'],
+                [
+                    'var C = d("k1", "createF");',
+                    'try { console.log(typeof new C().then); } catch (e) { console.log(e.constructor.name); }',
+                ],
+            ): 'function\n',
+        }
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: Entries whose unpacking a parameter list spells, mapped to what Node prints for each: a rest
+#: element, an object pattern, an array pattern, and an array pattern that skips an element.
+UNPACKINGS_A_PARAMETER_LIST_SPELLS = {
+    a_dispatcher(
+        ['"k1": function () { var [a, ...rest] = p; return a + rest.length; },', SEVEN],
+        [
+            'console.log((p = [1, 2, 3], d("k1")), d("k2", "clearF"));',
+        ],
+    ): '3 7\n',
+    a_dispatcher(
+        ['"k1": function () { var [{ x, y }] = p; return x + y; },', SEVEN],
+        [
+            'console.log((p = [{ x: 1, y: 2 }], d("k1")), d("k2", "clearF"));',
+        ],
+    ): '3 7\n',
+    a_dispatcher(
+        ['"k1": function () { var [[x, y]] = p; return x * y; },', SEVEN],
+        [
+            'console.log((p = [[3, 4]], d("k1")), d("k2", "clearF"));',
+        ],
+    ): '12 7\n',
+    a_dispatcher(
+        ['"k1": function () { var [[, y]] = p; return y; },', SEVEN],
+        [
+            'console.log((p = [[3, 4]], d("k1")), d("k2", "clearF"));',
+        ],
+    ): '4 7\n',
+}
+
+#: Entries whose unpacking is read as their parameter list, mapped to what Node prints for each:
+#: those above, a computed key, a computed key that runs code, a nested default, a hole in the
+#: payload, a spread payload, a default, a rest element alone, a hole in the unpacking, which no
+#: parameter list can skip, a parameter a function declaration of the body overwrites, in a block,
+#: in a nested function, and through a value form, and a generator whose payload another dispatch
+#: fills before its first step.
 UNPACKINGS_READ_AS_PARAMETERS = {
-    a_dispatcher(['"k1": function () { var [a, ...rest] = p; return a + rest.length; },', SEVEN], [
-        'console.log((p = [1, 2, 3], d("k1")), d("k2", "clearF"));',
-    ]): '3 7\n',
-    a_dispatcher(['"k1": function () { var [{ x, y }] = p; return x + y; },', SEVEN], [
-        'console.log((p = [{ x: 1, y: 2 }], d("k1")), d("k2", "clearF"));',
-    ]): '3 7\n',
-    a_dispatcher(['"k1": function () { var [[x, y]] = p; return x * y; },', SEVEN], [
-        'console.log((p = [[3, 4]], d("k1")), d("k2", "clearF"));',
-    ]): '12 7\n',
-    a_dispatcher(['"k1": function () { var [{ [key()]: v }] = p; function key() { return "inner"; } return v; }'], [
-        'console.log((p = [{ inner: "I", outer: "O" }], d("k1")));',
-    ], prefix_lines=['function key() { return "outer"; }']): 'I\n',
-    a_dispatcher([
-        '"k1": function () { var [{ [key()]: v }] = p; function key() { count++; return "inner"; } return v + count; }',
-    ], [
-        'console.log((p = [{ inner: "I", outer: "O" }], d("k1")));',
-    ], prefix_lines=['var count = 0;', 'function key() { return "outer"; }']): 'I1\n',
-    a_dispatcher(['"k1": function () { var [{ a = 1 }] = p; return a; }'], [
-        'console.log((p = [{}], d("k1")));',
-    ]): '1\n',
-    a_dispatcher(['"kc": function () { var [a, b, e] = p; return [a, b, e].join(); }'], [
-        'console.log((p = [1, , 3], d("kc")));',
-    ]): '1,,3\n',
-    a_dispatcher(['"kc": function () { var [a, b, e] = p; return [a, b, e].join(); }'], [
-        'function g() { return (p = [...arguments], d("kc")); }',
-        'console.log(g(1, 2, 3));',
-    ]): '1,2,3\n',
+    **UNPACKINGS_A_PARAMETER_LIST_SPELLS,
+    a_dispatcher(
+        ['"k1": function () { var [{ [key()]: v }] = p; function key() { return "inner"; } return v; }'],
+        [
+            'console.log((p = [{ inner: "I", outer: "O" }], d("k1")));',
+        ],
+        prefix_lines=['function key() { return "outer"; }'],
+    ): 'I\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [{ [key()]: v }] = p; function key() { count++; return "inner"; } return v + count; }',
+        ],
+        [
+            'console.log((p = [{ inner: "I", outer: "O" }], d("k1")));',
+        ],
+        prefix_lines=['var count = 0;', 'function key() { return "outer"; }'],
+    ): 'I1\n',
+    a_dispatcher(
+        ['"k1": function () { var [{ a = 1 }] = p; return a; }'],
+        [
+            'console.log((p = [{}], d("k1")));',
+        ],
+    ): '1\n',
+    a_dispatcher(
+        ['"kc": function () { var [a, b, e] = p; return [a, b, e].join(); }'],
+        [
+            'console.log((p = [1, , 3], d("kc")));',
+        ],
+    ): '1,,3\n',
+    a_dispatcher(
+        ['"kc": function () { var [a, b, e] = p; return [a, b, e].join(); }'],
+        [
+            'function g() { return (p = [...arguments], d("kc")); }',
+            'console.log(g(1, 2, 3));',
+        ],
+    ): '1,2,3\n',
     a_dispatcher(['"kd": function () { var [a = 5] = p; return a; }'], ['console.log((p = [], d("kd")));']): '5\n',
-    a_dispatcher(['"kd": function () { var [...a] = p; return a.length; }'], [
-        'console.log((p = [1, 2], d("kd")));',
-    ]): '2\n',
-    a_dispatcher(['"k1": function () { var [x] = p; function x() { return 1; } return typeof x; }'], [
-        'console.log((p = [5], d("k1")));',
-    ]): 'number\n',
-    a_dispatcher(['"k1": function () { var [x] = p; { function x() { return 1; } } return typeof x; }'], [
-        'console.log((p = [5], d("k1")));',
-    ]): 'function\n',
-    a_dispatcher([
-        '"k1": function () { var [a] = p; function g() { function a() {} return typeof a; } return g() + a; }',
-    ], ['console.log((p = [1], d("k1")));']): 'function1\n',
-    a_dispatcher([
-        '"k1": function () { var [cb] = p; function cb() { return "inner"; } return typeof cb === "function" ? cb() : cb; }',
-    ], ['console.log([1].map(d("k1", "createF")).join());']): '1\n',
-    a_dispatcher(['"k1": function* () { var [a] = p; yield a; },', '"k2": function () { return 0; }'], [
-        'var g = (p = ["first"], d("k1"));',
-        '(p = ["second"], d("k2"));',
-        'console.log(g.next().value);',
-    ]): 'second\n',
+    a_dispatcher(
+        ['"kd": function () { var [...a] = p; return a.length; }'],
+        [
+            'console.log((p = [1, 2], d("kd")));',
+        ],
+    ): '2\n',
+    a_dispatcher(['"kh": function () { var [a, , e] = p; return a + e; }'], ['console.log((p = [1, 2, 3], d("kh")));']): '4\n',
+    a_dispatcher(
+        ['"k1": function () { var [x] = p; function x() { return 1; } return typeof x; }'],
+        [
+            'console.log((p = [5], d("k1")));',
+        ],
+    ): 'number\n',
+    a_dispatcher(
+        ['"k1": function () { var [x] = p; { function x() { return 1; } } return typeof x; }'],
+        [
+            'console.log((p = [5], d("k1")));',
+        ],
+    ): 'function\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [a] = p; function g() { function a() {} return typeof a; } return g() + a; }',
+        ],
+        ['console.log((p = [1], d("k1")));'],
+    ): 'function1\n',
+    a_dispatcher(
+        [
+            '"k1": function () { var [cb] = p; function cb() { return "inner"; } return typeof cb === "function" ? cb() : cb; }',
+        ],
+        ['console.log([1].map(d("k1", "createF")).join());'],
+    ): '1\n',
+    a_dispatcher(
+        ['"k1": function* () { var [a] = p; yield a; },', '"k2": function () { return 0; }'],
+        [
+            'var g = (p = ["first"], d("k1"));',
+            '(p = ["second"], d("k2"));',
+            'console.log(g.next().value);',
+        ],
+    ): 'second\n',
 }
 
 
@@ -1060,25 +1315,38 @@ class TestAnUnpackingBecomesAParameterListOnlyWhereItMeansTheSame(TestBase):
             each_program_still_prints(rows),
         )
 
+    def test_unpackings_a_parameter_list_spells_are_unwrapped(self):
+        rows = UNPACKINGS_A_PARAMETER_LIST_SPELLS
+        self.assertEqual({source: unwrapped(source) for source in rows}, {source: True for source in rows})
+
 
 #: The payload and the cache read where the unwrap does not remove them, mapped to what Node prints
 #: for each: code before the unpacking that dispatches, a read of the payload after it, a read of
 #: the payload and of the cache outside the router, an unpacking that is not the first declarator,
 #: and the cache compared with what the router handed out.
 THE_PAYLOAD_AND_THE_CACHE_READ_ELSEWHERE = {
-    a_dispatcher([
-        '"ka": function () { if (globalThis.flag) { (p = ["inner"], d("kb")); } var [v] = p; return v; },',
-        '"kb": function () { var [w] = p; return w; }',
-    ], ['globalThis.flag = true;', 'console.log((p = ["outer"], d("ka")));']): 'inner\n',
-    a_dispatcher(['"ka": function () { var [v] = p; return v + p.length; }'], [
-        'console.log((p = ["x", "y"], d("ka")));',
-    ]): 'x2\n',
+    a_dispatcher(
+        [
+            '"ka": function () { if (globalThis.flag) { (p = ["inner"], d("kb")); } var [v] = p; return v; },',
+            '"kb": function () { var [w] = p; return w; }',
+        ],
+        ['globalThis.flag = true;', 'console.log((p = ["outer"], d("ka")));'],
+    ): 'inner\n',
+    a_dispatcher(
+        ['"ka": function () { var [v] = p; return v + p.length; }'],
+        [
+            'console.log((p = ["x", "y"], d("ka")));',
+        ],
+    ): 'x2\n',
     a_dispatcher(BOTH, ['console.log((p = [1, 2], d("k1")), p.length);']): '3 2\n',
     a_dispatcher(BOTH, ['console.log((p = [1, 2], d("k1")), typeof c);']): '3 object\n',
-    a_dispatcher([
-        '"ka": function () { var x = (p = ["inner"], d("kb")), [v] = p; return v + x; },',
-        '"kb": function () { var [w] = p; return w; }',
-    ], ['console.log((p = ["outer"], d("ka")));']): 'innerinner\n',
+    a_dispatcher(
+        [
+            '"ka": function () { var x = (p = ["inner"], d("kb")), [v] = p; return v + x; },',
+            '"kb": function () { var [w] = p; return w; }',
+        ],
+        ['console.log((p = ["outer"], d("ka")));'],
+    ): 'innerinner\n',
     a_dispatcher(BOTH, ['var f = d("k1", "createF");', 'console.log(c["k1"] === f);']): 'true\n',
 }
 
@@ -1101,15 +1369,21 @@ class TestThePayloadAndTheCacheAreReadOnlyWhereTheUnwrapRemovesThem(TestBase):
     @wontfix('no obfuscated program replaces the array iterator or apply, and a polyfill writes both')
     def test_a_built_in_the_router_uses_replaced(self):
         rows = {
-            a_dispatcher(BOTH, [
-                'Array.prototype[Symbol.iterator] = function* () { yield 40; yield 2; };',
-                'console.log((p = [1, 2], d("k1")));',
-            ]): '42\n',
-            a_dispatcher(BOTH, [
-                'var f = d("k1", "createF");',
-                'Function.prototype.apply = function () { return "patched"; };',
-                'console.log(f(1, 2));',
-            ]): 'patched\n',
+            a_dispatcher(
+                BOTH,
+                [
+                    'Array.prototype[Symbol.iterator] = function* () { yield 40; yield 2; };',
+                    'console.log((p = [1, 2], d("k1")));',
+                ],
+            ): '42\n',
+            a_dispatcher(
+                BOTH,
+                [
+                    'var f = d("k1", "createF");',
+                    'Function.prototype.apply = function () { return "patched"; };',
+                    'console.log(f(1, 2));',
+                ],
+            ): 'patched\n',
         }
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -1129,17 +1403,94 @@ A_LENGTH_HELPER_SOMETHING_ELSE_READS = {
     a_dispatcher(BOTH, ['console.log((p = [1, 2], d("k1")), typeof setLen);']): '3 function\n',
 }
 
+#: Programs in which the initializer of the cache runs code of the program, mapped to what Node
+#: prints for each: `Object.create` replaced, and `Object` a parameter of the function holding the
+#: router.
+A_CACHE_INITIALIZER_THAT_RUNS_PROGRAM_CODE = {
+    a_dispatcher(
+        BOTH,
+        ['console.log((p = [1, 2], d("k1")));'],
+        prefix_lines=['Object.create = function () { console.log("create"); return {}; };'],
+    ): 'create\n3\n',
+    '\n'.join((
+        'function f(Object) {',
+        a_dispatcher(BOTH, ['return (p = [1, 2], d("k1"));']),
+        '}',
+        'console.log(f({ create: function () { console.log("create"); return {}; } }));',
+    )): 'create\n3\n',
+}
+
+#: A module exporting the payload and the cache, mapped to what Node prints for it.
+A_MODULE_EXPORTING_THE_PAYLOAD_AND_THE_CACHE = {
+    '\n'.join((
+        *A_LENGTH_HELPER,
+        *(F'export {line}' for line in a_router(BOTH)[:2]),
+        *a_router(BOTH)[2:],
+        'console.log((p = [1, 2], d("k1")), d("k2", "clearF"));',
+    )): '3 7\n',
+}
+
 
 class TestTheUnwrapRemovesOnlyWhatOnlyTheRouterUsed(TestBase):
     """
     The router goes with the payload, the cache and the length helper, each only where nothing else
-    references it. No other function beside the router is removed, however empty: a host may call
-    it by name.
+    references it and no importer reads it, and the cache only where its initializer runs nothing.
+    No other function beside the router is removed, however empty: a host may call it by name.
     """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_a_length_helper_something_else_reads_still_prints(self):
         rows = A_LENGTH_HELPER_SOMETHING_ELSE_READS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_cache_initializer_that_runs_program_code_still_prints(self):
+        rows = A_CACHE_INITIALIZER_THAT_RUNS_PROGRAM_CODE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_module_exporting_the_payload_and_the_cache_still_prints(self):
+        rows = A_MODULE_EXPORTING_THE_PAYLOAD_AND_THE_CACHE
+        self.assertEqual(
+            {source: before_and_after(source, module=True) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    @wontfix('the obfuscation declares the cache, the payload and the length helper itself, beside the router')
+    def test_template_parts_beside_the_router_written_otherwise(self):
+        router = a_router(['"k1": function () { var [a] = p; return a + v; }'])
+        rows = {
+            '\n'.join((
+                *A_LENGTH_HELPER,
+                'var c = { "k1": function () { return "cached"; } };',
+                *a_router(BOTH)[1:],
+                'console.log(d("k1", "createF")(1, 2));',
+            )): 'cached\n',
+            '\n'.join((
+                *A_LENGTH_HELPER,
+                *router[:2],
+                'function outer(v) {',
+                *router[2:],
+                '  return d("k1", "createF");',
+                '}',
+                'console.log(outer(1)(10), outer(2)(10));',
+            )): '11 11\n',
+            '\n'.join((
+                'function setLen(fn, length) { console.log("helper"); return fn; }',
+                *a_router(BOTH, lengths='{ "k1": 2 }'),
+                'console.log(d("k1", "createF")(1, 2));',
+            )): 'helper\n3\n',
+            a_dispatcher(BOTH, ['try { d("k2", "clearF"); } catch (e) { console.log(e.constructor.name); }']).replace(
+                'var p;',
+                'const p = [];',
+            ): 'TypeError\n',
+        }
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
@@ -1163,58 +1514,89 @@ class TestTheUnwrapRemovesOnlyWhatOnlyTheRouterUsed(TestBase):
 #: another name, with a key the table lacks, through an optional call, from a class method, in a
 #: strict script, after assigning the router, and from a function inside a `with` body.
 OTHER_WAYS_TO_THE_ROUTER = {
-    a_dispatcher(BOTH, [
-        'with ({ d: function () { return "shadow"; } }) { console.log((p = [1, 2], d("k1"))); }',
-    ]): 'shadow\n',
-    a_dispatcher(BOTH, [
-        'function g() { return eval(\'d("k2", "clearF")\'); }',
-        'console.log(g(), (p = [1, 2], d("k1")));',
-    ]): '7 3\n',
-    a_dispatcher(BOTH, [
-        'function g() { return eval(Math.random() < 2 ? \'d("k2", "clearF")\' : ""); }',
-        'console.log(g(), (p = [1, 2], d("k1")));',
-    ]): '7 3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'with ({ d: function () { return "shadow"; } }) { console.log((p = [1, 2], d("k1"))); }',
+        ],
+    ): 'shadow\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'function g() { return eval(\'d("k2", "clearF")\'); }',
+            'console.log(g(), (p = [1, 2], d("k1")));',
+        ],
+    ): '7 3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'function g() { return eval(Math.random() < 2 ? \'d("k2", "clearF")\' : ""); }',
+            'console.log(g(), (p = [1, 2], d("k1")));',
+        ],
+    ): '7 3\n',
     a_dispatcher(BOTH, ['var h = d;', 'console.log(h("k2", "clearF"), (p = [1, 2], d("k1")));']): '7 3\n',
-    a_dispatcher(BOTH, [
-        'try { d("zz", "clearF"); } catch (e) { console.log(e.constructor.name); }',
-        'console.log((p = [1, 2], d("k1")));',
-    ]): 'TypeError\n3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'try { d("zz", "clearF"); } catch (e) { console.log(e.constructor.name); }',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): 'TypeError\n3\n',
     a_dispatcher(BOTH, ['console.log(d?.("k2", "clearF"));']): '7\n',
-    a_dispatcher(BOTH, [
-        'class K { m() { return (p = [1, 2], d("k1")); } }',
-        'console.log(new K().m());',
-    ]): '3\n',
-    a_dispatcher(BOTH, [
-        'console.log((p = [1, 2], d("k1")), d("k2", "clearF"));',
-    ], prefix_lines=['"use strict";']): '3 7\n',
-    a_dispatcher(BOTH, [
-        'console.log((p = [1, 2], d("k1")));',
-        'd = function () { return "X"; };',
-        'console.log((p = [1, 2], d("k1")));',
-    ]): '3\nX\n',
-    a_dispatcher(BOTH, [
-        'var g;',
-        'with ({ d: function () { return "shadow"; } }) { g = function () { return (p = [1, 2], d("k1")); }; }',
-        'console.log(g());',
-    ]): 'shadow\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'class K { m() { return (p = [1, 2], d("k1")); } }',
+            'console.log(new K().m());',
+        ],
+    ): '3\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'console.log((p = [1, 2], d("k1")), d("k2", "clearF"));',
+        ],
+        prefix_lines=['"use strict";'],
+    ): '3 7\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'console.log((p = [1, 2], d("k1")));',
+            'd = function () { return "X"; };',
+            'console.log((p = [1, 2], d("k1")));',
+        ],
+    ): '3\nX\n',
+    a_dispatcher(
+        BOTH,
+        [
+            'var g;',
+            'with ({ d: function () { return "shadow"; } }) { g = function () { return (p = [1, 2], d("k1")); }; }',
+            'console.log(g());',
+        ],
+    ): 'shadow\n',
 }
 
 #: The router reached in a classic script through an indirect `eval` of a string only known when it
 #: runs, mapped to what Node prints for it: code run that way sees every global of the script.
 OTHER_WAYS_TO_THE_ROUTER_IN_A_SCRIPT = {
-    a_dispatcher(BOTH, [
-        'console.log((0, eval)(Math.random() < 2 ? \'d("k2", "clearF")\' : ""), (p = [1, 2], d("k1")));',
-    ]): ('7 3\n', None),
+    a_dispatcher(
+        BOTH,
+        [
+            'console.log((0, eval)(Math.random() < 2 ? \'d("k2", "clearF")\' : ""), (p = [1, 2], d("k1")));',
+        ],
+    ): ('7 3\n', None),
 }
 
 #: Writing the payload from a function inside a `with` body whose object holds a payload of its own,
 #: mapped to what Node prints for it: the entry unpacks what the program never filled.
 A_PAYLOAD_WRITTEN_INSIDE_A_WITH_BODY = {
-    a_dispatcher(BOTH, [
-        'var g;',
-        'with ({ p: [] }) { g = function () { return (p = [1, 2], d("k1")); }; }',
-        'console.log(g());',
-    ]): ('', 'TypeError'),
+    a_dispatcher(
+        BOTH,
+        [
+            'var g;',
+            'with ({ p: [] }) { g = function () { return (p = [1, 2], d("k1")); }; }',
+            'console.log(g());',
+        ],
+    ): ('', 'TypeError'),
 }
 
 
@@ -1310,7 +1692,8 @@ class TestUnwrappingTakesTimeThatGrowsWithTheProgram(TestBase):
             ))
             lines.append(F'  return (q{index} = [v], e{index}("j{index}"));')
             lines.append('}')
-        lines.append('console.log(' + ' + '.join(F'outer{index}({index})' for index in range(count)) + ');')
+        calls = ' + '.join(F'outer{index}({index})' for index in range(count))
+        lines.append(F'console.log({calls});')
         source = '\n'.join(lines)
         # The fastest of three runs is compared, so a pause of the machine during one run cannot
         # decide the test.

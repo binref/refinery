@@ -41,10 +41,10 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
     enclosing_operator,
     is_direct_eval_call,
+    is_invocation_target,
     is_member_write_target,
     references_new_target,
     references_own_arguments,
-    walk_receiver_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     make_string_literal,
     make_undefined_expression,
     property_key,
+    references_receiver_this,
     remove_declarator,
     walk_scope,
 )
@@ -85,12 +86,12 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
-    JsTaggedTemplateExpression,
     JsThisExpression,
-    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
+    is_async_function,
+    is_generator_function,
     strip_parens,
     wraps_return,
 )
@@ -98,6 +99,7 @@ from refinery.lib.scripts.js.options import runs_as_module
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.cache import ModelCache
+    from refinery.lib.scripts.js.analysis.effects import EffectModel
     from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
 
 _N = TypeVar('_N', bound=Node)
@@ -421,8 +423,8 @@ class _TemplateReader:
 def _parameter_names(pattern: Node | None, names: list[str]) -> bool:
     """
     Collect into *names* the names *pattern* binds, and answer whether it binds them as a parameter
-    list would: through names, rest elements and nested patterns, with no default or computed key,
-    which a parameter list evaluates in a scope of its own, and no hole, which it cannot spell.
+    pattern would: through names, holes, rest elements and nested patterns, with no default or
+    computed key, which a parameter list evaluates in a scope of its own.
     """
     if isinstance(pattern, JsIdentifier):
         names.append(pattern.name)
@@ -430,10 +432,12 @@ def _parameter_names(pattern: Node | None, names: list[str]) -> bool:
     if isinstance(pattern, JsArrayPattern):
         last = len(pattern.elements) - 1
         for index, element in enumerate(pattern.elements):
+            if element is None:
+                continue
             if isinstance(element, JsRestElement):
                 if index != last or not _parameter_names(element.argument, names):
                     return False
-            elif element is None or not _parameter_names(element, names):
+            elif not _parameter_names(element, names):
                 return False
         return True
     if isinstance(pattern, JsObjectPattern):
@@ -482,7 +486,8 @@ class _Entry:
             id=JsIdentifier(name=name),
             params=parameters,
             body=JsBlockStatement(body=statements),
-            is_async=self.function.is_async,
+            generator=is_generator_function(self.function),
+            is_async=is_async_function(self.function),
         )
 
 
@@ -520,10 +525,11 @@ def _read_entry(
     could change what it computes. An entry that moves keeps its body but is called by its own
     name, outside the router, with its unpacking as parameters, so it must not tell any of that:
     it reads no `this`, no own `arguments`, no `new.target`, no direct `eval`, and no name the
-    router declares. Its unpacking means what a parameter list means, and none of its function
-    declarations is named like a parameter, since a parameter is bound before function
-    declarations are hoisted and the unpacking after. A generator runs its unpacking at its first
-    step and binds a parameter list at the call, so a generator with an unpacking stays.
+    router declares. Its unpacking means what a parameter list means and skips no position, which
+    a parameter list cannot spell, and none of its function declarations is named like a
+    parameter, since a parameter is bound before function declarations are hoisted and the
+    unpacking after. A generator runs its unpacking at its first step and binds a parameter list at
+    the call, so a generator with an unpacking stays.
     """
     body = function.body
     if function.id is not None or not isinstance(body, JsBlockStatement):
@@ -533,7 +539,11 @@ def _read_entry(
     if unpacking is not None:
         if function.generator:
             return None
-        if not _parameter_names(unpacking.pattern, names) or len(set(names)) != len(names):
+        if (
+            None in unpacking.pattern.elements
+            or not _parameter_names(unpacking.pattern, names)
+            or len(set(names)) != len(names)
+        ):
             return None
         if any(
             isinstance(node, JsFunctionDeclaration)
@@ -542,9 +552,11 @@ def _read_entry(
             for node in walk_scope(function, include_root_body=True)
         ):
             return None
-    if any(isinstance(node, JsThisExpression) for node in walk_receiver_scope(function)):
-        return None
-    if references_own_arguments(function) or references_new_target(function):
+    if (
+        references_receiver_this(function)
+        or references_own_arguments(function)
+        or references_new_target(function)
+    ):
         return None
     for node in function.walk():
         if is_direct_eval_call(node):
@@ -592,26 +604,10 @@ class _Dispatch:
         )
 
 
-def _written(expression: Node) -> bool:
-    holder = enclosing_operator(expression)
-    if isinstance(holder, JsUnaryExpression) and holder.operator == 'delete':
-        return True
-    return isinstance(expression, JsMemberExpression) and is_member_write_target(expression)
-
-
-def _called_as_a_method(expression: Node) -> bool:
-    holder = enclosing_operator(expression)
-    if isinstance(holder, JsCallExpression):
-        return strip_parens(holder.callee) is expression
-    if isinstance(holder, JsTaggedTemplateExpression):
-        return strip_parens(holder.tag) is expression
-    return False
-
-
 class _PayloadInFront(NamedTuple):
     """
-    The pair `(payload = [...], dispatch)`: the pair itself, the payload reference it assigns, and
-    the elements it assigns.
+    An assignment of an array to the payload paired with the dispatch after it: the pair itself, the
+    payload reference it assigns, and the elements it assigns.
     """
     pair: JsSequenceExpression
     target: JsIdentifier
@@ -654,12 +650,14 @@ def _reached_only_through(
     module_scope: bool,
 ) -> bool:
     """
-    Whether every reference to *binding* is one of *accounted*, and no lookup by name at runtime can
-    reach it under the execution model *module_scope* selects.
+    Whether *binding* is not exported, every reference to it is one of *accounted*, and no lookup by
+    name at runtime can reach it under the execution model *module_scope* selects.
     """
-    if model.reflection_can_reach(binding, module_scope=module_scope):
+    if binding.exported:
         return False
-    return all(reference in accounted for reference in model.references(binding))
+    if not all(reference in accounted for reference in model.references(binding)):
+        return False
+    return not model.reflection_can_reach(binding, module_scope=module_scope)
 
 
 def _name_base(key: str) -> str:
@@ -743,9 +741,10 @@ def _removable_declarators(
     return removable
 
 
-def _is_object_create_null(node: Node) -> bool:
+def _is_object_create_null(node: Node, effects: EffectModel) -> bool:
     """
-    Check if *node* is `Object.create(null)`.
+    Check if *node* is `Object.create(null)` of a program that neither binds `Object` nor writes its
+    `create`, so that the call runs nothing.
     """
     if not isinstance(node, JsCallExpression):
         return False
@@ -756,12 +755,9 @@ def _is_object_create_null(node: Node) -> bool:
         return False
     if not isinstance(callee.object, JsIdentifier) or callee.object.name != 'Object':
         return False
-    prop = callee.property
-    if isinstance(prop, JsStringLiteral):
-        return prop.value == 'create'
-    if isinstance(prop, JsIdentifier) and not callee.computed:
-        return prop.name == 'create'
-    return False
+    if access_key(callee) != 'create':
+        return False
+    return not effects.global_key_written('Object', 'create')
 
 
 def _depth(node: Node) -> int:
@@ -771,6 +767,97 @@ def _depth(node: Node) -> int:
         depth += 1
         cursor = cursor.parent
     return depth
+
+
+def _a_hole_reads_undefined(cache: ModelCache) -> bool:
+    """
+    Whether a payload position written with no element in it reads `undefined`, which is what
+    spelling it out as `undefined` at the call site claims. A hole is not an element whose value is
+    `undefined`: the callee reaches it by reading that index off the payload array, so what it finds
+    is whatever `Array.prototype` answers there, and a file that wrote that prototype answers
+    something else.
+    """
+    return cache.effects.chain_roots_unwritten(list)
+
+
+def _read_dispatch(
+    reference: Node,
+    dispatcher: _Dispatcher,
+    entries: dict[str, _Entry],
+    cache: ModelCache,
+) -> _Dispatch | None:
+    """
+    The dispatch *reference* is the callee of, or `None` where it is not one this pass reads. The
+    key selects the entry and the flags behind it what the dispatch denotes: the create flag the
+    entry itself, the clear flag a call of it with the payload emptied, and any other flag a call
+    with what the payload holds, which is only known where the dispatch is the second half of a pair
+    assigning it. The wrap flag puts the result under the wrap key, so a dispatch spelling it is
+    read only together with the access on that key, and a `new` dispatch only with it, since `new`
+    hands back what the router returned only where that is an object. Every argument after the
+    third is dropped, so it must run nothing, and a create dispatch takes none: the router reads a
+    fourth argument as its table of lengths there.
+    """
+    dispatch = reference.parent
+    if (
+        not isinstance(reference, JsIdentifier)
+        or not isinstance(dispatch, (JsCallExpression, JsNewExpression))
+        or dispatch.callee is not reference
+        or isinstance(dispatch, JsCallExpression) and dispatch.optional
+    ):
+        return None
+    key = _string_argument(dispatch, 0)
+    flag = _string_argument(dispatch, 1)
+    kind = _string_argument(dispatch, 2)
+    if not isinstance(key, str) or key not in entries:
+        return None
+    if isinstance(flag, _Unreadable) or isinstance(kind, _Unreadable):
+        return None
+    wrapped = kind == dispatcher.wrap_flag
+    expression: Node = dispatch
+    holder = enclosing_operator(dispatch)
+    if (
+        isinstance(holder, JsMemberExpression)
+        and strip_parens(holder.object) is dispatch
+        and not holder.optional
+        and access_key(holder) == dispatcher.wrap_key
+    ):
+        expression = holder
+    accessed = expression is not dispatch
+    if wrapped is not accessed or is_member_write_target(expression):
+        return None
+    if isinstance(dispatch, JsNewExpression) and not wrapped:
+        return None
+    if not all(
+        cache.effects.is_side_effect_free(
+            argument,
+            discarded=True,
+            reads_may_throw=True,
+            read_established=cache.read_established,
+        )
+        for argument in dispatch.arguments[3:]
+    ):
+        return None
+    in_front = _payload_in_front(expression, dispatcher.payload, cache.model)
+    if flag == dispatcher.create_flag:
+        if in_front is not None or len(dispatch.arguments) > 3:
+            return None
+        return _Dispatch(expression, reference, key, None)
+    receiver = dispatcher.wrap_key if wrapped and is_invocation_target(expression) else None
+    if flag == dispatcher.clear_flag:
+        if in_front is not None:
+            return None
+        return _Dispatch(expression, reference, key, [], receiver=receiver)
+    if in_front is None:
+        if entries[key].unpacking is not None:
+            return None
+        return _Dispatch(expression, reference, key, [], receiver=receiver)
+    if None in in_front.elements and not _a_hole_reads_undefined(cache):
+        return None
+    arguments: list[Expression] = [
+        make_undefined_expression() if element is None else element
+        for element in in_front.elements
+    ]
+    return _Dispatch(in_front.pair, reference, key, arguments, payload=in_front.target)
 
 
 class JsDispatcherUnwrapper(ScopeProcessingTransformer):
@@ -821,7 +908,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             entries[key] = entry
         dispatches: list[_Dispatch] = []
         for reference in model.references(dispatcher.binding):
-            dispatch = self._read_dispatch(reference, dispatcher, entries, cache)
+            dispatch = _read_dispatch(reference, dispatcher, entries, cache)
             if dispatch is None:
                 return
             dispatches.append(dispatch)
@@ -855,7 +942,11 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             return
         names = _choose_names(model, body_scope, dispatcher, dispatches)
         removals = _removable_declarators(cache, dispatcher.payload)
-        removals.extend(_removable_declarators(cache, dispatcher.cache, _is_object_create_null))
+        removals.extend(_removable_declarators(
+            cache,
+            dispatcher.cache,
+            partial(_is_object_create_null, effects=cache.effects),
+        ))
         helpers: list[Node] = []
         if _reached_only_through(
             model,
@@ -871,102 +962,13 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         for dispatch in sorted(dispatches, key=lambda dispatch: _depth(dispatch.node)):
             _replace_in_parent(dispatch.node, dispatch.replacement(names[dispatch.key]))
         edit = BodyEdit(scope, 'body')
-        edit.splice(dispatcher.declaration, [
-            entry.recovered(names[key]) for key, entry in entries.items()
-        ])
+        edit.splice(
+            dispatcher.declaration,
+            [entry.recovered(names[key]) for key, entry in entries.items()],
+        )
         edit.apply()
         for declarator in removals:
             remove_declarator(declarator)
         for helper in helpers:
             _remove_from_parent(helper)
         self.mark_changed()
-
-    def _read_dispatch(
-        self,
-        reference: Node,
-        dispatcher: _Dispatcher,
-        entries: dict[str, _Entry],
-        cache: ModelCache,
-    ) -> _Dispatch | None:
-        """
-        The dispatch *reference* is the callee of, or `None` where it is not one this pass reads.
-        The key selects the entry and the flags behind it what the dispatch denotes: the create flag
-        the entry itself, the clear flag a call of it with the payload emptied, and any other flag
-        a call with what the payload holds, which is only known where the dispatch is the second
-        half of a pair assigning it. The wrap flag puts the result under the wrap key, so a dispatch
-        spelling it is read only together with the access on that key, and a `new` dispatch only
-        with it, since `new` hands back what the router returned only where that is an object.
-        Every argument after the third is dropped, so it must run nothing.
-        """
-        dispatch = reference.parent
-        if (
-            not isinstance(reference, JsIdentifier)
-            or not isinstance(dispatch, (JsCallExpression, JsNewExpression))
-            or dispatch.callee is not reference
-            or isinstance(dispatch, JsCallExpression) and dispatch.optional
-        ):
-            return None
-        key = _string_argument(dispatch, 0)
-        flag = _string_argument(dispatch, 1)
-        kind = _string_argument(dispatch, 2)
-        if not isinstance(key, str) or key not in entries:
-            return None
-        if isinstance(flag, _Unreadable) or isinstance(kind, _Unreadable):
-            return None
-        wrapped = kind == dispatcher.wrap_flag
-        expression: Node = dispatch
-        holder = enclosing_operator(dispatch)
-        if (
-            isinstance(holder, JsMemberExpression)
-            and strip_parens(holder.object) is dispatch
-            and not holder.optional
-            and access_key(holder) == dispatcher.wrap_key
-        ):
-            expression = holder
-        accessed = expression is not dispatch
-        if wrapped is not accessed or _written(expression):
-            return None
-        if isinstance(dispatch, JsNewExpression) and not wrapped:
-            return None
-        if not all(
-            cache.effects.is_side_effect_free(
-                argument,
-                discarded=True,
-                reads_may_throw=True,
-                read_established=cache.read_established,
-            )
-            for argument in dispatch.arguments[3:]
-        ):
-            return None
-        in_front = _payload_in_front(expression, dispatcher.payload, cache.model)
-        if flag == dispatcher.create_flag:
-            if in_front is not None:
-                return None
-            return _Dispatch(expression, reference, key, None)
-        receiver = dispatcher.wrap_key if wrapped and _called_as_a_method(expression) else None
-        if flag == dispatcher.clear_flag:
-            if in_front is not None:
-                return None
-            return _Dispatch(expression, reference, key, [], receiver=receiver)
-        if in_front is None:
-            if entries[key].unpacking is not None:
-                return None
-            return _Dispatch(expression, reference, key, [], receiver=receiver)
-        if None in in_front.elements and not self._a_hole_reads_undefined():
-            return None
-        arguments: list[Expression] = [
-            make_undefined_expression() if element is None else element
-            for element in in_front.elements
-        ]
-        return _Dispatch(in_front.pair, reference, key, arguments, payload=in_front.target)
-
-    def _a_hole_reads_undefined(self) -> bool:
-        """
-        Whether a payload position written with no element in it reads `undefined`, which is what
-        spelling it out as `undefined` at the call site claims. A hole is not an element whose value
-        is `undefined`: the callee reaches it by reading that index off the payload array, so what
-        it finds is whatever `Array.prototype` answers there, and a file that wrote that prototype
-        answers something else.
-        """
-        assert self._root is not None
-        return model_cache(self, self._root).effects.chain_roots_unwritten(list)
