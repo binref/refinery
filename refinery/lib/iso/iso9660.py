@@ -262,11 +262,13 @@ def _walk_fat_directory(
     depth: int,
     extract_chain: Callable[[int, int], bytes],
     cluster_bytes: int,
+    walked: set[int],
 ) -> Iterator[tuple[str, datetime | None, bytes]]:
     """
     Generates a *(path, date, content)* triple for every file in the given FAT directory and in
     its subdirectories, each subdirectory in place of its entry. The cluster chain of a file or
-    directory is read by `extract_chain` from its first cluster and its size.
+    directory is read by `extract_chain` from its first cluster and its size. A subdirectory whose
+    first cluster is in `walked` was listed already and is skipped; the others are added to it.
     """
     if depth > 16:
         return
@@ -293,10 +295,13 @@ def _walk_fat_directory(
         dt = _fat_datetime(entry)
         full_path = F'{prefix}/{fname}' if prefix else fname
         if attr & 0x10:
-            if fname in ('.', '..'):
+            if fname in ('.', '..') or cluster in walked:
                 continue
+            walked.add(cluster)
             sub = extract_chain(cluster, cluster_bytes * 256)
-            yield from _walk_fat_directory(sub, full_path, depth + 1, extract_chain, cluster_bytes)
+            yield from _walk_fat_directory(
+                sub, full_path, depth + 1, extract_chain, cluster_bytes, walked
+            )
         else:
             yield full_path, dt, extract_chain(cluster, size)
 
@@ -358,8 +363,10 @@ def _parse_fat_image(
     def extract_chain(start: int, size: int) -> bytes:
         result = bytearray()
         remaining = size
+        chain: set[int] = set()
         c = start
-        while c >= 2 and c < end_mark and remaining > 0:
+        while c >= 2 and c < end_mark and remaining > 0 and c not in chain:
+            chain.add(c)
             cluster_off = data_offset + (c - 2) * cluster_bytes
             chunk = min(cluster_bytes, remaining)
             if cluster_off + chunk > len(data):
@@ -370,7 +377,7 @@ def _parse_fat_image(
         return bytes(result[:size])
 
     root = data[root_dir_offset:root_dir_offset + root_dir_size]
-    files = list(_walk_fat_directory(root, '', 0, extract_chain, cluster_bytes))
+    files = list(_walk_fat_directory(root, '', 0, extract_chain, cluster_bytes, set()))
     return files or None
 
 

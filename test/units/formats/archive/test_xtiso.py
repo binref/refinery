@@ -1,6 +1,18 @@
+import struct
+
 from unittest.mock import patch
 
+from refinery.lib.frame import Chunk
+
 from ... import TestUnitBase
+
+
+def _fat_entry(name: bytes, attributes: int, cluster: int, size: int) -> bytearray:
+    entry = bytearray(32)
+    entry[0:11] = name.ljust(11, b' ')
+    entry[11] = attributes
+    struct.pack_into('<HI', entry, 26, cluster, size)
+    return entry
 
 
 class TestISOFileExtractor(TestUnitBase):
@@ -104,6 +116,31 @@ class TestISOFileExtractor(TestUnitBase):
         data = self.download_sample('e81af9201d76081c695f616a118b0c7e16087d8a8bef5e44daa63e7396bd8c4f')
         unit = self.load()
         self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])
+
+    def test_a_fat_image_whose_directories_and_cluster_chains_loop_lists_each_file_once(self):
+        """
+        The El Torito boot image of this sample is a FAT12 floppy at offset 0xB800 with its two FATs
+        at 0x200 and 0x1400, its root directory at 0x2600 and cluster 2 at 0x4200. Two free root
+        entries become a directory LOOP at cluster 600, whose 16 entries are directories at cluster
+        600 again, and a file BIG.BIN of 1 MiB at cluster 601, whose next cluster is 601 again.
+        """
+        data = bytearray(self.download_sample('e81af9201d76081c695f616a118b0c7e16087d8a8bef5e44daa63e7396bd8c4f'))
+        image = 0xB800
+        root = image + 0x2600
+        cluster = image + 0x4200 + (600 - 2) * 512
+        data[root + 64:root + 96] = _fat_entry(b'LOOP', 0x10, 600, 0)
+        data[root + 96:root + 128] = _fat_entry(b'BIG     BIN', 0x20, 601, 0x100000)
+        for k in range(16):
+            data[cluster + 32 * k:cluster + 32 * (k + 1)] = _fat_entry(bytes([0x41 + k]), 0x10, 600, 0)
+        for fat in (image + 0x200, image + 0x1400):
+            offset = fat + 601 * 3 // 2
+            value, = struct.unpack_from('<H', data, offset)
+            struct.pack_into('<H', data, offset, value & 0x000F | 601 << 4)
+        sizes: dict[str, int] = {}
+        for chunk in data | self.load():
+            assert isinstance(chunk, Chunk)
+            sizes[str(chunk['path'])] = len(chunk)
+        self.assertEqual(sizes, {'gm.exe': 225246, 'big.bin': 512})
 
 
 _COVERAGE_SAMPLES = {
