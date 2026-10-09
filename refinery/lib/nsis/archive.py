@@ -1175,7 +1175,8 @@ class NSArchive(Struct):
                 raise NotImplementedError(
                     'This archive seems to use an NSIS-specific deflate algorithm '
                     'which has not been implemented yet. '
-                    F'Original error: {header_entry.decompression_error}')
+                    F'Original error: {header_entry.decompression_error}'
+                )
             if self.solid:
                 self._solid_iter = it
             self.entry_offset_delta += header_entry.size

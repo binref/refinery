@@ -1227,7 +1227,9 @@ class FunctionReference:
     def function(self) -> Function:
         if (function := self._function()) is None:
             raise RuntimeError(
-                'The script that this function reference belongs to was freed; keep the script while reading it.')
+                'The script that this function reference belongs to was freed; keep the script '
+                'while reading it.'
+            )
         return function
 
     def __str__(self):
