@@ -37,6 +37,18 @@ class TestEmailUnpacker(TestUnitBase):
         })
         self.assertIn(b'figures,12.18.2020.doc', out['attachments/request.zip'])
 
+    def test_an_attachment_whose_long_name_does_not_decode_is_extracted_under_its_short_name(self):
+        """
+        The name of the attachment is stored twice in the mini stream of this message; the second
+        copy is its long name, which a lone surrogate makes undecodable.
+        """
+        data = bytearray(self.download_sample('f4d5353552501b7aa0f9bb400e0d0349487dc45cbe5ce82fe5e7de526d37f301'))
+        name = 'request.zip'.encode('utf-16le')
+        offset = data.find(name, data.find(name, 194000) + 1)
+        data[offset:offset + 2] = B'\x00\xD8'
+        out = data | self.load() | {'path': ...}
+        self.assertIn('attachments/request.zip', out)
+
     def test_embedded_attachment_extraction(self):
         data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')
         unit = self.load('*.htm')

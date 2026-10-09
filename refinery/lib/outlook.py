@@ -10,6 +10,7 @@ import struct
 from datetime import datetime
 from email.parser import HeaderParser
 from functools import cached_property
+from typing import Callable
 
 from refinery.lib.dt import filetime
 
@@ -47,6 +48,26 @@ def _codepage_to_codec(cp: int) -> str:
         return 'cp1252'
 
 
+def _read_string_property(
+    read: Callable[[str], bytes | memoryview | None],
+    path: str,
+    ansi_codec: str,
+) -> str | None:
+    """
+    The string property in the stream at the given path plus its type suffix: The stream of the
+    Unicode string is read before the one of the 8-bit string, and a stream that does not decode
+    is skipped.
+    """
+    for suffix, codec in (('001F', 'utf-16-le'), ('001E', ansi_codec)):
+        data = read(F'{path}{suffix}')
+        if data is not None:
+            try:
+                return codecs.decode(data, codec).rstrip('\0')
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return None
+
+
 class MsgAttachment:
     """
     An attachment of a `refinery.lib.outlook.MsgFile`: it reads its streams from the message's
@@ -65,11 +86,7 @@ class MsgAttachment:
         return None
 
     def _read_string(self, prop_id: str) -> str | None:
-        for suffix, codec in (('001F', 'utf-16-le'), ('001E', self._ansi_codec)):
-            data = self._stream(F'__substg1.0_{prop_id}{suffix}')
-            if data is not None:
-                return codecs.decode(data, codec).rstrip('\0')
-        return None
+        return _read_string_property(self._stream, F'__substg1.0_{prop_id}', self._ansi_codec)
 
     @cached_property
     def attach_method(self) -> int:
@@ -158,14 +175,7 @@ class MsgFile:
     def _read_string(self, prop_id: str) -> str | None:
         p = self._prefix
         base = F'{p}/__substg1.0_{prop_id}' if p else F'__substg1.0_{prop_id}'
-        for suffix, codec in (('001F', 'utf-16-le'), ('001E', self._ansi_codec)):
-            data = self._read_stream(F'{base}{suffix}')
-            if data is not None:
-                try:
-                    return codecs.decode(data, codec).rstrip('\0')
-                except (UnicodeDecodeError, LookupError):
-                    continue
-        return None
+        return _read_string_property(self._read_stream, base, self._ansi_codec)
 
     def _read_binary(self, prop_id: str) -> bytes | memoryview | None:
         p = self._prefix
