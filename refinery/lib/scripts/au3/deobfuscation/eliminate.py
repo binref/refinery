@@ -1,9 +1,10 @@
 """
-The Phase 4 transform: what no live code reaches leaves the tree. A function no call names and no
-string spells, a declarator no occurrence binds, and an expression statement whose evaluation
-writes nothing and cannot terminate the script are removed — each only when no dynamic-name
-channel could observe the removal. What answers every question the rules ask is the usage model
-of `refinery.lib.scripts.au3.analysis.usage`, which this transform reads and never re-derives.
+The Phase 4 transform: what no live code reaches leaves the tree. A function no call names and
+no string spells, a declarator no occurrence binds or may bind, and an expression statement
+whose evaluation writes nothing and cannot terminate the script are removed — each only when
+no dynamic-name channel could observe the removal. What answers every question the rules ask is
+the usage model of `refinery.lib.scripts.au3.analysis.usage`, which this transform reads and
+never re-derives.
 
 One sweep per visit: the census reads the usage model once, then a single tree edit runs over
 every scope. The group's run loop is what reaches the fixpoint — a function whose only callers
@@ -14,9 +15,11 @@ Three gates close parts of the sweep. The entry gate: a script with no executabl
 statement, and any script holding an include, is a fragment whose functions and globals can be
 reached from outside the tree, so only its dead locals and effect-free statements leave. The
 channel gate: a computed-name channel outside the functions this sweep removes blocks function
-and global removal for the whole visit, because the name it computes may reach anything. The
-error-node gate: a tree that failed to parse anywhere blocks the whole pass, because the raw
-error text is live source the real AutoIt runs and no model here reads.
+and global removal for the whole visit, because the name it computes may reach anything, and a
+channel inside a function blocks that function's local removal, because a dynamic payload runs
+in the scope it stands in and can name a local of it. The error-node gate: a tree that failed to
+parse anywhere blocks the whole pass, because the raw error text is live source the real AutoIt
+runs and no model here reads.
 
 What a removal may not hide: an initializer or dimension that could terminate the script — a
 division, an exponentiation, an array subscript, a call of the wrong arity — keeps its
@@ -57,6 +60,7 @@ class Au3DeadCodeElimination(Transformer):
         self._usage: Au3UsageModel | None = None
         self._removable: frozenset[str] = frozenset()
         self._globals_may_leave: bool = False
+        self._channel_scopes: frozenset[Au3FunctionDeclaration] = frozenset()
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
@@ -69,6 +73,9 @@ class Au3DeadCodeElimination(Transformer):
         cache = model_cache(self, script)
         self._scopes = cache.scopes
         self._usage = cache.usage
+        self._channel_scopes = frozenset(filter(None, (
+            ast.enclosing_function(channel) for channel in self._usage.channels
+        )))
         entry_open = self._entry_is_open(script)
         removable = self._uncalled() if entry_open else set()
         removable = self._without_nested_survivors(removable)
@@ -211,9 +218,11 @@ class Au3DeadCodeElimination(Transformer):
         scope: Au3FunctionDeclaration | None,
     ) -> bool:
         """
-        Whether *declarator* leaves: no occurrence binds the storage its statement's keyword
-        forces — `Binding.NONE` never leaves, its write proving nothing — its name is spelled in
-        no string, and its initializer and every dimension are effect-free.
+        Whether *declarator* leaves: no occurrence binds or may bind the storage its statement's
+        keyword forces — `Binding.NONE` never leaves, its write proving nothing — its name is
+        spelled in no string, and its initializer and every dimension are effect-free. A local
+        leaves only when its own scope holds no channel: a dynamic `Execute` payload runs in the
+        scope it stands in and can name the local.
         """
         assert self._scopes is not None
         assert self._usage is not None
@@ -224,6 +233,8 @@ class Au3DeadCodeElimination(Transformer):
         binding = self._scopes.binding(scope, statement, name)
         if binding is Binding.LOCAL:
             assert scope is not None
+            if scope in self._channel_scopes:
+                return False
             if name in self._usage.local_bindings.get(scope, frozenset()):
                 return False
         elif binding is Binding.GLOBAL:

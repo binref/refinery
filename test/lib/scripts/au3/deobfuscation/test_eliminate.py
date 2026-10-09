@@ -363,6 +363,100 @@ class TestAu3DeadCodeElimination(TestAu3):
             'EndFunc\n'
             'f()\n')
 
+    def test_a_local_read_in_the_branch_that_declares_it_is_kept(self):
+        self._assertKept(
+            '''
+            Func f($c, $z)
+                If $c Then
+                    Local $x = $z
+                    $y = $x
+                EndIf
+                Return $y
+            EndFunc
+
+            MsgBox(0, 0, f(1, 5))
+            ''')
+
+    def test_a_local_read_after_the_branch_that_declares_it_is_kept(self):
+        self._assertKept(
+            '''
+            Func f($c, $z)
+                If $c Then
+                    Local $x = $z
+                EndIf
+                $y = $x
+                Return $y
+            EndFunc
+
+            MsgBox(0, 0, f(1, 5))
+            ''')
+
+    def test_a_local_read_before_the_branch_that_declares_it_is_removed(self):
+        self.assertEqual(
+            self._deobfuscate(
+                '''
+                Func f($c, $z)
+                    $y = $x
+                    If $c Then
+                        Local $x = $z
+                    EndIf
+                    Return $y
+                EndFunc
+
+                MsgBox(0, 0, f(1, 5))
+                '''),
+            'Func f($c, $z)\n'
+            '    $y = $x\n'
+            '    If $c Then\n'
+            '    EndIf\n'
+            '    Return $y\n'
+            'EndFunc\n'
+            'MsgBox(0, 0, f(1, 5))\n')
+
+    def test_a_local_read_earlier_in_the_loop_that_declares_it_is_kept(self):
+        self._assertKept(
+            '''
+            Func f($n)
+                Local $y = 0
+                While $n > 0
+                    $y = $x
+                    Local $x = 7
+                    $n -= 1
+                Wend
+                Return $y
+            EndFunc
+
+            MsgBox(0, 0, f(2))
+            ''')
+
+    def test_a_global_read_only_in_a_parameter_default_is_kept(self):
+        self._assertKept(
+            '''
+            Global $g = 5
+
+            Func f($p = $g)
+                Return $p
+            EndFunc
+
+            MsgBox(0, 0, f())
+            ''')
+
+    def test_a_local_named_by_a_dynamic_execute_payload_in_its_scope_is_kept(self):
+        """
+        A dynamic payload runs in the scope it stands in, so the name it computes can be a local
+        of the same function: the local and the channel stay together.
+        """
+        self._assertKept(
+            '''
+            Func f($prefix)
+                Local $data = 7
+                Execute($prefix & "ta")
+                Return 1
+            EndFunc
+
+            $x = f("$da")
+            ''')
+
     def test_a_dim_inside_a_function_is_untouched(self):
         self._assertKept(
             '''
@@ -468,33 +562,80 @@ class TestAu3DeadCodeElimination(TestAu3):
             'Func f()\n'
             'EndFunc\n')
 
-    def test_a_mutually_recursive_pure_cluster_keeps_its_statement_removed_only(self):
+    def test_a_call_of_a_function_holding_a_static_is_kept(self):
         """
-        The purity fixpoint qualifies both functions, so the call statement is effect-free and
-        goes — and the cluster keeps its call sites among itself, so the functions stay behind,
-        sound and the measured corpus outcome.
+        A static's value survives the call that first initializes it, so which call runs first —
+        and what the global held when it did — is observable: the removed call is the one that
+        would have initialized the static from the global's earlier value.
         """
-        self.assertEqual(
-            self._apply(
-                '''
-                Func a($n)
-                    Return b($n)
-                EndFunc
+        self._assertKept(
+            '''
+            Global $g = 1
 
-                Func b($n)
-                    Return a($n)
-                EndFunc
+            Func f()
+                Static $s = $g
+                Return $s
+            EndFunc
 
-                a(3)
-                ''',
-                Au3DeadCodeElimination,
-            ),
-            'Func a($n)\n'
-            '    Return b($n)\n'
-            'EndFunc\n'
-            'Func b($n)\n'
-            '    Return a($n)\n'
-            'EndFunc\n')
+            f()
+            $g = 2
+            MsgBox(0, 0, f())
+            ''')
+
+    def test_a_call_into_a_self_recursive_pure_function_is_kept(self):
+        """
+        The recursion never returns — AutoIt ends the script at its recursion limit — so
+        evaluating the call would terminate the script and the statement stays.
+        """
+        self._assertKept(
+            '''
+            Func f()
+                Return f()
+            EndFunc
+
+            f()
+
+            MsgBox(0, 0, 0)
+            ''')
+
+    def test_a_call_into_a_mutually_recursive_pure_cluster_is_kept(self):
+        """
+        No call into the cluster returns — AutoIt ends the script at its recursion limit before
+        one would — so the statement that starts the recursion stays, and the cluster keeps its
+        call sites among itself besides.
+        """
+        self._assertKept(
+            '''
+            Func a($n)
+                Return b($n)
+            EndFunc
+
+            Func b($n)
+                Return a($n)
+            EndFunc
+
+            a(3)
+            ''')
+
+    def test_a_call_of_a_function_calling_a_recursive_cluster_is_kept(self):
+        """
+        Impurity travels up the call chain: a caller of a cycle member is a call that may never
+        return as well.
+        """
+        self._assertKept(
+            '''
+            Func a($n)
+                Return a($n)
+            EndFunc
+
+            Func g()
+                Return a(1)
+            EndFunc
+
+            g()
+
+            MsgBox(0, 0, 0)
+            ''')
 
     def test_a_call_into_a_dividing_body_is_kept(self):
         self._assertKept(

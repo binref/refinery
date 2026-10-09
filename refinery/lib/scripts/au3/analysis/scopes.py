@@ -1,8 +1,8 @@
 """
-AutoIt3 scoping: the documented rules that decide which storage a write or a read targets, and
-the script's declared functions. This module is the single owner of that question — the
-constant-binding walk in `refinery.lib.scripts.au3.analysis.propagation` consults it and never
-re-derives the answer.
+AutoIt3 scoping: the documented rules that decide which storage a write or a read targets and
+which storage an occurrence may reach, and the script's declared functions. This module is the
+single owner of that question — the constant-binding walk in
+`refinery.lib.scripts.au3.analysis.propagation` consults it and never re-derives the answer.
 
 The rules, per the AutoIt3 documentation:
 
@@ -56,12 +56,14 @@ class Binding(enum.Enum):
 class Au3LocalFacts:
     """
     What one function body proves about a name: whether it is a parameter, whether any `Global`
-    declaration in the function claims it, and the body position where it first takes a
-    declaration that forces the local storage.
+    declaration in the function claims it, the body position where it first takes a declaration
+    that forces the local storage, and the body positions of every statement holding such a
+    declaration or claim at any depth.
     """
     parameters: frozenset[str]
     global_names: frozenset[str]
     first_local: dict[str, int]
+    local_positions: dict[str, frozenset[int]]
 
 
 def _declared_names(declaration: Au3VariableDeclaration | Au3EnumDeclaration) -> set[str]:
@@ -93,12 +95,25 @@ def _declares_local(
     return False
 
 
+def _local_claim_names(node: Node) -> set[str] | None:
+    """
+    The names *node* claims into the local storage — a local-forcing declaration's declared names
+    or a `For`/`For…In` loop's variable — or `None` when it claims none.
+    """
+    if isinstance(node, (Au3VariableDeclaration, Au3EnumDeclaration)):
+        return _declared_names(node) if _declares_local(node) else None
+    if isinstance(node, (Au3ForStatement, Au3ForInStatement)):
+        return None if node.variable is None else {node.variable.name}
+    return None
+
+
 def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
     """
     The local facts of *function*'s body: parameter names, the names any `Global` declaration in
     it claims — at any depth, but not inside a nested function, which is a scope of its own —
-    and the first body position at which each name takes a local-forcing declaration or becomes
-    the variable of a `For`/`For…In` loop.
+    the first body position at which each name takes a local-forcing declaration or becomes the
+    variable of a `For`/`For…In` loop, and the body positions of every statement holding such a
+    declaration or claim at any depth.
     """
     parameters = {
         parameter.variable.name
@@ -114,29 +129,37 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
             global_names |= _declared_names(node)
     first_local: dict[str, int] = {}
     for index, statement in enumerate(function.body):
-        if _declares_local(statement):
-            names = _declared_names(statement)
-        elif isinstance(statement, (Au3ForStatement, Au3ForInStatement)):
-            if statement.variable is None:
-                continue
-            names = {statement.variable.name}
-        else:
+        names = _local_claim_names(statement)
+        if names is None:
             continue
         for name in names:
             first_local.setdefault(name, index)
-    return Au3LocalFacts(frozenset(parameters), frozenset(global_names), first_local)
+    local_positions: dict[str, set[int]] = {}
+    for node in ast.scope_nodes(function.body):
+        names = _local_claim_names(node)
+        if names is None:
+            continue
+        index = _top_level_index(function, node)
+        for name in names:
+            local_positions.setdefault(name, set()).add(index)
+    return Au3LocalFacts(
+        frozenset(parameters),
+        frozenset(global_names),
+        first_local,
+        {name: frozenset(indices) for name, indices in local_positions.items()},
+    )
 
 
 def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
     """
     The position in *scope*'s body of the top-level statement that holds *write*, or `-1` when
-    the chain leaves the body: the write stands in no statement the body owns, so no declaration
-    before it is pinned.
+    the chain leaves the body: the write stands in no statement the body owns — a parameter
+    default, the function's own name — so no declaration before it is pinned.
     """
     cursor = write
     while cursor.parent is not None and cursor.parent is not scope:
         cursor = cursor.parent
-    if cursor.parent is not scope:
+    if cursor.parent is not scope or not isinstance(cursor, Statement):
         return -1
     return scope.body.index(cast(Statement, cursor))
 
@@ -144,8 +167,9 @@ def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
 @dataclass(frozen=True)
 class Au3ScopeModel:
     """
-    The script's declared functions, and the answer to which storage a write targets. Built once
-    per tree version by `build_scope_model`.
+    The script's declared functions, and the answers to which storage a write or a read targets
+    and which storage an occurrence may reach. Built once per tree version by
+    `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
@@ -222,6 +246,32 @@ class Au3ScopeModel:
         if first <= _top_level_index(scope, read):
             return Binding.LOCAL
         return Binding.GLOBAL
+
+    def may_bind_local(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        occurrence: Node,
+        name: str,
+    ) -> bool:
+        """
+        Whether the occurrence *occurrence* of *name* may bind a local of *scope*: the name is a
+        parameter of the function, or a local-forcing declaration or `For`/`For…In` claim of it
+        stands in a top-level statement at or before the occurrence's. A declaration inside a
+        branch creates its local the moment the branch runs it, and a loop's second iteration
+        sees one an earlier iteration created, so the occurrence and the claim sharing their
+        top-level statement counts as preceding it. A read that provably precedes every claim —
+        `read_binding` answering `Binding.GLOBAL` with no claim behind it — is one no local can
+        reach.
+        """
+        if scope is None:
+            return False
+        facts = self.local_facts.get(scope)
+        if facts is None or name in facts.global_names:
+            return False
+        if name in facts.parameters:
+            return True
+        index = _top_level_index(scope, occurrence)
+        return any(position <= index for position in facts.local_positions.get(name, ()))
 
 
 def build_scope_model(root: Au3Script) -> Au3ScopeModel:

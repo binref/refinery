@@ -2,8 +2,8 @@
 The usage model: what the script does with its names. The dead-code elimination in
 `refinery.lib.scripts.au3.deobfuscation.eliminate` asks it what a direct call names, which names
 a string or a directive spells, which calls may consume a computed name, which storage every
-variable occurrence binds, and which expressions are effect-free — each fact owned by the module
-that pinned it: the bindings by `refinery.lib.scripts.au3.analysis.scopes`, the may-write
+variable occurrence binds or may bind, and which expressions are effect-free — each fact owned by
+the module that pinned it: the bindings by `refinery.lib.scripts.au3.analysis.scopes`, the may-write
 summaries by `refinery.lib.scripts.au3.analysis.propagation`, the builtin knowledge by
 `refinery.lib.scripts.au3.analysis.builtins`.
 
@@ -14,16 +14,22 @@ call as well, so `/`, `^`, and array access are refused. A call is effect-free o
 script function of matching parameter count that declares no `ByRef` parameter, its arguments
 effect-free with it; no builtin call is, because a builtin's value-dependent fatals are
 unpinned and the builtin name universe phase owns the table that would change that. A function
-is pure when its may-write summary is empty, its body holds no `Exit`, and every expression in
-it is effect-free where a call inside the body names a pure function — the fixpoint of that
-rule, so a mutually recursive cluster qualifies when no body in it is impure for any other
-reason.
+is pure when its may-write summary is empty, its body holds no `Exit` and no `Static` — a
+static's value survives the call that first initializes it, so which call runs first is
+observable — and every expression in it is effect-free where a call inside the body names a
+pure function that cannot reach itself through the survivors' calls — the fixpoint of that
+rule. A recursion cycle may never return — AutoIt ends the script at its recursion limit — so
+a call into one is not an effect-free evaluation and no member of a cycle is pure.
 """
 from __future__ import annotations
 
+import itertools
+
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass
 
+from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import NAME_PARAMETERS
 from refinery.lib.scripts.au3.analysis.propagation import execute_kills
@@ -49,6 +55,7 @@ from refinery.lib.scripts.au3.model import (
     Au3Ternary,
     Au3UnaryExpression,
     Au3Variable,
+    Au3VariableDeclaration,
     Au3VariableDeclarator,
     Expression,
 )
@@ -73,8 +80,9 @@ class Au3UsageModel:
     What one tree version does with its names, built once per tree version by
     `build_usage_model`: the script's functions, the direct-identifier call count of each, the
     functions that are pure, the calls that may consume a computed name, the lowercased text of
-    every string literal and directive, and the storage every variable occurrence binds — per
-    scope for locals, per name for globals, the script level among them as `None`.
+    every string literal and directive, the local storage an occurrence in a scope may bind,
+    per scope, and the storage every occurrence provably binds globally, per name, the script
+    level among the readers as `None`.
     """
 
     functions: dict[str, Au3FunctionDeclaration]
@@ -177,6 +185,53 @@ def _holds_exit(function: Au3FunctionDeclaration) -> bool:
     return any(isinstance(node, Au3ExitStatement) for node in ast.scope_nodes(function.body))
 
 
+def _holds_static(function: Au3FunctionDeclaration) -> bool:
+    return any(
+        isinstance(node, Au3VariableDeclaration) and node.is_static
+        for node in ast.scope_nodes(function.body)
+    )
+
+
+def _called_names(function: Au3FunctionDeclaration) -> set[str]:
+    """
+    The names the calls directly in *function*'s body name — a nested function's body is a scope
+    of its own and its calls are not this function's.
+    """
+    names: set[str] = set()
+    for node in ast.scope_nodes(function.body):
+        if not isinstance(node, Au3Call):
+            continue
+        callee = ast.direct_callee(node)
+        if callee is not None:
+            names.add(callee.name)
+    return names
+
+
+def _cyclic_within(
+    pure: set[str],
+    functions: dict[str, Au3FunctionDeclaration],
+) -> set[str]:
+    """
+    The functions of *pure* that can reach themselves through calls into *pure*: a call into one
+    of them may never return — AutoIt ends the script at its recursion limit — so no evaluation
+    of such a call is effect-free.
+    """
+    graph = {name: _called_names(functions[name]) & pure for name in pure}
+    cyclic: set[str] = set()
+    for name in pure:
+        reachable: set[str] = set()
+        pending = list(graph[name])
+        while pending:
+            current = pending.pop()
+            if current in reachable:
+                continue
+            reachable.add(current)
+            pending.extend(graph[current])
+        if name in reachable:
+            cyclic.add(name)
+    return cyclic
+
+
 def _holds_only_effect_free_expressions(
     function: Au3FunctionDeclaration,
     functions: dict[str, Au3FunctionDeclaration],
@@ -194,9 +249,12 @@ def _build_purity(
     summaries: dict[str, frozenset[str] | None],
 ) -> frozenset[str]:
     """
-    The pure functions of the script: every function whose may-write summary is empty and whose
-    body holds no `Exit`, shrunk until every survivor's body also holds no expression that is
-    not effect-free under the survivors themselves.
+    The pure functions of the script: every function whose may-write summary is empty, whose body
+    holds no `Exit` and no `Static` — a static's value survives the call that first initializes
+    it, so which call runs first is observable — shrunk until every survivor's body also holds no
+    expression that is not effect-free under the survivors themselves and no survivor can reach
+    itself through the survivors' calls, which casts its callers out with it: a recursion cycle
+    may never return, and AutoIt ends the script at its recursion limit.
     """
     functions = scope_model.functions
     pure = {
@@ -204,12 +262,14 @@ def _build_purity(
         for name, function in functions.items()
         if summaries.get(name) == frozenset()
         and not _holds_exit(function)
+        and not _holds_static(function)
     }
     while True:
         survivors = {
             name
             for name in pure
             if _holds_only_effect_free_expressions(functions[name], functions, frozenset(pure))
+            and name not in _cyclic_within(pure, functions)
         }
         if survivors == pure:
             return frozenset(pure)
@@ -224,16 +284,26 @@ def _collect_bindings(
     dict[str, frozenset[Au3FunctionDeclaration | None]],
 ]:
     """
-    The storage every variable occurrence binds, over every scope of *root*: a write through the
-    scope model's write binding and a read through its read binding, the declarator variables
-    themselves excluded — the declarations are what the answers are asked about. A write that
-    proves nothing binds no storage: its value reaches a global only through a read somewhere,
-    and that read is the occurrence that protects the name.
+    The storage every variable occurrence binds or may bind, over every scope of *root*: a write
+    through the scope model's write binding and a read through its read binding, an occurrence
+    that may reach a local of its scope through `may_bind_local`, and the variables of a
+    function's parameter defaults among the occurrences — a default evaluates in the function
+    when a call leaves its argument out. The declarator variables themselves are excluded — the
+    declarations are what the answers are asked about. A write that proves nothing binds no
+    storage: its value reaches a global only through a read somewhere, and that read is the
+    occurrence that protects the name.
     """
     local: dict[Au3FunctionDeclaration, set[str]] = {}
     global_names: dict[str, set[Au3FunctionDeclaration | None]] = {}
     for scope, body in ast.scope_bodies(root):
-        for node in ast.scope_nodes(body):
+        occurrences: Iterator[Node] = ast.scope_nodes(body)
+        if scope is not None:
+            occurrences = itertools.chain(occurrences, *(
+                parameter.default.walk()
+                for parameter in scope.params
+                if parameter.default is not None
+            ))
+        for node in occurrences:
             if not isinstance(node, Au3Variable):
                 continue
             if isinstance(node.parent, (Au3VariableDeclarator, Au3EnumDeclarator)):
@@ -245,11 +315,14 @@ def _collect_bindings(
                 binding = scope_model.binding(scope, statement, node.name)
             else:
                 binding = scope_model.read_binding(scope, node, node.name)
-            if binding is Binding.LOCAL:
+            if binding is Binding.GLOBAL:
+                global_names.setdefault(node.name, set()).add(scope)
+            if (
+                binding is Binding.LOCAL
+                or scope_model.may_bind_local(scope, node, node.name)
+            ):
                 assert scope is not None
                 local.setdefault(scope, set()).add(node.name)
-            elif binding is Binding.GLOBAL:
-                global_names.setdefault(node.name, set()).add(scope)
     return (
         {scope: frozenset(names) for scope, names in local.items()},
         {name: frozenset(scopes) for name, scopes in global_names.items()},

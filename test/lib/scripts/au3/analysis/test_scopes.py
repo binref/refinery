@@ -1,7 +1,8 @@
 """
 Which storage a write or a read targets, per the scope model: the script level always the global,
 a function's parameters and dominating declarations the local, and everything else nothing at
-all. Every expectation below restates a rule the AutoIt3 documentation states, so a failure is
+all — and which storage an occurrence may reach, the branch-created local among them. Every
+expectation below restates a rule the AutoIt3 documentation states, so a failure is
 either a parsing defect or a rule the model misapplies — the unseen `#include` a bare write
 cannot decide is the reason the third answer exists.
 """
@@ -375,3 +376,105 @@ class TestAu3ReadBinding(TestBase):
                 self.assertEqual(model.read_binding(None, node, 'x'), Binding.GLOBAL)
                 return
         self.fail('the source holds no read')
+
+
+class TestAu3MayBindLocal(TestBase):
+    """
+    Whether an occurrence may reach a local of its function: a local created inside a branch is
+    live from the moment the branch runs it, so an occurrence after it in the same statement or
+    in a later one may reach it, while an occurrence every declaration trails may not. Every
+    expectation below restates that rule.
+    """
+
+    def _may_bind_local(self, source: str, name: str, occurrence: int = 0) -> bool:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        model = build_scope_model(root)
+        function = model.functions['f']
+        seen = 0
+        for node in ast.scope_nodes(function.body):
+            if not isinstance(node, Au3Variable) or node.name != name:
+                continue
+            if ast.is_write_occurrence(node):
+                continue
+            if seen < occurrence:
+                seen += 1
+                continue
+            return model.may_bind_local(function, node, name)
+        self.fail('the source holds no read of that name')
+
+    def test_a_read_after_a_dominating_local_may_bind_it(self):
+        self.assertTrue(self._may_bind_local(
+            '''
+            Func f()
+                Local $x = 1
+                $y = $x
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_read_in_the_branch_that_declares_the_local_may_bind_it(self):
+        self.assertTrue(self._may_bind_local(
+            '''
+            Func f($c)
+                If $c Then
+                    Local $x = 1
+                    $y = $x
+                EndIf
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_read_after_the_branch_that_declares_the_local_may_bind_it(self):
+        self.assertTrue(self._may_bind_local(
+            '''
+            Func f($c)
+                If $c Then
+                    Local $x = 1
+                EndIf
+                $y = $x
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_read_earlier_in_the_loop_that_declares_the_local_may_bind_it(self):
+        """
+        A loop's second iteration reads what an earlier iteration's declaration created.
+        """
+        self.assertTrue(self._may_bind_local(
+            '''
+            Func f($n)
+                While $n > 0
+                    $y = $x
+                    Local $x = 7
+                Wend
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_read_before_every_declaration_may_not_bind_it(self):
+        self.assertFalse(self._may_bind_local(
+            '''
+            Func f($c)
+                $y = $x
+                If $c Then
+                    Local $x = 1
+                EndIf
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_read_of_a_name_the_function_declares_global_may_not_bind_a_local(self):
+        self.assertFalse(self._may_bind_local(
+            '''
+            Func f()
+                $y = $x
+                Global $x
+            EndFunc
+            ''',
+            'x',
+        ))
