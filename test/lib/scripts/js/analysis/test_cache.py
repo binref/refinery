@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import inspect
+import unittest
 
 from contextlib import contextmanager
 
@@ -928,8 +929,8 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
     """
     Object folding folds one object at a time and holds the models of the tree it started on,
     renewing them only where a fold touched the next object or can show a write they do not
-    record. Released, each fold moves the tree under the next read, and the models are rebuilt once
-    per object.
+    record. Released, each fold moves the tree under the next read, and the models are rebuilt for
+    every reference decided after an edit.
     """
 
     @staticmethod
@@ -1016,12 +1017,12 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
     #: call, an `arguments` object holding an intrinsic, a write through what an inlined call
     #: answers, a string naming a global, an install or `eval`, a name running a string of code, a
     #: string a binding holds or a function is handed and then writes a prototype under, the global
-    #: object handed on through a call wrapper, a piece that completes the name of an install — or
-    #: edits what another object's reference stands in, by dropping a function that read it or by
-    #: writing the callee of the call it is handed to; a key the object reads after its own copy
-    #: installed it, a global a copied key rebinds before the object's call over it is inlined; and
-    #: strings copied into keys the models do not read today: of an object literal, a class member,
-    #: a pattern, and the key `Reflect.set` is handed.
+    #: object handed on through a call wrapper, a piece that completes the name of an install, the
+    #: name of an install an inlined call answers — or edits what another object's reference stands
+    #: in, by dropping a function that read it or by writing the callee of the call it is handed to;
+    #: a key the object reads after its own copy installed it, a global a copied key rebinds before
+    #: the object's call over it is inlined; and strings copied into keys the models do not read
+    #: today: of an object literal, a class member, a pattern, and the key `Reflect.set` is handed.
     _FOLDS_THE_MODELS_READ = (
         'var A = {g: globalThis}; var C = {x: 1}; console.log(A.g.C.x); console.log(C.x);',
         'var A = {g: globalThis}; var C = {x: 1};'
@@ -1085,6 +1086,8 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         'var o = {}; var A = {k: "toString"};'
         ' var p = {[A.k]: function () { console.log("conv"); return "c"; }};'
         ' var H = {s: p + "", n: 2}; console.log(H.n);',
+        'var A = {k: function () { return "defineProperty"; }};'
+        ' Object[A.k()](Object.prototype, "q", {value: 1}); var B = {y: 1}; console.log(B.q);',
     )
 
     @staticmethod
@@ -1145,6 +1148,46 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
     @a_property_of_the_pin_itself
     def test_inlined_calls_reading_members_under_handed_strings_renew_the_models_at_most_once_per_object(self):
         renewals = self._held(self._inlining_calls_that_read_members_under_handed_strings(16))[0] - 1
+        self.assertLessEqual(renewals, 16)
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_a_parameter_copied_into_an_argument_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._reading_a_parameter(2, 'var O = {a: e, b: INDEX};', 'g(O.a, O.b)'))[0],
+            self._held(self._reading_a_parameter(16, 'var O = {a: e, b: INDEX};', 'g(O.a, O.b)'))[0],
+        )
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_a_parameter_an_inlined_call_hands_into_a_variable_needs_no_new_models(self):
+        declarations = 'var O = {or: function (a, b) { return a || b; }}; var x = O.or(e, INDEX);'
+        self.assertEqual(
+            self._held(self._reading_a_parameter(2, declarations, 'x'))[0],
+            self._held(self._reading_a_parameter(16, declarations, 'x'))[0],
+        )
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_a_constant_string_joined_in_an_argument_needs_no_new_models(self):
+        self.assertEqual(
+            self._held(self._reading_a_parameter(2, 'var O = {a: "he", b: "llo", n: INDEX};', 'g(O.a + O.b, O.n)'))[0],
+            self._held(self._reading_a_parameter(16, 'var O = {a: "he", b: "llo", n: INDEX};', 'g(O.a + O.b, O.n)'))[0],
+        )
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_numbers_copied_into_keys_of_a_parameter_need_no_new_models(self):
+        self.assertEqual(
+            self._held(self._reading_a_parameter(2, 'var O = {i: 0, j: INDEX};', 'e[O.i] + e[O.j]'))[0],
+            self._held(self._reading_a_parameter(16, 'var O = {i: 0, j: INDEX};', 'e[O.i] + e[O.j]'))[0],
+        )
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_a_string_copied_into_a_key_beside_a_joining_call_renews_the_models_at_most_once_per_object(self):
+        declarations = 'var O = {m: "log", add: function (a, b) { return a + b; }, k: INDEX};'
+        renewals = self._held(self._reading_a_parameter(16, declarations, 'e[O.m](O.add("he", "llo"), O.k)'))[0] - 1
         self.assertLessEqual(renewals, 16)
 
     @a_property_of_the_pin_itself

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import time
 import unittest
 
+from test import a_property_of_the_pin_itself
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
@@ -1535,6 +1537,53 @@ A_VALUE_READING_A_GLOBAL_A_COPIED_KEY_CREATES = {
 }
 
 
+#: Programs in which an inlined call of an object is handed a read of the same object, mapped to
+#: what Node prints: a key the object does not hold, the same read handed to a call nested in
+#: another, a key the object inherits, and a key read inside a function handed to the call.
+A_READ_OF_AN_OBJECT_HANDED_TO_ITS_OWN_INLINED_CALL = {
+    'var O = {f: function (a) { return a + 1; }};'
+    ' console.log(O.f(O.q));': 'NaN\n',
+    'var O = {f: function (a, b) { return a + b; }, s: "x"};'
+    ' console.log(O.f(O.s, O.f(O.q, 2)));': 'xNaN\n',
+    'function m() {'
+    ' var O = {f: function (a) { return typeof a; }, s: 5};'
+    ' console.log(O.f(O.toString), O.s); }'
+    ' m();': 'function 5\n',
+    'var O = {f: function (a) { return a; }};'
+    ' console.log(O.f(function () { return O.q; })());': 'undefined\n',
+}
+
+
+#: Programs whose object holds, under a key nothing reads, a value that converts an object with a
+#: conversion method of its own, mapped to what Node prints: `toString` on an object literal, and
+#: `valueOf` on an instance of a class.
+A_VALUE_NO_ACCESS_READS_THAT_RUNS_A_CONVERSION = {
+    'var p = {toString: function () { console.log("conv"); return "c"; }};'
+    ' var H = {s: p + "", n: 2};'
+    ' console.log(H.n);': 'conv\n2\n',
+    'class C { valueOf() { console.log("conv"); return 1; } }'
+    ' var c = new C();'
+    ' var H = {s: c + 1, n: 2};'
+    ' console.log(H.n);': 'conv\n2\n',
+}
+
+
+#: Programs in which an inlined call of an object answers, in a computed key, the name of the method
+#: that installs a descriptor or of `eval`, and another object then reads the key that installs on
+#: every object, mapped to what a host running them as classic scripts prints.
+AN_INSTALL_NAMED_BY_WHAT_AN_INLINED_CALL_ANSWERS = {
+    'var A = {k: function () { return "defineProperty"; }};'
+    ' Object[A.k()](Object.prototype, "q", {value: 1});'
+    ' var B = {y: 1};'
+    ' console.log(B.q);': '1\n',
+    'var A = {k: function () { return "eval"; }};'
+    ' function G() { return this; }'
+    ' G()[A.k()]("Object.prototype.q = 1");'
+    ' var B = {y: 1};'
+    ' console.log(B.q);': '1\n',
+}
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscator):
 
@@ -1579,3 +1628,40 @@ class TestNodePrintsTheSameWhereACopyLandsWhereTheModelsReadIt(TestJsDeobfuscato
             {source: before_and_after_in_a_host(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+    def test_a_read_of_the_object_handed_to_its_own_inlined_call_still_reads_the_object(self):
+        rows = A_READ_OF_AN_OBJECT_HANDED_TO_ITS_OWN_INLINED_CALL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_value_no_access_reads_still_runs_its_conversion(self):
+        rows = A_VALUE_NO_ACCESS_READS_THAT_RUNS_A_CONVERSION
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_an_object_reads_a_key_an_install_named_by_an_inlined_call_installed(self):
+        rows = AN_INSTALL_NAMED_BY_WHAT_AN_INLINED_CALL_ANSWERS
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+class TestObjectFoldingCostsWhatAConcatenationIsLong(TestJsDeobfuscator):
+    """
+    After every copy, object folding asks whether the copy completed a constant string. A storage
+    object holding the pieces of a split string has it ask once for every piece of one chain.
+    """
+
+    @a_property_of_the_pin_itself
+    def test_four_hundred_copied_pieces_of_one_concatenation_fold_within_a_second(self):
+        pieces = ', '.join(F'p{k}: "c{k}"' for k in range(400))
+        chain = ' + '.join(F'O.p{k}' for k in range(400))
+        start = time.perf_counter()
+        folded = self._objectfold(F'function f() {{ var O = {{{pieces}}}; return {chain}; }} f();')
+        self.assertLess(time.perf_counter() - start, 1.0)
+        self.assertNotIn('O.', folded)

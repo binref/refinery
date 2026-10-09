@@ -166,7 +166,7 @@ def _resolves_consistently(
     model: SemanticModel,
     value: Node,
     dest: Scope | None,
-    free: list[tuple[JsIdentifier, Binding | None]] | None = None,
+    free: list[tuple[JsIdentifier, Binding | None]],
 ) -> bool:
     """
     Whether every free identifier in *value* resolves, from *dest* — the scope the value would be
@@ -176,11 +176,9 @@ def _resolves_consistently(
     object captured. This is the spatial counterpart to the temporal `_value_is_stable`; an identifier
     bound inside *value* itself places no constraint, since the clone carries its binding with it.
 
-    *free* is the precomputed `_free_external_bindings` list for *value*; it does not depend on *dest*,
-    so a caller checking one value against several destinations passes it once to avoid re-walking.
+    *free* is the `_free_external_bindings` list for *value*, which does not depend on *dest*, so a
+    caller checking one value against several destinations walks the value once.
     """
-    if free is None:
-        free = list(_free_external_bindings(model, value))
     return all(binding is model.lookup(node.name, dest) for node, binding in free)
 
 
@@ -203,8 +201,8 @@ def _copy_is_inert(value: Node, landing: Landing | None, *, handed: bool) -> boo
     did not read where it stood:
 
     - Where they read nothing of the value, the copy shows them nothing.
-    - A callee shows them something where the semantic model reads the call as running a string
-      of code (`refinery.lib.scripts.js.analysis.model.timer_callee_name`).
+    - A callee shows them something where the semantic model reads the call as running a string of
+      code (`refinery.lib.scripts.js.analysis.model.timer_callee_name`).
     - A key names a property from then on.
     - An argument that was an argument of the inlined call is handed on as it was.
     - Anywhere else, a literal denotes no object and shows them nothing.
@@ -227,23 +225,24 @@ def _an_inlined_call_is_inert(func: JsFunctionExpression, call: JsCallExpression
     """
     Whether inlining *call* of *func* leaves the held models as true as they were
     (`_copy_is_inert`). Each argument lands where the expression the call answers reads its
-    parameter: inside the expression, or where the call stands where the expression evaluates to
-    it. A name the expression reads other than a parameter lands there as a copy of itself.
+    parameter: inside the expression, or where the call stands where the expression evaluates to it.
+    A name the expression reads other than a parameter lands there as a copy of itself, and so does
+    a constant string the expression evaluates to (`refinery.lib.scripts.js.model.static_string`),
+    which names a property where the call stands in a key.
     """
     answered = expression_a_call_answers(func)
-    if answered is None:
-        return True
+    assert answered is not None, 'a call is inlined only where it answers an expression'
     expression, names = answered
     passed = dict(zip(names, call.arguments))
-    where_the_call_lands: Landing | None = None
+    where_the_call_lands = value_landing(call)
     for node in expression.walk():
-        if not isinstance(node, JsIdentifier) or not is_use_position(node):
-            continue
         landing = value_landing(node, expression)
         if landing is None:
-            if where_the_call_lands is None:
-                where_the_call_lands = value_landing(call)
             landing = where_the_call_lands
+            if landing is Landing.KEY and static_string(node) is not None:
+                return False
+        if not isinstance(node, JsIdentifier) or not is_use_position(node):
+            continue
         argument = passed.get(node.name)
         if argument is None:
             inert = _copy_is_inert(node, landing, handed=False)
@@ -260,16 +259,34 @@ def _joins_a_constant_string(node: Node) -> bool:
     the one string it spells (`refinery.lib.scripts.js.model.static_string`): as a key, and where
     they look for a name in every string. While a piece of it was a member access, they read it as
     no string at all.
+
+    A concatenation the models read as one string is made of pieces they read as strings, so every
+    concatenation inside it is read as one too. Where *node* holds such a concatenation, it holds
+    one that joins no other, and where it stands in one, the nearest one around it is such a
+    concatenation. Only those are asked, so a chain of copied pieces costs each piece the length of
+    the chain rather than its square.
     """
-    joined = [n for n in node.walk() if isinstance(n, JsBinaryExpression) and n.operator == '+']
+    for joined in node.walk():
+        if (
+            isinstance(joined, JsBinaryExpression)
+            and joined.operator == '+'
+            and not _is_concatenation(joined.left)
+            and not _is_concatenation(joined.right)
+            and static_string(joined) is not None
+        ):
+            return True
     cursor = node
-    while isinstance(parent := cursor.parent, (JsBinaryExpression, JsParenthesizedExpression)):
-        if isinstance(parent, JsBinaryExpression):
-            if parent.operator != '+':
-                break
-            joined.append(parent)
+    while isinstance(parent := cursor.parent, JsParenthesizedExpression):
         cursor = parent
-    return any(static_string(n) is not None for n in joined)
+    return _is_concatenation(parent) and static_string(parent) is not None
+
+
+def _is_concatenation(node: Node | None) -> bool:
+    """
+    Whether *node*, inside any parentheses, is a `+`, the operator a constant string is joined with.
+    """
+    node = strip_parens(node)
+    return isinstance(node, JsBinaryExpression) and node.operator == '+'
 
 
 def _call_of(member: JsMemberExpression) -> JsCallExpression | None:
@@ -346,10 +363,12 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
       (`_copy_is_inert`) outdates them. The pass makes an object's copies first, renews before its
       inlined calls where a copy outdated the models, and renews again before it reads a fact that
       an inlined call may have changed: an inherited key, the values a removed declaration drops,
-      the next object. An inlined call writes only through values handed to it, which the models
-      already read as written through. Between a copy and the next renewal, the pass compares only
-      where the names of a value resolve at the literal and at the reference. A copy changes what a
-      name resolves to only at the global scope, which both reach alike.
+      the next object. The inlined calls of one object all read the facts as they stand after its
+      copies, so a fact one call shows the models is not seen by a later call of the same object
+      (`test_unfixed_defects.TestACallOfAnObjectSeesWhatAnEarlierCallOfItShowed`). Between a copy
+      and the next renewal, the pass compares only where the names of a value resolve at the
+      literal and at the reference. A copy changes what a name resolves to only at the global
+      scope, which both reach alike.
     """
 
     def __init__(self):
@@ -401,9 +420,9 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
     def _replace(self, model: SemanticModel, old: Node, new: Node) -> None:
         """
         Replace *old* with *new*, recording the statement *old* stood in, the names it spelled
-        (`_detach`), and what each name *new* spells reaches there: the binding *model*, the one
-        the reference was decided on, resolves it to from the scope of *old*, or the name itself
-        where the model resolves it to none.
+        (`_detach`), and what each name *new* spells reaches there: the binding *model*, the one the
+        reference was decided on, resolves it to from the scope of *old*, or the name itself where
+        the model resolves it to none.
         """
         scope = model.scope_of(old)
         statement = _statement_holding(old)
@@ -474,12 +493,12 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 or self._has_freshly_allocating_value(prop_map)
             ):
                 continue
-            cache = self.held_models()
+            cache = self._facts()
             model = cache.model
             binding = model.binding_of(name)
             if binding is None:
                 continue
-            if self._outdated or self._edited_around(model, binding, name, init, prop_map):
+            if self._edited_around(model, binding, name, init, prop_map):
                 self.renew_models()
                 model = cache.model
                 binding = model.binding_of(name)
@@ -693,17 +712,20 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
         global-object alias (`globalThis.o`, a member node rather than an identifier) also keeps the
         declaration and is not folded: folding through it (`globalThis.o.x` to the property value)
         holds only under the script execution model, where a top-level `var` becomes a global
-        property, not when the global is module-scoped. A reference an earlier copy took out of the
-        tree with the code around it is no use any more and is passed over.
+        property, not when the global is module-scoped. A reference an inlined call took out of the
+        tree with its arguments keeps the declaration too, because the expression written where the
+        call stood may hold a copy of it.
 
         A property no access reads is dropped with the declaration when it is removed, so a value
         whose read may throw a `ReferenceError` no completed write establishes keeps the
         declaration: building the object read that value, and dropping the declaration would mute
-        the throw. A read the model proves established, and every value accessed at least once
-        (relocated to its use, its read still performed there), places no such constraint.
-        Relocating that read does move it past any statement between the literal and the
-        use, so a throw it carries is reordered past those statements' effects — a separate,
-        unpinned defect (`test_unfixed_defects.TestARelocatedMayThrowReadIsReorderedPastAnEffect`).
+        the throw. A value whose operator converts an operand that may be an object keeps it too,
+        because the conversion runs code the operand carries. A read the model proves established,
+        and every value accessed at least once (relocated to its use, its read still performed
+        there), places no such constraint. Relocating that read does move it past any statement
+        between the literal and the use, so a throw it carries is reordered past those statements'
+        effects — a separate, unpinned defect
+        (`test_unfixed_defects.TestARelocatedMayThrowReadIsReorderedPastAnEffect`).
 
         A function value is copied into a call only where no direct `eval` in it reads names the
         copy would read from the scope of the call (`_runs_code_in_its_scope`), and it is written
@@ -755,10 +777,11 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             changed = True
             if not inert:
                 self._outdated = True
-        if calls and self._outdated:
-            self.renew_models()
+        if calls:
+            self._facts()
         for ref, member, key, value in calls:
             if ref in self._detached or not self.held_models().model.knows(ref):
+                can_remove = False
                 continue
             accessed_keys.add(key)
             answers = self._answers(answers)
@@ -771,6 +794,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 self._outdated = True
         for ref, member, key in inherited:
             if ref in self._detached or not self.held_models().model.knows(ref):
+                can_remove = False
                 continue
             facts = self._facts()
             if not property_provably_absent(facts.effects, dict, key):
@@ -783,7 +807,11 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             facts = self._facts()
             can_remove = all(
                 facts.effects.is_side_effect_free(
-                    value, reads_may_throw=True, read_established=facts.read_established)
+                    value,
+                    reads_may_throw=True,
+                    read_established=facts.read_established,
+                    coercions_may_write=True,
+                )
                 for value in dropped
             )
         return _Folded(changed, can_remove)

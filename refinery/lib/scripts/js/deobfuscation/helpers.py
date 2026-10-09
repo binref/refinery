@@ -3043,14 +3043,14 @@ class PinnedTransformer(Transformer):
       makes at its first decision, before its first edit.
     - It renews (`renew_models`) before a decision that reads code the invocation made or edited
       since the last renewal: a held model knows that code as it was, or not at all.
-    - After an edit that may show the models a fact the held ones do not record, it renews before
-      it next reads a fact from them: an edit that puts a value the models follow only through
-      bindings
+    - After an edit that may show the models a fact the held ones do not record, it renews before it
+      next reads a fact from them: an edit that puts a value the models follow only through bindings
       (`refinery.lib.scripts.js.analysis.intrinsics.IntrinsicWrites.follows_only_through_bindings`)
       where they read one (`value_landing`), a string where it names a property, a name where it
-      makes a call run a string of code, that removes the `with` statement between a name and a
-      binding holding such a value, or that declares or assigns a name the intrinsic-write scan
-      watches (`declares_a_watched_name`).
+      makes a call run a string of code, the last piece of a concatenation the models read as one
+      string, that removes the `with` statement between a name and a binding holding such a value,
+      or that declares or assigns a name the intrinsic-write scan watches
+      (`declares_a_watched_name`).
     - A per-pass docstring of its own shows that every other edit leaves the answers it reads no
       more permissive than rebuilt ones.
 
