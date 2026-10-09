@@ -4,6 +4,7 @@ import os
 
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 from refinery.lib.dt import isodate
 
@@ -198,4 +199,12 @@ class TestFileReader(TestUnitBase):
                 self._link_directory(os.path.abspath('.'), os.path.join('a', 'again'))
                 self.assertEqual(self._paths('**/*.txt'), ['a/note.txt'])
                 self.assertEqual(self._paths('**/*.txt', symlinks=True), ['a/note.txt'])
+
+    def test_a_file_that_vanishes_is_reported_as_not_found(self):
+        from refinery.units.meta.ef import _SkipErrors, ef
+        unit = ef('note.txt')
+        messages = []
+        with mock.patch.object(unit, 'log_info', messages.append), _SkipErrors(unit).reset('note.txt'):
+            raise FileNotFoundError
+        self.assertEqual(messages, ['file unexpectedly not found: note.txt'])
 

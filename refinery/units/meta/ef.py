@@ -55,10 +55,10 @@ class _SkipErrors:
                 None
             ), PermissionError: (
                 'access error while scanning: {}'
-            ), OSError: (
-                'system error while scanning: {}'
             ), FileNotFoundError: (
                 'file unexpectedly not found: {}'
+            ), OSError: (
+                'system error while scanning: {}'
             ), Exception: (
                 'unknown error while reading: {}'
             ),
