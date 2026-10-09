@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import lzma
 
 from refinery.lib.emulator import (
@@ -408,6 +409,27 @@ class TestEmulator(TestBase):
         self.assertEqual(emulator.seen, 3)
         self.assertEqual(emulator.ip, emulator.base + 2)
 
+    def _test_an_emulator_is_freed_without_the_collector(self, base_emu: type[Emulator]):
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+
+        def emulate():
+            emu = base_emu(code, arch=Arch.X64, hooks=Hook.CodeExecute | Hook.Memory)
+            emu.reset()
+            emu.emulate(emu.base, emu.base + len(code))
+            self.assertEqual(emu.get_register('eax'), 2)
+
+        with self.assertNoInstanceSurvives(base_emu):
+            emulate()
+
+    def test_an_emulator_is_freed_without_the_collector_uc(self):
+        self._test_an_emulator_is_freed_without_the_collector(UnicornEmulator)
+
+    def test_an_emulator_is_freed_without_the_collector_se(self):
+        self._test_an_emulator_is_freed_without_the_collector(SpeakeasyEmulator)
+
     def _test_a_memory_write_hook_receives_the_state(self, base_emu: type[Emulator]):
         states = []
 
@@ -430,5 +452,59 @@ class TestEmulator(TestBase):
         self.assertGreater(len(states), 0)
         self.assertTrue(all(s is state for s in states))
 
+    def test_a_memory_write_hook_receives_the_state_uc(self):
+        self._test_a_memory_write_hook_receives_the_state(UnicornEmulator)
+
     def test_a_memory_write_hook_receives_the_state_ic(self):
         self._test_a_memory_write_hook_receives_the_state(IcicleEmulator)
+
+    def test_a_memory_write_hook_receives_the_state_se(self):
+        self._test_a_memory_write_hook_receives_the_state(SpeakeasyEmulator)
+
+    def test_the_memory_of_a_unicorn_engine_is_released_with_its_emulator(self):
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = UnicornEmulator(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        first = emu.unicorn
+        emu.reset()
+        second = emu.unicorn
+        self.assertEqual(list(first.mem_regions()), [])
+        self.assertNotEqual(list(second.mem_regions()), [])
+        del emu
+        self.assertEqual(list(second.mem_regions()), [])
+
+    def test_the_memory_of_a_speakeasy_engine_is_released_with_its_emulator(self):
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = SpeakeasyEmulator(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        engine = emu.speakeasy.emu.emu_eng.emu
+        self.assertNotEqual(list(engine.mem_regions()), [])
+        del emu
+        self.assertEqual(list(engine.mem_regions()), [])
+
+    def test_a_failing_hook_leaves_its_emulator_to_be_freed_without_the_collector(self):
+        class Emu(UnicornEmulator):
+            def hook_code_execute(self, emu, address, size, state=None):
+                raise RuntimeError('the hook failed')
+
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+
+        def emulate():
+            emu = Emu(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+            emu.reset()
+            with contextlib.suppress(EmulationError):
+                emu.emulate(emu.base, emu.base + len(code))
+
+        with self.assertNoInstanceSurvives(Emu):
+            emulate()

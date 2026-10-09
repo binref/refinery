@@ -111,17 +111,25 @@ _PACKAGE_DEFECTS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError)
 class _PartStream:
     """
     A package part as a read-only binary stream. Reading a defective entry of the archive
-    raises `ExcelFormatError` instead of the exception class of the `zipfile` module.
+    raises `ExcelFormatError` instead of the exception class of the `zipfile` module. Closing
+    the stream releases the archive entry, which refers to the data of the whole package.
     """
 
     def __init__(self, stream: IO[bytes]):
-        self._stream = stream
+        self._stream: IO[bytes] | None = stream
 
     def read(self, size: int = -1) -> bytes:
+        if (stream := self._stream) is None:
+            raise ValueError('The part stream is closed.')
         try:
-            return self._stream.read(size)
+            return stream.read(size)
         except _PACKAGE_DEFECTS as error:
             raise ExcelFormatError('the package contains a defective part') from error
+
+    def close(self):
+        if (stream := self._stream) is not None:
+            self._stream = None
+            stream.close()
 
 
 class _Package:

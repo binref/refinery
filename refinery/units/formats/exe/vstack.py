@@ -107,20 +107,13 @@ class EmuState:
 FN = TypeVar('FN', bound=Callable)
 
 
-def _inject_state_argument(pfn: FN) -> FN:
+def _halt_on_interrupt(pfn: FN) -> FN:
     """
-    A hook receives the state of the emulator when the backend passes none, and a hook that is
-    interrupted from the keyboard halts the emulation, so that the unit reports what it found until
-    then.
+    A hook that is interrupted from the keyboard halts the emulation, so that the unit reports what
+    it found until then.
     """
     @functools.wraps(pfn)
-    def wrapped(self: VStackEmulator, *args, **kwargs):
-        if 'state' in kwargs:
-            kwargs.update(state=self.state)
-        else:
-            *head, state = args
-            if state is None:
-                args = *head, self.state
+    def wrapped(self: Emulator, *args, **kwargs):
         try:
             return pfn(self, *args, **kwargs)
         except KeyboardInterrupt:
@@ -212,12 +205,12 @@ class VStackEmulator(Emulator):
                 self.ip = self.pop()
         return retval
 
-    @_inject_state_argument
+    @_halt_on_interrupt
     def hook_mem_read(self, emu, access: MemAccess, address: int, size: int, value: int, state: EmuState):
         mask = (1 << (size * 8)) - 1
         state.last_read = value & mask
 
-    @_inject_state_argument
+    @_halt_on_interrupt
     def hook_mem_write(self, emu, access: MemAccess, address: int, size: int, value: int, state: EmuState):
         mask = (1 << (size * 8)) - 1
         unsigned_value = value & mask
@@ -285,7 +278,7 @@ class VStackEmulator(Emulator):
             else:
                 vstack.log_always(msg)
 
-    @_inject_state_argument
+    @_halt_on_interrupt
     def hook_mem_error(self, _, access: MemAccess, address: int, size: int, value: int, state: EmuState) -> bool:
         state = self.state
         if state is None:
@@ -318,7 +311,7 @@ class VStackEmulator(Emulator):
         self.halt()
         return False
 
-    @_inject_state_argument
+    @_halt_on_interrupt
     def hook_code_execute(self, emu, address: int, size: int, state: EmuState):
 
         if _init := state.init_registers:

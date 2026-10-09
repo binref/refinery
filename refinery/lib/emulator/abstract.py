@@ -3,10 +3,13 @@ This module defines the refinery emulator abstraction layer interface.
 """
 from __future__ import annotations
 
+import traceback
+import weakref
+
 from abc import ABC, abstractmethod
 from enum import Enum, IntFlag
 from functools import cached_property
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Callable, Generic, TypeVar, overload
 
 from refinery.lib.executable import Arch, Executable, ExecutableCodeBlob, align
 from refinery.lib.intervals import IntIntervalUnion
@@ -181,6 +184,33 @@ NopCodeMaxLen = max(len(c) for c in NopCodeByArch.values())
 RetCodeMaxLen = max(len(c) for c in RetCodeByArch.values())
 
 
+class WeakHook:
+    """
+    A callback for an emulator backend that calls the given hook method of an emulator. Backends
+    keep their callbacks in reference cycles that only the cycle collector frees, so the callback
+    refers to the emulator weakly. An error of the hook does not reach the backend, which may keep
+    it: The frames of the failed hook let go of their variables, which include the emulator, and
+    the error goes to the emulator, which stops the engine and raises it when the run returns.
+    """
+    __slots__ = '_emulator', '_method'
+
+    def __init__(self, emulator: Emulator, method: Callable[..., Any]):
+        self._emulator = weakref.ref(emulator)
+        self._method = method
+
+    def __call__(self, *args):
+        if (emulator := self._emulator()) is None:
+            raise EmulationError('An emulator backend called a hook of an emulator that no longer exists.')
+        try:
+            return self._method(emulator, *args)
+        except BaseException as error:
+            traceback.clear_frames(error.__traceback__)
+            emulator._hook_failed(error)
+            return False
+        finally:
+            del emulator
+
+
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
@@ -224,6 +254,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.alloc_size = alloc_size
         self.page_limit = page_limit
         self._resetonce = False
+        self._engine_release: weakref.finalize | None = None
+        self._hook_error: BaseException | None = None
 
         self._sp, self._ip, self._rv = {
             Arch.PPC32   : ('1',   'pc',  '3'  ), # noqa
@@ -314,6 +346,9 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self._resetonce = True
         self._memorymap = IntIntervalUnion()
         self.state = state
+        if (release := self._engine_release) is not None:
+            self._engine_release = None
+            release()
         self._reset()
         for rd in self.exe.relocations():
             self.mem_write_int(rd.address, rd.value, rd.size)
@@ -376,7 +411,30 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         if not self._resetonce:
             self.reset()
-        return self._emulate(start, end, timeout)
+        self._hook_error = None
+        try:
+            result = self._emulate(start, end, timeout)
+        except BaseException:
+            if self._hook_error is None:
+                raise
+            result = None
+        if (error := self._hook_error) is None:
+            return result
+        self._hook_error = None
+        try:
+            if isinstance(error, Exception) and not isinstance(error, EmulationError):
+                raise EmulationError(str(error)) from error
+            raise error
+        finally:
+            del error
+
+    def _hook_failed(self, error: BaseException):
+        """
+        Called by a `refinery.lib.emulator.abstract.WeakHook` whose hook raised the given error. The
+        emulation halts, and `refinery.lib.emulator.Emulator.emulate` raises the error.
+        """
+        self._hook_error = error
+        self.halt()
 
     def mem_read_int(self, address: int, size: int | None = None):
         """
@@ -401,6 +459,16 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         Called as part of `refinery.lib.emulator.Emulator.reset`.
         """
+
+    def _own_engine(self, release: Callable[..., object], *engine: object):
+        """
+        Called by a backend when its `_reset` has created an engine. The engines of some backends
+        keep their memory, which holds a copy of the emulated data, in reference cycles that only
+        the cycle collector frees. The given function releases that memory when the engine is
+        replaced or when the emulator is freed; it is called with the given arguments, which must
+        not refer to the emulator.
+        """
+        self._engine_release = weakref.finalize(self, release, *engine)
 
     def _init(self):
         """

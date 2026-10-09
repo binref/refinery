@@ -50,3 +50,16 @@ class TestVFS(TestBase):
                 stream.write(b'refined')
             with open(vf1, 'rb') as stream:
                 self.assertEqual(stream.read(), b'refined')
+
+    def test_a_mapped_view_leaves_nothing_to_the_collector(self):
+        import mmap
+        data = bytes(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+
+        def view():
+            with VirtualFileSystem() as vfs:
+                vf = VirtualFile(vfs, bytearray(data))
+                with open(vf, 'rb') as stream:
+                    mapping = mmap.mmap(stream.fileno(), 0)
+                    self.assertEqual(mapping[:2], B'MZ')
+
+        self.assertCollectorFreesLessThan(0x40000, view)
