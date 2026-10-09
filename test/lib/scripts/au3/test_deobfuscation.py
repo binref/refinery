@@ -139,7 +139,9 @@ class TestAu3Deobfuscation(TestBase):
         The distilled decoder shape: a variable naming `Execute` through one more variable
         naming the decoder builtin, so no single pass sees the whole chain — the alias rewrite
         unmasks the second alias, the fold produces the literal the `Execute` splice reads, and
-        the splice result is the string the decoder returned.
+        the splice result is the string the decoder returned. The first alias then leaves as
+        dead code while the second stays: `e` is spelled in no string the tree holds, and `b` is
+        a substring of `"BinaryToString"` — the spelling rule's honest output.
         """
         ast = Au3Parser(
             'Local $e = Execute\n'
@@ -148,16 +150,14 @@ class TestAu3Deobfuscation(TestBase):
         ).parse()
         self.assertGreater(deobfuscate(ast), 0)
         self.assertEqual(Au3Synthesizer().convert(ast), (
-            'Local $e = Execute\n'
             'Local $b = Execute("BinaryToString")\n'
             '$v = "ABCD"\n'
         ))
 
     def test_declarations_the_passes_do_not_own_stay_standing(self):
         """
-        The alias declarations stay behind as dead code — removing them is a later phase's
-        question — and the multiply-defined variables the passes cannot prove a value for are
-        left alone.
+        The multiply-defined variables the passes cannot prove a value for are left alone, and
+        every name the loop binds is read by the statement that follows it.
         """
         ast = Au3Parser(self.SOURCES[2]).parse()
         deobfuscate(ast)

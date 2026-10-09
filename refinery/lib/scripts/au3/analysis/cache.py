@@ -16,6 +16,7 @@ from refinery.lib.scripts.au3.analysis.propagation import (
     build_propagation_model,
 )
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, build_scope_model
+from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel, build_usage_model
 from refinery.lib.scripts.au3.model import Au3Script
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
@@ -24,20 +25,23 @@ class Au3ModelCache(ModelCacheBase):
     """
     Lazily builds and memoizes the analysis models for one root script — the scope model the
     transforms ask which storage a write targets and which names are constant, the alias map the
-    indirection rewrite reads, and the propagation model the constant substitution reads — each
-    dropped, together, whenever this root's tree changes.
+    indirection rewrite reads, the propagation model the constant substitution reads, and the
+    usage model the dead-code elimination reads — each dropped, together, whenever this root's
+    tree changes.
     """
 
     _SLOTS = (
         '_scopes',
         '_aliases',
         '_propagation',
+        '_usage',
     )
 
     root: Au3Script
     _scopes: Au3ScopeModel | None
     _aliases: Au3AliasModel | None
     _propagation: Au3PropagationModel | None
+    _usage: Au3UsageModel | None
 
     @property
     def scopes(self) -> Au3ScopeModel:
@@ -60,6 +64,16 @@ class Au3ModelCache(ModelCacheBase):
         the scope model's binding answers.
         """
         return self._lazy('_propagation', lambda: build_propagation_model(self.root, self.scopes))
+
+    @property
+    def usage(self) -> Au3UsageModel:
+        """
+        What the script does with its names — the call counts, purity, channels, spellings, and
+        storage bindings the dead-code elimination asks — over the scope model's bindings and the
+        propagation walk's may-write summaries.
+        """
+        return self._lazy('_usage', lambda: build_usage_model(
+            self.root, self.scopes, self.propagation.summaries))
 
 
 def model_cache(transformer: Transformer, root: Node) -> Au3ModelCache:

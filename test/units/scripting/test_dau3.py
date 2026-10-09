@@ -91,7 +91,9 @@ class TestDAu3(TestUnitBase):
         """
         The distilled decoder shape: the `Execute` alias is rewritten, the second alias through
         it resolves, the argument folds to the string literal the splice reads, and the decoded
-        string is what the decoder returned.
+        string is what the decoder returned. The first alias then leaves as dead code while the
+        second stays: `e` is spelled in no string the tree holds, and `b` is a substring of
+        `"BinaryToString"`.
         """
         result = (
             B'Local $e = Execute\n'
@@ -99,7 +101,6 @@ class TestDAu3(TestUnitBase):
             B'$v = $e($b("0x22414243" & "4422"))\n'
         ) | self.load() | str
         self.assertEqual(result, (
-            'Local $e = Execute\n'
             'Local $b = Execute("BinaryToString")\n'
             '$v = "ABCD"\n'
         ))
@@ -143,12 +144,15 @@ class TestDAu3(TestUnitBase):
         """
         A comment the header line of a block carries, one standing between a `Select` and its
         first `Case`, and one standing alone in a body no statement follows: each was dropped
-        from the output or corrupted the parse around it before the round trip kept them.
+        from the output or corrupted the parse around it before the round trip kept them. The
+        function stays alive through a call the emulation cannot run — an unknown argument — so
+        an uncalled function's removal cannot cost the test its comment coverage.
         """
         data = (
             b'Select\n; pick one\nCase $x\n$y = 1\nEndSelect\n'
             b'While $x ; loop\n$y = 2\nWend\n'
-            b'Func F() ; setup\n; only a comment\nEndFunc\n'
+            b'$z = F($y)\n'
+            b'Func F($p) ; setup\n; only a comment\nEndFunc\n'
         )
         result = data | self.load() | str
         self.assertEqual(result, (
@@ -160,7 +164,8 @@ class TestDAu3(TestUnitBase):
             'While $x\n'
             '    $y = 2\n'
             'Wend ; loop\n'
-            'Func F()\n'
+            '$z = F($y)\n'
+            'Func F($p)\n'
             'EndFunc ; setup ; only a comment\n'
         ))
 

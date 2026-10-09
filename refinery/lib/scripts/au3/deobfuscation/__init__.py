@@ -1,13 +1,15 @@
 """
 AutoIt3 AST deobfuscation transforms.
 
-Three groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
+Four groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
 structurally is — an `Execute` call over a string literal becomes the expression that literal
 names, and a call through an alias variable becomes the function that variable provably names —
 `fold` replaces what is known — an expression whose operands pin its value becomes the literal
 of that value, and a variable read the propagation walk proves a value for becomes that literal —
-and `emulate` replaces what a script-defined function returns: the interpreter runs the call
-over the value domain and the call becomes the literal of its result.
+`emulate` replaces what a script-defined function returns: the interpreter runs the call
+over the value domain and the call becomes the literal of its result — and `cleanup` removes what
+no live code reaches: a function no call names, a declarator no occurrence binds, and an
+effect-free statement, each only when no dynamic-name channel could observe the removal.
 
 `fold` depends on `normalize` and re-triggers it: folding an `Execute` call's argument into the
 string literal it always was is what makes the next `normalize` pass see a flattenable call, and
@@ -15,12 +17,15 @@ rewriting a callee through an alias is what makes the next `fold` pass see the b
 named. `emulate` depends on `fold` — only literal arguments reach a decoded call — and every
 change it makes re-triggers the whole pipeline: a decoded `"BinaryToString"` is what the next
 `normalize` pass turns into an alias rewrite, and a decoded argument is what the next `fold`
-pass folds. The remaining alias declarations stay behind as dead code; removing them is a later
-phase's question.
+pass folds. `cleanup` depends on `emulate` and takes no selective invalidation set: a removal
+changes everything the other models know, the `emulate` stance. The group's internal loop is what
+iterates a sweep to its fixpoint — a function whose only callers an earlier sweep removed keeps
+its call sites until the next sweep re-census.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts.au3.analysis import Au3ModelCache
+from refinery.lib.scripts.au3.deobfuscation.eliminate import Au3DeadCodeElimination
 from refinery.lib.scripts.au3.deobfuscation.evaluate import Au3FunctionEvaluation
 from refinery.lib.scripts.au3.deobfuscation.execute import Au3ExecuteFlattening
 from refinery.lib.scripts.au3.deobfuscation.fold import Au3ConstantFolding
@@ -46,17 +51,23 @@ _emulate = TransformerGroup(
     Au3FunctionEvaluation,
 )
 
+_cleanup = TransformerGroup(
+    'cleanup',
+    Au3DeadCodeElimination,
+)
+
 _GROUP_DEPENDENCIES = {
     'fold': {'normalize'},
     'emulate': {'fold'},
+    'cleanup': {'emulate'},
 }
 
 _GROUP_INVALIDATORS = {
-    'fold': {'normalize', 'emulate'},
+    'fold': {'normalize', 'emulate', 'cleanup'},
 }
 
 _pipeline = DeobfuscationPipeline(
-    [_normalize, _fold, _emulate],
+    [_normalize, _fold, _emulate, _cleanup],
     dependencies=_GROUP_DEPENDENCIES,
     invalidators=_GROUP_INVALIDATORS,
 )

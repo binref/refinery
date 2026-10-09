@@ -1,6 +1,6 @@
 """
-AutoIt3 scoping: the documented rules that decide which storage a write targets, and the script's
-declared functions. This module is the single owner of that question — the
+AutoIt3 scoping: the documented rules that decide which storage a write or a read targets, and
+the script's declared functions. This module is the single owner of that question — the
 constant-binding walk in `refinery.lib.scripts.au3.analysis.propagation` consults it and never
 re-derives the answer.
 
@@ -194,6 +194,34 @@ class Au3ScopeModel:
         if first <= _top_level_index(scope, write):
             return Binding.LOCAL
         return Binding.NONE
+
+    def read_binding(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        read: Node,
+        name: str,
+    ) -> Binding:
+        """
+        The storage the read *read* of *name* targets when it stands in *scope*: the whole script
+        when `None`, one function's body otherwise. A read before a same-named local-forcing
+        declaration in the body sees the global and a read after it the local (probe4 22-23), and
+        a function that declares the name `Global` reads the global throughout. A name a `Dim`
+        in the function declares forces no storage, so a read of it keeps the global: the
+        function created no local the read could see.
+        """
+        if scope is None:
+            return Binding.GLOBAL
+        facts = self.local_facts.get(scope)
+        if facts is None or name in facts.global_names:
+            return Binding.GLOBAL
+        if name in facts.parameters:
+            return Binding.LOCAL
+        first = facts.first_local.get(name)
+        if first is None:
+            return Binding.GLOBAL
+        if first <= _top_level_index(scope, read):
+            return Binding.LOCAL
+        return Binding.GLOBAL
 
 
 def build_scope_model(root: Au3Script) -> Au3ScopeModel:

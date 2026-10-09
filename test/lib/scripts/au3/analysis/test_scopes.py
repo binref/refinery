@@ -1,6 +1,6 @@
 """
-Which storage a write targets, per the scope model: the script level always the global, a
-function's parameters and dominating declarations the local, and everything else nothing at
+Which storage a write or a read targets, per the scope model: the script level always the global,
+a function's parameters and dominating declarations the local, and everything else nothing at
 all. Every expectation below restates a rule the AutoIt3 documentation states, so a failure is
 either a parsing defect or a rule the model misapplies — the unseen `#include` a bare write
 cannot decide is the reason the third answer exists.
@@ -272,3 +272,106 @@ class TestAu3ScopeModel(TestBase):
                 self.assertEqual(model.binding(None, statement, 'x'), Binding.GLOBAL)
                 return
         self.fail('the source holds no write')
+
+
+class TestAu3ReadBinding(TestBase):
+    """
+    Which storage a read targets: the same dominating-declaration rule a write follows, with the
+    global on the other side — a read before a same-named `Local` sees the global, a read after it
+    the local (probe4 22-23). Every expectation restates a rule the AutoIt3 documentation states.
+    """
+
+    def _read_binding(self, source: str, name: str, occurrence: int = 0) -> Binding:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        model = build_scope_model(root)
+        function = model.functions['f']
+        seen = 0
+        for node in ast.scope_nodes(function.body):
+            if not isinstance(node, Au3Variable) or node.name != name:
+                continue
+            if ast.is_write_occurrence(node):
+                continue
+            if seen < occurrence:
+                seen += 1
+                continue
+            return model.read_binding(function, node, name)
+        self.fail('the source holds no read of that name')
+
+    def test_a_parameter_read_targets_the_local(self):
+        self.assertEqual(
+            self._read_binding(
+                '''
+                Func f($p)
+                    $x = $p
+                EndFunc
+                ''',
+                'p',
+            ),
+            Binding.LOCAL)
+
+    def test_a_read_before_a_dominating_local_targets_the_global(self):
+        self.assertEqual(
+            self._read_binding(
+                '''
+                Func f()
+                    $y = $x
+                    Local $x = 1
+                    $y = $x
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.GLOBAL)
+
+    def test_a_read_after_a_dominating_local_targets_the_local(self):
+        self.assertEqual(
+            self._read_binding(
+                '''
+                Func f()
+                    $y = $x
+                    Local $x = 1
+                    $y = $x
+                EndFunc
+                ''',
+                'x',
+                occurrence=1,
+            ),
+            Binding.LOCAL)
+
+    def test_a_read_in_a_function_declaring_the_global_targets_the_global(self):
+        self.assertEqual(
+            self._read_binding(
+                '''
+                Func f()
+                    $y = $x
+                    Global $x
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.GLOBAL)
+
+    def test_a_read_after_a_dim_targets_the_global(self):
+        """
+        A `Dim` forces no storage, so the function created no local the read could see.
+        """
+        self.assertEqual(
+            self._read_binding(
+                '''
+                Func f()
+                    Dim $x
+                    $y = $x
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.GLOBAL)
+
+    def test_the_script_level_always_answers_global(self):
+        root = Au3Parser('Global $x = 1\nMsgBox(0, 0, $x)\n').parse()
+        model = build_scope_model(root)
+        for node in ast.scope_nodes(root.body):
+            if isinstance(node, Au3Variable) and node.name == 'x':
+                self.assertEqual(model.read_binding(None, node, 'x'), Binding.GLOBAL)
+                return
+        self.fail('the source holds no read')

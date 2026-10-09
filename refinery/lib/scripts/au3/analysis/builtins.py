@@ -12,7 +12,9 @@ refuses — a number's little-endian int64 bytes (probe3 44) and a non-ASCII str
 may-write summaries but have no evaluator: `Execute`'s argument is code rather than data, and
 `Assign` writes rather than returns — `refinery.lib.scripts.au3.deobfuscation` owns both
 structurally. `IsDeclared` and `IsFunc` read runtime declaration state, and `Eval` and `Call`
-have unpinned effects; none of the four is emulated.
+have unpinned effects; none of the four is emulated. The name-parameter table below the
+evaluators lists the builtins whose argument names a function or a variable — the positions a
+computed name can reach a callee or a storage through, which no evaluator owns.
 """
 from __future__ import annotations
 
@@ -806,6 +808,32 @@ _EVALUATORS: dict[str, _Evaluator] = {
 #: `Assign`, which the transforms resolve structurally and never fold as a value — `Execute`'s
 #: argument is code, and `Assign`'s effect is a write the may-write summaries read.
 BUILTIN_NAMES = frozenset(_EVALUATORS) | {'execute', 'assign'}
+
+#: The builtins that consume the name of a script function or a variable through an argument,
+#: each mapped to every position that argument can take. The table errs on inclusion: a call to
+#: a name AutoIt does not define is fatal and cannot stand in a script that runs, so a spurious
+#: entry costs conservatism where a missing one is a hole — `DllCallbackRegister` lists both
+#: leading positions for exactly that reason. `Execute` is absent because
+#: `refinery.lib.scripts.au3.analysis.propagation.execute_kills` answers what its payload can do.
+NAME_PARAMETERS: dict[str, frozenset[int]] = {
+    'call'                   : frozenset({0}),
+    'assign'                 : frozenset({0}),
+    'eval'                   : frozenset({0}),
+    'isdeclared'             : frozenset({0}),
+    'isfunc'                 : frozenset({0}),
+    'adlibregister'          : frozenset({0}),
+    'adlibunregister'        : frozenset({0}),
+    'onautoitexitregister'   : frozenset({0}),
+    'onautoitexitunregister' : frozenset({0}),
+    'dllcallbackregister'   : frozenset({0, 1}),
+    'hotkeyset'              : frozenset({1}),
+    'guiregistermsg'         : frozenset({1}),
+    'guisetonevent'          : frozenset({1}),
+    'guictrlsetonevent'      : frozenset({1}),
+    'traysetonevent'         : frozenset({1}),
+    'trayitemsetonevent'     : frozenset({1}),
+    'objevent'               : frozenset({1}),
+}
 
 
 def evaluate_builtin(name: str, arguments: tuple[Au3Value, ...]) -> Au3Value | None:

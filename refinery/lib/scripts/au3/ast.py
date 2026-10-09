@@ -19,18 +19,24 @@ from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
     Au3Assignment,
     Au3Call,
+    Au3DoUntilStatement,
     Au3EnumDeclarator,
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
     Au3Identifier,
+    Au3IfStatement,
     Au3MemberAccess,
     Au3Parameter,
     Au3ParenExpression,
     Au3ReDimTarget,
     Au3Script,
+    Au3SelectStatement,
+    Au3SwitchStatement,
     Au3Variable,
     Au3VariableDeclarator,
+    Au3WhileStatement,
+    Au3WithStatement,
 )
 
 
@@ -82,6 +88,31 @@ def scope_nodes(body: list[Statement]) -> Iterator[Node]:
         if isinstance(node, Au3FunctionDeclaration):
             continue
         stack.extend(reversed(node.children()))
+
+
+def statement_lists(statement: Statement) -> Iterator[tuple[Node, str]]:
+    """
+    Every nested statement list *statement* holds, as the node owning the list and the attribute
+    naming it. The lists of a function declaration are absent: a nested function is a scope of its
+    own, so a walk that recurses through these pairs never crosses a scope border. A transform
+    that prunes statements pairs this with `refinery.lib.scripts.set_child_list` to write back.
+    """
+    if isinstance(statement, Au3IfStatement):
+        yield statement, 'body'
+        for elseif in statement.elseifs:
+            yield elseif, 'body'
+        if statement.else_body is not None:
+            yield statement, 'else_body'
+    elif isinstance(statement, (Au3WhileStatement, Au3DoUntilStatement)):
+        yield statement, 'body'
+    elif isinstance(statement, (Au3ForStatement, Au3ForInStatement, Au3WithStatement)):
+        yield statement, 'body'
+    elif isinstance(statement, Au3SelectStatement):
+        for case in statement.cases:
+            yield case, 'body'
+    elif isinstance(statement, Au3SwitchStatement):
+        for case in statement.cases:
+            yield case, 'body'
 
 
 def owning_statement(node: Node) -> Statement | None:

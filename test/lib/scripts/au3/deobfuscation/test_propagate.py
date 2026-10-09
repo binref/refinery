@@ -481,7 +481,8 @@ class TestAu3ConstantPropagation(TestAu3):
     def test_the_fold_pass_does_not_respond_to_a_replaced_read(self):
         """
         The replaced read is the value itself, so the pipeline's fold group turns the propagated
-        literal into whatever it folds to, end to end.
+        literal into whatever it folds to, end to end — and the declaration the read left behind
+        then leaves as dead code, its name bound by no occurrence anymore.
         """
         self.assertEqual(
             self._deobfuscate(
@@ -489,4 +490,4 @@ class TestAu3ConstantPropagation(TestAu3):
                 Local $x = 5
                 $y = $x + 1
                 '''),
-            'Local $x = 5\n$y = 6\n')
+            '$y = 6\n')
