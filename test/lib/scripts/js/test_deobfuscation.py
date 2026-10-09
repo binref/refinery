@@ -216,20 +216,27 @@ class TestRegressionBugs(TestJsDeobfuscator):
             """
             var c = Object["create"](null);
             var p;
-            function d(name, flag, rtype, lengths) {
+            function d(name, flag, rtype, lengths = {}) {
               var output;
               var fns = {
                 "f1": function() { var [a, b, c] = p; return a + b + c; }
               };
-              if (flag === "initF") { p = []; }
+              if (flag === "clearF") { p = []; }
               if (flag === "createF") {
-                output = c[name] || (c[name] = fns[name]);
+                function createFunction() {
+                  var fn = function (...args) { p = args; return fns[name].apply(this); };
+                  var fnLength = lengths[name];
+                  if (fnLength) { setLength(fn, fnLength); }
+                  return fn;
+                }
+                output = c[name] || (c[name] = createFunction());
               } else {
                 output = fns[name]();
               }
               if (rtype === "wrapF") { return { "wk": output }; }
               else { return output; }
             }
+            function setLength() {}
             console.log((p = ["first", , "third"], d("f1")));
             """
         )

@@ -366,17 +366,28 @@ def a_dispatcher(outer: str = '', entry: str = '', read: str = A_DISPATCH) -> st
     return _lines(
         'var cache = Object["create"](null);',
         'var params;',
-        F'{outer}function d(name, flag, rtype, lengths) {{',
+        F'{outer}function d(name, flag, rtype, lengths = {{}}) {{',
         '  var output;',
         F'  var fns = {{ "f1": {entry}function () {{',
         '    var [a, b] = params;',
         '    return a + b;',
         '  } };',
-        '  if (flag === "initF") {',
+        '  if (flag === "clearF") {',
         '    params = [];',
         '  }',
         '  if (flag === "createF") {',
-        '    output = cache[name] || (cache[name] = fns[name]);',
+        '    function createFunction() {',
+        '      var fn = function (...args) {',
+        '        params = args;',
+        '        return fns[name].apply(this);',
+        '      };',
+        '      var fnLength = lengths[name];',
+        '      if (fnLength) {',
+        '        setLength(fn, fnLength);',
+        '      }',
+        '      return fn;',
+        '    }',
+        '    output = cache[name] || (cache[name] = createFunction());',
         '  } else {',
         '    output = fns[name]();',
         '  }',
@@ -386,6 +397,7 @@ def a_dispatcher(outer: str = '', entry: str = '', read: str = A_DISPATCH) -> st
         '    return output;',
         '  }',
         '}',
+        'function setLength() {}',
         F'console.log({read});',
     )
 
@@ -504,14 +516,17 @@ A_CALL_ANSWERING_A_WRAPPER = {
         a_dispatcher(outer='async ', read=F'typeof {A_DISPATCH}.then'): 'function\n',
         a_dispatcher(outer='*', read=F'typeof {A_DISPATCH}.next').replace(
             '*function d(', 'function* d(', 1): 'function\n',
+        a_dispatcher(entry='*', read=F'typeof {A_DISPATCH}.next').replace(
+            '*function ()', 'function* ()', 1): 'function\n',
     },
 }
 
 
 #: Shapes in which the keyword sits on a function whose call the pass is right to answer, so that a
-#: guard written per pass rather than per function is caught. The dispatcher's entries are built
-#: with the keyword carried, which `dispatcher._build_extracted_function` already does, and an
-#: async arrow immediately called is answered by the value of its own body.
+#: guard written per pass rather than per function is caught. An `async` entry of a dispatcher is
+#: recovered as an `async` function, and an async arrow immediately called is answered by the value
+#: of its own body. A generator entry is not recovered: it unpacks its arguments at its first step,
+#: where a parameter list binds them at the call.
 #:
 #: The `async` rotation IIFE is the row that says the two kinds do not always answer together: that
 #: loop is read for its effect on the array and never for what the call answered, and an `async`
@@ -538,16 +553,6 @@ A_WRAPPER_THE_PASS_IS_RIGHT_TO_ANSWER = {
             '  return a + b;',
             '}',
             'console.log(typeof f1("a", "b").then);',
-        ).rstrip(NL),
-    ),
-    a_dispatcher(entry='*', read=F'typeof {A_DISPATCH}.next').replace(
-        '*function ()', 'function* ()', 1): (
-        'function' + NL,
-        _lines(
-            'function* f1(a, b) {',
-            '  return a + b;',
-            '}',
-            'console.log(typeof f1("a", "b").next);',
         ).rstrip(NL),
     ),
 }

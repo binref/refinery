@@ -1,35 +1,68 @@
 """
-The dispatcher obfuscation wraps function bodies into a central routing function that uses a string
-keyed lookup table and a global payload array for argument passing. This transformer detects the
-pattern structurally (no reliance on variable names), extracts the original functions, rewrites all
-call sites, and removes the dispatcher scaffolding.
+The dispatcher obfuscation moves the functions of a program into the table of one routing function
+and turns every call into a call of that router: a key names the table entry, two flags say whether
+the router empties the payload, calls the entry or hands it out, and the arguments travel in a
+payload array the entry unpacks. This transformer reads the router as the template the obfuscation
+writes, statement by statement, every name checked through the model to be the binding the template
+means:
+
+    function dispatcher(name, flag, returnType, lengths = {...}) {
+      var output;
+      var table = {key: function () { var [a, b] = payload; ... }, ...};
+      if (flag === clearFlag) { payload = []; }
+      if (flag === createFlag) {
+        function factory() {
+          var standIn = function (...args) { payload = args; return table[name].apply(this); };
+          var length = lengths[name];
+          if (length) { helper(standIn, length); }
+          return standIn;
+        }
+        output = cache[name] || (cache[name] = factory());
+      } else {
+        output = table[name]();
+      }
+      if (returnType === wrapFlag) { return { wrapKey: output }; } else { return output; }
+    }
+
+Each table entry becomes a function of its own whose parameters are its unpacking, every dispatch
+becomes a call of it or a reference to it, and the router goes, with the payload, the cache and the
+length helper where nothing else references them. Everything is decided before the first edit.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+from enum import Enum, auto
+from functools import partial
+from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar
 
-from refinery.lib.scripts import (
-    BodyEdit,
-    Node,
-    _clone_node,
-    _remove_from_parent,
-    _replace_in_parent,
-    set_child_list,
-)
+from refinery.lib.scripts import BodyEdit, Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import enclosing_operator
+from refinery.lib.scripts.js.analysis.model import (
+    enclosing_operator,
+    is_direct_eval_call,
+    is_member_write_target,
+    references_new_target,
+    references_own_arguments,
+    walk_receiver_scope,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
-    binding_has_references,
+    fresh_name,
+    is_valid_identifier,
+    make_string_literal,
     make_undefined_expression,
     property_key,
     remove_declarator,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
+    Expression,
     JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBinaryExpression,
     JsBlockStatement,
     JsCallExpression,
@@ -42,19 +75,33 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsNullLiteral,
+    JsNumericLiteral,
     JsObjectExpression,
+    JsObjectPattern,
     JsProperty,
+    JsPropertyKind,
+    JsRestElement,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
+    JsTaggedTemplateExpression,
+    JsThisExpression,
+    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
-    is_async_function,
-    is_generator_function,
+    JsVarKind,
     strip_parens,
     wraps_return,
 )
+from refinery.lib.scripts.js.options import runs_as_module
+
+if TYPE_CHECKING:
+    from refinery.lib.scripts.js.analysis.cache import ModelCache
+    from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
+
+_N = TypeVar('_N', bound=Node)
+_T = TypeVar('_T')
 
 
 class _Unreadable:
@@ -69,7 +116,7 @@ class _Unreadable:
 _UNREADABLE = _Unreadable()
 
 
-def _flag_argument(
+def _string_argument(
     call: JsCallExpression | JsNewExpression,
     index: int,
 ) -> str | None | _Unreadable:
@@ -85,356 +132,615 @@ def _flag_argument(
     return _UNREADABLE
 
 
-def _reads_the_payload(fn: JsFunctionExpression, payload_id: str) -> bool:
+class _Role(Enum):
     """
-    Whether the table entry *fn* takes its arguments out of the payload, so what the payload holds
-    when it is reached decides what it computes.
+    The part a name plays in the template. The first ten are declared by the template itself; the
+    last three are only referenced there and declared by the program around it.
     """
-    return _extract_params(fn, payload_id) != []
+    NAME = auto()
+    FLAG = auto()
+    RETURN_TYPE = auto()
+    LENGTHS = auto()
+    OUTPUT = auto()
+    TABLE = auto()
+    FACTORY = auto()
+    STAND_IN = auto()
+    ARGUMENTS = auto()
+    LENGTH = auto()
+    PAYLOAD = auto()
+    CACHE = auto()
+    HELPER = auto()
+
+
+_OUTER_ROLES = (_Role.PAYLOAD, _Role.CACHE, _Role.HELPER)
+
+
+class _NotTheTemplate(Exception):
+    """
+    Raised where the function `_TemplateReader` reads departs from the template.
+    """
+
+
+def _require(condition: bool) -> None:
+    if not condition:
+        raise _NotTheTemplate
+
+
+def _present(value: _T | None) -> _T:
+    if value is None:
+        raise _NotTheTemplate
+    return value
+
+
+def _as(node: Node | None, kind: type[_N]) -> _N:
+    if not isinstance(node, kind):
+        raise _NotTheTemplate
+    return node
+
+
+def _plain_body(function: JsFunctionDeclaration | JsFunctionExpression) -> list:
+    _require(not wraps_return(function))
+    return _as(function.body, JsBlockStatement).body
+
+
+def _only_statement(statement: Node | None) -> Node:
+    block = _as(statement, JsBlockStatement)
+    _require(len(block.body) == 1)
+    return block.body[0]
+
+
+def _declarator(statement: Node, *, initialized: bool) -> JsVariableDeclarator:
+    declaration = _as(statement, JsVariableDeclaration)
+    _require(declaration.kind == JsVarKind.VAR and len(declaration.declarations) == 1)
+    declarator = _as(declaration.declarations[0], JsVariableDeclarator)
+    _require((declarator.init is not None) is initialized)
+    return declarator
+
+
+def _assignment(statement: Node) -> tuple[Node | None, Node | None]:
+    expression = strip_parens(_as(statement, JsExpressionStatement).expression)
+    expression = _as(expression, JsAssignmentExpression)
+    _require(expression.operator == '=')
+    return expression.left, expression.right
+
+
+def _call(node: Node | None, count: int) -> JsCallExpression:
+    call = _as(strip_parens(node), JsCallExpression)
+    _require(not call.optional and len(call.arguments) == count)
+    return call
+
+
+def _is_data_property(prop: JsProperty) -> bool:
+    return not prop.method and prop.kind == JsPropertyKind.INIT and property_key(prop) is not None
+
+
+def _declared_within(binding: Binding, node: Node) -> bool:
+    owner = binding.scope.node
+    return owner is node or owner.is_descendant_of(node)
 
 
 @dataclass
-class _DispatcherInfo:
+class _Dispatcher:
     """
-    All structurally-extracted metadata about a single dispatcher function.
+    A router read as the template: its declaration and binding, its table entries by key, the two
+    flags of the second parameter, the flag of the third and the key it wraps the result under, and
+    the three bindings outside it the template uses, with the template's own references to them.
+    """
+    declaration: JsFunctionDeclaration
+    binding: Binding
+    entries: dict[str, JsFunctionExpression]
+    clear_flag: str
+    create_flag: str
+    wrap_flag: str
+    wrap_key: str
+    payload: Binding
+    cache: Binding
+    helper: Binding
+    template_references: set[Node]
 
-    The three flag strings are carried beside the things they select, because what a dispatch means
-    is decided by the arguments after the key and not by the key alone. *init_flag* is the value of
-    the second parameter that empties the payload, so a dispatch passing it reaches its callee with
-    no arguments however the payload was filled. *create_flag* is the value that makes the
-    dispatcher hand back the table entry instead of calling it, so a dispatch passing it names a
-    function where every other one names a result. *wrap_flag* is the value of the third parameter
-    that wraps the result in an object under `wrap_key`, so a dispatch passing it denotes that
-    object and only the access on that key denotes the result.
+
+class _TemplateReader:
     """
-    decl: JsFunctionDeclaration
-    dispatcher_id: str
-    fns_map: dict[str, JsFunctionExpression]
-    fns_declarator: JsVariableDeclarator
-    payload_id: str
-    init_flag: str
-    wrap_key: str | None
-    wrap_flag: str | None
-    cache_id: str | None
-    create_flag: str | None
+    Reads one function declaration as the template, statement by statement, recording each name
+    under the role it plays: where the template declares it and every place it references it. The
+    model is asked only once the whole shape has been read, whether each role is one binding and
+    no two roles are the same one, so a function that is not the template costs no analysis.
+    """
+
+    def __init__(self, function: JsFunctionDeclaration):
+        self.function = function
+        self.declared: dict[_Role, JsIdentifier] = {}
+        self.referenced: dict[_Role, list[JsIdentifier]] = defaultdict(list)
+        self.entries: dict[str, JsFunctionExpression] = {}
+        body = _plain_body(function)
+        self._read_parameters()
+        _require(len(body) == 5)
+        self._declare(_Role.OUTPUT, _declarator(body[0], initialized=False).id)
+        self._read_table(_declarator(body[1], initialized=True))
+        self.clear_flag = self._read_clear_branch(body[2])
+        self.create_flag = self._read_create_branch(body[3])
+        _require(self.clear_flag != self.create_flag)
+        self.wrap_flag, self.wrap_key = self._read_wrap_branch(body[4])
+
+    def _declare(self, role: _Role, node: Node | None) -> None:
+        self.declared[role] = _as(node, JsIdentifier)
+
+    def _reference(self, role: _Role, node: Node | None) -> None:
+        self.referenced[role].append(_as(strip_parens(node), JsIdentifier))
+
+    def _read_comparison(self, test: Node | None, role: _Role) -> str:
+        comparison = _as(strip_parens(test), JsBinaryExpression)
+        _require(comparison.operator == '===')
+        self._reference(role, comparison.left)
+        return _present(_as(strip_parens(comparison.right), JsStringLiteral).value)
+
+    def _read_lookup(self, node: Node | None, role: _Role) -> None:
+        lookup = _as(strip_parens(node), JsMemberExpression)
+        _require(lookup.computed and not lookup.optional)
+        self._reference(role, lookup.object)
+        self._reference(_Role.NAME, lookup.property)
+
+    def _read_parameters(self) -> None:
+        parameters = self.function.params
+        _require(len(parameters) == 4)
+        self._declare(_Role.NAME, parameters[0])
+        self._declare(_Role.FLAG, parameters[1])
+        self._declare(_Role.RETURN_TYPE, parameters[2])
+        lengths = _as(parameters[3], JsAssignmentPattern)
+        self._declare(_Role.LENGTHS, lengths.left)
+        for prop in _as(lengths.right, JsObjectExpression).properties:
+            prop = _as(prop, JsProperty)
+            _require(_is_data_property(prop) and isinstance(prop.value, JsNumericLiteral))
+
+    def _read_table(self, declarator: JsVariableDeclarator) -> None:
+        self._declare(_Role.TABLE, declarator.id)
+        table = _as(declarator.init, JsObjectExpression)
+        _require(bool(table.properties))
+        for prop in table.properties:
+            prop = _as(prop, JsProperty)
+            _require(_is_data_property(prop) and not prop.shorthand)
+            key = _present(property_key(prop))
+            _require(key not in self.entries)
+            entry = _as(prop.value, JsFunctionExpression)
+            _require(not entry.params)
+            self.entries[key] = entry
+
+    def _read_clear_branch(self, statement: Node) -> str:
+        branch = _as(statement, JsIfStatement)
+        _require(branch.alternate is None)
+        flag = self._read_comparison(branch.test, _Role.FLAG)
+        target, value = _assignment(_only_statement(branch.consequent))
+        self._reference(_Role.PAYLOAD, target)
+        _require(not _as(value, JsArrayExpression).elements)
+        return flag
+
+    def _read_create_branch(self, statement: Node) -> str:
+        branch = _as(statement, JsIfStatement)
+        flag = self._read_comparison(branch.test, _Role.FLAG)
+        block = _as(branch.consequent, JsBlockStatement)
+        _require(len(block.body) == 2)
+        factory, hand_out = block.body
+        self._read_factory(_as(factory, JsFunctionDeclaration))
+        target, value = _assignment(hand_out)
+        self._reference(_Role.OUTPUT, target)
+        cached = _as(strip_parens(value), JsLogicalExpression)
+        _require(cached.operator == '||')
+        self._read_lookup(cached.left, _Role.CACHE)
+        store = _as(strip_parens(cached.right), JsAssignmentExpression)
+        _require(store.operator == '=')
+        self._read_lookup(store.left, _Role.CACHE)
+        self._reference(_Role.FACTORY, _call(store.right, 0).callee)
+        target, value = _assignment(_only_statement(branch.alternate))
+        self._reference(_Role.OUTPUT, target)
+        self._read_lookup(_call(value, 0).callee, _Role.TABLE)
+        return flag
+
+    def _read_factory(self, factory: JsFunctionDeclaration) -> None:
+        self._declare(_Role.FACTORY, factory.id)
+        _require(not factory.params)
+        steps = _plain_body(factory)
+        _require(len(steps) == 4)
+        stand_in = _declarator(steps[0], initialized=True)
+        self._declare(_Role.STAND_IN, stand_in.id)
+        forward = _as(stand_in.init, JsFunctionExpression)
+        _require(forward.id is None and len(forward.params) == 1)
+        self._declare(_Role.ARGUMENTS, _as(forward.params[0], JsRestElement).argument)
+        forwarding = _plain_body(forward)
+        _require(len(forwarding) == 2)
+        target, value = _assignment(forwarding[0])
+        self._reference(_Role.PAYLOAD, target)
+        self._reference(_Role.ARGUMENTS, value)
+        apply = _call(_as(forwarding[1], JsReturnStatement).argument, 1)
+        _require(isinstance(strip_parens(apply.arguments[0]), JsThisExpression))
+        method = _as(strip_parens(apply.callee), JsMemberExpression)
+        _require(not method.optional and access_key(method) == 'apply')
+        self._read_lookup(method.object, _Role.TABLE)
+        length = _declarator(steps[1], initialized=True)
+        self._declare(_Role.LENGTH, length.id)
+        self._read_lookup(length.init, _Role.LENGTHS)
+        setter = _as(steps[2], JsIfStatement)
+        _require(setter.alternate is None)
+        self._reference(_Role.LENGTH, setter.test)
+        helper = _call(_as(_only_statement(setter.consequent), JsExpressionStatement).expression, 2)
+        self._reference(_Role.HELPER, helper.callee)
+        self._reference(_Role.STAND_IN, helper.arguments[0])
+        self._reference(_Role.LENGTH, helper.arguments[1])
+        self._reference(_Role.STAND_IN, _as(steps[3], JsReturnStatement).argument)
+
+    def _read_wrap_branch(self, statement: Node) -> tuple[str, str]:
+        branch = _as(statement, JsIfStatement)
+        flag = self._read_comparison(branch.test, _Role.RETURN_TYPE)
+        wrapped = _as(_only_statement(branch.consequent), JsReturnStatement)
+        wrapper = _as(strip_parens(wrapped.argument), JsObjectExpression)
+        _require(len(wrapper.properties) == 1)
+        prop = _as(wrapper.properties[0], JsProperty)
+        _require(_is_data_property(prop))
+        self._reference(_Role.OUTPUT, prop.value)
+        plain = _as(_only_statement(branch.alternate), JsReturnStatement)
+        self._reference(_Role.OUTPUT, plain.argument)
+        return flag, _present(property_key(prop))
+
+    def dispatcher(self, model: SemanticModel) -> _Dispatcher:
+        """
+        The router this reader read, once the model says every role is the one binding the template
+        means: every reference the template writes for a name it declares resolves to that
+        declaration, each name it only references is one binding declared outside the router, the
+        router's name is declared by the router alone, and no two roles, nor any role and the
+        router, are the same binding.
+        """
+        bindings: dict[_Role, Binding] = {}
+        for role, declaration in self.declared.items():
+            binding = bindings[role] = _present(model.binding_of(declaration))
+            references = self.referenced[role]
+            _require(all(model.resolve(reference) is binding for reference in references))
+        for role in _OUTER_ROLES:
+            first, *others = self.referenced[role]
+            binding = bindings[role] = _present(model.resolve(first))
+            _require(all(model.resolve(reference) is binding for reference in others))
+            _require(not _declared_within(binding, self.function))
+        own = _present(model.binding_of(_as(self.function.id, JsIdentifier)))
+        _require(len(own.declarations) == 1)
+        _require(len({own, *bindings.values()}) == len(bindings) + 1)
+        return _Dispatcher(
+            declaration=self.function,
+            binding=own,
+            entries=self.entries,
+            clear_flag=self.clear_flag,
+            create_flag=self.create_flag,
+            wrap_flag=self.wrap_flag,
+            wrap_key=self.wrap_key,
+            payload=bindings[_Role.PAYLOAD],
+            cache=bindings[_Role.CACHE],
+            helper=bindings[_Role.HELPER],
+            template_references={
+                reference for role in _OUTER_ROLES for reference in self.referenced[role]
+            },
+        )
+
+
+def _parameter_names(pattern: Node | None, names: list[str]) -> bool:
+    """
+    Collect into *names* the names *pattern* binds, and answer whether it binds them as a parameter
+    list would: through names, rest elements and nested patterns, with no default or computed key,
+    which a parameter list evaluates in a scope of its own, and no hole, which it cannot spell.
+    """
+    if isinstance(pattern, JsIdentifier):
+        names.append(pattern.name)
+        return True
+    if isinstance(pattern, JsArrayPattern):
+        last = len(pattern.elements) - 1
+        for index, element in enumerate(pattern.elements):
+            if isinstance(element, JsRestElement):
+                if index != last or not _parameter_names(element.argument, names):
+                    return False
+            elif element is None or not _parameter_names(element, names):
+                return False
+        return True
+    if isinstance(pattern, JsObjectPattern):
+        last = len(pattern.properties) - 1
+        for index, prop in enumerate(pattern.properties):
+            if isinstance(prop, JsRestElement):
+                if index != last or not isinstance(prop.argument, JsIdentifier):
+                    return False
+                names.append(prop.argument.name)
+            elif not isinstance(prop, JsProperty) or prop.computed or prop.method:
+                return False
+            elif not _parameter_names(prop.value, names):
+                return False
+        return True
+    return False
+
+
+class _Unpacking(NamedTuple):
+    """
+    The unpacking an entry begins with: its array pattern and its read of the payload.
+    """
+    pattern: JsArrayPattern
+    source: JsIdentifier
 
 
 @dataclass
-class _DispatchSite:
+class _Entry:
     """
-    One dispatch this pass can read: the expression it is written as, the identifier naming the
-    dispatcher within it, the name of the function it selects, and the arguments that function is
-    reached with. *arguments* is `None` where the site names the function rather than calling it,
-    which the wrapped-reference form does.
+    A table entry that can move out of the router: the function and, where its first statement
+    unpacks the payload, that unpacking, which becomes its parameter list.
+    """
+    function: JsFunctionExpression
+    unpacking: _Unpacking | None
 
-    *reference* is the one occurrence of the dispatcher name this site consumes, and it is what the
-    coverage question is asked over. Asking it over the site's whole subtree instead would count a
-    dispatch this pass cannot read as covered merely for standing inside one it can, and a payload
-    argument is carried into the replacement rather than discarded with the rest of it.
+    def recovered(self, name: str) -> JsFunctionDeclaration:
+        body = self.function.body
+        assert body is not None
+        statements = list(body.body)
+        parameters: list[Expression] = []
+        if self.unpacking is not None:
+            statements = statements[1:]
+            parameters = [
+                element for element in self.unpacking.pattern.elements if element is not None
+            ]
+        return JsFunctionDeclaration(
+            id=JsIdentifier(name=name),
+            params=parameters,
+            body=JsBlockStatement(body=statements),
+            is_async=self.function.is_async,
+        )
+
+
+def _read_unpacking(statements: list, payload: Binding, model: SemanticModel) -> _Unpacking | None:
+    """
+    The unpacking *statements* begin with: a `var` of one array pattern initialized by the payload.
+    """
+    if not statements:
+        return None
+    first = statements[0]
+    if (
+        not isinstance(first, JsVariableDeclaration)
+        or first.kind != JsVarKind.VAR
+        or len(first.declarations) != 1
+    ):
+        return None
+    declarator = first.declarations[0]
+    if (
+        not isinstance(declarator, JsVariableDeclarator)
+        or not isinstance(pattern := declarator.id, JsArrayPattern)
+        or not isinstance(source := declarator.init, JsIdentifier)
+        or model.resolve(source) is not payload
+    ):
+        return None
+    return _Unpacking(pattern, source)
+
+
+def _read_entry(
+    function: JsFunctionExpression,
+    dispatcher: _Dispatcher,
+    model: SemanticModel,
+) -> _Entry | None:
+    """
+    The table entry *function* as one that can move out of the router, or `None` where moving it
+    could change what it computes. An entry that moves keeps its body but is called by its own
+    name, outside the router, with its unpacking as parameters, so it must not tell any of that:
+    it reads no `this`, no own `arguments`, no `new.target`, no direct `eval`, and no name the
+    router declares. Its unpacking means what a parameter list means, and none of its function
+    declarations is named like a parameter, since a parameter is bound before function
+    declarations are hoisted and the unpacking after. A generator runs its unpacking at its first
+    step and binds a parameter list at the call, so a generator with an unpacking stays.
+    """
+    body = function.body
+    if function.id is not None or not isinstance(body, JsBlockStatement):
+        return None
+    unpacking = _read_unpacking(body.body, dispatcher.payload, model)
+    names: list[str] = []
+    if unpacking is not None:
+        if function.generator:
+            return None
+        if not _parameter_names(unpacking.pattern, names) or len(set(names)) != len(names):
+            return None
+        if any(
+            isinstance(node, JsFunctionDeclaration)
+            and isinstance(node.id, JsIdentifier)
+            and node.id.name in names
+            for node in walk_scope(function, include_root_body=True)
+        ):
+            return None
+    if any(isinstance(node, JsThisExpression) for node in walk_receiver_scope(function)):
+        return None
+    if references_own_arguments(function) or references_new_target(function):
+        return None
+    for node in function.walk():
+        if is_direct_eval_call(node):
+            return None
+        if not isinstance(node, JsIdentifier) or not model.is_reference(node):
+            continue
+        binding = model.lookup(node.name, model.scope_of(node), cross_dynamic=True)
+        if (
+            binding is not None
+            and _declared_within(binding, dispatcher.declaration)
+            and not _declared_within(binding, function)
+        ):
+            return None
+    return _Entry(function, unpacking)
+
+
+@dataclass
+class _Dispatch:
+    """
+    One dispatch read: the expression it replaces, the reference to the router it consumes, and the
+    key it selects. It denotes the selected function where *arguments* is `None` and a call of it
+    with *arguments* otherwise; *payload* is the payload reference of the assignment in front that
+    the replacement takes away. A call whose result is called as a method of the wrapper keeps the
+    wrapper around it under *receiver*, which is the receiver that call sees.
     """
     node: Node
     reference: JsIdentifier
     key: str
-    arguments: list | None
+    arguments: list[Expression] | None
+    payload: JsIdentifier | None = None
+    receiver: str | None = None
 
-    def replacement(self) -> Node:
+    def replacement(self, name: str) -> Expression:
         if self.arguments is None:
-            return JsIdentifier(name=self.key)
-        return JsCallExpression(
-            callee=JsIdentifier(name=self.key),
-            arguments=self.arguments,
+            return JsIdentifier(name=name)
+        call = JsCallExpression(callee=JsIdentifier(name=name), arguments=self.arguments)
+        if self.receiver is None:
+            return call
+        return JsMemberExpression(
+            object=JsObjectExpression(properties=[
+                JsProperty(key=make_string_literal(self.receiver), value=call)
+            ]),
+            property=make_string_literal(self.receiver),
+            computed=True,
         )
 
 
-def _extract_fns_table(
-    body: list,
-) -> tuple[JsVariableDeclarator, dict[str, JsFunctionExpression]] | None:
+def _written(expression: Node) -> bool:
+    holder = enclosing_operator(expression)
+    if isinstance(holder, JsUnaryExpression) and holder.operator == 'delete':
+        return True
+    return isinstance(expression, JsMemberExpression) and is_member_write_target(expression)
+
+
+def _called_as_a_method(expression: Node) -> bool:
+    holder = enclosing_operator(expression)
+    if isinstance(holder, JsCallExpression):
+        return strip_parens(holder.callee) is expression
+    if isinstance(holder, JsTaggedTemplateExpression):
+        return strip_parens(holder.tag) is expression
+    return False
+
+
+class _PayloadInFront(NamedTuple):
     """
-    Finds a declaration of the form
-
-        var fns = { ... }
-
-    where every property value is a zero-parameter
-    `refinery.lib.scripts.js.model.JsFunctionExpression`. Returns the declarator node and a map from
-    string key to function.
+    The pair `(payload = [...], dispatch)`: the pair itself, the payload reference it assigns, and
+    the elements it assigns.
     """
-    for stmt in body:
-        if not isinstance(stmt, JsVariableDeclaration):
-            continue
-        for decl in stmt.declarations:
-            if not isinstance(decl, JsVariableDeclarator):
-                continue
-            if not isinstance(decl.init, JsObjectExpression):
-                continue
-            obj = decl.init
-            if not obj.properties:
-                continue
-            fns: dict[str, JsFunctionExpression] = {}
-            ok = True
-            for prop in obj.properties:
-                if not isinstance(prop, JsProperty):
-                    ok = False
-                    break
-                key = property_key(prop)
-                if key is None:
-                    ok = False
-                    break
-                if not isinstance(prop.value, JsFunctionExpression):
-                    ok = False
-                    break
-                if prop.value.params:
-                    ok = False
-                    break
-                fns[key] = prop.value
-            if ok and fns:
-                return decl, fns
-    return None
+    pair: JsSequenceExpression
+    target: JsIdentifier
+    elements: list[Expression | None]
 
 
-def _guarded_flag(stmt: Node, param: str) -> str | None:
+def _payload_in_front(
+    expression: Node,
+    payload: Binding,
+    model: SemanticModel,
+) -> _PayloadInFront | None:
     """
-    The string *stmt*'s guard compares *param* to, or `None` where *stmt* is not an `if` guarded
-    that way. Every branch this pass reads out of a dispatcher body is selected by one such
-    comparison, and the value compared against is what a dispatch has to spell to take the branch —
-    so the same read serves finding the branch and deciding whether a call site enters it.
+    The assignment of an array to the payload that *expression* follows in a pair, or `None` where
+    it follows none.
     """
-    if not isinstance(stmt, JsIfStatement):
-        return None
-    test = stmt.test
-    if not isinstance(test, JsBinaryExpression) or test.operator != '===':
-        return None
-    if not isinstance(test.left, JsIdentifier) or test.left.name != param:
-        return None
-    if not isinstance(test.right, JsStringLiteral):
-        return None
-    return test.right.value
-
-
-def _find_payload_id(body: list, second_param: str) -> tuple[str, str] | None:
-    """
-    Find the payload-init guard:
-
-        if (p1 === "...") { payload = []; }
-
-    and return the payload identifier name together with the flag that empties it. The guard
-    compares the function's second parameter to a string literal and assigns an empty array to the
-    payload variable.
-    """
-    for stmt in body:
-        flag = _guarded_flag(stmt, second_param)
-        if flag is None:
-            continue
-        assert isinstance(stmt, JsIfStatement)
-        cons = stmt.consequent
-        if isinstance(cons, JsBlockStatement) and len(cons.body) == 1:
-            cons = cons.body[0]
-        if not isinstance(cons, JsExpressionStatement):
-            continue
-        expr = cons.expression
-        if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
-            continue
-        if isinstance(expr.left, JsIdentifier) and isinstance(expr.right, JsArrayExpression):
-            if not expr.right.elements:
-                return expr.left.name, flag
-    return None
-
-
-def _find_wrap_key(body: list, third_param: str) -> tuple[str, str] | None:
-    """
-    Find the return-type wrapper:
-
-        if (p2 === "...") { return { "wrapKey": output }; }
-
-    and return the wrapper property name together with the flag that asks for it.
-    """
-    for stmt in body:
-        flag = _guarded_flag(stmt, third_param)
-        if flag is None:
-            continue
-        assert isinstance(stmt, JsIfStatement)
-        cons = stmt.consequent
-        if isinstance(cons, JsBlockStatement) and len(cons.body) == 1:
-            inner = cons.body[0]
-        else:
-            inner = cons
-        if not isinstance(inner, JsReturnStatement):
-            continue
-        ret_val = inner.argument
-        if not isinstance(ret_val, JsObjectExpression):
-            continue
-        if len(ret_val.properties) != 1:
-            continue
-        prop = ret_val.properties[0]
-        if isinstance(prop, JsProperty):
-            key = property_key(prop)
-            if key is not None:
-                return key, flag
-    return None
-
-
-def _find_cache_id(body: list, first_param: str, second_param: str) -> tuple[str, str] | None:
-    """
-    Find the cache variable from the create-flag branch. Looks for an `if` guarded on the second
-    parameter whose body contains a logical-or assignment like
-
-        cache[p0] || (cache[p0] = ...)
-
-    Returns the cache identifier together with the flag that reaches that branch. The guard is read
-    rather than skipped past, because the branch does not call the entry it looks up: a dispatch
-    that spells this flag names the function, and one that does not names what calling it returned.
-    """
-    for stmt in body:
-        flag = _guarded_flag(stmt, second_param)
-        if flag is None:
-            continue
-        for node in stmt.walk():
-            if not isinstance(node, JsMemberExpression):
-                continue
-            if (
-                isinstance(node.object, JsIdentifier)
-                and isinstance(node.property, JsIdentifier)
-                and node.property.name == first_param
-                and node.computed
-            ):
-                parent = node.parent
-                if isinstance(parent, JsLogicalExpression) and parent.operator == '||':
-                    return node.object.name, flag
-    return None
-
-
-def _detect_dispatcher(func: JsFunctionDeclaration) -> _DispatcherInfo | None:
-    if wraps_return(func):
-        return None
-    if not isinstance(func.id, JsIdentifier):
-        return None
-    if not isinstance(func.body, JsBlockStatement):
-        return None
-    if len(func.params) < 3:
-        return None
-    p0 = func.params[0]
-    p1 = func.params[1]
-    p2 = func.params[2]
+    pair = enclosing_operator(expression)
     if (
-        not isinstance(p0, JsIdentifier)
-        or not isinstance(p1, JsIdentifier)
-        or not isinstance(p2, JsIdentifier)
+        not isinstance(pair, JsSequenceExpression)
+        or len(pair.expressions) != 2
+        or strip_parens(pair.expressions[1]) is not expression
     ):
         return None
-    first_param: str = p0.name
-    second_param: str = p1.name
-    third_param: str = p2.name
-    body = func.body.body
-    result = _extract_fns_table(body)
-    if result is None:
-        return None
-    fns_declarator, fns_map = result
-    payload = _find_payload_id(body, second_param)
-    if payload is None:
-        return None
-    payload_id, init_flag = payload
-    wrap = _find_wrap_key(body, third_param)
-    cache = _find_cache_id(body, first_param, second_param)
-    return _DispatcherInfo(
-        decl=func,
-        dispatcher_id=func.id.name,
-        fns_map=fns_map,
-        fns_declarator=fns_declarator,
-        payload_id=payload_id,
-        init_flag=init_flag,
-        wrap_key=None if wrap is None else wrap[0],
-        wrap_flag=None if wrap is None else wrap[1],
-        cache_id=None if cache is None else cache[0],
-        create_flag=None if cache is None else cache[1],
-    )
+    store = pair.expressions[0]
+    if (
+        isinstance(store, JsAssignmentExpression)
+        and store.operator == '='
+        and isinstance(target := store.left, JsIdentifier)
+        and model.resolve(target) is payload
+        and isinstance(elements := store.right, JsArrayExpression)
+    ):
+        return _PayloadInFront(pair, target, elements.elements)
+    return None
 
 
-def _extract_params(
-    fn: JsFunctionExpression,
-    payload_id: str,
-) -> list[JsIdentifier] | None:
+def _reached_only_through(
+    model: SemanticModel,
+    binding: Binding,
+    accounted: set[Node],
+    *,
+    module_scope: bool,
+) -> bool:
     """
-    Extract parameter names from the leading payload destructuring statement:
-
-        var [a, b] = payload;
-
-    Returns the parameter identifiers or `None` if the pattern is not found.
+    Whether every reference to *binding* is one of *accounted*, and no lookup by name at runtime can
+    reach it under the execution model *module_scope* selects.
     """
-    if not isinstance(fn.body, JsBlockStatement) or not fn.body.body:
-        return []
-    first = fn.body.body[0]
-    if not isinstance(first, JsVariableDeclaration):
-        return []
-    for decl in first.declarations:
-        if not isinstance(decl, JsVariableDeclarator):
-            continue
-        if not isinstance(decl.id, JsArrayPattern):
-            continue
-        if not isinstance(decl.init, JsIdentifier):
-            continue
-        if decl.init.name != payload_id:
-            continue
-        params: list[JsIdentifier] = []
-        for elem in decl.id.elements:
-            if not isinstance(elem, JsIdentifier):
-                return None
-            params.append(JsIdentifier(name=elem.name))
-        return params
-    return []
+    if model.reflection_can_reach(binding, module_scope=module_scope):
+        return False
+    return all(reference in accounted for reference in model.references(binding))
 
 
-def _build_extracted_function(
-    key: str,
-    fn: JsFunctionExpression,
-    payload_id: str,
-) -> JsFunctionDeclaration | None:
+def _name_base(key: str) -> str:
+    for name in (key, F'_{key}'):
+        if is_valid_identifier(name):
+            return name
+    return 'f'
+
+
+def _choose_names(
+    model: SemanticModel,
+    scope: Scope,
+    dispatcher: _Dispatcher,
+    dispatches: list[_Dispatch],
+) -> dict[str, str]:
     """
-    Convert a dispatcher function-table entry into a standalone
-    `refinery.lib.scripts.js.model.JsFunctionDeclaration` of the same kind. Extracts parameters from
-    the payload destructuring and removes that statement.
-
-    The kind is carried rather than defaulted: an entry that was `async` returns a promise and one
-    that was a generator returns an iterator, and a declaration that dropped either would compute a
-    different value — a `yield` left in a body no longer marked `*` does not even parse.
-
-    The body is cloned before anything is taken out of it, so that building a declaration leaves
-    the entry it was built from exactly as it stood. Reading the statements out of the entry itself
-    would make extraction destructive, and extraction is attempted for every entry of a table
-    before any of them is installed: a later entry this pass cannot read would then abandon the
-    unwrap over a table whose earlier entries had already had their payload destructuring taken
-    away, which is a dispatcher whose callees name parameters nothing declares.
+    The name each recovered function is declared with in *scope*, by key. A key that is a valid
+    name is its own, otherwise it is prefixed with an underscore, otherwise it is `f`, and a
+    numbered suffix is added until the name is free: no other recovered function takes it, no
+    binding of *scope* other than the router has it, declaring it would capture no use within
+    *scope*, and no dispatch rewritten to it sees a nearer binding of it. A key read off the global
+    object as a string is not considered, since the obfuscation makes up its keys at random.
     """
-    params = _extract_params(fn, payload_id)
-    if params is None:
-        return None
-    if not isinstance(fn.body, JsBlockStatement):
-        return None
-    body = _clone_node(fn.body)
-    new_body_stmts = list(body.body)
-    if new_body_stmts and params:
-        first = new_body_stmts[0]
-        if isinstance(first, JsVariableDeclaration):
-            remaining = [
-                d for d in first.declarations
-                if not (
-                    isinstance(d, JsVariableDeclarator)
-                    and isinstance(d.id, JsArrayPattern)
-                    and isinstance(d.init, JsIdentifier)
-                    and d.init.name == payload_id
-                )
-            ]
-            if not remaining:
-                new_body_stmts = new_body_stmts[1:]
-            else:
-                set_child_list(first, 'declarations', remaining)
-    new_body = JsBlockStatement(body=new_body_stmts)
-    decl = JsFunctionDeclaration(
-        id=JsIdentifier(name=key),
-        params=list(params),
-        body=new_body,
-        generator=is_generator_function(fn),
-        is_async=is_async_function(fn),
-    )
-    return decl
+    exclude = (dispatcher.binding,)
+    bases = {key: _name_base(key) for key in dispatcher.entries}
+    captured = model.captured_names(set(bases.values()), scope, exclude=exclude)
+    capturing = {name: name in captured for name in bases.values()}
+    sites: dict[str, list[_Dispatch]] = defaultdict(list)
+    for dispatch in dispatches:
+        sites[dispatch.key].append(dispatch)
+    chosen: dict[str, str] = {}
+    used: set[str] = set()
+
+    def taken(name: str, key: str) -> bool:
+        if name in used:
+            return True
+        bound = scope.bindings.get(name)
+        if bound is not None and bound is not dispatcher.binding:
+            return True
+        if name not in capturing:
+            capturing[name] = model.would_capture({name}, scope, exclude=exclude)
+        if capturing[name]:
+            return True
+        return any(model.is_shadowed(name, site.reference, scope) for site in sites[key])
+
+    for key, base in bases.items():
+        name = chosen[key] = fresh_name(base, partial(taken, key=key))
+        used.add(name)
+    return chosen
+
+
+def _removable_declarators(
+    cache: ModelCache,
+    binding: Binding,
+    template_initializer: Callable[[Node], bool] | None = None,
+) -> list[JsVariableDeclarator]:
+    """
+    The `var` declarators of *binding* that can go once nothing references it: those without an
+    initializer, those whose initializer runs nothing, and those the template writes.
+    """
+    removable: list[JsVariableDeclarator] = []
+    for declaration in binding.declarations:
+        declarator = declaration.parent
+        if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not declaration:
+            continue
+        statement = declarator.parent
+        if not isinstance(statement, JsVariableDeclaration) or statement.kind != JsVarKind.VAR:
+            continue
+        initializer = declarator.init
+        if (
+            initializer is None
+            or template_initializer is not None and template_initializer(initializer)
+            or cache.effects.is_side_effect_free(
+                initializer,
+                discarded=True,
+                reads_may_throw=True,
+                read_established=cache.read_established,
+            )
+        ):
+            removable.append(declarator)
+    return removable
 
 
 def _is_object_create_null(node: Node) -> bool:
@@ -458,10 +764,21 @@ def _is_object_create_null(node: Node) -> bool:
     return False
 
 
+def _depth(node: Node) -> int:
+    depth = 0
+    cursor: Node | None = node
+    while cursor is not None:
+        depth += 1
+        cursor = cursor.parent
+    return depth
+
+
 class JsDispatcherUnwrapper(ScopeProcessingTransformer):
     """
-    Detect and unwrap a dispatcher pattern. For each dispatcher found, extract the wrapped
-    functions, rewrite call sites, and remove the dispatcher scaffolding.
+    Unwrap every router that is the template: recover its table entries as functions of their own,
+    rewrite every dispatch into a call of one or a reference to one, and remove the router with the
+    payload, the cache and the length helper where nothing else references them. Where any of that
+    cannot be done without changing what the program computes, the router stays whole.
     """
 
     def __init__(self):
@@ -473,166 +790,175 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         return super().visit_JsScript(node)
 
     def _process_scope_body(self, scope: Node, body: list) -> None:
-        for func in list(body):
-            if not isinstance(func, JsFunctionDeclaration):
+        for function in list(body):
+            if not isinstance(function, JsFunctionDeclaration):
                 continue
-            info = _detect_dispatcher(func)
-            if info is None:
-                continue
-            self._unwrap_dispatcher(scope, body, info)
+            dispatcher = self._read_template(function)
+            if dispatcher is not None:
+                self._unwrap(scope, dispatcher)
 
-    def _unwrap_dispatcher(
-        self,
-        scope: Node,
-        body: list,
-        info: _DispatcherInfo,
-    ) -> None:
-        plan = self._plan_call_sites(scope, info)
-        if not self._plan_covers_every_reference(info, plan):
-            return
-        extracted: dict[str, JsFunctionDeclaration] = {}
-        for key, fn in info.fns_map.items():
-            decl = _build_extracted_function(key, fn, info.payload_id)
-            if decl is None:
-                return
-            extracted[key] = decl
-        for site in plan:
-            _replace_in_parent(site.node, site.replacement())
-        edit = BodyEdit(scope, 'body')
-        edit.splice(info.decl, list(extracted.values()))
-        edit.apply()
-        self.mark_changed()
-        self._remove_boilerplate(scope, body, info)
+    def _read_template(self, function: JsFunctionDeclaration) -> _Dispatcher | None:
+        assert self._root is not None
+        try:
+            reader = _TemplateReader(function)
+            return reader.dispatcher(model_cache(self, self._root).model)
+        except _NotTheTemplate:
+            return None
 
-    def _plan_call_sites(
-        self,
-        scope: Node,
-        info: _DispatcherInfo,
-    ) -> list[_DispatchSite]:
+    def _unwrap(self, scope: Node, dispatcher: _Dispatcher) -> None:
         """
-        Every dispatch through *info* that this pass can read, with nothing replaced yet. Whether
-        the dispatcher may be removed at all is a question about the whole set, so the set has to
-        exist before the first replacement does.
-
-        A site nested inside another is kept rather than dropped, because the outer replacement does
-        not always take the inner one with it: the direct-call form carries the payload elements
-        into the call it builds, so a dispatch written into a payload survives the rewrite of the
-        dispatch it is an argument of. The order the walk yields is what makes both replaceable —
-        an ancestor comes first, and building its replacement adopts the arguments it reuses, so the
-        inner node is still reachable from its new holder when its own turn comes.
-        """
-        planned: list[_DispatchSite] = []
-        for node in list(scope.walk()):
-            if isinstance(node, JsSequenceExpression):
-                site = self._read_direct_call(node, info)
-            elif isinstance(node, JsMemberExpression):
-                site = self._read_wrapped_ref(node, info)
-            elif isinstance(node, JsCallExpression):
-                site = self._read_bare_call(node, info)
-            else:
-                continue
-            if site is not None:
-                planned.append(site)
-        return planned
-
-    def _plan_covers_every_reference(
-        self,
-        info: _DispatcherInfo,
-        plan: list[_DispatchSite],
-    ) -> bool:
-        """
-        Whether *plan* replaces every reference to the dispatcher, so that removing its declaration
-        leaves nothing naming it. A dispatch this pass cannot read is one it is right to leave
-        alone, and what it leaves alone still calls the function it is leaving, so removing the
-        declaration anyway hands back a file that throws a `ReferenceError` where the original ran.
-
-        The whole unwrap is refused rather than the removal alone, because a dispatcher left
-        standing beside the extracted functions would still have to route through its own table,
-        and the payload the surviving dispatch writes is read by no extracted body.
-
-        What each site accounts for is the one occurrence of the name it consumes, not everything
-        standing inside it. A dispatch this pass cannot read is often written *within* one it can,
-        a payload argument being the ordinary place for a call, and the replacement carries such an
-        argument over rather than discarding it, so counting a subtree as covered would clear the
-        very reference that survives.
-
-        The dispatcher's own body is excluded rather than counted, since it goes with the
-        declaration. Everything else is asked of the model, so a same-named binding in another
-        scope is not mistaken for a use of this one.
+        Decide the whole unwrap on the tree as it stands, then make it in one go. No model is asked
+        anything after the first edit.
         """
         assert self._root is not None
-        if not isinstance(info.decl.id, JsIdentifier):
-            return False
-        model = model_cache(self, self._root).model
-        binding = model.binding_of(info.decl.id)
-        return not binding_has_references(
+        cache = model_cache(self, self._root)
+        model = cache.model
+        entries: dict[str, _Entry] = {}
+        for key, function in dispatcher.entries.items():
+            entry = _read_entry(function, dispatcher, model)
+            if entry is None:
+                return
+            entries[key] = entry
+        dispatches: list[_Dispatch] = []
+        for reference in model.references(dispatcher.binding):
+            dispatch = self._read_dispatch(reference, dispatcher, entries, cache)
+            if dispatch is None:
+                return
+            dispatches.append(dispatch)
+        module_scope = runs_as_module(self.options, self._root)
+        if not _reached_only_through(
             model,
-            binding,
-            exclude=info.decl,
-            exclude_ids={id(site.reference) for site in plan},
-        )
+            dispatcher.binding,
+            {dispatch.reference for dispatch in dispatches},
+            module_scope=module_scope,
+        ):
+            return
+        payload_references = set(dispatcher.template_references)
+        for entry in entries.values():
+            if entry.unpacking is not None:
+                payload_references.add(entry.unpacking.source)
+        for dispatch in dispatches:
+            if dispatch.payload is not None:
+                payload_references.add(dispatch.payload)
+        for binding, references in (
+            (dispatcher.payload, payload_references),
+            (dispatcher.cache, dispatcher.template_references),
+        ):
+            if not _reached_only_through(model, binding, references, module_scope=module_scope):
+                return
+        if (body_scope := model.scope_of(scope)) is None:
+            return
+        if any(
+            model.direct_eval_declares_below(dispatch.node, body_scope)
+            for dispatch in dispatches
+        ):
+            return
+        names = _choose_names(model, body_scope, dispatcher, dispatches)
+        removals = _removable_declarators(cache, dispatcher.payload)
+        removals.extend(_removable_declarators(cache, dispatcher.cache, _is_object_create_null))
+        helpers: list[Node] = []
+        if _reached_only_through(
+            model,
+            dispatcher.helper,
+            dispatcher.template_references,
+            module_scope=module_scope,
+        ):
+            helpers = [
+                declaration.parent for declaration in dispatcher.helper.declarations
+                if isinstance(declaration.parent, JsFunctionDeclaration)
+                and declaration.parent.id is declaration
+            ]
+        for dispatch in sorted(dispatches, key=lambda dispatch: _depth(dispatch.node)):
+            _replace_in_parent(dispatch.node, dispatch.replacement(names[dispatch.key]))
+        edit = BodyEdit(scope, 'body')
+        edit.splice(dispatcher.declaration, [
+            entry.recovered(names[key]) for key, entry in entries.items()
+        ])
+        edit.apply()
+        for declarator in removals:
+            remove_declarator(declarator)
+        for helper in helpers:
+            _remove_from_parent(helper)
+        self.mark_changed()
 
-    def _read_direct_call(
+    def _read_dispatch(
         self,
-        seq: JsSequenceExpression,
-        info: _DispatcherInfo,
-    ) -> _DispatchSite | None:
+        reference: Node,
+        dispatcher: _Dispatcher,
+        entries: dict[str, _Entry],
+        cache: ModelCache,
+    ) -> _Dispatch | None:
         """
-        The sequence expression dispatch call *seq* is:
-
-            (payload = [args], dispatcher("key"))  ->  key(args)
-
-        Also reads the wrapped variant where the return value is unwrapped via a member access
-        on the wrap key:
-
-            (payload = [args], dispatcher("key", s, wrapFlag)["wk"])
-
-        A `new` dispatch is read only in that wrapped variant. `new` hands back the object the
-        dispatcher returned only where it returned one, and the wrapper is the one branch that
-        does: everywhere else `new` yields the fresh instance and the result the call computed is
-        thrown away, which the call this would build hands back instead.
+        The dispatch *reference* is the callee of, or `None` where it is not one this pass reads.
+        The key selects the entry and the flags behind it what the dispatch denotes: the create flag
+        the entry itself, the clear flag a call of it with the payload emptied, and any other flag
+        a call with what the payload holds, which is only known where the dispatch is the second
+        half of a pair assigning it. The wrap flag puts the result under the wrap key, so a dispatch
+        spelling it is read only together with the access on that key, and a `new` dispatch only
+        with it, since `new` hands back what the router returned only where that is an object.
+        Every argument after the third is dropped, so it must run nothing.
         """
-        if len(seq.expressions) != 2:
-            return None
-        assign, second = seq.expressions
-        if not isinstance(assign, JsAssignmentExpression):
-            return None
-        if assign.operator != '=':
-            return None
-        if not isinstance(assign.left, JsIdentifier) or assign.left.name != info.payload_id:
-            return None
-        if not isinstance(assign.right, JsArrayExpression):
-            return None
-        read = self._unwrap_dispatch_call(second, info)
-        if read is None:
-            return None
-        dispatch_call, through_the_wrap_key = read
-        if isinstance(dispatch_call, JsNewExpression) and not through_the_wrap_key:
-            return None
-        if not dispatch_call.arguments:
-            return None
-        key_arg = dispatch_call.arguments[0]
-        if not isinstance(key_arg, JsStringLiteral):
-            return None
-        if key_arg.value not in info.fns_map:
-            return None
-        if not self._flags_agree_with_the_reading(
-            dispatch_call,
-            info,
-            unwrapped=through_the_wrap_key,
-            selects_without_calling=False,
-            carries_the_payload=True,
+        dispatch = reference.parent
+        if (
+            not isinstance(reference, JsIdentifier)
+            or not isinstance(dispatch, (JsCallExpression, JsNewExpression))
+            or dispatch.callee is not reference
+            or isinstance(dispatch, JsCallExpression) and dispatch.optional
         ):
             return None
-        elements = assign.right.elements
-        if any(element is None for element in elements) and not self._a_hole_reads_undefined():
+        key = _string_argument(dispatch, 0)
+        flag = _string_argument(dispatch, 1)
+        kind = _string_argument(dispatch, 2)
+        if not isinstance(key, str) or key not in entries:
             return None
-        args = [
-            make_undefined_expression() if e is None else e
-            for e in elements
+        if isinstance(flag, _Unreadable) or isinstance(kind, _Unreadable):
+            return None
+        wrapped = kind == dispatcher.wrap_flag
+        expression: Node = dispatch
+        holder = enclosing_operator(dispatch)
+        if (
+            isinstance(holder, JsMemberExpression)
+            and strip_parens(holder.object) is dispatch
+            and not holder.optional
+            and access_key(holder) == dispatcher.wrap_key
+        ):
+            expression = holder
+        accessed = expression is not dispatch
+        if wrapped is not accessed or _written(expression):
+            return None
+        if isinstance(dispatch, JsNewExpression) and not wrapped:
+            return None
+        if not all(
+            cache.effects.is_side_effect_free(
+                argument,
+                discarded=True,
+                reads_may_throw=True,
+                read_established=cache.read_established,
+            )
+            for argument in dispatch.arguments[3:]
+        ):
+            return None
+        in_front = _payload_in_front(expression, dispatcher.payload, cache.model)
+        if flag == dispatcher.create_flag:
+            if in_front is not None:
+                return None
+            return _Dispatch(expression, reference, key, None)
+        receiver = dispatcher.wrap_key if wrapped and _called_as_a_method(expression) else None
+        if flag == dispatcher.clear_flag:
+            if in_front is not None:
+                return None
+            return _Dispatch(expression, reference, key, [], receiver=receiver)
+        if in_front is None:
+            if entries[key].unpacking is not None:
+                return None
+            return _Dispatch(expression, reference, key, [], receiver=receiver)
+        if None in in_front.elements and not self._a_hole_reads_undefined():
+            return None
+        arguments: list[Expression] = [
+            make_undefined_expression() if element is None else element
+            for element in in_front.elements
         ]
-        assert isinstance(dispatch_call.callee, JsIdentifier)
-        return _DispatchSite(seq, dispatch_call.callee, key_arg.value, args)
+        return _Dispatch(in_front.pair, reference, key, arguments, payload=in_front.target)
 
     def _a_hole_reads_undefined(self) -> bool:
         """
@@ -644,221 +970,3 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         """
         assert self._root is not None
         return model_cache(self, self._root).effects.chain_roots_unwritten(list)
-
-    def _flags_agree_with_the_reading(
-        self,
-        call: JsCallExpression | JsNewExpression,
-        info: _DispatcherInfo,
-        *,
-        unwrapped: bool,
-        selects_without_calling: bool,
-        carries_the_payload: bool,
-    ) -> bool:
-        """
-        Whether the arguments after the key say the dispatch is the one the site reading it built.
-        The key alone selects the table entry; which of the dispatcher's branches runs, and what the
-        expression standing at the site therefore denotes, is decided by the two flags behind it.
-
-        Three readings can disagree with the flags, and each is a value the replacement would get
-        wrong rather than a shape it cannot spell. A dispatch spelling the wrap flag denotes the
-        wrapper object, so the access on the wrap key belongs to it and a reading without one hands
-        back the result the wrapper held. A dispatch spelling the create flag is handed the table
-        entry rather than what calling it returned, which is the wrapped-reference form's whole
-        premise and the ruin of every other one. And a dispatch spelling the init flag reaches its
-        callee with the payload emptied, so a reading that carries the payload elements into a call
-        passes arguments the original threw away.
-
-        Every argument beyond the third is dropped by the replacement, so it has to be one nothing
-        can miss. An argument this pass cannot read as a fixed string is refused outright in the
-        two flag positions, since such an argument may be any flag and may run something on the way
-        to being one.
-        """
-        assert self._root is not None
-        flag = _flag_argument(call, 1)
-        rtype = _flag_argument(call, 2)
-        if isinstance(flag, _Unreadable) or isinstance(rtype, _Unreadable):
-            return False
-        if (info.wrap_flag is not None and rtype == info.wrap_flag) is not unwrapped:
-            return False
-        selects = info.create_flag is not None and flag == info.create_flag
-        if selects is not selects_without_calling:
-            return False
-        if carries_the_payload and flag == info.init_flag:
-            return False
-        cache = model_cache(self, self._root)
-        return all(
-            cache.effects.is_side_effect_free(
-                argument,
-                discarded=True,
-                reads_may_throw=True,
-                read_established=cache.read_established,
-            )
-            for argument in call.arguments[3:]
-        )
-
-    @staticmethod
-    def _unwrap_dispatch_call(
-        node: Node,
-        info: _DispatcherInfo,
-    ) -> tuple[JsCallExpression | JsNewExpression, bool] | None:
-        """
-        Extract a dispatcher call from *node*, which may be a bare call or a member access of
-        the form:
-
-            dispatcher(...)["wrapKey"]
-
-        Returns the call node together with whether the wrap-key access was read off it, or `None`.
-        The second half is what the caller checks the dispatch's own return-type flag against: the
-        access and the flag asking for the object it reads from are one fact written twice, and a
-        site holding one without the other denotes something else entirely.
-        """
-        call = strip_parens(node)
-        through_the_wrap_key = False
-        if isinstance(call, JsMemberExpression) and info.wrap_key is not None:
-            if access_key(call) == info.wrap_key:
-                call = strip_parens(call.object)
-                through_the_wrap_key = True
-        if not isinstance(call, (JsCallExpression, JsNewExpression)):
-            return None
-        if not isinstance(call.callee, JsIdentifier):
-            return None
-        if call.callee.name != info.dispatcher_id:
-            return None
-        return call, through_the_wrap_key
-
-    def _read_wrapped_ref(
-        self,
-        member: JsMemberExpression,
-        info: _DispatcherInfo,
-    ) -> _DispatchSite | None:
-        """
-        The new-expression dispatch with wrap key access *member* is, which names the function it
-        selects rather than calling it:
-
-            new dispatcher("key", createFlag, wrapFlag)["wrapKey"]  ->  key
-
-        Both flags are what make it that. The create flag is what has the dispatcher hand the table
-        entry back instead of calling it, so without it this member denotes a *result*, and the wrap
-        flag is what puts that entry under the key being read.
-        """
-        if info.wrap_key is None:
-            return None
-        if access_key(member) != info.wrap_key:
-            return None
-        new_expr = strip_parens(member.object)
-        if not isinstance(new_expr, JsNewExpression):
-            return None
-        if not isinstance(new_expr.callee, JsIdentifier):
-            return None
-        if new_expr.callee.name != info.dispatcher_id:
-            return None
-        if not new_expr.arguments:
-            return None
-        key_arg = new_expr.arguments[0]
-        if not isinstance(key_arg, JsStringLiteral):
-            return None
-        if key_arg.value not in info.fns_map:
-            return None
-        if not self._flags_agree_with_the_reading(
-            new_expr,
-            info,
-            unwrapped=True,
-            selects_without_calling=True,
-            carries_the_payload=False,
-        ):
-            return None
-        return _DispatchSite(member, new_expr.callee, key_arg.value, None)
-
-    def _read_bare_call(
-        self,
-        call: JsCallExpression,
-        info: _DispatcherInfo,
-    ) -> _DispatchSite | None:
-        """
-        The bare `dispatcher("key")` call *call* is. These occur without a preceding payload
-        assignment, when the dispatched function takes no arguments.
-
-        A call standing second in a sequence expression is not one of them however it reads here:
-        the assignment in front of it is what fills the payload its callee takes its arguments from,
-        so rewriting it alone would call that callee with none. It belongs to `_read_direct_call`,
-        which reads the pair, and is left for that one to plan or to refuse whole. The parent is
-        read through any parentheses around the call, since a file that writes the grouping means
-        the same dispatch by it.
-
-        A call whose result is unwrapped on the wrap key is not one of them either: what that
-        member expression denotes is the callee's return value, so replacing the call alone leaves
-        the unwrap standing over a value that carries no such key. This pass has no reading of that
-        form, and an unread dispatch is what `_plan_covers_every_reference` refuses the unwrap on.
-
-        The zero arguments this reading gives its callee are a claim about the payload, not about
-        the site: the callee reads its arguments off the payload array, which a dispatch that does
-        not spell the init flag leaves holding whatever the last one put there. So an entry that
-        reads the payload at all is planned here only behind that flag, and an entry that reads
-        none is planned whatever the payload holds.
-        """
-        parent = enclosing_operator(call)
-        if isinstance(parent, JsSequenceExpression):
-            return None
-        if (
-            info.wrap_key is not None
-            and isinstance(parent, JsMemberExpression)
-            and strip_parens(parent.object) is call
-            and access_key(parent) == info.wrap_key
-        ):
-            return None
-        if not isinstance(call.callee, JsIdentifier):
-            return None
-        if call.callee.name != info.dispatcher_id:
-            return None
-        if not call.arguments:
-            return None
-        key_arg = call.arguments[0]
-        if not isinstance(key_arg, JsStringLiteral):
-            return None
-        if key_arg.value not in info.fns_map:
-            return None
-        if not self._flags_agree_with_the_reading(
-            call,
-            info,
-            unwrapped=False,
-            selects_without_calling=False,
-            carries_the_payload=False,
-        ):
-            return None
-        if (
-            _flag_argument(call, 1) != info.init_flag
-            and _reads_the_payload(info.fns_map[key_arg.value], info.payload_id)
-        ):
-            return None
-        return _DispatchSite(call, call.callee, key_arg.value, [])
-
-    def _remove_boilerplate(self, scope: Node, body: list, info: _DispatcherInfo) -> None:
-        assert self._root is not None
-        model = model_cache(self, self._root).model
-        to_remove = []
-        for stmt in list(body):
-            if isinstance(stmt, JsVariableDeclaration):
-                for decl in stmt.declarations:
-                    if not isinstance(decl, JsVariableDeclarator):
-                        continue
-                    if not isinstance(decl.id, JsIdentifier):
-                        continue
-                    if decl.id.name == info.payload_id and decl.init is None:
-                        remove_declarator(decl)
-                        break
-                    if info.cache_id and decl.id.name == info.cache_id:
-                        if decl.init is not None and _is_object_create_null(decl.init):
-                            remove_declarator(decl)
-                            break
-            elif isinstance(stmt, JsFunctionDeclaration):
-                if (
-                    isinstance(stmt.id, JsIdentifier)
-                    and isinstance(stmt.body, JsBlockStatement)
-                    and not stmt.body.body
-                    and not stmt.params
-                ):
-                    binding = model.binding_of(stmt.id)
-                    if not binding_has_references(model, binding, exclude=stmt):
-                        to_remove.append(stmt)
-        for stmt in to_remove:
-            _remove_from_parent(stmt)
