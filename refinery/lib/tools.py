@@ -4,7 +4,6 @@ Miscellaneous helper functions.
 from __future__ import annotations
 
 import copy
-import functools
 import inspect
 import io
 import itertools
@@ -352,9 +351,9 @@ class NoLogging:
 
 class NoLoggingProxy:
     """
-    This class can be used to wrap any object. It acts as a proxy for this object, passing though
-    and attribute access, operator use, and method calls to its base. However, any such action
-    is wrapped in a `refinery.lib.tools.NoLogging` context to ensure that it procudes no logging
+    This class can be used to wrap any object. It acts as a proxy for this object, passing through
+    attribute access, item access, iteration, and calls to its base. However, any such action is
+    wrapped in a `refinery.lib.tools.NoLogging` context to ensure that it produces no logging
     output. Notably, any returned values that are not considered primitive are wrapped as a proxy
     as well. The main downside of this is that instance checks no longer work as expected.
     """
@@ -367,7 +366,7 @@ class NoLoggingProxy:
     def __new__(cls, wrap, mode: NoLogging.Mode = NoLogging.Mode.ALL):
         if isinstance(wrap, (int, float, str, bytes, bytearray, memoryview, Enum)):
             return wrap
-        return super().__new__(_proxy_class(type(wrap))) # type:ignore
+        return super().__new__(cls)
 
     def __init__(self, wrap, mode: NoLogging.Mode = NoLogging.Mode.ALL):
         self.__wrapped__ = wrap
@@ -420,38 +419,6 @@ class NoLoggingProxy:
         with NoLogging(mode):
             rv = self.__wrapped__(*args, **kwargs)
         return NoLoggingProxy(rv, mode)
-
-
-def _proxied_dunder_method(method):
-    def proxied(self: NoLoggingProxy, *args, **kwargs):
-        mode = self.__nl_mode__
-        with NoLogging(mode):
-            result = method(self.__wrapped__, *args, **kwargs)
-        return NoLoggingProxy(result, mode)
-    return proxied
-
-
-@functools.cache
-def _proxy_class(wrap_type: type) -> type[NoLoggingProxy]:
-    """
-    The `refinery.lib.tools.NoLoggingProxy` class for objects of the given type; one class for each
-    type. It has the special methods of the type that an instance looks up as the same object as
-    the type: static methods and callable class attributes that are not descriptors. Each calls the
-    method of the object that the proxy wraps.
-    """
-    proxied_dunder_methods = {}
-    for name in dir(wrap_type):
-        if not name.startswith('__') or not name.endswith('__') or name == '__new__':
-            continue
-        attribute = inspect.getattr_static(wrap_type, name)
-        if not isinstance(attribute, staticmethod) and hasattr(type(attribute), '__get__'):
-            continue
-        class_method = getattr(wrap_type, name)
-        if class_method and callable(class_method):
-            proxied_dunder_methods[name] = _proxied_dunder_method(class_method)
-    if not proxied_dunder_methods:
-        return NoLoggingProxy
-    return type(F'_proxy_{wrap_type.__name__}', (NoLoggingProxy,), proxied_dunder_methods)
 
 
 def proxy(t: _T) -> _T:

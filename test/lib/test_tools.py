@@ -1,7 +1,7 @@
 import inspect
 import itertools
-import operator
 import random
+import weakref
 
 from refinery.lib import tools, colors
 
@@ -345,16 +345,17 @@ class TestNoLoggingProxy(TestBase):
         proxied = tools.NoLoggingProxy(c)
         self.assertEqual(tools.unwrap(proxied.data), [1, 2, 3])
 
-    def test_proxies_of_objects_of_one_type_call_their_own_object(self):
+    def test_a_proxy_keeps_no_reference_to_its_object_once_both_are_dropped(self):
         class Box:
-            def __init__(self, value):
-                self.value = value
-
             @staticmethod
-            def __index__(box):
-                return box.value
+            def __index__():
+                return 0
 
-        self.assertEqual([operator.index(tools.NoLoggingProxy(Box(k))) for k in (1, 2)], [1, 2])
+        box = Box()
+        alive = weakref.ref(box)
+        tools.NoLoggingProxy(box)
+        del box
+        self.assertIsNone(alive())
 
     def test_proxy_passthrough_for_primitives(self):
         self.assertEqual(tools.NoLoggingProxy(42), 42)
