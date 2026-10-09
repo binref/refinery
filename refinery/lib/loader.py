@@ -26,6 +26,35 @@ class EntryNotFound(NameError):
     pass
 
 
+def _entry_points_in(
+    parent: ModuleType,
+    path: str,
+    mark: type,
+    is_package: bool = True,
+) -> Generator[type[Unit]]:
+    for attr in dir(parent):
+        item = getattr(parent, attr)
+        if getattr(item, '__module__', None) != path:
+            continue
+        if getattr(item, '__name__', '_').startswith('_'):
+            continue
+        if isinstance(item, type) and issubclass(item, mark) and item is not mark:
+            yield item
+    if not is_package:
+        return
+    for _, name, is_package in pkgutil.iter_modules(parent.__path__):
+        mp = F'{path}.{name}'
+        try:
+            importlib.import_module(mp)
+            module = getattr(parent, name)
+        except ModuleNotFoundError as error:
+            logging.error(F'could not load {mp} because {error.name} is missing.')
+        except Exception as error:
+            logging.error(F'could not load {mp} due to unknown error: {error!s}')
+        else:
+            yield from _entry_points_in(module, mp, mark, is_package)
+
+
 def get_all_entry_points() -> Generator[type[Unit]]:
     """
     The function returns an iterator over all entry points, i.e.
@@ -33,32 +62,7 @@ def get_all_entry_points() -> Generator[type[Unit]]:
     """
     path = 'refinery.units'
     root = __import__(path).units
-    mark = root.Entry
-
-    def iterate(parent: ModuleType, path: str, is_package: bool = True) -> Generator[type[Unit]]:
-        for attr in dir(parent):
-            item = getattr(parent, attr)
-            if getattr(item, '__module__', None) != path:
-                continue
-            if getattr(item, '__name__', '_').startswith('_'):
-                continue
-            if isinstance(item, type) and issubclass(item, mark) and item is not mark:
-                yield item
-        if not is_package:
-            return
-        for _, name, is_package in pkgutil.iter_modules(parent.__path__):
-            mp = F'{path}.{name}'
-            try:
-                importlib.import_module(mp)
-                module = getattr(parent, name)
-            except ModuleNotFoundError as error:
-                logging.error(F'could not load {mp} because {error.name} is missing.')
-            except Exception as error:
-                logging.error(F'could not load {mp} due to unknown error: {error!s}')
-            else:
-                yield from iterate(module, mp, is_package)
-
-    yield from iterate(root, path)
+    yield from _entry_points_in(root, path, root.Entry)
 
 
 @functools.lru_cache(maxsize=1, typed=True)
@@ -70,6 +74,12 @@ def get_entry_point_map() -> dict[str, type[Unit]]:
     return {exe.name: exe for exe in get_all_entry_points()}
 
 
+def _subclasses(cls: type[_T]) -> Generator[type[_T]]:
+    for sc in cls.__subclasses__():
+        yield sc
+        yield from _subclasses(sc)
+
+
 def get_entry_point(name: str) -> type[Unit]:
     """
     Retrieve a refinery entry point by name.
@@ -79,11 +89,7 @@ def get_entry_point(name: str) -> type[Unit]:
     except AttributeError:
         pass
 
-    def get_subclasses(cls: type[_T]) -> Generator[type[_T]]:
-        for sc in cls.__subclasses__():
-            yield sc
-            yield from get_subclasses(sc)
-    for sc in get_subclasses(refinery.Unit):
+    for sc in _subclasses(refinery.Unit):
         if sc.name == name:
             return sc
 

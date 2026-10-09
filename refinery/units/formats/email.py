@@ -4,7 +4,7 @@ import email.utils
 import re
 
 from email.parser import Parser
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from refinery.lib import json
 from refinery.lib.id import is_likely_email
@@ -12,6 +12,9 @@ from refinery.lib.mime import file_extension
 from refinery.lib.types import asbuffer, isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
+
+if TYPE_CHECKING:
+    from refinery.lib.outlook import MsgAttachment, MsgFile
 
 CDFv2_MARKER = B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
 
@@ -54,6 +57,18 @@ class xtmail(PathExtractorUnit):
             headers['ReceivedTrace'] = received
 
         yield UnpackResult('headers.json', lambda jsn=headers: json.dumps(jsn))
+
+    @classmethod
+    def _walk_attachments(cls, msg: MsgFile) -> Iterable[MsgAttachment]:
+        """
+        Iterates the attachments of the given message and, after each attached message, its own
+        attachments.
+        """
+        from refinery.lib.outlook import MsgFile
+        for attachment in msg.attachments:
+            yield attachment
+            if isinstance(ad := attachment.data, MsgFile):
+                yield from cls._walk_attachments(ad)
 
     def _get_parts_outlook(self, data):
         from refinery.lib.outlook import MsgFile
@@ -124,13 +139,7 @@ class xtmail(PathExtractorUnit):
 
         msgcount = 0
 
-        def walk_attachments(msg: MsgFile):
-            for attachment in msg.attachments:
-                yield attachment
-                if isinstance(ad := attachment.data, MsgFile):
-                    yield from walk_attachments(ad)
-
-        for attachment in walk_attachments(msg):
+        for attachment in self._walk_attachments(msg):
             if isinstance(ad := attachment.data, MsgFile):
                 msgcount += 1
                 yield from make_message(

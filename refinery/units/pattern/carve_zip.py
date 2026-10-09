@@ -4,16 +4,18 @@ from refinery.lib.zip import Zip
 from refinery.units import Unit
 
 
+def _sub_archive_boundaries(zip: Zip):
+    if boundary := zip.coverage.boundary():
+        for sub in zip.sub_archives.values():
+            yield from _sub_archive_boundaries(sub)
+        yield boundary
+
+
 class carve_zip(Unit):
     """
     Extracts anything from the input data that looks like a zip archive file.
     """
     def process(self, data: bytearray):
-        def _sub_archive_boundaries(zip: Zip):
-            if boundary := zip.coverage.boundary():
-                for sub in zip.sub_archives.values():
-                    yield from _sub_archive_boundaries(sub)
-                yield boundary
         end = len(data)
         mem = memoryview(data)
         try:

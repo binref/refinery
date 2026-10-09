@@ -36,36 +36,36 @@ class xtasar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     Extract files from Atom Shell Archives (ASAR). These are often used to bundle Electron application
     data and resources.
     """
-    def unpack(self, data: bytearray):
-        def _unpack(dir: JSONDict, *path):
-            for name, listing in dir.get('files', {}).items():
-                yield from _unpack(listing, *path, name)
-            try:
-                offset = dir['offset']
-                size = dir['size']
-            except KeyError:
-                return
-            try:
-                offset = int(offset) + header.base
-                end = int(size) + offset
-            except TypeError:
-                self.log_warn(F'unable to convert offset "{offset}" and size "{size}" to integers')
-                return
-            if not path:
-                self.log_warn(F'not processing item at root with offset {offset} and size {size}')
-                return
-            yield UnpackResult(
-                '/'.join(path),
-                lambda a=offset, b=end: data[a:b],
-                **{
-                    MV.START: offset,
-                    MV.END: end,
-                }
-            )
+    def _unpack(self, data: bytearray, base: int, dir: JSONDict, *path):
+        for name, listing in dir.get('files', {}).items():
+            yield from self._unpack(data, base, listing, *path, name)
+        try:
+            offset = dir['offset']
+            size = dir['size']
+        except KeyError:
+            return
+        try:
+            offset = int(offset) + base
+            end = int(size) + offset
+        except TypeError:
+            self.log_warn(F'unable to convert offset "{offset}" and size "{size}" to integers')
+            return
+        if not path:
+            self.log_warn(F'not processing item at root with offset {offset} and size {size}')
+            return
+        yield UnpackResult(
+            '/'.join(path),
+            lambda a=offset, b=end: data[a:b],
+            **{
+                MV.START: offset,
+                MV.END: end,
+            }
+        )
 
+    def unpack(self, data: bytearray):
         header = AsarHeader.Parse(data)
         self.log_debug(F'header read successfully, base offset is {header.base}.')
-        yield from _unpack(header.directory)
+        yield from self._unpack(data, header.base, header.directory)
 
     @classmethod
     def handles(cls, data) -> bool | None:

@@ -16,24 +16,25 @@ class xtjson(PathExtractorUnit):
     """
     CustomPathSeparator = '.'
 
+    @classmethod
+    def _crawl(cls, sep: str, path: str, cursor):
+        if isinstance(cursor, dict):
+            for key, value in cursor.items():
+                yield from cls._crawl(sep, F'{path}{sep}{key}', value)
+        elif isinstance(cursor, list):
+            for key, value in enumerate(cursor):
+                yield from cls._crawl(sep, F'{path}{sep}{key:d}', value)
+        if path:
+            yield path, cursor, cursor.__class__.__name__
+
     def unpack(self, data):
 
         sep = self.CustomPathSeparator
 
-        def crawl(path, cursor):
-            if isinstance(cursor, dict):
-                for key, value in cursor.items():
-                    yield from crawl(F'{path}{sep}{key}', value)
-            elif isinstance(cursor, list):
-                for key, value in enumerate(cursor):
-                    yield from crawl(F'{path}{sep}{key:d}', value)
-            if path:
-                yield path, cursor, cursor.__class__.__name__
-
         if not isinstance(data, (dict, list)):
             data = libjson.loads(data)
 
-        for path, item, typename in crawl('', data):
+        for path, item, typename in self._crawl(sep, '', data):
             def extract(item=item):
                 if isinstance(item, (list, dict)):
                     return libjson.dumps(item)
@@ -71,45 +72,44 @@ class xj0(Unit):
     ):
         super().__init__(fmt=fmt, one=one, raw=raw, all=all)
 
+    def _convert(self, value, iskey=False):
+        if self.args.raw:
+            return value
+        if isinstance(value, (float, int, bool)):
+            return value
+        if isinstance(value, str):
+            return value.encode(self.codec)
+        if iskey:
+            raise TypeError
+        if isinstance(value, dict):
+            return {self._convert(k, True): self._convert(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._convert(k) for k in value]
+
+    def _acceptable(self, key, value, nested=False):
+        if not is_valid_variable_name(key, allow_derivations=False):
+            self.log_info(F'rejecting item with invalid name {key}')
+            return None
+        if isinstance(value, (float, int, bool, str)):
+            return True
+        if isinstance(value, dict):
+            if not self.args.all:
+                self.log_info(F'rejecting item {key} with dictionary value')
+                return False
+            return all(self._acceptable(k, val, True) for k, val in value.items())
+        if isinstance(value, list):
+            if nested:
+                self.log_info(F'rejecting item {key} containing a nested list')
+                return False
+            return all(self._acceptable(key, t, True) for t in value)
+        return False
+
     def process(self, data: Chunk):
-
-        def convert(value, iskey=False):
-            if self.args.raw:
-                return value
-            if isinstance(value, (float, int, bool)):
-                return value
-            if isinstance(value, str):
-                return value.encode(self.codec)
-            if iskey:
-                raise TypeError
-            if isinstance(value, dict):
-                return {convert(k, True): convert(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [convert(k) for k in value]
-
-        def acceptable(key, value, nested=False):
-            if not is_valid_variable_name(key, allow_derivations=False):
-                self.log_info(F'rejecting item with invalid name {key}')
-                return None
-            if isinstance(value, (float, int, bool, str)):
-                return True
-            if isinstance(value, dict):
-                if not self.args.all:
-                    self.log_info(F'rejecting item {key} with dictionary value')
-                    return False
-                return all(acceptable(k, val, True) for k, val in value.items())
-            if isinstance(value, list):
-                if nested:
-                    self.log_info(F'rejecting item {key} containing a nested list')
-                    return False
-                return all(acceptable(key, t, True) for t in value)
-            return False
-
         jdoc: dict = libjson.loads(data)
         if not isinstance(jdoc, dict):
             raise ValueError('The input must be a JSON dictionary.')
         meta = metavars(data)
-        args = {k: convert(v) for k, v in jdoc.items() if acceptable(k, v)}
+        args = {k: self._convert(v) for k, v in jdoc.items() if self._acceptable(k, v)}
         used = set()
         data[:] = meta.format_bin(' '.join(self.args.fmt), self.codec, [data], args, used)
         for u in used:

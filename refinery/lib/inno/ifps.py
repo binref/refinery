@@ -798,6 +798,37 @@ class DeclSpec:
         return cls(void, parameters, return_type=return_type)
 
 
+def _trace_stack(
+    bbs: dict[int, BasicBlock],
+    visited: set[int],
+    errored: set[int],
+    offset: int,
+    stack: int | None,
+) -> None:
+    """
+    Traces the stack depth from the basic block at the given offset through every block that is
+    reachable from it. A block that is reached with two different depths has no known depth.
+    """
+    if offset in errored:
+        return
+    bb = bbs[offset]
+    if bb.stack is not None and stack != bb.stack:
+        stack = None
+    if stack is None:
+        errored.add(offset)
+    elif offset in visited:
+        return
+    else:
+        visited.add(offset)
+    bb.stack = stack
+    body = [] if stack is None else bb.body
+    for insn in body:
+        insn.stack = stack
+        stack += insn.stack_delta
+    for t in bb.targets:
+        _trace_stack(bbs, visited, errored, t, stack)
+
+
 @dataclass
 class Function:
     """
@@ -895,30 +926,7 @@ class Function:
             for source in bb.sources.values():
                 source.targets.pop(offset, None)
 
-        visited: set[int] = set()
-        errored: set[int] = set()
-
-        def trace_stack(offset: int, stack: int | None):
-            if offset in errored:
-                return
-            bb = bbs[offset]
-            if bb.stack is not None and stack != bb.stack:
-                stack = None
-            if stack is None:
-                errored.add(offset)
-            elif offset in visited:
-                return
-            else:
-                visited.add(offset)
-            bb.stack = stack
-            body = [] if stack is None else bb.body
-            for insn in body:
-                insn.stack = stack
-                stack += insn.stack_delta
-            for t in bb.targets:
-                trace_stack(t, stack)
-
-        trace_stack(0, 0)
+        _trace_stack(bbs, set(), set(), 0, 0)
 
         for insn in self.body:
             if (stack := insn.stack) is None:

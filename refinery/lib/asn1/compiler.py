@@ -169,13 +169,188 @@ class _Ref:
     """
     A forward reference to a not-yet-resolved type, emitted when a type definition refers to
     itself (or to another type currently being resolved). It is replaced with the resolved schema
-    object by the back-patch pass in `_Parser._resolve`, producing a cyclic schema graph that the
+    object by the back-patch pass in `_Resolver.resolve`, producing a cyclic schema graph that the
     byte-driven decoder traverses safely.
     """
     __slots__ = ('name',)
 
     def __init__(self, name: str):
         self.name = name
+
+
+class _Resolver:
+    """
+    Resolves the parsed type assignments of a module into DSL schema objects. A type that refers to
+    itself, directly or through other types, is first resolved to a `_Ref`, which the back-patch
+    pass then replaces with the resolved schema object.
+    """
+    def __init__(self, assignments: dict[str, object], externals: dict[str, SchemaType]):
+        self.assignments = assignments
+        self.resolved: dict[str, SchemaType] = {}
+        self.resolved.update(externals)
+
+    def resolve(self) -> dict[str, SchemaType]:
+        resolved = self.resolved
+        for name in self.assignments:
+            if name not in resolved:
+                self._resolve_assignment(name)
+
+        seen: set[int] = set()
+        for name in self.assignments:
+            resolved[name] = self._deref(resolved[name])
+            self._backpatch(resolved[name], seen)
+
+        return resolved
+
+    def _resolve_type(self, t: object) -> SchemaType:
+        if isinstance(t, int) or t is ANY:
+            return t
+
+        if isinstance(t, tuple):
+            tag = t[0]
+
+            if tag == 'TypeRef':
+                name = t[1]
+                if name in self.resolved:
+                    target = self.resolved[name]
+                    return _Ref(name) if target is _RESOLVING else target
+                if name in self.assignments:
+                    return self._resolve_assignment(name)
+                if name in _BUILTIN_TYPE_MAP:
+                    return _BUILTIN_TYPE_MAP[name]
+                return ANY
+
+            if tag == 'Seq':
+                fields = t[1]
+                return Seq(*[self._resolve_field(f) for f in fields])
+
+            if tag == 'Set':
+                fields = t[1]
+                return Set(*[self._resolve_field(f) for f in fields])
+
+            if tag == 'IntNamed':
+                return INTEGER
+
+            if tag == 'SeqOf':
+                return SeqOf(self._resolve_type(t[1]))
+
+            if tag == 'SetOf':
+                return SetOf(self._resolve_type(t[1]))
+
+            if tag == 'Choice':
+                alts = t[1]
+                return Choice(*[self._resolve_alt(a) for a in alts])
+
+            if tag == 'Tagged':
+                # This is handled at the field level, shouldn't appear standalone
+                # at top level except in assignment like:
+                #   Foo ::= [0] IMPLICIT Bar
+                # In that case, just resolve the inner type
+                return self._resolve_type(t[3])
+
+        return ANY
+
+    def _resolve_inner_tags(self, t: object) -> SchemaType:
+        # An EXPLICIT outer tag preserves any further tags on the inner type as Tagged
+        # wrappers; an IMPLICIT outer tag would replace them, so this is only used on the
+        # EXPLICIT path. A CHOICE cannot be implicitly tagged, so its tag stays EXPLICIT.
+        if isinstance(t, tuple) and t[0] == 'Tagged':
+            tag_num, tagging, inner, tag_class_val = t[1], t[2], t[3], t[4]
+            inner_resolved = self._resolve_inner_tags(inner)
+            explicit = tagging != 'IMPLICIT' or isinstance(inner_resolved, Choice)
+            return Tagged(inner_resolved, tag_num, explicit, tag_class_val)
+        return self._resolve_type(t)
+
+    def _resolve_tag_kwargs(self, typ: object) -> tuple[SchemaType, dict[str, object]]:
+        implicit: int | None = None
+        explicit: int | None = None
+        tag_class_val: int = CLASS_CONTEXT
+
+        actual_type = typ
+        if isinstance(typ, tuple) and typ[0] == 'Tagged':
+            tag_num, tagging, inner, tag_class_val = typ[1], typ[2], typ[3], typ[4]
+            actual_type = inner
+            if tagging == 'IMPLICIT':
+                implicit = tag_num
+            else:
+                explicit = tag_num
+
+        if explicit is not None:
+            resolved_type = self._resolve_inner_tags(actual_type)
+        else:
+            resolved_type = self._resolve_type(actual_type)
+
+        if implicit is not None and isinstance(resolved_type, Choice):
+            # A CHOICE cannot be implicitly tagged (X.680); the tag is EXPLICIT.
+            explicit, implicit = implicit, None
+
+        kwargs: dict[str, object] = {}
+        if implicit is not None:
+            kwargs['implicit'] = implicit
+        if explicit is not None:
+            kwargs['explicit'] = explicit
+        if tag_class_val != CLASS_CONTEXT:
+            kwargs['tag_class'] = tag_class_val
+        return resolved_type, kwargs
+
+    def _resolve_field(self, f: object) -> F:
+        assert isinstance(f, tuple) and f[0] == 'Field'
+        _, name, ftype, optional, has_default, default = f
+        resolved_type, kwargs = self._resolve_tag_kwargs(ftype)
+        if has_default:
+            kwargs['default'] = default
+        elif optional:
+            kwargs['optional'] = True
+        return F(name, resolved_type, **kwargs)  # type: ignore
+
+    def _resolve_alt(self, a: object) -> F:
+        assert isinstance(a, tuple) and a[0] == 'Alt'
+        _, name, atype = a
+        resolved_type, kwargs = self._resolve_tag_kwargs(atype)
+        return F(name, resolved_type, **kwargs)  # type: ignore
+
+    def _resolve_assignment(self, name: str) -> SchemaType:
+        resolved = self.resolved
+        if name in resolved:
+            target = resolved[name]
+            return _Ref(name) if target is _RESOLVING else target
+        resolved[name] = _RESOLVING
+        result = self._resolve_type(self.assignments[name])
+        resolved[name] = result
+        return result
+
+    def _deref(self, t: object) -> SchemaType:
+        chain: set[str] = set()
+        while isinstance(t, _Ref):
+            if t.name in chain:
+                return ANY
+            chain.add(t.name)
+            t = self.resolved.get(t.name, ANY)
+        return t
+
+    def _backpatch(self, schema: object, seen: set[int]) -> None:
+        if id(schema) in seen:
+            return
+        seen.add(id(schema))
+        if isinstance(schema, (Seq, Set)):
+            fields = schema.fields
+        elif isinstance(schema, Choice):
+            fields = schema.alternatives
+        elif isinstance(schema, (SeqOf, SetOf)):
+            schema.element = self._deref(schema.element)
+            self._backpatch(schema.element, seen)
+            return
+        elif isinstance(schema, Tagged):
+            schema.inner = self._deref(schema.inner)
+            self._backpatch(schema.inner, seen)
+            return
+        else:
+            return
+        for fld in fields:
+            fld.type = self._deref(fld.type)
+            if fld.implicit is not None and isinstance(fld.type, Choice):
+                fld.explicit, fld.implicit = fld.implicit, None
+            self._backpatch(fld.type, seen)
 
 
 class _Parser:
@@ -594,168 +769,7 @@ class _Parser:
                 raise SyntaxError('unexpected EOF in braces')
 
     def _resolve(self) -> dict[str, SchemaType]:
-        resolved: dict[str, SchemaType] = {}
-        resolved.update(self._externals)
-
-        def resolve_type(t: object) -> SchemaType:
-            if isinstance(t, int) or t is ANY:
-                return t
-
-            if isinstance(t, tuple):
-                tag = t[0]
-
-                if tag == 'TypeRef':
-                    name = t[1]
-                    if name in resolved:
-                        target = resolved[name]
-                        return _Ref(name) if target is _RESOLVING else target
-                    if name in self._assignments:
-                        return _resolve_assignment(name)
-                    if name in _BUILTIN_TYPE_MAP:
-                        return _BUILTIN_TYPE_MAP[name]
-                    return ANY
-
-                if tag == 'Seq':
-                    fields = t[1]
-                    return Seq(*[_resolve_field(f) for f in fields])
-
-                if tag == 'Set':
-                    fields = t[1]
-                    return Set(*[_resolve_field(f) for f in fields])
-
-                if tag == 'IntNamed':
-                    return INTEGER
-
-                if tag == 'SeqOf':
-                    return SeqOf(resolve_type(t[1]))
-
-                if tag == 'SetOf':
-                    return SetOf(resolve_type(t[1]))
-
-                if tag == 'Choice':
-                    alts = t[1]
-                    return Choice(*[_resolve_alt(a) for a in alts])
-
-                if tag == 'Tagged':
-                    # This is handled at the field level, shouldn't appear standalone
-                    # at top level except in assignment like:
-                    #   Foo ::= [0] IMPLICIT Bar
-                    # In that case, just resolve the inner type
-                    return resolve_type(t[3])
-
-            return ANY
-
-        def _resolve_inner_tags(t: object) -> SchemaType:
-            # An EXPLICIT outer tag preserves any further tags on the inner type as Tagged
-            # wrappers; an IMPLICIT outer tag would replace them, so this is only used on the
-            # EXPLICIT path. A CHOICE cannot be implicitly tagged, so its tag stays EXPLICIT.
-            if isinstance(t, tuple) and t[0] == 'Tagged':
-                tag_num, tagging, inner, tag_class_val = t[1], t[2], t[3], t[4]
-                inner_resolved = _resolve_inner_tags(inner)
-                explicit = tagging != 'IMPLICIT' or isinstance(inner_resolved, Choice)
-                return Tagged(inner_resolved, tag_num, explicit, tag_class_val)
-            return resolve_type(t)
-
-        def _resolve_tag_kwargs(typ: object) -> tuple[SchemaType, dict[str, object]]:
-            implicit: int | None = None
-            explicit: int | None = None
-            tag_class_val: int = CLASS_CONTEXT
-
-            actual_type = typ
-            if isinstance(typ, tuple) and typ[0] == 'Tagged':
-                tag_num, tagging, inner, tag_class_val = typ[1], typ[2], typ[3], typ[4]
-                actual_type = inner
-                if tagging == 'IMPLICIT':
-                    implicit = tag_num
-                else:
-                    explicit = tag_num
-
-            if explicit is not None:
-                resolved_type = _resolve_inner_tags(actual_type)
-            else:
-                resolved_type = resolve_type(actual_type)
-
-            if implicit is not None and isinstance(resolved_type, Choice):
-                # A CHOICE cannot be implicitly tagged (X.680); the tag is EXPLICIT.
-                explicit, implicit = implicit, None
-
-            kwargs: dict[str, object] = {}
-            if implicit is not None:
-                kwargs['implicit'] = implicit
-            if explicit is not None:
-                kwargs['explicit'] = explicit
-            if tag_class_val != CLASS_CONTEXT:
-                kwargs['tag_class'] = tag_class_val
-            return resolved_type, kwargs
-
-        def _resolve_field(f: object) -> F:
-            assert isinstance(f, tuple) and f[0] == 'Field'
-            _, name, ftype, optional, has_default, default = f
-            resolved_type, kwargs = _resolve_tag_kwargs(ftype)
-            if has_default:
-                kwargs['default'] = default
-            elif optional:
-                kwargs['optional'] = True
-            return F(name, resolved_type, **kwargs)  # type: ignore
-
-        def _resolve_alt(a: object) -> F:
-            assert isinstance(a, tuple) and a[0] == 'Alt'
-            _, name, atype = a
-            resolved_type, kwargs = _resolve_tag_kwargs(atype)
-            return F(name, resolved_type, **kwargs)  # type: ignore
-
-        def _resolve_assignment(name: str) -> SchemaType:
-            if name in resolved:
-                target = resolved[name]
-                return _Ref(name) if target is _RESOLVING else target
-            resolved[name] = _RESOLVING
-            result = resolve_type(self._assignments[name])
-            resolved[name] = result
-            return result
-
-        def _deref(t: object) -> SchemaType:
-            chain: set[str] = set()
-            while isinstance(t, _Ref):
-                if t.name in chain:
-                    return ANY
-                chain.add(t.name)
-                t = resolved.get(t.name, ANY)
-            return t
-
-        def _backpatch(schema: object, seen: set[int]) -> None:
-            if id(schema) in seen:
-                return
-            seen.add(id(schema))
-            if isinstance(schema, (Seq, Set)):
-                fields = schema.fields
-            elif isinstance(schema, Choice):
-                fields = schema.alternatives
-            elif isinstance(schema, (SeqOf, SetOf)):
-                schema.element = _deref(schema.element)
-                _backpatch(schema.element, seen)
-                return
-            elif isinstance(schema, Tagged):
-                schema.inner = _deref(schema.inner)
-                _backpatch(schema.inner, seen)
-                return
-            else:
-                return
-            for fld in fields:
-                fld.type = _deref(fld.type)
-                if fld.implicit is not None and isinstance(fld.type, Choice):
-                    fld.explicit, fld.implicit = fld.implicit, None
-                _backpatch(fld.type, seen)
-
-        for name in self._assignments:
-            if name not in resolved:
-                _resolve_assignment(name)
-
-        seen: set[int] = set()
-        for name in self._assignments:
-            resolved[name] = _deref(resolved[name])
-            _backpatch(resolved[name], seen)
-
-        return resolved
+        return _Resolver(self._assignments, self._externals).resolve()
 
 
 def compile_asn1(

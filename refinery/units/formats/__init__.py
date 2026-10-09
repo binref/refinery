@@ -435,6 +435,45 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         a = re.sub(r'[^\w]+', '_', a)
         return a
 
+    @staticmethod
+    def _rank_attribute(attribute: str):
+        length = len(attribute)
+        scount = length - len(re.sub(r'\s+', '', attribute))
+        return (1 / length, scount)
+
+    @classmethod
+    def _map_path_attributes(cls, node: XMLNodeBase, nmap: dict):
+        """
+        Maps the path of every node below the given one to the attribute that names it among its
+        siblings, or to `None` if there is no such attribute.
+        """
+        nval = cls._normalize_val
+        children = node.children
+        tags = set()
+        for child in children:
+            if (tag := child.tag) not in tags:
+                tags.add(tag)
+                continue
+            candidates = [
+                candidate for candidate, count in Counter(
+                    key for child in children for key, val in child.attributes.items()
+                    if len(val) in range(2, 65) and re.fullmatch(R'[-\s\w+,.;@()]+', nval(val))
+                ).items()
+                if count == len(children) == len(
+                    {child.attributes[candidate] for child in children})
+            ]
+            break
+        else:
+            candidates = None
+        if not candidates:
+            attr = None
+        else:
+            candidates.sort(key=cls._rank_attribute)
+            attr = candidates[0]
+        for child in children:
+            nmap[child.path] = attr
+            cls._map_path_attributes(child, nmap)
+
     def _make_path_builder(
         self,
         meta: LazyMetaOracle,
@@ -447,39 +486,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
         nmap = {}
 
         if nfmt is None:
-            def rank_attribute(attribute: str):
-                length = len(attribute)
-                scount = length - len(re.sub(r'\s+', '', attribute))
-                return (1 / length, scount)
-
-            def walk(node: XMLNodeBase):
-                children = node.children
-                __tags = set()
-                for child in children:
-                    if (tag := child.tag) not in __tags:
-                        __tags.add(tag)
-                        continue
-                    candidates = [
-                        candidate for candidate, count in Counter(
-                            key for child in children for key, val in child.attributes.items()
-                            if len(val) in range(2, 65) and re.fullmatch(R'[-\s\w+,.;@()]+', nval(val))
-                        ).items()
-                        if count == len(children) == len(
-                            {child.attributes[candidate] for child in children})
-                    ]
-                    break
-                else:
-                    candidates = None
-                if not candidates:
-                    attr = None
-                else:
-                    candidates.sort(key=rank_attribute)
-                    attr = candidates[0]
-                for child in children:
-                    nmap[child.path] = attr
-                    walk(child)
-
-            walk(root)
+            self._map_path_attributes(root, nmap)
 
         def path_builder(node: XMLNodeBase) -> str:
             if node.tag is None:

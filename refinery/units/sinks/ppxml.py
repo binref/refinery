@@ -8,6 +8,32 @@ from refinery.lib.xml import Element, ForgivingParse
 from refinery.units import Arg, Unit
 
 
+def _indent(element: Element, pad: str, level=0, more_sibs=False):
+    """
+    The credit for this one goes to:
+    https://stackoverflow.com/a/12940014
+    """
+    indentation = '\n'
+    if level:
+        indentation += (level - 1) * pad
+    childcount = len(element)
+    if childcount:
+        if not element.text or not element.text.strip():
+            element.text = indentation + pad
+            if level:
+                element.text += pad
+        for count, child in enumerate(element):
+            _indent(child, pad, level + 1, count < childcount - 1)
+        if level and (not element.tail or element.tail.isspace()):
+            element.tail = indentation
+            if more_sibs:
+                element.tail += pad
+    elif level and (not element.tail or element.tail.isspace()):
+        element.tail = indentation
+        if more_sibs:
+            element.tail += pad
+
+
 class ppxml(Unit):
     """
     Expects XML input data and outputs it in a neatly formatted manner.
@@ -36,33 +62,8 @@ class ppxml(Unit):
             self.log_warn(msg)
             return data
 
-        def indent(element: Element, level=0, more_sibs=False):
-            """
-            The credit for this one goes to:
-            https://stackoverflow.com/a/12940014
-            """
-            indentation = '\n'
-            if level:
-                indentation += (level - 1) * pad
-            childcount = len(element)
-            if childcount:
-                if not element.text or not element.text.strip():
-                    element.text = indentation + pad
-                    if level:
-                        element.text += pad
-                for count, child in enumerate(element):
-                    indent(child, level + 1, count < childcount - 1)
-                if level and (not element.tail or element.tail.isspace()):
-                    element.tail = indentation
-                    if more_sibs:
-                        element.tail += pad
-            elif level and (not element.tail or element.tail.isspace()):
-                element.tail = indentation
-                if more_sibs:
-                    element.tail += pad
-
         if (root := dom.getroot()) is not None:
-            indent(root)
+            _indent(root, pad)
 
         with io.BytesIO() as output:
             dom.write(output, encoding=self.codec, xml_declaration=self.args.header)

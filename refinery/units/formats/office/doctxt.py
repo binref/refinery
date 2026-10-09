@@ -70,29 +70,29 @@ class doctxt(Unit):
                         output.write(node.text)
             return output.getvalue()
 
-    def _extract_odt(self, data: bytes):
-        def _extract_text(node: Element):
-            NAMESPACE = '{urn:oasis:names:tc:opendocument:xmlns:text:1.0}'
-            PARAGRAPH = F'{NAMESPACE}p'
-            SPAN = F'{NAMESPACE}span'
-            SPACE = F'{NAMESPACE}s'
-            with StringIO() as res:
-                for element in node:
-                    tag = element.tag
-                    text = element.text or ''
-                    tail = element.tail or ''
-                    if tag in [PARAGRAPH, SPAN]:
-                        res.write(text)
-                    elif tag == SPACE:
-                        res.write(' ')
-                    else:
-                        self.log_debug(F'unknown tag: {tag}')
-                    res.write(_extract_text(element))
-                    res.write(tail)
-                    if tag == PARAGRAPH:
-                        res.write('\n')
-                return res.getvalue()
+    def _extract_odt_text(self, node: Element) -> str:
+        NAMESPACE = '{urn:oasis:names:tc:opendocument:xmlns:text:1.0}'
+        PARAGRAPH = F'{NAMESPACE}p'
+        SPAN = F'{NAMESPACE}span'
+        SPACE = F'{NAMESPACE}s'
+        with StringIO() as res:
+            for element in node:
+                tag = element.tag
+                text = element.text or ''
+                tail = element.tail or ''
+                if tag in [PARAGRAPH, SPAN]:
+                    res.write(text)
+                elif tag == SPACE:
+                    res.write(' ')
+                else:
+                    self.log_debug(F'unknown tag: {tag}')
+                res.write(self._extract_odt_text(element))
+                res.write(tail)
+                if tag == PARAGRAPH:
+                    res.write('\n')
+            return res.getvalue()
 
+    def _extract_odt(self, data: bytes):
         NAMESPACE = '{urn:oasis:names:tc:opendocument:xmlns:office:1.0}'
         BODY = F'{NAMESPACE}body'
         TEXT = F'{NAMESPACE}text'
@@ -103,7 +103,7 @@ class doctxt(Unit):
             root: Element = XML(xml_content)
             body: Element = root.find(BODY)
             text: Element = body.find(TEXT)
-            return _extract_text(text)
+            return self._extract_odt_text(text)
         else:
             raise ValueError('found no text')
 

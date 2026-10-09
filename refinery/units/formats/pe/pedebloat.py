@@ -269,30 +269,30 @@ class pedebloat(OverlayUnit):
             data[gap_offset:gap_offset + gap_size] = []
         return trimmed
 
-    def _trim_pe_resources(self, pe: PE, data: bytearray) -> int:
+    def _find_bloated_resources(self, directory, level: int = 0, *path) -> Generator[Structure]:
         S = self.args.size_limit
         P = self.args.names
-        trimmed = 0
+        for entry in directory.entries:
+            name = getattr(entry, 'name')
+            numeric = getattr(entry, 'id')
+            if not name:
+                if level == 0 and numeric in iter(RSRC):
+                    name = RSRC(entry.id)
+                elif numeric is not None:
+                    name = str(numeric)
+            name = name and str(name) or '?'
+            if entry.struct.DataIsDirectory:
+                yield from self._find_bloated_resources(entry.directory, level + 1, *path, name)
+                continue
+            struct: Structure = entry.data.struct
+            name = '/'.join((*path, name))
+            if struct.Size <= S and not any(fnmatch(name, p) for p in P):
+                self.log_debug(F'criteria not satisfied for resource: {SizeInt(struct.Size)!r} {name}')
+                continue
+            yield name, struct
 
-        def find_bloated_resources(pe: PE, directory, level: int = 0, *path) -> Generator[Structure]:
-            for entry in directory.entries:
-                name = getattr(entry, 'name')
-                numeric = getattr(entry, 'id')
-                if not name:
-                    if level == 0 and numeric in iter(RSRC):
-                        name = RSRC(entry.id)
-                    elif numeric is not None:
-                        name = str(numeric)
-                name = name and str(name) or '?'
-                if entry.struct.DataIsDirectory:
-                    yield from find_bloated_resources(pe, entry.directory, level + 1, *path, name)
-                    continue
-                struct: Structure = entry.data.struct
-                name = '/'.join((*path, name))
-                if struct.Size <= S and not any(fnmatch(name, p) for p in P):
-                    self.log_debug(F'criteria not satisfied for resource: {SizeInt(struct.Size)!r} {name}')
-                    continue
-                yield name, struct
+    def _trim_pe_resources(self, pe: PE, data: bytearray) -> int:
+        trimmed = 0
 
         RSRC_INDEX = pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_RESOURCE']
         pe.parse_data_directories(directories=[RSRC_INDEX])
@@ -301,7 +301,7 @@ class pedebloat(OverlayUnit):
             resources = pe.DIRECTORY_ENTRY_RESOURCE
         except AttributeError:
             return 0
-        for name, resource in find_bloated_resources(pe, resources):
+        for name, resource in self._find_bloated_resources(resources):
             offset = pe.get_offset_from_rva(resource.OffsetToData)
             old_size = resource.Size
             new_size = self._right_strip_data(

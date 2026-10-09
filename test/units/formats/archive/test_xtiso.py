@@ -100,6 +100,11 @@ class TestISOFileExtractor(TestUnitBase):
     def test_coverage_d0b7(self):
         self._test_coverage_sample('d0b714860765ab1c5d751a7237b1c768248754f2b593b70deccac266366f2289')
 
+    def test_fat_image_extraction_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('e81af9201d76081c695f616a118b0c7e16087d8a8bef5e44daa63e7396bd8c4f')
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])
+
 
 _COVERAGE_SAMPLES = {
     '00cd2850489cf197ac4ba99786d192dd0135fdbd6922130a0ad17ecf905de2d1': {

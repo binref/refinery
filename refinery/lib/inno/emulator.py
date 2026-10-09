@@ -56,7 +56,6 @@ from refinery.lib.inno.ifps import (
     Instruction,
     Op,
     Operand,
-    OperandType,
     TArray,
     TPrimitive,
     TRecord,
@@ -788,31 +787,29 @@ class IFPSEmulator:
         def operator_in(a, b):
             return a in b
 
-        def getvar(op: VariableSpec | Operand) -> Variable:
-            if not isinstance(op, Operand):
-                v = op
-                k = None
-            elif op.type is OperandType.Value:
-                raise TypeError('Attempting to retrieve variable for an immediate operand.')
-            else:
-                v = op.variable
-                k = op.index
-                if op.type is OperandType.IndexedByVar:
-                    k = getvar(k).get()
-            t, i = v.type, v.index
+        def resolve(spec: VariableSpec) -> Variable:
+            t, i = spec.type, spec.index
             if t is VariableType.Argument:
                 if function.decl.void:
                     i -= 1
-                var = self.stack[sp - i]
-            elif t is VariableType.Global:
-                var = self.globals[i]
-            elif t is VariableType.Local:
-                var = self.stack[sp + i]
-            else:
-                raise TypeError
-            if k is not None:
-                var = var.at(k)
-            return var
+                return self.stack[sp - i]
+            if t is VariableType.Global:
+                return self.globals[i]
+            if t is VariableType.Local:
+                return self.stack[sp + i]
+            raise TypeError
+
+        def getvar(op: VariableSpec | Operand) -> Variable:
+            if not isinstance(op, Operand):
+                return resolve(op)
+            if (spec := op.variable) is None:
+                raise TypeError('Attempting to retrieve variable for an immediate operand.')
+            var = resolve(spec)
+            if isinstance(k := op.index, VariableSpec):
+                k = resolve(k).get()
+            if k is None:
+                return var
+            return var.at(k)
 
         def getval(op: Operand):
             if op.immediate:

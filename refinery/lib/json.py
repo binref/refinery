@@ -22,20 +22,22 @@ def flattened(data: dict, prefix: str = '', separator: str = '.'):
     Yield the rows of a flattened view for the input JSON dictionary. This is used by several
     refinery units to display a tabular view of what would otherwise be output as JSON.
     """
-    def flatten(
-        cursor: dict | list | str | int | float | bool, prefix: str
-    ) -> Generator[tuple[str, int | float | bool | str]]:
-        if isinstance(cursor, dict):
-            for key, value in cursor.items():
-                new_prefix = key if not prefix else F'{prefix}{separator}{key}'
-                yield from flatten(value, new_prefix)
-        elif isinstance(cursor, list):
-            width = len(F'{len(cursor) - 1:X}')
-            for key, value in enumerate(cursor):
-                yield from flatten(value, F'{prefix}[0x{key:0{width}X}]')
-        else:
-            yield (prefix, cursor)
-    yield from flatten(data, prefix)
+    yield from _flatten(data, prefix, separator)
+
+
+def _flatten(
+    cursor: dict | list | str | int | float | bool, prefix: str, separator: str
+) -> Generator[tuple[str, int | float | bool | str]]:
+    if isinstance(cursor, dict):
+        for key, value in cursor.items():
+            new_prefix = key if not prefix else F'{prefix}{separator}{key}'
+            yield from _flatten(value, new_prefix, separator)
+    elif isinstance(cursor, list):
+        width = len(F'{len(cursor) - 1:X}')
+        for key, value in enumerate(cursor):
+            yield from _flatten(value, F'{prefix}[0x{key:0{width}X}]', separator)
+    else:
+        yield (prefix, cursor)
 
 
 def _common_conversions(o):

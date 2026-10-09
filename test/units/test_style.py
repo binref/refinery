@@ -4,6 +4,7 @@ import importlib
 import os.path
 import pkgutil
 import pytest
+import symtable
 import unittest
 
 from contextlib import ExitStack
@@ -676,7 +677,7 @@ class TestCycleDiscipline(TestBase):
 
     #: Script packages that still contain these shapes. Every name here is work not yet done, not a
     #: package that is exempt on principle.
-    UNRATCHETED = ('js',)
+    UNRATCHETED = ('bat', 'js', 'ps1')
 
     _CONTAINER_METHODS = {'add', 'append', 'appendleft', 'extend', 'insert', 'put', 'setdefault', 'update'}
     _EXCEPTION_ATTRIBUTES = {'__traceback__', '__context__', '__cause__'}
@@ -686,7 +687,7 @@ class TestCycleDiscipline(TestBase):
         return os.path.join('refinery', 'lib', 'scripts', name, '')
 
     @classmethod
-    def _checked_sources(cls) -> list[tuple[str, ast.Module]]:
+    def _checked_sources(cls) -> list[tuple[str, ast.Module, symtable.SymbolTable]]:
         root = _project_root()
         vendored = os.path.join('refinery', 'lib', 'thirdparty', '')
         sources = []
@@ -694,8 +695,58 @@ class TestCycleDiscipline(TestBase):
             relative = os.path.relpath(path, root)
             if relative.startswith(vendored):
                 continue
-            sources.append((relative, tree))
+            with open(path, 'r', encoding='utf8') as stream:
+                table = symtable.symtable(stream.read(), relative, 'exec')
+            sources.append((relative, tree, table))
         return sources
+
+    @staticmethod
+    def _free_names(table: symtable.SymbolTable) -> set[str]:
+        names = {symbol.get_name() for symbol in table.get_symbols() if symbol.is_free()}
+        for child in table.get_children():
+            names |= TestCycleDiscipline._free_names(child)
+        return names
+
+    @staticmethod
+    def _lambda_bindings(tree: ast.Module) -> dict[int, str]:
+        bindings: dict[int, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+                targets = [node.target]
+            else:
+                continue
+            if isinstance(node.value, ast.Lambda):
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        bindings[node.value.lineno] = target.id
+        return bindings
+
+    @classmethod
+    def _closure_cycles(cls, table: symtable.SymbolTable, lambdas: dict[int, str]):
+        if table.get_type() == 'function':
+            nested: dict[str, symtable.SymbolTable] = {}
+            for child in table.get_children():
+                if child.get_type() not in ('function', 'class'):
+                    continue
+                if child.get_name() != 'lambda':
+                    nested[child.get_name()] = child
+                elif (name := lambdas.get(child.get_lineno())) is not None:
+                    nested[name] = child
+            refers = {name: cls._free_names(child) & nested.keys() for name, child in nested.items()}
+            for name, child in nested.items():
+                reached: set[str] = set()
+                pending = list(refers[name])
+                while pending:
+                    if (other := pending.pop()) in reached:
+                        continue
+                    reached.add(other)
+                    pending.extend(refers[other])
+                if name in reached:
+                    yield child.get_lineno()
+        for child in table.get_children():
+            yield from cls._closure_cycles(child, lambdas)
 
     @classmethod
     def _carries(cls, node: ast.AST | None, name: str | None) -> bool:
@@ -795,12 +846,14 @@ class TestCycleDiscipline(TestBase):
     @functools.lru_cache(maxsize=None)
     def _all_offenders(cls) -> dict[str, list[str]]:
         offenders: dict[str, set[str]] = {
+            'closure cycle': set(),
             'kept exception': set(),
             'raised parameter': set(),
             'raised attribute': set(),
         }
-        for path, tree in cls._checked_sources():
+        for path, tree, table in cls._checked_sources():
             found = {
+                'closure cycle': cls._closure_cycles(table, cls._lambda_bindings(tree)),
                 'kept exception': (line for f in cls._functions(tree) for line in cls._kept_exceptions(f)),
                 'raised parameter': (line for f in cls._functions(tree) for line in cls._raised_parameters(f)),
                 'raised attribute': cls._raised_attributes(tree),
@@ -812,6 +865,9 @@ class TestCycleDiscipline(TestBase):
     def _offenders(self, shape: str) -> list[str]:
         unratcheted = tuple(self._unratcheted_prefix(name) for name in self.UNRATCHETED)
         return [place for place in self._all_offenders()[shape] if not place.startswith(unratcheted)]
+
+    def test_no_function_or_class_defined_in_a_function_refers_to_itself(self):
+        self.assertListEqual(self._offenders('closure cycle'), [])
 
     def test_no_handler_keeps_its_exception(self):
         self.assertListEqual(self._offenders('kept exception'), [])

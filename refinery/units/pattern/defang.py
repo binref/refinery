@@ -60,34 +60,34 @@ class defang(Unit):
         data = re.sub(B'fxp(s?)://', B'ftp\\1://', data)
         return data
 
-    def process(self, data):
-        def replace_hostname(hostname: bytes | re.Match[bytes]):
-            if isinstance(hostname, re.Match):
-                return self._quote(replace_hostname(hostname[0]))
-            assert isinstance(hostname, (bytes, bytearray))
-            self.log_info('replace:', hostname)
-            host = hostname
-            user, atsgn, host = host.rpartition(B'@')
-            host, colon, port = host.rpartition(B':')
-            host = host.lower()
-            if not colon:
-                host = port
-                port = B''
-            if host in self._WHITELIST:
-                return hostname
-            host = re.split(R'(?:\[\.\]|\.)', host.decode('latin1'))
-            if len(host) == 1:
-                return hostname
-            components = iter(reversed(host))
-            defanged_parts = [next(components)]
-            separator = '[.]'
-            for part in components:
-                defanged_parts.append(separator)
-                defanged_parts.append(part)
-                separator = '[.]' if part in tlds else '.'
-            defanged_host = ''.join(reversed(defanged_parts)).encode('latin1')
-            return user + atsgn + defanged_host + colon + port
+    def _replace_hostname(self, hostname: bytes | re.Match[bytes]):
+        if isinstance(hostname, re.Match):
+            return self._quote(self._replace_hostname(hostname[0]))
+        assert isinstance(hostname, (bytes, bytearray))
+        self.log_info('replace:', hostname)
+        host = hostname
+        user, atsgn, host = host.rpartition(B'@')
+        host, colon, port = host.rpartition(B':')
+        host = host.lower()
+        if not colon:
+            host = port
+            port = B''
+        if host in self._WHITELIST:
+            return hostname
+        host = re.split(R'(?:\[\.\]|\.)', host.decode('latin1'))
+        if len(host) == 1:
+            return hostname
+        components = iter(reversed(host))
+        defanged_parts = [next(components)]
+        separator = '[.]'
+        for part in components:
+            defanged_parts.append(separator)
+            defanged_parts.append(part)
+            separator = '[.]' if part in tlds else '.'
+        defanged_host = ''.join(reversed(defanged_parts)).encode('latin1')
+        return user + atsgn + defanged_host + colon + port
 
+    def process(self, data):
         def replace_url(url: bytes):
             if not url:
                 return url
@@ -112,7 +112,7 @@ class defang(Unit):
                 operations.update(scheme=self._PROTOCOL_ESCAPES.get(parsed.scheme.lower(), parsed.scheme))
             if scheme < 2:
                 operations.update(scheme=B'')
-            operations.update(netloc=replace_hostname(parsed.netloc))
+            operations.update(netloc=self._replace_hostname(parsed.netloc))
             url = urlunparse(parsed._replace(**operations))
             if scheme == 0:
                 url = B':' + url
@@ -126,7 +126,7 @@ class defang(Unit):
 
         if not self.args.url_only:
             urlsplit[0::step] = [
-                indicators.host.value.bin.sub(replace_hostname, t)
+                indicators.host.value.bin.sub(self._replace_hostname, t)
                 for t in itertools.islice(iter(urlsplit), 0, None, step)
             ]
 

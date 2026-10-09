@@ -7,6 +7,7 @@ import itertools
 import struct
 
 from datetime import datetime, timedelta, timezone
+from typing import Callable, Iterator
 
 from refinery.lib.id import buffer_offset
 from refinery.lib.iso import FileSystemType
@@ -237,6 +238,69 @@ def _has_rr(system_use: bytes | memoryview, susp_offset: int) -> bool:
     return entry is not None
 
 
+def _fat_datetime(entry: bytes | memoryview) -> datetime | None:
+    time_val = struct.unpack_from('<H', entry, 22)[0]
+    date_val = struct.unpack_from('<H', entry, 24)[0]
+    if date_val == 0:
+        return None
+    try:
+        return datetime(
+            ((date_val >> 9) & 0x7F) + 1980,
+            (date_val >> 5) & 0xF,
+            date_val & 0x1F,
+            (time_val >> 11) & 0x1F,
+            (time_val >> 5) & 0x3F,
+            (time_val & 0x1F) * 2,
+        )
+    except (ValueError, OverflowError):
+        return None
+
+
+def _walk_fat_directory(
+    dir_data: bytes | memoryview,
+    prefix: str,
+    depth: int,
+    extract_chain: Callable[[int, int], bytes],
+    cluster_bytes: int,
+) -> Iterator[tuple[str, datetime | None, bytes]]:
+    """
+    Generates a *(path, date, content)* triple for every file in the given FAT directory and in
+    its subdirectories, each subdirectory in place of its entry. The cluster chain of a file or
+    directory is read by `extract_chain` from its first cluster and its size.
+    """
+    if depth > 16:
+        return
+    for i in range(0, len(dir_data) - 31, 32):
+        entry = dir_data[i:i + 32]
+        if entry[0] == 0:
+            break
+        if entry[0] == 0xE5:
+            continue
+        attr = entry[11]
+        if attr == 0x0F or attr & 0x08:
+            continue
+        raw_name = bytes(entry[0:8]).rstrip(b' ')
+        raw_ext = bytes(entry[8:11]).rstrip(b' ')
+        try:
+            fname = raw_name.decode('ascii')
+            if raw_ext:
+                fname += '.' + raw_ext.decode('ascii')
+        except (UnicodeDecodeError, ValueError):
+            continue
+        fname = fname.lower()
+        cluster = struct.unpack_from('<H', entry, 26)[0]
+        size = struct.unpack_from('<I', entry, 28)[0]
+        dt = _fat_datetime(entry)
+        full_path = F'{prefix}/{fname}' if prefix else fname
+        if attr & 0x10:
+            if fname in ('.', '..'):
+                continue
+            sub = extract_chain(cluster, cluster_bytes * 256)
+            yield from _walk_fat_directory(sub, full_path, depth + 1, extract_chain, cluster_bytes)
+        else:
+            yield full_path, dt, extract_chain(cluster, size)
+
+
 def _parse_fat_image(
     data: memoryview | bytes,
 ) -> list[tuple[str, datetime | None, bytes]] | None:
@@ -305,63 +369,8 @@ def _parse_fat_image(
             c = next_cluster(c)
         return bytes(result[:size])
 
-    def parse_datetime(entry: bytes | memoryview) -> datetime | None:
-        time_val = struct.unpack_from('<H', entry, 22)[0]
-        date_val = struct.unpack_from('<H', entry, 24)[0]
-        if date_val == 0:
-            return None
-        try:
-            return datetime(
-                ((date_val >> 9) & 0x7F) + 1980,
-                (date_val >> 5) & 0xF,
-                date_val & 0x1F,
-                (time_val >> 11) & 0x1F,
-                (time_val >> 5) & 0x3F,
-                (time_val & 0x1F) * 2,
-            )
-        except (ValueError, OverflowError):
-            return None
-
-    files: list[tuple[str, datetime | None, bytes]] = []
-
-    def walk_directory(
-        dir_data: bytes | memoryview,
-        prefix: str,
-        depth: int = 0,
-    ) -> None:
-        if depth > 16:
-            return
-        for i in range(0, len(dir_data) - 31, 32):
-            entry = dir_data[i:i + 32]
-            if entry[0] == 0:
-                break
-            if entry[0] == 0xE5:
-                continue
-            attr = entry[11]
-            if attr == 0x0F or attr & 0x08:
-                continue
-            raw_name = bytes(entry[0:8]).rstrip(b' ')
-            raw_ext = bytes(entry[8:11]).rstrip(b' ')
-            try:
-                fname = raw_name.decode('ascii')
-                if raw_ext:
-                    fname += '.' + raw_ext.decode('ascii')
-            except (UnicodeDecodeError, ValueError):
-                continue
-            fname = fname.lower()
-            cluster = struct.unpack_from('<H', entry, 26)[0]
-            size = struct.unpack_from('<I', entry, 28)[0]
-            dt = parse_datetime(entry)
-            full_path = F'{prefix}/{fname}' if prefix else fname
-            if attr & 0x10:
-                if fname in ('.', '..'):
-                    continue
-                sub = extract_chain(cluster, cluster_bytes * 256)
-                walk_directory(sub, full_path, depth + 1)
-            else:
-                files.append((full_path, dt, extract_chain(cluster, size)))
-
-    walk_directory(data[root_dir_offset:root_dir_offset + root_dir_size], '')
+    root = data[root_dir_offset:root_dir_offset + root_dir_size]
+    files = list(_walk_fat_directory(root, '', 0, extract_chain, cluster_bytes))
     return files or None
 
 

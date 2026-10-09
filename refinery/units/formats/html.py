@@ -5,7 +5,7 @@ from io import StringIO
 
 from refinery.lib.id import is_likely_htm
 from refinery.lib.meta import metavars
-from refinery.lib.types import Param
+from refinery.lib.types import Callable, Param
 from refinery.lib.xml import XMLNodeBase
 from refinery.units.formats import Arg, UnpackResult, XMLToPathExtractorUnit
 
@@ -183,33 +183,33 @@ class xthtml(XMLToPathExtractorUnit):
                 break
             root = child
 
-        def tree(root: HTMLNode, *parts: str):
+        yield from self._tree(path, root, path(root))
 
-            def outer(root: HTMLNode = root):
-                return root.recover(inner=False).encode(self.codec)
+    def _tree(self, path: Callable[[HTMLNode], str], root: HTMLNode, *parts: str):
 
-            def inner(root: HTMLNode = root):
-                return root.recover().encode(self.codec)
+        def outer(root: HTMLNode = root):
+            return root.recover(inner=False).encode(self.codec)
 
-            tagpath = '/'.join(parts)
-            meta = {}
+        def inner(root: HTMLNode = root):
+            return root.recover().encode(self.codec)
 
-            if self.args.attributes:
-                meta.update(root.attributes)
+        tagpath = '/'.join(parts)
+        meta = {}
 
-            if root.root:
-                yield UnpackResult(tagpath, inner, **meta)
-            elif self.args.outer:
-                yield UnpackResult(tagpath, outer, **meta)
-            else:
-                yield UnpackResult(tagpath, inner, **meta)
+        if self.args.attributes:
+            meta.update(root.attributes)
 
-            for child in root.children:
-                if child.textual:
-                    continue
-                yield from tree(child, *parts, path(child))
+        if root.root:
+            yield UnpackResult(tagpath, inner, **meta)
+        elif self.args.outer:
+            yield UnpackResult(tagpath, outer, **meta)
+        else:
+            yield UnpackResult(tagpath, inner, **meta)
 
-        yield from tree(root, path(root))
+        for child in root.children:
+            if child.textual:
+                continue
+            yield from self._tree(path, child, *parts, path(child))
 
     @classmethod
     def handles(cls, data):
