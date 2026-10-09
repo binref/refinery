@@ -16,6 +16,15 @@ class TestDecorators(TestBase):
         self.assertEqual(add(3, 4), 7)
         self.assertEqual(add(3, -4), 0xFFFF)
 
+    def test_a_function_that_defines_a_function_is_masked_as_a_whole(self):
+        @masked(0xFF)
+        def double_successor(a: int):
+            def successor(b: int):
+                return b + 1
+            return successor(a) * 2
+
+        self.assertEqual(double_successor(0x80), 0x02)
+
     def test_modulo_16bit(self):
         @masked(0x10000, mod=True)
         def add(a: int, b: int):

@@ -102,7 +102,6 @@ class _MaskingTransformer(ast.NodeTransformer):
         return ast.BinOp(node, self.op(), ast.Constant(self.mask))
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        self.generic_visit(node)
         if self.name is None:
             node.name = self.name = F'__wrapped_{node.name}'
             for k in range(len(node.decorator_list)):
@@ -113,6 +112,7 @@ class _MaskingTransformer(ast.NodeTransformer):
                 if decorator.id == masked.__name__:
                     del node.decorator_list[:k + 1]
                     break
+        self.generic_visit(node)
         return node
 
 
