@@ -68,6 +68,7 @@ from refinery.lib.inno.ifps import (
 )
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
+from refinery.lib.tools import copy_exception
 from refinery.lib.types import AST, INF
 
 if TYPE_CHECKING:
@@ -438,6 +439,11 @@ class ExceptionHandler:
     current: EHType = EHType.Try
     """
     Represents the current state of this exception handler.
+    """
+    depth: int = 0
+    """
+    The size of the data stack when the handler was installed. The stack is cut back to this size
+    when an exception enters one of the blocks of the handler.
     """
 
 
@@ -918,14 +924,17 @@ class IFPSEmulator:
                     except GeneratorExit:
                         raise
                     except BaseException as b:
-                        pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', b)
+                        pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', copy_exception(b))
                     else:
                         if not handler.void:
                             stack[-1].set(return_value)
                 if not callstack:
                     if pending_exception is None:
                         return
-                    raise pending_exception
+                    try:
+                        raise pending_exception
+                    finally:
+                        pending_exception = None
                 function, ip, sp, exceptions = callstack.pop()
                 continue
 
@@ -939,9 +948,11 @@ class IFPSEmulator:
                 if _cfg_log_opcodes:
                     yield NewInstruction(function, insn, ip)
                 try:
-                    if pe := pending_exception:
-                        pending_exception = None
-                        raise pe
+                    if pending_exception is not None:
+                        try:
+                            raise pending_exception
+                        finally:
+                            pending_exception = None
 
                     opc = insn.opcode
                     ip += insn.size
@@ -1081,7 +1092,7 @@ class IFPSEmulator:
                         if self.jumpflag:
                             ip = insn.operands[0]
                     elif opc == Op.PushEH:
-                        exceptions.append(ExceptionHandler(*insn.operands))
+                        exceptions.append(ExceptionHandler(*insn.operands, depth=len(stack)))
                     elif opc == Op.PopEH:
                         tp = None
                         et = EHType(insn.operands[0])
@@ -1132,6 +1143,7 @@ class IFPSEmulator:
                         }[et]
                     if et is None:
                         raise EE
+                    del stack[eh.depth:]
                     eh.current = et
                     ip = tp
                 except AbortEmulation:

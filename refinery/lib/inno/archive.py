@@ -2717,7 +2717,11 @@ class InnoArchive:
             emulator = None
         if emulator is not None:
             for file in self.files:
-                path = emulator.reset().expand_constant(file.path)
+                try:
+                    path = emulator.reset().expand_constant(file.path)
+                except Exception as error:
+                    self._log_warning(F'keeping the constants of {file.path}: {exception_to_string(error)}')
+                    path = file.path
                 path = path.replace('\\', '/')
                 drive, colon, path = path.rpartition(':/')
                 if colon and len(drive) == 1:

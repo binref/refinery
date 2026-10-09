@@ -105,6 +105,23 @@ class TestInnoExtractor(TestUnitBase):
             inno = InnoArchive(data)
         self.assertEqual(inno.version, tried[1])
 
+    def test_a_file_path_whose_constants_fail_to_expand_does_not_keep_the_archive_from_opening(self):
+        from refinery.lib.inno.emulator import IFPSEmulator, IFPSException
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
+        expand = IFPSEmulator.expand_constant
+
+        def expand_or_fail(emulator, string: str, *args, **kwargs):
+            if string.endswith('idp.dll'):
+                raise IFPSException('invalid format string')
+            return expand(emulator, string, *args, **kwargs)
+
+        with mock.patch.object(IFPSEmulator, 'expand_constant', expand_or_fail):
+            inno = InnoArchive(data)
+        self.assertEqual(sorted(file.path for file in inno.files), [
+            'data/{app}/FBDF14B7-BF8D-A74F-A843-5F22543F7A88',
+            'data/{tmp}/idp.dll',
+        ])
+
     def test_a_chunk_is_read_decompressed(self):
         inno = InnoArchive(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
         file = next(file for file in inno.files if file.size and not file.filtered)

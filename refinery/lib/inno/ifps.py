@@ -1210,12 +1210,18 @@ class FunctionReference:
     """
     A reference from an instruction or a constant of a compiled Pascal script to a function of the
     same script. The script owns its functions, and a function may call itself, so the reference is
-    weak: The script has to be kept while its instructions and constants are read.
+    weak: The script has to be kept while its instructions and constants are read. References are
+    equal when the functions they refer to are, like the procedure pointers of the script.
     """
     __slots__ = '_function',
 
     def __init__(self, function: Function):
         self._function = weakref.ref(function)
+
+    def __eq__(self, other):
+        if not isinstance(other, FunctionReference):
+            return NotImplemented
+        return self._function == other._function
 
     @property
     def function(self) -> Function:
