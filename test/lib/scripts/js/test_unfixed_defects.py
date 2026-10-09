@@ -3886,9 +3886,10 @@ class TestTheGlobalObjectInAPropertyADefaultOrAPatternIsWrittenThrough(TestBase)
         )
 
 
-#: Programs in which a copy of a string into a computed key makes a call install a key on every
-#: object, and another object reads that key, mapped to what Node prints: the reading object
-#: declared before the copying one, and declared in a function nested in its scope.
+#: Programs that install a key on every object through a method whose name an object holds, and read
+#: that key off an object of their own, mapped to what Node prints: the reading object declared
+#: before the one holding the name, and declared in a function nested in its scope. An obfuscator
+#: stores the names a program spells in such objects, and the program itself is arbitrary.
 A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT = {
     a_program("""
         var B = {x: 1};
@@ -3912,13 +3913,12 @@ class TestAKeyAnotherObjectReadsAfterACopyInstalledItIsFound(TestBase):
     the models see no install of it. The install `Object[A.k](...)` becomes readable once the copy
     of `"defineProperty"` is made, so an object decided before `A`, declared earlier or in a nested
     function, reads the key as absent.
+
+    The rule that closes it: the pass decides the keys objects inherit after it made the copies of
+    every object, on models renewed after them.
     """
 
-    @wontfix(
-        'an obfuscated file reads only keys its storage object holds, and a program reading a '
-        'key no object holds after building the call that installs it from a string is made up '
-        'for the defect'
-    )
+    @unittest.expectedFailure
     def test_the_key_is_found(self):
         rows = A_KEY_ANOTHER_OBJECT_READS_AFTER_A_COPY_INSTALLED_IT
         self.assertEqual(
@@ -4020,6 +4020,195 @@ class TestAnArrowReadingNewTargetReadsTheFunctionItWasWrittenIn(TestBase):
         self.assertEqual(
             before_and_after(AN_ARROW_READING_NEW_TARGET_CALLED_FROM_A_NESTED_FUNCTION),
             (('true\n', None), ('true\n', None)),
+        )
+
+
+#: A program in which one inlined call of an object answers the name of the method that installs a
+#: getter on every object, and a later call of the same object drops an argument that reads it,
+#: mapped to what Node prints for it.
+A_GETTER_ONE_CALL_INSTALLS_READ_IN_AN_ARGUMENT_ANOTHER_DROPS = a_program("""
+    var O = {id: function (x) { return x; }, drop: function (a) { return 1; }};
+    function h() { return ({}).q; }
+    function later() { return O.drop(h()); }
+    Object[O.id("defineProperty")](Object.prototype, "q", {get: function () { console.log("side"); return 1; }});
+    console.log(later());
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallOfAnObjectSeesWhatAnEarlierCallOfItShowed(TestBase):
+    """
+    Object folding inlines the calls of one object on the facts as they stand after its copies.
+    Inlining `O.id("defineProperty")` makes the install of a getter on `Object.prototype` readable,
+    but the call `O.drop(h())` is decided on facts without it: `h()` reads as free of effects and is
+    dropped with the argument, and the getter's output is lost.
+    """
+
+    @wontfix(
+        'storage objects hold no identity wrapper whose answer names an installer, and a getter '
+        'on every object read by an argument a wrapper drops is made up for the defect'
+    )
+    def test_the_getter_still_runs(self):
+        self.assertEqual(
+            before_and_after(A_GETTER_ONE_CALL_INSTALLS_READ_IN_AN_ARGUMENT_ANOTHER_DROPS),
+            (('side\n1\n', None), ('side\n1\n', None)),
+        )
+
+
+#: A program whose object is folded inside a `with` body whose object reads a name through a getter,
+#: mapped to what Node prints for it.
+A_COPY_IN_A_WITH_BODY_READING_A_NAME_THROUGH_A_GETTER = a_program("""
+    var obj = {};
+    Object.defineProperty(obj, "Math", {get: function () { console.log("got"); return Math; }});
+    with (obj) {
+      (function () {
+        var O = {k: "call", g: function (b) { return b; }, f: function (k, a) { return k; }};
+        console.log(O.f(""[O.k], O.g(Math)));
+      })();
+    }
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReadOfACopyInAWithBodyRunsItsGetter(TestBase):
+    """
+    The read of `Math` in the `with` body runs the getter of the `with` object. Object folding inlines
+    `O.g(Math)` first and then asks whether reading the copy of `Math` it wrote has an effect. The
+    held semantic model never saw that copy, does not place it in the `with` body, and answers that
+    the read has none, so `O.f` drops it.
+    """
+
+    @wontfix(
+        'obfuscated storage objects are not folded inside a with body whose object carries getters '
+        'for the names their wrappers are handed'
+    )
+    def test_the_getter_still_runs(self):
+        self.assertEqual(
+            before_and_after(A_COPY_IN_A_WITH_BODY_READING_A_NAME_THROUGH_A_GETTER),
+            (('got\nundefined\n', None), ('got\nundefined\n', None)),
+        )
+
+
+#: A classic script that replaces one of its top-level objects through the global object under a
+#: key it holds in a variable, mapped to what a host running it prints.
+AN_OBJECT_REPLACED_THROUGH_THE_GLOBAL_OBJECT_UNDER_A_RUNTIME_KEY = a_program("""
+    var K = "C";
+    var C = {x: 1};
+    globalThis[K] = {x: 5};
+    console.log(C.x);
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnObjectReplacedThroughTheGlobalObjectUnderARuntimeKeyIsRead(TestBase):
+    """
+    A top-level variable of a classic script is a property of the global object, and a write to the
+    global object under a key the models cannot read may replace it. Object folding folds `C.x` to
+    the value of the literal all the same.
+    """
+
+    @wontfix(
+        'a program replacing its own top-level object through the global object under a key it '
+        'computes is made up for the defect'
+    )
+    def test_the_replaced_object_is_read(self):
+        self.assertEqual(
+            before_and_after_in_a_host(AN_OBJECT_REPLACED_THROUGH_THE_GLOBAL_OBJECT_UNDER_A_RUNTIME_KEY),
+            (('5\n', None), ('5\n', None)),
+        )
+
+
+#: A program whose object literal names one key twice, the first time with a value that throws,
+#: mapped to what Node prints for it.
+AN_OBJECT_NAMING_A_KEY_TWICE_WITH_A_THROWING_VALUE_FIRST = a_program("""
+    function f() { var O = {a: x, a: 2}; return O.a; }
+    try { console.log(f()); } catch (e) { console.log(e.name); }
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnEarlierValueOfAKeyNamedTwiceStillThrows(TestBase):
+    """
+    Object folding keeps the last value of a key a literal names twice and drops the earlier one with
+    the declaration, without asking whether reading it throws. Building the literal reads `x`, which
+    no declaration binds, and throws a `ReferenceError`.
+    """
+
+    @wontfix(
+        'obfuscators emit every key of a storage object once, and a literal naming a key twice is '
+        'made up for the defect'
+    )
+    def test_the_literal_still_throws(self):
+        self.assertEqual(
+            before_and_after(AN_OBJECT_NAMING_A_KEY_TWICE_WITH_A_THROWING_VALUE_FIRST),
+            (('ReferenceError\n', None), ('ReferenceError\n', None)),
+        )
+
+
+#: A classic script whose object holds a function with a parameter named `eval` that it calls, mapped
+#: to what a host running it prints.
+A_PARAMETER_NAMED_EVAL_CALLED_IN_AN_INLINED_FUNCTION = a_program("""
+    var O = {f: function (eval, s) { return eval(s); }};
+    function main() { O.f(eval, "var x = 1"); return typeof x; }
+    console.log(main());
+    """)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAParameterNamedEvalRunsTheCodeInTheGlobalScope(TestBase):
+    """
+    Called through a parameter named `eval`, the function the parameter holds runs as an indirect
+    `eval`, in the global scope. Inlining `O.f` writes `eval(s)` with the argument in place of the
+    parameter where `main` calls it, a direct `eval` that declares `x` in `main`.
+    """
+
+    @wontfix(
+        'no obfuscator names a parameter eval, and a program handing eval to a function whose '
+        'parameter has that name is made up for the defect'
+    )
+    def test_the_code_runs_in_the_global_scope(self):
+        self.assertEqual(
+            before_and_after_in_a_host(A_PARAMETER_NAMED_EVAL_CALLED_IN_AN_INLINED_FUNCTION),
+            (('undefined\n', None), ('undefined\n', None)),
+        )
+
+
+#: Programs that take the method installing a descriptor out of `Object` by destructuring and install
+#: a key on every object with it, mapped to what Node prints: the key written as a name, and as a
+#: computed string.
+AN_INSTALLER_TAKEN_BY_DESTRUCTURING = {
+    a_program("""
+        var {defineProperty: d} = Object;
+        d(Object.prototype, "q", {value: 1});
+        var B = {y: 1};
+        console.log(B.q);
+        """): '1\n',
+    a_program("""
+        var {["defineProperty"]: d} = Object;
+        d(Object.prototype, "q", {value: 1});
+        var B = {y: 1};
+        console.log(B.q);
+        """): '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnInstallerTakenByDestructuringIsSeen(TestBase):
+    """
+    The models read a call of `Object.defineProperty`, or of a name a declaration gives it, as an
+    install, but not a call of the name a destructuring of `Object` takes it out under. The install on
+    `Object.prototype` is not seen, and object folding reads `B.q` as absent.
+
+    The rule that closes it: a property a pattern takes out of a value is read as the member access
+    of that value under the pattern's key, the way a declaration's initializer is.
+    """
+
+    @unittest.expectedFailure
+    def test_the_install_is_seen(self):
+        rows = AN_INSTALLER_TAKEN_BY_DESTRUCTURING
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
         )
 
 
