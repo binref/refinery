@@ -81,10 +81,18 @@ class ExcelWorkbook(ABC):
         Excel matches sheet names. `None` when the workbook has no such sheet.
         """
         key = name.lower()
-        for index, sheet in enumerate(self.sheets()):
-            if sheet.name.lower() == key:
+        for index, sheet_name in enumerate(self.sheet_names()):
+            if sheet_name.lower() == key:
                 return index
         return None
+
+    def sheet_names(self) -> list[str]:
+        """
+        The names of the sheets that `refinery.lib.excel.workbook.ExcelWorkbook.sheets` lists, in
+        the same order. Readers that keep a table of their sheets list the names without building
+        the sheets.
+        """
+        return [sheet.name for sheet in self.sheets()]
 
     def formula(self, source: FormulaSource) -> Expression | None:
         """
@@ -110,9 +118,10 @@ _PACKAGE_DEFECTS = (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError)
 
 class _PartStream:
     """
-    A package part as a read-only binary stream. Reading a defective entry of the archive
-    raises `ExcelFormatError` instead of the exception class of the `zipfile` module. Closing
-    the stream releases the archive entry, which refers to the data of the whole package.
+    A package part as a read-only binary stream. Reading a defective entry of the archive raises
+    `refinery.lib.excel.common.ExcelFormatError` instead of the exception class of the `zipfile`
+    module. Closing the stream releases the archive entry, which refers to the data of the whole
+    package.
     """
 
     def __init__(self, stream: IO[bytes]):

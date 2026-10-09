@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 
+from refinery.lib.excel import open_workbook
 from refinery.lib.excel.common import (
     ERROR_TEXT,
     Cell,
@@ -18,6 +19,7 @@ from refinery.lib.excel.common import (
 )
 
 from ... import TestBase
+from . import samples
 
 
 class TestCellReferences(TestBase):
@@ -265,3 +267,14 @@ class TestDateFormatDetection(TestBase):
         ]:
             with self.subTest(fmt_id=fmt_id):
                 self.assertEqual(is_builtin_date_format(fmt_id), expected)
+
+
+class TestSheetNames(TestBase):
+
+    def test_the_sheet_names_of_a_workbook_are_the_names_of_its_sheets(self):
+        names = [name for name in vars(samples) if name.isupper() and name != 'CORRUPTED_ERROR']
+        self.assertGreater(len(names), 10)
+        for name in names:
+            with self.subTest(sample=name):
+                workbook = open_workbook(getattr(samples, name))
+                self.assertEqual(workbook.sheet_names(), [sheet.name for sheet in workbook.sheets()])

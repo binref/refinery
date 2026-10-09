@@ -257,6 +257,9 @@ class OoxmlWorkbook(ExcelWorkbook):
         """
         return [OoxmlSheet(*entry, self) for entry in self._sheet_table]
 
+    def sheet_names(self) -> list[str]:
+        return [entry.name for entry in self._sheet_table]
+
     def defined_names(self) -> Sequence[DefinedName]:
         """
         All defined names of the workbook, in the order their `definedName` elements appear.

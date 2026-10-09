@@ -594,6 +594,9 @@ class BiffWorkbook(ExcelWorkbook):
         """
         return [BiffSheet(entry, self) for entry in self._sheet_table]
 
+    def sheet_names(self) -> list[str]:
+        return [entry.name for entry in self._sheet_table]
+
     def sheet_index(self, name: str) -> int | None:
         """
         The position of a sheet in the boundsheet table, which the scopes of the defined names
