@@ -72,6 +72,8 @@ class blz(Unit):
         remaining = total_size
         self.log_debug(F'total size: 0x{total_size:016X}')
         self.log_debug(F'chunk size: 0x{chunk_size:016X}')
+        if not chunk_size:
+            raise ValueError('The chunk size of the modified BriefLZ header is zero.')
         while remaining > chunk_size:
             self._decompress_chunk(chunk_size)
             remaining -= chunk_size

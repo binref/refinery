@@ -26,6 +26,13 @@ class TestBriefLZ(TestUnitBase):
         M = self.download_sample('2579bc4cd0d5f76d1a2937a0e0eb0256f2a9f2f8a30c1da694be66bfa04dc740')
         self.assertEqual(next(M | C | D), M)
 
+    def test_a_modified_header_with_a_chunk_size_of_zero_is_rejected(self):
+        from refinery.lib.frame import Chunk
+        data = Chunk(self.download_sample('2579bc4cd0d5f76d1a2937a0e0eb0256f2a9f2f8a30c1da694be66bfa04dc740'))
+        data[16:24] = bytes(8)
+        with self.assertRaises(ValueError):
+            self.load().process(data)
+
     def test_compress_repeated_byte(self):
         C = self.load(reverse=True)
         D = self.load()
