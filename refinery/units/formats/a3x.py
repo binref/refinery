@@ -573,6 +573,18 @@ class _Operands(dict):
         return a3x_number_representation(number)
 
 
+_BLOCK_ENDS = frozenset((
+    'endfunc',
+    'endif',
+    'endselect',
+    'endswitch',
+    'endwith',
+    'next',
+    'until',
+    'wend',
+))
+
+
 def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]]:
     reader = A3xReader(memoryview(bytecode))
     num_lines = reader.u32()
@@ -608,11 +620,11 @@ def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]
                 expected_terminators.append('endselect')
             elif lt[0] == 'switch':
                 expected_terminators.append('endswitch')
-            elif lt[0] == 'func':
+            elif lt[0] == 'func' or lt[:2] == ['volatile', 'func']:
                 expected_terminators.append('endfunc')
             elif lt[0] == 'with':
                 expected_terminators.append('endwith')
-            elif lt[0].startswith('end') or lt[0] in {'next', 'until', 'wend'}:
+            elif lt[0] in _BLOCK_ENDS:
                 try:
                     expected = expected_terminators.pop()
                 except IndexError:
