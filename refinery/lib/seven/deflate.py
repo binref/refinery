@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import enum
 
-from typing import Callable
-
 from refinery.lib.array import make_array
 from refinery.lib.seven.huffman import BitDecoderBase, HuffmanDecoder, HuffmanDecoder7b
 from refinery.lib.structures import StructReader
@@ -145,24 +143,22 @@ class BitLDecoderBase:
         '_value',
         '_stream',
         '_num_extra_bytes',
-        'read_direct_byte',
+        '_u8fast',
     )
 
-    read_direct_byte: Callable[[], int]
-
     def __init__(self, reader: StructReader):
-        def _rdb():
-            try:
-                return u8fast()
-            except Exception:
-                self._num_extra_bytes += 1
-                return 0xFF
         self._bit_pos = kNumBigValueBits
         self._value = 0
         self._stream = reader
         self._num_extra_bytes = 0
-        u8fast = reader.u8fast
-        self.read_direct_byte = _rdb
+        self._u8fast = reader.u8fast
+
+    def read_direct_byte(self) -> int:
+        try:
+            return self._u8fast()
+        except Exception:
+            self._num_extra_bytes += 1
+            return 0xFF
 
     def get_stream_size(self):
         if self.extra_bits_were_read():

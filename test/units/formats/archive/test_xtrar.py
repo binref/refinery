@@ -534,6 +534,11 @@ class TestRarSamples(TestUnitBase):
             'cda_exe/ChromeSingle.exe' : 'f4b74e8dc753d4aceeb3e7fe66327db33c7d6eb7e863989271f51e2fb426f86d',
         })
 
+    def test_ppm_decompression_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('1a1af0d6b8caf1dd5f56dc2c6a02a768a1c27960171dc21ddbac244e02fd25c1')
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])
+
 
 @pytest.mark.cythonized
 class TestRAR15(TestUnitBase):

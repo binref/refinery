@@ -3,6 +3,8 @@ import codecs
 import struct
 import zlib
 
+import pytest
+
 from unittest import mock
 
 from ... import TestUnitBase
@@ -160,13 +162,15 @@ class Test7zipFileExtractor(TestUnitBase):
             self.TESTFILE2_CONTENT,
         )
 
+    DEFLATE64_ARCHIVE = base64.b64decode(
+        'N3q8ryccAASXzpbMrgAAAAAAAAAhAAAAAAAAACYfpAU9ikEKgDAMBL+yD5Be/YJ3X1BqagOlCUn04OsVQWFOM7NQ7zIhGjseMoI8'
+        'ULkTqhjmixXZSuOT3sRjTysVGds/fR56mIqTpxsAAIEzB64P0lo1/UDAkM7l30UpeDKqr9MF9yyL2dyBv0cQc5Iu4RhHoFIz1b7U'
+        'AjikBrUQdMTrEeqXY4mf5m4yijjl3nVzt2iWATkcaESi5zJUI7qqZBfyaSh7KWwQaqg3EkajqYAXBkgBCWYABwsBAAEjAwEBBV0A'
+        'EAAADICOCgHJWZxoAAA='
+    )
+
     def test_deflate64_archive(self):
-        data = base64.b64decode(
-            'N3q8ryccAASXzpbMrgAAAAAAAAAhAAAAAAAAACYfpAU9ikEKgDAMBL+yD5Be/YJ3X1BqagOlCUn04OsVQWFOM7NQ7zIhGjseMoI8'
-            'ULkTqhjmixXZSuOT3sRjTysVGds/fR56mIqTpxsAAIEzB64P0lo1/UDAkM7l30UpeDKqr9MF9yyL2dyBv0cQc5Iu4RhHoFIz1b7U'
-            'AjikBrUQdMTrEeqXY4mf5m4yijjl3nVzt2iWATkcaESi5zJUI7qqZBfyaSh7KWwQaqg3EkajqYAXBkgBCWYABwsBAAEjAwEBBV0A'
-            'EAAADICOCgHJWZxoAAA='
-        )
+        data = self.DEFLATE64_ARCHIVE
         self.assertEqual(
             str(data | self.load('testfile.txt')),
             self.TESTFILE1_CONTENT,
@@ -175,6 +179,17 @@ class Test7zipFileExtractor(TestUnitBase):
             str(data | self.load('testfile2.txt')),
             self.TESTFILE2_CONTENT,
         )
+
+    @pytest.mark.cythonized
+    def test_the_deflate64_decoder_is_freed_without_the_collector(self):
+        from refinery.lib.seven.deflate import BitLDecoder
+        unit = self.load('testfile.txt')
+
+        def extract():
+            self.assertEqual(str(self.DEFLATE64_ARCHIVE | unit), self.TESTFILE1_CONTENT)
+
+        with self.assertNoInstanceSurvives(BitLDecoder):
+            extract()
 
     def test_archive_with_directory(self):
         data = base64.b64decode(

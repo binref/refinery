@@ -1240,14 +1240,6 @@ class Unpack30(RarUnpacker):
         self._prgstack: list[_UnpackFilter30 | None] = []
         self._last_filter = 0
 
-    def _get_char(self) -> int:
-        inp = self._inp
-        if inp.in_addr >= len(inp.buf):
-            return 0
-        ch = inp.buf[inp.in_addr]
-        inp.in_addr += 1
-        return ch
-
     def _write_buf(self):
         written_border = self._wr_ptr
         mask = self._win_mask
@@ -1473,7 +1465,7 @@ class Unpack30(RarUnpacker):
         if bit_field & 0x8000:
             self._block_type = BLOCK_PPM
             esc_ref = [self._ppm_esc_char]
-            result = self._ppm.decode_init(self._get_char, esc_ref)
+            result = self._ppm.decode_init(self._inp.get_char, esc_ref)
             self._ppm_esc_char = esc_ref[0]
             return result
 

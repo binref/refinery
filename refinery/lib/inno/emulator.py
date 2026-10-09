@@ -447,6 +447,15 @@ class _CallState(NamedTuple):
     eh: list[ExceptionHandler]
 
 
+class _WizardForm:
+    """
+    Stands in for the wizard form of a setup: a script can keep it and pass it to the methods of
+    its controls, which do not read it.
+    """
+    def __repr__(self):
+        return 'WizardForm'
+
+
 class IFPSEmulatedFunction(NamedTuple):
     """
     Represents an emulated external symbol.
@@ -721,6 +730,7 @@ class IFPSEmulator:
             self.inno = None
             self.ifps = ifps = archive
         self.config = options or IFPSEmulatorConfig(**more)
+        self._wizard_form = _WizardForm()
         self.globals = [Variable(v.type, v.spec) for v in ifps.globals]
         self.stack: list[Variable] = []
         self.mutexes: set[str] = set()
@@ -991,7 +1001,7 @@ class IFPSEmulator:
                     elif opc == Op.PushVar:
                         stack.append(getvar(insn.op(0)))
                     elif opc == Op.Pop:
-                        self.temp = stack.pop()
+                        stack.pop()
                     elif opc == Op.Call:
                         callstack.append(_CallState(function, ip, sp, exceptions))
                         function = insn.operands[0]
@@ -1740,7 +1750,7 @@ class IFPSEmulator:
 
     @external()
     def WizardForm(self) -> object:
-        return self
+        return self._wizard_form
 
     @external()
     def Unassigned(self) -> None:

@@ -109,7 +109,7 @@ class RarUnpacker:
         """
         Reinitialize for the next file in a solid archive chain.
         """
-        self._inp = BitInput(data)
+        self._inp.load(data)
         self._dest_size = dest_size
         self._output = bytearray()
         self._written = 0

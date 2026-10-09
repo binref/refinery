@@ -81,3 +81,8 @@ class TestInnoExtractor(TestUnitBase):
         unit = self.load()
         pwds = data | unit | {str}
         self.assertContains(pwds, r'fb1282c9-cffb-4dfb-bd71-a3a333110eeb')
+
+    def test_emulation_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc')
+        unit = self.load()
+        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | {str})
