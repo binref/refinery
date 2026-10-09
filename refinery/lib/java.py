@@ -669,11 +669,11 @@ class JvClassFile(Struct):
         self.this = reader.u16()
         self.parent = reader.u16()
 
-        try:
-            self.interfaces = [self.pool[reader.u16()]
-                for _ in range(reader.u16())]
-        except IndexError:
-            raise ValueError('Failed parsing Interfaces.')
+        self.interfaces = []
+        for _ in range(reader.u16()):
+            if not 0 < (index := reader.u16()) <= len(self.pool):
+                raise ValueError('Failed parsing Interfaces.')
+            self.interfaces.append(self.pool[index - 1])
         try:
             self.fields = [JvClassMember(reader, pool=self.pool)
                 for _ in range(reader.u16())]
