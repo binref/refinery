@@ -65,3 +65,14 @@ class TestIterSpread(TestBase):
             return a + b + len(test.__name__)
         with self.assertRaises(FunctionRefersToItself):
             iterspread(test, range(3), 10)
+
+    def test_a_function_with_a_parameter_named_like_it_is_inlined(self):
+        def test(a, test):
+            return a + test
+        self.assertEqual(list(iterspread(test, range(3), 10)(None)), [10, 11, 12])
+
+    def test_a_function_with_a_local_variable_named_like_it_is_inlined(self):
+        def test(a, b):
+            test = a * b
+            return test + 1
+        self.assertEqual(list(iterspread(test, range(3), 10)(None)), [1, 11, 21])

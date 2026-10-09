@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import symtable
 
 from ast import (
     Assign,
@@ -64,9 +65,30 @@ class NoFunctionDefinitionFound(ValueError):
 
 class FunctionRefersToItself(ValueError):
     """
-    Raised by `refinery.lib.inline.iterspread` if the body of the input method names the method:
-    The inlined function is a different function under the same name.
+    Raised by `refinery.lib.inline.iterspread` if the body of the input method uses the name of
+    the method as a global name: The inlined function is a different function under the same name.
     """
+
+
+def _uses_global_name(source: str, function: str, name: str) -> bool:
+    """
+    Whether the given function, defined in the given source code, uses the given name as a global
+    name in its body or in a scope nested in it. A parameter or local variable of that name is not
+    a global name.
+    """
+    module = symtable.symtable(source, '<inlined>', 'exec')
+    pending = [table for table in module.get_children() if table.get_name() == function]
+    while pending:
+        table = pending.pop()
+        try:
+            symbol = table.lookup(name)
+        except KeyError:
+            pass
+        else:
+            if symbol.is_global() and symbol.is_referenced():
+                return True
+        pending.extend(table.get_children())
+    return False
 
 
 def _as_arg(name: str):
@@ -248,7 +270,8 @@ def iterspread(
     making a function call to `method` in each step of the iteration.
     """
 
-    code = ast.parse(getsource(method))
+    source = getsource(method)
+    code = ast.parse(source)
     closure_vars = inspect.getclosurevars(method)
     context = dict(closure_vars.nonlocals)
     reserved_names = set(context)
@@ -260,10 +283,7 @@ def iterspread(
     except StopIteration:
         raise NoFunctionDefinitionFound
 
-    if any(
-        isinstance(node, Name) and node.id == function_head.name
-        for statement in function_head.body for node in ast.walk(statement)
-    ):
+    if _uses_global_name(source, function_head.name, function_head.name):
         raise FunctionRefersToItself(F'The function {function_head.name} refers to itself and cannot be inlined.')
 
     for transformer in (
