@@ -20,8 +20,9 @@ import decimal
 import math
 import operator
 import re
+import struct
 
-from typing import Callable
+from typing import Callable, cast
 
 from refinery.lib.scripts.au3.analysis.values import (
     HEX_DIGITS,
@@ -32,7 +33,6 @@ from refinery.lib.scripts.au3.analysis.values import (
     as_string,
     of_array,
     of_binary,
-    of_bool,
     of_double_result,
     of_int,
     of_int_result,
@@ -66,6 +66,20 @@ def _int_argument(arguments: tuple[Au3Value, ...], index: int) -> int | None:
     number = _number_argument(arguments, index)
     if number is None or not isinstance(number, int):
         return None
+    return number
+
+
+def _whole_number(value: Au3Value) -> int | None:
+    """
+    The integer a value contributes to a bitwise builtin: a number without a fractional part, a
+    whole double included (probe7 51 — `BitAND(7.0, 3)` answers the Int32 3). A fractional value
+    is not a reading any probe pinned, so it refuses.
+    """
+    number = to_number(value)
+    if number is None:
+        return None
+    if isinstance(number, float):
+        return int(number) if number == int(number) else None
     return number
 
 
@@ -115,14 +129,16 @@ def _binary_argument(arguments: tuple[Au3Value, ...], index: int) -> bytes | Non
 
 
 def _evaluate_abs(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The absolute value as a double, over an integer argument no less than a string one
+    (probe7 45, 46, 55).
+    """
     if len(arguments) != 1:
         return None
     number = to_number(arguments[0])
     if number is None:
         return None
-    if isinstance(number, int):
-        return of_int_result(abs(number))
-    return of_double_result(abs(number))
+    return of_double_result(float(abs(number)))
 
 
 def _evaluate_int(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
@@ -164,18 +180,30 @@ def _evaluate_number(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
 
 
 def _evaluate_round(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    Half-up rounding. One argument rounds to an integer (probe7 43; probe8 21, 24, 25); two
+    arguments round to *digits* decimals and answer a double, an explicit zero included
+    (probe7 44; probe8 22, 23). Over an integer first argument the two-argument form is not a
+    reading any probe pinned, so it refuses.
+    """
     number = _number_argument(arguments, 0)
-    digits = _optional_int_argument(arguments, 1, 0)
+    if number is None or len(arguments) > 2:
+        return None
+    if len(arguments) == 1:
+        try:
+            quantized = decimal.Decimal(number).quantize(
+                decimal.Decimal(1), rounding=decimal.ROUND_HALF_UP)
+        except decimal.InvalidOperation:
+            return None
+        return of_int_result(int(quantized))
+    digits = _int_argument(arguments, 1)
     if (
-        number is None
-        or len(arguments) > 2
-        or digits is None
+        digits is None
         or digits < 0
         or digits > 15
+        or isinstance(number, int)
     ):
         return None
-    if isinstance(number, int) and digits == 0:
-        return of_int_result(number)
     try:
         quantized = decimal.Decimal(number).quantize(
             decimal.Decimal(1).scaleb(-digits), rounding=decimal.ROUND_HALF_UP)
@@ -209,17 +237,22 @@ def _math_evaluator(function: Callable[[int | float], float]) -> _Evaluator:
 
 
 def _evaluate_mod(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The remainder with the sign of the dividend: an integer only when both arguments are values
+    of the integer kind, a double once any argument is a double, a string, or a boolean
+    (probe6 19; probe7 20-25).
+    """
     if len(arguments) != 2:
         return None
     one = to_number(arguments[0])
     two = to_number(arguments[1])
     if one is None or two is None or two == 0:
         return None
-    if isinstance(one, int) and isinstance(two, int):
-        if abs(one) > _EXACT_INT or abs(two) > _EXACT_INT:
-            return None
-        return of_int_result(int(math.fmod(one, two)))
-    return of_double_result(math.fmod(one, two))
+    if arguments[0].kind is not Kind.INT or arguments[1].kind is not Kind.INT:
+        return of_double_result(math.fmod(one, two))
+    if abs(one) > _EXACT_INT or abs(two) > _EXACT_INT:
+        return None
+    return of_int_result(int(math.fmod(one, two)))
 
 
 def _bitwise_result(
@@ -227,8 +260,8 @@ def _bitwise_result(
         combine: Callable[[int, int], int]) -> Au3Value | None:
     numbers = []
     for argument in arguments:
-        number = to_number(argument)
-        if number is None or not isinstance(number, int):
+        number = _whole_number(argument)
+        if number is None:
             return None
         numbers.append(_to_int32(number))
     if len(numbers) < 2:
@@ -254,8 +287,8 @@ def _evaluate_bitxor(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
 def _evaluate_bitnot(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     if len(arguments) != 1:
         return None
-    number = to_number(arguments[0])
-    if number is None or not isinstance(number, int):
+    number = _whole_number(arguments[0])
+    if number is None:
         return None
     return of_int_result(~_to_int32(number))
 
@@ -268,14 +301,9 @@ def _evaluate_bitshift(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     if len(arguments) != 2:
         return None
-    one = to_number(arguments[0])
-    two = to_number(arguments[1])
-    if (
-        one is None
-        or two is None
-        or not isinstance(one, int)
-        or not isinstance(two, int)
-    ):
+    one = _whole_number(arguments[0])
+    two = _number_argument(arguments, 1)
+    if one is None or two is None or not isinstance(two, int):
         return None
     value = _to_int32(one)
     if two >= 0:
@@ -369,13 +397,19 @@ def _evaluate_hex(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     The unsigned 64-bit hex of a number: eight digits by default when the value fits signed
     int32 and sixteen otherwise, an explicit length zero-padding on the left or keeping the
-    rightmost digits (all seven pinned facts, probe 86-87 and probe3 20-24). A length above
-    sixteen is not a reading any probe pinned, so it refuses rather than spell an unbounded
-    string of zeroes.
+    rightmost digits (all seven pinned facts, probe 86-87 and probe3 20-24). A double is read
+    as its 64-bit IEEE bits, which follow the integer rule from there (probe7 60-64). A length
+    above sixteen is not a reading any probe pinned, so it refuses rather than spell an
+    unbounded string of zeroes.
     """
     if not 1 <= len(arguments) <= 2:
         return None
-    number = _int_argument(arguments, 0)
+    value = arguments[0]
+    if value.kind is Kind.DOUBLE:
+        bits = int.from_bytes(struct.pack('>d', cast(float, value.payload)), 'big')
+        number = _to_int64_signed(bits)
+    else:
+        number = _int_argument(arguments, 0)
     if number is None:
         return None
     unsigned = number & 0xFFFFFFFFFFFFFFFF
@@ -635,22 +669,77 @@ def _evaluate_ubound(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     return of_int(len(elements))
 
 
-def _is_evaluator(kinds: frozenset[Kind]) -> _Evaluator:
+def _kind_evaluator(kinds: frozenset[Kind]) -> _Evaluator:
+    """
+    The kind-membership `Is…` functions: the integer 1 when the argument's kind is one of
+    *kinds*, the integer 0 otherwise (probe7 31-33; probe8 45).
+    """
     def evaluator(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
         if len(arguments) != 1:
             return None
-        return of_bool(arguments[0].kind in kinds)
+        return of_int(1 if arguments[0].kind in kinds else 0)
     return evaluator
+
+
+def _evaluate_isint(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The integer 1 for a number without a fractional part, a double holding a whole value
+    included (probe6 53), and 0 for a string (probe7 35; probe8 44). A boolean, a binary, and an
+    array are not readings any probe pinned, so they refuse.
+    """
+    if len(arguments) != 1:
+        return None
+    value = arguments[0]
+    if value.kind is Kind.INT:
+        return of_int(1)
+    if value.kind is Kind.DOUBLE:
+        number = cast(float, value.payload)
+        return of_int(1 if number == int(number) else 0)
+    if value.kind is Kind.STRING:
+        return of_int(0)
+    return None
+
+
+def _evaluate_isfloat(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The integer 1 only for a double with a fractional part (probe6 54; probe7 34, 38), 0 for a
+    whole double, an integer, and a string (probe8 40-42). A boolean, a binary, and an array
+    refuse.
+    """
+    if len(arguments) != 1:
+        return None
+    value = arguments[0]
+    if value.kind is Kind.DOUBLE:
+        number = cast(float, value.payload)
+        return of_int(0 if number == int(number) else 1)
+    if value.kind in (Kind.INT, Kind.STRING):
+        return of_int(0)
+    return None
+
+
+def _evaluate_isnumber(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The integer 1 for a number and 0 for a string (probe7 36; probe8 43). A boolean, a binary,
+    and an array refuse.
+    """
+    if len(arguments) != 1:
+        return None
+    kind = arguments[0].kind
+    if kind in (Kind.INT, Kind.DOUBLE):
+        return of_int(1)
+    if kind is Kind.STRING:
+        return of_int(0)
+    return None
 
 
 def _evaluate_never(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     The answer for `IsKeyword`, `IsObj`, `IsHWnd`, and `IsPtr` over any value this domain can
-    hold: none of the four can appear in a folded constant.
+    hold: none of the four can appear in a folded constant, and the family answers 1/0.
     """
     if len(arguments) != 1:
         return None
-    return of_bool(False)
+    return of_int(0)
 
 
 _EVALUATORS: dict[str, _Evaluator] = {
@@ -700,13 +789,13 @@ _EVALUATORS: dict[str, _Evaluator] = {
     'binarytostring'  : _evaluate_binarytostring,
     'stringtobinary'  : _evaluate_stringtobinary,
     'ubound'          : _evaluate_ubound,
-    'isarray'         : _is_evaluator(frozenset({Kind.ARRAY})),
-    'isbinary'        : _is_evaluator(frozenset({Kind.BINARY})),
-    'isbool'          : _is_evaluator(frozenset({Kind.BOOL})),
-    'isint'           : _is_evaluator(frozenset({Kind.INT})),
-    'isfloat'          : _is_evaluator(frozenset({Kind.DOUBLE})),
-    'isnumber'        : _is_evaluator(frozenset({Kind.INT, Kind.DOUBLE})),
-    'isstring'        : _is_evaluator(frozenset({Kind.STRING})),
+    'isarray'         : _kind_evaluator(frozenset({Kind.ARRAY})),
+    'isbinary'        : _kind_evaluator(frozenset({Kind.BINARY})),
+    'isbool'          : _kind_evaluator(frozenset({Kind.BOOL})),
+    'isint'           : _evaluate_isint,
+    'isfloat'         : _evaluate_isfloat,
+    'isnumber'        : _evaluate_isnumber,
+    'isstring'        : _kind_evaluator(frozenset({Kind.STRING})),
     'iskeyword'       : _evaluate_never,
     'isobj'           : _evaluate_never,
     'ishwnd'          : _evaluate_never,

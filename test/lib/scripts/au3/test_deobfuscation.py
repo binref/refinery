@@ -1,10 +1,113 @@
 from __future__ import annotations
 
+import inspect
+
 from test import TestBase
+from test.units.pattern.test_resub import AUTOIT_OBFUSCATED
 
 from refinery.lib.scripts.au3.deobfuscation import deobfuscate
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
+
+
+#: The decoder bodies the obfuscated sample carries in front of its payload function: every
+#: decoder call the fixture holds resolves through them, in both the single and the composed form.
+FIXTURE_HELPERS = inspect.cleandoc('''
+Func sjwakhwbtxwwb($s)
+    Local $r = ""
+    For $i = 1 To StringLen($s) - 1 Step 2
+        $r &= StringMid($s, $i + 1, 1) & StringMid($s, $i, 1)
+    Next
+    If Mod(StringLen($s), 2) = 1 Then $r &= StringRight($s, 1)
+    Return $r
+EndFunc
+
+Func nvbjtycmyxlfrdbypxqk($s, $n)
+    Local $r = ""
+    For $i = 1 To StringLen($s) Step $n
+        $r &= StringMid($s, $i, 1)
+    Next
+    Return $r
+EndFunc
+''')
+
+#: The obfuscated sample fixture of the `resub` tests, with its decoder bodies in front of it.
+FIXTURE_OBFUSCATED = FIXTURE_HELPERS + '\n\n' + inspect.cleandoc(AUTOIT_OBFUSCATED.decode('ASCII'))
+
+#: The pipeline output over `FIXTURE_OBFUSCATED`. Every decoded literal equals the cleaned
+#: fixture's (`test_resub.AUTOIT_CLEANED`): the decoders fold away entirely, the payload function
+#: keeps the cleaned fixture's statements. Two shapes stay one step behind the cleaned fixture:
+#: the statements whose spliced code calls outside the evaluated builtins (`DllCall`,
+#: `DllStructCreate`, `DllStructSetData`, `BinaryMid` over `DllStructGetData`) remain an `Execute`
+#: around that code, and the decoder-alias initializer names `Execute` directly once the alias
+#: rewrite has resolved the chain through it.
+FIXTURE_DEOBFUSCATED = (
+    'Func sjwakhwbtxwwb($s)\n'
+    '    Local $r = ""\n'
+    '    For $i = 1 To StringLen($s) - 1 Step 2\n'
+    '        $r &= StringMid($s, $i + 1, 1) & StringMid($s, $i, 1)\n'
+    '    Next\n'
+    '    If Mod(StringLen($s), 2) = 1 Then\n'
+    '        $r &= StringRight($s, 1)\n'
+    '    EndIf\n'
+    '    Return $r\n'
+    'EndFunc\n'
+    'Func nvbjtycmyxlfrdbypxqk($s, $n)\n'
+    '    Local $r = ""\n'
+    '    For $i = 1 To StringLen($s) Step $n\n'
+    '        $r &= StringMid($s, $i, 1)\n'
+    '    Next\n'
+    '    Return $r\n'
+    'EndFunc\n'
+    'Func lwmmqmcfqg($vdata, $vcryptkey)\n'
+    '    Local $__g_acryptinternaldata["3"]\n'
+    '    Local $tbuff\n'
+    '    Local $ttempstruct\n'
+    '    Local $iplaintextsize\n'
+    '    Local $vreturn\n'
+    '    Local $e = Execute\n'
+    '    Local $b = Execute("BinaryToString")\n'
+    '    $vdata = BinaryToString($vData)\n'
+    '    Local $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptAcquireContext"", '
+    '""handle*"", ""0"", ""ptr"", ""0"", ""ptr"", ""0"", ""dword"", ""24"", ""dword"", '
+    '""0xF0000000"")")\n'
+    '    $__g_acryptinternaldata["2"] = $aret["1"]\n'
+    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptCreateHash"", '
+    '""handle"", $__g_aCryptInternalData[""2""], ""uint"", ""0x00008003"", ""ptr"", ""0"", '
+    '""dword"", ""0"", ""handle*"", ""0"")")\n'
+    '    $hcrypthash = $aret["5"]\n'
+    '    $tbuff = Execute("DllStructCreate(""byte["" & BinaryLen($vCryptKey) & ""]"")")\n'
+    '    Execute("DllStructSetData($tBuff, Execute(""1""), $vCryptKey)")\n'
+    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptHashData"", '
+    '""handle"", $hCryptHash, ""struct*"", $tBuff, ""dword"", DllStructGetSize($tBuff), '
+    '""dword"", ""1"")")\n'
+    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDeriveKey"", '
+    '""handle"",$__g_aCryptInternalData[""2""], ""uint"", ""0x00006610"", ""handle"", '
+    '$hCryptHash, ""dword"", ""0x00000001"", ""handle*"", ""0"")")\n'
+    '    $vreturn = $aret["5"]\n'
+    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyHash"", '
+    '""handle"", $hCryptHash)")\n'
+    '    $vcryptkey = $vreturn\n'
+    '    $tbuff = Execute("DllStructCreate(""byte["" & BinaryLen($vData) + ""1000"" & '
+    '""]"")")\n'
+    '    Execute("DllStructSetData($tBuff, Execute(""1""), $vData)")\n'
+    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDecrypt"", '
+    '""handle"", $vCryptKey, ""handle"", ""0"", ""bool"", Execute(""1""), ""dword"", ""0"", '
+    '""struct*"", $tBuff, ""dword*"", BinaryLen($vData))")\n'
+    '    $iplaintextsize = $aret["6"]\n'
+    '    $ttempstruct = Execute("DllStructCreate(""byte["" & $iPlainTextSize + ""1"" & '
+    '""]"", DllStructGetPtr($tBuff))")\n'
+    '    $vreturn = Execute("BinaryMid(DllStructGetData($tTempStruct, Execute(""1"")), '
+    '""1"", $iPlainTextSize)")\n'
+    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyKey"", '
+    '""handle"", $vCryptKey)")\n'
+    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyKey"", '
+    '""handle"", $vCryptKey)")\n'
+    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptReleaseContext"", '
+    '""handle"", $__g_aCryptInternalData[""2""], ""dword"", ""0"")")\n'
+    '    Return Binary($vReturn)\n'
+    'EndFunc\n'
+)
 
 
 class TestAu3Deobfuscation(TestBase):
@@ -76,3 +179,15 @@ class TestAu3Deobfuscation(TestBase):
     def test_parse_errors_on_malformed_input(self):
         ast = Au3Parser('$x = = 1\n').parse()
         self.assertNotEqual(ast.errors, [])
+
+    def test_the_obfuscated_fixture_decodes_to_its_cleaned_form(self):
+        ast = Au3Parser(FIXTURE_OBFUSCATED).parse()
+        self.assertEqual(ast.errors, [])
+        self.assertGreater(deobfuscate(ast), 0)
+        self.assertEqual(Au3Synthesizer().convert(ast), FIXTURE_DEOBFUSCATED)
+
+    def test_the_decoded_fixture_is_stable(self):
+        ast = Au3Parser(FIXTURE_OBFUSCATED).parse()
+        deobfuscate(ast)
+        self.assertEqual(deobfuscate(ast), 0)
+        self.assertEqual(Au3Synthesizer().convert(ast), FIXTURE_DEOBFUSCATED)

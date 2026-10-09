@@ -1,10 +1,10 @@
 from .. import TestUnitBase
 
 
-class TestRegexSubstitution(TestUnitBase):
-
-    def test_real_world_obfuscated_code(self):
-        autoit_obfuscated = '''
+#: The obfuscated AutoIt3 fixture shared with the au3 deobfuscation tests: a crypt decoder whose
+#: every literal hides behind two script-defined helpers. The cleaned form is what those helpers
+#: decode the literals to, derived by the resub layers the test below builds.
+AUTOIT_OBFUSCATED = '''
         Func lwmmqmcfqg($vdata, $vcryptkey)
             Local $__g_acryptinternaldata[nvbjtycmyxlfrdbypxqk(sjwakhwbtxwwb("Z3HQHwba"), 8)]
             Local $tbuff
@@ -38,7 +38,7 @@ class TestRegexSubstitution(TestUnitBase):
         EndFunc
         '''.encode('ASCII')
 
-        autoit_cleaned_up = '''
+AUTOIT_CLEANED = '''
         Func lwmmqmcfqg($vdata, $vcryptkey)
             Local $__g_acryptinternaldata["3"]
             Local $tbuff
@@ -71,6 +71,13 @@ class TestRegexSubstitution(TestUnitBase):
             Return Binary($vReturn)
         EndFunc
         '''.encode('ASCII')
+
+
+class TestRegexSubstitution(TestUnitBase):
+
+    def test_real_world_obfuscated_code(self):
+        autoit_obfuscated = AUTOIT_OBFUSCATED
+        autoit_cleaned_up = AUTOIT_CLEANED
 
         layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"{1:resub[(.)(.),{{2}}{{1}}]}"')
         layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"{1:snip[::{2}]}"')

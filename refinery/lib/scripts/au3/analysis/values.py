@@ -2,11 +2,11 @@
 The AutoIt3 value domain: the kinds a value can have, the coercions between them, and the result
 of every operator over known values. Operator semantics live here and nowhere else.
 
-The source of truth is a probe of the real interpreter (AutoIt 3.3.18.0; three probe scripts and
-outputs in `temp/au3_semantics_probe/`), then the official docs, then nothing: a rule neither of
-those pins is refused rather than guessed, so an unpinned operator returns `None` and the fold
-that asked leaves the expression standing. Which cases are refused is documented on the operator
-that refuses them.
+The source of truth is a probe of the real interpreter (AutoIt 3.3.18.0; the probe scripts and
+their outputs in `temp/au3_semantics_probe/`), then the official docs, then nothing: a rule
+neither of those pins is refused rather than guessed, so an unpinned operator returns `None` and
+the fold that asked leaves the expression standing. Which cases are refused is documented on
+the operator that refuses them.
 
 The domain keeps int and double distinct because AutoIt prints them differently at magnitude
 `1e15` and above: an int64 prints its full digits while a double goes scientific. All-digit
@@ -24,10 +24,12 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
+from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.lexer import LINE_BREAKS, encode_au3_string
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
+    Au3BinaryExpression,
     Au3BooleanLiteral,
     Au3Call,
     Au3FloatLiteral,
@@ -188,7 +190,8 @@ def _prefix_number(text: str) -> int | float | None:
     literal `0x…` or a decimal with optional fraction and exponent, each form backtracking to the
     shorter prefix when it is incomplete (`"1e"` is 1, `"0x"` is 0), and 0 when nothing parses.
     Only ASCII digits parse — the digits of other scripts are not a reading any probe pinned.
-    Pinned by probe3 50-57 and probe 60-68.
+    An all-digit prefix beyond int64 is refused: whether AutoIt saturates or promotes there is
+    not a fact any probe pinned either. Pinned by probe3 50-57 and probe 60-68.
     """
     length = len(text)
     i = 0
@@ -230,7 +233,7 @@ def _prefix_number(text: str) -> int | float | None:
         return result if math.isfinite(result) else None
     result = int(matched)
     if result > INT64_MAX or result < INT64_MIN:
-        return float(result)
+        return None
     return result
 
 
@@ -246,6 +249,35 @@ def to_number(value: Au3Value) -> int | float | None:
         return 1 if value.payload else 0
     if value.kind is Kind.STRING:
         return _prefix_number(cast(str, value.payload))
+    return None
+
+
+def _left_operand(value: Au3Value) -> int | float | None:
+    """
+    The number a value becomes in an arithmetic left-operand position: a number stays its own
+    type, a boolean becomes a double, and a string becomes the number its text spells — an
+    integer unless the text carries a fraction or an exponent (probe6 12-17, 30-33; probe7
+    10-18). A unary sign converts its operand the same way (probe6 18, 32; probe7 19).
+    """
+    if value.kind in (Kind.INT, Kind.DOUBLE):
+        return cast(int | float, value.payload)
+    if value.kind is Kind.BOOL:
+        return 1.0 if value.payload else 0.0
+    if value.kind is Kind.STRING:
+        return _prefix_number(cast(str, value.payload))
+    return None
+
+
+def _right_operand(value: Au3Value) -> int | float | None:
+    """
+    The number a value becomes in an arithmetic right-operand position: a number stays its own
+    type, and a string or a boolean becomes a double (probe6 10, 11, 14; probe7 10-18).
+    """
+    if value.kind in (Kind.INT, Kind.DOUBLE):
+        return cast(int | float, value.payload)
+    if value.kind in (Kind.BOOL, Kind.STRING):
+        number = to_number(value)
+        return None if number is None else float(number)
     return None
 
 
@@ -390,26 +422,30 @@ def apply_binary(operator: str, left: Au3Value, right: Au3Value) -> Au3Value | N
     The result of a binary operator over two known values, or `None` where the operator is
     refused:
 
-    - `+ - *`: numeric; two ints stay int below `1e15` (above that, int64-versus-double is
-      unpinned); otherwise double;
-    - `/`: always double (`10 / 2` prints `5`, `10 / 4` is 2.5); a zero divisor is fatal in
-      AutoIt and never folds;
-    - `^`: always double; a negative base under a fractional exponent is refused;
+    - `+ - * / ^`: numeric, the operands converted by position — see `_left_operand` and
+      `_right_operand`; the result is an integer only when both converted operands are integers,
+      and an int result outside the int64 range is refused (`1e15` and above is where int64 and
+      double print differently); `/` is always double (`10 / 2` prints `5`, `10 / 4` is 2.5) and
+      a zero divisor is fatal in AutoIt and never folds; `^` is always double and refuses a
+      negative base under a fractional exponent;
+    - `and`/`or`: the truth of both operands, a boolean (probe4 62-65);
     - `&`: string `&` string, with numbers joining through their printed text; binary `&` binary
       concatenates; string `&` binary appends the binary's `0x…` text (probe3 40); binary `&`
       anything else is refused — a binary result and a plain string both fit every probe fact
-      (probe3 41-42), so the type is unpinned;
-    - `and`/`or` never fold here: their value in expression position is unpinned. Only the
-      conditions that consume them fold, and they read the operands through `truthy`.
+      (probe3 41-42), so the type is unpinned.
     """
     if operator == '&':
         return _concatenate(left, right)
     if operator in ('and', 'or'):
+        one = truthy(left)
+        two = truthy(right)
+        if one is None or two is None:
+            return None
+        return of_bool(one and two if operator == 'and' else one or two)
+    one = _left_operand(left)
+    two = _right_operand(right)
+    if one is None or two is None:
         return None
-    operands = _numeric_operands(left, right)
-    if operands is None:
-        return None
-    one, two = operands
     if operator == '+':
         if isinstance(one, int) and isinstance(two, int):
             return of_int_result(one + two)
@@ -458,15 +494,16 @@ def _concatenate(left: Au3Value, right: Au3Value) -> Au3Value | None:
 def apply_unary(operator: str, operand: Au3Value) -> Au3Value | None:
     """
     The result of a unary operator over one known value: `Not` answers a boolean (pinned by
-    `Not True & ""` printing `False`), `+` and `-` coerce to number, with the same `1e15` refusal
-    on int results as the binary arithmetic.
+    `Not True & ""` printing `False`), and a sign converts its operand like an arithmetic left
+    operand (probe6 18, 32; probe7 19) — `-"2"` is an int, `-"2.5"` and `-True` are doubles —
+    with the same int64 refusal on int results as the binary arithmetic.
     """
     if operator == 'not':
         verdict = truthy(operand)
         if verdict is None:
             return None
         return of_bool(not verdict)
-    number = to_number(operand)
+    number = _left_operand(operand)
     if number is None:
         return None
     if operator == '+':
@@ -484,10 +521,11 @@ def literal_value(
 ) -> Au3Value | None:
     """
     The value an expression holds when it is nothing but a literal shape: a number, a string, a
-    boolean, a run-time-constant macro, a unary minus over a number, an array literal of such, or
-    a `Binary("0x…")` call — the spelling a binary renders to, read back. These are the shapes a
-    fold leaves behind, which is what a binding walk reads. An all-digit literal beyond int64
-    saturates, the way the interpreter reads it.
+    boolean, a run-time-constant macro, a unary minus over a number, an array literal of such, a
+    `Binary("0x…")` call, or an `&` chain of string literals and the pieces that spell the
+    characters no literal expresses — the spellings `render_literal` writes, read back. These
+    are the shapes a fold leaves behind, which is what a binding walk reads. An all-digit
+    literal beyond int64 saturates, the way the interpreter reads it.
 
     *functions* names the script's own functions, because a script function named `Binary` shadows
     the builtin and the call would run foreign code: while one exists, the call is not a literal.
@@ -506,7 +544,18 @@ def literal_value(
     if isinstance(node, Au3Macro):
         macro = MACRO_CONSTANTS.get(node.name)
         return None if macro is None else of_string(macro)
+    if isinstance(node, Au3BinaryExpression):
+        if node.operator != '&' or node.left is None or node.right is None:
+            return None
+        one = literal_value(node.left, functions)
+        two = literal_value(node.right, functions)
+        if one is None or two is None:
+            return None
+        return apply_binary('&', one, two)
     if isinstance(node, Au3Call):
+        character = _character_literal(node, functions)
+        if character is not None:
+            return character
         return _binary_literal(node, functions)
     if isinstance(node, Au3UnaryExpression):
         if node.operator != '-' or node.operand is None:
@@ -523,6 +572,33 @@ def literal_value(
                 return None
             elements.append(value)
         return of_array(tuple(elements))
+    return None
+
+
+def _character_literal(call: Au3Call, functions: frozenset[str]) -> Au3Value | None:
+    """
+    The character one piece of a rendered chain spells — `Chr(0)` for the NUL, `ChrW(n)` for a
+    surrogate or a Unicode line break — read back, so the chain a payload renders to stays a
+    literal shape. No other argument spells a piece the renderer writes, and a script function
+    shadowing the builtin would run foreign code.
+    """
+    callee = ast.direct_callee(call)
+    if callee is None or len(call.arguments) != 1:
+        return None
+    literal = ast.unwrap_parens(call.arguments[0])
+    if not isinstance(literal, Au3IntLiteral):
+        return None
+    if callee.name == 'chr':
+        if literal.value != 0 or 'chr' in functions:
+            return None
+        return of_string('\x00')
+    if callee.name == 'chrw':
+        if 'chrw' in functions:
+            return None
+        code = literal.value
+        if not (0xD800 <= code <= 0xDFFF or code in (0x2028, 0x2029)):
+            return None
+        return of_string(chr(code))
     return None
 
 
@@ -557,8 +633,9 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     """
     The expression node that spells `value` in AutoIt3 source, or `None` where no expression can:
 
-    - a string carrying a character no literal expresses (NUL, a line break, a surrogate) — `@CR`
-      never becomes a literal, while `StringLen(@CR)` still folds to 1;
+    - a string carrying a character no literal expresses (NUL, a line break, a surrogate),
+      spelled as the `&` chain of the pieces that spell it — unless a script function shadows
+      the builtin one of those pieces names;
     - a non-finite double, and a negative zero: AutoIt prints the latter `-0`, which the unary
       minus over a zero literal does not spell;
     - an int64 at its floor: it spells only as the minus over `2^63`, which re-reads as the
@@ -586,10 +663,7 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
             return Au3UnaryExpression(operator='-', operand=literal)
         return literal
     if value.kind is Kind.STRING:
-        text = cast(str, value.payload)
-        if not _spellable(text):
-            return None
-        return Au3StringLiteral(value=text, raw=encode_au3_string(text))
+        return _render_string(cast(str, value.payload), functions)
     if value.kind is Kind.BOOL:
         return Au3BooleanLiteral(value=cast(bool, value.payload))
     if value.kind is Kind.BINARY:
@@ -612,6 +686,89 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
             elements.append(rendered)
         return Au3ArrayLiteral(elements=elements)
     return None
+
+
+def _render_string(text: str, functions: frozenset[str]) -> Expression | None:
+    """
+    The spelling of a string: the literal itself when every character spells, and otherwise the
+    left-associated `&` chain of the literal runs and the pieces that spell the characters no
+    literal expresses (probe5 14 loads such a chain as an array element). The chain is refused
+    where a script function shadows the builtin one of its pieces names.
+    """
+    if _spellable(text):
+        return Au3StringLiteral(value=text, raw=encode_au3_string(text))
+    pieces: list[Expression] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        if run:
+            spelled = ''.join(run)
+            pieces.append(Au3StringLiteral(value=spelled, raw=encode_au3_string(spelled)))
+            run.clear()
+
+    index = 0
+    while index < len(text):
+        if text[index:index + 2] == '\r\n':
+            flush()
+            pieces.append(Au3Macro(name='crlf', raw='@CRLF'))
+            index += 2
+            continue
+        character = text[index]
+        if _spellable(character):
+            run.append(character)
+        else:
+            piece = _rendered_piece(character, functions)
+            if piece is None:
+                return None
+            flush()
+            pieces.append(piece)
+        index += 1
+    flush()
+    result: Expression = pieces[0]
+    for piece in pieces[1:]:
+        result = Au3BinaryExpression(operator='&', left=result, right=piece)
+    return result
+
+
+def _rendered_piece(character: str, functions: frozenset[str]) -> Expression | None:
+    """
+    The piece that spells one character no literal expresses: the macro of a line break, `Chr(0)`
+    for the NUL, or `ChrW(n)` for a surrogate or a Unicode line break.
+    """
+    if character == '\r':
+        return Au3Macro(name='cr', raw='@CR')
+    if character == '\n':
+        return Au3Macro(name='lf', raw='@LF')
+    if character == '\x00':
+        if 'chr' in functions:
+            return None
+        return Au3Call(
+            callee=Au3Identifier(name='chr', raw='Chr'),
+            arguments=[Au3IntLiteral(value=0, raw='0')])
+    code = ord(character)
+    if 0xD800 <= code <= 0xDFFF or code in (0x2028, 0x2029):
+        if 'chrw' in functions:
+            return None
+        return Au3Call(
+            callee=Au3Identifier(name='chrw', raw='ChrW'),
+            arguments=[Au3IntLiteral(value=code, raw=str(code))])
+    return None
+
+
+def render_at(
+    node: Node,
+    value: Au3Value,
+    functions: frozenset[str],
+) -> Expression | None:
+    """
+    The spelling of `value` where *node* stands, or `None` where the position accepts none: an
+    array literal is legal AutoIt only where a declaration initializes, so an array value spells
+    only there. Every other value spells wherever an expression does, and `render_literal` says
+    which values spell at all.
+    """
+    if value.kind is Kind.ARRAY and not ast.in_declaration_initializer(node):
+        return None
+    return render_literal(value, functions)
 
 
 def _render_int(value: int) -> Expression | None:

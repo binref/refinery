@@ -1,0 +1,274 @@
+"""
+Which storage a write targets, per the scope model: the script level always the global, a
+function's parameters and dominating declarations the local, and everything else nothing at
+all. Every expectation below restates a rule the AutoIt3 documentation states, so a failure is
+either a parsing defect or a rule the model misapplies — the unseen `#include` a bare write
+cannot decide is the reason the third answer exists.
+"""
+from __future__ import annotations
+
+import inspect
+
+from test import TestBase
+
+from refinery.lib.scripts.au3 import ast
+from refinery.lib.scripts.au3.analysis.scopes import Binding, build_scope_model
+from refinery.lib.scripts.au3.model import Au3Assignment, Au3Variable
+from refinery.lib.scripts.au3.parser import Au3Parser
+
+
+class TestAu3ScopeModel(TestBase):
+
+    def _binding(self, source: str, name: str) -> Binding:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        model = build_scope_model(root)
+        function = model.functions['f']
+        for node in ast.scope_nodes(function.body):
+            if not isinstance(node, Au3Assignment):
+                continue
+            variable = ast.store_target_variable(node.target)
+            statement = ast.owning_statement(node)
+            if variable is not None and variable.name == name and statement is not None:
+                return model.binding(function, statement, name)
+        self.fail('the source holds no assignment of that name')
+
+    def test_a_parameter_write_targets_the_local(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f($p)
+                    $p = 5
+                EndFunc
+                ''',
+                'p',
+            ),
+            Binding.LOCAL)
+
+    def test_a_bare_write_after_a_dominating_local_targets_the_local(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Local $x
+                    $x = 5
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.LOCAL)
+
+    def test_a_bare_write_before_the_declaration_proves_nothing(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    $x = 5
+                    Local $x
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.NONE)
+
+    def test_a_dim_declaration_dominates_nothing(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Dim $x
+                    $x = 5
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.NONE)
+
+    def test_a_static_declaration_dominates_the_local(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Static $x
+                    $x = 5
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.LOCAL)
+
+    def test_a_function_scope_const_declaration_dominates_the_local(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Const $x = 1
+                    $x = 5
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.LOCAL)
+
+    def test_a_local_enum_declaration_dominates_the_local(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Local Enum $e
+                    $e = 5
+                EndFunc
+                ''',
+                'e',
+            ),
+            Binding.LOCAL)
+
+    def test_a_bare_enum_declaration_dominates_the_local(self):
+        """
+        An `Enum` no `Global` keyword leads declares its entries into the scope it stands in, so
+        inside a function they are constants of the function's local storage.
+        """
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Enum $e = 1, $d
+                    $d = 5
+                EndFunc
+                ''',
+                'd',
+            ),
+            Binding.LOCAL)
+
+    def test_a_global_enum_declaration_in_the_function_claims_the_global(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Global Enum $e = 1
+                    $e = 5
+                EndFunc
+                ''',
+                'e',
+            ),
+            Binding.NONE)
+
+    def test_a_global_declaration_in_the_function_claims_the_global(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Local $x
+                    $x = 5
+                    Global $x
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.NONE)
+
+    def test_a_declaration_inside_control_flow_dominates_nothing(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    If True Then
+                        Local $x
+                    EndIf
+                    $x = 5
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.NONE)
+
+    def test_a_write_inside_control_flow_under_a_dominating_declaration(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    Local $x
+                    If True Then
+                        $x = 5
+                    EndIf
+                EndFunc
+                ''',
+                'x',
+            ),
+            Binding.LOCAL)
+
+    def test_a_write_inside_a_for_body_targets_the_loop_variable(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    For $i = 1 To 3
+                        $i = 5
+                    Next
+                EndFunc
+                ''',
+                'i',
+            ),
+            Binding.LOCAL)
+
+    def test_a_write_after_a_for_targets_the_loop_variable(self):
+        """
+        The loop creates its variable before its first test, a zero trip included (probe4 31),
+        so the local exists for every write after the loop statement.
+        """
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    For $i = 1 To 0
+                    Next
+                    $i = 5
+                EndFunc
+                ''',
+                'i',
+            ),
+            Binding.LOCAL)
+
+    def test_a_write_before_a_for_proves_nothing(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    $i = 5
+                    For $i = 1 To 3
+                    Next
+                EndFunc
+                ''',
+                'i',
+            ),
+            Binding.NONE)
+
+    def test_a_for_inside_control_flow_claims_nothing(self):
+        self.assertEqual(
+            self._binding(
+                '''
+                Func f()
+                    If True Then
+                        For $i = 1 To 3
+                        Next
+                    EndIf
+                    $i = 5
+                EndFunc
+                ''',
+                'i',
+            ),
+            Binding.NONE)
+
+    def test_the_script_level_always_answers_global(self):
+        root = Au3Parser('Local $x = 1\n$x = 2\n').parse()
+        model = build_scope_model(root)
+        for node in ast.scope_nodes(root.body):
+            if (
+                isinstance(node, Au3Variable)
+                and node.name == 'x'
+                and ast.is_write_occurrence(node)
+            ):
+                statement = ast.owning_statement(node)
+                assert statement is not None
+                self.assertEqual(model.binding(None, statement, 'x'), Binding.GLOBAL)
+                return
+        self.fail('the source holds no write')

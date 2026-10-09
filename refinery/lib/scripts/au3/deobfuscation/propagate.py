@@ -19,10 +19,9 @@ value the walk learned, so the pass's own edits cannot make its snapshot wrong.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.propagation import Au3PropagationModel
-from refinery.lib.scripts.au3.analysis.values import Kind, render_literal
+from refinery.lib.scripts.au3.analysis.values import render_at
 from refinery.lib.scripts.au3.model import (
     Au3Script,
     Au3Variable,
@@ -37,7 +36,7 @@ class Au3ConstantPropagation(Transformer):
 
     def __init__(self):
         super().__init__()
-        self._model = Au3PropagationModel({}, {})
+        self._model = Au3PropagationModel({}, {}, {})
         self._functions: frozenset[str] = frozenset()
 
     def visit(self, node: Node) -> Node | None:
@@ -51,8 +50,4 @@ class Au3ConstantPropagation(Transformer):
         value = self._model.value_at(node)
         if value is None:
             return None
-        if value.kind is Kind.ARRAY and not ast.in_declaration_initializer(node):
-            return None
-        if value.kind is Kind.BINARY and ast.inside_array_literal(node):
-            return None
-        return render_literal(value, self._functions)
+        return render_at(node, value, self._functions)

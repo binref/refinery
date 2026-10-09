@@ -9,6 +9,9 @@ The functions under test are the ones the constant folder reads, so a value reac
 the way the folder delivers one: parsed out of AutoIt3 source by `literal_value`, then combined
 by `compare` or `apply_binary`, or fed to a builtin by `evaluate_builtin`. What is asserted is
 the value's printed text, which is what the probes observed and what a folded literal spells.
+Where a probe read a number's type off `VarGetType`, the assertion is a witness — the printed
+text, `IsInt`, `IsFloat`, and `Hex` of the same value — because `Hex` is the one reading that
+separates an Int from a Double holding a whole number.
 """
 from __future__ import annotations
 
@@ -21,6 +24,8 @@ from refinery.lib.scripts.au3.analysis.values import (
     compare,
     literal_value,
     of_bool,
+    of_string,
+    render_literal,
     to_string,
     truthy,
 )
@@ -45,6 +50,26 @@ class TestAu3Values(TestBase):
 
     def _called(self, name: str, *sources: str):
         return self._printed(evaluate_builtin(name, tuple(_value(s) for s in sources)))
+
+    def _witnessed(self, result):
+        """
+        The four readings a probe took of a number: its printed text, `IsInt`, `IsFloat`, and
+        `Hex`. `Hex` is the only one that separates an Int from a Double holding a whole number,
+        because `IsInt` answers 1 over both (probe6 53, 54).
+        """
+        if result is None:
+            return None
+        readings = [to_string(result)]
+        for name in ('isint', 'isfloat', 'hex'):
+            witness = evaluate_builtin(name, (result,))
+            readings.append(None if witness is None else to_string(witness))
+        return tuple(readings)
+
+    def _typed(self, operator: str, one: str, two: str):
+        return self._witnessed(apply_binary(operator, _value(one), _value(two)))
+
+    def _typed_call(self, name: str, *sources: str):
+        return self._witnessed(evaluate_builtin(name, tuple(_value(s) for s in sources)))
 
     def test_two_strings_compare_case_insensitively(self):
         for operator, one, two, expected in (
@@ -128,6 +153,200 @@ class TestAu3Values(TestBase):
         ):
             with self.subTest(operator=operator, one=one, two=two):
                 self.assertEqual(self._applied(operator, one, two), expected)
+
+    def test_arithmetic_types_by_operand_position(self):
+        """
+        The left operand keeps its type — a string stays the number its text spells, a boolean
+        becomes a double — and a string or a boolean on the right makes the whole result a double
+        (probe6 10-17, 30-33, 40-46; probe7 10-18).
+        """
+        for operator, one, two, expected in (
+            ('+', '5', '"2"', ('7', '1', '0', '401C000000000000')),
+            ('+', '"5"', '"6"', ('11', '1', '0', '4026000000000000')),
+            ('*', '"5"', '2', ('10', '1', '0', '0000000A')),
+            ('-', '"5"', '0', ('5', '1', '0', '00000005')),
+            ('+', '5', '"2.5"', ('7.5', '0', '1', '401E000000000000')),
+            ('+', '"abc"', '1', ('1', '1', '0', '00000001')),
+            ('+', '"0x10"', '0', ('16', '1', '0', '00000010')),
+            ('+', '"1e3"', '0', ('1000', '1', '0', '408F400000000000')),
+            ('+', 'True', '1', ('2', '1', '0', '4000000000000000')),
+            ('+', 'True', 'True', ('2', '1', '0', '4000000000000000')),
+            ('*', 'True', '2.5', ('2.5', '0', '1', '4004000000000000')),
+            ('+', '5', '2', ('7', '1', '0', '00000007')),
+            ('+', '1', '2147483647', ('2147483648', '1', '0', '0000000080000000')),
+            ('-', '5', '5.0', ('0', '1', '0', '00000000')),
+            ('*', '5', '"2"', ('10', '1', '0', '4024000000000000')),
+            ('-', '5', '"2"', ('3', '1', '0', '4008000000000000')),
+            ('*', '"5"', '"2"', ('10', '1', '0', '4024000000000000')),
+            ('-', '"5"', '"2"', ('3', '1', '0', '4008000000000000')),
+            ('+', '1', 'True', ('2', '1', '0', '4000000000000000')),
+            ('*', '2', 'True', ('2', '1', '0', '4000000000000000')),
+            ('-', '2', 'False', ('2', '1', '0', '4000000000000000')),
+            ('+', '"2"', 'True', ('3', '1', '0', '4008000000000000')),
+            ('+', 'True', '"2"', ('3', '1', '0', '4008000000000000')),
+        ):
+            with self.subTest(operator=operator, one=one, two=two):
+                self.assertEqual(self._typed(operator, one, two), expected)
+
+    def test_a_left_string_past_the_int64_range_is_refused(self):
+        """
+        The number literal saturates at int64 max (probe3 60), but whether the interpreter
+        saturates or promotes a string spelling past it is not a fact any probe pinned, so the
+        left-operand reading refuses.
+        """
+        self.assertIsNone(apply_binary('+', _value('"99999999999999999999"'), _value('0')))
+
+    def test_a_sign_types_like_a_left_operand(self):
+        """
+        `-"2"` is an Int32 while `-"2.5"` and `-True` are doubles (probe6 18, 32; probe7 19).
+        """
+        self.assertEqual(
+            self._witnessed(apply_unary('-', _value('"2"'))), ('-2', '1', '0', 'FFFFFFFE'))
+        self.assertEqual(
+            self._witnessed(apply_unary('-', _value('"2.5"'))),
+            ('-2.5', '0', '1', 'C004000000000000'))
+        self.assertEqual(
+            self._witnessed(apply_unary('-', _value('True'))), ('-1', '1', '0', 'BFF0000000000000'))
+
+    def test_mod_types_by_argument_kind(self):
+        """
+        `Mod` types by the value kinds of its arguments, not by the arithmetic operand
+        positions: an integer only when both arguments are Int values, and a double once any
+        argument is a double, a string, or a boolean (probe6 19; probe7 20-25).
+        """
+        for sources, expected in (
+            (('7', '2'), ('1', '1', '0', '00000001')),
+            (('7.0', '2'), ('1', '1', '0', '3FF0000000000000')),
+            (('"7"', '"2"'), ('1', '1', '0', '3FF0000000000000')),
+            (('7', '"2"'), ('1', '1', '0', '3FF0000000000000')),
+            (('True', '2'), ('1', '1', '0', '3FF0000000000000')),
+            (('7', '2.0'), ('1', '1', '0', '3FF0000000000000')),
+            (('"7"', '2'), ('1', '1', '0', '3FF0000000000000')),
+        ):
+            with self.subTest(sources=sources):
+                self.assertEqual(self._typed_call('mod', *sources), expected)
+
+    def test_builtin_result_types(self):
+        """
+        `Int`, `Floor`, `Ceiling`, one-argument `Round`, `Asc`, `Dec`, the bitwise family, and
+        `Number` over an integer text answer integers — over numbers, strings and booleans
+        alike — while `Abs`, `Sqrt` and the two-argument `Round` answer doubles (probe6 42, 43,
+        45; probe7 40-55; probe8 10-31).
+        """
+        for name, sources, expected in (
+            ('int', ('7.5',), ('7', '1', '0', '00000007')),
+            ('floor', ('2.5',), ('2', '1', '0', '00000002')),
+            ('ceiling', ('2.5',), ('3', '1', '0', '00000003')),
+            ('round', ('2.5',), ('3', '1', '0', '00000003')),
+            ('round', ('2.25', '1'), ('2.3', '0', '1', '4002666666666666')),
+            ('abs', ('-2',), ('2', '1', '0', '4000000000000000')),
+            ('abs', ('-2.5',), ('2.5', '0', '1', '4004000000000000')),
+            ('sqrt', ('4',), ('2', '1', '0', '4000000000000000')),
+            ('asc', ('"A"',), ('65', '1', '0', '00000041')),
+            ('dec', ('"FF"',), ('255', '1', '0', '000000FF')),
+            ('bitxor', ('5', '1'), ('4', '1', '0', '00000004')),
+            ('bitand', ('7.0', '3'), ('3', '1', '0', '00000003')),
+            ('bitnot', ('0',), ('-1', '1', '0', 'FFFFFFFF')),
+            ('int', ('"7"',), ('7', '1', '0', '00000007')),
+            ('number', ('"2"',), ('2', '1', '0', '00000002')),
+            ('number', ('"2.0"',), ('2', '1', '0', '4000000000000000')),
+            ('number', ('" 7"',), ('7', '1', '0', '00000007')),
+            ('stringlen', ('"ab"',), ('2', '1', '0', '00000002')),
+            ('floor', ('"2.5"',), ('2', '1', '0', '00000002')),
+            ('abs', ('"-2"',), ('2', '1', '0', '4000000000000000')),
+            ('floor', ('"7"',), ('7', '1', '0', '00000007')),
+            ('floor', ('"2"',), ('2', '1', '0', '00000002')),
+            ('floor', ('"abc"',), ('0', '1', '0', '00000000')),
+            ('floor', ('7.0',), ('7', '1', '0', '00000007')),
+            ('floor', ('7',), ('7', '1', '0', '00000007')),
+            ('floor', ('True',), ('1', '1', '0', '00000001')),
+            ('ceiling', ('"2.5"',), ('3', '1', '0', '00000003')),
+            ('ceiling', ('"7"',), ('7', '1', '0', '00000007')),
+            ('ceiling', ('7.0',), ('7', '1', '0', '00000007')),
+            ('ceiling', ('True',), ('1', '1', '0', '00000001')),
+            ('round', ('"2.5"',), ('3', '1', '0', '00000003')),
+            ('round', ('"2.25"', '1'), ('2.3', '0', '1', '4002666666666666')),
+            ('round', ('2.5', '0'), ('3', '1', '0', '4008000000000000')),
+            ('round', ('7.0',), ('7', '1', '0', '00000007')),
+            ('round', ('True',), ('1', '1', '0', '00000001')),
+            ('int', ('"7.5"',), ('7', '1', '0', '00000007')),
+            ('int', ('"abc"',), ('0', '1', '0', '00000000')),
+            ('int', ('7.0',), ('7', '1', '0', '00000007')),
+            ('int', ('True',), ('1', '1', '0', '00000001')),
+            ('sqrt', ('"4"',), ('2', '1', '0', '4000000000000000')),
+            ('sqrt', ('True',), ('1', '1', '0', '3FF0000000000000')),
+        ):
+            with self.subTest(name=name, sources=sources):
+                self.assertEqual(self._typed_call(name, *sources), expected)
+
+    def test_two_argument_round_over_an_integer_is_refused(self):
+        """
+        The two-argument `Round` is pinned only over a fractional first argument (probe7 44;
+        probe8 22, 23), so an integer one — where AutoIt might answer the integer back — is not
+        a reading any probe pinned and refuses.
+        """
+        self.assertIsNone(evaluate_builtin('round', (_value('7'), _value('0'))))
+
+    def test_the_is_family_answers_integers(self):
+        """
+        The `Is…` functions answer the integers 1 and 0, never a boolean (probe6 53, 54; probe7
+        30-38; probe8 40-45).
+        """
+        for name, source, expected in (
+            ('isint', '5', '1'),
+            ('isstring', '"a"', '1'),
+            ('isbool', 'True', '1'),
+            ('isarray', '0', '0'),
+            ('isfloat', '2.5', '1'),
+            ('isint', '"5"', '0'),
+            ('isnumber', '"5"', '0'),
+            ('isint', '2.5', '0'),
+            ('isfloat', '5', '0'),
+            ('isfloat', '"5"', '0'),
+            ('isfloat', '"2.5"', '0'),
+            ('isfloat', '"abc"', '0'),
+            ('isnumber', '"2.5"', '0'),
+            ('isint', '"2.5"', '0'),
+            ('isbool', '"1"', '0'),
+            ('isint', '7.0', '1'),
+            ('isfloat', '7.0', '0'),
+        ):
+            with self.subTest(name=name, source=source):
+                self.assertEqual(self._called(name, source), expected)
+
+    def test_the_is_family_refuses_a_boolean_operand(self):
+        """
+        `IsInt`, `IsFloat`, and `IsNumber` over a boolean are not readings any probe pinned —
+        the probes covered numbers and strings only — so they refuse rather than guess.
+        """
+        self.assertIsNone(evaluate_builtin('isint', (_value('True'),)))
+        self.assertIsNone(evaluate_builtin('isfloat', (_value('True'),)))
+        self.assertIsNone(evaluate_builtin('isnumber', (_value('True'),)))
+
+    def test_hex_reads_a_double_as_its_bits(self):
+        """
+        `Hex` over a double is the hex of its 64-bit IEEE bits read as a signed int64, and an
+        explicit length keeps the rightmost digits exactly as for integers (probe7 60-64).
+        """
+        for sources, expected in (
+            (('7.0',), '401C000000000000'),
+            (('-1.0',), 'BFF0000000000000'),
+            (('2.5',), '4004000000000000'),
+            (('7.0', '4'), '0000'),
+            (('7.0', '8'), '00000000'),
+        ):
+            with self.subTest(sources=sources):
+                self.assertEqual(self._called('hex', *sources), expected)
+
+    def test_and_or_answer_a_boolean(self):
+        """
+        In expression position `And` and `Or` answer a boolean whatever the operands' kinds
+        (probe4 62-65).
+        """
+        self.assertEqual(self._applied('and', '1', '2'), 'True')
+        self.assertEqual(self._applied('or', '0', '""'), 'False')
+        self.assertEqual(self._applied('and', '"abc"', '1'), 'True')
+        self.assertEqual(self._applied('or', '1', '0'), 'True')
 
     def test_division_by_zero_is_refused(self):
         """
@@ -383,6 +602,39 @@ class TestAu3Values(TestBase):
         shadowed = literal_value(
             Au3Parser('Binary("0x41")').parse_expression(), frozenset({'binary'}))
         self.assertIsNone(shadowed)
+
+    def test_a_string_no_literal_spells_reads_back_as_its_chain(self):
+        """
+        The `&` chain `render_literal` writes for a string holding a character no literal
+        expresses reads back as that string, so the pair stays symmetric and a fold re-rendering
+        such a chain spells the text it already holds.
+        """
+        for source, text in (
+            ('"a" & @CRLF & "b"', 'a\r\nb'),
+            ('"a" & @CR & "b" & Chr(0)', 'a\rb\x00'),
+            ('ChrW(55296) & "x"', '\ud800x'),
+            ('"x" & ChrW(8232)', 'x '),
+        ):
+            with self.subTest(source=source):
+                value = literal_value(Au3Parser(source).parse_expression(), frozenset())
+                self.assertEqual(self._printed(value), text)
+
+    def test_a_chain_piece_is_refused_when_its_builtin_is_shadowed(self):
+        self.assertIsNone(
+            literal_value(Au3Parser('"a" & Chr(0)').parse_expression(), frozenset({'chr'})))
+        self.assertIsNone(
+            literal_value(
+                Au3Parser('"a" & ChrW(55296)').parse_expression(), frozenset({'chrw'})))
+
+    def test_rendering_a_string_no_literal_spells_round_trips(self):
+        for text in ('a\r\nb\x00', '\ud800x', 'x ', '\r', '\n'):
+            with self.subTest(text=repr(text)):
+                rendered = render_literal(of_string(text), frozenset())
+                self.assertEqual(self._printed(literal_value(rendered, frozenset())), text)
+
+    def test_rendering_a_string_no_literal_spells_is_refused_under_a_shadow(self):
+        self.assertIsNone(render_literal(of_string('\x00'), frozenset({'chr'})))
+        self.assertIsNone(render_literal(of_string('\ud800'), frozenset({'chrw'})))
 
     def test_a_number_argument_to_a_binary_function_is_refused(self):
         """

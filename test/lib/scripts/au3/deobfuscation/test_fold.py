@@ -22,6 +22,18 @@ class TestAu3ConstantFolding(TestAu3):
             self._apply('$x = "a" & "b" & "c"', Au3ConstantFolding),
             '$x = "abc"\n')
 
+    def test_a_folded_string_with_an_unspellable_character_spells_a_chain(self):
+        self.assertEqual(
+            self._apply('$x = "a" & Chr(10) & "b"', Au3ConstantFolding),
+            '$x = "a" & @LF & "b"\n')
+
+    def test_a_chain_spells_the_text_it_already_holds(self):
+        """
+        The fold re-renders a chain to the same text it holds, because `literal_value` reads the
+        chain back — the symmetry that keeps a decoded payload's line breaks standing.
+        """
+        self._assertKept('$x = "a" & @CRLF & "b"')
+
     def test_a_comparison_folds_wherever_it_stands(self):
         self.assertEqual(
             self._apply('$x = 10 > "9"', Au3ConstantFolding),
@@ -96,11 +108,10 @@ class TestAu3ConstantFolding(TestAu3):
             self._apply('$x = Binary("0x41")', Au3ConstantFolding),
             '$x = Binary("0x41")\n')
 
-    def test_and_or_folds_only_as_a_decided_condition(self):
+    def test_and_or_fold_to_their_boolean_value(self):
         """
-        Whether AutoIt skips the right side of a decided `And` is not a fact any probe pinned,
-        so a condition folds only when both sides' truth is known and neither holds a call, and
-        the same operators in expression position never fold.
+        In expression position the operators answer a boolean (probe4 62-65), so the fold no
+        longer needs the condition position to consume them.
         """
         self.assertEqual(
             self._apply(
@@ -114,7 +125,65 @@ class TestAu3ConstantFolding(TestAu3):
             'If True Then\n    $x = 1\nEndIf\n')
         self.assertEqual(
             self._apply('$x = True and False', Au3ConstantFolding),
-            '$x = True and False\n')
+            '$x = False\n')
+
+    def test_a_decided_left_operand_folds_without_the_right_side(self):
+        """
+        AutoIt skips the right side of a decided `And`/`Or` (probe4 60, 61), so the fold drops a
+        call there soundly — it is code the interpreter never runs.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Return 1
+                EndFunc
+
+                If False And f() Then
+                    $x = 1
+                EndIf
+                ''',
+                Au3ConstantFolding,
+            ),
+            'Func f()\n    Return 1\nEndFunc\nIf False Then\n    $x = 1\nEndIf\n')
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Return 1
+                EndFunc
+
+                If True Or f() Then
+                    $x = 1
+                EndIf
+                ''',
+                Au3ConstantFolding,
+            ),
+            'Func f()\n    Return 1\nEndFunc\nIf True Then\n    $x = 1\nEndIf\n')
+
+    def test_a_ternary_over_a_literal_condition_folds_to_its_branch(self):
+        """
+        AutoIt evaluates only the chosen branch (probe4 66, 67), so the other side is dropped
+        soundly, call included.
+        """
+        self.assertEqual(
+            self._apply('$x = True ? "yes" : "no"', Au3ConstantFolding),
+            '$x = "yes"\n')
+        self.assertEqual(
+            self._apply('$x = 0 ? 1 : 2', Au3ConstantFolding),
+            '$x = 2\n')
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Return 1
+                EndFunc
+
+                $x = True ? "yes" : f()
+                ''',
+                Au3ConstantFolding,
+            ),
+            'Func f()\n    Return 1\nEndFunc\n$x = "yes"\n')
 
     def test_an_elseif_test_folds_as_a_condition(self):
         self.assertEqual(

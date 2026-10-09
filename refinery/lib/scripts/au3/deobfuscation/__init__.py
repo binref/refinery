@@ -1,22 +1,27 @@
 """
 AutoIt3 AST deobfuscation transforms.
 
-Two groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
+Three groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
 structurally is — an `Execute` call over a string literal becomes the expression that literal
 names, and a call through an alias variable becomes the function that variable provably names —
-and `fold` replaces what is known — an expression whose operands pin its value becomes the
-literal of that value, and a variable read the propagation walk proves a value for becomes that
-literal.
+`fold` replaces what is known — an expression whose operands pin its value becomes the literal
+of that value, and a variable read the propagation walk proves a value for becomes that literal —
+and `emulate` replaces what a script-defined function returns: the interpreter runs the call
+over the value domain and the call becomes the literal of its result.
 
 `fold` depends on `normalize` and re-triggers it: folding an `Execute` call's argument into the
 string literal it always was is what makes the next `normalize` pass see a flattenable call, and
 rewriting a callee through an alias is what makes the next `fold` pass see the builtin the alias
-named. The remaining alias declarations stay behind as dead code; removing them is a later
+named. `emulate` depends on `fold` — only literal arguments reach a decoded call — and every
+change it makes re-triggers the whole pipeline: a decoded `"BinaryToString"` is what the next
+`normalize` pass turns into an alias rewrite, and a decoded argument is what the next `fold`
+pass folds. The remaining alias declarations stay behind as dead code; removing them is a later
 phase's question.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts.au3.analysis import Au3ModelCache
+from refinery.lib.scripts.au3.deobfuscation.evaluate import Au3FunctionEvaluation
 from refinery.lib.scripts.au3.deobfuscation.execute import Au3ExecuteFlattening
 from refinery.lib.scripts.au3.deobfuscation.fold import Au3ConstantFolding
 from refinery.lib.scripts.au3.deobfuscation.indirect import Au3IndirectCallRewrite
@@ -36,14 +41,24 @@ _fold = TransformerGroup(
     Au3ConstantPropagation,
 )
 
-_GROUP_WIRING = {
+_emulate = TransformerGroup(
+    'emulate',
+    Au3FunctionEvaluation,
+)
+
+_GROUP_DEPENDENCIES = {
     'fold': {'normalize'},
+    'emulate': {'fold'},
+}
+
+_GROUP_INVALIDATORS = {
+    'fold': {'normalize', 'emulate'},
 }
 
 _pipeline = DeobfuscationPipeline(
-    [_normalize, _fold],
-    dependencies=_GROUP_WIRING,
-    invalidators=_GROUP_WIRING,
+    [_normalize, _fold, _emulate],
+    dependencies=_GROUP_DEPENDENCIES,
+    invalidators=_GROUP_INVALIDATORS,
 )
 
 

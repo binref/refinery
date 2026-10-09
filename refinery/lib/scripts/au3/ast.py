@@ -19,33 +19,18 @@ from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
     Au3Assignment,
     Au3Call,
-    Au3DoUntilStatement,
-    Au3ElseIf,
     Au3EnumDeclarator,
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
     Au3Identifier,
-    Au3IfStatement,
     Au3MemberAccess,
     Au3Parameter,
     Au3ParenExpression,
     Au3ReDimTarget,
     Au3Script,
-    Au3SelectCase,
-    Au3Ternary,
     Au3Variable,
     Au3VariableDeclarator,
-    Au3WhileStatement,
-)
-
-_CONDITION_FIELDS = (
-    (Au3IfStatement, 'test'),
-    (Au3ElseIf, 'test'),
-    (Au3WhileStatement, 'test'),
-    (Au3DoUntilStatement, 'test'),
-    (Au3SelectCase, 'test'),
-    (Au3Ternary, 'condition'),
 )
 
 
@@ -171,25 +156,6 @@ def declarator_variable(node: Node) -> Au3Variable | None:
     return None
 
 
-def consumed_as_condition(node: Node) -> bool:
-    """
-    Whether *node* is the condition an `If`, an `ElseIf`, a `While`, a `Do..Until`, or a `Select`
-    branch tests, or the condition of a ternary. Enclosing parentheses are transparent, because
-    a condition wrapped in them is still consumed as a truth value and by nothing else.
-    """
-    cursor = node
-    parent = cursor.parent
-    while isinstance(parent, Au3ParenExpression):
-        cursor = parent
-        parent = cursor.parent
-    if parent is None:
-        return False
-    for owner, field in _CONDITION_FIELDS:
-        if isinstance(parent, owner) and getattr(parent, field) is cursor:
-            return True
-    return False
-
-
 def in_declaration_initializer(node: Node) -> bool:
     """
     Whether *node* sits where a declarator initializes: inside its initializer through array
@@ -201,19 +167,6 @@ def in_declaration_initializer(node: Node) -> bool:
         cursor = parent
         parent = cursor.parent
     return isinstance(parent, Au3VariableDeclarator) and parent.initializer is cursor
-
-
-def inside_array_literal(node: Node) -> bool:
-    """
-    Whether *node* sits anywhere inside an array literal, at any depth: a value the renderer
-    spells as a call is not a legal element of one.
-    """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, Au3ArrayLiteral):
-            return True
-        cursor = cursor.parent
-    return False
 
 
 def contains_a_call(node: Node) -> bool:

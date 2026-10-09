@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from collections.abc import Mapping
+
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
@@ -65,12 +67,13 @@ from refinery.lib.scripts.au3.parser import Au3Parser
 class Au3PropagationModel:
     """
     What the walk learned about one tree version: the value at every variable read a
-    substitution may replace — a read in a target or `ByRef` position is never recorded — and the
-    may-write summary of every script function. Built once per tree version by
-    `build_propagation_model`.
+    substitution may replace — a read in a target or `ByRef` position is never recorded — the
+    may-write summary of every script function, and the globals proven at every script-level call
+    to a function that writes none. Built once per tree version by `build_propagation_model`.
     """
     values: dict[Au3Variable, Au3Value]
     summaries: dict[str, frozenset[str] | None]
+    entries: dict[Au3Call, dict[str, Au3Value]]
 
     def value_at(self, node: Au3Variable) -> Au3Value | None:
         """
@@ -83,6 +86,15 @@ class Au3PropagationModel:
         The globals *function* may write, or `None` when it may write any.
         """
         return self.summaries.get(function)
+
+    def entry_globals(self, call: Au3Call) -> Mapping[str, Au3Value]:
+        """
+        The globals the walk proves a value for where *call* stands — a call at script level to a
+        function whose summary is empty, so nothing it does can change them and the values hold
+        for the whole call. Inside a function body the walk knows no globals, so the answer there
+        is empty.
+        """
+        return self.entries.get(call, {})
 
 
 @dataclass
@@ -263,6 +275,9 @@ def _function_scan(
     """
     What one function may write by itself, ignoring its calls: the global names its provable
     writes target, whether it may write any global at all, and the script functions it calls.
+    A variable handed to the `ByRef` parameter of a script function is written by that call, so
+    it counts as a write of this function. A write to a `ByRef` parameter of this function is a
+    write of its local: the variable behind it belongs to the caller, which counts it there.
     """
     names: set[str] = set()
     everything = False
@@ -274,7 +289,7 @@ def _function_scan(
             statement = ast.owning_statement(node)
             if statement is None:
                 continue
-            if scope_model.binding(function, statement) is not Binding.LOCAL:
+            if scope_model.binding(function, statement, node.name) is not Binding.LOCAL:
                 names.add(node.name)
             continue
         if not isinstance(node, Au3Call):
@@ -285,6 +300,12 @@ def _function_scan(
             continue
         if callee.name in scope_model.functions:
             callees.add(callee.name)
+            statement = ast.owning_statement(node)
+            if statement is None:
+                continue
+            for name in _byref_variables(node, scope_model.functions[callee.name]):
+                if scope_model.binding(function, statement, name) is not Binding.LOCAL:
+                    names.add(name)
             continue
         if callee.name not in BUILTIN_NAMES:
             everything = True
@@ -346,6 +367,7 @@ class _Walker:
         self.summaries = summaries
         self.functions = scope_model.function_names
         self.values: dict[Au3Variable, Au3Value] = {}
+        self.entries: dict[Au3Call, dict[str, Au3Value]] = {}
 
     def walk_scope(self, scope: Au3FunctionDeclaration | None, body: list[Statement]) -> None:
         state = _State.empty()
@@ -405,7 +427,6 @@ class _Walker:
         stmt: Au3VariableDeclaration,
         state: _State,
     ) -> None:
-        binding = self.scope_model.binding(scope, stmt)
         for declarator in stmt.declarations:
             for dimension in declarator.dimensions:
                 self.visit_expression(scope, dimension, state)
@@ -424,7 +445,8 @@ class _Walker:
                 state.kill(variable.name)
                 continue
             state.bind(
-                variable.name, binding,
+                variable.name,
+                self.scope_model.binding(scope, stmt, variable.name),
                 literal_value(declarator.initializer, self.functions))
 
     def visit_enum(
@@ -490,7 +512,7 @@ class _Walker:
         statement = ast.owning_statement(assignment)
         if statement is None:
             return
-        binding = self.scope_model.binding(scope, statement)
+        binding = self.scope_model.binding(scope, statement, variable.name)
         if binding is Binding.NONE:
             state.kill(variable.name)
             return
@@ -577,6 +599,16 @@ class _Walker:
             ):
                 continue
             self.visit_expression(scope, argument, state)
+        if (
+            scope is None
+            and function is not None
+            and callee is not None
+            and self.summaries.get(callee.name) == frozenset()
+        ):
+            self.entries[call] = {
+                **state.constants,
+                **{name: entry[1] for name, entry in state.variables.items()},
+            }
         for name in byref:
             state.kill(name)
         if kills is None:
@@ -725,4 +757,4 @@ def build_propagation_model(root: Au3Script, scope_model: Au3ScopeModel) -> Au3P
     walker = _Walker(scope_model, summaries)
     for scope, body in ast.scope_bodies(root):
         walker.walk_scope(scope, body)
-    return Au3PropagationModel(walker.values, summaries)
+    return Au3PropagationModel(walker.values, summaries, walker.entries)

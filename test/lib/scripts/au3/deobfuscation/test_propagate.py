@@ -111,6 +111,48 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Func f()\n    $x = 5\n    $y = $x\nEndFunc\n')
 
+    def test_a_bare_write_to_a_proven_local_binds(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    $x = 5
+                    $y = $x
+                EndFunc
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Func f()\n    Local $x\n    $x = 5\n    $y = 5\nEndFunc\n')
+
+    def test_a_parameter_write_binds_the_local(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f($p)
+                    $p = 5
+                    $y = $p
+                EndFunc
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Func f($p)\n    $p = 5\n    $y = 5\nEndFunc\n')
+
+    def test_a_global_declaration_in_the_function_breaks_the_local_proof(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    $x = 5
+                    Global $x
+                    $y = $x
+                EndFunc
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Func f()\n    Local $x\n    $x = 5\n    Global $x\n    $y = $x\nEndFunc\n')
+
     def test_a_local_declaration_inside_a_function_binds(self):
         self.assertEqual(
             self._apply(
@@ -216,6 +258,101 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Local $x = 5\nFunc f(ByRef $p)\n    $p = 1\nEndFunc\nf($x)\n$y = $x\n')
 
+    def test_a_byref_write_reached_through_another_function_kills_the_variable(self):
+        """
+        The variable a function hands to a `ByRef` parameter is written by that call, so a
+        caller of the function kills it, although the function's own body never spells a write.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+
+                Func modify(ByRef $p)
+                    $p = 1
+                EndFunc
+
+                Func f()
+                    modify($x)
+                EndFunc
+
+                f()
+                $y = $x
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\n'
+            'Func modify(ByRef $p)\n'
+            '    $p = 1\n'
+            'EndFunc\n'
+            'Func f()\n'
+            '    modify($x)\n'
+            'EndFunc\n'
+            'f()\n'
+            '$y = $x\n')
+
+    def test_a_byref_write_reached_through_another_function_spares_other_globals(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+                Local $z = 7
+
+                Func modify(ByRef $p)
+                    $p = 1
+                EndFunc
+
+                Func f()
+                    modify($x)
+                EndFunc
+
+                f()
+                $y = $x
+                $w = $z
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\n'
+            'Local $z = 7\n'
+            'Func modify(ByRef $p)\n'
+            '    $p = 1\n'
+            'EndFunc\n'
+            'Func f()\n'
+            '    modify($x)\n'
+            'EndFunc\n'
+            'f()\n'
+            '$y = $x\n'
+            '$w = 7\n')
+
+    def test_a_byref_chain_through_a_byref_parameter_kills_the_outermost_variable(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+
+                Func modify(ByRef $p)
+                    $p = 1
+                EndFunc
+
+                Func relay(ByRef $q)
+                    modify($q)
+                EndFunc
+
+                relay($x)
+                $y = $x
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\n'
+            'Func modify(ByRef $p)\n'
+            '    $p = 1\n'
+            'EndFunc\n'
+            'Func relay(ByRef $q)\n'
+            '    modify($q)\n'
+            'EndFunc\n'
+            'relay($x)\n'
+            '$y = $x\n')
+
     def test_an_indexed_store_kills_the_whole_array(self):
         """
         A store through an index mutates one element, so the array as a value is no longer the
@@ -307,7 +444,7 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Local $a[2] = [1, 2]\n$y = $a[0]\n')
 
-    def test_a_binary_value_refuses_a_position_inside_an_array_literal(self):
+    def test_a_binary_value_replaces_a_read_inside_an_array_literal(self):
         self.assertEqual(
             self._apply(
                 '''
@@ -316,7 +453,19 @@ class TestAu3ConstantPropagation(TestAu3):
                 ''',
                 Au3ConstantPropagation,
             ),
-            'Local $b = Binary("0x41")\nLocal $a[1] = [$b]\n')
+            'Local $b = Binary("0x41")\n'
+            'Local $a[1] = [Binary("0x41")]\n')
+
+    def test_a_value_with_a_line_break_propagates_as_its_chain(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Global Const $c = "a" & @CRLF & "b"
+                $y = $c
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Global Const $c = "a" & @CRLF & "b"\n$y = "a" & @CRLF & "b"\n')
 
     def test_a_binary_value_replaces_a_scalar_read(self):
         self.assertEqual(

@@ -3,6 +3,11 @@ from .. import TestUnitBase
 import inspect
 import pytest
 
+from test.lib.scripts.au3.test_deobfuscation import (
+    FIXTURE_DEOBFUSCATED,
+    FIXTURE_OBFUSCATED,
+)
+
 
 _PRETTY_INPUT = inspect.cleandoc(
     """
@@ -170,6 +175,10 @@ class TestDAu3(TestUnitBase):
     def test_empty_input(self):
         result = B'' | self.load() | str
         self.assertEqual(result, '')
+
+    def test_the_obfuscated_fixture_decodes_to_its_cleaned_form(self):
+        result = FIXTURE_OBFUSCATED.encode('ASCII') | self.load() | str
+        self.assertEqual(result, FIXTURE_DEOBFUSCATED)
 
     @pytest.mark.cythonized
     def test_decompiled_a3x_script_parses_error_free(self):

@@ -225,7 +225,7 @@ def _record_use(
         use.initializer = _written_initializer(node)
         statement = ast.owning_statement(node)
         if statement is not None:
-            use.binding = scope_model.binding(scope, statement)
+            use.binding = scope_model.binding(scope, statement, node.name)
     elif not _is_callee(node):
         use.every_read_is_a_call = False
 
