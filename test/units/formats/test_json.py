@@ -97,3 +97,10 @@ class TestJSONLevel0Extractor(TestUnitBase):
         self.assertEqual(result, B'Binary Refinery!')
         self.assertNotIn('n3', result.meta)
         self.assertIn('n2', result.meta)
+
+    def test_without_a_format_the_input_is_returned(self):
+        data = B'{"data": "Binary Refinery!", "test": true}'
+        result = next(data | self.ldu('xj0'))
+        assert isinstance(result, Chunk)
+        self.assertEqual(result, data)
+        self.assertEqual(result['data'], B'Binary Refinery!')

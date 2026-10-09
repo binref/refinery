@@ -111,7 +111,8 @@ class xj0(Unit):
         meta = metavars(data)
         args = {k: self._convert(v) for k, v in jdoc.items() if self._acceptable(k, v)}
         used = set()
-        data[:] = meta.format_bin(' '.join(self.args.fmt), self.codec, [data], args, used)
+        if fmt := self.args.fmt:
+            data[:] = meta.format_bin(' '.join(fmt), self.codec, [data], args, used)
         for u in used:
             args.pop(u, None)
         if not self.args.one:
