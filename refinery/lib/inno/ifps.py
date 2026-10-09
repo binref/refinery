@@ -799,35 +799,33 @@ class DeclSpec:
         return cls(void, parameters, return_type=return_type)
 
 
-def _trace_stack(
-    bbs: dict[int, BasicBlock],
-    visited: set[int],
-    errored: set[int],
-    offset: int,
-    stack: int | None,
-) -> None:
+def _trace_stack(bbs: dict[int, BasicBlock]) -> None:
     """
-    Traces the stack depth from the basic block at the given offset through every block that is
-    reachable from it. A block that is reached with two different depths has no known depth.
+    Traces the stack depth from the entry block through every block that is reachable from it, in
+    depth-first order. A block that is reached with two different depths has no known depth.
     """
-    if offset in errored:
-        return
-    bb = bbs[offset]
-    if bb.stack is not None and stack != bb.stack:
-        stack = None
-    if stack is None:
-        errored.add(offset)
-    elif offset in visited:
-        return
-    else:
-        visited.add(offset)
-    bb.stack = stack
-    body = [] if stack is None else bb.body
-    for insn in body:
-        insn.stack = stack
-        stack += insn.stack_delta
-    for t in bb.targets:
-        _trace_stack(bbs, visited, errored, t, stack)
+    visited: set[int] = set()
+    errored: set[int] = set()
+    pending: list[tuple[int, int | None]] = [(0, 0)]
+    while pending:
+        offset, stack = pending.pop()
+        if offset in errored:
+            continue
+        bb = bbs[offset]
+        if bb.stack is not None and stack != bb.stack:
+            stack = None
+        if stack is None:
+            errored.add(offset)
+        elif offset in visited:
+            continue
+        else:
+            visited.add(offset)
+        bb.stack = stack
+        if stack is not None:
+            for insn in bb.body:
+                insn.stack = stack
+                stack += insn.stack_delta
+        pending.extend((target, stack) for target in reversed(bb.targets))
 
 
 @dataclass
@@ -929,7 +927,7 @@ class Function:
                 if (block := bbs.get(source)) is not None and offset in block.targets:
                     block.targets.remove(offset)
 
-        _trace_stack(bbs, set(), set(), 0, 0)
+        _trace_stack(bbs)
 
         for insn in self.body:
             if (stack := insn.stack) is None:
