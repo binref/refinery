@@ -38,6 +38,9 @@ class _MappedView(bytearray, MemoryFileMethods[bytearray, bytes]):
         if data is not self:
             raise TypeError('A mapped view is its own data.')
 
+    def __bytes__(self) -> bytes:
+        return bytes(memoryview(self))
+
 
 class VirtualFile:
     """
@@ -72,9 +75,9 @@ class VirtualFile:
         """
         if (data := self.data) is None:
             raise ValueError('Attempt to map a virtual file with no associated data.')
-        view = memoryview(data)
+        view = memoryview(data)[offset:]
         if length:
-            view = view[offset:offset + length]
+            view = view[:length]
         return _MappedView(view, self.node)
 
     def open(self, mode: str) -> MemoryFile[bytearray, bytes]:

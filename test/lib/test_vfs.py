@@ -38,6 +38,23 @@ class TestVFS(TestBase):
             self.assertEqual(mapping.read(), B'refinery')
             self.assertEqual(mapping[:6], b'finest')
 
+    def test_a_mapping_converts_to_the_bytes_it_maps(self):
+        import mmap
+        with VirtualFileSystem() as vfs:
+            vf = VirtualFile(vfs, b'finest refinery')
+            mapping = mmap.mmap(open(vf, 'rb').fileno(), 0)
+            self.assertEqual(bytes(mapping), b'finest refinery')
+
+    def test_a_mapping_to_the_end_of_the_file_starts_at_its_offset(self):
+        import mmap
+        data = bytes(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+        offset = mmap.ALLOCATIONGRANULARITY
+        with VirtualFileSystem() as vfs:
+            vf = VirtualFile(vfs, data)
+            mapping = mmap.mmap(open(vf, 'rb').fileno(), 0, offset=offset)
+            self.assertEqual(mapping[:16], data[offset:offset + 16])
+            self.assertEqual(len(mapping), len(data) - offset)
+
     def test_read_and_write(self):
         with VirtualFileSystem() as vfs:
             vf1 = VirtualFile(vfs)
