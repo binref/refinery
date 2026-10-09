@@ -134,6 +134,14 @@ class TestBiffWorkbook(TestBase):
             with self.subTest(data=data[:8]):
                 self.assertIs(detect_format(data), ExcelFormat.BIFF)
 
+    def test_a_code_page_without_a_codec_is_read_as_latin_1(self):
+        data = bytearray(FORMATE_BIFF8)
+        record = data.find(B'\x42\x00\x02\x00')
+        data[record + 4:record + 6] = (708).to_bytes(2, 'little')
+        workbook = open_workbook(bytes(data))
+        assert isinstance(workbook, BiffWorkbook)
+        self.assertEqual(B'\xC1'.decode(workbook._codepage), '\xC1')
+
     def test_sheets_of_formate(self):
         self.assertEqual(
             [(sheet.name, sheet.kind) for sheet in open_workbook(FORMATE_BIFF8).sheets()],

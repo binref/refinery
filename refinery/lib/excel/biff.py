@@ -9,6 +9,7 @@ formula token stream.
 """
 from __future__ import annotations
 
+import codecs
 import struct
 
 from collections.abc import Iterator, Sequence
@@ -194,6 +195,21 @@ class _Supbook(NamedTuple):
     """
     internal: bool
     sheets: tuple[str, ...]
+
+
+def _encoding_of_codepage(codepage: int) -> str:
+    """
+    The codec for the Windows code page of a CODEPAGE record. A code page that Python has no codec
+    for is read as Latin-1, like a number outside the range of Windows code pages.
+    """
+    if (encoding := _CODEPAGE_ENCODINGS.get(codepage)) is not None:
+        return encoding
+    if 300 <= codepage <= 1999:
+        try:
+            return codecs.lookup(F'cp{codepage}').name
+        except LookupError:
+            pass
+    return 'iso-8859-1'
 
 
 def _u16(data: memoryview | bytes, offset: int = 0) -> int:
@@ -669,13 +685,7 @@ class BiffWorkbook(ExcelWorkbook):
         elif opcode == _Record.SST:
             self._shared_strings = self._shared_string_table(body, stream)
         elif opcode == _Record.CODEPAGE:
-            codepage = _u16(body)
-            if codepage in _CODEPAGE_ENCODINGS:
-                self._encoding = _CODEPAGE_ENCODINGS[codepage]
-            elif 300 <= codepage <= 1999:
-                self._encoding = F'cp{codepage}'
-            else:
-                self._encoding = 'iso-8859-1'
+            self._encoding = _encoding_of_codepage(_u16(body))
         elif opcode == _Record.DATEMODE:
             self.date_mode_1904 = body[0] == 1
         elif opcode == _Record.FILEPASS:
