@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import functools
 import re
 import struct
 
@@ -11,6 +10,7 @@ from dataclasses import dataclass
 from refinery.lib.argformats import DelayedArgument, multibin, number
 from refinery.lib.emulator import CC, EmulationTimeout, Emulator, Hook
 from refinery.lib.structures import StructReader
+from refinery.lib.tools import mixed_class
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk
 from refinery.units.formats.exe import Arch, EmulatingUnit, Engine
@@ -521,8 +521,8 @@ class Evaluator:
 
 class _DisassemblingEmulator(Emulator):
     """
-    Logs each instruction that the emulator executes. The function `_show_disassembly` adds this
-    to an emulator backend.
+    Logs each instruction that the emulator executes; the unit adds it to an emulator backend when
+    asked to show the disassembly.
     """
     def disassemble(self, address: int):
         try:
@@ -537,16 +537,6 @@ class _DisassemblingEmulator(Emulator):
         else:
             self.halt()
         return False
-
-
-@functools.cache
-def _show_disassembly(base: type[Emulator]) -> type[Emulator]:
-    """
-    The given emulator class, extended to log each instruction that it executes; one class for
-    each backend.
-    """
-    namespace = {'__module__': __name__}
-    return type(F'Disassembling{base.__name__}', (_DisassemblingEmulator, base), namespace)
 
 
 class vcall(EmulatingUnit):
@@ -627,7 +617,7 @@ class vcall(EmulatingUnit):
         hook = Hook.Errors
 
         if self.log_info():
-            engine = _show_disassembly(engine)
+            engine = mixed_class(_DisassemblingEmulator, engine, F'Disassembling{engine.__name__}')
             hook |= Hook.CodeExecute
 
         emu = engine(data, self.args.base, self.args.arch, hook).reset()

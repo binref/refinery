@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import pathlib
 import typing
 
@@ -12,6 +11,7 @@ if True:
 from refinery.lib.id import get_text_format
 from refinery.lib.meta import MV, metavars
 from refinery.lib.scripts.guess import guess_language
+from refinery.lib.tools import mixed_class
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -24,8 +24,8 @@ if typing.TYPE_CHECKING:
 class _ColoramaFormatting:
     """
     The behavior of a pygments formatter that writes each token in the color that a map from token
-    types to colorama codes assigns to it. The function `_colorama_formatter` adds it to the
-    formatter class of pygments.
+    types to colorama codes assigns to it. The unit adds it to the formatter class of pygments,
+    which it imports only when it is needed.
     """
     def __init__(self, colors: dict, **options):
         super().__init__(**options)
@@ -41,15 +41,6 @@ class _ColoramaFormatting:
             outfile.write(cc or colorama.Fore.WHITE)
             outfile.write(value)
             outfile.write(colorama.Style.RESET_ALL)
-
-
-@functools.cache
-def _colorama_formatter(base: type) -> type:
-    """
-    The colorama formatter on the given formatter class of pygments. Pygments is imported only when
-    it is needed, so the class is built then, once.
-    """
-    return type('ColoramaFormatter', (_ColoramaFormatting, base), {})
 
 
 class hl(Unit):
@@ -201,7 +192,7 @@ class hl(Unit):
                 t.Error            : R + ST.BRIGHT,
             }
 
-            tf = _colorama_formatter(lib.formatter.Formatter)(ANSI_MAP)
+            tf = mixed_class(_ColoramaFormatting, lib.formatter.Formatter, 'ColoramaFormatter')(ANSI_MAP)
 
         out = lib.highlight(data, lexer, tf)
         out = F'{out}{colorama.Style.RESET_ALL}'

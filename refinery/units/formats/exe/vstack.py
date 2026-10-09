@@ -26,7 +26,7 @@ from refinery.lib.executable import Arch, Range
 from refinery.lib.intervals import MemoryIntervalUnion
 from refinery.lib.meta import MV, metavars
 from refinery.lib.structures import StructReader
-from refinery.lib.tools import exception_to_string
+from refinery.lib.tools import exception_to_string, mixed_class
 from refinery.lib.types import INF, bounds, isbuffer
 from refinery.units import Arg, Chunk
 from refinery.units.formats.exe import EmulatingUnit, Engine
@@ -124,8 +124,7 @@ def _halt_on_interrupt(pfn: FN) -> FN:
 
 class VStackEmulator(Emulator):
     """
-    The hooks of `refinery.vstack`. The function `_vstack_emulator` adds them to an emulator
-    backend.
+    The hooks of `refinery.vstack`, which the unit adds to an emulator backend.
     """
 
     state: EmuState
@@ -386,14 +385,6 @@ class VStackEmulator(Emulator):
                 self.halt()
 
 
-@functools.cache
-def _vstack_emulator(base: type[Emulator]) -> type[VStackEmulator]:
-    """
-    The emulator class of `refinery.vstack` for the given backend; one class for each backend.
-    """
-    return type(F'VStack{base.__name__}', (VStackEmulator, base), {'__module__': __name__})
-
-
 class vstack(EmulatingUnit):
     """
     Emulate instructions at a given address and extract memory patches.
@@ -491,7 +482,7 @@ class vstack(EmulatingUnit):
         flags = Hook.Default | Hook.ApiCall
         self.log_debug(F'attempting to use {engine.name}')
 
-        Emu = _vstack_emulator(engine.cls)
+        Emu = mixed_class(VStackEmulator, engine.cls, F'VStack{engine.cls.__name__}')
 
         emu = Emu(
             data,

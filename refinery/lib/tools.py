@@ -4,6 +4,7 @@ Miscellaneous helper functions.
 from __future__ import annotations
 
 import copy
+import functools
 import inspect
 import io
 import itertools
@@ -419,6 +420,15 @@ class NoLoggingProxy:
         with NoLogging(mode):
             rv = self.__wrapped__(*args, **kwargs)
         return NoLoggingProxy(rv, mode)
+
+
+@functools.cache
+def mixed_class(mixin: type[_T], base: type, name: str) -> type[_T]:
+    """
+    The class of the given name that adds the given mixin to a base class chosen at run time; one
+    class for each combination. It belongs to the module of the mixin.
+    """
+    return cast('type[_T]', type(name, (mixin, base), {'__module__': mixin.__module__}))
 
 
 def proxy(t: _T) -> _T:

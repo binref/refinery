@@ -1,6 +1,8 @@
 import struct
 import unittest
 
+from refinery.lib.tools import mixed_class
+
 from ... import TestUnitBase
 
 
@@ -179,7 +181,7 @@ class TestVStack(TestUnitBase):
         def interrupted(args):
             raise KeyboardInterrupt
 
-        emu = vstack._vstack_emulator(UnicornEmulator)(bytes.fromhex('90'), arch=Arch.X32)
+        emu = mixed_class(vstack.VStackEmulator, UnicornEmulator, 'VStackUnicornEmulator')(bytes.fromhex('90'), arch=Arch.X32)
         emu.reset(SimpleNamespace(last_api=None, cfg=SimpleNamespace(show_apis=False)))
         try:
             result = emu.hook_api_call(emu, 'kernel32.Sleep', interrupted, ())
@@ -191,4 +193,4 @@ class TestVStack(TestUnitBase):
         from refinery.lib.emulator import IcicleEmulator, SpeakeasyEmulator, UnicornEmulator
         from refinery.units.formats.exe import vstack
         for backend in (IcicleEmulator, SpeakeasyEmulator, UnicornEmulator):
-            self.assertEqual(vstack._vstack_emulator(backend).__module__, vstack.__name__)
+            self.assertEqual(mixed_class(vstack.VStackEmulator, backend, 'VStack').__module__, vstack.__name__)
