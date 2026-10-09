@@ -204,7 +204,6 @@ class WeakHook:
         try:
             return self._method(emulator, *args)
         except BaseException as error:
-            traceback.clear_frames(error.__traceback__)
             emulator._hook_failed(error)
             return False
         finally:
@@ -438,10 +437,12 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
     def _hook_failed(self, error: BaseException):
         """
-        Called by a `refinery.lib.emulator.abstract.WeakHook` whose hook raised the given error. The
-        emulation halts, and `refinery.lib.emulator.Emulator.emulate` raises the first such error of
-        the run; a hook that fails after it may only have failed because of it.
+        Called by a backend when a hook raised the given error. The frames of the failed hook let
+        go of their variables, the emulation halts, and `refinery.lib.emulator.Emulator.emulate`
+        raises the first such error of the run; a hook that fails after it may only have failed
+        because of it.
         """
+        traceback.clear_frames(error.__traceback__)
         if self._hook_error is None:
             self._hook_error = error
         self.halt()

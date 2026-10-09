@@ -4,7 +4,7 @@ Implements `refinery.lib.emulator.interface.RawMetalEmulator` for the icicle bac
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from refinery.lib.emulator.abstract import (
     EmulationError,
@@ -43,9 +43,11 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     def _init(self):
         super()._init()
         self._single_step = False
+        self._halts: set[int] = set()
 
     def _reset(self):
         super()._reset()
+        self._halts.clear()
         exe = self.exe
 
         try:
@@ -67,6 +69,17 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         if self.hooks.ApiCall:
             self._install_api_trampoline()
 
+    def _call_hook(self, hook: Callable[..., Any], *args) -> Any:
+        """
+        Calls a hook of the emulator. A hook that fails ends the run like a hook of the other
+        backends: `refinery.lib.emulator.Emulator.emulate` raises its error.
+        """
+        try:
+            return hook(*args)
+        except BaseException as error:
+            self._hook_failed(error)
+            raise
+
     def _enable_single_step(self):
         self._single_step = True
 
@@ -84,6 +97,15 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         return insn.addr_size
 
     def _emulate(self, start: int, end: int | None = None, timeout: int | None = None):
+        try:
+            return self._run(start, end, timeout)
+        finally:
+            ice = self.icicle
+            for address in self._halts:
+                ice.remove_breakpoint(address)
+            self._halts.clear()
+
+    def _run(self, start: int, end: int | None, timeout: int | None):
         RS = ic.RunStatus
         MP = ic.MemoryProtection
         ice = self.icicle
@@ -132,9 +154,9 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     raise InvalidInstruction(ip) from SI
                 args = (ice, ip, insn.size, self.state)
                 if apis_hooked:
-                    self._hook_api_call_check(*args)
+                    self._call_hook(self._hook_api_call_check, *args)
                 if code_hooked:
-                    self.hook_code_execute(*args)
+                    self._call_hook(self.hook_code_execute, *args)
             else:
                 insn = None
             if mprotect:
@@ -148,7 +170,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                     ice.mem_protect(addr, size, MP.ExecuteOnly)
                     if mm_w_hooked and prot == MP.ExecuteReadWrite:
                         value = self.mem_read_int(addr, size)
-                        if self.hook_mem_write(ice, MemAccess.Write, addr, size, value, self.state) is False:
+                        if self._call_hook(self.hook_mem_write, ice, MemAccess.Write, addr, size, value, self.state) is False:
                             stop = True
                 mprotect.clear()
                 retrying = 0
@@ -179,12 +201,12 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 if ec == EC.WriteUnmapped:
                     xs = MemAccess.Unmapped | MemAccess.Write
                 if xs is not None and mm_e_hooked:
-                    if self.hook_mem_error(ice, xs, ea, size, 0, self.state) is not False:
+                    if self._call_hook(self.hook_mem_error, ice, xs, ea, size, 0, self.state) is not False:
                         retrying += 1
                         continue
                 elif ec == EC.ReadPerm and mm_x_hooked:
                     value = self.mem_read_int(ea, size)
-                    if self.hook_mem_read(ice, MemAccess.Read, ea, size, value, self.state) is not False:
+                    if self._call_hook(self.hook_mem_read, ice, MemAccess.Read, ea, size, value, self.state) is not False:
                         prot = MP.ExecuteRead if mm_w_hooked else MP.ExecuteReadWrite
                         mprotect.append((ea, size, prot))
                         retrying += 1
@@ -201,7 +223,12 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 break
 
     def halt(self):
-        self.icicle.add_breakpoint(self.ip)
+        """
+        Stops the run at the current instruction with a breakpoint, which the run removes when it
+        ends, so that the next run passes it.
+        """
+        self._halts.add(ip := self.ip)
+        self.icicle.add_breakpoint(ip)
 
     def _lookup_register(self, var: str) -> Register[str]:
         name = var.casefold()

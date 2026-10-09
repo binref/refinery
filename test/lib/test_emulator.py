@@ -9,6 +9,8 @@ import subprocess
 import sys
 import weakref
 
+from unittest import mock
+
 from refinery.lib.emulator import (
     CC,
     Arch,
@@ -588,6 +590,40 @@ class TestEmulator(TestBase):
         inner._set_dyn_code_hook(emulator.base, 5)
         emulator.emulate(emulator.base, emulator.base + 5, timeout=5)
         self.assertEqual(emulator.ip, emulator.base + 5)
+
+    def _test_a_failing_hook_ends_the_run_with_an_emulation_error(self, base_emu: type[Emulator]):
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = base_emu(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        with mock.patch.object(emu, 'hook_code_execute', side_effect=RuntimeError('the hook failed')):
+            with self.assertRaises(EmulationError) as context:
+                emu.emulate(emu.base, emu.base + len(code))
+        self.assertIsInstance(context.exception.__cause__, RuntimeError)
+
+    def test_a_failing_hook_ends_the_run_with_an_emulation_error_uc(self):
+        self._test_a_failing_hook_ends_the_run_with_an_emulation_error(UnicornEmulator)
+
+    def test_a_failing_hook_ends_the_run_with_an_emulation_error_ic(self):
+        self._test_a_failing_hook_ends_the_run_with_an_emulation_error(IcicleEmulator)
+
+    def test_a_failing_hook_ends_the_run_with_an_emulation_error_se(self):
+        self._test_a_failing_hook_ends_the_run_with_an_emulation_error(SpeakeasyEmulator)
+
+    def test_a_run_after_a_halted_run_passes_the_address_of_the_halt_ic(self):
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = IcicleEmulator(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        with mock.patch.object(emu, 'hook_code_execute', side_effect=lambda *_: emu.halt()):
+            emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(emu.ip, emu.base)
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(emu.get_register('eax'), 2)
 
     def test_the_first_hook_that_fails_is_the_cause_of_the_emulation_error_uc(self):
         class Emu(UnicornEmulator):
