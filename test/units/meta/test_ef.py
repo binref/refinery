@@ -164,3 +164,38 @@ class TestFileReader(TestUnitBase):
                 self.assertEqual(
                     isodate(str(result['mtime'])),
                     datetime.fromtimestamp(stat.st_mtime).replace(microsecond=0))
+
+    @staticmethod
+    def _link_directory(target: str, link: str):
+        if os.name == 'nt':
+            import _winapi
+            _winapi.CreateJunction(target, link)
+        else:
+            os.symlink(target, link, target_is_directory=True)
+
+    def _paths(self, pattern: str, **options) -> list[str]:
+        return sorted(str(chunk['path']) for chunk in None | self.load(pattern, wild=True, **options) | [])
+
+    def test_a_link_to_another_directory_is_followed_only_when_asked(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root):
+                os.makedirs('a')
+                os.makedirs('b')
+                with open('b/note.txt', 'w') as stream:
+                    stream.write('content')
+                self._link_directory(os.path.abspath('b'), 'c')
+                self.assertEqual(self._paths('*/note.txt'), ['b/note.txt'])
+                self.assertEqual(self._paths('**/*.txt'), ['b/note.txt'])
+                self.assertEqual(self._paths('*/note.txt', symlinks=True), ['b/note.txt', 'c/note.txt'])
+
+    def test_links_to_a_directory_that_contains_them_are_not_walked_into(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root):
+                os.makedirs('a')
+                with open('a/note.txt', 'w') as stream:
+                    stream.write('content')
+                self._link_directory(os.path.abspath('.'), os.path.join('a', 'up'))
+                self._link_directory(os.path.abspath('.'), os.path.join('a', 'again'))
+                self.assertEqual(self._paths('**/*.txt'), ['a/note.txt'])
+                self.assertEqual(self._paths('**/*.txt', symlinks=True), ['a/note.txt'])
+
