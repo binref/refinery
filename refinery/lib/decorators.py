@@ -68,7 +68,34 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
     return method_wrapper
 
 
-class _MaskingTransformer(ast.NodeTransformer):
+class ArithmeticReducer(ast.NodeTransformer):
+    """
+    Rewrites code so that the result of each arithmetic operation that can leave a range of
+    integers is reduced back into it; the subclass decides how by implementing `reduced`.
+    """
+    BINARY = (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)
+    UNARY = (ast.UAdd, ast.USub, ast.Invert)
+
+    def reduced(self, node: ast.expr) -> ast.expr:
+        """
+        The given expression, reduced into the range.
+        """
+        raise NotImplementedError
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, self.BINARY):
+            return node
+        return self.reduced(node)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        self.generic_visit(node)
+        if not isinstance(node.op, self.UNARY):
+            return node
+        return self.reduced(node)
+
+
+class _MaskingTransformer(ArithmeticReducer):
     """
     Rewrites a function for `refinery.lib.decorators.masked`: the result of each arithmetic
     operation is reduced with the given operation and mask, and the function gets a new name, which
@@ -79,27 +106,17 @@ class _MaskingTransformer(ast.NodeTransformer):
         self.mask = mask
         self.name: str | None = None
 
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-        self.generic_visit(node)
-        if not isinstance(node.op, (ast.USub, ast.Invert)):
-            return node
+    def reduced(self, node: ast.expr) -> ast.expr:
         return ast.BinOp(node, self.op(), ast.Constant(self.mask))
 
     def visit_AugAssign(self, node: ast.AugAssign) -> Any:
         self.generic_visit(node)
-        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
+        if not isinstance(node.op, self.BINARY):
             return node
         target_load = copy.deepcopy(node.target)
         target_load.ctx = ast.Load()
         computation = ast.BinOp(left=target_load, op=node.op, right=node.value)
-        reduced = ast.BinOp(left=computation, op=self.op(), right=ast.Constant(self.mask))
-        return ast.Assign(targets=[node.target], value=reduced)
-
-    def visit_BinOp(self, node: ast.BinOp):
-        self.generic_visit(node)
-        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
-            return node
-        return ast.BinOp(node, self.op(), ast.Constant(self.mask))
+        return ast.Assign(targets=[node.target], value=self.reduced(computation))
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         if self.name is None:

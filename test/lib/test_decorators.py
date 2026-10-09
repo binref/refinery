@@ -25,6 +25,13 @@ class TestDecorators(TestBase):
 
         self.assertEqual(double_successor(0x80), 0x02)
 
+    def test_unary_operations_are_reduced_like_in_expressions(self):
+        @masked(0xFF)
+        def signs(a: int):
+            return (+a, -a, ~a)
+
+        self.assertEqual(signs(0x1FF), (0xFF, 0x01, 0x00))
+
     def test_modulo_16bit(self):
         @masked(0x10000, mod=True)
         def add(a: int, b: int):

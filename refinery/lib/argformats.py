@@ -123,6 +123,7 @@ from typing import (
     overload,
 )
 
+from refinery.lib.decorators import ArithmeticReducer
 from refinery.lib.frame import Chunk
 from refinery.lib.meta import Percentage, is_valid_variable_name, metavars
 from refinery.lib.patterns import formats
@@ -164,7 +165,7 @@ class LazyEvaluation:
     """
 
 
-class _ExpressionPostprocessor(ast.NodeTransformer):
+class _ExpressionPostprocessor(ArithmeticReducer):
     """
     Rewrites an expression for `refinery.lib.argformats.PythonExpression`: string constants become
     bytes, the matrix product becomes exclusive or, and the result of each arithmetic operation is
@@ -174,7 +175,7 @@ class _ExpressionPostprocessor(ast.NodeTransformer):
         self.modulus = modulus
         self.mask = mask
 
-    def _reduced(self, node: ast.expr) -> ast.expr:
+    def reduced(self, node: ast.expr) -> ast.expr:
         if (modulus := self.modulus) is not None:
             return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
         if (mask := self.mask) > 0:
@@ -188,18 +189,6 @@ class _ExpressionPostprocessor(ast.NodeTransformer):
 
     def visit_MatMult(self, node: ast.MatMult) -> Any:
         return ast.BitXor()
-
-    def visit_BinOp(self, node: ast.BinOp) -> Any:
-        self.generic_visit(node)
-        if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
-            return node
-        return self._reduced(node)
-
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-        self.generic_visit(node)
-        if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
-            return node
-        return self._reduced(node)
 
 
 class PythonExpression:
