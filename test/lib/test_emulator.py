@@ -89,6 +89,35 @@ def _makeEmulator(e: type[UnicornEmulator]):
     return Emu
 
 
+class _StateRecorder(Emulator):
+    """
+    Maps memory where an access fails and records the state that each memory write hook receives.
+    """
+    def _init(self):
+        super()._init()
+        self.states: list = []
+
+    def hook_mem_error(self, emu, access, address, size, value, state=None):
+        self.map(self.align(address, down=True), self.alloc_size)
+        return True
+
+    def hook_mem_write(self, emu, access, address, size, value, state=None):
+        self.states.append(state)
+        return True
+
+
+class _UnicornStateRecorder(_StateRecorder, UnicornEmulator):
+    pass
+
+
+class _IcicleStateRecorder(_StateRecorder, IcicleEmulator):
+    pass
+
+
+class _SpeakeasyStateRecorder(_StateRecorder, SpeakeasyEmulator):
+    pass
+
+
 class TestEmulator(TestBase):
 
     def _test_single_stepping_x32(self, base_emu):
@@ -314,14 +343,16 @@ class TestEmulator(TestBase):
         emu.reset()
         emu.emulate(emu._module.base + emu._module.ep)
         self.assertEqual(emu.rv, 0)
-        self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)
+        assert (inner := emu.speakeasy.emu) is not None
+        self.assertEqual(emu.ip, inner.return_hook)
 
     def test_module_entry_se(self):
         emu = SpeakeasyEmulator(_module_exe())
         emu.reset()
         emu.emulate(emu._module.base + emu._module.ep)
         self.assertEqual(emu.rv, 0x1337)
-        self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)
+        assert (inner := emu.speakeasy.emu) is not None
+        self.assertEqual(emu.ip, inner.return_hook)
 
     def test_code_hook_se(self):
         seen = []
@@ -435,36 +466,25 @@ class TestEmulator(TestBase):
     def test_an_emulator_is_freed_without_the_collector_se(self):
         self._test_an_emulator_is_freed_without_the_collector(SpeakeasyEmulator)
 
-    def _test_a_memory_write_hook_receives_the_state(self, base_emu: type[Emulator]):
-        states = []
-
-        class Emu(base_emu):
-            def hook_mem_error(self, emu, access, address, size, value, state=None):
-                self.map(self.align(address, down=True), self.alloc_size)
-                return True
-
-            def hook_mem_write(self, emu, access, address, size, value, state=None):
-                states.append(state)
-                return True
-
+    def _test_a_memory_write_hook_receives_the_state(self, recorder: type[_StateRecorder]):
         code = bytes.fromhex(
             'C6 05 00 00 66 06 11'   # mov byte ptr [0x6660000], 0x11
         )
         state = object()
-        emu = Emu(code, arch=Arch.X32, hooks=Hook.Memory)
+        emu = recorder(code, arch=Arch.X32, hooks=Hook.Memory)
         emu.reset(state)
         emu.emulate(emu.base, emu.base + len(code))
-        self.assertGreater(len(states), 0)
-        self.assertTrue(all(s is state for s in states))
+        self.assertGreater(len(emu.states), 0)
+        self.assertTrue(all(s is state for s in emu.states))
 
     def test_a_memory_write_hook_receives_the_state_uc(self):
-        self._test_a_memory_write_hook_receives_the_state(UnicornEmulator)
+        self._test_a_memory_write_hook_receives_the_state(_UnicornStateRecorder)
 
     def test_a_memory_write_hook_receives_the_state_ic(self):
-        self._test_a_memory_write_hook_receives_the_state(IcicleEmulator)
+        self._test_a_memory_write_hook_receives_the_state(_IcicleStateRecorder)
 
     def test_a_memory_write_hook_receives_the_state_se(self):
-        self._test_a_memory_write_hook_receives_the_state(SpeakeasyEmulator)
+        self._test_a_memory_write_hook_receives_the_state(_SpeakeasyStateRecorder)
 
     def test_a_memory_write_hook_receives_the_size_of_the_write_without_code_hooks_ic(self):
         writes = []
@@ -513,7 +533,9 @@ class TestEmulator(TestBase):
         emu = SpeakeasyEmulator(code, arch=Arch.X64, hooks=Hook.CodeExecute)
         emu.reset()
         emu.emulate(emu.base, emu.base + len(code))
-        engine = emu.speakeasy.emu.emu_eng.emu
+        assert (inner := emu.speakeasy.emu) is not None
+        assert (wrapper := inner.emu_eng) is not None
+        assert (engine := wrapper.emu) is not None
         self.assertNotEqual(list(engine.mem_regions()), [])
         del emu
         self.assertEqual(list(engine.mem_regions()), [])

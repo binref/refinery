@@ -15,8 +15,12 @@ multibin format expressions, see `refinery.lib.argformats`.
 from __future__ import annotations
 
 from functools import WRAPPER_ASSIGNMENTS, cache, wraps
+from typing import TYPE_CHECKING, Callable
 
 from refinery.__unit__ import UNITS
+
+if TYPE_CHECKING:
+    from refinery.units import Unit
 
 __all__ = list(UNITS)
 
@@ -37,8 +41,12 @@ def _assembled(cls, *args, **kwargs):
     return cls.__wrapped__.assemble(*args, **kwargs)
 
 
+def __getattr__(name: str) -> Callable[..., Unit]:
+    return _wrapped_unit(name)
+
+
 @cache
-def __getattr__(name):
+def _wrapped_unit(name: str) -> Callable[..., Unit]:
     """
     Loads the unit with the given name, wrapped so that it takes its arguments as they are given on
     the command line. Each unit is wrapped once.
