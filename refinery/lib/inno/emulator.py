@@ -468,6 +468,15 @@ class IFPSEmulatedFunction(NamedTuple):
         return len(self.spec)
 
 
+def _now_in_whole_seconds() -> datetime:
+    """
+    The current time without its fraction of a second. The emulated clock starts there, so that what
+    a script computes from the clock does not depend on the fraction of the second in which the
+    emulation starts.
+    """
+    return datetime.now().replace(microsecond=0)
+
+
 @dataclass
 class IFPSEmulatorConfig:
     """
@@ -485,7 +494,7 @@ class IFPSEmulatorConfig:
     wizard_silent: bool = True
     max_opcodes: int = 0
     max_seconds: int = 10
-    start_time: datetime = field(default_factory=datetime.now)
+    start_time: datetime = field(default_factory=_now_in_whole_seconds)
     milliseconds_per_instruction: float = 0.0001
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000

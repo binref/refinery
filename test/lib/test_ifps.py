@@ -12,3 +12,7 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(repr(ismu.globals[1]), 'GlobalVar1 = 0')
         ismu.globals[1].set(7)
         self.assertEqual(repr(ismu.globals[1]), 'GlobalVar1 = 7')
+
+    def test_the_emulated_clock_starts_at_a_whole_second(self):
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig
+        self.assertEqual(IFPSEmulatorConfig().start_time.microsecond, 0)
