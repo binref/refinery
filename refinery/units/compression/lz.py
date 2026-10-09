@@ -99,13 +99,14 @@ class lzma(Unit):
         return temp
 
     def _process(self, data: bytearray, partial=False):
+        best_message = ''
+        best_partial = None
         try:
             dc = LZMADecompressor()
             return self._decompress(data, dc, partial)
         except RefineryPartialResult as pe:
-            best = pe
+            best_message, best_partial = pe.message, pe.partial
         except Exception:
-            best = None
             self.log_info('default LZMA decompressor failed, brute-forcing custom header')
         view = memoryview(data)
         min_original_size = {
@@ -136,10 +137,8 @@ class lzma(Unit):
                 engine = LZMADecompressor(FORMAT_RAW, filters=[filter])
                 result = self._decompress(view[offset:], engine, partial)
             except RefineryPartialResult as pe:
-                if best is None:
-                    best = pe
-                elif len(best.partial) < len(pe.partial):
-                    best = pe
+                if best_partial is None or len(best_partial) < len(pe.partial):
+                    best_message, best_partial = pe.message, pe.partial
                 continue
             except Exception:
                 continue
@@ -154,8 +153,8 @@ class lzma(Unit):
                 F'success with LZMA{version} properties at {offset_prop} and raw stream starting at {to_data + offset_prop + p}')
             return result
         if partial or not self._ATTEMPT_PARTIAL:
-            if best and len(best.partial) > 0:
-                raise best
+            if best_partial:
+                raise RefineryPartialResult(best_message, best_partial)
             raise ValueError('unable to find an LZMA stream')
 
     def process(self, data: bytearray):

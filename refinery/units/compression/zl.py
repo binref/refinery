@@ -44,6 +44,27 @@ class zl(Unit):
                 memory = memory[consumed:]
         return result, memory
 
+    def _decompress_chunk(self, view: memoryview, modes: list[int], step: int, k: int):
+        """
+        Decompresses the next chunk with the first of the given modes that works. When none works,
+        the error of the first mode is raised.
+        """
+        error = None
+        try:
+            for mode in modes:
+                msg = F'decompressing chunk {k} with mode {mode & 0xFF:02X}'
+                try:
+                    out, rest = self._decompress_data(view, mode, step)
+                except Exception as e:
+                    self.log_info(F'{msg} failed: {e!s}')
+                    error = error or e
+                else:
+                    self.log_info(F'{msg} ok, remaining data:', rest, clip=True)
+                    return mode, out, rest
+            raise error or ValueError('Could not detect any zlib stream.')
+        finally:
+            del error
+
     def process(self, data):
         if data[0] == 0x78 or data[0:2] == B'\x1F\x8B' or self.args.zlib_header or self.args.gzip_header:
             modes = [self.args.window | 0x20, -self.args.window]
@@ -54,30 +75,21 @@ class zl(Unit):
         rest = view
         step = 32 if self.leniency > 0 else len(data)
         count = 0
-        error = None
         for k in itertools.count(1):
-            error = None
-            for mode in modes:
-                msg = F'decompressing chunk {k} with mode {mode & 0xFF:02X}'
-                try:
-                    out, rest = self._decompress_data(view, mode, step)
-                    yield out
-                except Exception as e:
-                    self.log_info(F'{msg} failed: {e!s}')
-                    error = error or e
-                else:
-                    self.log_info(F'{msg} ok, remaining data:', rest, clip=True)
-                    count += 1
-                    error = None
-                    modes = [mode]
+            try:
+                mode, out, rest = self._decompress_chunk(view, modes, step, k)
+            except Exception:
+                if count > 0:
                     break
-            if error or not rest or len(rest) == len(view):
+                raise
+            yield out
+            count += 1
+            modes = [mode]
+            if not rest or len(rest) == len(view):
                 break
             if len(rest) > len(view):
                 raise RuntimeError('Decompressor returned more tail data than input data.')
             view = rest
-        if count <= 0:
-            raise error or ValueError('Could not detect any zlib stream.')
         if rest:
             from refinery.lib.meta import SizeInt
             size = SizeInt(len(rest))

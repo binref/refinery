@@ -667,6 +667,168 @@ class TestPartialReadDiscipline(TestBase):
         self.assertListEqual(sorted(unclosed), [])
 
 
+class TestCycleDiscipline(TestBase):
+    """
+    Objects in a reference cycle are freed only by the cycle collector, and so is everything they
+    refer to, like the data that a unit was given. Each shape checked here forms such a cycle,
+    whatever the rest of the code does. Vendored code is kept as it was published.
+    """
+
+    #: Script packages that still contain these shapes. Every name here is work not yet done, not a
+    #: package that is exempt on principle.
+    UNRATCHETED = ('js',)
+
+    _CONTAINER_METHODS = {'add', 'append', 'appendleft', 'extend', 'insert', 'put', 'setdefault', 'update'}
+    _EXCEPTION_ATTRIBUTES = {'__traceback__', '__context__', '__cause__'}
+
+    @staticmethod
+    def _unratcheted_prefix(name: str) -> str:
+        return os.path.join('refinery', 'lib', 'scripts', name, '')
+
+    @classmethod
+    def _checked_sources(cls) -> list[tuple[str, ast.Module]]:
+        root = _project_root()
+        vendored = os.path.join('refinery', 'lib', 'thirdparty', '')
+        sources = []
+        for path, tree in _sources('refinery'):
+            relative = os.path.relpath(path, root)
+            if relative.startswith(vendored):
+                continue
+            sources.append((relative, tree))
+        return sources
+
+    @classmethod
+    def _carries(cls, node: ast.AST | None, name: str | None) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id == name
+        if isinstance(node, ast.Attribute):
+            return node.attr in cls._EXCEPTION_ATTRIBUTES and cls._carries(node.value, name)
+        if isinstance(node, ast.Subscript):
+            return cls._carries(node.value, name)
+        if isinstance(node, ast.Call):
+            function = node.func
+            return (
+                isinstance(function, ast.Attribute)
+                and function.attr in ('exc_info', 'exception')
+                and isinstance(function.value, ast.Name)
+                and function.value.id == 'sys'
+            )
+        if isinstance(node, ast.BoolOp):
+            return any(cls._carries(value, name) for value in node.values)
+        if isinstance(node, ast.IfExp):
+            return cls._carries(node.body, name) or cls._carries(node.orelse, name)
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return any(cls._carries(element, name) for element in node.elts)
+        if isinstance(node, ast.Dict):
+            return any(cls._carries(value, name) for value in node.values)
+        if isinstance(node, ast.Starred):
+            return cls._carries(node.value, name)
+        return False
+
+    @staticmethod
+    def _cleared_in_finally(function: ast.AST, handler: ast.ExceptHandler, name: str) -> bool:
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Try):
+                continue
+            if not any(
+                inner is handler
+                for part in (node.body, node.handlers, node.orelse)
+                for statement in part
+                for inner in ast.walk(statement)
+            ):
+                continue
+            for statement in node.finalbody:
+                if isinstance(statement, ast.Delete):
+                    targets = statement.targets
+                elif isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant):
+                    targets = statement.targets if statement.value.value is None else []
+                else:
+                    continue
+                if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                    return True
+        return False
+
+    @classmethod
+    def _kept_exceptions(cls, function: ast.FunctionDef | ast.AsyncFunctionDef):
+        for handler in ast.walk(function):
+            if not isinstance(handler, ast.ExceptHandler):
+                continue
+            name = handler.name
+            for node in (node for statement in handler.body for node in ast.walk(statement)):
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                    if not cls._carries(node.value, name):
+                        continue
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if all(
+                        isinstance(target, ast.Name) and (
+                            target.id == name or cls._cleared_in_finally(function, handler, target.id))
+                        for target in targets
+                    ):
+                        continue
+                    yield node.lineno
+                elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
+                    if cls._carries(node.value, name):
+                        yield node.lineno
+                elif isinstance(node, ast.Call) and isinstance(method := node.func, ast.Attribute):
+                    if method.attr in cls._CONTAINER_METHODS and any(cls._carries(arg, name) for arg in node.args):
+                        yield node.lineno
+
+    @staticmethod
+    def _raised_parameters(function: ast.FunctionDef | ast.AsyncFunctionDef):
+        arguments = function.args
+        parameters = {argument.arg for argument in arguments.posonlyargs + arguments.args + arguments.kwonlyargs}
+        for node in ast.walk(function):
+            if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Name) and node.exc.id in parameters:
+                yield node.lineno
+
+    @staticmethod
+    def _raised_attributes(tree: ast.Module):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Raise) and isinstance(node.exc, (ast.Attribute, ast.Subscript)):
+                yield node.lineno
+
+    @staticmethod
+    def _functions(tree: ast.Module):
+        return (node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))
+
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def _all_offenders(cls) -> dict[str, list[str]]:
+        offenders: dict[str, set[str]] = {
+            'kept exception': set(),
+            'raised parameter': set(),
+            'raised attribute': set(),
+        }
+        for path, tree in cls._checked_sources():
+            found = {
+                'kept exception': (line for f in cls._functions(tree) for line in cls._kept_exceptions(f)),
+                'raised parameter': (line for f in cls._functions(tree) for line in cls._raised_parameters(f)),
+                'raised attribute': cls._raised_attributes(tree),
+            }
+            for shape, lines in found.items():
+                offenders[shape].update(F'{path}:{line}' for line in lines)
+        return {shape: sorted(places) for shape, places in offenders.items()}
+
+    def _offenders(self, shape: str) -> list[str]:
+        unratcheted = tuple(self._unratcheted_prefix(name) for name in self.UNRATCHETED)
+        return [place for place in self._all_offenders()[shape] if not place.startswith(unratcheted)]
+
+    def test_no_handler_keeps_its_exception(self):
+        self.assertListEqual(self._offenders('kept exception'), [])
+
+    def test_no_function_raises_an_exception_it_was_given(self):
+        self.assertListEqual(self._offenders('raised parameter'), [])
+
+    def test_no_function_raises_an_exception_kept_in_an_attribute(self):
+        self.assertListEqual(self._offenders('raised attribute'), [])
+
+    def test_the_unratcheted_packages_are_still_unratcheted(self):
+        places = [place for shape in self._all_offenders().values() for place in shape]
+        for name in self.UNRATCHETED:
+            if not any(place.startswith(self._unratcheted_prefix(name)) for place in places):
+                self.fail(F'{name} no longer needs the exemption; drop it from UNRATCHETED')
+
+
 class TestStyleGuides(TestUnitBase):
 
     @pytest.mark.cosmetics

@@ -1,3 +1,6 @@
+import contextlib
+import zlib
+
 from .. import TestUnitBase
 from . import KADATH1, KADATH2
 
@@ -26,3 +29,13 @@ class TestZL(TestUnitBase):
 
         db = cb | self.load(lenient=True) | [bytes]
         self.assertListEqual(db, [b1.encode(), b2.encode(), junk])
+
+    def test_a_failed_decompression_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
+        unit = self.load()
+
+        def decompress():
+            with contextlib.suppress(zlib.error):
+                bytearray(data) | unit | bytes
+
+        self.assertCollectorFreesLessThan(0x40000, decompress)

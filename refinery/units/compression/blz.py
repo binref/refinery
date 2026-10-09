@@ -209,7 +209,7 @@ class blz(Unit):
             return self._decompress()
         except ValueError as error:
             if isinstance(error, RefineryPartialResult):
-                partial = error
+                partial = error.message, error.partial
             self.log_warn(F'Reverting to modified BriefLZ after decompression error: {error!s}')
             self._reset()
 
@@ -220,7 +220,7 @@ class blz(Unit):
         except Exception as error:
             if not partial:
                 raise
-            raise partial from error
+            raise RefineryPartialResult(*partial) from error
 
     def reverse(self, data):
         return self._begin(data)._compress()

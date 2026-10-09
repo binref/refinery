@@ -1067,7 +1067,7 @@ class NSArchive(Struct):
         offset: int
         data: bytearray
         size: int
-        decompression_error: Exception | None = None
+        decompression_error: str | None = None
 
     def __init__(
         self,
@@ -1171,11 +1171,11 @@ class NSArchive(Struct):
             self._solid_method = self.method
             it = self._decompress_items(reader, self.method)
             header_entry = next(it)
-            if header_entry.decompression_error:
+            if header_entry.decompression_error is not None:
                 raise NotImplementedError(
                     'This archive seems to use an NSIS-specific deflate algorithm '
                     'which has not been implemented yet. '
-                    F'Original error: {exception_to_string(header_entry.decompression_error)}')
+                    F'Original error: {header_entry.decompression_error}')
             if self.solid:
                 self._solid_iter = it
             self.entry_offset_delta += header_entry.size
@@ -1239,8 +1239,7 @@ class NSArchive(Struct):
         self.reader.seek(self.offset_items + item.offset)
         dc = self._decompress_items(self.reader, self.method)
         entry = next(dc)
-        if entry.decompression_error:
-            err = exception_to_string(entry.decompression_error)
+        if (err := entry.decompression_error) is not None:
             msg = F'decompression failed ({err}); the item is still compressed'
             raise RefineryPartialResult(msg, entry.data)
         else:
@@ -1289,7 +1288,7 @@ class NSArchive(Struct):
                     dc = self._dc(MemoryFile(item.data))
                     item.data = dc.read()
                 except Exception as E:
-                    item.decompression_error = E
+                    item.decompression_error = exception_to_string(E)
             return item
 
     class LZMAFix:

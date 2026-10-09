@@ -332,12 +332,12 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
                 try:
                     self._string = value = self.decode(codec)
                 except UnicodeError as e:
-                    _error = _error or e
+                    _error = _error or str(e)
                 else:
                     self.codec = codec
                     break
             else:
-                raise AttributeError(F'Codec unknown: {_error!s}')
+                raise AttributeError(F'Codec unknown: {_error}')
         return value
 
     def __eq__(self, other):

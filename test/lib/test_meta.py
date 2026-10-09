@@ -159,6 +159,12 @@ class TestMeta(TestBase):
         pl = L('emit DATA [| put x hello | pf {x} ]')
         self.assertEqual(pl(), b'hello')
 
+    def test_a_string_that_the_first_codec_cannot_decode_leaves_nothing_to_the_collector(self):
+        from refinery.lib.meta import ByteStringWrapper
+        data = bytes(self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'))
+
+        self.assertCollectorFreesLessThan(0x40000, lambda: ByteStringWrapper(bytearray(data), 'utf8').string)
+
 
 class TestLazyMetaOracle(TestBase):
 

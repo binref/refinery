@@ -12,6 +12,7 @@ from refinery.lib.dt import filetime
 from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
 from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.tools import exception_to_string
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 A3X_KEYWORDS = [
@@ -818,7 +819,7 @@ class a3x(PathExtractorUnit):
     def unpack(self, data: bytearray):
         view = memoryview(data)
         cursor = 0
-        errors: dict[int, Exception] = {}
+        errors: dict[int, str] = {}
         script_count = 0
         truncated: set[A3xRecord] = set()
         intact: set[A3xRecord] = set()
@@ -837,67 +838,70 @@ class a3x(PathExtractorUnit):
                     written=record.written and record.written.isoformat(' ', 'seconds'),
                 )
 
-        while cursor < len(view):
-            self.log_debug(F'searching at offset 0x{cursor:08X}')
-            nc = data.find(A3xScript.MAGIC, cursor)
-            if nc >= 0:
-                cursor = nc
-            else:
-                rp = data.find(A3xRecord.MAGIC, cursor) - A3xScript.WIDTH
-                if rp <= cursor:
-                    break
-                cursor = rp
-            try:
-                script = A3xScript.Parse(view[cursor:])
-            except Exception as E:
-                errors[cursor] = E
-                cursor += 1
-                continue
-            else:
-                valid = script.has_valid_magic()
-                if valid:
-                    _m = 'correct'
+        last_error: Exception | None = None
+        try:
+            while cursor < len(view):
+                self.log_debug(F'searching at offset 0x{cursor:08X}')
+                nc = data.find(A3xScript.MAGIC, cursor)
+                if nc >= 0:
+                    cursor = nc
                 else:
-                    _m = 'invalid'
-                if not script.body:
-                    cursor += A3xScript.WIDTH
-                    if not script.has_valid_magic():
-                        cursor += len(A3xRecord.MAGIC)
+                    rp = data.find(A3xRecord.MAGIC, cursor) - A3xScript.WIDTH
+                    if rp <= cursor:
+                        break
+                    cursor = rp
+                try:
+                    script = A3xScript.Parse(view[cursor:])
+                except Exception as E:
+                    errors[cursor] = exception_to_string(E)
+                    last_error = E
+                    cursor += 1
                     continue
-                if script.truncated:
-                    _a = 'truncated'
-                    truncated.update(script.body)
                 else:
-                    script_count += 1
-                    _a = 'intact'
-                    intact.update(script.body)
-                self.log_info(
-                    F'{_a} script of type', script.type,
-                    F'and length 0x{len(script):08X}',
-                    F'with {len(script.body)} records and {_m} magic:',
-                    script.magic
-                )
-                cursor += len(script)
-                if script.truncated:
-                    if not script.has_valid_magic():
-                        cursor += len(A3xRecord.MAGIC)
-                    continue
+                    valid = script.has_valid_magic()
+                    if valid:
+                        _m = 'correct'
+                    else:
+                        _m = 'invalid'
+                    if not script.body:
+                        cursor += A3xScript.WIDTH
+                        if not script.has_valid_magic():
+                            cursor += len(A3xRecord.MAGIC)
+                        continue
+                    if script.truncated:
+                        _a = 'truncated'
+                        truncated.update(script.body)
+                    else:
+                        script_count += 1
+                        _a = 'intact'
+                        intact.update(script.body)
+                    self.log_info(
+                        F'{_a} script of type', script.type,
+                        F'and length 0x{len(script):08X}',
+                        F'with {len(script.body)} records and {_m} magic:',
+                        script.magic
+                    )
+                    cursor += len(script)
+                    if script.truncated:
+                        if not script.has_valid_magic():
+                            cursor += len(A3xRecord.MAGIC)
+                        continue
 
-            yield from _package(script.body)
+                yield from _package(script.body)
 
-        remaining = truncated - intact
-        if remaining:
-            self.log_warn('emitting records from truncated scripts')
-            yield from _package(remaining)
-            return
-        elif truncated:
-            self.log_debug('good news: intact scripts contained all records from truncated scripts')
-        if script_count == 0:
-            error = None
-            for offset, error in errors.items():
-                self.log_warn(F'error at offset 0x{offset:08X}:', error)
-            if error:
-                raise error
+            remaining = truncated - intact
+            if remaining:
+                self.log_warn('emitting records from truncated scripts')
+                yield from _package(remaining)
+                return
+            elif truncated:
+                self.log_debug('good news: intact scripts contained all records from truncated scripts')
+            if script_count == 0 and last_error is not None:
+                for offset, error in errors.items():
+                    self.log_warn(F'error at offset 0x{offset:08X}:', error)
+                raise last_error
+        finally:
+            del last_error
 
     @classmethod
     def handles(cls, data) -> bool | None:

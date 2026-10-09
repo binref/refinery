@@ -83,7 +83,7 @@ def make_decompiled_item(name: str, data: buf, *magics) -> PiMeta:
             try:
                 return decompile_buffer(magic + data, name)
             except Exception as exception:
-                error = exception
+                error = str(exception)
         return '\n'.join(F'# {line}'
             for line in str(error).splitlines(True)).encode('utf8')
 
@@ -125,9 +125,8 @@ class PYZ(Struct):
         if isinstance(toc, list):
             try:
                 toc = dict(toc)
-            except Exception as error:
+            except Exception:
                 self.entries = []
-                self.error = error
                 return False
 
         if TYPE_CHECKING:

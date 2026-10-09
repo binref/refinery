@@ -1,3 +1,4 @@
+import contextlib
 import gc
 import hashlib
 import tracemalloc
@@ -18,6 +19,7 @@ from refinery.lib.wim import (
     WimDecompressionError,
     WimHashMismatch,
     WimPartMissing,
+    WimResource,
     WimStreamKind,
     WimVersion,
     walk_image,
@@ -329,7 +331,19 @@ class TestWimlibTestSuiteFiles(TestBase):
             blob.data()
         with self.assertRaises(WimDecompressionError) as second:
             blob.data()
-        self.assertIs(second.exception.error, first.exception.error)
+        with self.assertRaises(WimDecompressionError) as third:
+            blob.data()
+        self.assertIs(third.exception.error, second.exception.error)
+        self.assertIs(type(second.exception.error), type(first.exception.error))
+        self.assertEqual(str(second.exception.error), str(first.exception.error))
+
+    def test_the_first_failure_of_a_chunk_keeps_the_traceback_of_its_decompressor(self):
+        wim = WimArchive(self.download_sample('f90e6d6c45d96b294e6f5b673d97948b7cf65dc0f8a49f0cb7efb3442686b334'))
+        _, file = entries(wim)
+        stream, = file.streams
+        with self.assertRaises(WimDecompressionError) as failure:
+            wim.blobs[stream.hash].data()
+        self.assertIsNotNone(failure.exception.error.__traceback__)
 
     def test_cyclic_directory_tree_is_rejected(self):
         wim = WimArchive(self.download_sample('4ce27c8422b4b1f32a3d02ae35fb87504ae71e640f2a812ab02c27bd8ba4d54b'))
@@ -376,3 +390,13 @@ class TestWimlibTestSuiteFiles(TestBase):
             stream, = link.streams
             self.assertEqual(bytes(wim.blobs[stream.hash].data()), B'5\n')
 
+    def test_a_chunk_that_fails_to_decompress_leaves_no_resource_to_the_collector(self):
+        def read():
+            wim = WimArchive(self.download_sample('f90e6d6c45d96b294e6f5b673d97948b7cf65dc0f8a49f0cb7efb3442686b334'))
+            _, file = entries(wim)
+            stream, = file.streams
+            with contextlib.suppress(WimDecompressionError):
+                wim.blobs[stream.hash].data()
+
+        with self.assertNoInstanceSurvives(WimResource):
+            read()

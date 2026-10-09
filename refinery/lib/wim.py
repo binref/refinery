@@ -25,6 +25,7 @@ from refinery.lib.lzms import lzms_decompress
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.solid import SolidStream
 from refinery.lib.structures import Struct, StructReader
+from refinery.lib.tools import copy_exception
 from refinery.lib.types import buf
 
 
@@ -375,7 +376,7 @@ class WimResource:
         except MemoryError:
             raise
         except Exception as error:
-            self._errors[index] = error
+            self._errors[index] = copy_exception(error)
             raise WimDecompressionError(self.offset, index, error) from error
         return chunk
 

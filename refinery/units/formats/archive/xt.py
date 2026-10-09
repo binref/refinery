@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from refinery.lib.tools import exception_to_string
 from refinery.units import RefineryException
 from refinery.units.formats import UnpackResult
 from refinery.units.formats.archive import ArchiveUnit, MultipleArchives, PathExtractorUnit
@@ -83,7 +84,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
     def unpack(self, data):
         fallback: list[type[PathExtractorUnit]] = []
-        errors = {}
+        errors: dict[str, str] = {}
         pos_args = self.args.paths
         key_args = dict(
             list=self.args.list,
@@ -114,7 +115,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     try:
                         verdict = handler.handles(data)
                     except Exception as error:
-                        errors[handler.name] = error
+                        errors[handler.name] = exception_to_string(error)
                         if self.unit.log_debug():
                             raise
                         self.unit.log_info(F'format check of {handler.name} failed:', error)
@@ -132,10 +133,10 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     except TypeError as error:
                         self.unit.log_debug('handler construction failed:', error)
                         return
+                    first_failure: Exception | None = None
                     try:
                         verified = self.unit.args.list
                         unverified: list[UnpackResult] = []
-                        first_failure: Exception | None = None
                         for filtered in unit.filter([data]):
                             for item in unit.unpack(filtered):
                                 if not verified:
@@ -154,7 +155,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                             raise first_failure
                     except Exception as error:
                         if not self.fallback:
-                            errors[handler.name] = error
+                            errors[handler.name] = exception_to_string(error)
                         if isinstance(error, MultipleArchives):
                             self.unit.log_warn(error)
                         else:
@@ -163,6 +164,8 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                             self.unit.log_info('handler unpacking failed:', error)
                     else:
                         self.success = True
+                    finally:
+                        del first_failure
                 elif verdict is None:
                     fallback.append(handler)
 

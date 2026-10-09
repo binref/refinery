@@ -1,3 +1,5 @@
+import contextlib
+
 from refinery.units import RefineryPartialResult
 from .. import TestUnitBase
 
@@ -36,3 +38,13 @@ class TestLZMA(TestUnitBase):
         data = self.download_sample('331a59118a5bff2e096e4475cbf78636ab79b03c2f16a3e0c65c9a10366512be')
         test = data | self.load() | bytes
         self.assertIn(B'CGlobalIncludeLuaFile', test)
+
+    def test_a_failed_decompression_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')[:0x100000]
+        unit = self.load()
+
+        def decompress():
+            with contextlib.suppress(ValueError):
+                bytearray(data) | unit | bytes
+
+        self.assertCollectorFreesLessThan(0x40000, decompress)

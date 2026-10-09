@@ -2627,27 +2627,10 @@ class InnoArchive:
 
         self._log_comment(F'inno {version!s} via {method} header: {header}')
 
-        def _parse(v: InnoVersion):
-            inno.seekset(inno_start)
-            if inno.eof:
-                raise EOFError
-            try:
-                if v.legacy:
-                    inno.seekrel(-48)
-                r = self._try_parse_as(inno, blobs, v)
-            except Exception as e:
-                nonlocal best_error
-                best_error = best_error or e
-                self._log_comment(F'exception while parsing as {v!s}: {exception_to_string(e)}')
-                return InnoParseResult(v, [], [], 1, [str(e)], None, None, None)
-            else:
-                results[v] = r
-                return r
-
         inno_start = inno.tell()
         best_parse = None
         best_score = 0
-        best_error = None
+        first_error = None
         success = False
         results: dict[InnoVersion, InnoParseResult] = {}
         result = None
@@ -2670,28 +2653,42 @@ class InnoArchive:
 
         versions = [version] + VER[lower:upper] + VER[upper:] + VER[:lower]
 
-        for v in versions:
-            if success := (result := _parse(v)).ok():
-                if v != version:
-                    self._log_comment(F'inno {v!s} via closest match: {header}')
-                break
-            if not result.failures and (best_parse is None or result.warnings < best_score):
-                best_score = result.warnings
-                best_parse = result
+        try:
+            for v in versions:
+                inno.seekset(inno_start)
+                if inno.eof:
+                    raise EOFError
+                try:
+                    if v.legacy:
+                        inno.seekrel(-48)
+                    result = self._try_parse_as(inno, blobs, v)
+                except Exception as e:
+                    first_error = first_error or e
+                    self._log_comment(F'exception while parsing as {v!s}: {exception_to_string(e)}')
+                    result = InnoParseResult(v, [], [], 1, [str(e)], None, None, None)
+                else:
+                    results[v] = result
+                if success := result.ok():
+                    if v != version:
+                        self._log_comment(F'inno {v!s} via closest match: {header}')
+                    break
+                if not result.failures and (best_parse is None or result.warnings < best_score):
+                    best_score = result.warnings
+                    best_parse = result
 
-        if not success:
-            if best_parse is not None:
-                result = best_parse
-                self._log_warning(F'using parse result for {result.version!s} with {result.warnings} warnings')
-            else:
-                if not results:
-                    if best_error:
-                        raise best_error
-                    raise ValueError('no parser for any known Inno version worked')
-                result = min(results.values(), key=lambda result: len(result.failures))
-                self._log_warning(F'using parse result for {result.version!s} with {len(result.failures)} failures')
-                for k, failure in enumerate(result.failures, 1):
-                    self._log_comment(F'failure {k}: {failure}')
+            if not success:
+                if best_parse is not None:
+                    result = best_parse
+                    self._log_warning(F'using parse result for {result.version!s} with {result.warnings} warnings')
+                else:
+                    if not results:
+                        raise first_error or ValueError('no parser for any known Inno version worked')
+                    result = min(results.values(), key=lambda result: len(result.failures))
+                    self._log_warning(F'using parse result for {result.version!s} with {len(result.failures)} failures')
+                    for k, failure in enumerate(result.failures, 1):
+                        self._log_comment(F'failure {k}: {failure}')
+        finally:
+            del first_error
 
         if TYPE_CHECKING:
             assert result

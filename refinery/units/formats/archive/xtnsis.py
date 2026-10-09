@@ -59,18 +59,20 @@ class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         memory = memoryview(data)
         before = -1
         _error = None
-        while True:
-            offset = self._find_archive_offset(data, before)
-            if offset is None:
-                _error = _error or ValueError('Unable to find an NSIS archive marker.')
-                raise _error
-            try:
-                arc = NSArchive.Parse(memory[offset:], log=self.log_debug)
-            except Exception as e:
-                _error = e
-                before = offset
-            else:
-                break
+        try:
+            while True:
+                offset = self._find_archive_offset(data, before)
+                if offset is None:
+                    raise _error or ValueError('Unable to find an NSIS archive marker.')
+                try:
+                    arc = NSArchive.Parse(memory[offset:], log=self.log_debug)
+                except Exception as e:
+                    _error = e
+                    before = offset
+                else:
+                    break
+        finally:
+            del _error
 
         def info():
             yield F'{arc.header.type.name} archive'

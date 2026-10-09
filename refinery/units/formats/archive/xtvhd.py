@@ -69,7 +69,8 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             try:
                 yield from self._files(fs, prefix)
             except Exception as error:
-                self._failed(part, error)
+                if not self._tolerated(part, error):
+                    raise
                 images.append((part, view))
             for warning in fs.warnings:
                 self.log_warn(F'partition {part.index}: {warning}')
@@ -107,17 +108,23 @@ class xtvhd(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             if is_fat(boot):
                 return FatVolume(view)
         except Exception as error:
-            self._failed(part, error)
+            if not self._tolerated(part, error):
+                raise
             return None
         self.log_info(F'partition {part.index}: unrecognized file system')
         return None
 
-    def _failed(self, part: Partition, error: Exception) -> None:
+    def _tolerated(self, part: Partition, error: Exception) -> bool:
+        """
+        Decides whether the extraction goes on after reading the given partition failed, and if
+        so, logs the error.
+        """
         if isinstance(error, MemoryError):
-            raise error
+            return False
         if self.log_debug() and not isinstance(error, (FatError, NtfsError)):
-            raise error
+            return False
         self.log_warn(F'partition {part.index}: {exception_to_string(error)}')
+        return True
 
     @staticmethod
     def _iso(value: datetime.datetime | None) -> str | None:

@@ -298,7 +298,7 @@ class BiffSheet(ExcelSheet):
         self._offset = offset
         self._workbook = workbook
         self._cells: list[Cell] | None = None
-        self._error: ExcelFormatError | None = None
+        self._defect: str | None = None
         self._shared: list[tuple[int, int, int, int, bytes]] = []
 
     def cells(self) -> Iterator[Cell]:
@@ -310,14 +310,14 @@ class BiffSheet(ExcelSheet):
             try:
                 cells.extend(self._read())
             except ExcelFormatError as error:
-                self._error = error
+                self._defect = str(error)
             except _DEFECTS as error:
-                self._error = ExcelFormatError(F'sheet {self.name!r} is malformed: {error}')
+                self._defect = F'sheet {self.name!r} is malformed: {error}'
             self._cells = cells
             self._apply_shared_formulas(cells)
         yield from self._cells
-        if self._error is not None:
-            raise self._error
+        if self._defect is not None:
+            raise ExcelFormatError(self._defect)
 
     def _shared_formula(self, body: memoryview) -> None:
         """
