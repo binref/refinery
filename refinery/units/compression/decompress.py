@@ -120,7 +120,7 @@ class _Decompression(NamedTuple):
     def ratio(self):
         if not self.result:
             return INF()
-        return (self.size + int(bool(self.prefix)) - self.cutoff) / len(self)
+        return (self.size + int(self.prefix is not None) - self.cutoff) / len(self)
 
     @property
     def unmodified(self):

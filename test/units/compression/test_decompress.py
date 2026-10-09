@@ -187,3 +187,9 @@ class TestAutoDecompressor(TestUnitBase):
     def test_mangled_lznt1_07(self): self.perform_mangled_buffer_test('lznt1', 7)
     def test_mangled_lznt1_08(self): self.perform_mangled_buffer_test('lznt1', 8)
     def test_mangled_lznt1_09(self): self.perform_mangled_buffer_test('lznt1', 9)
+
+    def test_a_prefix_byte_of_zero_counts_toward_the_ratio_like_any_other(self):
+        from refinery.units.compression.decompress import _Decompression, _R
+        engine = self.load()
+        ratios = [_Decompression('zl', engine, _R.InvalidData, 10, B'?' * 20, 0, p).ratio for p in (0, 1, 0xFF)]
+        self.assertEqual(ratios, [11 / 20] * 3)
