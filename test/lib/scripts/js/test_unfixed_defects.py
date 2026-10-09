@@ -4726,3 +4726,99 @@ class TestAnAssignmentToAConstantStillThrows(TestBase):
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Functions that assign a constant and return what they then read, mapped to what Node makes of
+#: each: the assignment throws a `TypeError`, which the first returns from its `catch` and which
+#: ends the second.
+A_CALL_THAT_ASSIGNS_A_CONSTANT = {
+    a_program("""
+        function f() {
+          const a = 1;
+          try { a = 2; return 'assigned' + a; } catch (e) { return e.constructor.name; }
+        }
+        console.log(f());
+        """): ('TypeError\n', None),
+    a_program("""
+        function f() {
+          const a = 1;
+          a = 2;
+          return a;
+        }
+        console.log(f());
+        """): ('', 'TypeError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestACallThatAssignsAConstantStillThrows(TestBase):
+    """
+    The assignment of `TestAnAssignmentToAConstantStillThrows`, reached through a call that the
+    deobfuscation evaluates rather than through a store that it drops: the evaluation completes the
+    assignment the engine refuses, and the call folds to what the function returns after it. No
+    program assigns a constant on purpose, which is why this is not held against a release.
+    """
+
+    @unittest.expectedFailure
+    def test_the_evaluated_assignment_still_throws(self):
+        rows = A_CALL_THAT_ASSIGNS_A_CONSTANT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (behavior, behavior) for source, behavior in rows.items()},
+        )
+
+
+#: A function whose parameter shares its name with a property of a namespace object it declares,
+#: and which reads its argument back through `arguments`, mapped to what Node prints for it.
+A_NAMESPACE_PROPERTY_NAMED_LIKE_A_PARAMETER = {
+    a_program("""
+        function f(a) { var NS = {}; NS.a = 1; return arguments[0]; }
+        console.log(f(5));
+        """): '5\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFlattenedNamespaceLeavesTheArgumentsAlone(TestBase):
+    """
+    Flattening a namespace object turns each of its properties into a variable of the function. A
+    variable named like a parameter of a function with simple parameters is that parameter, and
+    `arguments[0]` reads what the parameter holds, so the flattened store writes the argument the
+    program reads back.
+    """
+
+    @unittest.expectedFailure
+    def test_the_argument_is_read_back(self):
+        rows = A_NAMESPACE_PROPERTY_NAMED_LIKE_A_PARAMETER
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A classic script that assigns `eval` to itself and calls it on code reading a global, mapped to
+#: what Node makes of it: the call still runs the code, which reads the global.
+A_SCRIPT_THAT_ASSIGNS_EVAL = {
+    a_program("""
+        var x = 1;
+        function keep() { eval = eval; }
+        eval("console.log(x)");
+        """): ('1\n', None),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnEvalTheScriptAssignsIsStillEval(TestBase):
+    """
+    An assignment to `eval` makes the name a binding of the script, and the model then reads every
+    call of it as a call of that binding rather than of the intrinsic, so the code it runs is no
+    longer counted as reading the globals around it.
+    """
+
+    @wontfix('no program assigns eval to a name of its own, and an obfuscator that hides eval aliases it')
+    def test_the_global_the_code_reads_stays(self):
+        rows = A_SCRIPT_THAT_ASSIGNS_EVAL
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            {source: (behavior, behavior) for source, behavior in rows.items()},
+        )
