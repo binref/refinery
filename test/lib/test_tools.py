@@ -1,5 +1,6 @@
 import inspect
 import itertools
+import operator
 import random
 
 from refinery.lib import tools, colors
@@ -343,6 +344,17 @@ class TestNoLoggingProxy(TestBase):
         c = Container()
         proxied = tools.NoLoggingProxy(c)
         self.assertEqual(tools.unwrap(proxied.data), [1, 2, 3])
+
+    def test_proxies_of_objects_of_one_type_call_their_own_object(self):
+        class Box:
+            def __init__(self, value):
+                self.value = value
+
+            @staticmethod
+            def __index__(box):
+                return box.value
+
+        self.assertEqual([operator.index(tools.NoLoggingProxy(Box(k))) for k in (1, 2)], [1, 2])
 
     def test_proxy_passthrough_for_primitives(self):
         self.assertEqual(tools.NoLoggingProxy(42), 42)
