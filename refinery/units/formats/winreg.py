@@ -77,7 +77,7 @@ class winreg(PathExtractorUnit):
 
     def _decode_registry_export(self, data: str):
         def REG_BINARY(data: str) -> bytes:
-            return bytes.fromhex(re.sub('[^a-f0-9]+', '', data))
+            return bytes.fromhex(re.sub('[^a-fA-F0-9]+', '', data))
 
         def REG_SZ(data: str) -> bytes:
             return data.encode(self.codec) | esc(quoted=True) | bytes

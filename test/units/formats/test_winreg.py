@@ -12,6 +12,17 @@ class TestWindowsRegistryExtractor(TestUnitBase):
         self.assertEqual(len(test), 49)
         self.assertIn(R'HKEY_CURRENT_USER/Control Panel/Desktop/HungAppTimeout', test)
 
+    def test_binary_values_in_uppercase_hex_keep_every_byte(self):
+        data = self.download_sample('ff548cb8ff1e35ded07207b1488150571c81d5aed93758db11c60d362981a45b')
+        items = data | self.load() | {'path': ...}
+        self.assertEqual(items['HKEY_CURRENT_USER/Control Panel/Mouse/SmoothMouseXCurve'], bytes.fromhex(
+            '0000000000000000'
+            'C0CC0C0000000000'
+            '8099190000000000'
+            '4066260000000000'
+            '0033330000000000'
+        ))
+
     def test_registry_export(self):
         unit = self.load()
         data = inspect.cleandoc(
