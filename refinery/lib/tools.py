@@ -3,6 +3,7 @@ Miscellaneous helper functions.
 """
 from __future__ import annotations
 
+import copy
 import inspect
 import io
 import itertools
@@ -14,6 +15,7 @@ import warnings
 
 from enum import Enum, IntFlag
 from math import log
+from types import WrapperDescriptorType
 from typing import Generator, Iterable, Iterator, TypeVar, cast
 
 from refinery.lib.types import buf
@@ -529,6 +531,26 @@ def normalize_to_identifier(words: str, strip: bool = True):
     Normalizes all separators to underscores.
     """
     return normalize_word_separators(words, '_', strip)
+
+
+_E = TypeVar('_E', bound=BaseException)
+
+
+def copy_exception(error: _E) -> _E:
+    """
+    A copy of the given exception without traceback, cause and context. An exception that is kept
+    to be raised again later must not keep the frames of an earlier raise, which refer to whatever
+    keeps it; a fresh copy is raised each time. Builtin exception classes are copied through their
+    own copy protocol, which keeps the fields that their `__init__` sets from its arguments. A class
+    that defines `__init__` in Python keeps its state in `args` and in its attributes, and its
+    `__init__` may expect other arguments, so these are copied.
+    """
+    cls = error.__class__
+    if isinstance(cls.__init__, WrapperDescriptorType):
+        return copy.copy(error)
+    replica = cls.__new__(cls, *error.args)
+    replica.__dict__.update(error.__dict__)
+    return replica
 
 
 def exception_to_string(exception: BaseException, default=None) -> str:

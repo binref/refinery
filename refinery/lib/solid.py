@@ -13,6 +13,8 @@ import weakref
 
 from typing import TYPE_CHECKING
 
+from refinery.lib.tools import copy_exception
+
 if TYPE_CHECKING:
     from typing import Callable, Iterable, Iterator
 
@@ -29,13 +31,6 @@ class SolidStreamTruncated(EOFError):
     def __init__(self, offset: int, partial: buf):
         super().__init__(F'The decoded stream has no data at offset {offset:#x}.')
         self.partial = partial
-
-
-def _replica(error: Exception) -> Exception:
-    cls = error.__class__
-    replica = cls.__new__(cls, *error.args)
-    replica.__dict__.update(error.__dict__)
-    return replica
 
 
 class SolidClaim:
@@ -216,7 +211,7 @@ class SolidStream:
             if claim._cut:
                 raise claim._truncated()
             if (failure := self._failures.get(self._origin(claim.next))) and claim._needs(failure[0]):
-                raise _replica(failure[1])
+                raise copy_exception(failure[1])
             if self._pieces is None or self._passed(claim):
                 self._begin(self._origin(claim.next))
             else:
@@ -296,7 +291,7 @@ class SolidStream:
         self._queue.clear()
         self._pieces = None
         position = self._position
-        self._failures[self._origin(position)] = position, _replica(error)
+        self._failures[self._origin(position)] = position, copy_exception(error)
 
     def _distribute(self, position: int, piece: buf):
         end = position + len(piece)

@@ -184,6 +184,23 @@ class TestSolidStream(TestBase):
         self.assertEqual(decoder.starts, [0])
         self.assertEqual(bytes(files[1]()), B'B' * 10)
 
+    def test_a_failure_raised_again_keeps_the_message_of_a_builtin_exception(self):
+        expected = str(UnicodeDecodeError('utf-8', B'\xFF', 0, 1, 'invalid start byte'))
+
+        def decode(origin):
+            yield 0, bytearray(B'A' * 10)
+            B'\xFF'.decode('utf8')
+
+        stream = SolidStream(decode)
+        files = [stream.claim(k * 10, 10) for k in range(3)]
+        self.assertEqual(bytes(files[0]()), B'A' * 10)
+        messages = []
+        for file in files[1:]:
+            with self.assertRaises(UnicodeDecodeError) as failure:
+                file()
+            messages.append(str(failure.exception))
+        self.assertEqual(messages, [expected, expected])
+
     def test_a_failure_does_not_affect_files_after_the_next_restart_point(self):
         decoder = Decoder(B'A' * 10, B'B' * 10, B'C' * 10, B'D' * 10, restarts=(0, 20), broken=10)
         stream = decoder.stream()
