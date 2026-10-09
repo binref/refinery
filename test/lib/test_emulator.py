@@ -580,6 +580,15 @@ class TestEmulator(TestBase):
         self.assertEqual(emu.get_register('ecx'), 3)
         self.assertLessEqual({emu.base + 5, emu.base + 10}, set(addresses))
 
+    def test_an_instruction_in_memory_speakeasy_marked_as_allocated_is_counted_once_se(self):
+        code = bytes.fromhex('90' * 5 + 'F4' * 4)  # five NOPs reach end after exactly five steps
+        emulator = SpeakeasyEmulator(code, arch=Arch.X32)
+        emulator.reset()
+        assert (inner := emulator.speakeasy.emu) is not None
+        inner._set_dyn_code_hook(emulator.base, 5)
+        emulator.emulate(emulator.base, emulator.base + 5, timeout=5)
+        self.assertEqual(emulator.ip, emulator.base + 5)
+
     def test_the_first_hook_that_fails_is_the_cause_of_the_emulation_error_uc(self):
         class Emu(UnicornEmulator):
             def hook_mem_write(self, emu, access, address, size, value, state=None):

@@ -132,11 +132,9 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         if emu.emu is None:
             raise RuntimeError('emulator failed to initialize')
 
-        self._end_hook_s = None
-        self._end_hook_d = None
+        self._end_hook = None
 
-        self._single_step_hook_s = emu.add_code_hook(self._singlestep())
-        self._single_step_hook_d = emu.add_dyn_code_hook(self._singlestep())
+        self._single_step_hook = emu.add_code_hook(self._singlestep())
         self._disable_single_step()
 
         # Speakeasy's wall-clock run timeout (config.timeout) is a frozen pydantic field with no
@@ -217,19 +215,13 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         return None
 
     def _enable_single_step(self):
-        hd = self._single_step_hook_d
-        hs = self._single_step_hook_s
-        if hd is None or hs is None:
-            raise RuntimeError('single stepping hooks failed to be installed')
-        hd.cb.stepped = False
-        hs.cb.stepped = False
-        hd.enable()
-        hs.enable()
+        if (hook := self._single_step_hook) is None:
+            raise RuntimeError('single stepping hook failed to be installed')
+        hook.cb.stepped = False
+        hook.enable()
 
     def _disable_single_step(self):
-        if hook := self._single_step_hook_d:
-            hook.disable()
-        if hook := self._single_step_hook_s:
+        if hook := self._single_step_hook:
             hook.disable()
 
     @property
@@ -285,8 +277,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                     spky.stop()
                     hook.disable()
 
-    _end_hook_s: _stop | None
-    _end_hook_d: _stop | None
+    _end_hook: _stop | None
 
     def _remove_hook(self, hook: SeHook | None):
         if hook is None:
@@ -316,18 +307,13 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 emu.hooks[h] = tuple(hooklist)
 
     def _set_end(self, end: int | None):
-        if h := self._end_hook_s:
-            self._remove_hook(h.hook)
-        if h := self._end_hook_d:
+        if h := self._end_hook:
             self._remove_hook(h.hook)
         if end is None:
-            self._end_hook_s = None
-            self._end_hook_d = None
+            self._end_hook = None
         else:
-            self._end_hook_s = h = self._stop(end)
+            self._end_hook = h = self._stop(end)
             h.hook = self.speakeasy.add_code_hook(h, end, end + 1)
-            self._end_hook_d = h = self._stop(end)
-            h.hook = self.speakeasy.add_dyn_code_hook(h)
 
     def _ensure_context(self) -> list:
         """
@@ -407,7 +393,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         if timeout is not None:
             budget = _InstructionBudget(timeout, spk.stop)
             countdown_hooks.append(spk.add_code_hook(budget))
-            countdown_hooks.append(spk.add_dyn_code_hook(budget))
 
         try:
             if inner.get_current_run():
