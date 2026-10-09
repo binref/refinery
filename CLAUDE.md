@@ -94,13 +94,13 @@ The following rules contradict common Python conventions. Check them explicitly:
 
 # Tool Permissions
 
-Sessions run in `dontAsk` mode: 
- Every tool call that is not pre-approved is refused without a prompt.
-At the start of every session, read these files if they exist to review your allowed tools:
+Some sessions run in `dontAsk` mode:
+ When this is the case, every tool call that is not pre-approved is refused without a prompt.
+Whenever a command gets automatically rejected, read these files if they exist to review your allowed tools:
 - `.claude/settings.json`
 - `.claude/settings.local.json`
 
-Notes on how permissions in these files work:
+and mind the following notes on permission semantics:
 - Text before the `*` in `Bash(cmd *)` must match literally, so use flags in the order the rule shows.
   Every part of a compound command must match on its own.
   A leading variable assignment such as `FOO=1 pytest` never matches; use a flag instead, e.g. `python -B`.
