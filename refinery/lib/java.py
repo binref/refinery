@@ -4,6 +4,8 @@ Parsing of the Java Class file format as per
 """
 from __future__ import annotations
 
+import functools
+
 from enum import IntEnum
 from typing import Any, Generic, NamedTuple, TypeVar
 
@@ -75,6 +77,19 @@ class Index(PerInstanceAttribute[AttrType]):
         return self.lookup(pool, value)
 
 
+@functools.cache
+def _index_attributes(cls: type) -> tuple[tuple[str, Index], ...]:
+    """
+    The `Index` attributes of the given class by the names under which its instances find them: A
+    name that a class defines hides the same name in the classes after it in the resolution order.
+    """
+    attributes: dict[str, Any] = {}
+    for base in cls.__mro__:
+        for name, attribute in vars(base).items():
+            attributes.setdefault(name, attribute)
+    return tuple(item for item in attributes.items() if isinstance(item[1], Index))
+
+
 class JvConstType(IntEnum):
     Utf8             = 0x01 # noqa
     Int              = 0x03 # noqa
@@ -119,14 +134,13 @@ class _HasPoolAndTag(Struct):
         """
         values = vars(self)
         pool = values.pop('pool')
-        for cls in type(self).__mro__:
-            for name, attribute in vars(cls).items():
-                if not isinstance(attribute, Index) or name not in values:
-                    continue
-                try:
-                    values[name] = attribute.lookup(pool, values[name])
-                except (AttributeError, TypeError) as error:
-                    values[name] = _Unresolvable(type(error))
+        for name, attribute in _index_attributes(type(self)):
+            if name not in values:
+                continue
+            try:
+                values[name] = attribute.lookup(pool, values[name])
+            except (AttributeError, TypeError) as error:
+                values[name] = _Unresolvable(type(error))
 
 
 class JvStructWithName(_HasPoolAndTag):
