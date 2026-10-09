@@ -1,6 +1,27 @@
 import contextlib
+import pytest
+
+from unittest import mock
 
 from .. import TestBase
+
+_SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
+_SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
+
+
+@contextlib.contextmanager
+def _failing_external(name: str):
+    """
+    Makes the emulated external function of the given name raise an error.
+    """
+    from refinery.lib.inno.emulator import IFPSEmulator
+    registry = IFPSEmulator.external_symbols['']
+
+    def fail(*_):
+        raise RuntimeError(F'{name} failed')
+
+    with mock.patch.dict(registry, {name: registry[name]._replace(call=fail)}):
+        yield
 
 
 class TestIPFSEmulator(TestBase):
@@ -62,3 +83,42 @@ class TestIPFSEmulator(TestBase):
         logged = [event.args for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
         self.assertEqual(logged, [('Failed to get configuration',)])
         self.assertFalse(call.value)
+
+    def _emulated_value(self, sample: str, function: str, **config):
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.ifps import IFPSFile
+        emulator = InnoSetupEmulator(IFPSFile.Parse(self.download_sample(sample)), IFPSEmulatorConfig(**config))
+        call = emulator.emulate_function(emulator.symbols[function])
+        for _ in call:
+            pass
+        return call.value
+
+    @pytest.mark.xfail(strict=True, reason='an exception does not leave a script function for a handler of its caller')
+    def test_an_exception_in_a_called_function_runs_the_handler_of_its_caller(self):
+        windows = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSDIR')
+        with _failing_external('CompareText'):
+            temp = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSTEMPDIR')
+        self.assertEqual(temp, F'{windows}\temp')
+
+    @pytest.mark.xfail(strict=True, reason='an exception inside a catch block enters the same catch block again')
+    def test_an_exception_in_a_catch_block_leaves_the_function(self):
+        from refinery.lib.inno.emulator import IFPSException
+        with _failing_external('Log'), self.assertRaises(IFPSException):
+            self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_seconds=2)
+
+    @pytest.mark.xfail(strict=True, reason='a try block with a finally block swallows the exception')
+    def test_an_exception_in_a_try_block_leaves_the_function_after_its_finally_block(self):
+        from refinery.lib.inno.emulator import IFPSException
+        with _failing_external('GetDateTimeString'), self.assertRaises(IFPSException):
+            self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')
+
+    @pytest.mark.xfail(strict=True, reason='an exit from a try block skips its finally block')
+    def test_an_exit_from_a_try_block_runs_its_finally_block(self):
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.ifps import IFPSFile
+        emulator = InnoSetupEmulator(IFPSFile.Parse(self.download_sample(_SCRIPT_WITH_TRY_FINALLY)), IFPSEmulatorConfig())
+        emulator.globals[16].set('session')
+        call = emulator.emulate_function(emulator.symbols['GETSESSIONID'])
+        for _ in call:
+            pass
+        self.assertEqual(call.value, 'session')
