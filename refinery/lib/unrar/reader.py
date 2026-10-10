@@ -75,6 +75,19 @@ class BitInput:
         val = (b0 << 32) | (b1 << 24) | (b2 << 16) | (b3 << 8) | b4
         return (val >> (8 - bit)) & 0xFFFFFFFF
 
+    def getbits64(self) -> int:
+        """
+        Return 64 bits starting from current position (MSB-first).
+        """
+        addr = self.in_addr
+        buf = self.buf
+        blen = len(buf)
+
+        val = 0
+        for k in range(addr, addr + 9):
+            val = (val << 8) | (buf[k] if k < blen else 0)
+        return (val >> (8 - self.in_bit)) & 0xFFFFFFFFFFFFFFFF
+
     def addbits(self, bits: int):
         """
         Advance the position by the given number of bits.

@@ -78,12 +78,12 @@ class Unpack15(RarUnpacker):
     def __init__(
         self,
         data: bytes | memoryview,
-        unp_size: int,
+        unp_size: int | None,
         solid: bool = False,
     ):
         self._inp = BitInput(data)
         self._dest_size = unp_size
-        self._orig_size = unp_size
+        self._remaining = 0
         self._win_size = 0x10000
         self._win_mask = self._win_size - 1
         self._window = bytearray(self._win_size)
@@ -160,14 +160,6 @@ class Unpack15(RarUnpacker):
             self._unp_ptr = (self._unp_ptr + 1) & mask
             length -= 1
 
-    def _write_data(self, data: memoryview | bytes | bytearray):
-        remaining = self._orig_size - self._written
-        if remaining <= 0:
-            return
-        write_size = min(len(data), remaining)
-        self._output.extend(data[:write_size])
-        self._written += write_size
-
     def _get_flags_buf(self):
         """
         Read next flags byte from the encoded stream.
@@ -210,7 +202,7 @@ class Unpack15(RarUnpacker):
             inp.addbits(1)
             if bit_field >= 0x8000:
                 self._copy_string(self._last_dist, self._last_length)
-                self._dest_size -= self._last_length
+                self._remaining -= self._last_length
                 return
             bit_field <<= 1
             self._lcount = 0
@@ -251,7 +243,7 @@ class Unpack15(RarUnpacker):
             if length == 9:
                 self._lcount += 1
                 self._copy_string(self._last_dist, self._last_length)
-                self._dest_size -= self._last_length
+                self._remaining -= self._last_length
                 return
 
             if length == 14:
@@ -262,7 +254,7 @@ class Unpack15(RarUnpacker):
                 self._last_length = length
                 self._last_dist = distance
                 self._copy_string(distance, length)
-                self._dest_size -= length
+                self._remaining -= length
                 return
 
             self._lcount = 0
@@ -282,7 +274,7 @@ class Unpack15(RarUnpacker):
             self._last_length = length
             self._last_dist = distance
             self._copy_string(distance, length)
-            self._dest_size -= length
+            self._remaining -= length
             return
 
         self._lcount = 0
@@ -303,7 +295,7 @@ class Unpack15(RarUnpacker):
         self._last_length = length
         self._last_dist = distance
         self._copy_string(distance, length)
-        self._dest_size -= length
+        self._remaining -= length
 
     def _long_lz(self):
         """
@@ -385,7 +377,7 @@ class Unpack15(RarUnpacker):
         self._last_length = length
         self._last_dist = distance
         self._copy_string(distance, length)
-        self._dest_size -= length
+        self._remaining -= length
 
     def _huff_decode(self):
         """
@@ -427,7 +419,7 @@ class Unpack15(RarUnpacker):
                     if distance == 0:
                         self._raise_corrupt('RAR1.5 zero-distance back-reference.')
                     self._copy_string(distance, length)
-                    self._dest_size -= length
+                    self._remaining -= length
                     return
         else:
             if self._num_huf >= 16 and self._flags_cnt == 0:
@@ -443,7 +435,7 @@ class Unpack15(RarUnpacker):
 
         self._window[self._unp_ptr] = (self._ch_set[byte_place] >> 8) & 0xFF
         self._unp_ptr = (self._unp_ptr + 1) & self._win_mask
-        self._dest_size -= 1
+        self._remaining -= 1
 
         while True:
             cur_byte = self._ch_set[byte_place]
@@ -457,13 +449,6 @@ class Unpack15(RarUnpacker):
 
         self._ch_set[byte_place] = self._ch_set[new_byte_place]
         self._ch_set[new_byte_place] = cur_byte
-
-    def init_solid(self, data: bytes | memoryview, dest_size: int):
-        """
-        Reinitialize for the next file in a solid archive chain.
-        """
-        super().init_solid(data, dest_size)
-        self._orig_size = dest_size
 
     def decompress(self) -> bytearray:
         """
@@ -481,12 +466,12 @@ class Unpack15(RarUnpacker):
         self._st_mode = 0
         self._lcount = 0
 
-        self._dest_size -= 1
-        if self._dest_size >= 0:
+        self._remaining = self._known_size('RAR 1.5') - 1
+        if self._remaining >= 0:
             self._get_flags_buf()
             self._flags_cnt = 8
 
-        while self._dest_size >= 0:
+        while self._remaining >= 0:
             self._unp_ptr &= self._win_mask
 
             if self._inp.overread:

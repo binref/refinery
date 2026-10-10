@@ -62,7 +62,7 @@ class Unpack20(RarUnpacker):
     def __init__(
         self,
         data: bytes | memoryview,
-        unp_size: int,
+        unp_size: int | None,
         solid: bool = False,
     ):
         self._inp = BitInput(data)
@@ -233,8 +233,7 @@ class Unpack20(RarUnpacker):
         if (not self._solid or not self._tables_read) and not self._read_tables():
             return self._output
 
-        remaining = self._dest_size
-        remaining -= 1
+        remaining = self._known_size('RAR 2.0') - 1
         while remaining >= 0:
             self._unp_ptr &= mask
 

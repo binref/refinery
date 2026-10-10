@@ -59,7 +59,7 @@ class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         extractors = [rar.extractor(entry, password) for entry in files]
         probed = None
         if not self.args.list and not password:
-            encrypted = next((k for k, entry in enumerate(files) if entry.is_encrypted and entry.size), None)
+            encrypted = next((k for k, entry in enumerate(files) if entry.is_encrypted and entry.size != 0), None)
             if encrypted is not None:
                 for pwd in self.CommonPasswords:
                     trial = [rar.extractor(entry, pwd) for entry in files]

@@ -36,6 +36,12 @@ from refinery.lib.unrar.headers import (
     parse_headers,
 )
 
+_UNKNOWN_SIZE_ROOM = 1 << 64
+"""
+The room that a member of unknown size takes in the decompressed stream of its archive: more than
+any member can decompress to.
+"""
+
 
 class RarException(Exception):
     """
@@ -246,6 +252,8 @@ class RarFile:
         start, which are all members that do not continue the decompression of a previous one. An
         empty member that no later member continues is never decompressed, because nothing depends
         on it; it shares its position with the next member, whose decompression it must not fail.
+        A member of unknown size takes more room than any member can fill and ends where its
+        stream ends.
         """
         self._index: dict[int, int] = {}
         self._positions: list[int] = []
@@ -261,12 +269,12 @@ class RarFile:
             if not entry.solid or not self._starts:
                 self._starts.append(k)
                 self._start_positions.append(position)
-            position += entry.size
+            position += _UNKNOWN_SIZE_ROOM if entry.size is None else entry.size
         continued = False
         for k in reversed(range(len(self._file_entries))):
             if (entry := self._file_entries[k]).is_dir:
                 continue
-            if not entry.size and not continued:
+            if entry.size == 0 and not continued:
                 self._idle.add(k)
             continued = entry.solid
 
@@ -347,7 +355,8 @@ class RarFile:
             return missing
         if (stream := self._streams.get(pw)) is None:
             stream = self._streams[pw] = SolidStream(partial(self._decode, pw), self._restart)
-        claim = stream.claim(self._positions[self._index[id(fe)]], fe.size)
+        size = _UNKNOWN_SIZE_ROOM if fe.size is None else fe.size
+        claim = stream.claim(self._positions[self._index[id(fe)]], size)
 
         def extract() -> buf:
             try:
@@ -469,7 +478,9 @@ class RarFile:
         Decompress data based on the compression method and format version.
         """
         if entry.method == 0:
-            return (data[:entry.size] if len(data) > entry.size else data), engine
+            if (size := entry.size) is not None and len(data) > size:
+                data = data[:size]
+            return data, engine
 
         if entry.solid and engine is not None:
             engine.init_solid(data, entry.size)
@@ -478,9 +489,12 @@ class RarFile:
         unp_ver = entry.unp_ver
 
         if self._format == RarFormat.RARFMT50 or unp_ver >= 50:
+            if unp_ver > 51:
+                raise RarCorruptArchive(
+                    F'Unsupported compression version {unp_ver} for {entry.name}')
             from refinery.lib.unrar.unpack50 import Unpack50
             win_size = entry.win_size if entry.win_size > 0 else 0x400000
-            engine = Unpack50(data, entry.size, win_size, entry.solid)
+            engine = Unpack50(data, entry.size, win_size, entry.solid, extended=(unp_ver == 51))
         elif unp_ver >= 29:
             from refinery.lib.unrar.unpack30 import Unpack30
             win_size = entry.win_size if entry.win_size > 0 else 0x400000

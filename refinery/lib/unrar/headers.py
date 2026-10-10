@@ -147,7 +147,11 @@ class FCI(enum.IntEnum):
     METHOD_SHIFT = 7
     METHOD_MASK = 0x0380
     DICT_SHIFT = 10
-    DICT_MASK = 0x3C00
+    DICT_MASK_V0 = 0x3C00
+    DICT_MASK_V1 = 0x7C00
+    FRACTION_SHIFT = 15
+    FRACTION_MASK = 0xF8000
+    RAR5_COMPAT = 0x100000
 
 
 FHEXTRA_CRYPT = 0x01
@@ -337,7 +341,11 @@ class RarFileEntry:
     Metadata for a single file or service entry in a RAR archive.
     """
     name: str = ''
-    size: int = 0
+    size: int | None = 0
+    """
+    The size of the decompressed data, or `None` if the header states that it is unknown; the data
+    then ends where its compressed stream ends.
+    """
     packed_size: int = 0
     date: datetime | None = None
     ctime: datetime | None = None
@@ -372,7 +380,6 @@ class RarFileEntry:
     _volume_index: int = 0
     _data_offset: int = 0
     _data_size: int = 0
-    unknown_unp_size: bool = False
 
     def __repr__(self):
         kind = 'dir' if self.is_dir else 'file'
@@ -642,14 +649,14 @@ def parse_header15(raw: RawHeaderReader) -> tuple:
         if large_file:
             high_pack = raw.get4()
             high_unp = raw.get4()
-            hd.unknown_unp_size = (low_unp_size == 0xFFFFFFFF and high_unp == 0xFFFFFFFF)
+            unknown_size = (low_unp_size == 0xFFFFFFFF and high_unp == 0xFFFFFFFF)
         else:
             high_pack = 0
             high_unp = 0
-            hd.unknown_unp_size = (low_unp_size == 0xFFFFFFFF)
+            unknown_size = (low_unp_size == 0xFFFFFFFF)
 
         hd.packed_size = (high_pack << 32) | data_size
-        hd.size = (high_unp << 32) | low_unp_size
+        hd.size = None if unknown_size else (high_unp << 32) | low_unp_size
 
         read_name_size = min(name_size, raw.remaining())
         name_bytes = bytes(raw.getb(read_name_size))
@@ -818,7 +825,8 @@ def parse_header50(data: bytes | memoryview, offset: int = 0) -> tuple:
         hd.packed_size = data_size
         hd.file_flags = raw.getv()
         hd.size = raw.getv()
-        hd.unknown_unp_size = bool(hd.file_flags & FHFL.UNPUNKNOWN)
+        if hd.file_flags & FHFL.UNPUNKNOWN:
+            hd.size = None
 
         raw.getv()
         hd.is_dir = bool(hd.file_flags & FHFL.DIRECTORY)
@@ -835,10 +843,20 @@ def parse_header50(data: bytes | memoryview, offset: int = 0) -> tuple:
             hd.crc32 = raw.get4()
 
         comp_info = raw.getv()
+        algorithm = comp_info & FCI.ALGO_MASK
         hd.method = (comp_info >> FCI.METHOD_SHIFT) & 7
-        hd.unp_ver = (comp_info & FCI.ALGO_MASK) + 50
+        hd.unp_ver = 50 + algorithm
         hd.solid = bool(comp_info & FCI.SOLID)
-        hd.win_size = 0 if hd.is_dir else 0x20000 << ((comp_info >> FCI.DICT_SHIFT) & 0xF)
+        if hd.is_dir or algorithm > 1:
+            hd.win_size = 0
+        elif algorithm == 0:
+            hd.win_size = 0x20000 << ((comp_info & FCI.DICT_MASK_V0) >> FCI.DICT_SHIFT)
+        else:
+            win_size = 0x20000 << ((comp_info & FCI.DICT_MASK_V1) >> FCI.DICT_SHIFT)
+            win_size += win_size // 32 * ((comp_info & FCI.FRACTION_MASK) >> FCI.FRACTION_SHIFT)
+            hd.win_size = win_size
+            if comp_info & FCI.RAR5_COMPAT:
+                hd.unp_ver = 50
 
         hd.host_os = raw.getv()
         if hd.host_os == HostSystem.HOST5_UNIX:

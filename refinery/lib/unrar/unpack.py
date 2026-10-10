@@ -13,7 +13,7 @@ SDBits = [2, 2, 3, 4, 5, 6, 6, 6]
 
 class RarUnpacker:
     _inp: BitInput
-    _dest_size: int
+    _dest_size: int | None
     _win_size: int
     _win_mask: int
     _window: bytearray
@@ -81,12 +81,44 @@ class RarUnpacker:
         self._unp_ptr = dst & mask
 
     def _write_data(self, data: memoryview | bytes | bytearray):
-        remaining = self._dest_size - self._written
-        if remaining <= 0:
-            return
-        write_size = min(len(data), remaining)
-        self._output.extend(data[:write_size])
-        self._written += write_size
+        """
+        Append decompressed data to the output, which ends at the size of the file. Every byte
+        counts as written, including those beyond that size, as in the reference decoder.
+        """
+        written = self._written
+        self._written = written + len(data)
+        if (size := self._dest_size) is not None:
+            if written >= size:
+                return
+            if self._written > size:
+                data = data[:size - written]
+        self._output.extend(data)
+
+    def _ended_short(self, pending: int) -> bool:
+        """
+        Whether the decompressed data falls short of the size of the file once the given number of
+        bytes still pending in the window are written. A file of unknown size ends with its stream.
+        """
+        size = self._dest_size
+        return size is not None and self._written + pending < size
+
+    def _known_size(self, algorithm: str) -> int:
+        """
+        The size of the file, for an algorithm whose stream has no end marker and therefore cannot
+        decompress a file of unknown size.
+        """
+        if (size := self._dest_size) is None:
+            from refinery.lib.unrar import RarCorruptArchive
+            raise RarCorruptArchive(
+                F'The {algorithm} algorithm has no end marker for a file of unknown size.')
+        return size
+
+    def _overran(self) -> bool:
+        """
+        Whether more data was decompressed than the file holds, which ends its decompression.
+        """
+        size = self._dest_size
+        return size is not None and self._written > size
 
     def _write_area(self, start: int, end: int):
         win = self._window
@@ -105,7 +137,7 @@ class RarUnpacker:
             self._write_data(win[self._wr_ptr:self._unp_ptr])
         self._wr_ptr = self._unp_ptr
 
-    def init_solid(self, data: bytes | memoryview, dest_size: int):
+    def init_solid(self, data: bytes | memoryview, dest_size: int | None):
         """
         Reinitialize for the next file in a solid archive chain.
         """

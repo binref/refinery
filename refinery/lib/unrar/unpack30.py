@@ -1211,7 +1211,7 @@ class Unpack30(RarUnpacker):
     def __init__(
         self,
         data: bytes | memoryview,
-        unp_size: int,
+        unp_size: int | None,
         win_size: int,
         solid: bool = False,
     ):
@@ -1543,7 +1543,7 @@ class Unpack30(RarUnpacker):
         self._unp_old_table[:] = table
         return True
 
-    def init_solid(self, data: bytes | memoryview, dest_size: int):
+    def init_solid(self, data: bytes | memoryview, dest_size: int | None):
         """
         Reinitialize for the next file in a solid archive chain.
         """
@@ -1575,13 +1575,13 @@ class Unpack30(RarUnpacker):
             self._unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
-                if self._written + ((self._unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                if self._ended_short((self._unp_ptr - self._wr_ptr) & mask):
                     self._raise_corrupt('RAR3.0 stream consumed past end of input.')
                 break
 
             if ((self._wr_ptr - self._unp_ptr) & mask) < 260 and self._wr_ptr != self._unp_ptr:
                 self._write_buf()
-                if self._written > self._dest_size:
+                if self._overran():
                     return self._output
 
             if self._block_type == BLOCK_PPM:

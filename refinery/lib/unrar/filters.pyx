@@ -46,7 +46,7 @@ def apply_filter(
     bytearray data,
     int filter_type,
     int channels=0,
-    int file_offset=0,
+    size_t file_offset=0,
 ):
     """
     Apply a RAR5 filter to decompressed data.
@@ -97,7 +97,7 @@ cdef bytearray _filter_e8(bytearray data, bint include_e9, size_t file_offset):
     return data
 
 
-cdef bytearray _filter_arm(bytearray data, int file_offset):
+cdef bytearray _filter_arm(bytearray data, size_t file_offset):
     cdef unsigned char *ptr = <unsigned char *>PyByteArray_AS_STRING(data)
     cdef int data_size = len(data)
     cdef int cur_pos
@@ -201,13 +201,13 @@ cdef bytearray _v3_filter_e8(
 ):
     cdef unsigned char *ptr = <unsigned char *>PyByteArray_AS_STRING(data)
     cdef int file_size = 0x1000000
-    cdef int file_offset = 0
+    cdef unsigned int file_offset = 0
     cdef int cur_pos = 0
     cdef unsigned char b
     cdef unsigned int offset, addr, val
 
     if initial_register_values is not None:
-        file_offset = <int>initial_register_values[6]
+        file_offset = <unsigned int>initial_register_values[6]
 
     while cur_pos + 4 < data_size:
         b = ptr[cur_pos]

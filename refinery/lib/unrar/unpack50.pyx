@@ -15,11 +15,11 @@ from refinery.lib.unrar.unpack import RarUnpacker
 
 
 cdef int NC = 306
-cdef int DC = 64
+cdef int DCB = 64
+cdef int DCX = 80
 cdef int LDC = 16
 cdef int RC = 44
 cdef int BC = 20
-cdef int HUFF_TABLE_SIZE = NC + DC + RC + LDC
 cdef int LARGEST_TABLE_SIZE = 306
 cdef int MAX_QUICK_DECODE_BITS = 10
 cdef int MAX_UNPACK_FILTERS = 8192
@@ -31,9 +31,9 @@ cdef int MAX_INC_LZ_MATCH = 0x1001 + 3
 cdef class BitInput:
     cdef:
         const unsigned char[::1] _buf
-        public int in_addr
+        public Py_ssize_t in_addr
         public int in_bit
-        int _buf_len
+        Py_ssize_t _buf_len
 
     def __init__(self, data):
         if isinstance(data, memoryview):
@@ -50,7 +50,7 @@ cdef class BitInput:
 
     @property
     def remaining(self):
-        cdef int r = self._buf_len - self.in_addr
+        cdef Py_ssize_t r = self._buf_len - self.in_addr
         return r if r > 0 else 0
 
     @property
@@ -62,9 +62,9 @@ cdef class BitInput:
         self.in_bit = 0
 
     cpdef int getbits(self):
-        cdef int addr = self.in_addr
+        cdef Py_ssize_t addr = self.in_addr
         cdef int bit = self.in_bit
-        cdef int blen = self._buf_len
+        cdef Py_ssize_t blen = self._buf_len
         cdef int b0, b1, b2, val
         b0 = self._buf[addr] if addr < blen else 0
         b1 = self._buf[addr + 1] if addr + 1 < blen else 0
@@ -73,9 +73,9 @@ cdef class BitInput:
         return (val >> (8 - bit)) & 0xFFFF
 
     cpdef unsigned int getbits32(self):
-        cdef int addr = self.in_addr
+        cdef Py_ssize_t addr = self.in_addr
         cdef int bit = self.in_bit
-        cdef int blen = self._buf_len
+        cdef Py_ssize_t blen = self._buf_len
         cdef unsigned long long b0, b1, b2, b3, b4, val
         b0 = self._buf[addr] if addr < blen else 0
         b1 = self._buf[addr + 1] if addr + 1 < blen else 0
@@ -85,8 +85,19 @@ cdef class BitInput:
         val = (b0 << 32) | (b1 << 24) | (b2 << 16) | (b3 << 8) | b4
         return <unsigned int>((val >> (8 - bit)) & 0xFFFFFFFF)
 
+    cpdef unsigned long long getbits64(self):
+        cdef Py_ssize_t addr = self.in_addr
+        cdef Py_ssize_t blen = self._buf_len
+        cdef Py_ssize_t k
+        cdef unsigned long long val = 0
+        cdef unsigned long long last
+        for k in range(addr, addr + 8):
+            val = (val << 8) | (self._buf[k] if k < blen else 0)
+        last = self._buf[addr + 8] if addr + 8 < blen else 0
+        return (val << self.in_bit) | (last >> (8 - self.in_bit))
+
     cpdef void addbits(self, int bits):
-        cdef int total = (self.in_addr << 3) + self.in_bit + bits
+        cdef Py_ssize_t total = (self.in_addr << 3) + self.in_bit + bits
         self.in_addr = total >> 3
         self.in_bit = total & 7
 
@@ -260,7 +271,7 @@ cdef class BlockHeader:
     cdef:
         public int block_size
         public int block_bit_size
-        public int block_start
+        public Py_ssize_t block_start
         public int header_size
         public bint last_block
         public bint table_present
@@ -336,11 +347,12 @@ def read_block_header(BitInput inp, BlockHeader header):
     return _read_block_header(inp, header)
 
 
-cdef bint _read_tables(BitInput inp, BlockHeader header, BlockTables tables):
+cdef bint _read_tables(BitInput inp, BlockHeader header, BlockTables tables, int distance_codes):
     cdef int i, length, zero_count, number, n
     cdef bytearray bit_length
     cdef bytearray table
     cdef int off
+    cdef int table_size = NC + distance_codes + RC + LDC
 
     if not header.table_present:
         return True
@@ -368,9 +380,9 @@ cdef bint _read_tables(BitInput inp, BlockHeader header, BlockTables tables):
 
     make_decode_tables(bit_length, tables.BD, BC)
 
-    table = bytearray(HUFF_TABLE_SIZE)
+    table = bytearray(table_size)
     i = 0
-    while i < HUFF_TABLE_SIZE:
+    while i < table_size:
         number = _decode_number_fast(inp, tables.BD)
         if number < 16:
             table[i] = number
@@ -384,7 +396,7 @@ cdef bint _read_tables(BitInput inp, BlockHeader header, BlockTables tables):
                 inp.addbits(7)
             if i == 0:
                 return False
-            while n > 0 and i < HUFF_TABLE_SIZE:
+            while n > 0 and i < table_size:
                 table[i] = table[i - 1]
                 i += 1
                 n -= 1
@@ -395,35 +407,37 @@ cdef bint _read_tables(BitInput inp, BlockHeader header, BlockTables tables):
             else:
                 n = ((inp.getbits() >> 9) & 0x7F) + 11
                 inp.addbits(7)
-            while n > 0 and i < HUFF_TABLE_SIZE:
+            while n > 0 and i < table_size:
                 table[i] = 0
                 i += 1
                 n -= 1
 
     make_decode_tables(table, tables.LD, NC)
     off = NC
-    make_decode_tables(table[off:], tables.DD, DC)
-    off += DC
+    make_decode_tables(table[off:], tables.DD, distance_codes)
+    off += distance_codes
     make_decode_tables(table[off:], tables.LDD, LDC)
     off += LDC
     make_decode_tables(table[off:], tables.RD, RC)
     return True
 
 
-def read_tables(BitInput inp, BlockHeader header, BlockTables tables):
+def read_tables(BitInput inp, BlockHeader header, BlockTables tables, int distance_codes):
     """
-    Read Huffman tables from a block.
+    Read Huffman tables from a block. The RAR 7 algorithm uses `DCX` distance codes instead of
+    `DCB` for distances beyond 4 GB.
     """
-    return _read_tables(inp, header, tables)
+    return _read_tables(inp, header, tables, distance_codes)
 
 
-cdef int _read_filter_data(BitInput inp):
-    cdef int byte_count, data, i
+cdef Py_ssize_t _read_filter_data(BitInput inp):
+    cdef int byte_count, i
+    cdef Py_ssize_t data
     byte_count = ((inp.getbits() >> 14) & 3) + 1
     inp.addbits(2)
     data = 0
     for i in range(byte_count):
-        data += ((inp.getbits() >> 8) & 0xFF) << (i * 8)
+        data += (<Py_ssize_t>((inp.getbits() >> 8) & 0xFF)) << (i * 8)
         inp.addbits(8)
     return data
 
@@ -463,13 +477,15 @@ class Unpack50(RarUnpacker):
     def __init__(
         self,
         data,
-        int unp_size,
-        int win_size,
+        unp_size,
+        win_size,
         bint solid=False,
+        bint extended=False,
     ):
         self._inp = BitInput(data)
         self._dest_size = unp_size
-        self._win_size = max(win_size, 0x40000)
+        self._distance_codes = DCX if extended else DCB
+        self._win_size = max(1 << (win_size - 1).bit_length(), 0x40000)
         self._win_mask = self._win_size - 1
         self._window = bytearray(self._win_size)
         self._solid = solid
@@ -485,7 +501,7 @@ class Unpack50(RarUnpacker):
         self._block_tables = BlockTables()
         self._write_border = min(self._win_size, UNPACK_MAX_WRITE) & self._win_mask
 
-    def init_solid(self, data, int dest_size):
+    def init_solid(self, data, dest_size):
         """
         Reinitialize for the next file in a solid archive chain.
         """
@@ -499,9 +515,9 @@ class Unpack50(RarUnpacker):
         """
         Apply filters and flush the write buffer.
         """
-        cdef int mask, full_write_size, write_size_left
-        cdef int block_start, block_length, block_end, first_part
-        cdef int i, j
+        cdef size_t mask, full_write_size, write_size_left
+        cdef size_t block_start, block_length, block_end, first_part
+        cdef Py_ssize_t i, j
         written_border = self._wr_ptr
         mask = self._win_mask
         win = self._window
@@ -568,17 +584,17 @@ class Unpack50(RarUnpacker):
         Run the RAR5 decompression and return the extracted data.
         """
         cdef BitInput inp = self._inp
-        cdef int mask = self._win_mask
-        cdef int inp_len
-        cdef int main_slot, length, dist_slot, d_bits
-        cdef unsigned int distance
+        cdef size_t mask = self._win_mask
+        cdef Py_ssize_t inp_len
+        cdef int main_slot, dist_slot, d_bits
+        cdef size_t length, distance
         cdef int length_slot, dist_num
         cdef int low_dist
 
-        cdef int old0, old1, old2, old3
-        cdef int unp_ptr, last_length, win_size, write_border
+        cdef size_t old0, old1, old2, old3
+        cdef size_t unp_ptr, last_length, win_size, write_border
         cdef unsigned char *win_ptr
-        cdef int src, dst, copied, chunk
+        cdef size_t src, dst, copied, chunk
 
         win = self._window
         win_ptr = <unsigned char *>PyByteArray_AS_STRING(win)
@@ -586,7 +602,7 @@ class Unpack50(RarUnpacker):
 
         if not _read_block_header(inp, self._block_header):
             return self._output
-        if not _read_tables(inp, self._block_header, self._block_tables):
+        if not _read_tables(inp, self._block_header, self._block_tables, self._distance_codes):
             return self._output
         self._tables_read = True
 
@@ -608,7 +624,7 @@ class Unpack50(RarUnpacker):
             unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
-                if self._written + ((unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                if self._ended_short((unp_ptr - self._wr_ptr) & mask):
                     self._unp_ptr = unp_ptr
                     self._raise_corrupt('RAR5.0 stream consumed past end of input.')
                 break
@@ -625,8 +641,11 @@ class Unpack50(RarUnpacker):
                     self._last_length = last_length
                     self._write_buf()
                     return self._output
-                if not _read_block_header(inp, hdr) or not _read_tables(inp, hdr, tbl):
-                    if self._written + ((unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                if (
+                    not _read_block_header(inp, hdr)
+                    or not _read_tables(inp, hdr, tbl, self._distance_codes)
+                ):
+                    if self._ended_short((unp_ptr - self._wr_ptr) & mask):
                         self._unp_ptr = unp_ptr
                         self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
                     self._old_dist[0] = old0
@@ -648,7 +667,7 @@ class Unpack50(RarUnpacker):
                 self._last_length = last_length
                 self._write_buf()
                 write_border = self._write_border
-                if self._written > self._dest_size:
+                if self._overran():
                     return self._output
 
             main_slot = _decode_number_fast(inp, tbl.LD)
@@ -667,12 +686,15 @@ class Unpack50(RarUnpacker):
                     distance = 1 + dist_slot
                 else:
                     d_bits = dist_slot // 2 - 1
-                    distance = 1 + ((<unsigned int>(2 | (dist_slot & 1))) << d_bits)
+                    distance = 1 + ((<size_t>(2 | (dist_slot & 1))) << d_bits)
 
                 if d_bits > 0:
                     if d_bits >= 4:
-                        if d_bits > 4:
-                            distance += (inp.getbits32() >> (36 - d_bits)) << 4
+                        if d_bits > 36:
+                            distance += (<size_t>(inp.getbits64() >> (68 - d_bits))) << 4
+                            inp.addbits(d_bits - 4)
+                        elif d_bits > 4:
+                            distance += (<size_t>(inp.getbits32() >> (36 - d_bits))) << 4
                             inp.addbits(d_bits - 4)
                         low_dist = _decode_number_fast(inp, tbl.LDD)
                         distance += low_dist
@@ -687,7 +709,7 @@ class Unpack50(RarUnpacker):
                         if distance > 0x40000:
                             length += 1
 
-                if distance > <unsigned int>win_size:
+                if distance > win_size:
                     self._unp_ptr = unp_ptr
                     self._raise_corrupt('RAR5.0 LZ back-reference distance exceeds the window size.')
 
