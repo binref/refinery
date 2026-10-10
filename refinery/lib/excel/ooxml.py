@@ -137,8 +137,6 @@ class OoxmlSheet(ExcelSheet):
                 root.clear()
         except XML_DEFECTS as error:
             raise ExcelFormatError(F'sheet {self.name!r} is malformed') from error
-        finally:
-            stream.close()
 
     def _build_cell(self, element: Element, row: int, col: int) -> Cell:
         formula: str | None = None
@@ -384,8 +382,6 @@ class OoxmlWorkbook(ExcelWorkbook):
                 root.clear()
         except XML_DEFECTS as error:
             raise ExcelFormatError(F'shared string part {part!r} is malformed') from error
-        finally:
-            stream.close()
         self._shared_strings = strings
 
     def _load_styles(self) -> None:

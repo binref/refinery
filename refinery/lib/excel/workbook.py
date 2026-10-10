@@ -120,25 +120,17 @@ class _PartStream:
     """
     A package part as a read-only binary stream. Reading a defective entry of the archive raises
     `refinery.lib.excel.common.ExcelFormatError` instead of the exception class of the `zipfile`
-    module. Closing the stream releases the archive entry, which refers to the data of the whole
-    package.
+    module.
     """
 
     def __init__(self, stream: IO[bytes]):
-        self._stream: IO[bytes] | None = stream
+        self._stream = stream
 
     def read(self, size: int = -1) -> bytes:
-        if (stream := self._stream) is None:
-            raise ValueError('The part stream is closed.')
         try:
-            return stream.read(size)
+            return self._stream.read(size)
         except _PACKAGE_DEFECTS as error:
             raise ExcelFormatError('the package contains a defective part') from error
-
-    def close(self):
-        if (stream := self._stream) is not None:
-            self._stream = None
-            stream.close()
 
 
 class _Package:

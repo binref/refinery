@@ -4,7 +4,6 @@ This module defines the refinery emulator abstraction layer interface.
 from __future__ import annotations
 
 import traceback
-import weakref
 
 from abc import ABC, abstractmethod
 from enum import Enum, IntFlag
@@ -184,40 +183,6 @@ NopCodeMaxLen = max(len(c) for c in NopCodeByArch.values())
 RetCodeMaxLen = max(len(c) for c in RetCodeByArch.values())
 
 
-class WeakHook:
-    """
-    A callback for an emulator backend that calls the given hook method of an emulator. Backends
-    keep their callbacks in reference cycles that only the cycle collector frees, so the callback
-    refers to the emulator weakly. An error of the hook does not reach the backend, which may keep
-    it: The frames of the failed hook let go of their variables, which include the emulator, and
-    the error goes to the emulator, which stops the engine and raises it when the run returns.
-    """
-    __slots__ = '_emulator', '_method'
-
-    def __init__(self, emulator: Emulator, method: Callable[..., Any]):
-        self._emulator = weakref.ref(emulator)
-        self._method = method
-
-    def __call__(self, *args):
-        if (emulator := self._emulator()) is None:
-            raise EmulationError('An emulator backend called a hook of an emulator that no longer exists.')
-        try:
-            return self._method(emulator, *args)
-        except BaseException as error:
-            emulator._hook_failed(error)
-            return False
-        finally:
-            del emulator
-
-
-def _release_engine(release: Callable[[Any], object], engine: weakref.ref):
-    """
-    Releases the memory of the referenced engine with the given function unless the engine is gone.
-    """
-    if (alive := engine()) is not None:
-        release(alive)
-
-
 class Emulator(ABC, Generic[_E, _R, _T]):
     """
     The emulator base class.
@@ -261,7 +226,6 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         self.alloc_size = alloc_size
         self.page_limit = page_limit
         self._resetonce = False
-        self._engine_release: weakref.finalize | None = None
         self._hook_error: BaseException | None = None
 
         self._sp, self._ip, self._rv = {
@@ -350,13 +314,13 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         the underlying emulator engine, map the input executable to memory, and install any of the
         requested hooks.
         """
-        self._resetonce = True
+        if self._resetonce:
+            self._resetonce = False
+            self._release()
         self._memorymap = IntIntervalUnion()
         self.state = state
-        if (release := self._engine_release) is not None:
-            self._engine_release = None
-            release()
         self._reset()
+        self._resetonce = True
         for rd in self.exe.relocations():
             self.mem_write_int(rd.address, rd.value, rd.size)
         return self
@@ -435,6 +399,18 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         finally:
             del error
 
+    def _call_hook(self, hook: Callable[..., Any], *args) -> Any:
+        """
+        Called by a backend to run a hook. An error of the hook does not reach the backend, which
+        may lose it: Speakeasy ignores it, and unicorn drops it when the run fails afterwards. The
+        error goes to `Emulator._hook_failed` instead.
+        """
+        try:
+            return hook(*args)
+        except BaseException as error:
+            self._hook_failed(error)
+            return False
+
     def _hook_failed(self, error: BaseException):
         """
         Called by a backend when a hook raised the given error. The frames of the failed hook let
@@ -471,17 +447,12 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Called as part of `refinery.lib.emulator.Emulator.reset`.
         """
 
-    def _own_engine(self, release: Callable[[Any], object], engine: object):
+    def _release(self):
         """
-        Called by a backend when its `_reset` has created an engine. The engines of some backends
-        keep their memory, which holds a copy of the emulated data, in reference cycles that only
-        the cycle collector frees. The given function releases that memory when the engine is
-        replaced or when the emulator is freed. The engine is referred to weakly, so that it may
-        refer to the emulator. Nothing is released at exit, where the engine may be closed already.
+        Called as part of `refinery.lib.emulator.Emulator.reset` before the engine is replaced. A
+        backend whose engine keeps a copy of the emulated data until the cycle collector frees it
+        releases that memory here, so that an emulator reset many times holds only one copy.
         """
-        engine_release = weakref.finalize(self, _release_engine, release, weakref.ref(engine))
-        engine_release.atexit = False
-        self._engine_release = engine_release
 
     def _init(self):
         """

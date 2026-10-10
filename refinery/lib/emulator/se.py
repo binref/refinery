@@ -4,6 +4,7 @@ Implements `refinery.lib.emulator.interface.Emulator` for the speakeasy backend.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from refinery.lib.emulator.abstract import (
@@ -12,7 +13,6 @@ from refinery.lib.emulator.abstract import (
     Emulator,
     MemAccess,
     Register,
-    WeakHook,
 )
 from refinery.lib.emulator.uc_shared import get_access_map, unmap_all
 from refinery.lib.executable import ET, Arch
@@ -65,18 +65,6 @@ class _InstructionBudget:
         return True
 
 
-def _shut_down(speakeasy: Se):
-    """
-    Removes the hooks of a speakeasy instance and releases the memory of its unicorn engine, which
-    holds a copy of the emulated data. Speakeasy keeps itself in reference cycles, so the instance
-    waits for the cycle collector.
-    """
-    speakeasy.shutdown()
-    if (emu := speakeasy.emu) is None or (eng := emu.emu_eng) is None or (engine := eng.emu) is None:
-        return
-    unmap_all(engine)
-
-
 class SpeakeasyEmulator(Emulator[Se, str, _T]):
     """
     A Speakeasy-based emulator. Speakeasy only supports PE files, but it has support for several
@@ -115,7 +103,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             raise NotImplementedError(F'Speakeasy cannot handle executables of arch {exe.arch().name}') from KE
 
         emu = self.speakeasy = se.Speakeasy()
-        self._own_engine(_shut_down, emu)
         self._driver = None
 
         with VirtualFileSystem() as vfs:
@@ -159,25 +146,31 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
         # The suppressed builtin was also what detected the run-ending fetch into the unmapped
         # return_hook, so we detect it ourselves (_uc_hook_return) to stop a run when it returns.
-        cls = type(self)
-        emu.add_mem_invalid_hook(WeakHook(self, cls._uc_hook_return))
+        emu.add_mem_invalid_hook(partial(self._call_hook, self._uc_hook_return))
 
         self._access_map = get_access_map()
 
         if self.hooks.CodeExecute:
-            emu.add_code_hook(WeakHook(self, cls._uc_hook_code))
+            emu.add_code_hook(partial(self._call_hook, self._uc_hook_code))
 
         if self.hooks.MemoryRead:
-            emu.add_mem_read_hook(WeakHook(self, cls._uc_hook_mem_read))
+            emu.add_mem_read_hook(partial(self._call_hook, self._uc_hook_mem_read))
 
         if self.hooks.MemoryWrite:
-            emu.add_mem_write_hook(WeakHook(self, cls._uc_hook_mem_write))
+            emu.add_mem_write_hook(partial(self._call_hook, self._uc_hook_mem_write))
 
         if self.hooks.MemoryError:
-            emu.add_mem_invalid_hook(WeakHook(self, cls._uc_hook_mem_error))
+            emu.add_mem_invalid_hook(partial(self._call_hook, self._uc_hook_mem_error))
 
         if self.hooks.ApiCall:
-            emu.add_api_hook(WeakHook(self, cls.hook_api_call), '*', '*')
+            emu.add_api_hook(partial(self._call_hook, self.hook_api_call), '*', '*')
+
+    def _release(self):
+        speakeasy = self.speakeasy
+        speakeasy.shutdown()
+        if (emu := speakeasy.emu) is None or (eng := emu.emu_eng) is None or (engine := eng.emu) is None:
+            return
+        unmap_all(engine)
 
     def _uc_hook_code(self, emu: Se, address: int, size: int, *_) -> bool:
         return self.hook_code_execute(emu, address, size, self.state)
@@ -365,15 +358,15 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         snapshot = {reg: self._get_register(reg) for reg in registers}
         restored = False
 
-        def restore(emulator: SpeakeasyEmulator, spky: Se, address: int, size: int, *_):
+        def restore(spky: Se, address: int, size: int, *_):
             nonlocal restored
             if not restored and address == start:
                 restored = True
                 for reg, value in snapshot.items():
-                    emulator._set_register(reg, value)
+                    self._set_register(reg, value)
             return True
 
-        hook = self.speakeasy.add_code_hook(WeakHook(self, restore), start, start + 1)
+        hook = self.speakeasy.add_code_hook(partial(self._call_hook, restore), start, start + 1)
         try:
             yield
         finally:

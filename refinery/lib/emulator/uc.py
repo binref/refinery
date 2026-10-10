@@ -3,6 +3,7 @@ Implements `refinery.lib.emulator.interface.RawMetalEmulator` for the unicorn ba
 """
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from refinery.lib.emulator.abstract import (
@@ -11,7 +12,6 @@ from refinery.lib.emulator.abstract import (
     MemAccess,
     RawMetalEmulator,
     Register,
-    WeakHook,
 )
 from refinery.lib.emulator.uc_shared import get_access_map, unmap_all
 from refinery.lib.executable import BO, Arch
@@ -55,31 +55,31 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
             BO.LE: uc.UC_MODE_LITTLE_ENDIAN,
         }[self.exe.byte_order()]
 
-        self.unicorn = engine = uc.unicorn.Uc(uc_arch, uc_mode)
-        self._own_engine(unmap_all, engine)
+        self.unicorn = uc.unicorn.Uc(uc_arch, uc_mode)
         self._single_step_hook = None
         self._halted = False
 
         self._map_segments()
         self._map_stack_and_heap()
 
-        cls = type(self)
-
         if self.hooks.ApiCall:
             self._install_api_trampoline()
-            self.unicorn.hook_add(uc.UC_HOOK_CODE, WeakHook(self, cls._uc_hook_api_call))
+            self.unicorn.hook_add(uc.UC_HOOK_CODE, partial(self._call_hook, self._uc_hook_api_call))
 
         self._access_map = get_access_map()
 
         for hook, hooked, callback in [
-            (uc.UC_HOOK_CODE,           self.hooks.CodeExecute, cls._uc_hook_code      ),  # noqa
-            (uc.UC_HOOK_INSN_INVALID,   self.hooks.CodeError,   cls._uc_hook_code_error),  # noqa
-            (uc.UC_HOOK_MEM_READ,       self.hooks.MemoryRead,  cls._uc_hook_mem_read ),  # noqa
-            (uc.UC_HOOK_MEM_WRITE,      self.hooks.MemoryWrite, cls._uc_hook_mem_write),  # noqa
-            (uc.UC_HOOK_MEM_INVALID,    self.hooks.MemoryError, cls._uc_hook_mem_error),  # noqa
+            (uc.UC_HOOK_CODE,           self.hooks.CodeExecute, self._uc_hook_code      ),  # noqa
+            (uc.UC_HOOK_INSN_INVALID,   self.hooks.CodeError,   self._uc_hook_code_error),  # noqa
+            (uc.UC_HOOK_MEM_READ,       self.hooks.MemoryRead,  self._uc_hook_mem_read ),  # noqa
+            (uc.UC_HOOK_MEM_WRITE,      self.hooks.MemoryWrite, self._uc_hook_mem_write),  # noqa
+            (uc.UC_HOOK_MEM_INVALID,    self.hooks.MemoryError, self._uc_hook_mem_error),  # noqa
         ]:
             if hooked:
-                self.unicorn.hook_add(hook, WeakHook(self, callback))
+                self.unicorn.hook_add(hook, partial(self._call_hook, callback))
+
+    def _release(self):
+        unmap_all(self.unicorn)
 
     def _uc_hook_api_call(self, emu: Uc, address: int, size: int, user_data: Any = None) -> bool:
         return self._hook_api_call_check(emu, address, size, self.state)

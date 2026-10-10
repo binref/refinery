@@ -23,20 +23,11 @@ from refinery.lib.types import buf
 class _MappedView(bytearray, MemoryFileMethods[bytearray, bytes]):
     """
     A copy of a region of a virtual file that works both as a buffer and as a file, like the result
-    of `mmap.mmap`. The view is its own data; it does not store a reference to itself.
+    of `mmap.mmap`.
     """
     def __init__(self, view: memoryview, node: int):
         bytearray.__init__(self, view)
         MemoryFileMethods.__init__(self, data=self, output=bytes, fileno=node)
-
-    @property
-    def _data(self) -> bytearray:
-        return self
-
-    @_data.setter
-    def _data(self, data: bytearray):
-        if data is not self:
-            raise TypeError('A mapped view is its own data.')
 
     def __bytes__(self) -> bytes:
         return bytes(memoryview(self))
