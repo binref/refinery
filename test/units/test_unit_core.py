@@ -178,6 +178,17 @@ class TestUnitOutput(unittest.TestCase):
 
         self.assertEqual(B'ABCDEF' | delegating_chop(2) | [bytes], [B'AB', B'CD', B'EF'])
 
+    def test_unit_runs_the_collection_trigger_after_each_output_it_hands_on_and_after_its_input(self):
+        from unittest import mock
+        from refinery.units.meta.chop import chop
+        received = []
+        received_at_trigger = []
+        with mock.patch('refinery.units.collect_when_grown', lambda: received_at_trigger.append(len(received))):
+            for chunk in B'ABCDEF' | chop(2):
+                received.append(bytes(chunk))
+        self.assertEqual(received, [B'AB', B'CD', B'EF'])
+        self.assertEqual(received_at_trigger, [1, 2, 3, 3])
+
     def test_repeated_output_chunk_gets_no_trailing_line_break(self):
         from refinery.lib.loader import load_pipeline
         self.assertEqual(load_pipeline('emit A | rep 3') | bytes, B'A\nA\nA')

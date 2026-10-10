@@ -181,6 +181,7 @@ from typing import (
 )
 
 from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks, HelpAction
+from refinery.lib.collector import collect_when_grown
 from refinery.lib.dependencies import dependency_accessor
 from refinery.lib.environment import Logger, LogLevel, environment, logger
 from refinery.lib.exceptions import (
@@ -2321,6 +2322,8 @@ class Unit(UnitBase, abstract=True):
                 count += 1
                 assert isinstance(outbox[-1], Chunk)
                 yield outbox.pop()
+                collect_when_grown()
+            collect_when_grown()
         except BaseException:
             if count > 0 or not self.args.trypass:
                 raise
