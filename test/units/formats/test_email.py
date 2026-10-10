@@ -146,8 +146,3 @@ class TestEmailUnpacker(TestUnitBase):
             'end': '2025-06-15 11:30:00+00:00',
             'location': 'Planet Gunsmoke',
         })
-
-    def test_outlook_message_leaves_nothing_to_the_collector(self):
-        data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')
-        unit = self.load()
-        self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])

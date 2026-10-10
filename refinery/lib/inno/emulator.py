@@ -51,7 +51,6 @@ from refinery.lib.inno.ifps import (
     COp,
     EHType,
     Function,
-    FunctionReference,
     IFPSFile,
     IFPSType,
     Instruction,
@@ -1063,8 +1062,6 @@ class IFPSEmulator:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
                             call = self.ifps.functions[call]
-                        elif isinstance(call, FunctionReference):
-                            call = call.function
                         if isinstance(call, Function):
                             callstack.append(_CallState(function, ip, sp, exceptions))
                             function = call

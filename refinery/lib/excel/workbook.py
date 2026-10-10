@@ -6,7 +6,7 @@ import zlib
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import IO, Iterator, NamedTuple
+from typing import IO, Iterator
 
 from defusedxml.ElementTree import fromstring
 
@@ -31,16 +31,6 @@ class ExcelFormat(enum.Enum):
     OOXML = enum.auto()
     XLSB = enum.auto()
     BIFF = enum.auto()
-
-
-class _SheetPart(NamedTuple):
-    """
-    A sheet in the sheet table of a workbook that is a package of parts: its name, its kind, and
-    the name of its part.
-    """
-    name: str
-    kind: SheetKind
-    part: str | None
 
 
 class ExcelSheet(ABC):
@@ -81,18 +71,10 @@ class ExcelWorkbook(ABC):
         Excel matches sheet names. `None` when the workbook has no such sheet.
         """
         key = name.lower()
-        for index, sheet_name in enumerate(self.sheet_names()):
-            if sheet_name.lower() == key:
+        for index, sheet in enumerate(self.sheets()):
+            if sheet.name.lower() == key:
                 return index
         return None
-
-    def sheet_names(self) -> list[str]:
-        """
-        The names of the sheets that `refinery.lib.excel.workbook.ExcelWorkbook.sheets` lists, in
-        the same order. Readers that keep a table of their sheets list the names without building
-        the sheets.
-        """
-        return [sheet.name for sheet in self.sheets()]
 
     def formula(self, source: FormulaSource) -> Expression | None:
         """

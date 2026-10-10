@@ -41,16 +41,16 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(IFPSEmulatorConfig().start_time.microsecond, 0)
 
     def test_two_procedure_pointer_constants_for_one_function_are_equal(self):
-        from refinery.lib.inno.ifps import FunctionReference, IFPSFile, Operand
+        from refinery.lib.inno.ifps import Function, IFPSFile, Operand
         ifps = IFPSFile.Parse(self.download_sample('ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'))
-        by_function: dict[int, list[FunctionReference]] = {}
+        by_function: dict[str, list[Function]] = {}
         for function in ifps.functions:
             for instruction in function.body or ():
                 for operand in instruction.operands:
                     if not isinstance(operand, Operand) or (value := operand.value) is None:
                         continue
-                    if isinstance(reference := value.value, FunctionReference):
-                        by_function.setdefault(id(reference.function), []).append(reference)
+                    if isinstance(reference := value.value, Function):
+                        by_function.setdefault(reference.name, []).append(reference)
         groups = [references for references in by_function.values() if len(references) > 1]
         self.assertTrue(groups)
         for first, *others in groups:

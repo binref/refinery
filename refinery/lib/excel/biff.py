@@ -13,7 +13,6 @@ import codecs
 import struct
 
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
 from enum import IntEnum
 from typing import NamedTuple
 
@@ -302,21 +301,6 @@ def _read_bof(stream: _RecordStream) -> _Bof:
     return _Bof(version, stream_type)
 
 
-@dataclass
-class _SheetEntry:
-    """
-    A sheet in the sheet table of a `BiffWorkbook`: its name, its kind, and the offset of its
-    substream; a sheet of a workbook older than BIFF4W is the whole stream. Once the sheet is read,
-    the entry keeps its cells and the text of its defect, so that the sheet is read only once.
-    """
-    name: str
-    kind: SheetKind
-    offset: int
-    whole_stream: bool = False
-    cells: list[Cell] | None = None
-    defect: str | None = None
-
-
 class BiffSheet(ExcelSheet):
     """
     A worksheet or macrosheet of a `BiffWorkbook`. Calling `cells` walks the sheet
@@ -324,31 +308,32 @@ class BiffSheet(ExcelSheet):
     and an `ExcelFormatError` is raised afterwards.
     """
 
-    def __init__(self, entry: _SheetEntry, workbook: BiffWorkbook):
-        self.name = entry.name
-        self.kind = entry.kind
-        self._entry = entry
+    def __init__(self, name: str, kind: SheetKind, offset: int, workbook: BiffWorkbook):
+        self.name = name
+        self.kind = kind
+        self._offset = offset
         self._workbook = workbook
+        self._cells: list[Cell] | None = None
+        self._defect: str | None = None
         self._shared: list[tuple[int, int, int, int, bytes]] = []
 
     def cells(self) -> Iterator[Cell]:
         """
         Iterate over every cell of the sheet, in document order.
         """
-        entry = self._entry
-        if entry.cells is None:
+        if self._cells is None:
             cells: list[Cell] = []
             try:
                 cells.extend(self._read())
             except ExcelFormatError as error:
-                entry.defect = str(error)
+                self._defect = str(error)
             except _DEFECTS as error:
-                entry.defect = F'sheet {self.name!r} is malformed: {error}'
+                self._defect = F'sheet {self.name!r} is malformed: {error}'
+            self._cells = cells
             self._apply_shared_formulas(cells)
-            entry.cells = cells
-        yield from entry.cells
-        if entry.defect is not None:
-            raise ExcelFormatError(entry.defect)
+        yield from self._cells
+        if self._defect is not None:
+            raise ExcelFormatError(self._defect)
 
     def _shared_formula(self, body: memoryview) -> None:
         """
@@ -382,11 +367,10 @@ class BiffSheet(ExcelSheet):
     def _read(self) -> Iterator[Cell]:
         workbook = self._workbook
         view = workbook._view
-        entry = self._entry
-        if not 0 <= entry.offset < len(view):
+        if not 0 <= self._offset < len(view):
             raise ExcelFormatError(F'sheet {self.name!r} starts outside the stream')
-        stream = _RecordStream(view, entry.offset)
-        if entry.whole_stream:
+        stream = _RecordStream(view, self._offset)
+        if self is workbook._whole_stream_sheet:
             stream.next_record()
         else:
             bof = _read_bof(stream)
@@ -587,13 +571,15 @@ class BiffWorkbook(ExcelWorkbook):
         self._xf_format_keys: list[int] = []
         self._ixfe: int | None = None
         self._sheethdr_count = 0
-        self._sheet_table: list[_SheetEntry] = []
+        self._sheets: list[BiffSheet] = []
         self._all_sheet_names: list[str] = []
         self._names: list[DefinedName] = []
         self._externsheet: list[tuple[int, int, int]] = []
         self._supbooks: list[_Supbook] = []
+        self._whole_stream_sheet: BiffSheet | None = None
         if self.version < BiffVersion.BIFF4W:
-            self._sheet_table.append(_SheetEntry('Sheet 1', SheetKind.WORKSHEET, 0, whole_stream=True))
+            self._whole_stream_sheet = BiffSheet('Sheet 1', SheetKind.WORKSHEET, 0, self)
+            self._sheets.append(self._whole_stream_sheet)
         else:
             try:
                 self._parse_globals(stream)
@@ -604,14 +590,10 @@ class BiffWorkbook(ExcelWorkbook):
 
     def sheets(self) -> Sequence[BiffSheet]:
         """
-        All sheets of the workbook in document order; only worksheets and macrosheets appear in
-        this list. Every call builds new sheet objects: A sheet refers to its workbook, so the
-        workbook keeps only the table of its sheets.
+        All sheets of the workbook in document order; only worksheets and macrosheets
+        appear in this list.
         """
-        return [BiffSheet(entry, self) for entry in self._sheet_table]
-
-    def sheet_names(self) -> list[str]:
-        return [entry.name for entry in self._sheet_table]
+        return self._sheets
 
     def sheet_index(self, name: str) -> int | None:
         """
@@ -712,7 +694,7 @@ class BiffWorkbook(ExcelWorkbook):
     def _boundsheet(self, body: memoryview) -> None:
         if self.version is BiffVersion.BIFF4W:
             name = self._decode_short_string(body, 0)
-            self._sheet_table.append(_SheetEntry(name, SheetKind.WORKSHEET, -1))
+            self._sheets.append(BiffSheet(name, SheetKind.WORKSHEET, -1, self))
         else:
             offset, = struct.unpack_from('<i', body)
             kind = _SHEET_KINDS.get(body[5], SheetKind.OTHER)
@@ -722,7 +704,7 @@ class BiffWorkbook(ExcelWorkbook):
                 name = self._decode_short_string(body, 6)
             self._all_sheet_names.append(name)
             if kind in (SheetKind.WORKSHEET, SheetKind.MACROSHEET):
-                self._sheet_table.append(_SheetEntry(name, kind, offset))
+                self._sheets.append(BiffSheet(name, kind, offset, self))
 
     def _name_record(self, body: memoryview) -> DefinedName:
         """
@@ -846,11 +828,10 @@ class BiffWorkbook(ExcelWorkbook):
         name = self._decode_short_string(body, 4)
         position = stream.position
         index = self._sheethdr_count
-        table = self._sheet_table
-        if index < len(table) and table[index].name == name:
-            table[index].offset = position
+        if index < len(self._sheets) and self._sheets[index].name == name:
+            self._sheets[index]._offset = position
         else:
-            table.append(_SheetEntry(name, SheetKind.WORKSHEET, position))
+            self._sheets.append(BiffSheet(name, SheetKind.WORKSHEET, position, self))
         self._sheethdr_count += 1
         stream.position = position + length
 

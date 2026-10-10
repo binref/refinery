@@ -8,7 +8,6 @@ import abc
 import enum
 import io
 import itertools
-import weakref
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -592,7 +591,7 @@ class Value(NamedTuple):
 
     def __str__(self):
         v = self.value
-        if isinstance(v, FunctionReference):
+        if isinstance(v, Function):
             return F'&{v!s}'
         return repr(v)
 
@@ -900,8 +899,8 @@ class Function:
                 if jump or insn.jumptarget:
                     nb = bbs[insn.offset] = BasicBlock(insn.offset)
                     if not jump:
-                        nb.sources.add(bb.offset)
-                        bb.targets.append(nb.offset)
+                        nb.sources[bb.offset] = bb
+                        bb.targets[nb.offset] = nb
                     bb = nb
             bb.body.append(insn)
             if not insn.branches:
@@ -915,17 +914,15 @@ class Function:
             for t in targets:
                 if not (bt := bbs.get(t)):
                     bt = bbs[t] = BasicBlock(t)
-                if t not in bb.targets:
-                    bb.targets.append(t)
-                bt.sources.add(bb.offset)
+                bb.targets[t] = bt
+                bt.sources[bb.offset] = bb
 
         for offset, bb in list(bbs.items()):
             if bb.body:
                 continue
             del bbs[offset]
-            for source in bb.sources:
-                if (block := bbs.get(source)) is not None and offset in block.targets:
-                    block.targets.remove(offset)
+            for source in bb.sources.values():
+                source.targets.pop(offset, None)
 
         _trace_stack(bbs)
 
@@ -1088,7 +1085,7 @@ class Instruction:
     opcode: Op
     encoded: bytes = B''
     stack: int | None = None
-    operands: list[str | bool | int | float | Operand | IFPSType | FunctionReference | None] = field(default_factory=list)
+    operands: list[str | bool | int | float | Operand | IFPSType | Function | None] = field(default_factory=list)
     operator: AOp | COp | None = None
     jumptarget: bool = False
 
@@ -1096,9 +1093,9 @@ class Instruction:
         """
         The function that this instruction calls; it must be a `refinery.lib.inno.ifps.Op.Call`.
         """
-        if not isinstance(target := self.operands[0], FunctionReference):
+        if not isinstance(target := self.operands[0], Function):
             raise TypeError(F'The instruction at offset 0x{self.offset:X} calls no function.')
-        return target.function
+        return target
 
     def op(self, index: int):
         arg = self.operands[index]
@@ -1176,15 +1173,11 @@ class Instruction:
 
 @dataclass
 class BasicBlock:
-    """
-    A basic block of a function. The blocks that jump to it and the blocks it continues at are
-    given by their offsets, which are keys of the table of blocks of the function.
-    """
     offset: int
     stack: int | None = None
     body: list[Instruction] = field(default_factory=list)
-    sources: set[int] = field(default_factory=set)
-    targets: list[int] = field(default_factory=list)
+    sources: dict[int, BasicBlock] = field(default_factory=dict)
+    targets: dict[int, BasicBlock] = field(default_factory=dict)
 
     @property
     def stack_delta(self):
@@ -1202,39 +1195,6 @@ class FTag(enum.IntFlag):
 
     def check(self, v):
         return bool(self & v)
-
-
-class FunctionReference:
-    """
-    A reference from an instruction or a constant of a compiled Pascal script to a function of the
-    same script. The script owns its functions, and a function may call itself, so the reference is
-    weak: The script has to be kept while its instructions and constants are read. References are
-    equal when the functions they refer to are, like the procedure pointers of the script.
-    """
-    __slots__ = '_function',
-
-    def __init__(self, function: Function):
-        self._function = weakref.ref(function)
-
-    def __eq__(self, other):
-        if not isinstance(other, FunctionReference):
-            return NotImplemented
-        return self._function == other._function
-
-    @property
-    def function(self) -> Function:
-        if (function := self._function()) is None:
-            raise RuntimeError(
-                'The script that this function reference belongs to was freed; keep the script '
-                'while reading it.'
-            )
-        return function
-
-    def __str__(self):
-        return str(self.function)
-
-    def __repr__(self):
-        return repr(self.function)
 
 
 class IFPSFile(Struct):
@@ -1459,7 +1419,7 @@ class IFPSFile(Struct):
             TC.UnicodeString : reader.read_length_prefixed_utf16,
             TC.Char          : lambda: chr(reader.u8()),
             TC.WideChar      : lambda: chr(reader.u16()),
-            TC.ProcPtr       : lambda: FunctionReference(self.functions[reader.u32()]),
+            TC.ProcPtr       : lambda: self.functions[reader.u32()],
             TC.Set           : lambda: int.from_bytes(reader.read(type.size_in_bytes), 'little'),
             TC.Currency      : lambda: reader.u64() / 10_000,
         }.get(type.code, None)
@@ -1653,7 +1613,7 @@ class IFPSFile(Struct):
             for instruction in function.body:
                 if instruction.opcode is Op.Call:
                     t: Function = self.functions[instruction.operands[0]]
-                    instruction.operands[0] = FunctionReference(t)
+                    instruction.operands[0] = t
 
     def _load_variables(self):
         reader = self.reader

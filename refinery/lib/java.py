@@ -4,10 +4,8 @@ Parsing of the Java Class file format as per
 """
 from __future__ import annotations
 
-import functools
-
 from enum import IntEnum
-from typing import Any, Generic, NamedTuple, TypeVar
+from typing import Any, Generic, TypeVar
 
 from refinery.lib.structures import (
     AttrType,
@@ -38,56 +36,25 @@ __all__ = (
 )
 
 
-class _Unresolvable(NamedTuple):
-    """
-    The value of an `refinery.lib.java.Index` attribute of a constant whose index does not resolve
-    in the constant pool: reading the attribute raises the given error.
-    """
-    error: type[Exception]
-
-
 class Index(PerInstanceAttribute[AttrType]):
-    """
-    An attribute that is stored as an index into the constant pool. A structure that has the pool
-    as its attribute `pool` resolves the index when the attribute is read; the constants of the
-    pool itself resolve theirs once the pool is read and do not keep it.
-    """
     def __init__(self, jtype: type[AttrType]):
         super().__init__()
         self.jtype = jtype
 
-    def lookup(self, pool: list, value: int) -> AttrType:
+    def resolve(self, parent: Any, value: int) -> AttrType:
         if not value:
             return None
         try:
-            result = pool[value - 1]
+            cpool = parent.pool
+        except AttributeError as AE:
+            raise AttributeError from AE
+        try:
+            result = cpool[value - 1]
         except IndexError as IE:
             raise AttributeError from IE
         if not isinstance(result, self.jtype):
             raise TypeError
         return result
-
-    def resolve(self, parent: Any, value: Any) -> AttrType:
-        try:
-            pool = parent.pool
-        except AttributeError:
-            if isinstance(value, _Unresolvable):
-                raise value.error()
-            return value
-        return self.lookup(pool, value)
-
-
-@functools.cache
-def _index_attributes(cls: type) -> tuple[tuple[str, Index], ...]:
-    """
-    The `Index` attributes of the given class by the names under which its instances find them: A
-    name that a class defines hides the same name in the classes after it in the resolution order.
-    """
-    attributes: dict[str, Any] = {}
-    for base in cls.__mro__:
-        for name, attribute in vars(base).items():
-            attributes.setdefault(name, attribute)
-    return tuple(item for item in attributes.items() if isinstance(item[1], Index))
 
 
 class JvConstType(IntEnum):
@@ -126,21 +93,6 @@ class _HasPoolAndTag(Struct):
     def __init__(self, _: StructReader, pool: list, tag: JvConstType):
         self.pool = pool
         self.tag = tag
-
-    def _resolve_indices(self):
-        """
-        Replaces the pool indices of this constant by what they refer to and drops the reference to
-        the pool, which refers to this constant.
-        """
-        values = vars(self)
-        pool = values.pop('pool')
-        for name, attribute in _index_attributes(type(self)):
-            if name not in values:
-                continue
-            try:
-                values[name] = attribute.lookup(pool, values[name])
-            except (AttributeError, TypeError) as error:
-                values[name] = _Unresolvable(type(error))
 
 
 class JvStructWithName(_HasPoolAndTag):
@@ -741,14 +693,6 @@ class JvClassFile(Struct):
 
     def _read_pool(self, reader: StructReader):
         assert not self.pool, 'pool can only be read once.'
-        try:
-            self._read_pool_entries(reader)
-        finally:
-            for entry in self.pool:
-                if isinstance(entry, _HasPoolAndTag):
-                    entry._resolve_indices()
-
-    def _read_pool_entries(self, reader: StructReader):
         size = reader.u16() - 1
         reserved_slot = False
         for _ in range(size):
