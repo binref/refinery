@@ -56,6 +56,8 @@ class RarUnpacker:
                 self._raise_corrupt(F'LZ back-reference distance {distance} exceeds the decoded size.')
 
     def _copy_string(self, length: int, distance: int):
+        if not length:
+            return
         self._check_distance(distance)
         mask = self._win_mask
         win = self._window

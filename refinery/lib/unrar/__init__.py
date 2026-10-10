@@ -497,7 +497,7 @@ class RarFile:
             return data, engine
 
         unp_ver = entry.unp_ver
-        continues = entry.solid and engine is not None
+        win_size = entry.win_size or 0x400000
 
         if self._format == RarFormat.RARFMT50 or unp_ver >= 50:
             if unp_ver > 51:
@@ -507,43 +507,41 @@ class RarFile:
                     F'The dictionary of {entry.name} exceeds the 64 GB limit of RAR.'
                 )
             from refinery.lib.unrar.unpack50 import Unpack50
-            extended = unp_ver == 51
-            if not continues:
-                win_size = entry.win_size if entry.win_size > 0 else 0x400000
-                engine = Unpack50(data, entry.size, win_size, entry.solid, extended=extended)
-            elif isinstance(engine, Unpack50):
-                engine.init_solid(data, entry.size, extended=extended)
-            else:
-                raise self._algorithm_changed(entry)
+            engine = self._engine(engine, Unpack50, data, entry, win_size, extended=unp_ver == 51)
         elif unp_ver >= 29:
             from refinery.lib.unrar.unpack30 import Unpack30
-            if not continues:
-                win_size = entry.win_size if entry.win_size > 0 else 0x400000
-                engine = Unpack30(data, entry.size, win_size, entry.solid)
-            elif isinstance(engine, Unpack30):
-                engine.init_solid(data, entry.size)
-            else:
-                raise self._algorithm_changed(entry)
+            engine = self._engine(engine, Unpack30, data, entry, win_size)
         elif unp_ver >= 20:
             from refinery.lib.unrar.unpack20 import Unpack20
-            if not continues:
-                engine = Unpack20(data, entry.size, entry.solid)
-            elif isinstance(engine, Unpack20):
-                engine.init_solid(data, entry.size)
-            else:
-                raise self._algorithm_changed(entry)
+            engine = self._engine(engine, Unpack20, data, entry)
         elif unp_ver >= 15:
             from refinery.lib.unrar.unpack15 import Unpack15
-            if not continues:
-                engine = Unpack15(data, entry.size, entry.solid)
-            elif isinstance(engine, Unpack15):
-                engine.init_solid(data, entry.size)
-            else:
-                raise self._algorithm_changed(entry)
+            engine = self._engine(engine, Unpack15, data, entry)
         else:
             raise self._unsupported(entry)
 
         return engine.decompress(), engine
+
+    def _engine(
+        self,
+        engine,
+        algorithm: type,
+        data: bytes | memoryview,
+        entry: RarFileEntry,
+        *arguments,
+        **options,
+    ):
+        """
+        Continue the solid chain of the given engine with the entry, or start a new engine of the
+        given algorithm. Positional arguments only configure a new engine; keyword options also
+        apply to every member that continues its chain.
+        """
+        if not entry.solid or engine is None:
+            return algorithm(data, entry.size, *arguments, entry.solid, **options)
+        if type(engine) is not algorithm:
+            raise self._algorithm_changed(entry)
+        engine.init_solid(data, entry.size, **options)
+        return engine
 
     @staticmethod
     def _unsupported(entry: RarFileEntry) -> RarCorruptArchive:

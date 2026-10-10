@@ -307,14 +307,14 @@ cdef bint _read_block_header(BitInput inp, BlockHeader header):
     header.header_size = 0
     inp.addbits((8 - inp.in_bit) & 7)
 
-    if inp.remaining < 7:
+    if inp.in_addr >= inp._buf_len:
         return False
 
     block_flags = inp.getbits() >> 8
     inp.addbits(8)
 
     byte_count = ((block_flags >> 3) & 3) + 1
-    if byte_count == 4:
+    if byte_count == 4 or inp._buf_len - inp.in_addr < 1 + byte_count:
         return False
 
     header.header_size = 2 + byte_count
@@ -546,6 +546,7 @@ class Unpack50(RarUnpacker):
     def init_solid(self, data, dest_size, bint extended=False):
         """
         Reinitialize for the next file in a solid archive chain, which selects its own algorithm.
+        Filters never span two files.
         """
         self._inp = BitInput(data)
         self._dest_size = dest_size
@@ -553,6 +554,7 @@ class Unpack50(RarUnpacker):
         self._written = 0
         self._solid = True
         self._distance_codes = DCX if extended else DCB
+        self._filters = []
 
     def _ran_out(self, BitInput inp, BlockHeader header):
         """
@@ -662,8 +664,9 @@ class Unpack50(RarUnpacker):
         if (
             not _read_block_header(inp, hdr)
             or not _read_tables(inp, hdr, tbl, self._distance_codes)
+            or not (self._tables_read or hdr.table_present)
         ):
-            if self._dest_size is None:
+            if self._ended_early((self._unp_ptr - self._wr_ptr) & mask):
                 self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
             return self._output
         self._tables_read = True
@@ -736,6 +739,27 @@ class Unpack50(RarUnpacker):
                 produced += 1
                 continue
 
+            if main_slot == 256:
+                self._unp_ptr = unp_ptr
+                flt = read_filter(inp)
+                if flt is None:
+                    break
+                flt.next_window = (self._wr_ptr != unp_ptr
+                    and ((self._wr_ptr - unp_ptr) & mask) <= flt.block_start)
+                flt.block_start = (flt.block_start + unp_ptr) & mask
+                if len(self._filters) >= MAX_UNPACK_FILTERS:
+                    self._old_dist[0] = old0
+                    self._old_dist[1] = old1
+                    self._old_dist[2] = old2
+                    self._old_dist[3] = old3
+                    self._last_length = last_length
+                    self._write_buf()
+                    write_border = self._write_border
+                    if len(self._filters) >= MAX_UNPACK_FILTERS:
+                        self._filters.clear()
+                self._filters.append(flt)
+                continue
+
             if main_slot >= 262:
                 length = _slot_to_length(inp, main_slot - 262)
 
@@ -773,48 +797,12 @@ class Unpack50(RarUnpacker):
                 old1 = old0
                 old0 = distance
                 last_length = length
-
-                if distance == 0 or distance > win_size or (not solid and distance > produced):
-                    self._unp_ptr = unp_ptr
-                    self._check_distance(distance)
-                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
-                produced += length
-                continue
-
-            if main_slot == 256:
-                self._unp_ptr = unp_ptr
-                flt = read_filter(inp)
-                if flt is None:
-                    break
-                flt.next_window = (self._wr_ptr != unp_ptr
-                    and ((self._wr_ptr - unp_ptr) & mask) <= flt.block_start)
-                flt.block_start = (flt.block_start + unp_ptr) & mask
-                if len(self._filters) >= MAX_UNPACK_FILTERS:
-                    self._old_dist[0] = old0
-                    self._old_dist[1] = old1
-                    self._old_dist[2] = old2
-                    self._old_dist[3] = old3
-                    self._last_length = last_length
-                    self._write_buf()
-                    write_border = self._write_border
-                    if len(self._filters) >= MAX_UNPACK_FILTERS:
-                        self._filters.clear()
-                self._filters.append(flt)
-                continue
-
-            if main_slot == 257:
+            elif main_slot == 257:
                 if last_length == 0:
                     continue
                 distance = old0
                 length = last_length
-                if distance == 0 or distance > win_size or (not solid and distance > produced):
-                    self._unp_ptr = unp_ptr
-                    self._check_distance(distance)
-                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
-                produced += length
-                continue
-
-            if main_slot < 262:
+            else:
                 dist_num = main_slot - 258
                 if dist_num == 0:
                     distance = old0
@@ -838,12 +826,11 @@ class Unpack50(RarUnpacker):
                 length = _slot_to_length(inp, length_slot)
                 last_length = length
 
-                if distance == 0 or distance > win_size or (not solid and distance > produced):
-                    self._unp_ptr = unp_ptr
-                    self._check_distance(distance)
-                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
-                produced += length
-                continue
+            if distance == 0 or distance > win_size or (not solid and distance > produced):
+                self._unp_ptr = unp_ptr
+                self._check_distance(distance)
+            unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
+            produced += length
 
         self._old_dist[0] = old0
         self._old_dist[1] = old1

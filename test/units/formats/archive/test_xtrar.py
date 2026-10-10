@@ -655,8 +655,14 @@ class TestTruncatedStream(TestUnitBase):
 # - match_before_any_data: testfile.rar5.cbr; the first symbol of testfile.jpg replaced by a match
 #   (main code 262) at distance slot 0, the distance 1; cut off 8 bytes after these codes.
 # - solid_member_of_unknown_algorithm: testfile.rar5.solid.cbr; testfile.png states algorithm 2.
+# - solid_member_of_another_algorithm: testfile.rar3.solid.cbr; testfile.jpg states the RAR 2.0
+#   algorithm (version 20) instead of the RAR 3.0 algorithm of testfile.png.
 # - unknown_size_cut_off: testfile.rar5.cbr; testfile.jpg states that its size is unknown, and the
 #   archive ends 120 bytes into its compressed data, after the Huffman tables.
+# - first_block_without_tables: testfile.rar5.cbr; the first block header of testfile.jpg states
+#   that the block carries no Huffman tables.
+# - solid_first_member_declared_longer: testfile.rar5.solid.cbr; testfile.jpg declares one byte
+#   more than its data and a checksum with the lowest bit flipped.
 TEST_RAR_EDITED = {
     'dictionary_beyond_64_gb': bytes.fromhex(
         '526172211A07010020B6FA110A01050604050101808000ADD15A6D2302029B00068C00B68302D00E503AFE8FC16E81A54101'
@@ -683,6 +689,38 @@ TEST_RAR_EDITED = {
         '48F618A98C76C9F26FFEE4140D36B5990A2B5AFB2FF5FC14B04B1E8D9E56B7679DCAC5F41BCDC1C8CB80964B11F7569F981D'
         '77565103050400'
     ),
+    'solid_member_of_another_algorithm': bytes.fromhex(
+        '526172211A07003BD07308000D0000000000000062D47480802C0054000000570000000062ACB0AF0000212A1D350C002000'
+        '00007465737466696C652E706E67A71888C5FBB542D1F3DED5F7B2C970254F81BF495B52740C9DEE9307B04DC502422A6EB6'
+        '01460C90A7B9B5A71CEFF87387A5FC0269E03C8C0E35402C66502BECC86B2A47980E360402C0000000BF8867F6A9FFD4D34A'
+        '7490802C00B6000000DC000000006CB170DA0000212A14350C00200000007465737466696C652E6A7067C715FECFF824AE8B'
+        '900F34AFD6EF2CD188338B7CD5790F769ED618231EDFFC8E4677337FF39DC0E5C952FEF4BA715DD3696E0995E62153063781'
+        '40FDBD48D55B0FD8372A4CF27920C17D947A85E90A7C3329F423D733C0B1DBBBF5E25E5717A856CB61233CF05B91D707FEF2'
+        'D00B433A2E66912D5A6292A8118A6CE087F87590B30A8D5AC34804C95D04C1262FF68C90A44CB64CB6F9582036E1BD536F91'
+        '8FA6536D2F79685E97A75ED3DFE46D0000BF8867F6A9FFD4C43D7B00400700'
+    ),
+    'first_block_without_tables': bytes.fromhex(
+        '526172211A0701003392B5E50A01050600050101808000F41D9AA6220202D60106DC01B68302D00E503A6CB170DA8005010C'
+        '7465737466696C652E6A706745CCD326644532F65035D9D3C67673922101107C2504110685202D4B6B11A106B684106896BE'
+        '0ED4DCF85A082F80212031E805B5A9B1B380A3B254F8C6F49A66E6E6EF93FE686E1986061FFF5FDE2E794FE00B760B900208'
+        '000C4D43F50B409233B4F54BEC9913F9AA422845955D7195965D97195D86D81B5A334DB85298A213AF3A57A6BCA7DC0C2A08'
+        '8B8AF9854E0146757F956616994465049FF884E1E51E7501D87E8249F0590A913FC76FB53BC589F63B57267ADAE5C32471C9'
+        'E766FD3092C72C18EAE8A59A1C9A87F419544EDDEBE633DE8FCCE250DC1C220202D70006D700B68302D00E503A62ACB0AF80'
+        '00010C7465737466696C652E706E6789504E470D0A1A0A0000000D49484452000000020000000208030000004568FD160000'
+        '0006504C5445000000FFFFFFA5D99FDD0000000C494441547801636060044200000C000339E077030000000049454E44AE42'
+        '60821D77565103050400'
+    ),
+    'solid_first_member_declared_longer': bytes.fromhex(
+        '526172211A07010020B6FA110A0105060405010180800024262BD7220202EC0106DD01B68302D00E503A6DB170DA801D010C'
+        '7465737466696C652E6A7067C477E9276544432F57044AC99996DE5E66497731181041E1282288231CC8B8890C526A62260A'
+        '20E8742082A4D8BA9E02EA41D4BB1E06820BC01090191FE066D753B1D4960A4AABD538C5DDD7F17EAF57AAB9357C51554551'
+        '5E3C7DF6BFDC5D77978013AB5E5AE0D34003E272FD83481BA0CE31EDFFCE19CFECE633A678E840B3CF220A5021FA2F8CB0AA'
+        '1A3492952442A71534C453A57E00F9C280F456D42A79063B1770A7217252233A24C5A4258E3C7138C37CBF512328680655BA'
+        '9E7DFF8EFCDBDBA8FFBE71B8B33AAF6D5DB972EFD76F8F3DA367FA6CEE65F1D5E1B5BDD23BE0703AE4736BA9517DAEF8D31C'
+        'D7D7220202BE0006D700B68302D00E503A62ACB0AFC01D010C7465737466696C652E706E6745243BE89AC69C28AA825A865D'
+        '48F618A98C76C9F26FFEE4140D36B5990A2B5AFB2FF5FC14B04B1E8D9E56B7679DCAC5F41BCDC1C8CB80964B11F7569F981D'
+        '77565103050400'
+    ),
     'unknown_size_cut_off': bytes.fromhex(
         '526172211A0701003392B5E50A01050600050101808000F503EC9E220202D6010EDC01B68302D00E503A6CB170DA8005010C'
         '7465737466696C652E6A7067C54CD326644532F65035D9D3C67673922101107C2504110685202D4B6B11A106B684106896BE'
@@ -690,6 +728,7 @@ TEST_RAR_EDITED = {
         '000C4D43F50B409233B4F54BEC9913F9AA422845955D7195965D97195D86D81B'
     ),
 }
+
 
 @pytest.mark.cythonized
 class TestEditedArchives(TestUnitBase):
@@ -723,6 +762,7 @@ class TestEditedArchives(TestUnitBase):
             cwd=pathlib.Path(refinery.__file__).parents[1],
             timeout=60,
         )
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         self.assertIn(B'distance is zero', result.stdout)
 
     def test_a_match_before_any_data_of_a_member_that_is_not_solid_is_refused(self):
@@ -737,9 +777,22 @@ class TestEditedArchives(TestUnitBase):
         with self.assertRaisesRegex(RarCorruptArchive, 'Unsupported compression version'):
             rar.read(second)
 
+    def test_a_solid_member_of_another_algorithm_than_its_chain_is_refused_after_its_predecessor(self):
+        rar = RarFile(TEST_RAR_EDITED['solid_member_of_another_algorithm'])
+        first, second = rar.entries
+        self.assertTrue(second.solid)
+        self.assertEqual(bytes(rar.read(first)), self._original('testfile.rar3.solid.cbr'))
+        with self.assertRaisesRegex(RarCorruptArchive, 'another compression algorithm'):
+            rar.read(second)
+
     def test_a_member_of_unknown_size_whose_stream_ends_before_its_last_block_is_corrupt(self):
         with self.assertRaises(RarCorruptArchive):
             self._read('unknown_size_cut_off')
+
+    def test_a_member_whose_first_block_has_no_tables_is_corrupt_and_decodes_nothing(self):
+        with self.assertRaises(RarCorruptArchive) as ctx:
+            self._read('first_block_without_tables')
+        self.assertEqual(ctx.exception.partial, B'')
 
     @unittest.expectedFailure
     def test_the_partial_output_of_a_cut_off_stream_holds_no_byte_decoded_past_the_cut(self):
@@ -815,7 +868,10 @@ class TestRarExtractors(TestUnitBase):
         return RarFile(bytes(data))
 
     def test_a_member_that_decompresses_short_fails_with_its_own_data_when_the_next_member_is_corrupt(self):
-        rar = self._solid_archive_with_a_byte_of_the_first_member_flipped(0)
+        data = bytearray(TEST_RAR_EDITED['solid_first_member_declared_longer'])
+        _, second = RarFile(bytes(data)).entries
+        data[second._data_offset] ^= 0xFF
+        rar = RarFile(bytes(data))
         first, second = rar.entries
         with self.assertRaises(RarCorruptArchive) as corrupt:
             rar.read(second)
@@ -823,7 +879,8 @@ class TestRarExtractors(TestUnitBase):
         with self.assertRaises(RarInvalidChecksum) as check:
             rar.read(first)
         self.assertEqual(check.exception.name, first.name)
-        self.assertEqual(bytes(check.exception.data), B'')
+        original = RarFile(bytes(TEST_RAR_ARCHIVES['testfile.rar5.solid.cbr']))
+        self.assertEqual(bytes(check.exception.data), bytes(original.read(original.entries[0])))
 
     def test_a_member_after_a_corrupt_member_of_its_solid_chain_carries_none_of_its_data(self):
         rar = self._solid_archive_with_a_byte_of_the_first_member_flipped(40)

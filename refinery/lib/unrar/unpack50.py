@@ -162,14 +162,14 @@ def read_block_header(inp: BitInput, header: BlockHeader) -> bool:
 
     inp.addbits((8 - inp.in_bit) & 7)
 
-    if inp.remaining < 7:
+    if not inp.remaining:
         return False
 
     block_flags = inp.getbits() >> 8
     inp.addbits(8)
 
     byte_count = ((block_flags >> 3) & 3) + 1
-    if byte_count == 4:
+    if byte_count == 4 or inp.remaining < 1 + byte_count:
         return False
 
     header.header_size = 2 + byte_count
@@ -349,9 +349,11 @@ class Unpack50(RarUnpacker):
     def init_solid(self, data: bytes | memoryview, dest_size: int | None, extended: bool = False):
         """
         Reinitialize for the next file in a solid archive chain, which selects its own algorithm.
+        Filters never span two files.
         """
         super().init_solid(data, dest_size)
         self._distance_codes = DCX if extended else DCB
+        self._filters = []
 
     def _ran_out(self, inp: BitInput, header: BlockHeader) -> bool:
         """
@@ -436,8 +438,12 @@ class Unpack50(RarUnpacker):
         hdr = self._block_header
         tbl = self._block_tables
 
-        if not read_block_header(inp, hdr) or not read_tables(inp, hdr, tbl, self._distance_codes):
-            if self._dest_size is None:
+        if (
+            not read_block_header(inp, hdr)
+            or not read_tables(inp, hdr, tbl, self._distance_codes)
+            or not (self._tables_read or hdr.table_present)
+        ):
+            if self._ended_early((self._unp_ptr - self._wr_ptr) & mask):
                 self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
             return self._output
         self._tables_read = True

@@ -152,6 +152,8 @@ class Unpack15(RarUnpacker):
         _corr_huff(self._ch_set_b, self._n_to_pl_b)
 
     def _copy_string(self, distance: int, length: int):
+        if not length:
+            return
         self._check_distance(distance)
         mask = self._win_mask
         win = self._window
