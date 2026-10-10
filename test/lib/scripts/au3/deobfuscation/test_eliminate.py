@@ -78,12 +78,16 @@ class TestAu3DeadCodeElimination(TestAu3):
             'MsgBox(0, 0, 0)\n')
 
     def test_a_function_spelled_in_a_call_string_is_kept(self):
+        """
+        The extra argument is one `Call` answers with `@error` and a direct call does not, so the
+        flattening of dynamic names refuses — and the string keeps protecting the function.
+        """
         self._assertKept(
             '''
             Func checkip()
             EndFunc
 
-            Call("checkip")
+            Call("checkip", 1)
             ''')
 
     def test_a_function_spelled_in_a_hotkeyset_string_is_kept(self):

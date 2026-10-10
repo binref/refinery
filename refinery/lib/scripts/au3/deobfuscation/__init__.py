@@ -3,10 +3,12 @@ AutoIt3 AST deobfuscation transforms.
 
 Four groups, in the order the obfuscated shapes need them. `normalize` rewrites what a call
 structurally is — an `Execute` call over a string literal becomes the expression that literal
-names, and a call through an alias variable becomes the function that variable provably names —
-`fold` replaces what is known — an expression whose operands pin its value becomes the literal
-of that value, and a variable read the propagation walk proves a value for becomes that literal —
-`emulate` replaces what a script-defined function returns: the interpreter runs the call
+names, a call through an alias variable becomes the function that variable provably names, and
+a `Call`, `Assign`, or `Eval` over a string-literal name becomes the direct call, plain write,
+or plain read that name spells — `fold` replaces what is known — an expression whose operands
+pin its value becomes the literal of that value, and a variable read the propagation walk proves
+a value for becomes that literal — `emulate` replaces what a script-defined function returns:
+the interpreter runs the call
 over the value domain and the call becomes the literal of its result — and `cleanup` removes what
 no live code reaches: a function no call names, a declarator no occurrence binds, and an
 effect-free statement, each only when no dynamic-name channel could observe the removal.
@@ -30,6 +32,7 @@ from refinery.lib.scripts.au3.deobfuscation.evaluate import Au3FunctionEvaluatio
 from refinery.lib.scripts.au3.deobfuscation.execute import Au3ExecuteFlattening
 from refinery.lib.scripts.au3.deobfuscation.fold import Au3ConstantFolding
 from refinery.lib.scripts.au3.deobfuscation.indirect import Au3IndirectCallRewrite
+from refinery.lib.scripts.au3.deobfuscation.names import Au3DynamicNameFlattening
 from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
 from refinery.lib.scripts.au3.model import Au3Script
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
@@ -38,6 +41,7 @@ _normalize = TransformerGroup(
     'normalize',
     Au3ExecuteFlattening,
     Au3IndirectCallRewrite,
+    Au3DynamicNameFlattening,
 )
 
 _fold = TransformerGroup(

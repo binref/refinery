@@ -21,6 +21,10 @@ The rules, per the AutoIt3 documentation:
   creates its variable local before its first test, a zero trip included (probe4 31), so a write
   in its body or after it finds the local. A `Global` declaration of the name anywhere in the
   function still proves the global and keeps the write `NONE`.
+
+The model also holds the tree's constant names — a `Const` or `Enum` declaration or a `Const`
+parameter claims one — because no scope placement softens that fact: writing a constant is an
+interpreter refusal, so a caller that flattens a dynamic write over a name asks the model first.
 """
 from __future__ import annotations
 
@@ -36,6 +40,7 @@ from refinery.lib.scripts.au3.model import (
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
+    Au3Parameter,
     Au3ScopeKind,
     Au3Script,
     Au3VariableDeclaration,
@@ -167,12 +172,13 @@ def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
 @dataclass(frozen=True)
 class Au3ScopeModel:
     """
-    The script's declared functions, and the answers to which storage a write or a read targets
-    and which storage an occurrence may reach. Built once per tree version by
-    `build_scope_model`.
+    The script's declared functions, the answers to which storage a write or a read targets and
+    which storage an occurrence may reach, and the names the tree declares constants. Built once
+    per tree version by `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
+    constant_names: frozenset[str] = frozenset()
 
     @property
     def function_names(self) -> frozenset[str]:
@@ -247,6 +253,33 @@ class Au3ScopeModel:
             return Binding.LOCAL
         return Binding.GLOBAL
 
+    def local_precedes_read(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        read: Node,
+        name: str,
+    ) -> bool:
+        """
+        Whether the read *read* of *name* in *scope* targets a local that exists when the read
+        runs and whose claim strictly precedes it. `read_binding` counts the statement that
+        claims a local as covering a read inside it, but the local does not exist while that
+        statement's own initializer runs — `Local $x = $x` is an interpreter refusal (probe9g)
+        where the dynamic read of the same name answers `""` — so a caller that replaces a
+        dynamic read with the plain one asks this instead. A parameter needs no claim: it exists
+        from the moment the function runs.
+        """
+        if scope is None:
+            return False
+        facts = self.local_facts.get(scope)
+        if facts is None or name in facts.global_names:
+            return False
+        if name in facts.parameters:
+            return True
+        first = facts.first_local.get(name)
+        if first is None:
+            return False
+        return first < _top_level_index(scope, read)
+
     def may_bind_local(
         self,
         scope: Au3FunctionDeclaration | None,
@@ -274,11 +307,29 @@ class Au3ScopeModel:
         return any(position <= index for position in facts.local_positions.get(name, ()))
 
 
+def _constant_names(root: Au3Script) -> frozenset[str]:
+    """
+    Every name the tree declares a constant: the names of a `Const` declaration, of any `Enum` —
+    an enum's entries are constants of the scope it stands in — and of a `Const` parameter.
+    """
+    names: set[str] = set()
+    for node in root.walk():
+        if isinstance(node, Au3VariableDeclaration):
+            if node.is_const:
+                names |= _declared_names(node)
+        elif isinstance(node, Au3EnumDeclaration):
+            names |= _declared_names(node)
+        elif isinstance(node, Au3Parameter):
+            if node.is_const and node.variable is not None:
+                names.add(node.variable.name)
+    return frozenset(names)
+
+
 def build_scope_model(root: Au3Script) -> Au3ScopeModel:
     """
-    Collect the function declarations of *root* and the local facts of each body. Two functions
-    of one name never coexist in a script AutoIt runs, so the mapping keeps the last of them
-    without comment.
+    Collect the function declarations of *root*, the local facts of each body, and the names the
+    tree declares constants. Two functions of one name never coexist in a script AutoIt runs, so
+    the mapping keeps the last of them without comment.
     """
     functions: dict[str, Au3FunctionDeclaration] = {}
     for node in root.walk():
@@ -286,4 +337,4 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
             if node.name is not None:
                 functions[node.name.name] = node
     local_facts = {function: _local_facts(function) for function in functions.values()}
-    return Au3ScopeModel(functions, local_facts)
+    return Au3ScopeModel(functions, local_facts, _constant_names(root))

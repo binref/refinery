@@ -10,11 +10,12 @@ refuses — a number's little-endian int64 bytes (probe3 44) and a non-ASCII str
 
 `Execute` and `Assign` are known builtin names for the transforms' callee gates and the
 may-write summaries but have no evaluator: `Execute`'s argument is code rather than data, and
-`Assign` writes rather than returns — `refinery.lib.scripts.au3.deobfuscation` owns both
-structurally. `IsDeclared` and `IsFunc` read runtime declaration state, and `Eval` and `Call`
-have unpinned effects; none of the four is emulated. The name-parameter table below the
-evaluators lists the builtins whose argument names a function or a variable — the positions a
-computed name can reach a callee or a storage through, which no evaluator owns.
+`Assign` writes rather than returns. The four names no evaluator will ever answer — `Execute`,
+`Assign`, `Call`, and `Eval` — are flattened structurally over literal arguments by
+`refinery.lib.scripts.au3.deobfuscation` instead. `IsDeclared` and `IsFunc` read runtime
+declaration state; neither is emulated. The name-parameter table below the evaluators lists the
+builtins whose argument names a function or a variable — the positions a computed name can
+reach a callee or a storage through, which no evaluator owns.
 """
 from __future__ import annotations
 
