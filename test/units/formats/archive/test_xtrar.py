@@ -5,6 +5,7 @@ import pathlib
 import struct
 import subprocess
 import sys
+import unittest
 
 from ... import TestUnitBase
 
@@ -739,6 +740,14 @@ class TestEditedArchives(TestUnitBase):
     def test_a_member_of_unknown_size_whose_stream_ends_before_its_last_block_is_corrupt(self):
         with self.assertRaises(RarCorruptArchive):
             self._read('unknown_size_cut_off')
+
+    @unittest.expectedFailure
+    def test_the_partial_output_of_a_cut_off_stream_holds_no_byte_decoded_past_the_cut(self):
+        with self.assertRaises(RarCorruptArchive) as ctx:
+            self._read('unknown_size_cut_off')
+        partial = bytes(ctx.exception.partial or B'')
+        self.assertTrue(partial)
+        self.assertEqual(partial, self._original('testfile.rar5.cbr')[:len(partial)])
 
     def test_the_bit_reader_reads_64_bits_from_any_bit_position(self):
         from refinery.lib.unrar.unpack50 import BitInput
