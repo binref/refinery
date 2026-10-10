@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import inspect
+import pathlib
 import struct
+import subprocess
+import sys
 
 from ... import TestUnitBase
 
 from unittest import mock
 
 from test.units.compression import KADATH1, KADATH2
+import refinery
 from refinery.lib.frame import Chunk
 from refinery.lib.unrar import (
     RarCorruptArchive,
@@ -637,6 +642,113 @@ class TestTruncatedStream(TestUnitBase):
     def test_rar5_truncated_stream_raises(self):
         partial, full = self._read_truncated('testfile.rar5.solid.rar')
         self.assertEqual(partial, full[:len(partial)])
+
+
+# Authentic archives of TEST_RAR_ARCHIVES with one header field or the compressed data of one
+# member changed, header checksums fixed:
+# - dictionary_beyond_64_gb: testfile.rar5.solid.rar; RAR 7 dictionary field of 128 KB << 20 with
+#   the flag that keeps the RAR 5 algorithm.
+# - repeat_of_a_distance_never_set: testfile.rar5.cbr; the first symbol of testfile.jpg replaced by
+#   the repeat of the most recent distance (main code 258), followed by the code of length slot 1;
+#   cut off 8 bytes after these codes.
+# - match_before_any_data: testfile.rar5.cbr; the first symbol of testfile.jpg replaced by a match
+#   (main code 262) at distance slot 0, the distance 1; cut off 8 bytes after these codes.
+# - solid_member_of_unknown_algorithm: testfile.rar5.solid.cbr; testfile.png states algorithm 2.
+# - unknown_size_cut_off: testfile.rar5.cbr; testfile.jpg states that its size is unknown, and the
+#   archive ends 120 bytes into its compressed data, after the Huffman tables.
+TEST_RAR_EDITED = {
+    'dictionary_beyond_64_gb': bytes.fromhex(
+        '526172211A07010020B6FA110A01050604050101808000ADD15A6D2302029B00068C00B68302D00E503AFE8FC16E81A54101'
+        '0C7465737466696C652E747874C6841830022FB32FD85305562AC15CE39390BFDFE35BC983F357901D77565103050400'
+    ),
+    'repeat_of_a_distance_never_set': bytes.fromhex(
+        '526172211A0701003392B5E50A01050600050101808000F41D9AA6220202D60106DC01B68302D00E503A6CB170DA8005010C'
+        '7465737466696C652E6A7067C54CD326644532F65035D9D3C67673922101107C2504110685202D4B6B11A106B684106896BE'
+        '0ED4DCF85A082F80212031E805B5A9B1B380A3B254F8C6F49A66E6E6EF93FE686E1986061FFF5FDE2FF20000000000000000'
+    ),
+    'match_before_any_data': bytes.fromhex(
+        '526172211A0701003392B5E50A01050600050101808000F41D9AA6220202D60106DC01B68302D00E503A6CB170DA8005010C'
+        '7465737466696C652E6A7067C54CD326644532F65035D9D3C67673922101107C2504110685202D4B6B11A106B684106896BE'
+        '0ED4DCF85A082F80212031E805B5A9B1B380A3B254F8C6F49A66E6E6EF93FE686E1986061FFF5FDE2E2C00000000000000'
+    ),
+    'solid_member_of_unknown_algorithm': bytes.fromhex(
+        '526172211A07010020B6FA110A0105060405010180800046C44BD1220202EC0106DC01B68302D00E503A6CB170DA801D010C'
+        '7465737466696C652E6A7067C477E9276544432F57044AC99996DE5E66497731181041E1282288231CC8B8890C526A62260A'
+        '20E8742082A4D8BA9E02EA41D4BB1E06820BC01090191FE066D753B1D4960A4AABD538C5DDD7F17EAF57AAB9357C51554551'
+        '5E3C7DF6BFDC5D77978013AB5E5AE0D34003E272FD83481BA0CE31EDFFCE19CFECE633A678E840B3CF220A5021FA2F8CB0AA'
+        '1A3492952442A71534C453A57E00F9C280F456D42A79063B1770A7217252233A24C5A4258E3C7138C37CBF512328680655BA'
+        '9E7DFF8EFCDBDBA8FFBE71B8B33AAF6D5DB972EFD76F8F3DA367FA6CEE65F1D5E1B5BDD23BE0703AE4736BA9517DAEF8B039'
+        '7750220202BE0006D700B68302D00E503A62ACB0AFC21D010C7465737466696C652E706E6745243BE89AC69C28AA825A865D'
+        '48F618A98C76C9F26FFEE4140D36B5990A2B5AFB2FF5FC14B04B1E8D9E56B7679DCAC5F41BCDC1C8CB80964B11F7569F981D'
+        '77565103050400'
+    ),
+    'unknown_size_cut_off': bytes.fromhex(
+        '526172211A0701003392B5E50A01050600050101808000F503EC9E220202D6010EDC01B68302D00E503A6CB170DA8005010C'
+        '7465737466696C652E6A7067C54CD326644532F65035D9D3C67673922101107C2504110685202D4B6B11A106B684106896BE'
+        '0ED4DCF85A082F80212031E805B5A9B1B380A3B254F8C6F49A66E6E6EF93FE686E1986061FFF5FDE2E794FE00B760B900208'
+        '000C4D43F50B409233B4F54BEC9913F9AA422845955D7195965D97195D86D81B'
+    ),
+}
+
+@pytest.mark.cythonized
+class TestEditedArchives(TestUnitBase):
+
+    def _read(self, name: str, member: int = 0):
+        rar = RarFile(TEST_RAR_EDITED[name])
+        return rar.read(rar.entries[member])
+
+    def _original(self, archive: str, member: int = 0):
+        rar = RarFile(bytes(TEST_RAR_ARCHIVES[archive]))
+        return bytes(rar.read(rar.entries[member]))
+
+    def test_a_dictionary_beyond_the_64_gb_limit_of_rar_is_refused(self):
+        with self.assertRaisesRegex(RarCorruptArchive, '64 GB'):
+            self._read('dictionary_beyond_64_gb')
+
+    def test_a_repeated_distance_that_was_never_set_is_refused_and_does_not_hang(self):
+        script = inspect.cleandoc("""
+            import sys
+            from refinery.lib.unrar import RarCorruptArchive, RarFile
+            rar = RarFile(sys.stdin.buffer.read())
+            try:
+                rar.read(rar.entries[0])
+            except RarCorruptArchive as error:
+                print(error)
+        """)
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            input=TEST_RAR_EDITED['repeat_of_a_distance_never_set'],
+            capture_output=True,
+            cwd=pathlib.Path(refinery.__file__).parents[1],
+            timeout=60,
+        )
+        self.assertIn(B'distance is zero', result.stdout)
+
+    def test_a_match_before_any_data_of_a_member_that_is_not_solid_is_refused(self):
+        with self.assertRaisesRegex(RarCorruptArchive, 'exceeds the decoded size'):
+            self._read('match_before_any_data')
+
+    def test_a_solid_member_of_an_unknown_algorithm_is_refused_after_its_predecessor(self):
+        rar = RarFile(TEST_RAR_EDITED['solid_member_of_unknown_algorithm'])
+        first, second = rar.entries
+        self.assertTrue(second.solid)
+        self.assertEqual(bytes(rar.read(first)), self._original('testfile.rar5.solid.cbr'))
+        with self.assertRaisesRegex(RarCorruptArchive, 'Unsupported compression version'):
+            rar.read(second)
+
+    def test_a_member_of_unknown_size_whose_stream_ends_before_its_last_block_is_corrupt(self):
+        with self.assertRaises(RarCorruptArchive):
+            self._read('unknown_size_cut_off')
+
+    def test_the_bit_reader_reads_64_bits_from_any_bit_position(self):
+        from refinery.lib.unrar.unpack50 import BitInput
+        data = bytes(TEST_RAR_ARCHIVES['testfile.rar5.cbr'][:24])
+        bits = ''.join(F'{byte:08b}' for byte in data)
+        for position in range(len(bits)):
+            reader = BitInput(data)
+            reader.addbits(position)
+            expected = int(bits[position:position + 64].ljust(64, '0'), 2)
+            self.assertEqual(reader.getbits64(), expected, F'at bit {position}')
 
 
 class TestRarExtractors(TestUnitBase):

@@ -273,6 +273,14 @@ def read_tables(
     return True
 
 
+def block_consumed(inp: BitInput, header: BlockHeader) -> bool:
+    """
+    Whether the reader has passed the end of the given block.
+    """
+    last = header.block_start + header.block_size - 1
+    return inp.in_addr > last or (inp.in_addr == last and inp.in_bit >= header.block_bit_size)
+
+
 def read_filter_data(inp: BitInput) -> int:
     """
     Read a variable-length filter data value.
@@ -337,6 +345,26 @@ class Unpack50(RarUnpacker):
         self._block_header = BlockHeader()
         self._block_tables = BlockTables()
         self._write_border = min(self._win_size, UNPACK_MAX_WRITE) & self._win_mask
+
+    def init_solid(self, data: bytes | memoryview, dest_size: int | None, extended: bool = False):
+        """
+        Reinitialize for the next file in a solid archive chain, which selects its own algorithm.
+        """
+        super().init_solid(data, dest_size)
+        self._distance_codes = DCX if extended else DCB
+
+    def _ran_out(self, inp: BitInput, header: BlockHeader) -> bool:
+        """
+        Whether the input ran out before the stream ended: before the file reached its size or, for
+        a file of unknown size, before the last block was consumed within the input.
+        """
+        if self._dest_size is None:
+            return not (
+                header.last_block
+                and block_consumed(inp, header)
+                and header.block_start + header.block_size <= len(inp.buf)
+            )
+        return self._ended_short((self._unp_ptr - self._wr_ptr) & self._win_mask)
 
     def _write_buf(self):
         """
@@ -405,14 +433,14 @@ class Unpack50(RarUnpacker):
         mask = self._win_mask
         win = self._window
 
-        if not read_block_header(inp, self._block_header):
-            return self._output
-        if not read_tables(inp, self._block_header, self._block_tables, self._distance_codes):
-            return self._output
-        self._tables_read = True
-
         hdr = self._block_header
         tbl = self._block_tables
+
+        if not read_block_header(inp, hdr) or not read_tables(inp, hdr, tbl, self._distance_codes):
+            if self._dest_size is None:
+                self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
+            return self._output
+        self._tables_read = True
 
         inp_len = len(inp.buf)
 
@@ -420,13 +448,11 @@ class Unpack50(RarUnpacker):
             self._unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
-                if self._ended_short((self._unp_ptr - self._wr_ptr) & mask):
+                if self._ran_out(inp, hdr):
                     self._raise_corrupt('RAR5.0 stream consumed past end of input.')
                 break
 
-            while (inp.in_addr > hdr.block_start + hdr.block_size - 1
-                or (inp.in_addr == hdr.block_start + hdr.block_size - 1
-                    and inp.in_bit >= hdr.block_bit_size)):
+            while block_consumed(inp, hdr):
                 if hdr.last_block:
                     self._write_buf()
                     return self._output
@@ -434,7 +460,7 @@ class Unpack50(RarUnpacker):
                     not read_block_header(inp, hdr)
                     or not read_tables(inp, hdr, tbl, self._distance_codes)
                 ):
-                    if self._ended_short((self._unp_ptr - self._wr_ptr) & mask):
+                    if self._ended_early((self._unp_ptr - self._wr_ptr) & mask):
                         self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
                     self._write_buf()
                     return self._output

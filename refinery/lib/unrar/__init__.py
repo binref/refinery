@@ -36,6 +36,11 @@ from refinery.lib.unrar.headers import (
     parse_headers,
 )
 
+_MAX_DICTIONARY = 0x1000000000
+"""
+The largest dictionary that the reference decoder accepts, 64 GB.
+"""
+
 _UNKNOWN_SIZE_ROOM = 1 << 64
 """
 The room that a member of unknown size takes in the decompressed stream of its archive: more than
@@ -269,7 +274,7 @@ class RarFile:
             if not entry.solid or not self._starts:
                 self._starts.append(k)
                 self._start_positions.append(position)
-            position += _UNKNOWN_SIZE_ROOM if entry.size is None else entry.size
+            position += self._room(entry)
         continued = False
         for k in reversed(range(len(self._file_entries))):
             if (entry := self._file_entries[k]).is_dir:
@@ -277,6 +282,15 @@ class RarFile:
             if entry.size == 0 and not continued:
                 self._idle.add(k)
             continued = entry.solid
+
+    @staticmethod
+    def _room(entry: RarFileEntry) -> int:
+        """
+        The room that the given member takes in the decompressed stream of the archive.
+        """
+        if (size := entry.size) is None:
+            return _UNKNOWN_SIZE_ROOM
+        return size
 
     @property
     def entries(self) -> list[RarFileEntry]:
@@ -355,8 +369,7 @@ class RarFile:
             return missing
         if (stream := self._streams.get(pw)) is None:
             stream = self._streams[pw] = SolidStream(partial(self._decode, pw), self._restart)
-        size = _UNKNOWN_SIZE_ROOM if fe.size is None else fe.size
-        claim = stream.claim(self._positions[self._index[id(fe)]], size)
+        claim = stream.claim(self._positions[self._index[id(fe)]], self._room(fe))
 
         def extract() -> buf:
             try:
@@ -475,41 +488,74 @@ class RarFile:
 
     def _decompress(self, data: bytes | memoryview, entry: RarFileEntry, engine=None):
         """
-        Decompress data based on the compression method and format version.
+        Decompress data based on the compression method and format version. A member that continues
+        a solid chain is decompressed by the engine of the chain, with its own algorithm.
         """
         if entry.method == 0:
             if (size := entry.size) is not None and len(data) > size:
                 data = data[:size]
             return data, engine
 
-        if entry.solid and engine is not None:
-            engine.init_solid(data, entry.size)
-            return engine.decompress(), engine
-
         unp_ver = entry.unp_ver
+        continues = entry.solid and engine is not None
 
         if self._format == RarFormat.RARFMT50 or unp_ver >= 50:
             if unp_ver > 51:
+                raise self._unsupported(entry)
+            if entry.win_size > _MAX_DICTIONARY:
                 raise RarCorruptArchive(
-                    F'Unsupported compression version {unp_ver} for {entry.name}')
+                    F'The dictionary of {entry.name} exceeds the 64 GB limit of RAR.'
+                )
             from refinery.lib.unrar.unpack50 import Unpack50
-            win_size = entry.win_size if entry.win_size > 0 else 0x400000
-            engine = Unpack50(data, entry.size, win_size, entry.solid, extended=(unp_ver == 51))
+            extended = unp_ver == 51
+            if not continues:
+                win_size = entry.win_size if entry.win_size > 0 else 0x400000
+                engine = Unpack50(data, entry.size, win_size, entry.solid, extended=extended)
+            elif isinstance(engine, Unpack50):
+                engine.init_solid(data, entry.size, extended=extended)
+            else:
+                raise self._algorithm_changed(entry)
         elif unp_ver >= 29:
             from refinery.lib.unrar.unpack30 import Unpack30
-            win_size = entry.win_size if entry.win_size > 0 else 0x400000
-            engine = Unpack30(data, entry.size, win_size, entry.solid)
+            if not continues:
+                win_size = entry.win_size if entry.win_size > 0 else 0x400000
+                engine = Unpack30(data, entry.size, win_size, entry.solid)
+            elif isinstance(engine, Unpack30):
+                engine.init_solid(data, entry.size)
+            else:
+                raise self._algorithm_changed(entry)
         elif unp_ver >= 20:
             from refinery.lib.unrar.unpack20 import Unpack20
-            engine = Unpack20(data, entry.size, entry.solid)
+            if not continues:
+                engine = Unpack20(data, entry.size, entry.solid)
+            elif isinstance(engine, Unpack20):
+                engine.init_solid(data, entry.size)
+            else:
+                raise self._algorithm_changed(entry)
         elif unp_ver >= 15:
             from refinery.lib.unrar.unpack15 import Unpack15
-            engine = Unpack15(data, entry.size, entry.solid)
+            if not continues:
+                engine = Unpack15(data, entry.size, entry.solid)
+            elif isinstance(engine, Unpack15):
+                engine.init_solid(data, entry.size)
+            else:
+                raise self._algorithm_changed(entry)
         else:
-            raise RarCorruptArchive(
-                F'Unsupported compression version {unp_ver} for {entry.name}')
+            raise self._unsupported(entry)
 
         return engine.decompress(), engine
+
+    @staticmethod
+    def _unsupported(entry: RarFileEntry) -> RarCorruptArchive:
+        return RarCorruptArchive(
+            F'Unsupported compression version {entry.unp_ver} for {entry.name}'
+        )
+
+    @staticmethod
+    def _algorithm_changed(entry: RarFileEntry) -> RarCorruptArchive:
+        return RarCorruptArchive(
+            F'The solid member {entry.name} uses another compression algorithm than its chain.'
+        )
 
     def _verify(self, data: buf, entry: RarFileEntry, password: str | None = None):
         """

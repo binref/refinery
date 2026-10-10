@@ -430,6 +430,18 @@ def read_tables(BitInput inp, BlockHeader header, BlockTables tables, int distan
     return _read_tables(inp, header, tables, distance_codes)
 
 
+cdef inline bint _block_consumed(BitInput inp, BlockHeader header):
+    cdef Py_ssize_t last = header.block_start + header.block_size - 1
+    return inp.in_addr > last or (inp.in_addr == last and inp.in_bit >= header.block_bit_size)
+
+
+def block_consumed(BitInput inp, BlockHeader header):
+    """
+    Whether the reader has passed the end of the given block.
+    """
+    return _block_consumed(inp, header)
+
+
 cdef Py_ssize_t _read_filter_data(BitInput inp):
     cdef int byte_count, i
     cdef Py_ssize_t data
@@ -469,6 +481,36 @@ def read_filter(BitInput inp):
     return flt
 
 
+cdef inline size_t _copy_match(
+    unsigned char *win_ptr,
+    size_t unp_ptr,
+    size_t length,
+    size_t distance,
+    size_t mask,
+    size_t win_size,
+):
+    cdef size_t src = (unp_ptr - distance) & mask
+    cdef size_t dst = unp_ptr
+    cdef size_t copied, chunk
+    if src + length <= win_size and dst + length <= win_size:
+        if distance >= length:
+            memcpy(&win_ptr[dst], &win_ptr[src], length)
+        else:
+            copied = 0
+            while copied < length:
+                chunk = distance if distance < length - copied else length - copied
+                memcpy(&win_ptr[dst + copied], &win_ptr[src + copied], chunk)
+                copied += chunk
+        return (dst + length) & mask
+    src = unp_ptr - distance
+    while length > 0:
+        win_ptr[dst & mask] = win_ptr[src & mask]
+        src += 1
+        dst += 1
+        length -= 1
+    return dst & mask
+
+
 class Unpack50(RarUnpacker):
     """
     RAR 5.0 decompression engine
@@ -501,15 +543,29 @@ class Unpack50(RarUnpacker):
         self._block_tables = BlockTables()
         self._write_border = min(self._win_size, UNPACK_MAX_WRITE) & self._win_mask
 
-    def init_solid(self, data, dest_size):
+    def init_solid(self, data, dest_size, bint extended=False):
         """
-        Reinitialize for the next file in a solid archive chain.
+        Reinitialize for the next file in a solid archive chain, which selects its own algorithm.
         """
         self._inp = BitInput(data)
         self._dest_size = dest_size
         self._output = bytearray()
         self._written = 0
         self._solid = True
+        self._distance_codes = DCX if extended else DCB
+
+    def _ran_out(self, BitInput inp, BlockHeader header):
+        """
+        Whether the input ran out before the stream ended: before the file reached its size or, for
+        a file of unknown size, before the last block was consumed within the input.
+        """
+        if self._dest_size is None:
+            return not (
+                header.last_block
+                and _block_consumed(inp, header)
+                and header.block_start + header.block_size <= inp._buf_len
+            )
+        return self._ended_short((self._unp_ptr - self._wr_ptr) & self._win_mask)
 
     def _write_buf(self):
         """
@@ -592,22 +648,25 @@ class Unpack50(RarUnpacker):
         cdef int low_dist
 
         cdef size_t old0, old1, old2, old3
-        cdef size_t unp_ptr, last_length, win_size, write_border
+        cdef size_t unp_ptr, last_length, win_size, write_border, produced
         cdef unsigned char *win_ptr
-        cdef size_t src, dst, copied, chunk
+        cdef bint solid = self._solid
 
         win = self._window
         win_ptr = <unsigned char *>PyByteArray_AS_STRING(win)
         win_size = self._win_size
 
-        if not _read_block_header(inp, self._block_header):
-            return self._output
-        if not _read_tables(inp, self._block_header, self._block_tables, self._distance_codes):
-            return self._output
-        self._tables_read = True
-
         cdef BlockHeader hdr = self._block_header
         cdef BlockTables tbl = self._block_tables
+
+        if (
+            not _read_block_header(inp, hdr)
+            or not _read_tables(inp, hdr, tbl, self._distance_codes)
+        ):
+            if self._dest_size is None:
+                self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
+            return self._output
+        self._tables_read = True
 
         inp_len = inp._buf_len
 
@@ -619,19 +678,18 @@ class Unpack50(RarUnpacker):
         unp_ptr = self._unp_ptr
         last_length = self._last_length
         write_border = self._write_border
+        produced = self._written + ((unp_ptr - self._wr_ptr) & mask)
 
         while True:
             unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
-                if self._ended_short((unp_ptr - self._wr_ptr) & mask):
-                    self._unp_ptr = unp_ptr
+                self._unp_ptr = unp_ptr
+                if self._ran_out(inp, hdr):
                     self._raise_corrupt('RAR5.0 stream consumed past end of input.')
                 break
 
-            while (inp.in_addr > hdr.block_start + hdr.block_size - 1
-                or (inp.in_addr == hdr.block_start + hdr.block_size - 1
-                    and inp.in_bit >= hdr.block_bit_size)):
+            while _block_consumed(inp, hdr):
                 if hdr.last_block:
                     self._old_dist[0] = old0
                     self._old_dist[1] = old1
@@ -645,7 +703,7 @@ class Unpack50(RarUnpacker):
                     not _read_block_header(inp, hdr)
                     or not _read_tables(inp, hdr, tbl, self._distance_codes)
                 ):
-                    if self._ended_short((unp_ptr - self._wr_ptr) & mask):
+                    if self._ended_early((unp_ptr - self._wr_ptr) & mask):
                         self._unp_ptr = unp_ptr
                         self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
                     self._old_dist[0] = old0
@@ -675,6 +733,7 @@ class Unpack50(RarUnpacker):
             if main_slot < 256:
                 win_ptr[unp_ptr] = <unsigned char>(main_slot & 0xFF)
                 unp_ptr = (unp_ptr + 1) & mask
+                produced += 1
                 continue
 
             if main_slot >= 262:
@@ -709,37 +768,17 @@ class Unpack50(RarUnpacker):
                         if distance > 0x40000:
                             length += 1
 
-                if distance > win_size:
-                    self._unp_ptr = unp_ptr
-                    self._raise_corrupt('RAR5.0 LZ back-reference distance exceeds the window size.')
-
                 old3 = old2
                 old2 = old1
                 old1 = old0
                 old0 = distance
                 last_length = length
 
-                src = (unp_ptr - distance) & mask
-                dst = unp_ptr
-                if src + length <= win_size and dst + length <= win_size:
-                    if distance >= length:
-                        memcpy(&win_ptr[dst], &win_ptr[src], length)
-                    else:
-                        copied = 0
-                        while copied < length:
-                            chunk = distance if distance < length - copied else length - copied
-                            memcpy(&win_ptr[dst + copied], &win_ptr[src + copied], chunk)
-                            copied += chunk
-                    unp_ptr = (dst + length) & mask
-                else:
-                    src = unp_ptr - distance
-                    dst = unp_ptr
-                    while length > 0:
-                        win_ptr[dst & mask] = win_ptr[src & mask]
-                        src += 1
-                        dst += 1
-                        length -= 1
-                    unp_ptr = dst & mask
+                if distance == 0 or distance > win_size or (not solid and distance > produced):
+                    self._unp_ptr = unp_ptr
+                    self._check_distance(distance)
+                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
+                produced += length
                 continue
 
             if main_slot == 256:
@@ -764,31 +803,15 @@ class Unpack50(RarUnpacker):
                 continue
 
             if main_slot == 257:
-                if last_length != 0:
-                    distance = old0
-                    length = last_length
-                    src = (unp_ptr - distance) & mask
-                    dst = unp_ptr
-                    if src + length <= win_size and dst + length <= win_size:
-                        if distance >= length:
-                            memcpy(&win_ptr[dst], &win_ptr[src], length)
-                        else:
-                            copied = 0
-                            while copied < length:
-                                chunk = distance if distance < length - copied else length - copied
-                                memcpy(
-                                    &win_ptr[dst + copied], &win_ptr[src + copied], chunk)
-                                copied += chunk
-                        unp_ptr = (dst + length) & mask
-                    else:
-                        src = unp_ptr - distance
-                        dst = unp_ptr
-                        while length > 0:
-                            win_ptr[dst & mask] = win_ptr[src & mask]
-                            src += 1
-                            dst += 1
-                            length -= 1
-                        unp_ptr = dst & mask
+                if last_length == 0:
+                    continue
+                distance = old0
+                length = last_length
+                if distance == 0 or distance > win_size or (not solid and distance > produced):
+                    self._unp_ptr = unp_ptr
+                    self._check_distance(distance)
+                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
+                produced += length
                 continue
 
             if main_slot < 262:
@@ -815,27 +838,11 @@ class Unpack50(RarUnpacker):
                 length = _slot_to_length(inp, length_slot)
                 last_length = length
 
-                src = (unp_ptr - distance) & mask
-                dst = unp_ptr
-                if src + length <= win_size and dst + length <= win_size:
-                    if distance >= length:
-                        memcpy(&win_ptr[dst], &win_ptr[src], length)
-                    else:
-                        copied = 0
-                        while copied < length:
-                            chunk = distance if distance < length - copied else length - copied
-                            memcpy(&win_ptr[dst + copied], &win_ptr[src + copied], chunk)
-                            copied += chunk
-                    unp_ptr = (dst + length) & mask
-                else:
-                    src = unp_ptr - distance
-                    dst = unp_ptr
-                    while length > 0:
-                        win_ptr[dst & mask] = win_ptr[src & mask]
-                        src += 1
-                        dst += 1
-                        length -= 1
-                    unp_ptr = dst & mask
+                if distance == 0 or distance > win_size or (not solid and distance > produced):
+                    self._unp_ptr = unp_ptr
+                    self._check_distance(distance)
+                unp_ptr = _copy_match(win_ptr, unp_ptr, length, distance, mask, win_size)
+                produced += length
                 continue
 
         self._old_dist[0] = old0

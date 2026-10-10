@@ -42,10 +42,12 @@ class RarUnpacker:
 
     def _check_distance(self, distance: int):
         """
-        Reject an LZ back-reference whose distance points outside the window or, for a
+        Reject an LZ back-reference whose distance is zero, points outside the window or, for a
         non-solid stream, beyond the bytes decoded so far, matching the reference decoders
         which abort instead of reading uninitialized dictionary memory.
         """
+        if distance == 0:
+            self._raise_corrupt('LZ back-reference distance is zero.')
         if distance > self._win_size:
             self._raise_corrupt(F'LZ back-reference distance {distance} exceeds the window size.')
         if not self._solid:
@@ -102,6 +104,14 @@ class RarUnpacker:
         size = self._dest_size
         return size is not None and self._written + pending < size
 
+    def _ended_early(self, pending: int) -> bool:
+        """
+        Whether a stream that ran out before its end mark ended before the file: always for a file
+        of unknown size, which only the end mark ends, and otherwise when the data falls short of
+        the size of the file.
+        """
+        return self._dest_size is None or self._ended_short(pending)
+
     def _known_size(self, algorithm: str) -> int:
         """
         The size of the file, for an algorithm whose stream has no end marker and therefore cannot
@@ -110,7 +120,8 @@ class RarUnpacker:
         if (size := self._dest_size) is None:
             from refinery.lib.unrar import RarCorruptArchive
             raise RarCorruptArchive(
-                F'The {algorithm} algorithm has no end marker for a file of unknown size.')
+                F'The {algorithm} algorithm has no end marker for a file of unknown size.'
+            )
         return size
 
     def _overran(self) -> bool:
