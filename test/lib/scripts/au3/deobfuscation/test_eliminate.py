@@ -136,11 +136,27 @@ class TestAu3DeadCodeElimination(TestAu3):
             EndFunc
             ''')
 
+    def test_a_script_holding_an_include_line_with_trailing_text_is_unchanged(self):
+        """
+        The parser reads an include line with trailing text as a plain directive, but the included
+        file is spliced in all the same, so its calls reach the tree's functions — where the
+        executable statement below would leave the entry open without the include.
+        """
+        self._assertKept(
+            '''
+            #include <String.au3> ; Required for the constants.
+
+            Func dead()
+            EndFunc
+
+            MsgBox(0, 0, 0)
+            ''')
+
     def test_a_live_channel_blocks_function_and_global_removal(self):
         """
-        The `Execute` over a non-literal may compute any name, so no function and no global leaves
-        while it stands — while the effect-free `gone()` statement still goes, the statement rule
-        being ungated.
+        The `Execute` over a non-literal may compute any name, so no function and no global
+        leaves while it stands — and its payload could read `@error`, so the pure call that
+        would have cleared the error state stays as well.
         """
         self.assertEqual(
             self._apply(
@@ -167,6 +183,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             '    $g = 1\n'
             'EndFunc\n'
             'live()\n'
+            'gone()\n'
             'Execute($x)\n')
 
     def test_a_computed_name_inside_an_execute_payload_is_kept(self):
@@ -445,6 +462,23 @@ class TestAu3DeadCodeElimination(TestAu3):
             MsgBox(0, 0, f())
             ''')
 
+    def test_a_global_read_in_a_default_of_its_own_parameter_name_is_kept(self):
+        """
+        A parameter default runs before any parameter is bound, so a read of a parameter name
+        there targets the global — the reader that keeps the global alive — and not the local
+        the bound parameter would be.
+        """
+        self._assertKept(
+            '''
+            Global $p = 5
+
+            Func g($p = $p)
+                Return $p
+            EndFunc
+
+            MsgBox(0, 0, g())
+            ''')
+
     def test_a_local_named_by_a_dynamic_execute_payload_in_its_scope_is_kept(self):
         """
         A dynamic payload runs in the scope it stands in, so the name it computes can be a local
@@ -565,6 +599,37 @@ class TestAu3DeadCodeElimination(TestAu3):
             ),
             'Func f()\n'
             'EndFunc\n')
+
+    def test_a_pure_call_is_kept_where_the_tree_reads_the_error_state(self):
+        """
+        Entering a user function clears `@error` and `@extended` (probe9 A17/A17b), so a tree
+        that may read the error state holds no pure function: the removed call is the one that
+        would have cleared what the read observes.
+        """
+        self._assertKept(
+            '''
+            Func f()
+                Return 1
+            EndFunc
+
+            f()
+            $e = @error
+            ''')
+
+    def test_a_pure_call_is_kept_where_the_tree_calls_execute(self):
+        """
+        An unflattened `Execute` payload could read `@error` invisibly, so the clear every call
+        into a user function performs is observable and the call stays.
+        """
+        self._assertKept(
+            '''
+            Func f()
+                Return 1
+            EndFunc
+
+            f()
+            Execute($s)
+            ''')
 
     def test_a_call_of_a_function_holding_a_static_is_kept(self):
         """

@@ -805,9 +805,12 @@ _EVALUATORS: dict[str, _Evaluator] = {
     'isptr'           : _evaluate_never,
 }
 
-#: Every builtin the pipeline knows by name: the emulated functions above plus `Execute` and
-#: `Assign`, which the transforms resolve structurally and never fold as a value — `Execute`'s
-#: argument is code, and `Assign`'s effect is a write the may-write summaries read.
+#: The builtins the pipeline models as a value-producing call whose writes it pins: the emulated
+#: functions above plus `Execute` and `Assign`, which the transforms resolve structurally and
+#: never fold as a value — `Execute`'s argument is code, and `Assign`'s effect is a write the
+#: may-write summaries read. `Call` and `Eval` the transforms resolve the same way through the
+#: name-parameter table below, and neither stands here: a `Call` invocation may write any of its
+#: `ByRef` arguments, and `Eval`'s value is a read of a name the tree spells as a string.
 BUILTIN_NAMES = frozenset(_EVALUATORS) | {'execute', 'assign'}
 
 #: The builtins that consume the name of a script function or a variable through an argument,

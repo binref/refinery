@@ -40,8 +40,6 @@ from refinery.lib.scripts.au3.model import (
     Au3ErrorNode,
     Au3ExpressionStatement,
     Au3FunctionDeclaration,
-    Au3Include,
-    Au3IncludeOnce,
     Au3Script,
     Au3VariableDeclaration,
     Au3VariableDeclarator,
@@ -90,12 +88,12 @@ class Au3DeadCodeElimination(Transformer):
     def _entry_is_open(self, script: Au3Script) -> bool:
         """
         Whether the script runs from its own top-level statements: it holds a statement that is
-        neither a declaration, a function definition nor a directive, and no include anywhere —
-        an included file's contents are called from outside the tree.
+        neither a declaration, a function definition nor a directive, and no include — read from
+        the scope model, in both spellings the parser answers with — because an included file's
+        contents are called from outside the tree.
         """
-        for node in script.walk():
-            if isinstance(node, (Au3Include, Au3IncludeOnce)):
-                return False
+        if self._scopes is not None and self._scopes.holds_an_include:
+            return False
         for statement in script.body:
             if not isinstance(statement, (
                 Au3VariableDeclaration,

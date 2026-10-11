@@ -1,9 +1,13 @@
 """
 Dynamic-name flattening on its own: the gates the pinned `Call`, `Assign`, and `Eval`
 semantics draw around what a string-literal name may flatten into, and the no-effect cases the
-interpreter answered with `@error` or `""` for, which a flatten must never make fatal.
+interpreter answered with `@error` or `""` for, which a flatten must never make fatal. The tests
+near the end run the whole pipeline instead, pinning that a flatten survives the dead code
+elimination the cleanup group applies to the tree it left behind.
 """
 from __future__ import annotations
+
+import unittest
 
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
@@ -193,6 +197,30 @@ class TestAu3DynamicNameFlattening(TestAu3):
             'Func h($a, ByRef $r)\n    $r = $a\nEndFunc\nFunc f()\n    Local $x\n'
             '    Call("h", 1, $x + 1)\nEndFunc\n')
 
+    def test_a_byref_position_with_a_parenthesized_argument_is_kept(self):
+        """
+        The pinned shapes are the bare variable (probe9 A15) and the bare literal (probe9h A30);
+        a parenthesized argument is an expression shape no probe pins, and the flatten keeps the
+        parentheses, so it keeps the dynamic form.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func h($a, ByRef $r)
+                    $r = $a
+                EndFunc
+
+                Func f()
+                    Local $x
+                    Call("h", 1, ($x))
+                    Call("h", 1, ("lit"))
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func h($a, ByRef $r)\n    $r = $a\nEndFunc\nFunc f()\n    Local $x\n'
+            '    Call("h", 1, ($x))\n    Call("h", 1, ("lit"))\nEndFunc\n')
+
     def test_a_sole_string_literal_argument_flattens(self):
         """
         A sole string literal never expands, the spelling `CallArgArray` included (probe9 A14c).
@@ -269,6 +297,50 @@ class TestAu3DynamicNameFlattening(TestAu3):
             ),
             'Func f($a)\n    Return $a\nEndFunc\nCall("f()")\n')
 
+    def test_a_name_of_non_ascii_shape_flattens(self):
+        """
+        The lexer reads non-ASCII characters as name parts, so a name spelled in them round-trips
+        through print and flattens like any other.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func Fön($a)
+                    Return $a
+                EndFunc
+
+                Call("Fön", 1)
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func Fön($a)\n    Return $a\nEndFunc\nFön(1)\n')
+
+    def test_a_flattened_name_keeps_the_literal_spelling(self):
+        """
+        The spelled name prints as the literal spelled it, the same spelling the alias machinery
+        keeps — a lowercased print would rename what the script never renamed.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func Foo($a)
+                    Return $a
+                EndFunc
+
+                Func f()
+                    Local $x
+                    $r = Call("FOO", 1)
+                    Assign("X", 1)
+                    $r = Eval("X")
+                EndFunc
+
+                f()
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func Foo($a)\n    Return $a\nEndFunc\nFunc f()\n    Local $x\n'
+            '    $r = FOO(1)\n    $X = 1\n    $r = $X\nEndFunc\nf()\n')
+
     def test_a_dollar_prefixed_name_is_kept_in_every_rule(self):
         """
         Whether the three builtins accept a `$`-prefixed name is unpinned — `Assign` restricts
@@ -310,6 +382,71 @@ class TestAu3DynamicNameFlattening(TestAu3):
             ),
             '#include <Array.au3>\nFunc f()\n    Local $x\n    Assign("x", 1)\n'
             '    $r = Eval("x")\n    Call("f")\nEndFunc\n')
+
+    def test_an_include_line_with_trailing_text_keeps_every_rule(self):
+        """
+        The parser reads an include line as the include node only when the line ends after the
+        path, so one with trailing text — the comment form the official documentation's own
+        examples write — stays a directive naming the same unseen file.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                #include <Array.au3> ; Required for the constants.
+
+                Func f()
+                    Local $x
+                    Assign("x", 1)
+                    $r = Eval("x")
+                    Call("f")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            '#include <Array.au3> ; Required for the constants.\nFunc f()\n    Local $x\n'
+            '    Assign("x", 1)\n    $r = Eval("x")\n    Call("f")\nEndFunc\n')
+
+    def test_an_unparseable_line_keeps_every_rule(self):
+        """
+        A parse failure leaves live source text in the tree that no walk reads, so every rule
+        refuses rather than rewrite around it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    Assign("x", 1)
+                    $r = Eval("x")
+                    Call("f")
+                EndFunc
+
+                $x = = 1
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $x\n    Assign("x", 1)\n    $r = Eval("x")\n    Call("f")\n'
+            'EndFunc\n$x = = 1\n')
+
+    def test_an_unterminated_construct_keeps_every_rule(self):
+        """
+        A construct the parser closed itself leaves no error node in the tree, but the parser's
+        own error record names it — source the real AutoIt refuses to load — so every rule
+        refuses rather than rewrite around the repair.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    Assign("x", 1)
+                    If True Then
+                        $y = 1
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $x\n    Assign("x", 1)\n    If True Then\n'
+            '        $y = 1\n    EndIf\nEndFunc\n')
 
     def test_an_assign_behind_a_preceding_local_flattens(self):
         self.assertEqual(
@@ -550,8 +687,9 @@ class TestAu3DynamicNameFlattening(TestAu3):
     def test_an_autoitsetoption_call_keeps_an_unbacked_write(self):
         """
         Under `MustDeclareVars` the plain write to an undeclared name is a documented refusal
-        while `Assign`'s behavior under the option is unpinned, so the write stands — at script
-        level and bare inside a function, the two shapes no declaration of the scope backs.
+        while `Assign`'s behavior under the option is unpinned, so the write stands. The gate
+        holds every write that does not target the enclosing function's local storage, so the
+        script-level write and the bare write inside a function both stand.
         """
         self.assertEqual(
             self._apply(
@@ -586,6 +724,125 @@ class TestAu3DynamicNameFlattening(TestAu3):
                 Au3DynamicNameFlattening,
             ),
             'AutoItSetOption("MustDeclareVars", 1)\nFunc f($p)\n    $p = 1\nEndFunc\n')
+
+    @unittest.expectedFailure
+    def test_a_declared_global_write_under_mustdeclarevars_flattens(self):
+        """
+        A declared global is legal for the plain write under `MustDeclareVars`, and `Assign`
+        over it answers the same storage (probe9 A3/A23), so the flatten is sound. The gate asks
+        the binding model for the local storage instead of whether a declaration backs the name,
+        so the write stands until the scope model answers the declared-name question.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                Global $g
+
+                Assign("g", 1)
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nGlobal $g\n$g = 1\n')
+
+    def test_an_opt_spelling_of_the_option_setter_keeps_the_write(self):
+        """
+        `Opt` is the documented alias of `AutoItSetOption`, so the same refusal the direct
+        spelling draws applies to it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Opt("MustDeclareVars", 1)
+
+                Func f()
+                    Assign("q", 1)
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Opt("MustDeclareVars", 1)\nFunc f()\n    Assign("q", 1)\nEndFunc\n')
+
+    def test_a_call_spelling_of_the_option_setter_keeps_the_write(self):
+        """
+        The literal name of a `Call` invocation reaches the option setter the same way a direct
+        callee does.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Call("AutoItSetOption", "MustDeclareVars", 1)
+                EndFunc
+
+                Func g()
+                    Assign("q", 1)
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Call("AutoItSetOption", "MustDeclareVars", 1)\nEndFunc\n'
+            'Func g()\n    Assign("q", 1)\nEndFunc\n')
+
+    def test_a_computed_callee_keeps_the_write(self):
+        """
+        A callee computed at run time could name the option setter, so a write the option could
+        make a fatal refusal keeps its dynamic form.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $o = "AutoItSetOption"
+                    $o("MustDeclareVars", 1)
+                    Assign("q", 1)
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $o = "AutoItSetOption"\n    $o("MustDeclareVars", 1)\n'
+            '    Assign("q", 1)\nEndFunc\n')
+
+    def test_a_computed_callee_keeps_the_eval_flatten(self):
+        """
+        A callee computed at run time could name `Execute`, whose payload could read `@error`
+        invisibly — the same refusal a direct `Execute` call draws.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $e = "Execute"
+                    $e("$r = @error")
+                    Local $x
+                    $r = Eval("x")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $e = "Execute"\n    $e("$r = @error")\n    Local $x\n'
+            '    $r = Eval("x")\nEndFunc\n')
+
+    def test_a_call_spelling_of_execute_keeps_the_flatten(self):
+        """
+        The literal name of a `Call` invocation reaches `Execute` the same way a direct callee
+        does, so its payload could read `@error` invisibly there too.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    Call("Execute", "$r = @error")
+                    Assign("x", 1)
+                    $r = Eval("x")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $x\n    Call("Execute", "$r = @error")\n'
+            '    Assign("x", 1)\n    $r = Eval("x")\nEndFunc\n')
 
     def test_an_error_macro_read_keeps_the_assign_flatten(self):
         """
@@ -692,6 +949,29 @@ class TestAu3DynamicNameFlattening(TestAu3):
             'Func f()\n    Local $x = Eval("x")\n    For $i = Eval("i") To 1\n'
             '        $y = $i\n    Next\nEndFunc\n')
 
+    def test_an_eval_inside_a_parameter_default_is_kept(self):
+        """
+        A parameter default runs before any parameter is bound — the self-referential shape reads
+        the very parameter being defaulted — and the plain read of the unbound name is the
+        refusal the claiming-statement boundary pins (probe9g A29), so both default-position
+        reads keep their dynamic form.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func g($p = Eval("p"))
+                    Return $p
+                EndFunc
+
+                Func h($a = Eval("b"), $b = 1)
+                    Return $a + $b
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func g($p = Eval("p"))\n    Return $p\nEndFunc\n'
+            'Func h($a = Eval("b"), $b = 1)\n    Return $a + $b\nEndFunc\n')
+
     def test_an_eval_without_a_local_claim_is_kept(self):
         """
         The plain read of a name no local claims is fatal when the global is missing (probe9c
@@ -759,6 +1039,81 @@ class TestAu3DynamicNameFlattening(TestAu3):
             ),
             'Func f()\n    Local $x = 1\n    $r = Eval("x")(1)\nEndFunc\n')
 
+    def test_an_eval_in_a_byref_slot_is_kept(self):
+        """
+        A variable in a `ByRef` slot is mutated (probe9 A15) where the temporary `Eval` answers
+        is not — the Func documentation names a function return value a legal `ByRef` argument —
+        so both call spellings keep the read. A parenthesized argument stays a parenthesized
+        expression after the flatten, and a builtin parameter is never `ByRef`, so both flatten.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func h(ByRef $r, $a)
+                    $r = 5
+                EndFunc
+
+                Func f()
+                    Local $y = 1
+                    Local $z = 2
+                    h(Eval("y"), 1)
+                    Call("h", Eval("y"), 1)
+                    h((Eval("z")), 1)
+                    MsgBox(0, 0, Eval("z"))
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func h(ByRef $r, $a)\n    $r = 5\nEndFunc\nFunc f()\n    Local $y = 1\n'
+            '    Local $z = 2\n    h(Eval("y"), 1)\n    Call("h", Eval("y"), 1)\n'
+            '    h(($z), 1)\n    MsgBox(0, 0, $z)\nEndFunc\n')
+
+    def test_an_eval_in_a_slot_a_computed_callee_takes_is_kept(self):
+        """
+        A callee computed at run time could name a function whose parameter there is `ByRef`, so
+        the read keeps the temporary the original passed.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f($g)
+                    Local $y = 1
+                    $g(Eval("y"))
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f($g)\n    Local $y = 1\n    $g(Eval("y"))\nEndFunc\n')
+
+    def test_an_eval_as_the_left_of_a_statement_comparison_flattens_bracketed(self):
+        """
+        A whole-statement `=` comparison over a writable left operand re-parses as an assignment
+        once the flatten makes the left operand a variable, an array element, or a member, so the
+        synthesizer brackets the line. A parenthesized left operand is not an lvalue and the right
+        operand is never an assignment target, so both print without the extra brackets.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func side()
+                    Return 2
+                EndFunc
+
+                Func f($n, $i)
+                    Local $x = $n
+                    Eval("x") = side()
+                    Eval("x")[$i] = side()
+                    Eval("x").prop = side()
+                    (Eval("x")) = side()
+                    side() = Eval("x")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func side()\n    Return 2\nEndFunc\nFunc f($n, $i)\n    Local $x = $n\n'
+            '    ($x = side())\n    ($x[$i] = side())\n    ($x.prop = side())\n'
+            '    ($x) = side()\n    side() = $x\nEndFunc\n')
+
     def test_an_error_macro_read_keeps_the_eval_flatten(self):
         """
         A successful `Eval` clears a previous `@error`/`@extended` while the plain read leaves
@@ -798,6 +1153,29 @@ class TestAu3DynamicNameFlattening(TestAu3):
                 Au3DynamicNameFlattening,
             ),
             'Execute($s)\nFunc f()\n    Local $x\n    $r = Eval("x")\nEndFunc\n')
+
+    def test_a_flattened_call_survives_the_cleanup_where_the_tree_reads_the_error_state(self):
+        """
+        The flattened direct call clears `@error` exactly as the `Call` invocation did (probe9
+        A17/A17b), so the cleanup that would delete a pure call keeps the statement.
+        """
+        self._assertDeobfuscatesTo(
+            '''
+            Func f()
+                Return 1
+            EndFunc
+
+            Call("f")
+            $e = @error
+            ''',
+            '''
+            Func f()
+                Return 1
+            EndFunc
+
+            f()
+            $e = @error
+            ''')
 
     def test_a_function_called_only_through_call_leaves(self):
         self._assertDeobfuscatesTo(

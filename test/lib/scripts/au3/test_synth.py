@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts import canonical
+from refinery.lib.scripts import canonical, set_child
+from refinery.lib.scripts.au3.model import Au3ExpressionStatement
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
 
@@ -73,6 +74,21 @@ class TestAu3Synthesizer(TestBase):
     def test_comparison(self):
         for operator in ('=', '==', '<>', '<', '>', '<=', '>='):
             self._round_trip(F'$x {operator} $y\n')
+
+    def test_a_statement_comparison_over_a_writable_left_operand_is_bracketed(self):
+        """
+        The parser reads `=` at statement position as an assignment whenever the left operand is
+        writable, so a comparison over one prints bracketed to stay a comparison. No source spells
+        the tree directly — unbracketed, the statement is an assignment — so the comparison is
+        parsed with parentheses and the parentheses removed, which is the tree a pass rewriting the
+        left operand leaves behind.
+        """
+        tree = Au3Parser('($x) = side()\n').parse()
+        statement = next(
+            node for node in tree.walk() if isinstance(node, Au3ExpressionStatement))
+        comparison = statement.expression
+        set_child(comparison, 'left', comparison.left.expression)
+        self.assertEqual(Au3Synthesizer().convert(tree), '($x = side())\n')
 
     def test_logical_and_ternary(self):
         self._round_trip('$x = $c ? $a : $b And $d\n')

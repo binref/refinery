@@ -56,6 +56,17 @@ def _is_ident_part(c: str) -> bool:
     return c.isalnum() or c == '_' or ord(c) >= 0x80
 
 
+def is_au3_identifier(text: str) -> bool:
+    """
+    Whether *text* is a shape the lexer reads as exactly one name: a first character a name
+    starts with and only characters a name continues with, so a caller that prints it back can
+    rely on the lexer reading the same name again.
+    """
+    return bool(text) and _is_ident_start(text[0]) and all(
+        _is_ident_part(c) for c in text[1:]
+    )
+
+
 def decode_au3_string(text: str) -> str:
     """
     Decode an AutoIt string literal, including its delimiting quotes. A doubled quote is the

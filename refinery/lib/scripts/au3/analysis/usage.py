@@ -18,15 +18,17 @@ is pure when its may-write summary is empty, its body holds no `Exit` and no `St
 static's value survives the call that first initializes it, so which call runs first is
 observable — and every expression in it is effect-free where a call inside the body names a
 pure function that cannot reach itself through the survivors' calls — the fixpoint of that
-rule. A recursion cycle may never return — AutoIt ends the script at its recursion limit — so
-a call into one is not an effect-free evaluation and no member of a cycle is pure.
+rule. Entering a function clears `@error` and `@extended` (probe9 A17/A17b), so a script that
+may read the error state holds no pure function at all: every call into one writes what the
+script observes. A recursion cycle may never return — AutoIt ends the script at its recursion
+limit — so a call into one is not an effect-free evaluation and no member of a cycle is pure.
 """
 from __future__ import annotations
 
 import itertools
 
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from refinery.lib.scripts import Node
@@ -107,6 +109,70 @@ class Au3UsageModel:
         script.
         """
         return _effect_free(expression, self.functions, self.pure_functions)
+
+
+#: The interpreter's error-state macros: entering a user function clears both, so a read of
+#: either observes what every call wrote.
+_ERROR_MACROS = frozenset({'error', 'extended'})
+
+
+@dataclass(frozen=True)
+class Au3CalleeCensus:
+    """
+    What the calls of one tree name, gathered once for every question that asks it: the names a
+    direct identifier or a `Call` invocation over a string literal spells, whether any callee is
+    computed at run time — a value the tree does not show, which could name anything — and whether
+    the tree reads the interpreter's `@error` or `@extended`.
+    """
+    callees: frozenset[str]
+    computed_callee: bool
+    reads_error_macros: bool
+
+    def observes_error_state(self) -> bool:
+        """
+        Whether the script may read the interpreter's `@error` and `@extended` at run time: a
+        read of either macro anywhere, or a call to `Execute` by any spelling the census sees —
+        whose payload text is a reader no walk reads.
+        """
+        return (
+            self.reads_error_macros
+            or self.computed_callee
+            or 'execute' in self.callees
+        )
+
+
+def callee_census(
+    root: Au3Script,
+    functions: Mapping[str, Au3FunctionDeclaration],
+) -> Au3CalleeCensus:
+    """
+    Count what the calls of *root* name. A member callee is the one exception to every reader: it
+    dispatches through an object and reaches no builtin and no script function. A script function
+    named `Call` shadows the builtin, so its first argument is an ordinary argument rather than a
+    name.
+    """
+    callees: set[str] = set()
+    computed_callee = False
+    reads_error_macros = False
+    for node in root.walk():
+        if isinstance(node, Au3Macro):
+            reads_error_macros = reads_error_macros or node.name in _ERROR_MACROS
+        elif isinstance(node, Au3Call):
+            callee = ast.direct_callee(node)
+            if callee is not None:
+                callees.add(callee.name)
+                if callee.name == 'call' and callee.name not in functions:
+                    literal = (
+                        ast.unwrap_parens(node.arguments[0])
+                        if node.arguments else None
+                    )
+                    if not isinstance(literal, Au3StringLiteral):
+                        computed_callee = True
+                    else:
+                        callees.add(literal.value.lower())
+            elif not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
+                computed_callee = True
+    return Au3CalleeCensus(frozenset(callees), computed_callee, reads_error_macros)
 
 
 def _effect_free(
@@ -245,6 +311,7 @@ def _holds_only_effect_free_expressions(
 
 
 def _build_purity(
+    root: Au3Script,
     scope_model: Au3ScopeModel,
     summaries: dict[str, frozenset[str] | None],
 ) -> frozenset[str]:
@@ -255,7 +322,13 @@ def _build_purity(
     expression that is not effect-free under the survivors themselves and no survivor can reach
     itself through the survivors' calls, which casts its callers out with it: a recursion cycle
     may never return, and AutoIt ends the script at its recursion limit.
+
+    Entering a function clears `@error` and `@extended` (probe9 A17/A17b), so a script that may
+    read the error state holds no pure function at all: every call into one writes what the
+    script observes.
     """
+    if callee_census(root, scope_model.functions).observes_error_state():
+        return frozenset()
     functions = scope_model.functions
     pure = {
         name
@@ -396,7 +469,7 @@ def build_usage_model(
     return Au3UsageModel(
         functions=scope_model.functions,
         call_counts=_collect_call_counts(root, scope_model),
-        pure_functions=_build_purity(scope_model, summaries),
+        pure_functions=_build_purity(root, scope_model, summaries),
         channels=_collect_channels(root, scope_model),
         spellings=_collect_spellings(root),
         local_bindings=local_bindings,

@@ -68,7 +68,7 @@ from refinery.lib.scripts.au3.model import (
     Au3WithMember,
     Au3WithStatement,
 )
-from refinery.lib.scripts.au3.precedence import needs_parens
+from refinery.lib.scripts.au3.precedence import needs_parens, statement_needs_parens
 from refinery.lib.scripts.au3.token import KEYWORD_SPELLINGS, Au3TokenKind
 
 _SPELL = KEYWORD_SPELLINGS
@@ -245,7 +245,12 @@ class Au3Synthesizer(Synthesizer):
 
     def visit_Au3ExpressionStatement(self, node: Au3ExpressionStatement):
         if node.expression is not None:
-            self.visit(node.expression)
+            if statement_needs_parens(node.expression):
+                self._write('(')
+                self.visit(node.expression)
+                self._write(')')
+            else:
+                self.visit(node.expression)
 
     def visit_Au3IfStatement(self, node: Au3IfStatement):
         self._write(F'{_SPELL[_K.IF]} ')

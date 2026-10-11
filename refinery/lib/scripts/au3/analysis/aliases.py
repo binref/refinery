@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
 from refinery.lib.scripts.au3.analysis.propagation import assign_kills, execute_kills
@@ -42,7 +41,6 @@ from refinery.lib.scripts.au3.model import (
     Au3Call,
     Au3FunctionDeclaration,
     Au3Identifier,
-    Au3ParenExpression,
     Au3Script,
     Au3StringLiteral,
     Au3Variable,
@@ -112,12 +110,11 @@ def _written_initializer(node: Au3Variable) -> Expression | None:
 
 
 def _is_callee(node: Au3Variable) -> bool:
-    cursor: Node = node
-    parent = cursor.parent
-    while isinstance(parent, Au3ParenExpression):
-        cursor = parent
-        parent = cursor.parent
-    return isinstance(parent, Au3Call) and parent.callee is cursor
+    """
+    Whether the variable occurrence stands in the callee position of a call, through any number
+    of parentheses.
+    """
+    return ast.in_callee_position(node)
 
 
 def _aliased_function(initializer: Expression | None, functions: frozenset[str]) -> Au3Alias | None:

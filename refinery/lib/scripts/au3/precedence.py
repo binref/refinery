@@ -24,6 +24,7 @@ from refinery.lib.scripts.au3.model import (
     Au3ParenExpression,
     Au3Ternary,
     Au3UnaryExpression,
+    Au3Variable,
     Au3WithMember,
 )
 
@@ -130,12 +131,31 @@ def needs_parens(child: Node, parent: Node | None) -> bool:
     return parens_required(child, parent, child)
 
 
+def _is_assignment_target(node: Node) -> bool:
+    """
+    Whether *node* is a shape the parser accepts as the target of a statement-position
+    assignment: a variable, a `.member` reference, or an array or member access rooted in one.
+    """
+    if isinstance(node, (Au3Variable, Au3WithMember)):
+        return True
+    if isinstance(node, Au3ArrayAccess):
+        return node.array is not None and _is_assignment_target(node.array)
+    if isinstance(node, Au3MemberAccess):
+        return node.object is not None and _is_assignment_target(node.object)
+    return False
+
+
 def statement_needs_parens(expr: Node) -> bool:
     """
-    Whether an expression statement consisting of *expr* must be parenthesized because of a
-    leading-token hazard. AutoIt delimits statements by line and has no expression shape that
-    merges with the surrounding syntax, so no such hazard exists; the function is provided for
-    parity with the other language modules and always returns `False`.
+    Whether an expression statement consisting of *expr* must be parenthesized to keep its
+    meaning. AutoIt reads `=` both as assignment and as comparison, and at statement position the
+    parser makes an assignment of it whenever the left operand is a writable shape — so a
+    comparison whose left operand is one, `$x = side()` comparing rather than storing, must keep
+    the parentheses that hold it a comparison. `=` is the only operator the two readings share.
     """
-    del expr
-    return False
+    return (
+        isinstance(expr, Au3BinaryExpression)
+        and expr.operator == '='
+        and expr.left is not None
+        and _is_assignment_target(expr.left)
+    )

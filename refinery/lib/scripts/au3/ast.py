@@ -173,6 +173,20 @@ def direct_callee(call: Au3Call) -> Au3Identifier | None:
     return None
 
 
+def in_callee_position(node: Node) -> bool:
+    """
+    Whether *node* is the callee of a call, through any number of parentheses. Replacing the node
+    there rewrites the caller's shape — `Call("f")(1)` would collapse two calls into one — not
+    only the occurrence's own.
+    """
+    cursor = node
+    parent = cursor.parent
+    while isinstance(parent, Au3ParenExpression):
+        cursor = parent
+        parent = cursor.parent
+    return isinstance(parent, Au3Call) and parent.callee is cursor
+
+
 def declarator_variable(node: Node) -> Au3Variable | None:
     """
     The variable a declarator, parameter, or store target declares or writes, or `None` when the

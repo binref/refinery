@@ -25,10 +25,15 @@ The rules, per the AutoIt3 documentation:
 The model also holds the tree's constant names — a `Const` or `Enum` declaration or a `Const`
 parameter claims one — because no scope placement softens that fact: writing a constant is an
 interpreter refusal, so a caller that flattens a dynamic write over a name asks the model first.
+It answers whether the tree holds an include the same way — the node, or the directive an
+include line with trailing text becomes — because an unseen included file may declare storage
+and constants no tree declaration covers, so every caller that rewrites around the tree's own
+declarations asks the model first.
 """
 from __future__ import annotations
 
 import enum
+import re
 
 from dataclasses import dataclass, field
 from typing import TypeGuard, cast
@@ -36,10 +41,13 @@ from typing import TypeGuard, cast
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.model import (
+    Au3Directive,
     Au3EnumDeclaration,
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
+    Au3Include,
+    Au3IncludeOnce,
     Au3Parameter,
     Au3ScopeKind,
     Au3Script,
@@ -55,6 +63,12 @@ class Binding(enum.Enum):
     GLOBAL = enum.auto()
     LOCAL = enum.auto()
     NONE = enum.auto()
+
+
+#: An include spelled as a directive: the parser reads an include line only as the include node
+#: when the line ends after the path, so one with trailing text — the comment form the official
+#: documentation's own examples write — stays a directive that names the same unseen file.
+_INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -173,12 +187,13 @@ def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
 class Au3ScopeModel:
     """
     The script's declared functions, the answers to which storage a write or a read targets and
-    which storage an occurrence may reach, and the names the tree declares constants. Built once
-    per tree version by `build_scope_model`.
+    which storage an occurrence may reach, the names the tree declares constants, and whether the
+    tree holds an include. Built once per tree version by `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
     constant_names: frozenset[str] = frozenset()
+    holds_an_include: bool = False
 
     @property
     def function_names(self) -> frozenset[str]:
@@ -237,7 +252,9 @@ class Au3ScopeModel:
         declaration in the body sees the global and a read after it the local (probe4 22-23), and
         a function that declares the name `Global` reads the global throughout. A name a `Dim`
         in the function declares forces no storage, so a read of it keeps the global: the
-        function created no local the read could see.
+        function created no local the read could see. A parameter read inside the body targets
+        the local, but a read inside a parameter default runs before any parameter is bound, so
+        it keeps the global — the only storage that could exist where it stands.
         """
         if scope is None:
             return Binding.GLOBAL
@@ -245,6 +262,8 @@ class Au3ScopeModel:
         if facts is None or name in facts.global_names:
             return Binding.GLOBAL
         if name in facts.parameters:
+            if _top_level_index(scope, read) < 0:
+                return Binding.GLOBAL
             return Binding.LOCAL
         first = facts.first_local.get(name)
         if first is None:
@@ -266,7 +285,9 @@ class Au3ScopeModel:
         statement's own initializer runs — `Local $x = $x` is an interpreter refusal (probe9g)
         where the dynamic read of the same name answers `""` — so a caller that replaces a
         dynamic read with the plain one asks this instead. A parameter needs no claim: it exists
-        from the moment the function runs.
+        once the function's parameters are bound, and the defaults that fill them run before any
+        is, so a read inside a parameter default — of the very parameter being defaulted no less
+        — targets nothing the plain read may name and counts only inside the body.
         """
         if scope is None:
             return False
@@ -274,7 +295,7 @@ class Au3ScopeModel:
         if facts is None or name in facts.global_names:
             return False
         if name in facts.parameters:
-            return True
+            return _top_level_index(scope, read) >= 0
         first = facts.first_local.get(name)
         if first is None:
             return False
@@ -294,7 +315,8 @@ class Au3ScopeModel:
         sees one an earlier iteration created, so the occurrence and the claim sharing their
         top-level statement counts as preceding it. A read that provably precedes every claim —
         `read_binding` answering `Binding.GLOBAL` with no claim behind it — is one no local can
-        reach.
+        reach. An occurrence inside a parameter default may bind no local at all: no parameter
+        is bound and no body statement has run where it stands.
         """
         if scope is None:
             return False
@@ -302,7 +324,7 @@ class Au3ScopeModel:
         if facts is None or name in facts.global_names:
             return False
         if name in facts.parameters:
-            return True
+            return _top_level_index(scope, occurrence) >= 0
         index = _top_level_index(scope, occurrence)
         return any(position <= index for position in facts.local_positions.get(name, ()))
 
@@ -327,14 +349,26 @@ def _constant_names(root: Au3Script) -> frozenset[str]:
 
 def build_scope_model(root: Au3Script) -> Au3ScopeModel:
     """
-    Collect the function declarations of *root*, the local facts of each body, and the names the
-    tree declares constants. Two functions of one name never coexist in a script AutoIt runs, so
-    the mapping keeps the last of them without comment.
+    Collect the function declarations of *root*, the local facts of each body, the names the tree
+    declares constants, and whether the tree holds an include — the node the parser reads an
+    include line without trailing text into, or the directive one with trailing text becomes.
+    Two functions of one name never coexist in a script AutoIt runs, so the mapping keeps the
+    last of them without comment.
     """
     functions: dict[str, Au3FunctionDeclaration] = {}
+    holds_an_include = False
     for node in root.walk():
         if isinstance(node, Au3FunctionDeclaration):
             if node.name is not None:
                 functions[node.name.name] = node
+        elif isinstance(node, (Au3Include, Au3IncludeOnce)):
+            holds_an_include = True
+        elif isinstance(node, Au3Directive) and _INCLUDE_SPELLING.match(node.text):
+            holds_an_include = True
     local_facts = {function: _local_facts(function) for function in functions.values()}
-    return Au3ScopeModel(functions, local_facts, _constant_names(root))
+    return Au3ScopeModel(
+        functions,
+        local_facts,
+        _constant_names(root),
+        holds_an_include,
+    )

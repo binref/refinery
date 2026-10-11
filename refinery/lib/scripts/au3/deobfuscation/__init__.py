@@ -8,10 +8,10 @@ a `Call`, `Assign`, or `Eval` over a string-literal name becomes the direct call
 or plain read that name spells — `fold` replaces what is known — an expression whose operands
 pin its value becomes the literal of that value, and a variable read the propagation walk proves
 a value for becomes that literal — `emulate` replaces what a script-defined function returns:
-the interpreter runs the call
-over the value domain and the call becomes the literal of its result — and `cleanup` removes what
-no live code reaches: a function no call names, a declarator no occurrence binds, and an
-effect-free statement, each only when no dynamic-name channel could observe the removal.
+the interpreter runs the call over the value domain and the call becomes the literal of its
+result — and `cleanup` removes what no live code reaches: a function no call names, a declarator
+no occurrence binds, and an effect-free statement, each only when no dynamic-name channel could
+observe the removal.
 
 `fold` depends on `normalize` and re-triggers it: folding an `Execute` call's argument into the
 string literal it always was is what makes the next `normalize` pass see a flattenable call, and
