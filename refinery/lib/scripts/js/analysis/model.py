@@ -2510,12 +2510,15 @@ class SemanticModel:
     ) -> bool:
         """
         Whether evaluating *statement* throws on no run at all, so that a run leaving it for a
-        handler never leaves it half done. Only a declaration of plain names and an expression
-        statement qualify, each when `evaluation_cannot_throw` holds for everything it evaluates.
-        Binding a destructuring pattern can throw after its initializer ran, and a `var` declared
-        inside a `with` body stores through the object, whose setter may throw, so a declaration
-        with either does not qualify. *store_cannot_throw* is handed on to
-        `evaluation_cannot_throw`.
+        handler never leaves it half done. Only a declaration of plain names, a function declaration
+        and an expression statement qualify, the first and the last when `evaluation_cannot_throw`
+        holds for everything they evaluate. Binding a destructuring pattern can throw after its
+        initializer ran, and a `var` declared inside a `with` body stores through the object, whose
+        setter may throw, so a declaration with either does not qualify. Reaching a function
+        declaration does nothing, since its function is in place before the statements of its scope
+        run, except where Annex B copies it out of its block: that copy stores the function into the
+        name of the enclosing scope, which is ruled as every other store into a declared name is.
+        *store_cannot_throw* is handed on to `evaluation_cannot_throw`.
         """
         if isinstance(statement, JsVariableDeclaration):
             for declarator in statement.declarations:
@@ -2537,6 +2540,13 @@ class SemanticModel:
                 if init is not None and not self.evaluation_cannot_throw(init, store_cannot_throw):
                     return False
             return True
+        if isinstance(statement, JsFunctionDeclaration):
+            binding = None if statement.id is None else self.binding_of(statement.id)
+            if binding is None:
+                return False
+            if statement_list_holding(statement) is _statement_list_holder_of(binding.scope):
+                return True
+            return self._stores_into_without_throwing(binding, statement)
         if isinstance(statement, JsExpressionStatement):
             return self.evaluation_cannot_throw(statement.expression, store_cannot_throw)
         return False

@@ -728,3 +728,37 @@ class TestDominance(TestBase):
         ast, dom = self._dominance(
             'try { var w = 5; h(); } catch (e) {} function g() { return w; } g();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'w'), self._func(ast, 'g')))
+
+    def test_a_function_declared_in_a_try_block_in_a_loop_is_in_place_for_a_call_after_it(self):
+        """
+        A run that throws in the `try` block loops back past the declaration, and reaching a
+        function declaration throws on no run, so every run reaching the call has passed it.
+        """
+        ast, dom = self._dominance(
+            'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } }')
+        declaration, call = self._idents(ast, 'f')
+        self.assertTrue(dom.binding_established_before(dom.model.binding_of(declaration), call))
+
+    def test_a_function_declared_after_a_throw_in_its_try_block_is_not_in_place_for_the_handler(self):
+        ast, dom = self._dominance(
+            'function g() { for (var i = 0; i < 2; i++) { try { if (i === 0) { throw 1; } '
+            'function f() {} f(); } catch (e) { f; } } }')
+        declaration, call, handler = self._idents(ast, 'f')
+        binding = dom.model.binding_of(declaration)
+        self.assertTrue(dom.binding_established_before(binding, call))
+        self.assertFalse(dom.binding_established_before(binding, handler))
+
+    def test_a_block_function_is_not_in_place_after_its_block_where_a_throw_skips_the_block(self):
+        ast, dom = self._dominance(
+            'function g() { for (var i = 0; i < 3; i++) { try { if (i === 0) { throw 1; } '
+            '{ function f() { return i; } } } catch (e) {} f; } }')
+        declaration, read = self._idents(ast, 'f')
+        self.assertFalse(dom.binding_established_before(dom.model.binding_of(declaration), read))
+
+    def test_a_function_declared_in_a_try_block_in_a_loop_is_not_in_place_after_the_loop(self):
+        ast, dom = self._dominance(
+            'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } f(); }')
+        declaration, call, after = self._idents(ast, 'f')
+        binding = dom.model.binding_of(declaration)
+        self.assertTrue(dom.binding_established_before(binding, call))
+        self.assertFalse(dom.binding_established_before(binding, after))
