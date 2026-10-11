@@ -3,15 +3,314 @@ from __future__ import annotations
 import base64
 import inspect
 import lzma
+import unittest
 
+from test import TestBase
+from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91
 
+ALPHABET = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
+
+#: A table of strings encoded with `ALPHABET`: 'fOg=r' is 'push', 'lrCD^' is 'Fizz', '#ZlH' is 'log'.
+TABLE = '["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","fOg=r","lrCD^","#ZlH"]'
+
+#: `TABLE` with 'eww6zXGM(' at index 11, which encodes a byte order mark followed by 'Fizz'.
+TABLE_WITH_A_BYTE_ORDER_MARK = '["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","fOg=r","eww6zXGM(","#ZlH"]'
+
+#: Another table of the same length, with 'Fizz' at index 10.
+OTHER_TABLE = '["a","b","c","d","e","f","g","h","i","j","lrCD^","#ZlH","fOg=r"]'
+
+#: The function turning the decoded bytes into a string through `Buffer`.
+BUFFER = 'function bufferToString(b) { return Buffer.from(b).toString("utf-8"); }'
+
+#: The function turning the decoded bytes into a string through `TextDecoder`, which drops a leading
+#: byte order mark.
+TEXT_DECODER = 'function bufferToString(b) { return new TextDecoder()["decode"](new Uint8Array(b)); }'
+
+#: The cache and the table every accessor below reads, and the function turning bytes into a string.
+HEAD = F'var cache = {{}};\nvar table = {TABLE};\n{BUFFER}\n'
+
+
+def decoder_body() -> str:
+    """
+    The body of a decoder over `ALPHABET`, as the obfuscator writes it.
+    """
+    alphabet = ALPHABET.replace('"', '\\"')
+    return (
+        F'var alpha = "{alphabet}"; var raw = "" + (str || ""); var len = raw.length; var ret = []; '
+        'var b = 0, n = 0, v = -1; for (var i = 0; i < len; i++) { var p = alpha.indexOf(raw[i]); '
+        'if (p === -1) continue; if (v < 0) { v = p; } else { v += p * 91; b |= v << n; '
+        'n += (v & 8191) > 88 ? 13 : 14; do { ret.push(b & 0xff); b >>= 8; n -= 8; } while (n > 7); '
+        'v = -1; } } if (v > -1) { ret.push((b | v << n) & 0xff); } return bufferToString(ret);'
+    )
+
+
+def decoder(name: str) -> str:
+    """
+    A decoder over `ALPHABET` declared as *name*.
+    """
+    return F'function {name}(str) {{ {decoder_body()} }}'
+
+
+def accessor_body(cache: str, decode: str, table: str = 'table') -> str:
+    """
+    The body of an accessor over *cache*, *decode* and *table*, as the obfuscator writes it.
+    """
+    return (
+        F'if (typeof {cache}[index] === "undefined") {{ return {cache}[index] = {decode}({table}[index]); }} '
+        F'return {cache}[index];'
+    )
+
+
+def accessor(name: str, cache: str, decode: str, table: str = 'table') -> str:
+    """
+    An accessor over *cache*, *decode* and *table* declared as *name*.
+    """
+    return F'function {name}(index) {{ {accessor_body(cache, decode, table)} }}'
+
+
+AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP = (
+    HEAD
+    + 'function find() {\n'
+    + '  for (var k = 0; k < 2; k++) {\n'
+    + '    try {\n'
+    + '      ' + decoder('dec') + '\n'
+    + '      ' + accessor('acc', 'cache', 'dec') + '\n'
+    + '      var out = [];\n'
+    + '      for (var j = 0; j < acc(10).length; j++) { out.push(j); }\n'
+    + '      return acc(12) + out.length;\n'
+    + '    } catch (e) {}\n'
+    + '  }\n'
+    + '}\n'
+    + 'console.log(find());\n'
+)
+
+A_PROGRAM_FUNCTION_HOLDING_A_DECODER = (
+    HEAD
+    + 'function parse(src) {\n'
+    + '  ' + decoder('d') + '\n'
+    + '  ' + accessor('a', 'cache', 'd') + '\n'
+    + '  return src + a(11);\n'
+    + '}\n'
+    + 'function run() {\n'
+    + '  ' + decoder('parse') + '\n'
+    + '  ' + accessor('acc', 'cache', 'parse') + '\n'
+    + '  return acc(10);\n'
+    + '}\n'
+    + 'console.log(parse("x"), run());\n'
+)
+
+AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED = (
+    HEAD
+    + decoder('decode') + '\n'
+    + 'var acc;\n'
+    + 'var early;\n'
+    + 'try { early = acc(10); } catch (e) { early = e.constructor.name; }\n'
+    + 'acc = function (index) { ' + accessor_body('cache', 'decode') + ' };\n'
+    + 'console.log(early, acc(11));\n'
+)
+
+AN_ACCESSOR_CALLED_IN_A_WITH_BODY = (
+    HEAD
+    + decoder('decode') + '\n'
+    + accessor('acc', 'cache', 'decode') + '\n'
+    + 'var o = { k: 1 };\n'
+    + 'console.log(acc(10));\n'
+    + 'with (o) { console.log(acc(11), k); }\n'
+)
+
+#: Programs holding the machinery of concealed strings in a shape that decides what a call of an
+#: accessor returns or whether the machinery is still named, mapped to what Node prints for each.
+A_PROGRAM_HOLDING_CONCEALED_STRINGS = {
+    AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP: 'log4\n',
+    A_PROGRAM_FUNCTION_HOLDING_A_DECODER: 'xFizz push\n',
+    AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED: 'TypeError Fizz\n',
+    AN_ACCESSOR_CALLED_IN_A_WITH_BODY: 'push\nFizz 1\n',
+    (
+        HEAD
+        + 'function g() {\n'
+        + '  ' + decoder('D') + '\n'
+        + '  ' + accessor('A', 'cache', 'D') + '\n'
+        + '  return A(10);\n'
+        + '}\n'
+        + 'function f(a, D, A) {\n'
+        + '  if (!A) { A = function (index) { ' + accessor_body('cache', 'D') + ' }; }\n'
+        + '  if (!D) { D = function (str) { ' + decoder_body() + ' }; }\n'
+        + '  return a + A(11);\n'
+        + '}\n'
+        + 'console.log(g(), f("x"));\n'
+    ): 'push xFizz\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(typeof new acc(10), acc(11));\n'
+    ): 'object Fizz\n',
+    (
+        F'var NS = {{}};\nNS.cache = {{}};\n{BUFFER}\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'NS.cache', 'decode', 'NS.table') + '\n'
+        + 'var early;\n'
+        + 'try { early = acc(10); } catch (e) { early = e.constructor.name; }\n'
+        + F'NS.table = {TABLE};\n'
+        + 'console.log(early, acc(11));\n'
+    ): 'TypeError Fizz\n',
+    (
+        F'var NS = {{}};\nNS.cache = {{}};\n{BUFFER}\n'
+        + F'NS.table = {TABLE};\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'NS.cache', 'decode', 'NS.table') + '\n'
+        + 'NS.table = ["a","b","c","d","e","f","g","h","i","j","#ZlH","#ZlH","fOg=r"];\n'
+        + 'console.log(acc(10), acc(12));\n'
+    ): 'log push\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10), decode("lrCD^"));\n'
+    ): 'push Fizz\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + 'var acc = function (index) { ' + accessor_body('cache', 'decode') + ' };\n'
+        + 'var first = acc(10);\n'
+        + 'acc = function () { return "other"; };\n'
+        + 'console.log(first, acc(11));\n'
+    ): 'push other\n',
+    (
+        HEAD
+        + 'function run(o) {\n'
+        + '  ' + decoder('decode') + '\n'
+        + '  ' + accessor('acc', 'cache', 'decode') + '\n'
+        + '  var a = acc(10);\n'
+        + '  with (o) { return a + acc(11) + k; }\n'
+        + '}\n'
+        + 'console.log(run({ k: 1 }));\n'
+    ): 'pushFizz1\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'function later(o) {\n'
+        + '  with (o) {\n'
+        + '    acc2 = function (index) { ' + accessor_body('cache', 'decode') + ' };\n'
+        + '    return acc2(11);\n'
+        + '  }\n'
+        + '}\n'
+        + 'var acc2;\n'
+        + 'console.log(later({}));\n'
+    ): 'push\nFizz\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'var o = { k: 1 };\n'
+        + 'with (o) {\n'
+        + '  ' + decoder('decode2') + '\n'
+        + '  ' + accessor('acc2', 'cache', 'decode2') + '\n'
+        + '  console.log(acc2(11), k);\n'
+        + '}\n'
+    ): 'push\nFizz 1\n',
+    (
+        F'var cache = {{}};\nvar table = {TABLE_WITH_A_BYTE_ORDER_MARK};\n{TEXT_DECODER}\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(JSON.stringify(acc(11)), acc(11).length);\n'
+    ): '"Fizz" 4\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + 'function acc(index) { if (typeof cache[index] === "undefined") { '
+        + 'return cache[index] = decode(table[index]).split("").reverse().join(""); } return cache[index]; }\n'
+        + 'console.log(acc(10), acc(11));\n'
+    ): 'hsup zziF\n',
+    (
+        F'var table = {TABLE};\n{BUFFER}\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'var early;\n'
+        + 'try { early = acc(10); } catch (e) { early = e.constructor.name; }\n'
+        + 'var cache = {};\n'
+        + 'console.log(early, acc(11));\n'
+    ): 'TypeError Fizz\n',
+    (
+        F'var NS = {{}};\nNS.cache = {{}};\n{BUFFER}\n'
+        + F'NS.table = {TABLE};\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'NS.cache', 'decode', 'NS.table') + '\n'
+        + 'function swap(o) { with (o) { NS.table = ["a","b","c","d","e","f","g","h","i","j","#ZlH","#ZlH","fOg=r"]; } }\n'
+        + 'swap({});\n'
+        + 'console.log(acc(10), acc(12));\n'
+    ): 'log push\n',
+    (
+        'var memo = {};\n'
+        'var words = ["red","green","blue","cyan","magenta","yellow","black","white","gray","pink","alpha","six","abc"];\n'
+        'function encode(str) { var table = "' + ALPHABET.replace('"', '\\"') + '"; '
+        'var raw = Buffer.from(str, "utf-8"); var len = raw.length; var ret = ""; var n = 0; var b = 0; '
+        'for (var i = 0; i < len; i++) { b |= raw[i] << n; n += 8; if (n > 13) { var v = b & 8191; '
+        'if (v > 88) { b >>= 13; n -= 13; } else { v = b & 16383; b >>= 14; n -= 14; } '
+        'ret += table[v % 91] + table[(v / 91) | 0]; } } '
+        'if (n) { ret += table[b % 91]; if (n > 7 || b > 90) ret += table[(b / 91) | 0]; } return ret; }\n'
+        'function encoded(index) { if (typeof memo[index] === "undefined") { return memo[index] = encode(words[index]); } '
+        'return memo[index]; }\n'
+        'console.log(encoded(10), encoded(12));\n'
+    ): 'S?aHNE0 pQ*l\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + accessor('acc2', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'with ({}) { console.log(acc2(11)); }\n'
+    ): 'push\nFizz\n',
+    (
+        F'var NS = {{}};\nNS.cache = {{}};\nNS.table = {TABLE};\n'
+        + F'NS.swap = function () {{ this.table = {OTHER_TABLE}; }};\n'
+        + BUFFER + '\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'NS.cache', 'decode', 'NS.table') + '\n'
+        + 'NS.swap();\n'
+        + 'console.log(acc(10));\n'
+    ): 'Fizz\n',
+    (
+        F'var other = {OTHER_TABLE};\n'
+        + 'var NS = { cache: {}, get table() { return other; }, set table(v) {} };\n'
+        + F'NS.table = {TABLE};\n'
+        + BUFFER + '\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'NS.cache', 'decode', 'NS.table') + '\n'
+        + 'console.log(acc(10));\n'
+    ): 'Fizz\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'table[10] = "lrCD^";\n'
+        + 'console.log(acc(10));\n'
+    ): 'Fizz\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'table.reverse();\n'
+        + 'console.log(acc(0));\n'
+    ): 'log\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'cache[10] = "other";\n'
+        + 'console.log(acc(10));\n'
+    ): 'other\n',
+}
+
 
 class TestStringConcealing(TestJsDeobfuscator):
-
-    _ALPHABET = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
 
     @staticmethod
     def _decode_js(name: str, alphabet: str, indent: int = 4) -> list[str]:
@@ -59,7 +358,7 @@ class TestStringConcealing(TestJsDeobfuscator):
             '}',
         ]
 
-    _ESCAPED_ALPHABET = _ALPHABET.replace('"', '\\"')
+    _ESCAPED_ALPHABET = ALPHABET.replace('"', '\\"')
 
     def _minimal_sample(self) -> str:
         return '\n'.join([
@@ -74,9 +373,9 @@ class TestStringConcealing(TestJsDeobfuscator):
         ])
 
     def test_base91_decode(self):
-        self.assertEqual(_decode_base91('fOg=r', self._ALPHABET), 'push')
-        self.assertEqual(_decode_base91('lrCD^', self._ALPHABET), 'Fizz')
-        self.assertEqual(_decode_base91('#ZlH', self._ALPHABET), 'log')
+        self.assertEqual(_decode_base91('fOg=r', ALPHABET), 'push')
+        self.assertEqual(_decode_base91('lrCD^', ALPHABET), 'Fizz')
+        self.assertEqual(_decode_base91('#ZlH', ALPHABET), 'log')
 
     def test_accessor_calls_resolved(self):
         result = self._deobfuscate(self._minimal_sample())
@@ -298,4 +597,39 @@ class TestStringConcealing(TestJsDeobfuscator):
                 """
             ),
             self._deobfuscate(source),
+        )
+
+    def test_an_accessor_declared_in_a_try_block_inside_a_loop_is_resolved(self):
+        self.assertEqual(
+            "console.log('log4');",
+            deobfuscate_source(AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP, module=True),
+        )
+
+    def test_a_function_holding_a_decoder_is_no_decoder_of_its_own(self):
+        self.assertEqual(
+            "console.log('xFizz', 'push');",
+            deobfuscate_source(A_PROGRAM_FUNCTION_HOLDING_A_DECODER, module=True),
+        )
+
+    def test_a_call_before_the_accessor_is_assigned_stays_a_call(self):
+        result = deobfuscate_source(AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED, module=True)
+        self.assertIn('early = acc(10);', result)
+        self.assertIn("console.log(early, 'Fizz');", result)
+
+    def test_an_accessor_called_in_a_with_body_keeps_its_machinery(self):
+        result = deobfuscate_source(AN_ACCESSOR_CALLED_IN_A_WITH_BODY, module=True)
+        self.assertIn("console.log('push');", result)
+        self.assertIn('console.log(acc(11), k);', result)
+        self.assertIn('function acc(index)', result)
+        self.assertIn('function decode(str)', result)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutConcealedStrings(TestBase):
+
+    def test_each_program_prints_what_it_printed(self):
+        rows = A_PROGRAM_HOLDING_CONCEALED_STRINGS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
         )

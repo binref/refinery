@@ -4822,3 +4822,42 @@ class TestAnEvalTheScriptAssignsIsStillEval(TestBase):
             {source: before_and_after_in_a_host(source) for source in rows},
             {source: (behavior, behavior) for source, behavior in rows.items()},
         )
+
+
+#: A function nothing calls, beside a nested function that declares a name of its own spelled like
+#: it, mapped to what the deobfuscation writes once the function is removed.
+A_FUNCTION_ONLY_A_SHADOWING_NAME_SPELLS = {
+    a_program("""
+        function outer(n) {
+          function dec(s) { return s + 1; }
+          var other = function (k) { var dec = [k]; return dec.length + n; };
+          return other;
+        }
+        console.log(outer(2)(1));
+        """): inspect.cleandoc("""
+        function outer(n) {
+          var other = function(k) {
+            var dec = [k];
+            return dec.length + n;
+          };
+          return other;
+        }
+        console.log(outer(2)(1));
+        """),
+}
+
+
+class TestAFunctionNothingCallsIsRemovedWhateverShadowsItsName(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` decides whether a function
+    declaration is reachable by the names the statements around it spell, so a function nothing
+    calls is kept wherever a nested function declares a name of its own spelled the same. The
+    renaming setting of an obfuscator gives functions of different scopes one name, so the
+    deobfuscation of its output keeps functions nothing calls. The fix is to decide reachability
+    through the references the semantic model records.
+    """
+
+    @unittest.expectedFailure
+    def test_the_function_nothing_calls_is_removed(self):
+        rows = A_FUNCTION_ONLY_A_SHADOWING_NAME_SPELLS
+        self.assertEqual({source: folded(source) for source in rows}, rows)

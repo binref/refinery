@@ -1,42 +1,57 @@
 """
-The obfuscator replaces string literals with calls to per-scope caching accessor functions. Each
-accessor lazily decodes an encoded string from a shared global string table through a base91
-decoder that uses a unique shuffled 91-character alphabet. This transformer detects the
-infrastructure structurally, decodes every string in Python, replaces accessor calls with string
-literals, and removes the dead definitions.
+Decode the strings an obfuscator conceals behind base91 decoders. Every string literal becomes a call
+of an accessor, which decodes an element of a shared table of encoded strings once and keeps the
+result in a cache:
+
+    var table = ["fOg=r", ...];
+    var cache = {};
+    function decode(str) { var alphabet = "..."; ...; return bufferToString(bytes); }
+    function accessor(index) {
+        if (typeof cache[index] === "undefined") { return cache[index] = decode(table[index]); }
+        return cache[index];
+    }
+
+Every scope gets a decoder with an alphabet of its own. A decoder and an accessor are recognized by
+their templates (`refinery.lib.scripts.js.deobfuscation.templates`), whatever their names are and
+wherever they stand, through the names that hold them. A call of an accessor whose decoder, table
+and cache are in place before it runs becomes the string it decodes, and the machinery goes once
+nothing names it any longer.
 """
 from __future__ import annotations
 
-from typing import NamedTuple, Sequence
+from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
+from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, statement_list_of
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    binding_has_references,
-    find_enclosing_body,
+    binding_constant,
     make_string_literal,
-    member_key,
+    nothing_still_names,
     remove_declarator,
 )
+from refinery.lib.scripts.js.deobfuscation.templates import Template, matches
 from refinery.lib.scripts.js.model import (
-    JsArrayExpression,
+    FUNCTION_NODES,
     JsAssignmentExpression,
-    JsBlockStatement,
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
-    JsFunctionExpression,
+    JsFunctionNode,
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
     JsObjectExpression,
-    JsRestElement,
+    JsParenthesizedExpression,
+    JsReturnStatement,
     JsScript,
+    JsSequenceExpression,
     JsStringLiteral,
-    JsVariableDeclaration,
     JsVariableDeclarator,
-    wraps_return,
+    strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
 
@@ -75,538 +90,390 @@ def _is_base91_alphabet(s: str) -> bool:
     return len(s) == 91 and len(set(s)) == 91
 
 
-class _DecoderInfo(NamedTuple):
-    node: Node
-    name: str
+_DECODER_BODY = (
+    'var raw = "" + (str || ""); var len = raw.length; var ret = []; var b = 0; var n = 0; var v = -1;'
+    ' for (var i = 0; i < len; i++) { var p = ALPHABET.indexOf(raw[i]); if (p === -1) continue;'
+    ' if (v < 0) { v = p; } else { v += p * 91; b |= v << n; n += (v & 8191) > 88 ? 13 : 14;'
+    ' do { ret.push(b & 0xff); b >>= 8; n -= 8; } while (n > 7); v = -1; } }'
+    ' if (v > -1) { ret.push((b | (v << n)) & 0xff); } return BUFFER(ret);'
+)
+
+_DECODER_BODY_READING_A_VARIABLE = _DECODER_BODY.replace('ALPHABET.', 'table.')
+
+_DECODER_TEMPLATES = (
+    Template(
+        F'function DECODE(str) {{ {_DECODER_BODY} }}',
+        frozenset({'ALPHABET', 'BUFFER'}),
+    ),
+    Template(
+        F'function DECODE(str) {{ var table = ALPHABET; {_DECODER_BODY_READING_A_VARIABLE} }}',
+        frozenset({'ALPHABET', 'BUFFER'}),
+    ),
+)
+"""
+The decoder as the obfuscator writes it, with its alphabet inlined and in a variable of its own.
+`ALPHABET` stands for the literal holding the alphabet and `BUFFER` for the callee of the call that
+turns the decoded bytes into a string.
+"""
+
+_ACCESSOR_TEMPLATES = (
+    Template(
+        'function ACCESSOR(index) { if (typeof CACHE[index] === "undefined") {'
+        ' return CACHE[index] = DECODE(TABLE[index]); } return CACHE[index]; }',
+        frozenset({'CACHE', 'DECODE', 'TABLE'}),
+    ),
+    Template(
+        'function ACCESSOR(index) { if (typeof CACHE[index] === "undefined") {'
+        ' return CACHE[index] = DECODE(TABLE[index]); } else { return CACHE[index]; } }',
+        frozenset({'CACHE', 'DECODE', 'TABLE'}),
+    ),
+)
+"""
+The accessor as the obfuscator writes it, its last `return` after the `if` or in an `else`.
+`CACHE`, `DECODE` and `TABLE` stand for the names holding the cache, the decoder and the table.
+"""
+
+
+class _Held(NamedTuple):
+    """
+    A function a name holds as its one value, and the node installing it there, which goes when the
+    function goes: the declaration, the declarator, or the statement assigning it.
+    """
+    binding: Binding
+    function: JsFunctionNode
+    definition: Node | None
+
+
+class _Decoder(NamedTuple):
+    held: _Held
     alphabet: str
 
 
-class _AccessorInfo(NamedTuple):
-    node: Node
-    name: str
-    decoder_name: str
-    table_name: str
-    cache_name: str
+class _Parts(NamedTuple):
+    """
+    The names standing where the accessor template has its decoder, its table and its cache.
+    """
+    decoder: Binding
+    table: Binding
+    cache: Binding
 
 
-class _StringTableInfo(NamedTuple):
-    declarator: JsVariableDeclarator | None
-    assignment: JsAssignmentExpression | None
-    name: str
+class _Accessor(NamedTuple):
+    """
+    An accessor, the decoder it calls, the table it reads, the strings that table holds, and the
+    cache it keeps the decoded strings in.
+    """
+    held: _Held
+    decoder: _Decoder
+    table: Binding
     strings: list[str]
+    cache: Binding
 
 
-def _try_string_array(init: Node) -> list[str] | None:
-    """
-    If *init* is an array of at least 10 string literals, return the string values.
-    """
-    if not isinstance(init, JsArrayExpression):
-        return None
-    elements = init.elements
-    if len(elements) < 10:
-        return None
-    strings: list[str] = []
-    for el in elements:
-        if not isinstance(el, JsStringLiteral) or el.value is None:
-            return None
-        strings.append(el.value)
-    return strings
-
-
-def _find_string_tables(root: Node) -> list[_StringTableInfo]:
-    """
-    Find string table arrays: either a `var`/`const`/`let` declarator whose initializer is an array
-    of 10+ string literals, or a bare assignment `NAME = [...]` with the same shape. The latter
-    covers the obfuscator pattern where variables are hoisted as `var NAME;` and later assigned via
-    function default arguments. Also handles member-expression LHS like `obj.prop = [...]`.
-    """
-    tables: list[_StringTableInfo] = []
-    seen: set[str] = set()
-    for node in root.walk():
-        if isinstance(node, JsVariableDeclarator):
-            if not isinstance(node.id, JsIdentifier):
-                continue
-            if node.init is None:
-                continue
-            strings = _try_string_array(node.init)
-            if strings is not None:
-                tables.append(_StringTableInfo(node, None, node.id.name, strings))
-                seen.add(node.id.name)
-        elif isinstance(node, JsAssignmentExpression):
-            if isinstance(node.left, JsIdentifier):
-                names = [node.left.name]
-            elif isinstance(node.left, JsMemberExpression):
-                full = member_key(node.left)
-                if full is None:
-                    continue
-                names = _dotted_name_variants(full)
-            else:
-                continue
-            if any(n in seen for n in names):
-                continue
-            rhs = node.right
-            if rhs is None:
-                continue
-            strings = _try_string_array(rhs)
-            if strings is not None:
-                for name in names:
-                    tables.append(_StringTableInfo(None, node, name, strings))
-                    seen.add(name)
-    return tables
-
-
-def _dotted_name_variants(full: str) -> list[str]:
-    """
-    Return all suffix variants of a dotted name with at least two parts. For `a.b.c` returns
-    `['a.b.c', 'b.c']`. This handles the case where a scope prefix (CFF artifact) is present in
-    the LHS but not in accessor references.
-    """
-    parts = full.split('.')
-    result = [full]
-    for i in range(1, len(parts) - 1):
-        result.append('.'.join(parts[i:]))
-    return result
-
-
-def _find_decoders(root: Node) -> list[_DecoderInfo]:
-    """
-    Find base91 decoder functions. A decoder is identified by having exactly one parameter and
-    containing a local variable initialized to a 91-character string with 91 unique characters (the
-    shuffled base91 alphabet). Matches both function declarations and function expressions assigned
-    to identifiers.
-    """
-    decoders: list[_DecoderInfo] = []
-    for node in root.walk():
-        if isinstance(node, JsFunctionDeclaration):
-            if wraps_return(node):
-                continue
-            if node.id is None or node.body is None:
-                continue
-            if len(node.params) != 1:
-                continue
-            if not isinstance(node.body, JsBlockStatement):
-                continue
-            alphabet = _extract_alphabet(node.body.body)
-            if alphabet is not None:
-                decoders.append(_DecoderInfo(node, node.id.name, alphabet))
-        elif isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
-            func = node.right
-            if not isinstance(func, JsFunctionExpression):
-                continue
-            if wraps_return(func):
-                continue
-            if len(func.params) != 1:
-                continue
-            if func.body is None or not isinstance(func.body, JsBlockStatement):
-                continue
-            alphabet = _extract_alphabet(func.body.body)
-            if alphabet is not None:
-                stmt = node.parent if isinstance(node.parent, JsExpressionStatement) else func
-                decoders.append(_DecoderInfo(stmt, node.left.name, alphabet))
-    return decoders
-
-
-def _extract_alphabet(body: Sequence[Node]) -> str | None:
-    """
-    Scan the statements in a function body for a string literal of exactly 91 unique characters —
-    the base91 decoder alphabet. Checks variable initializers first, then falls back to any string
-    literal in the body (covers the case where constant inlining has folded the variable away).
-    """
-    for stmt in body:
-        if not isinstance(stmt, JsVariableDeclaration):
-            continue
-        for decl in stmt.declarations:
-            if not isinstance(decl, JsVariableDeclarator):
-                continue
-            if not isinstance(decl.init, JsStringLiteral) or decl.init.value is None:
-                continue
-            if _is_base91_alphabet(decl.init.value):
-                return decl.init.value
-    for stmt in body:
-        for node in stmt.walk():
-            if isinstance(node, JsStringLiteral) and node.value is not None:
-                if _is_base91_alphabet(node.value):
-                    return node.value
+def _definition(function: JsFunctionNode) -> Node | None:
+    if isinstance(function, JsFunctionDeclaration):
+        return function
+    parent = function.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        parent = parent.parent
+    if isinstance(parent, JsVariableDeclarator):
+        return parent
+    if isinstance(parent, JsAssignmentExpression) and isinstance(parent.parent, JsExpressionStatement):
+        return parent.parent
     return None
 
 
-def _find_accessors(
-    root: Node,
-    decoder_names: set[str],
-    table_names: set[str],
-) -> list[_AccessorInfo]:
+def _held_functions(model: SemanticModel, root: Node) -> Iterator[_Held]:
     """
-    Find caching accessor functions. An accessor has exactly one parameter (or a single rest
-    element) and its body matches::
-
-        if (typeof CACHE[param] === 'undefined') {
-            return CACHE[param] = DECODER(TABLE[param]);
-        }
-        return CACHE[param];
-
-    Detection is structural: the function must reference a known decoder and a known string table.
-    Matches both function declarations and function expressions assigned to identifiers.
+    Every function that the one name invoking it holds as its only value.
     """
-    accessors: list[_AccessorInfo] = []
     for node in root.walk():
-        if isinstance(node, JsFunctionDeclaration):
-            if wraps_return(node):
-                continue
-            if node.id is None or node.body is None:
-                continue
-            if len(node.params) != 1:
-                continue
-            if not isinstance(node.body, JsBlockStatement):
-                continue
-            param = node.params[0]
-            if isinstance(param, JsIdentifier):
-                pass
-            elif isinstance(param, JsRestElement) and isinstance(param.argument, JsIdentifier):
-                pass
-            else:
-                continue
-            body_stmts = node.body.body
-            if len(body_stmts) not in (1, 2, 3):
-                continue
-            info = _match_accessor_body(node.body, node.id.name, node, decoder_names, table_names)
-            if info is not None:
-                accessors.append(info)
-        elif isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
-            func = node.right
-            if not isinstance(func, JsFunctionExpression):
-                continue
-            if wraps_return(func):
-                continue
-            if func.body is None or not isinstance(func.body, JsBlockStatement):
-                continue
-            if len(func.params) != 1:
-                continue
-            param = func.params[0]
-            if isinstance(param, JsIdentifier):
-                pass
-            elif isinstance(param, JsRestElement) and isinstance(param.argument, JsIdentifier):
-                pass
-            else:
-                continue
-            body_stmts = func.body.body
-            if len(body_stmts) not in (1, 2, 3):
-                continue
-            stmt = node.parent if isinstance(node.parent, JsExpressionStatement) else func
-            info = _match_accessor_body(func.body, node.left.name, stmt, decoder_names, table_names)
-            if info is not None:
-                accessors.append(info)
-    return accessors
+        if not isinstance(node, FUNCTION_NODES):
+            continue
+        binding = model.invocation_binding(node)
+        if binding is None or len(binding.declarations) != 1:
+            continue
+        if strip_parens(model.singular_value(binding)) is not node:
+            continue
+        yield _Held(binding, node, _definition(node))
 
 
-def _extract_object_name(node: Node | None) -> str | None:
+def _own_nodes(function: Node) -> Iterator[Node]:
     """
-    Extract the effective name from a member expression's object, supporting both plain identifiers
-    and nested member expressions (dotted names like `obj.prop`).
+    Every node of *function* outside the functions nested in it.
     """
-    if node is None:
+    stack = list(function.children())
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, FUNCTION_NODES):
+            stack.extend(node.children())
+
+
+def _declared_outside(model: SemanticModel, function: Node, callee: Node | None) -> bool:
+    """
+    Whether *callee* names something *function* does not declare: a name or fixed keys read off
+    one, possibly behind numbers a comma operator discards, as in `(0, Buffer.from)`.
+    """
+    callee = strip_parens(callee)
+    if isinstance(callee, JsSequenceExpression):
+        *discarded, callee = callee.expressions
+        if not all(isinstance(strip_parens(part), JsNumericLiteral) for part in discarded):
+            return False
+        callee = strip_parens(callee)
+    while isinstance(callee, JsMemberExpression) and not callee.computed:
+        callee = strip_parens(callee.object)
+    if not isinstance(callee, JsIdentifier):
+        return False
+    binding = model.resolve(callee)
+    if binding is None:
+        return True
+    scope = binding.scope.node
+    return scope is not function and not scope.is_descendant_of(function)
+
+
+def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
+    """
+    The decoder *held* is, when it is the decoder template: its alphabet is the one string literal
+    of its own that is a base91 alphabet, and the call it returns through calls a function it does
+    not declare, which turns the decoded bytes into a string.
+    """
+    function = held.function
+    if len(function.params) != 1:
         return None
-    if isinstance(node, JsIdentifier):
-        return node.name
-    if isinstance(node, JsMemberExpression):
-        return member_key(node)
-    return None
-
-
-def _match_accessor_body(
-    body: JsBlockStatement,
-    func_name: str,
-    removable_node: Node,
-    decoder_names: set[str],
-    table_names: set[str],
-) -> _AccessorInfo | None:
-    """
-    Check if a function body matches the caching accessor pattern. Looks for a call expression of
-    the form `DECODER(TABLE[param])` inside the body to structurally identify the decoder and
-    table references, and extracts the cache variable name from the member access pattern.
-    Handles indirect callees `(literal, name)(...)` and member-expression table/cache objects.
-    """
-    decoder_name: str | None = None
-    table_name: str | None = None
-    cache_name: str | None = None
-    for node in body.walk():
-        if not isinstance(node, JsCallExpression):
-            continue
-        if not isinstance(node.callee, JsIdentifier):
-            continue
-        if node.callee.name not in decoder_names:
-            continue
-        if len(node.arguments) != 1:
-            continue
-        arg = node.arguments[0]
-        if not isinstance(arg, JsMemberExpression):
-            continue
-        obj_name = _extract_object_name(arg.object)
-        if obj_name is None or obj_name not in table_names:
-            continue
-        decoder_name = node.callee.name
-        table_name = obj_name
-        break
-    if decoder_name is None or table_name is None:
+    alphabets = [
+        node for node in _own_nodes(function)
+        if isinstance(node, JsStringLiteral) and node.value is not None and _is_base91_alphabet(node.value)
+    ]
+    values = {node.value for node in alphabets if node.value is not None}
+    if len(values) != 1:
         return None
-    for node in body.walk():
-        if not isinstance(node, JsMemberExpression):
-            continue
-        obj_name = _extract_object_name(node.object)
-        if obj_name is None:
-            continue
-        if obj_name == table_name:
-            continue
-        if obj_name == func_name:
-            continue
-        cache_name = obj_name
-        break
-    if cache_name is None:
+    statements = statement_list_of(function)
+    if not statements or not isinstance(last := statements[-1], JsReturnStatement):
         return None
-    return _AccessorInfo(removable_node, func_name, decoder_name, table_name, cache_name)
+    call = strip_parens(last.argument)
+    if not isinstance(call, JsCallExpression) or len(call.arguments) != 1:
+        return None
+    if not _declared_outside(model, function, call.callee):
+        return None
+    nodes = {id(node): 'ALPHABET' for node in alphabets}
+    nodes[id(call.callee)] = 'BUFFER'
+    if not matches(model, function, _DECODER_TEMPLATES, {}, nodes):
+        return None
+    return _Decoder(held, values.pop())
 
 
-class _ScopedAccessor(NamedTuple):
+def _parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
     """
-    A fully resolved accessor: its function node, the decoder alphabet that applies to it (from its
-    sibling decoder in the same scope), and the shared encoded string table.
+    The names *function* reads an element of at its one parameter, the one of them it hands to a
+    call taking one argument, and that call's callee: the cache, the table and the decoder, if
+    *function* is an accessor.
     """
-    node: Node
-    name: str
-    alphabet: str
-    strings: list[str]
+    if len(function.params) != 1 or not isinstance(index := function.params[0], JsIdentifier):
+        return None
+    parameter = model.binding_of(index)
+    owners: dict[int, Binding] = {}
+    decoder = table = None
+    for node in _own_nodes(function):
+        if not isinstance(node, JsMemberExpression) or not node.computed:
+            continue
+        owner = strip_parens(node.object)
+        key = strip_parens(node.property)
+        if not isinstance(owner, JsIdentifier) or not isinstance(key, JsIdentifier):
+            continue
+        if model.resolve(key) is not parameter or (binding := model.resolve(owner)) is None:
+            continue
+        owners[id(binding)] = binding
+        call = node.parent
+        while isinstance(call, JsParenthesizedExpression):
+            call = call.parent
+        if not isinstance(call, JsCallExpression) or len(call.arguments) != 1:
+            continue
+        callee = strip_parens(call.callee)
+        if strip_parens(call.arguments[0]) is node and isinstance(callee, JsIdentifier):
+            decoder = model.resolve(callee)
+            table = binding
+    if decoder is None or table is None or len(owners) != 2:
+        return None
+    cache = next(binding for binding in owners.values() if binding is not table)
+    if decoder is cache or decoder is table:
+        return None
+    return _Parts(decoder, table, cache)
 
 
-def _pair_accessors_with_decoders(
-    accessors: list[_AccessorInfo],
-    decoders: list[_DecoderInfo],
-    tables: list[_StringTableInfo],
-) -> list[_ScopedAccessor]:
-    """
-    Pair each accessor with its decoder by scope proximity. An accessor's `decoder_name` refers
-    to a decoder function declared in the same body list. When the same function name is reused
-    across nested scopes, this ensures each accessor gets the correct alphabet.
-    """
-    table_map = {t.name: t.strings for t in tables}
-    decoder_by_scope: dict[tuple[int, str], _DecoderInfo] = {}
-    for d in decoders:
-        body = find_enclosing_body(d.node)
-        if body is not None:
-            decoder_by_scope[id(body), d.name] = d
-    result: list[_ScopedAccessor] = []
-    for a in accessors:
-        strings = table_map.get(a.table_name)
-        if strings is None:
-            continue
-        body = find_enclosing_body(a.node)
-        if body is None:
-            continue
-        decoder = decoder_by_scope.get((id(body), a.decoder_name))
-        if decoder is None:
-            continue
-        result.append(_ScopedAccessor(a.node, a.name, decoder.alphabet, strings))
-    return result
+def _is_accessor(model: SemanticModel, function: JsFunctionNode, parts: _Parts) -> bool:
+    placeholders = {
+        id(parts.cache): 'CACHE',
+        id(parts.decoder): 'DECODE',
+        id(parts.table): 'TABLE',
+    }
+    return matches(model, function, _ACCESSOR_TEMPLATES, placeholders)
 
 
-def _resolve_calls(
-    root: Node,
-    scoped_accessors: list[_ScopedAccessor],
-) -> int:
+def _accessor(
+    effects: EffectModel,
+    options: object,
+    held: _Held,
+    decoders: dict[int, _Decoder],
+) -> _Accessor | None:
     """
-    Walk the AST and replace accessor calls `ACCESSOR(numericLiteral)` with the decoded string
-    literal. Uses scope-aware matching: for each call, walks up the AST to find the nearest
-    enclosing body that contains a function declaration matching a known accessor.
+    The accessor *held* is, when it is the accessor template over a decoder of *decoders*, a table
+    holding at least ten strings, and a cache holding an empty object.
     """
-    accessor_by_scope: dict[tuple[int, str], _ScopedAccessor] = {}
-    for sa in scoped_accessors:
-        body = find_enclosing_body(sa.node)
-        if body is not None:
-            accessor_by_scope[id(body), sa.name] = sa
-    accessor_names = {sa.name for sa in scoped_accessors}
-    count = 0
-    for node in list(root.walk()):
-        if not isinstance(node, JsCallExpression):
+    model = effects.model
+    function = held.function
+    statements = statement_list_of(function)
+    if not statements or len(statements) > 2:
+        return None
+    parts = _parts(model, function)
+    if parts is None or (decoder := decoders.get(id(parts.decoder))) is None:
+        return None
+    if not _is_accessor(model, function, parts):
+        return None
+    known, strings = binding_constant(effects, parts.table, options)
+    if not known or not isinstance(strings, list) or len(strings) < 10:
+        return None
+    if not all(isinstance(string, str) for string in strings):
+        return None
+    cache = strip_parens(model.singular_value(parts.cache))
+    if not isinstance(cache, JsObjectExpression) or cache.properties:
+        return None
+    return _Accessor(held, decoder, parts.table, strings, parts.cache)
+
+
+def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
+    """
+    Whether nothing but the accessor template reads or writes *cache*: every reference, a `with`
+    body's included, lies in its declarator, in a write establishing its value, or in a function that
+    is the accessor template over it. Such a function need not be held by a name: the
+    moved-declaration setting hands an accessor to a function through a parameter.
+    """
+    declarator = cache.declarations[0].parent if len(cache.declarations) == 1 else None
+    sites = model.binding_establishment_sites(cache) or []
+    accessors: dict[int, bool] = {}
+    for reference in [*model.references(cache), *model.dynamic_references(cache)]:
+        if declarator is not None and reference.is_descendant_of(declarator):
             continue
-        if not isinstance(node.callee, JsIdentifier):
+        if any(reference is site or reference.is_descendant_of(site) for site in sites):
             continue
-        if node.callee.name not in accessor_names:
+        function = reference.parent
+        while function is not None and not isinstance(function, FUNCTION_NODES):
+            function = function.parent
+        if function is None:
+            return False
+        if (known := accessors.get(id(function))) is None:
+            parts = _parts(model, function)
+            known = parts is not None and parts.cache is cache and _is_accessor(model, function, parts)
+            accessors[id(function)] = known
+        if not known:
+            return False
+    return True
+
+
+def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[tuple[JsCallExpression, str]]:
+    """
+    Every call of *accessor* that passes a number literal indexing its table, after the accessor,
+    the decoder, the table and the cache are in place, with the string the call returns. A string
+    that does not decode or starts with a byte order mark is left a call: the function turning the
+    bytes into a string strips a byte order mark where the host has a `TextDecoder` and keeps it
+    elsewhere.
+    """
+    bindings = (accessor.held.binding, accessor.decoder.held.binding, accessor.table, accessor.cache)
+    for read in accessor.held.binding.reads:
+        if not isinstance(read, JsIdentifier):
             continue
-        if len(node.arguments) != 1:
+        callee: Node = read
+        while isinstance(callee.parent, JsParenthesizedExpression):
+            callee = callee.parent
+        call = callee.parent
+        if not isinstance(call, JsCallExpression) or call.callee is not callee or len(call.arguments) != 1:
             continue
-        arg = node.arguments[0]
-        if not isinstance(arg, JsNumericLiteral):
+        argument = call.arguments[0]
+        if not isinstance(argument, JsNumericLiteral):
             continue
-        sa = _find_scoped_accessor(node, node.callee.name, accessor_by_scope)
-        if sa is None:
+        index = exact_integer(argument.value)
+        if index is None or not 0 <= index < len(accessor.strings):
             continue
-        idx = exact_integer(arg.value)
-        if idx is None or not (0 <= idx < len(sa.strings)):
+        if not all(dominance.binding_established_before(binding, call) for binding in bindings):
             continue
         try:
-            decoded = _decode_base91(sa.strings[idx], sa.alphabet)
+            decoded = _decode_base91(accessor.strings[index], accessor.decoder.alphabet)
         except (UnicodeDecodeError, ValueError):
             continue
-        _replace_in_parent(node, make_string_literal(decoded))
-        count += 1
-    return count
-
-
-def _find_scoped_accessor(
-    call_node: Node,
-    name: str,
-    accessor_by_scope: dict[tuple[int, str], _ScopedAccessor],
-) -> _ScopedAccessor | None:
-    """
-    Walk up from *call_node* through enclosing body lists to find the nearest scope that contains
-    an accessor declaration with the given *name*. This implements JavaScript's lexical scoping:
-    inner scopes shadow outer ones.
-    """
-    child = call_node
-    parent = call_node.parent
-    while parent is not None:
-        if isinstance(parent, (JsBlockStatement, JsScript)):
-            if child in parent.body:
-                sa = accessor_by_scope.get((id(parent.body), name))
-                if sa is not None:
-                    return sa
-        child = parent
-        parent = parent.parent
-    return None
-
-
-def _remove_assignment_table(table: _StringTableInfo) -> None:
-    """
-    Remove an assignment-based string table. This handles the pattern where the variable is hoisted
-    as `var NAME;` and later assigned as `NAME = [...]`. Removes the expression statement
-    containing the assignment and the hoisted declarator (if it has no initializer). The hoisted
-    declarator is searched only in the same body as the assignment to avoid removing same-named
-    variables in inner scopes. For member-expression tables (dotted names), only the expression
-    statement is removed.
-    """
-    assert table.assignment is not None
-    stmt = table.assignment.parent
-    body = find_enclosing_body(stmt) if isinstance(stmt, JsExpressionStatement) else None
-    if isinstance(stmt, JsExpressionStatement):
-        _remove_from_parent(stmt)
-    if body is None:
-        return
-    if '.' in table.name:
-        return
-    for item in body:
-        if not isinstance(item, JsVariableDeclaration):
+        if decoded.startswith('\N{BYTE ORDER MARK}'):
             continue
-        for decl in item.declarations:
-            if (
-                isinstance(decl, JsVariableDeclarator)
-                and isinstance(decl.id, JsIdentifier)
-                and decl.id.name == table.name
-                and decl.init is None
-            ):
-                remove_declarator(decl)
+        yield call, decoded
+
+
+def _remove_machinery(model: SemanticModel, accessors: list[_Accessor], replaced: list[Node]) -> None:
+    """
+    Remove the accessors, then the decoders, then the tables and caches whose every reference, a
+    `with` body's included, lies in a replaced call or in a definition removed with them, when
+    `refinery.lib.scripts.js.deobfuscation.helpers.nothing_still_names` agrees for all of them.
+    """
+    inside: set[int] = {id(node) for call in replaced for node in call.walk()}
+    removed: list[Node] = []
+
+    def remove(definition: Node | None, binding: Binding) -> None:
+        if definition is None or any(definition is node for node in removed):
+            return
+        own = {id(node) for node in definition.walk()}
+        for reference in [*model.references(binding), *model.dynamic_references(binding)]:
+            if id(reference) not in inside and id(reference) not in own:
                 return
+        removed.append(definition)
+        inside.update(own)
 
-
-def _cleanup(
-    root: Node,
-    accessors: list[_AccessorInfo],
-    decoders: list[_DecoderInfo],
-    tables: list[_StringTableInfo],
-    cache_names: set[str],
-    cache: ModelCache,
-) -> None:
-    """
-    Remove accessor functions, decoder functions, string tables, and emptied cache objects that are no
-    longer referenced. An accessor whose name still has a call — one whose argument was not yet a
-    constant when this pass resolved calls, so it could not be replaced — is kept, together with the
-    decoder, table, and cache it depends on, so a later pass can resolve it once constant inlining has
-    folded the argument, rather than deleting the decoder out from under a surviving call and stranding
-    it. Removal is decided from the model's reference facts, the same basis the table and cache removals
-    already use, so it is shadowing-correct and sees the bare-assignment form.
-    """
-    assert isinstance(root, JsScript)
-    model = cache.model
-    kept: set[str] = set()
-    for a in accessors:
-        binding = model.lookup(a.name, model.scope_of(a.node))
-        if binding is None or binding_has_references(model, binding, exclude=a.node):
-            kept.add(a.name)
-    keep_decoders = {a.decoder_name for a in accessors if a.name in kept}
-    keep_tables = {a.table_name for a in accessors if a.name in kept}
-    keep_caches = {a.cache_name for a in accessors if a.name in kept}
-    removed_accessors = [a for a in accessors if a.name not in kept]
-    removed_decoders = [d for d in decoders if d.name not in keep_decoders]
-    dead_ids: set[int] = set()
-    for a in removed_accessors:
-        dead_ids.add(id(a.node))
-    for d in removed_decoders:
-        dead_ids.add(id(d.node))
-    for t in tables:
-        if t.name in keep_tables:
-            continue
-        if t.declarator is not None:
-            dead_ids.add(id(t.declarator))
-        if t.assignment is not None:
-            dead_ids.add(id(t.assignment))
-    for a in removed_accessors:
-        _remove_from_parent(a.node)
-    for d in removed_decoders:
-        _remove_from_parent(d.node)
-    for t in tables:
-        if t.name in keep_tables:
-            continue
-        if '.' in t.name:
-            if t.assignment is not None:
-                _remove_assignment_table(t)
-        elif not binding_has_references(
-            model, model.lookup(t.name, model.root_scope), exclude_ids=dead_ids,
-        ):
-            if t.declarator is not None:
-                remove_declarator(t.declarator)
-            elif t.assignment is not None:
-                _remove_assignment_table(t)
-    for node in list(root.walk()):
-        if isinstance(node, JsVariableDeclarator) and isinstance(node.id, JsIdentifier):
-            if (
-                node.id.name in cache_names
-                and node.id.name not in keep_caches
-                and isinstance(node.init, JsObjectExpression)
-            ):
-                if not node.init.properties:
-                    if not binding_has_references(
-                        model, model.binding_of(node.id), exclude_ids=dead_ids,
-                    ):
-                        remove_declarator(node)
+    for accessor in accessors:
+        remove(accessor.held.definition, accessor.held.binding)
+    for accessor in accessors:
+        remove(accessor.decoder.held.definition, accessor.decoder.held.binding)
+    for accessor in accessors:
+        for binding in (accessor.table, accessor.cache):
+            declarator = binding.declarations[0].parent if len(binding.declarations) == 1 else None
+            if isinstance(declarator, JsVariableDeclarator):
+                remove(declarator, binding)
+    if not removed or not nothing_still_names(model, [*removed, *replaced]):
+        return
+    for node in removed:
+        if isinstance(node, JsVariableDeclarator):
+            remove_declarator(node)
+        else:
+            _remove_from_parent(node)
 
 
 class JsBase91StringDecoder(ScriptLevelTransformer):
     """
-    Resolve per-scope b91 string obfuscation. Detects the shared encoded string table, per-scope
-    base91 decoders with shuffled alphabets, and caching accessor functions. Decodes all strings in
-    Python and replaces accessor calls with string literals.
+    Replace every call of a base91 string accessor the module describes by the string it returns,
+    and remove the machinery nothing names any longer.
     """
 
     def _process_script(self, node: JsScript):
-        tables = _find_string_tables(node)
-        if not tables:
-            return
-        decoders = _find_decoders(node)
+        cache = model_cache(self, node)
+        model = cache.model
+        held = list(_held_functions(model, node))
+        decoders: dict[int, _Decoder] = {}
+        for item in held:
+            if (decoder := _decoder(model, item)) is not None:
+                decoders[id(item.binding)] = decoder
         if not decoders:
             return
-        decoder_names = {d.name for d in decoders}
-        table_names = {t.name for t in tables}
-        accessors = _find_accessors(node, decoder_names, table_names)
-        if not accessors:
+        accessors: list[_Accessor] = []
+        confined: dict[int, bool] = {}
+        replacements: list[tuple[JsCallExpression, str]] = []
+        for item in held:
+            if id(item.binding) in decoders:
+                continue
+            if (accessor := _accessor(cache.effects, self.options, item, decoders)) is None:
+                continue
+            accessors.append(accessor)
+            if (known := confined.get(id(accessor.cache))) is None:
+                known = confined[id(accessor.cache)] = _cache_confined(model, accessor.cache)
+            if known:
+                replacements.extend(_decoded_calls(cache.dominance, accessor))
+        if not replacements:
             return
-        scoped_accessors = _pair_accessors_with_decoders(accessors, decoders, tables)
-        if not scoped_accessors:
-            return
-        count = _resolve_calls(node, scoped_accessors)
-        if count == 0:
-            return
-        cache_names = {a.cache_name for a in accessors}
-        resolved_accessor_nodes = {id(sa.node) for sa in scoped_accessors}
-        resolved_accessors = [a for a in accessors if id(a.node) in resolved_accessor_nodes]
-        resolved_decoder_names = {a.decoder_name for a in resolved_accessors}
-        resolved_decoders = [d for d in decoders if d.name in resolved_decoder_names]
-        cache = model_cache(self, node)
-        _cleanup(node, resolved_accessors, resolved_decoders, tables, cache_names, cache)
+        for call, decoded in replacements:
+            _replace_in_parent(call, make_string_literal(decoded))
+        _remove_machinery(model, accessors, [call for call, _ in replacements])
         self.mark_changed()
