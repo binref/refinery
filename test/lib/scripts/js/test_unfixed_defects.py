@@ -49,6 +49,13 @@ from test.lib.scripts.js.analysis.differential import (
 from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
     A_COUNT_THE_FOLD_DOES_NOT_REACH,
 )
+from test.lib.scripts.js.deobfuscation.test_b91strings import (
+    HEAD,
+    OTHER_TABLE,
+    TABLE,
+    accessor,
+    decoder,
+)
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
 )
@@ -4821,3 +4828,154 @@ class TestAFunctionNothingCallsIsRemovedWhateverShadowsItsName(TestBase):
     def test_the_function_nothing_calls_is_removed(self):
         rows = A_FUNCTION_ONLY_A_SHADOWING_NAME_SPELLS
         self.assertEqual({source: folded(source) for source in rows}, rows)
+
+
+#: Programs whose concealed strings the base91 pass decodes although the program changes what a
+#: decoded string is, each through a shape the obfuscator never writes, mapped to what Node prints:
+#: the function turning bytes into a string assigned after an early call, or turning them into
+#: something other than their UTF-8 text; a second accessor filling a slot of the shared cache
+#: from a table of its own; and an index the program puts on the object prototype, which the cache
+#: inherits.
+A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
+    (
+        F'var cache = {{}};\nvar table = {TABLE};\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'var early;\n'
+        + 'try { early = acc(10); } catch (e) { early = e.constructor.name; }\n'
+        + 'var bufferToString = function (b) { return Buffer.from(b).toString("utf-8"); };\n'
+        + 'console.log(early, acc(11));\n'
+    ):
+        'TypeError Fizz\n',
+    (
+        F'var cache = {{}};\nvar table = {TABLE};\nfunction bufferToString(b) {{ return b.join(","); }}\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10));\n'
+    ):
+        '112,117,115,104\n',
+    (
+        HEAD
+        + F'var other = {OTHER_TABLE};\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + accessor('acc2', 'cache', 'decode', 'other') + '\n'
+        + 'console.log(acc2(10), acc(10));\n'
+    ):
+        'Fizz Fizz\n',
+    (
+        'Object.prototype[10] = "polluted";\n'
+        + HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10), acc(11));\n'
+    ):
+        'polluted Fizz\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAConcealedStringIsDecodedAsTheProgramChangesIt(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.b91strings` reads a decoder and an accessor by their
+    templates and trusts what the obfuscator writes around them: its own function turning UTF-8
+    bytes into a string, declared before anything runs; one table index per string, so no two
+    accessors fill one slot of the cache; and prototypes nobody writes.
+    """
+
+    @wontfix(
+        'the obfuscator declares its own function turning UTF-8 bytes into a string, gives every '
+        'string an index of its own and writes no prototype; each of these programs is made up for '
+        'the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_CONCEALED_STRING_THE_PROGRAM_CHANGES
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A classic script that evaluates code at runtime naming the accessor of its concealed strings,
+#: mapped to what a host prints for it.
+AN_ACCESSOR_NAMED_BY_CODE_EVALUATED_AT_RUNTIME = {
+    (
+        HEAD
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'console.log((0, eval)("typeof acc"));\n'
+    ):
+        'push\nfunction\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAccessorCodeEvaluatedAtRuntimeNamesIsKept(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.b91strings` removes its machinery once nothing the model
+    records names it, a `with` body included. Code a script evaluates at runtime runs in the global
+    scope and may name a function the script declares there, which no reference records.
+    """
+
+    @wontfix('the obfuscator names its machinery with made-up names, which no code evaluated at runtime spells')
+    def test_the_host_prints_what_the_script_prints(self):
+        rows = AN_ACCESSOR_NAMED_BY_CODE_EVALUATED_AT_RUNTIME
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+#: A program putting an index on the array prototype that a function whose parameters are masked
+#: in a rest array reads through a slot it never wrote, mapped to what Node prints.
+AN_INDEX_A_MASKED_ARRAY_INHERITS = {
+    (
+        'Array.prototype[1] = "proto";\n'
+        'function f(...m) { m.length = 2; return m[0] + "/" + m[1]; }\n'
+        'console.log(f("a"));\n'
+    ):
+        'a/proto\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMaskedSlotReadsWhatTheArrayInherits(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.restunpack` refuses a key the language's array prototype
+    supplies, but a slot the program put on that prototype itself becomes a fresh name holding
+    `undefined`.
+    """
+
+    @wontfix('no program puts an index on the array prototype that a masked function reads unwritten')
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = AN_INDEX_A_MASKED_ARRAY_INHERITS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
+    """
+    Under `preserve_script_return`,
+    `refinery.lib.scripts.js.deobfuscation.unused.JsUnusedCodeRemoval` removes a store to a
+    declared name nothing reads although the script ends on it: the value of the script is the value
+    of its last statement with one, and a store is such a statement. The sweep of stores to
+    properties of the global object already spares a store that
+    `refinery.lib.scripts.js.deobfuscation.helpers.reaches_script_completion` places at the end of
+    the script; the removal of a store to a declared name has to ask the same question. Node
+    evaluates the script below to `5`, and the deobfuscation to `undefined`.
+    """
+
+    @unittest.expectedFailure
+    def test_the_script_ends_on_the_value_of_its_last_store(self):
+        source = 'var acc;\nacc = 5;\n'
+        deobfuscated = deobfuscate_source(source, preserve_script_return=True)
+        for evaluation in JsEvaluation:
+            with self.subTest(evaluation=evaluation.value):
+                self.assertEqual(
+                    completion_values([deobfuscated], evaluation),
+                    completion_values([source], evaluation),
+                )
