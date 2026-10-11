@@ -1048,8 +1048,9 @@ def annex_b_var_home(
     A declaration written directly in such a body names something there and is answered with that
     body. A declaration written inside a block is a lexical binding of that block, and only Annex
     B.3.3 puts the name outside it: the enclosing body gets a `var` of the name, which the copy the
-    declaration makes writes to when it runs. That happens in sloppy code only, and §B.3.3.1 names
-    three things that stop it:
+    declaration makes writes to when it runs. That happens in sloppy code only, for a plain function
+    only and never for a generator or an async function, and §B.3.3.1 names three things that stop
+    it:
 
     - a `let`, `const` or `class` of the same name between the block and the body, the body's own
       list included, which the `var` would conflict with;
@@ -1069,7 +1070,7 @@ def annex_b_var_home(
     home = statement_list_holding(declaration)
     if home is not None and is_a_var_home(home):
         return home
-    if strict_mode_at(declaration):
+    if declaration.generator or declaration.is_async or strict_mode_at(declaration):
         return None
     name = declaration.id.name if declaration.id is not None else None
     if name is None:

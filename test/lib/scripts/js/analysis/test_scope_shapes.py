@@ -565,6 +565,34 @@ A_FUNCTION_DECLARED_INSIDE_A_BLOCK = {
             """),
         prints('threw'),
     ),
+    'a sloppy generator read after the block': Program(
+        a_program("""
+            function outer() {
+              var W = 7;
+              function inner() {
+                { function* W() { yield 1; } }
+                return W;
+              }
+              console.log(inner());
+            }
+            outer();
+            """),
+        prints('7'),
+    ),
+    'a sloppy async function read after the block': Program(
+        a_program("""
+            function outer() {
+              var W = 7;
+              function inner() {
+                { async function W() { return 1; } }
+                return W;
+              }
+              console.log(inner());
+            }
+            outer();
+            """),
+        prints('7'),
+    ),
 }
 
 
@@ -578,7 +606,8 @@ class TestAFunctionDeclaredInsideABlockIsDeclaredInsideIt(TestBase):
     beside the block reads no binding and throws. Sloppy code creates a `var` of the name at the
     entry of the enclosing function and copies the block's function into it where the declaration
     runs, so a call before the block reads `undefined` and throws too, and only a call after it
-    answers the function.
+    answers the function. A generator or an async function is copied in no mode: the name after its
+    block reads whatever the scopes around it bind.
     """
 
     def test_a_block_function_is_read_from_where_the_language_binds_it(self):
