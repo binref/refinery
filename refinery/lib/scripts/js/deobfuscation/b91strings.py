@@ -1,7 +1,7 @@
 """
-Decode the strings an obfuscator conceals behind base91 decoders. Every string literal becomes a call
-of an accessor, which decodes an element of a shared table of encoded strings once and keeps the
-result in a cache:
+Decode the strings an obfuscator conceals behind base91 decoders. Every string literal becomes a
+call of an accessor, which decodes an element of a shared table of encoded strings once and keeps
+the result in a cache:
 
     var table = ["fOg=r", ...];
     var cache = {};
@@ -28,9 +28,10 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, statement_list_of
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    binding_constant,
+    denoted_value,
     make_string_literal,
     nothing_still_names,
+    reaches_script_completion,
     remove_declarator,
 )
 from refinery.lib.scripts.js.deobfuscation.templates import Template, matches
@@ -54,13 +55,16 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.options import preserves_script_return
+from refinery.lib.scripts.js.utf16 import to_code_units
 
 
 def _decode_base91(encoded: str, alphabet: str) -> str:
     """
     Decode a base91-encoded string using the given 91-character alphabet. The encoding pairs
     characters from the alphabet into 13-or-14-bit values that are accumulated into a byte stream,
-    which is then interpreted as UTF-8.
+    which is then interpreted as UTF-8. The result is the string a program holds, one UTF-16 code
+    unit to a character, so a character above the basic plane is its surrogate pair.
     """
     result: list[int] = []
     b = 0
@@ -83,7 +87,7 @@ def _decode_base91(encoded: str, alphabet: str) -> str:
             v = -1
     if v > -1:
         result.append((b | v << n) & 0xFF)
-    return bytes(result).decode('utf-8')
+    return to_code_units(bytes(result).decode('utf-8'))
 
 
 def _is_base91_alphabet(s: str) -> bool:
@@ -310,15 +314,43 @@ def _is_accessor(model: SemanticModel, function: JsFunctionNode, parts: _Parts) 
     return matches(model, function, _ACCESSOR_TEMPLATES, placeholders)
 
 
+def _table_strings(effects: EffectModel, table: Binding) -> list[str] | None:
+    """
+    The strings *table* holds wherever it is in place: the one array of at least ten strings the
+    text gives it, in a container nothing changes or hands out
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`).
+
+    The table is machinery under a name the obfuscator makes up, like the decoder, the accessor and
+    the cache. A constant of the program is also asked whether a host or code running in the global
+    scope may reach it (`refinery.lib.scripts.js.deobfuscation.helpers.binding_constant`), while
+    the table is asked only about code in its own scope the model cannot read: a direct `eval`
+    there, or a span the parser could not read, which is what
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach` answers for a name
+    scoped to the file. A script the obfuscator writes stores on the global object under keys this
+    very table holds, and the wider question would refuse the table of every script.
+    """
+    model = effects.model
+    known, value = denoted_value(model.singular_value(table), model)
+    if not known or not isinstance(value, list) or len(value) < 10:
+        return None
+    strings = [string for string in value if isinstance(string, str)]
+    if len(strings) != len(value) or not effects.binding_is_immutable_container(table):
+        return None
+    if model.reflection_can_reach(table, module_scope=True):
+        return None
+    return strings
+
+
 def _accessor(
     effects: EffectModel,
-    options: object,
     held: _Held,
     decoders: dict[int, _Decoder],
+    tables: dict[int, list[str] | None],
 ) -> _Accessor | None:
     """
     The accessor *held* is, when it is the accessor template over a decoder of *decoders*, a table
-    holding at least ten strings, and a cache holding an empty object.
+    holding at least ten strings, and a cache holding an empty object. The strings of each table
+    are kept in *tables* by the identity of its binding, since every accessor reads the one table.
     """
     model = effects.model
     function = held.function
@@ -330,10 +362,9 @@ def _accessor(
         return None
     if not _is_accessor(model, function, parts):
         return None
-    known, strings = binding_constant(effects, parts.table, options)
-    if not known or not isinstance(strings, list) or len(strings) < 10:
-        return None
-    if not all(isinstance(string, str) for string in strings):
+    if (key := id(parts.table)) not in tables:
+        tables[key] = _table_strings(effects, parts.table)
+    if (strings := tables[key]) is None:
         return None
     cache = strip_parens(model.singular_value(parts.cache))
     if not isinstance(cache, JsObjectExpression) or cache.properties:
@@ -344,8 +375,8 @@ def _accessor(
 def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
     """
     Whether nothing but the accessor template reads or writes *cache*: every reference, a `with`
-    body's included, lies in its declarator, in a write establishing its value, or in a function that
-    is the accessor template over it. Such a function need not be held by a name: the
+    body's included, lies in its declarator, in a write establishing its value, or in a function
+    that is the accessor template over it. Such a function need not be held by a name: the
     moved-declaration setting hands an accessor to a function through a parameter.
     """
     declarator = cache.declarations[0].parent if len(cache.declarations) == 1 else None
@@ -405,37 +436,67 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
         yield call, decoded
 
 
-def _remove_machinery(model: SemanticModel, accessors: list[_Accessor], replaced: list[Node]) -> None:
+def _stands_in_a_list(definition: Node) -> bool:
+    """
+    Whether *definition* can be taken out of the tree without leaving a hole: a statement standing
+    in a statement list, or a declarator of a declaration that does. One written under an `export`
+    or a label stands in a slot of its own, which nothing may be left empty in.
+    """
+    statement = definition.parent if isinstance(definition, JsVariableDeclarator) else definition
+    holder = None if statement is None else statement.parent
+    return holder is not None and any(item is statement for item in statement_list_of(holder) or ())
+
+
+def _remove_machinery(
+    model: SemanticModel,
+    accessors: list[_Accessor],
+    replaced: list[Node],
+    root: JsScript,
+    keeps_the_end_value: bool,
+) -> None:
     """
     Remove the accessors, then the decoders, then the tables and caches whose every reference, a
     `with` body's included, lies in a replaced call or in a definition removed with them, when
-    `refinery.lib.scripts.js.deobfuscation.helpers.nothing_still_names` agrees for all of them.
+    `refinery.lib.scripts.js.deobfuscation.helpers.nothing_still_names` agrees for all of them. A
+    name an importer reads stays, and so does a definition that does not stand in a statement list
+    (`_stands_in_a_list`) or, where *keeps_the_end_value* asks for the value the script ends on, a
+    statement assigning one that may set that value. Each decoder, table and cache is asked about
+    once, however many accessors share it.
     """
     inside: set[int] = {id(node) for call in replaced for node in call.walk()}
-    removed: list[Node] = []
+    removed: dict[int, Node] = {}
 
     def remove(definition: Node | None, binding: Binding) -> None:
-        if definition is None or any(definition is node for node in removed):
+        if definition is None or id(definition) in removed:
+            return
+        if binding.exported or not _stands_in_a_list(definition):
+            return
+        if (
+            keeps_the_end_value
+            and isinstance(definition, JsExpressionStatement)
+            and reaches_script_completion(definition, root)
+        ):
             return
         own = {id(node) for node in definition.walk()}
         for reference in [*model.references(binding), *model.dynamic_references(binding)]:
             if id(reference) not in inside and id(reference) not in own:
                 return
-        removed.append(definition)
+        removed[id(definition)] = definition
         inside.update(own)
 
     for accessor in accessors:
         remove(accessor.held.definition, accessor.held.binding)
-    for accessor in accessors:
-        remove(accessor.decoder.held.definition, accessor.decoder.held.binding)
-    for accessor in accessors:
-        for binding in (accessor.table, accessor.cache):
-            declarator = binding.declarations[0].parent if len(binding.declarations) == 1 else None
-            if isinstance(declarator, JsVariableDeclarator):
-                remove(declarator, binding)
-    if not removed or not nothing_still_names(model, [*removed, *replaced]):
+    decoders = {id(accessor.decoder.held.binding): accessor.decoder.held for accessor in accessors}
+    for held in decoders.values():
+        remove(held.definition, held.binding)
+    stores = {id(store): store for accessor in accessors for store in (accessor.table, accessor.cache)}
+    for store in stores.values():
+        declarator = store.declarations[0].parent if len(store.declarations) == 1 else None
+        if isinstance(declarator, JsVariableDeclarator):
+            remove(declarator, store)
+    if not removed or not nothing_still_names(model, [*removed.values(), *replaced]):
         return
-    for node in removed:
+    for node in removed.values():
         if isinstance(node, JsVariableDeclarator):
             remove_declarator(node)
         else:
@@ -459,12 +520,13 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         if not decoders:
             return
         accessors: list[_Accessor] = []
+        tables: dict[int, list[str] | None] = {}
         confined: dict[int, bool] = {}
         replacements: list[tuple[JsCallExpression, str]] = []
         for item in held:
             if id(item.binding) in decoders:
                 continue
-            if (accessor := _accessor(cache.effects, self.options, item, decoders)) is None:
+            if (accessor := _accessor(cache.effects, item, decoders, tables)) is None:
                 continue
             accessors.append(accessor)
             if (known := confined.get(id(accessor.cache))) is None:
@@ -475,5 +537,6 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
             return
         for call, decoded in replacements:
             _replace_in_parent(call, make_string_literal(decoded))
-        _remove_machinery(model, accessors, [call for call, _ in replacements])
+        replaced: list[Node] = [call for call, _ in replacements]
+        _remove_machinery(model, accessors, replaced, node, preserves_script_return(self.options))
         self.mark_changed()

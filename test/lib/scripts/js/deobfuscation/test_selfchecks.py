@@ -11,7 +11,11 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.analysis.differential import (
+    completion_values,
+    deobfuscate_source,
+    node_executable,
+)
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
 from refinery.lib.scripts.js.analysis.cache import ModelCache
@@ -456,6 +460,29 @@ A_HASH_COMPARED_WITH_NO_INTEGER = {
 }
 
 
+#: A hash call standing alone over helpers that carry nothing, beside a call that hands the function
+#: it hashes on to code of its own.
+A_LONE_HASH_CALL_OVER_A_FUNCTION_HANDED_ON = (
+    '(function () {\n' + OLD_HELPERS + PROGRAM
+    + '  hashText(textOf(program), 25);\n'
+    + '  keep(program);\n'
+    + '})();\n'
+    + 'function keep(f) { return [f]; }\n'
+)
+
+#: Scripts in which a hash the self-check folding decides stands where it would set the value the
+#: script ends on: a hash call standing last, and the declaration of a hash a guard compares behind
+#: which no statement leaves a value.
+A_SCRIPT_ENDING_WHERE_A_HASH_IS_DECIDED = (
+    OLD_HELPERS + PROGRAM + 'hashText(textOf(program), 25);\n',
+    (
+        'var ctx = globalThis;\n' + CONTEXT_HELPERS + PROGRAM_READING_TRIPPED
+        + 'var h = hashText(textOf(program), 25);\n'
+        + F'function run() {{ if (h == {PROGRAM_READING_TRIPPED_25}) {{ return program(); }} else {{ console.log("tampered"); }} }}\n'
+    ),
+)
+
+
 class TestTheCheckTheInputTextDecidesIsGone(TestBase):
 
     def test_the_deobfuscation_no_longer_holds_the_check(self):
@@ -533,6 +560,14 @@ class TestNodePrintsTheSameAboutASelfCheck(TestBase):
             each_program_still_prints(rows),
         )
 
+    def test_a_script_kept_for_its_value_ends_on_the_value_it_ended_on(self):
+        for source in A_SCRIPT_ENDING_WHERE_A_HASH_IS_DECIDED:
+            with self.subTest(source):
+                self.assertEqual(
+                    completion_values([source]),
+                    completion_values([deobfuscate_source(source, preserve_script_return=True)]),
+                )
+
 
 class TestASelfCheckAsksAboutAConversionOnlyWhereNothingElseStopsTheFold(TestBase):
     """
@@ -568,3 +603,12 @@ class TestASelfCheckAsksAboutAConversionOnlyWhereNothingElseStopsTheFold(TestBas
     def test_a_hash_guard_over_a_function_kept_in_an_array_waits_for_the_settled_tree(self):
         tail = 'var keep = [double];\nconsole.log(guarded(21), keep.length);\n'
         self.assertTrue(self._waits(guarded(DOUBLE, 'double', 42, DOUBLE_42, tail)))
+
+    def test_a_lone_hash_call_whose_match_statics_are_read_leaves_nothing_waiting(self):
+        self.assertFalse(self._waits(
+            A_LONE_HASH_CALL_OVER_A_FUNCTION_HANDED_ON
+            + 'if (/(\\d+)/.test("abc 123")) { console.log("$1=" + RegExp.$1); }\n'
+        ))
+
+    def test_a_lone_hash_call_over_a_function_handed_on_waits_for_the_settled_tree(self):
+        self.assertTrue(self._waits(A_LONE_HASH_CALL_OVER_A_FUNCTION_HANDED_ON))

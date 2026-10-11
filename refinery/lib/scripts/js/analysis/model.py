@@ -1028,14 +1028,43 @@ class LexicalNameCache:
     def declares(self, holder: Node, name: str) -> bool:
         """
         Whether the statement list *holder* holds declares *name* lexically, false where it holds
-        none.
+        none. A generator or an async function declared in a block or a `switch` is lexical there
+        (`_lexical_function_names`).
         """
         names = self._names.get(id(holder))
         if names is None:
             statements = statement_list_of(holder)
             names = frozenset() if statements is None else lexically_declared_names(statements)
+            if statements is not None and not _hoists_its_functions(holder):
+                names |= _lexical_function_names(statements)
             self._names[id(holder)] = names
         return name in names
+
+
+def _hoists_its_functions(holder: Node) -> bool:
+    """
+    Whether the statement list *holder* holds is the top level of a script, a static block or the
+    body of a function, where every function declaration it holds is var-scoped, rather than a
+    block or a `switch`.
+    """
+    if is_a_var_home(holder):
+        return True
+    parent = holder.parent
+    return isinstance(parent, FUNCTION_NODES) and parent.body is holder
+
+
+def _lexical_function_names(statements: list[Statement]) -> frozenset[str]:
+    """
+    The names *statements* declare with a generator or an async function, which a block or a
+    `switch` binds lexically in every mode: Annex B gives a `var` to a plain function only.
+    """
+    return frozenset(
+        statement.id.name
+        for statement in statements
+        if isinstance(statement, JsFunctionDeclaration)
+        and statement.id is not None
+        and (statement.generator or statement.is_async)
+    )
 
 
 def annex_b_var_home(
@@ -1053,7 +1082,8 @@ def annex_b_var_home(
     it:
 
     - a `let`, `const` or `class` of the same name between the block and the body, the body's own
-      list included, which the `var` would conflict with;
+      list included, or a generator or an async function of the same name in a block between them,
+      which the `var` would conflict with;
     - a parameter of the function, which already binds the name;
     - the name `arguments`, whose binding the function already has, which is a condition about a
       function and not about a script or a static block, neither of which has one.

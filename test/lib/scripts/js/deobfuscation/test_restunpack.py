@@ -153,6 +153,34 @@ class TestVariableDemasking(TestJsDeobfuscator):
             self._demask('var f = function(...s) { s.length = 1; var g = function() { return s[0] + 1; }; return s[0] + g(); }'),
         )
 
+    def test_keeps_a_rest_array_a_closure_reads_before_the_truncation(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              var g = function() {
+                return s[1];
+              };
+              var early = g();
+              s.length = 1;
+              return early + s[0];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    def test_keeps_a_rest_array_a_var_declares_again(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 1;
+              var a = s[0];
+              var s = [9];
+              return a + s[0];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
     def test_keeps_a_rest_array_with_a_deleted_slot(self):
         source = inspect.cleandoc(
             """
@@ -691,10 +719,11 @@ class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
         )
 
 
-#: Programs whose rest array a nested function reads or writes, or whose key is no slot of it, mapped
-#: to what Node prints for each. The pass unpacks an array every reference of which, nested
-#: functions included, is a slot, and keeps one with a deleted slot, a key the array inherits, a
-#: parameter slot called with the array as its receiver, a `with` body or a direct `eval` reaching it.
+#: Programs whose rest array a nested function reads or writes, or whose key is no slot of it,
+#: mapped to what Node prints for each. The pass unpacks an array every reference of which, nested
+#: functions included, is a slot read after the truncation, and keeps one with a deleted slot, a key
+#: the array inherits, a parameter slot called with the array as its receiver, a `with` body or a
+#: direct `eval` reaching it, a slot read before the truncation, or a `var` declaring it again.
 _A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY = {
     (
         'function f(...m) { m.length = 0; m[3] = function () { return m[4]; }; m[4] = "v"; return m[3](); }\n'
@@ -753,6 +782,22 @@ _A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY = {
         'function run(...m) { m.length = 1; return m[0](); }\n'
         'console.log(run(function () { return Array.isArray(this); }));\n'
     ): 'true\n',
+    (
+        'function f(...m) { var g = function () { return m[1]; }; var early = g(); m.length = 1; return early + m[0]; }\n'
+        'console.log(f("a", "b"));\n'
+    ): 'ba\n',
+    (
+        'function f(...m) { var early = g(); m.length = 1; return early + m[0]; function g() { return m[1]; } }\n'
+        'console.log(f("a", "b"));\n'
+    ): 'ba\n',
+    (
+        'function f(...m) { var early = m[1]; m.length = 1; return early + m[0]; }\n'
+        'console.log(f("a", "b"));\n'
+    ): 'ba\n',
+    (
+        'function f(...m) { m.length = 1; var a = m[0]; var m = [9]; return a + m[0]; }\n'
+        'console.log(f(1));\n'
+    ): '10\n',
 }
 
 

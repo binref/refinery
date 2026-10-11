@@ -593,6 +593,37 @@ A_FUNCTION_DECLARED_INSIDE_A_BLOCK = {
             """),
         prints('7'),
     ),
+    'a sloppy function in a block inside the block of a generator of its name': Program(
+        a_program("""
+            function outer() {
+              { function* W() { yield 1; } { function W() { return 1; } } }
+              try { return W(); } catch (e) { return e.constructor.name; }
+            }
+            console.log(outer());
+            """),
+        prints('ReferenceError'),
+    ),
+    'a sloppy function in a block inside the block of an async function of its name': Program(
+        a_program("""
+            function outer() {
+              { async function W() { return 1; } { function W() { return 2; } } }
+              try { return W(); } catch (e) { return e.constructor.name; }
+            }
+            console.log(outer());
+            """),
+        prints('ReferenceError'),
+    ),
+    'a sloppy function in a block beside a generator of its name in the body': Program(
+        a_program("""
+            function outer() {
+              function* W() { yield 1; }
+              { function W() { return 1; } }
+              return W();
+            }
+            console.log(outer());
+            """),
+        prints('1'),
+    ),
 }
 
 
@@ -607,7 +638,8 @@ class TestAFunctionDeclaredInsideABlockIsDeclaredInsideIt(TestBase):
     entry of the enclosing function and copies the block's function into it where the declaration
     runs, so a call before the block reads `undefined` and throws too, and only a call after it
     answers the function. A generator or an async function is copied in no mode: the name after its
-    block reads whatever the scopes around it bind.
+    block reads whatever the scopes around it bind, and a plain function of its name declared in a
+    block inside its own is not copied past it either.
     """
 
     def test_a_block_function_is_read_from_where_the_language_binds_it(self):

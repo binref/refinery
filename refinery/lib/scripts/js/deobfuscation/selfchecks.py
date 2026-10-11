@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import re
 
+from itertools import chain
 from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
@@ -59,9 +60,10 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     ScriptLevelTransformer,
+    reaches_script_completion,
     remove_declarator,
 )
-from refinery.lib.scripts.js.deobfuscation.templates import Template, matches
+from refinery.lib.scripts.js.deobfuscation.templates import Template, matches, template_form
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsAssignmentExpression,
@@ -101,6 +103,7 @@ from refinery.lib.scripts.js.model import (
     wraps_return,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
+from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.utf16 import to_code_units
 
 _STRIPPED_PATTERN = r' |\n|;|,|\{|\}|\(|\)|\.|\[|\]'
@@ -210,6 +213,7 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
     for node in walk_receiver_scope(statement):
         if isinstance(node, (JsThisExpression, JsMetaProperty)):
             return False
+    checked: set[int] = set()
     for node in statement.walk():
         if isinstance(node, JsWithStatement):
             return False
@@ -218,14 +222,15 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
         if node.name in ('arguments', 'eval', 'super'):
             return False
         binding = model.resolve(node) or model.binding_of(node)
-        if binding is None:
+        if binding is None or id(binding) in checked:
             continue
+        checked.add(id(binding))
         scope = binding.scope.node
         if scope is not function and not scope.is_descendant_of(function):
             continue
         if scope.is_descendant_of(statement):
             continue
-        for use in (*binding.declarations, *binding.reads, *binding.writes):
+        for use in chain(binding.declarations, binding.reads, binding.writes):
             if use is not statement and not use.is_descendant_of(statement):
                 return False
     return True
@@ -314,8 +319,11 @@ class _HelperRecognizer:
     def _matches(self, function: JsFunctionNode, template: Template, placeholders: dict[int, str]) -> bool:
         """
         Whether *function* is *template* once the statements another transform inserted into it are
-        left out, the names *placeholders* maps standing for the template's placeholders.
+        left out, the names *placeholders* maps standing for the template's placeholders. A function
+        with another number of parameters is refused before its inserted statements are looked for.
         """
+        if len(function.params) != len(template_form(template).params):
+            return False
         inserted = self.inserted_statements(function)
         return matches(self.model, function, (template,), placeholders, left_out=inserted)
 
@@ -545,7 +553,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
                 folds.extend((call, False) for call in calls)
         recognizer = _HelperRecognizer(model, effects)
         decided: list[tuple[JsVariableDeclarator, _Hashed]] = []
-        alone: list[JsExpressionStatement] = []
+        lone: list[tuple[JsExpressionStatement, _Hashed, JsFunctionNode]] = []
         for statement in node.walk():
             if isinstance(statement, JsIfStatement):
                 found = self._decided_hash(model, effects, dominance, recognizer, statement)
@@ -553,21 +561,31 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
                     folds.append((statement.test, True))
                     decided.append(found)
             elif isinstance(statement, JsExpressionStatement):
-                if self._hash_call_nothing_reads(effects, dominance, recognizer, statement):
-                    alone.append(statement)
-        statics = bool(decided or alone) and _regexp_statics_observable(model, node)
-        if statics:
-            alone.clear()
+                found = self._lone_hash_call(effects, dominance, recognizer, statement, node)
+                if found is not None:
+                    lone.append((statement, *found))
+        statics = bool(decided or lone) and _regexp_statics_observable(model, node)
+        alone: list[JsExpressionStatement] = []
+        if not statics:
+            alone = [
+                statement for statement, hashed, subject in lone
+                if effects.function_conversion_untouched(subject, (hashed.subject,))
+            ]
         if not folds and not alone:
             return
         for site, value in folds:
             _replace_in_parent(site, JsBooleanLiteral(value=value))
+        keeps_the_end_value = preserves_script_return(self.options)
         for declarator, hashed in decided:
             declaration = declarator.parent
-            if (statics or hashed.carries) and declaration is not None and declarator.init is not None:
-                _replace_in_parent(declaration, JsExpressionStatement(expression=declarator.init))
-            else:
+            if not statics and not hashed.carries:
                 remove_declarator(declarator)
+            elif (
+                declaration is not None
+                and declarator.init is not None
+                and not (keeps_the_end_value and reaches_script_completion(declaration, node))
+            ):
+                _replace_in_parent(declaration, JsExpressionStatement(expression=declarator.init))
         for statement in alone:
             _remove_from_parent(statement)
         self.mark_changed()
@@ -672,8 +690,8 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
     ) -> tuple[JsVariableDeclarator, _Hashed] | None:
         """
         The declarator of the hash the test of *guard* compares and the hash call it evaluates, when
-        that hash equals the constant it is compared to. The declaration has to be a statement of its
-        own, which the hash call can replace, and no importer may read the name it declares.
+        that hash equals the constant it is compared to. The declaration has to be a statement of
+        its own, which the hash call can replace, and no importer may read the name it declares.
         """
         test = strip_parens(guard.test)
         if not isinstance(test, JsBinaryExpression) or test.operator not in ('==', '==='):
@@ -734,27 +752,37 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
             return None
         return subject
 
-    def _hash_call_nothing_reads(
+    def _lone_hash_call(
         self,
         effects: EffectModel,
         dominance: DominanceModel,
         recognizer: _HelperRecognizer,
         statement: JsExpressionStatement,
-    ) -> bool:
+        root: JsScript,
+    ) -> tuple[_Hashed, JsFunctionNode] | None:
         """
-        Whether *statement* is a hash call standing in a statement list that does nothing but compute
-        the number it discards: its helpers carry no inserted statement, and they read the text the
-        parser kept for the function it hashes. Whether the match statics it sets are read is the
-        caller's question.
+        The hash call *statement* makes and the function it hashes, when the call stands in a
+        statement list doing nothing but compute the number it discards: its helpers carry no
+        inserted statement, they read the text the parser kept for the function it hashes, and the
+        number is not the value the script ends on where that value is kept
+        (`refinery.lib.scripts.js.options.preserves_script_return`).
+
+        Whether the match statics the call sets are read, and whether the program gave the function
+        a conversion of its own, are the caller's questions, in that order: a call the first one
+        keeps is not worth a run, and the second one is noted against the run wherever the tree is
+        not yet settled
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched`).
         """
-        holder = statement.parent
-        if holder is None or not any(item is statement for item in statement_list_of(holder) or ()):
-            return False
         hashed = recognizer.hashed(statement.expression)
         if hashed is None or hashed.carries:
-            return False
+            return None
+        holder = statement.parent
+        if holder is None or not any(item is statement for item in statement_list_of(holder) or ()):
+            return None
+        if preserves_script_return(self.options) and reaches_script_completion(statement, root):
+            return None
         subject = self._hashed_function(effects, dominance, recognizer, hashed)
-        return subject is not None and effects.function_conversion_untouched(subject, (hashed.subject,))
+        return None if subject is None else (hashed, subject)
 
     @staticmethod
     def _hash_call(

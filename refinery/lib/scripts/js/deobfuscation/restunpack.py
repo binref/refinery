@@ -15,6 +15,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import BodyEdit, Node, _replace_in_parent, set_child_list
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     SemanticModel,
@@ -238,6 +239,23 @@ def _walk_collect_frame(
         _walk_collect_frame(child, stack_chain, accesses, depth)
 
 
+def _truncated_before_every_access(
+    dominance: DominanceModel,
+    length_access: JsMemberExpression,
+    accesses: dict[str, list[JsMemberExpression]],
+) -> bool:
+    """
+    Whether the truncation writing *length_access* has run before every access of *accesses*, those
+    in nested functions included. Before the truncation, a slot past the truncated length still
+    holds the argument passed at its index, and a value written to it is gone once the truncation
+    runs; the fresh local the rewrite gives the slot holds neither. A nested function called before
+    the truncation reads the array as early as a read written there.
+    """
+    return dominance.runs_before_all(
+        length_access, (access for keyed in accesses.values() for access in keyed)
+    )
+
+
 def _numeric_key(value: float) -> str | None:
     """
     The property name a Number indexes, or `None` when it names no slot this pass rewrites. The
@@ -369,11 +387,13 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
 
     def _process_script(self, node: JsScript) -> None:
         count = 0
-        model = model_cache(self, node).model
+        cache = model_cache(self, node)
+        model = cache.model
+        dominance = cache.dominance
         for fn_node in node.walk():
             if not isinstance(fn_node, (JsFunctionExpression, JsFunctionDeclaration)):
                 continue
-            if self._demask_function(fn_node, model):
+            if self._demask_function(fn_node, model, dominance):
                 count += 1
         if count > 0:
             self.mark_changed()
@@ -382,6 +402,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
         self,
         fn: JsFunctionExpression | JsFunctionDeclaration,
         model: SemanticModel,
+        dominance: DominanceModel,
     ) -> bool:
         if len(fn.params) != 1:
             return False
@@ -391,7 +412,12 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
         if not isinstance(param.argument, JsIdentifier):
             return False
         binding = model.binding_of(param.argument)
-        if binding is None or binding.dynamic_refs or model.reflection_can_reach(binding):
+        if (
+            binding is None
+            or any(site is not param.argument and site is not fn.id for site in binding.declarations)
+            or binding.dynamic_refs
+            or model.reflection_can_reach(binding)
+        ):
             return False
         rest_name = param.argument.name
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
@@ -411,7 +437,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
             return False
         else:
             accesses = _collect_accesses_frame(fn.body, stack_chain)
-        if accesses is None:
+        if accesses is None or not _truncated_before_every_access(dominance, length_access, accesses):
             return False
         if param_count > 0 and not any(str(i) in accesses for i in range(param_count)):
             return False

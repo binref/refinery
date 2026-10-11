@@ -5,20 +5,30 @@ import inspect
 import lzma
 import unittest
 
-from test import TestBase
-from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.analysis.differential import (
+    completion_values,
+    deobfuscate_source,
+    module_graph_behavior,
+    node_executable,
+)
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
 
-from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91
+from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder, _decode_base91
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 
 ALPHABET = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
 
-#: A table of strings encoded with `ALPHABET`: 'fOg=r' is 'push', 'lrCD^' is 'Fizz', '#ZlH' is 'log'.
+#: A table of strings encoded with `ALPHABET`: 'fOg=r' is 'push', 'lrCD^' is 'Fizz', '#ZlH' is
+#: 'log'.
 TABLE = '["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","fOg=r","lrCD^","#ZlH"]'
 
 #: `TABLE` with 'eww6zXGM(' at index 11, which encodes a byte order mark followed by 'Fizz'.
 TABLE_WITH_A_BYTE_ORDER_MARK = '["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj","fOg=r","eww6zXGM(","#ZlH"]'
+
+#: `TABLE` with '{<@g2' at index 0, which encodes U+1F600, a character above the basic plane that a
+#: string holds as two code units.
+TABLE_WITH_AN_ASTRAL_CHARACTER = '["{<@g2","bb","cc","dd","ee","ff","gg","hh","ii","jj","fOg=r","lrCD^","#ZlH"]'
 
 #: Another table of the same length, with 'Fizz' at index 10.
 OTHER_TABLE = '["a","b","c","d","e","f","g","h","i","j","lrCD^","#ZlH","fOg=r"]'
@@ -29,6 +39,10 @@ BUFFER = 'function bufferToString(b) { return Buffer.from(b).toString("utf-8"); 
 #: The function turning the decoded bytes into a string through `TextDecoder`, which drops a leading
 #: byte order mark.
 TEXT_DECODER = 'function bufferToString(b) { return new TextDecoder()["decode"](new Uint8Array(b)); }'
+
+#: The function turning the decoded bytes into a string with nothing a host has to supply, for a
+#: program run where neither `Buffer` nor `TextDecoder` exists.
+CHAR_CODES = 'function bufferToString(b) { return String.fromCharCode.apply(null, b); }'
 
 #: The cache and the table every accessor below reads, and the function turning bytes into a string.
 HEAD = F'var cache = {{}};\nvar table = {TABLE};\n{BUFFER}\n'
@@ -225,6 +239,20 @@ A_PROGRAM_HOLDING_CONCEALED_STRINGS = {
     (
         HEAD
         + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + F'eval(Date.now() > 0 ? "table = " + JSON.stringify({OTHER_TABLE}) : "");\n'
+        + 'console.log(acc(10));\n'
+    ): 'Fizz\n',
+    (
+        F'var cache = {{}};\nvar table = {TABLE_WITH_AN_ASTRAL_CHARACTER};\n{BUFFER}\n'
+        + decoder('decode') + '\n'
+        + accessor('acc', 'cache', 'decode') + '\n'
+        + 'var s = acc(0);\n'
+        + 'console.log(s.length, s.charCodeAt(0), s.charCodeAt(1), s.split("").length);\n'
+    ): '2 55357 56832 2\n',
+    (
+        HEAD
+        + decoder('decode') + '\n'
         + 'function acc(index) { if (typeof cache[index] === "undefined") { '
         + 'return cache[index] = decode(table[index]).split("").reverse().join(""); } return cache[index]; }\n'
         + 'console.log(acc(10), acc(11));\n'
@@ -376,6 +404,9 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertEqual(_decode_base91('fOg=r', ALPHABET), 'push')
         self.assertEqual(_decode_base91('lrCD^', ALPHABET), 'Fizz')
         self.assertEqual(_decode_base91('#ZlH', ALPHABET), 'log')
+
+    def test_base91_decodes_a_character_above_the_basic_plane_to_its_two_code_units(self):
+        self.assertEqual(_decode_base91('{<@g2', ALPHABET), '\ud83d\ude00')
 
     def test_accessor_calls_resolved(self):
         result = self._deobfuscate(self._minimal_sample())
@@ -623,13 +654,76 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertIn('function acc(index)', result)
         self.assertIn('function decode(str)', result)
 
+    def test_a_script_storing_on_the_global_object_under_a_concealed_key_is_decoded(self):
+        source = (
+            HEAD
+            + decoder('decode') + '\n'
+            + accessor('acc', 'cache', 'decode') + '\n'
+            + 'this[acc(11)] = 1;\n'
+            + 'console.log(acc(10), Fizz);\n'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                this.Fizz = 1;
+                console.log('push', Fizz);
+                """
+            ),
+            deobfuscate_source(source),
+        )
+
+    def test_an_exported_cache_stays_declared(self):
+        source = (
+            F'export var cache = {{}};\nvar table = {TABLE};\n{BUFFER}\n'
+            + decoder('decode') + '\n'
+            + accessor('acc', 'cache', 'decode') + '\n'
+            + 'console.log(acc(10));\n'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                export var cache = {};
+                console.log('push');
+                """
+            ),
+            deobfuscate_source(source, module=True),
+        )
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestNodePrintsTheSameAboutConcealedStrings(TestBase):
+class TestNodePrintsTheSameAboutConcealedStrings(TestJsDeobfuscator):
 
     def test_each_program_prints_what_it_printed(self):
         rows = A_PROGRAM_HOLDING_CONCEALED_STRINGS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
+        )
+
+    def test_a_script_kept_for_its_value_keeps_the_accessor_it_assigns_last(self):
+        source = (
+            F'var cache = {{}};\nvar table = {TABLE};\n{CHAR_CODES}\n'
+            + decoder('decode') + '\n'
+            + 'var acc;\n'
+            + 'acc = function (index) { ' + accessor_body('cache', 'decode') + ' };\n'
+            + 'var x = acc(10);\n'
+        )
+        decoded = self._run_transformer(
+            source,
+            JsBase91StringDecoder,
+            DeobfuscationOptions(preserve_script_return=True),
+        )
+        self.assertEqual(completion_values([source]), completion_values([decoded]))
+
+    def test_an_importer_calls_an_exported_accessor_as_it_did(self):
+        source = (
+            HEAD
+            + decoder('decode') + '\n'
+            + 'export ' + accessor('acc', 'cache', 'decode') + '\n'
+            + 'console.log(acc(10));\n'
+        )
+        importer = 'import { acc } from "./m.mjs";\nconsole.log(acc(11));\n'
+        self.assertEqual(
+            module_graph_behavior({'m.mjs': source, 'main.mjs': importer}, 'main.mjs'),
+            module_graph_behavior({'m.mjs': deobfuscate_source(source, module=True), 'main.mjs': importer}, 'main.mjs'),
         )

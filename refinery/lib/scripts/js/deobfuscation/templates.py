@@ -1,9 +1,9 @@
 """
-Recognize a helper an obfuscator inserts by what it is: a function is the helper when its normal form
-equals the normal form of the helper's template, the text the obfuscator writes it from. The normal
-form undoes the changes minifying and the other transforms of the obfuscator make to a function, so
-a pass asking this reads the helper wherever it stands and whatever its names are, and reads no
-other function that merely holds a landmark of it.
+Recognize a helper an obfuscator inserts by what it is: a function is the helper when its normal
+form equals the normal form of the helper's template, the text the obfuscator writes it from. The
+normal form undoes the changes minifying and the other transforms of the obfuscator make to a
+function, so a pass asking this reads the helper wherever it stands and whatever its names are, and
+reads no other function that merely holds a landmark of it.
 """
 from __future__ import annotations
 
@@ -22,7 +22,11 @@ from refinery.lib.scripts import (
     set_child_list,
     set_value,
 )
-from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model, statement_list_of
+from refinery.lib.scripts.js.analysis.model import (
+    SemanticModel,
+    build_semantic_model,
+    statement_list_of,
+)
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsAssignmentExpression,
