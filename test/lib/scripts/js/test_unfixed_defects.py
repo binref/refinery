@@ -4568,13 +4568,9 @@ class TestAClosureANestedRunReplacedReadsThatRun(TestBase):
 
 
 #: Self-checks the input text decides that the deobfuscation leaves standing and then trips,
-#: mapped to what Node prints: the check reached through an array slot a nested function reads,
-#: and the older hash guard whose helper holds a date check the obfuscator inserted into it.
+#: mapped to what Node prints: the older hash guard whose helper holds a date check the obfuscator
+#: inserted into it.
 A_DECIDED_SELF_CHECK_LEFT_TO_TRIP = {
-    r'(function (...m) { m.length = 0; m[9] = function () { const t = function () { const r = new RegExp("\n"); '
-    r'return r.test(m[9]); }; if (t()) { console.log("tampered"); } }; return m[9](); })();' '\n'
-    'console.log("ran");\n':
-        'ran\n',
     wrapped(PROGRAM_READING_A_KEY_25, DATED_HELPERS, PROGRAM_READING_A_KEY):
         'ran\n',
 }
@@ -4583,15 +4579,12 @@ A_DECIDED_SELF_CHECK_LEFT_TO_TRIP = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestADecidedSelfCheckIsFoldedWhereverItStands(TestBase):
     """
-    `refinery.lib.scripts.js.deobfuscation.selfchecks` decides a line-break check only over a name
-    that holds the checked function, and the rest-array pass refuses an array a nested function
-    reads, so a check reaching its function through `m[9]` stays and trips on the reformatted
-    text. The older hash guard is decided only where its helpers equal their templates; a date,
-    host or debugger check the obfuscator inserts into the hash helper is a statement the template
-    does not hold, and removing the hash call would drop that check, so the guard stays and trips.
-    The fix for the first is the rest-array pass reading the slot; for the second, keeping the
-    call and folding only the comparison, which needs the helper read as its template after
-    statements that never return and write none of its names.
+    `refinery.lib.scripts.js.deobfuscation.selfchecks` decides the older hash guard only where its
+    helpers equal their templates; a date, host or debugger check the obfuscator inserts into the
+    hash helper is a statement the template does not hold, and removing the hash call would drop
+    that check, so the guard stays and trips. The fix is keeping the call and folding only the
+    comparison, which needs the helper read as its template after statements that never return and
+    write none of its names.
     """
 
     @unittest.expectedFailure

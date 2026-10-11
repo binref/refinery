@@ -138,15 +138,94 @@ class TestVariableDemasking(TestJsDeobfuscator):
             self._demask('var f = function(...r) { A.B.C.length = 2; return A.X.C[0]; }'),
         )
 
-    def test_skips_rest_param_captured_by_closure(self):
+    def test_unpacks_a_rest_array_a_closure_reads(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(p0) {
+                  var g = function() {
+                    return p0 + 1;
+                  };
+                  return p0 + g();
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 1; var g = function() { return s[0] + 1; }; return s[0] + g(); }'),
+        )
+
+    def test_keeps_a_rest_array_with_a_deleted_slot(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 0;
+              s[0] = 1;
+              delete s[0];
+              return s[0];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    def test_keeps_a_rest_array_whose_inherited_method_is_called(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 0;
+              s[0] = 7;
+              s.push(8);
+              return s[1];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    def test_keeps_a_rest_array_whose_length_is_read_through_a_computed_key(self):
         source = inspect.cleandoc(
             """
             var f = function(...s) {
               s.length = 1;
-              var g = function() {
-                return s[0] + 1;
+              return s[0] + s["length"];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    def test_keeps_a_rest_array_whose_parameter_slot_is_called_with_it_as_receiver(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 1;
+              return s[0]();
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
+
+    def test_unpacks_a_local_slot_called_with_the_array_as_receiver_that_holds_a_function_reading_none(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function() {
+                  var v0;
+                  v0 = function() {
+                    return 1;
+                  };
+                  return v0();
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 0; s[3] = function() { return 1; }; return s[3](); }'),
+        )
+
+    def test_keeps_a_rest_array_whose_local_slot_called_with_it_as_receiver_holds_a_function_reading_it(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 0;
+              s[3] = function() {
+                return this.length;
               };
-              return s[0] + g();
+              return s[3]();
             };
             """
         )
@@ -609,4 +688,83 @@ class TestABodyThatOpensWithADirective(TestJsDeobfuscator):
         self.assertEqual(
             ('ReferenceError\n', None),
             behavior(self._demask(self.A_BODY_DECLARING_STRICT_MODE)),
+        )
+
+
+#: Programs whose rest array a nested function reads or writes, or whose key is no slot of it, mapped
+#: to what Node prints for each. The pass unpacks an array every reference of which, nested
+#: functions included, is a slot, and keeps one with a deleted slot, a key the array inherits, a
+#: parameter slot called with the array as its receiver, a `with` body or a direct `eval` reaching it.
+_A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY = {
+    (
+        'function f(...m) { m.length = 0; m[3] = function () { return m[4]; }; m[4] = "v"; return m[3](); }\n'
+        'console.log(f());\n'
+    ): 'v\n',
+    (
+        'function f(...m) { m.length = 1; var set = function (x) { m[0] = x; }; set(m[0] + 1); return m[0]; }\n'
+        'console.log(f(4));\n'
+    ): '5\n',
+    (
+        'function f(...m) { m.length = 0; m[0] = 1; delete m[0]; return m[0]; }\n'
+        'console.log(f());\n'
+    ): 'undefined\n',
+    (
+        'function f(...a) { a.length = 0; a[0] = 1; var g = function (a) { return a[0]; }; return g([5]) + a[0]; }\n'
+        'console.log(f());\n'
+    ): '6\n',
+    (
+        'function f(...a) { a.length = 0; a[0] = 1; return function () { return eval("a[0]"); }(); }\n'
+        'console.log(f());\n'
+    ): '1\n',
+    (
+        'function f(...a) { a.length = 0; a[0] = 1; var o = { a: [7] }; with (o) { return a[0]; } }\n'
+        'console.log(f());\n'
+    ): '7\n',
+    (
+        'function f(...m) { m.length = 1; return function () { return m[0]; }; }\n'
+        'var x = f(1), y = f(2);\n'
+        'console.log(x(), y());\n'
+    ): '1 2\n',
+    (
+        'function f(...m) { m.length = 0; m[1] = 2; var g = function () { var v0 = 9; return v0 + m[1]; }; return g(); }\n'
+        'console.log(f());\n'
+    ): '11\n',
+    (
+        'function f(...m) { m.length = 0; m[0] = 7; var g = function () { return m["length"]; }; return g(); }\n'
+        'console.log(f());\n'
+    ): '1\n',
+    (
+        'function f(...m) { m.length = 0; m[0] = 7; m.push(8); return m[1]; }\n'
+        'console.log(f());\n'
+    ): '8\n',
+    (
+        'function f(...m) { m.length = 0; m[0] = 7; var g = function () { m.push(8); }; g(); return m[1]; }\n'
+        'console.log(f());\n'
+    ): '8\n',
+    (
+        'function f(...m) { m.length = 0; m[0] = 7; m[1] = 8; var g = function () { return m.join("-"); }; return g(); }\n'
+        'console.log(f());\n'
+    ): '7-8\n',
+    (
+        'function run(...m) { m.length = 1; var call = function () { return m[0](); }; return call(); }\n'
+        'console.log(run(function () { return Array.isArray(this); }));\n'
+    ): 'true\n',
+    (
+        'function run(...m) { m.length = 1; return m[0](); }\n'
+        'console.log(run(function () { return Array.isArray(this); }));\n'
+    ): 'true\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestARestArrayNamedBeyondItsOwnBody(TestJsDeobfuscator):
+
+    def _demask(self, source: str) -> str:
+        return self._run_transformer(source, JsRestArrayUnpacking)
+
+    def test_node_prints_the_same_before_and_after_the_unpacking(self):
+        rows = _A_REST_ARRAY_NAMED_BEYOND_ITS_OWN_BODY
+        self.assertEqual(
+            {source: (behavior(source), behavior(self._demask(source))) for source in rows},
+            {source: ((printed, None), (printed, None)) for source, printed in rows.items()},
         )

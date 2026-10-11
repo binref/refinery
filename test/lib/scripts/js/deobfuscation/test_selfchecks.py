@@ -173,6 +173,11 @@ A_CHECK_THE_INPUT_TEXT_DECIDES = {
         '42 8 1\n', str(DOUBLE_42)),
     guarded(DOUBLE, 'double', 42, DOUBLE_42, 'function use(f) { return [f]; }\nconsole.log(guarded(21), use(double).length);\n'): (
         '42 1\n', str(DOUBLE_42)),
+    (
+        r'(function (...m) { m.length = 0; m[9] = function () { const t = function () { const r = new RegExp("\n"); '
+        r'return r.test(m[9]); }; if (t()) { console.log("tampered"); } }; return m[9](); })();' '\n'
+        'console.log("ran");\n'
+    ): ('ran\n', LINE_BREAK_MARKER),
 }
 
 #: Programs whose hash guard the input text decides while the program may read the match statics

@@ -15,14 +15,23 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import BodyEdit, Node, _replace_in_parent, set_child_list
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import SemanticModel, references_own_arguments
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    SemanticModel,
+    is_member_write_target,
+    references_own_arguments,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     insert_after_prologue,
+    is_receiver_binding_call,
     member_key,
     numeric_value,
+    property_is_inherited,
+    references_receiver_this,
 )
 from refinery.lib.scripts.js.model import (
+    FUNCTION_NODES,
     JsAssignmentExpression,
     JsBlockStatement,
     JsExpressionStatement,
@@ -31,6 +40,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
+    JsParenthesizedExpression,
     JsRestElement,
     JsScript,
     JsStringLiteral,
@@ -38,6 +48,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
+    strip_parens,
 )
 from refinery.lib.scripts.js.numbers import (
     canonical_array_index,
@@ -117,14 +128,22 @@ def _extract_truncation(
 
 
 def _collect_accesses_simple(
-    body: JsBlockStatement,
-    rest_name: str,
+    model: SemanticModel,
+    binding: Binding,
     length_access: JsMemberExpression,
+    param_count: int,
 ) -> dict[str, list[JsMemberExpression]] | None:
     """
-    Collect all `restParam[key]` and `restParam.key` accesses in the immediate function body
-    (not descending into nested functions). Returns a map from string key to list of AST nodes.
-    Returns None if the rest param is used in a way that prevents demasking.
+    Collect every access of the rest array from the references the model records for *binding*,
+    those of the functions nested in the masked one included, as a map from string key to the member
+    nodes. Returns None if the rest array is used in a way that prevents demasking: a reference that
+    is no access of a fixed key, the operand of `delete`, or a key the prototype chain of an array
+    supplies, such as `push` or `join`, which the array answers and no slot does.
+
+    A slot called with the array as its receiver, as in `m[0]()`, hands the array to the function
+    as `this`, and the unpacked call hands it nothing. Such a slot is unpacked only where it is no
+    parameter, whose value the caller chooses, and every value stored into it is a function that
+    reads no receiver.
 
     Only the one `.length` member that *length_access* names is skipped, because it is the one the
     rewrite removes. Any other mention of the rest array's length is an ordinary read of a binding
@@ -132,38 +151,51 @@ def _collect_accesses_simple(
     to a name that no longer exists.
     """
     accesses: dict[str, list[JsMemberExpression]] = {}
-    if not _walk_collect_simple(body, rest_name, accesses, length_access):
-        return None
+    called: set[str] = set()
+    for reference in model.references(binding):
+        member = reference.parent
+        if not isinstance(reference, JsIdentifier) or not isinstance(member, JsMemberExpression):
+            return None
+        if member.object is not reference:
+            return None
+        if member is length_access:
+            continue
+        operator = member.parent
+        while isinstance(operator, JsParenthesizedExpression):
+            operator = operator.parent
+        if isinstance(operator, JsUnaryExpression) and operator.operator == 'delete':
+            return None
+        key = _extract_access_key(member)
+        if key is None:
+            return None
+        if canonical_array_index(key) is None and property_is_inherited(list, key):
+            return None
+        if is_receiver_binding_call(member):
+            called.add(key)
+        accesses.setdefault(key, []).append(member)
+    for key in called:
+        index = canonical_array_index(key)
+        if index is not None and index < param_count:
+            return None
+        for member in accesses[key]:
+            if is_member_write_target(member) and not _stores_a_function_reading_no_receiver(member):
+                return None
     return accesses
 
 
-def _walk_collect_simple(
-    node: Node,
-    rest_name: str,
-    accesses: dict[str, list[JsMemberExpression]],
-    length_access: JsMemberExpression,
-) -> bool:
-    for child in node.children():
-        if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration)):
-            continue
-        if isinstance(child, JsMemberExpression):
-            obj = child.object
-            if isinstance(obj, JsIdentifier) and obj.name == rest_name:
-                if child is length_access:
-                    continue
-                key = _extract_access_key(child)
-                if key is None:
-                    return False
-                accesses.setdefault(key, []).append(child)
-                continue
-        if isinstance(child, JsIdentifier) and child.name == rest_name:
-            parent = child.parent
-            if isinstance(parent, JsMemberExpression) and parent.object is child:
-                continue
-            return False
-        if not _walk_collect_simple(child, rest_name, accesses, length_access):
-            return False
-    return True
+def _stores_a_function_reading_no_receiver(member: JsMemberExpression) -> bool:
+    """
+    Whether the write to *member* is a plain assignment of a function that reads no receiver.
+    """
+    store = member.parent
+    while isinstance(store, JsParenthesizedExpression):
+        store = store.parent
+    if not isinstance(store, JsAssignmentExpression) or store.operator != '=':
+        return False
+    if strip_parens(store.left) is not member:
+        return False
+    value = strip_parens(store.right)
+    return isinstance(value, FUNCTION_NODES) and not references_receiver_this(value)
 
 
 def _collect_accesses_frame(
@@ -219,24 +251,26 @@ def _numeric_key(value: float) -> str | None:
 
 
 def _extract_access_key(node: JsMemberExpression) -> str | None:
-    if node.computed:
-        prop = node.property
-        if isinstance(prop, JsNumericLiteral):
-            return _numeric_key(prop.value)
-        if isinstance(prop, JsStringLiteral):
-            return prop.value
-        if (
-            isinstance(prop, JsUnaryExpression)
-            and prop.operator == '-'
-            and isinstance(prop.operand, JsNumericLiteral)
-        ):
-            return _numeric_key(-prop.operand.value)
-        return None
-    if isinstance(node.property, JsIdentifier):
-        if node.property.name == 'length':
-            return None
-        return node.property.name
-    return None
+    """
+    The key *node* reads, or `None` where the key is computed at runtime or is `length`, which the
+    array answers itself however the key is spelled.
+    """
+    prop = node.property
+    if not node.computed:
+        key = prop.name if isinstance(prop, JsIdentifier) else None
+    elif isinstance(prop, JsNumericLiteral):
+        key = _numeric_key(prop.value)
+    elif isinstance(prop, JsStringLiteral):
+        key = prop.value
+    elif (
+        isinstance(prop, JsUnaryExpression)
+        and prop.operator == '-'
+        and isinstance(prop.operand, JsNumericLiteral)
+    ):
+        key = _numeric_key(-prop.operand.value)
+    else:
+        key = None
+    return None if key == 'length' else key
 
 
 def _mentioned_names(node: Node) -> set[str]:
@@ -357,7 +391,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
         if not isinstance(param.argument, JsIdentifier):
             return False
         binding = model.binding_of(param.argument)
-        if binding is None or binding.captured or model.reflection_can_reach(binding):
+        if binding is None or binding.dynamic_refs or model.reflection_can_reach(binding):
             return False
         rest_name = param.argument.name
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
@@ -369,7 +403,12 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
             return False
         param_count, stack_chain, length_access = result
         if stack_chain is None:
-            accesses = _collect_accesses_simple(fn.body, rest_name, length_access)
+            stack = length_access.object
+            if not isinstance(stack, JsIdentifier) or model.resolve(stack) is not binding:
+                return False
+            accesses = _collect_accesses_simple(model, binding, length_access, param_count)
+        elif binding.captured:
+            return False
         else:
             accesses = _collect_accesses_frame(fn.body, stack_chain)
         if accesses is None:
