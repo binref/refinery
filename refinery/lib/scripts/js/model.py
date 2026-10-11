@@ -704,6 +704,9 @@ FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionEx
 
 JsFunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
+#: The statements that run their body again: the three `for` forms, `while` and `do`-`while`.
+LOOP_NODES = (JsWhileStatement, JsDoWhileStatement, JsForStatement, JsForInStatement, JsForOfStatement)
+
 
 class AwaitReading(enum.Enum):
     """

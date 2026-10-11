@@ -1197,6 +1197,15 @@ def annex_b_copies_into(binding: Binding) -> bool:
     declaration = binding.declarations[0].parent
     if not isinstance(declaration, JsFunctionDeclaration):
         return False
+    return _copied_out_of_its_block(declaration, binding)
+
+
+def _copied_out_of_its_block(declaration: JsFunctionDeclaration, binding: Binding) -> bool:
+    """
+    Whether the function *declaration* declaring *binding* stands outside the statement list whose
+    declarations the scope of *binding* binds, which is the function Annex B copies out of its block
+    into the name of an enclosing scope.
+    """
     return statement_list_holding(declaration) is not _statement_list_holder_of(binding.scope)
 
 
@@ -2574,7 +2583,7 @@ class SemanticModel:
             binding = None if statement.id is None else self.binding_of(statement.id)
             if binding is None:
                 return False
-            if statement_list_holding(statement) is _statement_list_holder_of(binding.scope):
+            if not _copied_out_of_its_block(statement, binding):
                 return True
             return self._stores_into_without_throwing(binding, statement)
         if isinstance(statement, JsExpressionStatement):

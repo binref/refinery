@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    LOOP_NODES,
     JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
@@ -68,7 +69,6 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsClassExpression,
     JsContinueStatement,
-    JsDoWhileStatement,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
@@ -1622,15 +1622,6 @@ def _writes_a_state_variable(
     return False
 
 
-_LOOP_NODES = (
-    JsDoWhileStatement,
-    JsForInStatement,
-    JsForOfStatement,
-    JsForStatement,
-    JsWhileStatement,
-)
-
-
 def _leaves_the_block(stmts: list[Statement]) -> bool:
     """
     Whether *stmts* hold a `break` or `continue` that leaves them: one naming a label they do not
@@ -1651,7 +1642,7 @@ def _leaves_the_block(stmts: list[Statement]) -> bool:
             continue
         if isinstance(node, JsLabeledStatement) and node.label is not None:
             labels = labels | {node.label.name}
-        if isinstance(node, _LOOP_NODES):
+        if isinstance(node, LOOP_NODES):
             breaks = continues = True
         elif isinstance(node, JsSwitchStatement):
             breaks = True

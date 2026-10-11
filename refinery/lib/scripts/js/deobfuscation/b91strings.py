@@ -25,7 +25,12 @@ from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, statement_list_of
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    SemanticModel,
+    enclosing_operator,
+    statement_list_of,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     denoted_value,
@@ -33,6 +38,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     nothing_still_names,
     reaches_script_completion,
     remove_declarator,
+    walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.templates import Template, matches
 from refinery.lib.scripts.js.model import (
@@ -46,7 +52,6 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNumericLiteral,
     JsObjectExpression,
-    JsParenthesizedExpression,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
@@ -177,9 +182,7 @@ class _Accessor(NamedTuple):
 def _definition(function: JsFunctionNode) -> Node | None:
     if isinstance(function, JsFunctionDeclaration):
         return function
-    parent = function.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        parent = parent.parent
+    parent = enclosing_operator(function)
     if isinstance(parent, JsVariableDeclarator):
         return parent
     if isinstance(parent, JsAssignmentExpression) and isinstance(parent.parent, JsExpressionStatement):
@@ -200,18 +203,6 @@ def _held_functions(model: SemanticModel, root: Node) -> Iterator[_Held]:
         if strip_parens(model.singular_value(binding)) is not node:
             continue
         yield _Held(binding, node, _definition(node))
-
-
-def _own_nodes(function: Node) -> Iterator[Node]:
-    """
-    Every node of *function* outside the functions nested in it.
-    """
-    stack = list(function.children())
-    while stack:
-        node = stack.pop()
-        yield node
-        if not isinstance(node, FUNCTION_NODES):
-            stack.extend(node.children())
 
 
 def _declared_outside(model: SemanticModel, function: Node, callee: Node | None) -> bool:
@@ -246,7 +237,7 @@ def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     if len(function.params) != 1:
         return None
     alphabets = [
-        node for node in _own_nodes(function)
+        node for node in walk_scope(function, include_root_body=True)
         if isinstance(node, JsStringLiteral) and node.value is not None and _is_base91_alphabet(node.value)
     ]
     values = {node.value for node in alphabets if node.value is not None}
@@ -278,7 +269,7 @@ def _parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
     parameter = model.binding_of(index)
     owners: dict[int, Binding] = {}
     decoder = table = None
-    for node in _own_nodes(function):
+    for node in walk_scope(function, include_root_body=True):
         if not isinstance(node, JsMemberExpression) or not node.computed:
             continue
         owner = strip_parens(node.object)
@@ -288,9 +279,7 @@ def _parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
         if model.resolve(key) is not parameter or (binding := model.resolve(owner)) is None:
             continue
         owners[id(binding)] = binding
-        call = node.parent
-        while isinstance(call, JsParenthesizedExpression):
-            call = call.parent
+        call = enclosing_operator(node)
         if not isinstance(call, JsCallExpression) or len(call.arguments) != 1:
             continue
         callee = strip_parens(call.callee)
@@ -413,11 +402,8 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
     for read in accessor.held.binding.reads:
         if not isinstance(read, JsIdentifier):
             continue
-        callee: Node = read
-        while isinstance(callee.parent, JsParenthesizedExpression):
-            callee = callee.parent
-        call = callee.parent
-        if not isinstance(call, JsCallExpression) or call.callee is not callee or len(call.arguments) != 1:
+        call = enclosing_operator(read)
+        if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not read or len(call.arguments) != 1:
             continue
         argument = call.arguments[0]
         if not isinstance(argument, JsNumericLiteral):

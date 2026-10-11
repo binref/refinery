@@ -2542,24 +2542,6 @@ def collect_identifier_names(node: Node) -> set[str]:
     return {n.name for n in node.walk() if isinstance(n, JsIdentifier)}
 
 
-def find_enclosing_body(node: Node) -> list[Statement] | None:
-    """
-    Walk up parent pointers from *node* to find the body list that directly contains it. Returns the
-    `body` attribute of the nearest `refinery.lib.scripts.js.model.JsBlockStatement` or
-    `refinery.lib.scripts.js.model.JsScript` ancestor whose body list includes *node* (or an
-    ancestor of *node*).
-    """
-    child = node
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, (JsBlockStatement, JsScript)):
-            if child in parent.body:
-                return parent.body
-        child = parent
-        parent = parent.parent
-    return None
-
-
 def function_binds_name(func: Node, name: str) -> bool:
     """
     Check if a function creates a local binding for `name` (parameter, function name, or var

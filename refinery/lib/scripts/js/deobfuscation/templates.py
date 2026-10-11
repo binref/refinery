@@ -29,13 +29,11 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    LOOP_NODES,
     JsAssignmentExpression,
     JsBlockStatement,
     JsCallExpression,
-    JsDoWhileStatement,
     JsExpressionStatement,
-    JsForInStatement,
-    JsForOfStatement,
     JsForStatement,
     JsFunctionDeclaration,
     JsFunctionNode,
@@ -48,18 +46,9 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVarKind,
-    JsWhileStatement,
     static_property_key,
 )
 from refinery.lib.scripts.js.parser import JsParser
-
-_LOOPS = (
-    JsWhileStatement,
-    JsDoWhileStatement,
-    JsForStatement,
-    JsForInStatement,
-    JsForOfStatement,
-)
 
 
 class Template(NamedTuple):
@@ -179,7 +168,7 @@ class NormalForm:
                 if key is not None and key.isidentifier():
                     set_value(node, 'computed', False)
                     set_child(node, 'property', JsIdentifier(name=key))
-            if isinstance(node, (JsIfStatement, *_LOOPS)):
+            if isinstance(node, (JsIfStatement, *LOOP_NODES)):
                 for field in ('consequent', 'alternate', 'body'):
                     child = getattr(node, field, None)
                     if child is not None and not isinstance(child, JsBlockStatement):

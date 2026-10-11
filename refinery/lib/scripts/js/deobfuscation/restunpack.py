@@ -19,6 +19,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     SemanticModel,
+    enclosing_operator,
     is_member_write_target,
     references_own_arguments,
 )
@@ -41,7 +42,6 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
-    JsParenthesizedExpression,
     JsRestElement,
     JsScript,
     JsStringLiteral,
@@ -161,9 +161,7 @@ def _collect_accesses_simple(
             return None
         if member is length_access:
             continue
-        operator = member.parent
-        while isinstance(operator, JsParenthesizedExpression):
-            operator = operator.parent
+        operator = enclosing_operator(member)
         if isinstance(operator, JsUnaryExpression) and operator.operator == 'delete':
             return None
         key = _extract_access_key(member)
@@ -188,9 +186,7 @@ def _stores_a_function_reading_no_receiver(member: JsMemberExpression) -> bool:
     """
     Whether the write to *member* is a plain assignment of a function that reads no receiver.
     """
-    store = member.parent
-    while isinstance(store, JsParenthesizedExpression):
-        store = store.parent
+    store = enclosing_operator(member)
     if not isinstance(store, JsAssignmentExpression) or store.operator != '=':
         return False
     if strip_parens(store.left) is not member:

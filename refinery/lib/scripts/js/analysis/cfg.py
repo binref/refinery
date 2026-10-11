@@ -26,6 +26,7 @@ from refinery.lib.scripts.analysis.cfg import (
 from refinery.lib.scripts.analysis.cfg import build_control_flow as _build_control_flow
 from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
 from refinery.lib.scripts.js.model import (
+    LOOP_NODES,
     JsArrayPattern,
     JsAssignmentExpression,
     JsAssignmentPattern,
@@ -65,15 +66,6 @@ __all__ = [
     'build_control_flow_model',
     'evaluated_whenever_completed',
 ]
-
-_LOOP_NODES = (
-    JsWhileStatement,
-    JsDoWhileStatement,
-    JsForStatement,
-    JsForInStatement,
-    JsForOfStatement,
-)
-
 
 _LOGICAL_ASSIGNMENT = frozenset({
     '&&=',
@@ -221,7 +213,7 @@ class _Builder(CfgBuilder):
                 _label_name(statement),
                 statement.body,
                 frontier,
-                binds_to_body=isinstance(statement.body, (*_LOOP_NODES, JsSwitchStatement)),
+                binds_to_body=isinstance(statement.body, (*LOOP_NODES, JsSwitchStatement)),
             )
         if isinstance(statement, JsReturnStatement):
             return self.terminate(statement, frontier, exceptional=False)

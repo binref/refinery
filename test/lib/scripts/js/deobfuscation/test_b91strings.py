@@ -632,24 +632,24 @@ class TestStringConcealing(TestJsDeobfuscator):
 
     def test_an_accessor_declared_in_a_try_block_inside_a_loop_is_resolved(self):
         self.assertEqual(
-            "console.log('log4');",
+            'console.log(\'log4\');',
             deobfuscate_source(AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP, module=True),
         )
 
     def test_a_function_holding_a_decoder_is_no_decoder_of_its_own(self):
         self.assertEqual(
-            "console.log('xFizz', 'push');",
+            'console.log(\'xFizz\', \'push\');',
             deobfuscate_source(A_PROGRAM_FUNCTION_HOLDING_A_DECODER, module=True),
         )
 
     def test_a_call_before_the_accessor_is_assigned_stays_a_call(self):
         result = deobfuscate_source(AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED, module=True)
         self.assertIn('early = acc(10);', result)
-        self.assertIn("console.log(early, 'Fizz');", result)
+        self.assertIn('console.log(early, \'Fizz\');', result)
 
     def test_an_accessor_called_in_a_with_body_keeps_its_machinery(self):
         result = deobfuscate_source(AN_ACCESSOR_CALLED_IN_A_WITH_BODY, module=True)
-        self.assertIn("console.log('push');", result)
+        self.assertIn('console.log(\'push\');', result)
         self.assertIn('console.log(acc(11), k);', result)
         self.assertIn('function acc(index)', result)
         self.assertIn('function decode(str)', result)

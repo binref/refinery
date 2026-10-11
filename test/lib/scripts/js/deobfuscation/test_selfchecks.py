@@ -187,6 +187,12 @@ A_CHECK_THE_INPUT_TEXT_DECIDES = {
     guarded(NAME_OF, 'nameOf', 5, NAME_OF_5, 'console.log(guarded({ name: "you" }));\n'): (
         'you\n', str(NAME_OF_5)),
     wrapped(PROGRAM_25): ('ran\n', str(PROGRAM_25)),
+    (
+        NEW_HELPERS
+        + DOUBLE
+        + '\nfunction guarded() { guarded.memo || (guarded.memo = hashOf(double, 42)); return double(...arguments); }\n'
+        + 'console.log(guarded(21));\n'
+    ): ('42\n', 'hashOf('),
     wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash(F'if ({INSERTED_LINE_BREAK_CHECK}) {{ console.log("tampered"); }} ')): (
         'ran\n', str(PROGRAM_25)),
     inspect.cleandoc(r'''
@@ -364,6 +370,8 @@ A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
     wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { return 1; } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
     wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { imul = null; } '), PROGRAM): (
+        'ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (new.target) { console.log("constructed"); } '), PROGRAM): (
         'ran\n', str(PROGRAM_25)),
     wrapped(
         PROGRAM_25,

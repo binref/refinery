@@ -54,6 +54,7 @@ from refinery.lib.scripts.js.analysis.model import (
     enclosing_operator,
     is_constructed_or_invoked,
     is_invocation_target,
+    references_new_target,
     statement_list_of,
     walk_receiver_scope,
 )
@@ -62,10 +63,12 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     reaches_script_completion,
     remove_declarator,
+    walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.templates import Template, matches, template_form
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    LOOP_NODES,
     JsAssignmentExpression,
     JsAwaitExpression,
     JsBinaryExpression,
@@ -74,18 +77,13 @@ from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsCallExpression,
     JsContinueStatement,
-    JsDoWhileStatement,
     JsExpressionStatement,
-    JsForInStatement,
-    JsForOfStatement,
-    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionNode,
     JsIdentifier,
     JsIfStatement,
     JsLogicalExpression,
     JsMemberExpression,
-    JsMetaProperty,
     JsNewExpression,
     JsNumericLiteral,
     JsReturnStatement,
@@ -94,7 +92,6 @@ from refinery.lib.scripts.js.model import (
     JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
-    JsWhileStatement,
     JsWithStatement,
     JsYieldExpression,
     static_property_key,
@@ -159,27 +156,6 @@ def _integer(node: Node | None) -> int | None:
     return exact_integer(node.value) if isinstance(node, JsNumericLiteral) else None
 
 
-_LOOPS = (
-    JsWhileStatement,
-    JsDoWhileStatement,
-    JsForStatement,
-    JsForInStatement,
-    JsForOfStatement,
-)
-
-
-def _own_nodes(root: Node) -> Iterator[Node]:
-    """
-    *root* and every node of it outside the functions nested in it.
-    """
-    stack = [root]
-    while stack:
-        node = stack.pop()
-        yield node
-        if node is root or not isinstance(node, FUNCTION_NODES):
-            stack.extend(node.children())
-
-
 def _leaves(jump: JsBreakStatement | JsContinueStatement, statement: Node) -> bool:
     """
     Whether *jump* leaves *statement*: it names a label, or no statement it may end lies between it
@@ -187,7 +163,7 @@ def _leaves(jump: JsBreakStatement | JsContinueStatement, statement: Node) -> bo
     """
     if jump.label is not None:
         return True
-    targets = _LOOPS if isinstance(jump, JsContinueStatement) else (*_LOOPS, JsSwitchStatement)
+    targets = LOOP_NODES if isinstance(jump, JsContinueStatement) else (*LOOP_NODES, JsSwitchStatement)
     cursor = jump.parent
     while cursor is not None and cursor is not statement:
         if isinstance(cursor, targets):
@@ -205,13 +181,15 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
     """
     if not isinstance(statement, JsIfStatement) or statement.alternate is not None:
         return False
-    for node in _own_nodes(statement):
+    for node in walk_scope(statement):
         if isinstance(node, (JsReturnStatement, JsYieldExpression, JsAwaitExpression)):
             return False
         if isinstance(node, (JsBreakStatement, JsContinueStatement)) and _leaves(node, statement):
             return False
+    if references_new_target(statement):
+        return False
     for node in walk_receiver_scope(statement):
-        if isinstance(node, (JsThisExpression, JsMetaProperty)):
+        if isinstance(node, JsThisExpression):
             return False
     checked: set[int] = set()
     for node in statement.walk():
@@ -247,7 +225,7 @@ def _inserted_statements(model: SemanticModel, function: JsFunctionNode) -> list
     stack: list[Node] = [] if function.body is None else [function.body]
     while stack:
         node = stack.pop()
-        if isinstance(node, (*FUNCTION_NODES, *_LOOPS)):
+        if isinstance(node, (*FUNCTION_NODES, *LOOP_NODES)):
             continue
         if not isinstance(node, JsBlockStatement):
             stack.extend(node.children())
@@ -561,7 +539,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
                     folds.append((statement.test, True))
                     decided.append(found)
             elif isinstance(statement, JsExpressionStatement):
-                found = self._lone_hash_call(effects, dominance, recognizer, statement, node)
+                found = self._lone_hash_call(model, effects, dominance, recognizer, statement, node)
                 if found is not None:
                     lone.append((statement, *found))
         statics = bool(decided or lone) and _regexp_statics_observable(model, node)
@@ -754,6 +732,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
 
     def _lone_hash_call(
         self,
+        model: SemanticModel,
         effects: EffectModel,
         dominance: DominanceModel,
         recognizer: _HelperRecognizer,
@@ -762,7 +741,8 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
     ) -> tuple[_Hashed, JsFunctionNode] | None:
         """
         The hash call *statement* makes and the function it hashes, when the call stands in a
-        statement list doing nothing but compute the number it discards: its helpers carry no
+        statement list doing nothing but compute the number it discards, directly or through the
+        property of a function it keeps the number in (`_hash_call`): its helpers carry no
         inserted statement, they read the text the parser kept for the function it hashes, and the
         number is not the value the script ends on where that value is kept
         (`refinery.lib.scripts.js.options.preserves_script_return`).
@@ -773,7 +753,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         not yet settled
         (`refinery.lib.scripts.js.analysis.effects.EffectModel.function_conversion_untouched`).
         """
-        hashed = recognizer.hashed(statement.expression)
+        hashed = recognizer.hashed(self._hash_call(model, effects, dominance, statement.expression))
         if hashed is None or hashed.carries:
             return None
         holder = statement.parent
