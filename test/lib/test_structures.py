@@ -246,6 +246,49 @@ class TestStructuresExtended(TestBase):
         self.assertLess(peak, size // 16)
         data.append(0)
 
+    def test_memoryfile_append_of_a_view_does_not_copy_it(self):
+        import gc
+        import tracemalloc
+        size = 0x1000000
+        data = bytes(range(256)) * (size // 256)
+        mem = MemoryFile(bytearray())
+        gc.collect()
+        tracemalloc.start()
+        try:
+            mem.write(memoryview(data))
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(mem.getvalue(), data)
+        self.assertLess(peak, size * 1.5)
+
+    def test_memoryfile_append_of_a_strided_view_writes_its_elements(self):
+        mem = MemoryFile(bytearray(b'ab'))
+        mem.seek(0, io.SEEK_END)
+        self.assertEqual(mem.write(memoryview(b'0123456789')[::3]), 4)
+        self.assertEqual(mem.getvalue(), b'ab0369')
+        self.assertEqual(mem.tell(), 6)
+
+    def test_memoryfile_append_of_a_32bit_view_writes_its_bytes(self):
+        import array
+        values = array.array('I', [1, 2, 3])
+        mem = MemoryFile(bytearray())
+        self.assertEqual(mem.write(memoryview(values)), 12)
+        self.assertEqual(mem.getvalue(), values.tobytes())
+        self.assertEqual(mem.tell(), 12)
+
+    def test_memoryfile_growing_a_buffer_that_a_view_holds_raises_and_changes_nothing(self):
+        buffer = bytearray(b'abc')
+        mem = MemoryFile(buffer)
+        mem.seek(0, io.SEEK_END)
+        with memoryview(buffer):
+            with self.assertRaises(BufferError):
+                mem.write(b'def')
+            with self.assertRaises(BufferError):
+                mem.write_byte(0x64)
+        self.assertEqual(buffer, b'abc')
+        self.assertEqual(mem.tell(), 3)
+
     def test_memoryfile_len(self):
         buffer = bytearray(b'Hello World')
         with MemoryFile(buffer) as mem:

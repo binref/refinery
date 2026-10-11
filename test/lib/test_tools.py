@@ -1,6 +1,9 @@
 import inspect
+import io
 import itertools
+import os
 import random
+import unittest
 import weakref
 
 from refinery.lib import tools, colors
@@ -334,6 +337,33 @@ class TestTools(TestBase):
             """
 
         self.assertEqual(tools.terminalfit(data, width=90), wish)
+
+
+class TestIsTerminal(TestBase):
+
+    def test_null_device_is_not_a_terminal(self):
+        for mode in ('rb', 'wb', 'r+b'):
+            with self.subTest(mode=mode), open(os.devnull, mode) as null:
+                self.assertFalse(tools.is_terminal(null))
+
+    @unittest.skipUnless(os.name == 'nt', 'the console device exists on Windows')
+    def test_console_opened_for_writing_only_is_a_terminal(self):
+        try:
+            descriptor = os.open('CONOUT$', os.O_WRONLY)
+        except OSError:
+            self.skipTest('the process has no console')
+        with open(descriptor, 'wb') as console:
+            self.assertTrue(tools.is_terminal(console))
+
+    def test_stream_that_reports_a_terminal_without_a_descriptor_is_one(self):
+        class Terminal(io.BytesIO):
+            def isatty(self):
+                return True
+
+        self.assertTrue(tools.is_terminal(Terminal()))
+
+    def test_object_without_a_terminal_query_is_not_a_terminal(self):
+        self.assertFalse(tools.is_terminal(object()))
 
 
 class TestNoLoggingProxy(TestBase):

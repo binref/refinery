@@ -421,13 +421,10 @@ class MemoryFileMethods(Generic[T, B]):
         cursor = self._cursor
         if limit is not None and cursor >= limit:
             raise LimitExceeded(bytes((byte,)))
-        try:
-            if cursor < len(out):
-                out[cursor] = byte
-            elif isinstance(out, bytearray):
-                out.append(byte)
-        except Exception as T:
-            raise OSError(str(T)) from T
+        if cursor < len(out):
+            out[cursor] = byte
+        elif isinstance(out, bytearray):
+            out.append(byte)
         self._cursor = cursor + 1
 
     def write(self, _data: Buffer | Iterable[int]) -> int:
@@ -438,21 +435,24 @@ class MemoryFileMethods(Generic[T, B]):
         except TypeError:
             it = iter(cast('Iterable[int]', _data))
             if limit is None:
-                data = bytes(it)
+                data = memoryview(bytes(it))
             else:
-                data = bytes(itertools.islice(it, max(limit - beginning, 0)))
+                data = memoryview(bytes(itertools.islice(it, max(limit - beginning, 0))))
             rest = bytearray(it)
-            size = len(data)
         else:
             rest = None
-            size = data.nbytes
-            if limit is not None and size and beginning + size > limit:
+            if limit is not None and data.nbytes and beginning + data.nbytes > limit:
                 raise LimitExceeded(bytes(data))
+        size = data.nbytes
         stop = beginning + size
-        try:
+        if (
+            beginning >= len(out)
+            and isinstance(out, bytearray)
+            and data.c_contiguous
+        ):
+            out.extend(data)
+        else:
             out[beginning:stop] = data
-        except Exception as T:
-            raise OSError(str(T)) from T
         self._cursor = stop
         if rest:
             raise LimitExceeded(rest)

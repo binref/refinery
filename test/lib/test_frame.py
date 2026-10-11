@@ -1,9 +1,17 @@
 import copy
+import errno
 import gc
 import io
 import itertools
+import os
+import random
+import sys
 import tracemalloc
 import weakref
+
+from unittest import mock
+
+import pytest
 
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
@@ -76,21 +84,17 @@ class _Trickle(io.RawIOBase):
         return size
 
 
-class _Sink:
+class _Sink(io.BytesIO):
     def __init__(self):
+        super().__init__()
         self.size = 0
 
-    def writable(self):
-        return True
-
-    def isatty(self):
+    def isatty(self) -> bool:
         return False
 
-    def write(self, data):
+    def write(self, data) -> int:
         self.size += len(data)
-
-    def flush(self):
-        pass
+        return len(data)
 
 
 class _Terminal(_Sink):
@@ -101,8 +105,18 @@ class _Terminal(_Sink):
     def isatty(self):
         return True
 
-    def write(self, data):
+    def write(self, data) -> int:
         self.data.extend(data)
+        return len(data)
+
+
+class _CountingTerminal(_Sink):
+    def isatty(self):
+        return True
+
+
+def _standard_output_encoded_as(encoding: str):
+    return mock.patch.object(sys, 'stdout', io.TextIOWrapper(io.BytesIO(), encoding=encoding))
 
 
 class TestFraming(TestBase):
@@ -800,6 +814,36 @@ class TestFraming(TestBase):
         data = bytes(0x1000000)
         self.assertLess(_peak_memory(lambda: _drain(data | nop())), len(data) * 1.5)
 
+    def test_output_collected_in_python_is_held_twice_at_most(self):
+        from refinery import nop
+        data = bytes(0x1000000)
+        for form, collect in (
+            ('call', lambda: nop()(data)),
+            ('bytes', lambda: data | nop() | bytes),
+            ('bytearray', lambda: data | nop() | bytearray),
+        ):
+            with self.subTest(form):
+                self.assertLess(_peak_memory(collect), len(data) * 2.5)
+
+    def test_output_into_a_buffer_that_a_view_holds_raises(self):
+        from refinery import nop
+        target = bytearray()
+        with memoryview(target):
+            with self.assertRaises(BufferError):
+                _ = B'data' | nop() | target
+        self.assertEqual(target, B'')
+
+    @pytest.mark.xfail(strict=True, reason='a write that fails for any reason is read as a receiver that stopped reading')
+    def test_output_to_a_stream_without_space_left_raises(self):
+        from refinery import nop
+
+        class _Full(_Sink):
+            def write(self, data):
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+        with self.assertRaises(OSError):
+            _ = B'data' | nop() | _Full()
+
     def test_single_unshared_output_is_not_copied(self):
         from refinery import Unit, nop
         data = bytes(0x1000000)
@@ -871,6 +915,45 @@ class TestFraming(TestBase):
                 terminal = _Terminal()
                 B'' | emit(*outputs) | terminal
                 self.assertEqual(terminal.data, shown)
+
+    def test_terminal_with_another_encoding_gets_text_in_its_encoding(self):
+        from refinery import nop
+        for text in ('café naïve\n', 'x' + 'é' * 0x10000 + '\n'):
+            with self.subTest(length=len(text)), _standard_output_encoded_as('cp1252'):
+                terminal = _Terminal()
+                _ = text.encode('utf8') | nop() | terminal
+                self.assertEqual(terminal.data, text.encode('cp1252'))
+
+    def test_terminal_with_another_encoding_gets_text_it_cannot_encode_as_it_is(self):
+        from refinery import nop
+        for text in ('café 中\n', 'é' * 0x10000 + '中\n'):
+            with self.subTest(length=len(text)), _standard_output_encoded_as('cp1252'):
+                terminal = _Terminal()
+                _ = text.encode('utf8') | nop() | terminal
+                self.assertEqual(terminal.data, text.encode('utf8'))
+
+    def test_terminal_with_another_encoding_gets_binary_output_without_inflating_it(self):
+        from refinery import nop
+        data = random.Random(0).randbytes(0x400000) + B'\n'
+        terminal = _CountingTerminal()
+        with _standard_output_encoded_as('cp1252'):
+            peak = _peak_memory(lambda: data | nop() | terminal)
+        self.assertEqual(terminal.size, len(data))
+        self.assertLess(peak, len(data) * 2)
+
+    def test_unit_writing_to_the_null_device_does_not_write_to_a_terminal(self):
+        from refinery import Unit
+        seen = []
+
+        class observer(Unit):
+            def process(self, data):
+                seen.append(self.isatty())
+                return data
+
+        _ = B'data' | observer() | None
+        with open(os.devnull, 'wb') as null:
+            _ = B'data' | observer() | null
+        self.assertEqual(seen, [False, False])
 
     def test_partly_read_unit_continues_when_piped(self):
         from refinery import emit, nop

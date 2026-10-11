@@ -228,6 +228,7 @@ from refinery.lib.argformats import (
 from refinery.lib.tools import (
     documentation,
     exception_to_string,
+    is_terminal,
     normalize_to_display,
     normalize_to_identifier,
     one,
@@ -1401,6 +1402,38 @@ _SECRET_DEBUG_TIMING_FLAG = '--debug-timing'
 _SECRET_DEBUG_TRACES_FLAG = '--debug-traces'
 _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
 
+_RECODING_SLICE_SIZE = 0x10000
+
+
+def _recoded_slices(piece: buf, codec: str, encoding: str) -> Generator[bytes]:
+    """
+    Generates the given piece decoded from `codec` and encoded to `encoding`, one slice of bounded
+    size at a time. Bytes that cannot be decoded are escaped with backslashes; a character that
+    cannot be encoded raises an exception.
+    """
+    import codecs
+    decoder = codecs.getincrementaldecoder(codec)(errors='backslashreplace')
+    encoder = codecs.getincrementalencoder(encoding)()
+    step = _RECODING_SLICE_SIZE
+    with memoryview(piece) as view:
+        for start in range(0, len(view), step):
+            yield encoder.encode(decoder.decode(view[start:start + step]))
+    yield encoder.encode(decoder.decode(B'', True), True)
+
+
+def _recoded_for_terminal(piece: buf, codec: str, encoding: str) -> Generator[buf]:
+    """
+    Generates the parts in which the given piece is written to a terminal with the given encoding:
+    the piece re-encoded if all of it can be, otherwise the piece as it is.
+    """
+    try:
+        for _ in _recoded_slices(piece, codec, encoding):
+            pass
+    except Exception:
+        yield piece
+        return
+    yield from _recoded_slices(piece, codec, encoding)
+
 
 class Unit(UnitBase, abstract=True):
     """
@@ -2180,24 +2213,18 @@ class Unit(UnitBase, abstract=True):
         def cname(x: str):
             return x.lower().replace('-', '')
 
-        recode = cname(self.codec) != cname(sys.stdout.encoding)
+        encoding = sys.stdout.encoding
+        recode = cname(self.codec) != cname(encoding)
         linebreak = True
 
         for piece in self._pieces_to_write(True):
             if not piece:
                 continue
             linebreak = piece.endswith(B'\n')
-            if recode:
-                try:
-                    import codecs
-                    piece = codecs.encode(
-                        codecs.decode(piece, self.codec, errors='backslashreplace'),
-                        sys.stdout.encoding,
-                    )
-                except Exception:
-                    pass
+            parts = _recoded_for_terminal(piece, self.codec, encoding) if recode else (piece,)
             try:
-                stream.write(piece)
+                for part in parts:
+                    stream.write(part)
                 stream.flush()
             except AttributeError:
                 pass
@@ -2439,10 +2466,7 @@ class Unit(UnitBase, abstract=True):
         """
         Checks whether the unit's output is currently connected to a terminal type IO stream.
         """
-        try:
-            return (t := self._target) is not None and t.isatty()
-        except AttributeError:
-            return False
+        return (t := self._target) is not None and is_terminal(t)
 
     @classmethod
     def _output(cls, *messages, clip=False) -> str:
@@ -2680,7 +2704,7 @@ class Unit(UnitBase, abstract=True):
                 yappi = _yappi
 
         if stream is None:
-            stream = open(os.devnull, 'rb') if sys.stdin.isatty() else sys.stdin.buffer
+            stream = open(os.devnull, 'rb') if is_terminal(sys.stdin) else sys.stdin.buffer
 
         with stream as source:
             try:
