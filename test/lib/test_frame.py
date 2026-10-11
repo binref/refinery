@@ -89,30 +89,24 @@ class _Sink(io.BytesIO):
         super().__init__()
         self.size = 0
 
-    def isatty(self) -> bool:
-        return False
-
     def write(self, data) -> int:
         self.size += len(data)
         return len(data)
 
 
-class _Terminal(_Sink):
+class _CountingTerminal(_Sink):
+    def isatty(self) -> bool:
+        return True
+
+
+class _Terminal(_CountingTerminal):
     def __init__(self):
         super().__init__()
         self.data = bytearray()
 
-    def isatty(self):
-        return True
-
     def write(self, data) -> int:
         self.data.extend(data)
         return len(data)
-
-
-class _CountingTerminal(_Sink):
-    def isatty(self):
-        return True
 
 
 def _standard_output_encoded_as(encoding: str):
@@ -940,6 +934,90 @@ class TestFraming(TestBase):
             peak = _peak_memory(lambda: data | nop() | terminal)
         self.assertEqual(terminal.size, len(data))
         self.assertLess(peak, len(data) * 2)
+
+    def test_terminal_with_an_alias_of_the_unit_codec_gets_the_bytes_as_they_are(self):
+        from refinery import nop
+        data = B'\xFF\xFE binary \x80\n'
+        for encoding in ('utf_8', 'U8', 'cp65001'):
+            with self.subTest(encoding=encoding), _standard_output_encoded_as(encoding):
+                terminal = _Terminal()
+                _ = data | nop() | terminal
+                self.assertEqual(terminal.data, data)
+
+    def test_terminal_gets_the_bytes_as_they_are_when_standard_output_names_no_encoding(self):
+        from refinery import nop
+        data = 'café\n'.encode('utf8')
+        terminal = _Terminal()
+        with mock.patch.object(sys, 'stdout', io.StringIO()):
+            _ = data | nop() | terminal
+        self.assertEqual(terminal.data, data)
+
+    def test_terminal_lets_go_of_each_output_before_the_next_one_is_made(self):
+        from refinery import Unit
+        alive = []
+
+        class outputs(Unit):
+            def process(self, data):
+                previous = None
+                for _ in range(3):
+                    if previous is not None:
+                        alive.append(previous() is not None)
+                    output = Chunk(data)
+                    previous = weakref.ref(output)
+                    yield output
+                    del output
+
+        for encoding, text in (
+            ('utf8', 'café\n'),
+            ('cp1252', 'café\n'),
+            ('cp1252', 'café 中\n'),
+            ('cp1252', 'café ' * 0x4000 + '\n'),
+            ('cp1252', 'café ' * 0x4000 + '中\n'),
+        ):
+            alive.clear()
+            with self.subTest(encoding=encoding, length=len(text)):
+                with _standard_output_encoded_as(encoding):
+                    _ = text.encode('utf8') | outputs() | _CountingTerminal()
+                self.assertEqual(alive, [False, False])
+
+    @pytest.mark.xfail(strict=True, reason='every terminal gets the encoding of standard output')
+    def test_terminal_behind_standard_error_gets_text_in_the_encoding_of_standard_error(self):
+        from refinery import nop
+        text = 'café\n'
+        terminal = _Terminal()
+        with (
+            _standard_output_encoded_as('utf8'),
+            mock.patch.object(sys, 'stderr', io.TextIOWrapper(terminal, encoding='cp1252')),
+        ):
+            _ = text.encode('utf8') | nop() | sys.stderr.buffer
+        self.assertEqual(terminal.data, text.encode('cp1252'))
+
+    @pytest.mark.xfail(strict=True, reason='output into a bytearray overwrites it from the start')
+    def test_output_into_a_bytearray_is_appended_to_it(self):
+        from refinery import nop
+        self.assertEqual(B'ABC' | nop() | bytearray(B'0123456789'), B'0123456789ABC')
+
+    def test_unit_asks_its_output_stream_once_whether_it_is_a_terminal(self):
+        from refinery import Unit
+        answers = []
+
+        class asking(Unit):
+            def process(self, data):
+                for _ in range(3):
+                    answers.append(self.isatty())
+                return data
+
+        class Terminal(_CountingTerminal):
+            questions = 0
+
+            def isatty(self) -> bool:
+                self.questions += 1
+                return True
+
+        terminal = Terminal()
+        _ = B'data' | asking() | terminal
+        self.assertEqual(answers, [True, True, True])
+        self.assertEqual(terminal.questions, 1)
 
     def test_unit_writing_to_the_null_device_does_not_write_to_a_terminal(self):
         from refinery import Unit

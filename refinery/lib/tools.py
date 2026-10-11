@@ -17,7 +17,7 @@ import warnings
 from enum import Enum, IntFlag
 from math import log
 from types import WrapperDescriptorType
-from typing import Callable, Generator, Iterable, Iterator, TypeVar, cast
+from typing import Generator, Iterable, Iterator, TypeVar, cast
 
 from refinery.lib.types import buf
 
@@ -81,15 +81,15 @@ if sys.platform == 'win32':
 
     class _FileFsDeviceInformation(ctypes.Structure):
         """
-        The structure `FILE_FS_DEVICE_INFORMATION` of the Windows API.
+        The structure of the Windows API that receives the type of the device behind a handle.
         """
         _fields_ = [('DeviceType', ctypes.c_uint32), ('Characteristics', ctypes.c_uint32)]
 
     @functools.cache
-    def _device_type_reader() -> Callable[[int], int | None]:
+    def _volume_information_query():
         """
-        Returns a function that reads the device type of a file handle, or `None` when the handle
-        cannot be queried.
+        Returns the function of the Windows API that queries information about the volume or the
+        device behind a handle.
         """
         query = ctypes.WinDLL('ntdll').NtQueryVolumeInformationFile
         query.argtypes = [
@@ -100,31 +100,27 @@ if sys.platform == 'win32':
             ctypes.c_int,
         ]
         query.restype = ctypes.c_long
-
-        def read(handle: int) -> int | None:
-            status = _IoStatusBlock()
-            info = _FileFsDeviceInformation()
-            if query(
-                handle,
-                ctypes.byref(status),
-                ctypes.byref(info),
-                ctypes.sizeof(info),
-                _FILE_FS_DEVICE_INFORMATION,
-            ):
-                return None
-            return info.DeviceType
-
-        return read
+        return query
 
     def _is_windows_null_device(stream) -> bool:
         """
-        Returns whether the descriptor of the given stream refers to the Windows null device.
+        Returns whether the descriptor of the given stream refers to the Windows null device. A
+        stream whose descriptor cannot be determined, for any reason, is not the null device.
         """
         try:
             handle = msvcrt.get_osfhandle(stream.fileno())
-        except (AttributeError, OSError, ValueError):
+        except Exception:
             return False
-        return _device_type_reader()(handle) == _FILE_DEVICE_NULL
+        status = _IoStatusBlock()
+        info = _FileFsDeviceInformation()
+        failure = _volume_information_query()(
+            handle,
+            ctypes.byref(status),
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            _FILE_FS_DEVICE_INFORMATION,
+        )
+        return not failure and info.DeviceType == _FILE_DEVICE_NULL
 
 else:
     def _is_windows_null_device(stream) -> bool:
@@ -136,7 +132,7 @@ def is_terminal(stream) -> bool:
     Returns whether the given stream is connected to a terminal. On Windows, a stream reports itself
     as a terminal when it is connected to any character device, including the null device; this
     function returns false for the null device. A stream that reports itself as a terminal but has
-    no descriptor is believed.
+    no usable descriptor is believed.
     """
     try:
         if not stream.isatty():

@@ -451,6 +451,8 @@ class MemoryFileMethods(Generic[T, B]):
             and data.c_contiguous
         ):
             out.extend(data)
+        elif isinstance(_data, bytearray):
+            out[beginning:stop] = _data
         else:
             out[beginning:stop] = data
         self._cursor = stop

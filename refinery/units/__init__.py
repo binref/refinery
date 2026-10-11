@@ -1405,6 +1405,17 @@ _SECRET_YAPPI_TIMING_FLAG = '--yappi-timing'
 _RECODING_SLICE_SIZE = 0x10000
 
 
+def _same_codec(a: str, b: str) -> bool:
+    """
+    Returns whether the two given names refer to the same codec.
+    """
+    import codecs
+    try:
+        return codecs.lookup(a).name == codecs.lookup(b).name
+    except LookupError:
+        return False
+
+
 def _recoded_slices(piece: buf, codec: str, encoding: str) -> Generator[bytes]:
     """
     Generates the given piece decoded from `codec` and encoded to `encoding`, one slice of bounded
@@ -1421,18 +1432,38 @@ def _recoded_slices(piece: buf, codec: str, encoding: str) -> Generator[bytes]:
     yield encoder.encode(decoder.decode(B'', True), True)
 
 
-def _recoded_for_terminal(piece: buf, codec: str, encoding: str) -> Generator[buf]:
+def _can_be_recoded(piece: buf, codec: str, encoding: str) -> bool:
     """
-    Generates the parts in which the given piece is written to a terminal with the given encoding:
-    the piece re-encoded if all of it can be, otherwise the piece as it is.
+    Returns whether all of the given piece can be decoded from `codec` and encoded to `encoding`.
     """
     try:
         for _ in _recoded_slices(piece, codec, encoding):
             pass
     except Exception:
-        yield piece
-        return
-    yield from _recoded_slices(piece, codec, encoding)
+        return False
+    return True
+
+
+def _write_recoded(stream: BinaryIO, piece: buf, codec: str, encoding: str) -> None:
+    """
+    Writes the given piece to a terminal with the given encoding: re-encoded if all of it can be,
+    otherwise as it is. A piece of at most one slice is re-encoded at once. A larger piece is
+    re-encoded one slice at a time, twice: once to check that all of it can be encoded, and once
+    to write it.
+    """
+    import codecs
+    if len(piece) <= _RECODING_SLICE_SIZE:
+        try:
+            recoded = codecs.encode(codecs.decode(piece, codec, 'backslashreplace'), encoding)
+        except Exception:
+            recoded = piece
+        stream.write(recoded)
+    elif _can_be_recoded(piece, codec, encoding):
+        for part in _recoded_slices(piece, codec, encoding):
+            if part:
+                stream.write(part)
+    else:
+        stream.write(piece)
 
 
 class Unit(UnitBase, abstract=True):
@@ -1449,7 +1480,7 @@ class Unit(UnitBase, abstract=True):
     _offset: int
     _reader: Iterator[bytes | bytearray] | None
     _source: BinaryIO | None
-    _target: BinaryIO | None
+    _terminal: bool
     _run: _Run | None
     console: bool
 
@@ -2163,14 +2194,14 @@ class Unit(UnitBase, abstract=True):
         if not stream.writable():
             raise ValueError('target stream is not writable')
 
-        self._target = stream
+        self._terminal = is_terminal(stream)
         try:
-            if self.isatty():
+            if self._terminal:
                 self._write_to_terminal(stream)
             else:
                 self._write_to_stream(stream)
         finally:
-            self._target = None
+            self._terminal = False
         return stream
 
     def _collected(self) -> Generator[bytes | bytearray | Chunk]:
@@ -2210,21 +2241,21 @@ class Unit(UnitBase, abstract=True):
             del piece
 
     def _write_to_terminal(self, stream: BinaryIO):
-        def cname(x: str):
-            return x.lower().replace('-', '')
-
-        encoding = sys.stdout.encoding
-        recode = cname(self.codec) != cname(encoding)
+        codec = self.codec
+        recoding: str | None = getattr(sys.stdout, 'encoding', None)
+        if recoding is not None and _same_codec(codec, recoding):
+            recoding = None
         linebreak = True
 
         for piece in self._pieces_to_write(True):
             if not piece:
                 continue
             linebreak = piece.endswith(B'\n')
-            parts = _recoded_for_terminal(piece, self.codec, encoding) if recode else (piece,)
             try:
-                for part in parts:
-                    stream.write(part)
+                if recoding is None:
+                    stream.write(piece)
+                else:
+                    _write_recoded(stream, piece, codec, recoding)
                 stream.flush()
             except AttributeError:
                 pass
@@ -2466,7 +2497,7 @@ class Unit(UnitBase, abstract=True):
         """
         Checks whether the unit's output is currently connected to a terminal type IO stream.
         """
-        return (t := self._target) is not None and is_terminal(t)
+        return self._terminal
 
     @classmethod
     def _output(cls, *messages, clip=False) -> str:
@@ -2625,7 +2656,7 @@ class Unit(UnitBase, abstract=True):
     #         the above __dict__ update unnecessary.
     #   clone._buffer = self._buffer
     #   clone._source = self._source
-        clone._target = None
+        clone._terminal = False
         clone._run = None
         clone._buffer = B''
         clone._offset = 0
@@ -2638,7 +2669,7 @@ class Unit(UnitBase, abstract=True):
         self._offset = 0
         self._reader = None
         self._source = None
-        self._target = None
+        self._terminal = False
         self._run = None
         self.console = False
 

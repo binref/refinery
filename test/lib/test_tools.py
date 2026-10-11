@@ -3,8 +3,11 @@ import io
 import itertools
 import os
 import random
+import sys
 import unittest
 import weakref
+
+from unittest import mock
 
 from refinery.lib import tools, colors
 
@@ -364,6 +367,20 @@ class TestIsTerminal(TestBase):
 
     def test_object_without_a_terminal_query_is_not_a_terminal(self):
         self.assertFalse(tools.is_terminal(object()))
+
+    def test_terminal_size_falls_back_to_the_default_when_the_standard_streams_are_mocks(self):
+        from refinery.lib.environment import environment
+        with mock.patch.object(environment.term_size, 'value', None):
+            with (
+                mock.patch.object(sys, 'stdout', io.StringIO()),
+                mock.patch.object(sys, 'stderr', io.StringIO()),
+            ):
+                default = tools.get_terminal_size(80)
+            with (
+                mock.patch.object(sys, 'stdout', mock.Mock()),
+                mock.patch.object(sys, 'stderr', mock.Mock()),
+            ):
+                self.assertEqual(tools.get_terminal_size(80), default)
 
 
 class TestNoLoggingProxy(TestBase):

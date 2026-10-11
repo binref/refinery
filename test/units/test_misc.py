@@ -1,6 +1,10 @@
 import sys
 import contextlib
 
+from unittest import mock
+
+import pytest
+
 from . import TestUnitBase
 from .compression import KADATH1, KADATH2
 
@@ -313,6 +317,26 @@ class TestSimpleInvertible(TestUnitBase):
         finally:
             sys.stdin = sys_stdin
             sys.stdout = sys_stdout
+
+    @pytest.mark.xfail(strict=True, reason='a process without standard input fails instead of reading no input')
+    def test_run_method_without_standard_input(self):
+        from refinery import emit
+
+        class console:
+            def __init__(self):
+                self.buffer = MemoryFile()
+
+            def isatty(self):
+                return False
+
+        out = console()
+        with (
+            mock.patch.object(sys, 'stdin', None),
+            mock.patch.object(sys, 'stdout', out),
+            mock.patch.object(sys, 'argv', ['emit', 'ABC']),
+        ):
+            emit.run()
+        self.assertEqual(out.buffer.getvalue(), b'ABC')
 
     def test_regression_empty_chunk_unpack(self):
         pl = PL('emit X [| struct {x:B} {bin} ]')

@@ -289,6 +289,23 @@ class TestStructuresExtended(TestBase):
         self.assertEqual(buffer, b'abc')
         self.assertEqual(mem.tell(), 3)
 
+    def test_memoryfile_overwrite_with_a_bytearray_does_not_copy_it(self):
+        import gc
+        import tracemalloc
+        size = 0x1000000
+        data = bytearray(range(256)) * (size // 256)
+        mem = MemoryFile(bytearray(size))
+        gc.collect()
+        tracemalloc.start()
+        try:
+            mem.write(data)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(mem.getvalue(), data)
+        self.assertEqual(mem.tell(), size)
+        self.assertLess(peak, size // 16)
+
     def test_memoryfile_len(self):
         buffer = bytearray(b'Hello World')
         with MemoryFile(buffer) as mem:
