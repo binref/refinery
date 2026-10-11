@@ -29,6 +29,13 @@ LINE_BREAK_CHECK = (
 #: The marker of a line-break check that is still in a deobfuscated file.
 LINE_BREAK_MARKER = 'new RegExp('
 
+#: A line-break check over a function of its own, written as the test of an `if` the obfuscator
+#: inserts.
+INSERTED_LINE_BREAK_CHECK = (
+    r'function () { var n = function () { const t = function () { const r = new RegExp("\n"); return r.test(n); }; '
+    'return t(); }; return n(); }()'
+)
+
 #: The hash helpers, in the newer form: the fallback multiplication, the cyrb53 hash, and the helper
 #: that hashes a function's text with spaces, line breaks and `;,{}().[]` removed.
 NEW_HELPERS = (
@@ -125,6 +132,20 @@ def wrapped(constant: int, helpers: str = OLD_HELPERS, program: str = PROGRAM, p
     )
 
 
+def inserted_at_the_start_of_the_hash(statement: str) -> str:
+    """
+    The older hash helpers with *statement* inserted at the start of the hash.
+    """
+    return OLD_HELPERS.replace('function hashText(str, seed) { ', F'function hashText(str, seed) {{ {statement}')
+
+
+def inserted_before_the_hash_returns(statement: str) -> str:
+    """
+    The older hash helpers with *statement* inserted in front of the `return` of the hash.
+    """
+    return OLD_HELPERS.replace(_HASH_RETURN, F'{statement}{_HASH_RETURN}')
+
+
 def checked(statement: str = LINE_BREAK_CHECK, tail: str = 'console.log("ran");\n') -> str:
     """
     A program running the line-break check *statement* in a function of its own, then *tail*.
@@ -162,6 +183,8 @@ A_CHECK_THE_INPUT_TEXT_DECIDES = {
     guarded(NAME_OF, 'nameOf', 5, NAME_OF_5, 'console.log(guarded({ name: "you" }));\n'): (
         'you\n', str(NAME_OF_5)),
     wrapped(PROGRAM_25): ('ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash(F'if ({INSERTED_LINE_BREAK_CHECK}) {{ console.log("tampered"); }} ')): (
+        'ran\n', str(PROGRAM_25)),
     inspect.cleandoc(r'''
         var N = function () { return 1; };
         var saved = [N];
@@ -181,13 +204,13 @@ A_CHECK_THE_INPUT_TEXT_DECIDES = {
 }
 
 #: Programs whose hash guard the input text decides while the program may read the match statics
-#: of `RegExp` that the hash sets, mapped to what Node prints and to the hash call, which the
-#: deobfuscation keeps for them although the comparison is gone.
+#: of `RegExp` that the hash sets, mapped to what Node prints, to the hash call, which the
+#: deobfuscation keeps for them although the comparison is gone, and to the constant compared.
 A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED = {
     guarded(
         DOUBLE, 'double', 42, DOUBLE_42,
         'if (/(\\d+)/.test("abc 123")) { guarded(1); console.log("$1=" + globalThis.RegExp.$1); }\n',
-    ): ('$1=\n', 'hashOf(double, 42)'),
+    ): ('$1=\n', 'hashOf(double, 42)', str(DOUBLE_42)),
     guarded(
         DOUBLE,
         'double',
@@ -197,7 +220,31 @@ A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED = {
     ): (
         '$1=\n',
         'hashOf(double, 42)',
+        str(DOUBLE_42),
     ),
+    (
+        wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash(F'if ({INSERTED_LINE_BREAK_CHECK}) {{ console.log("tampered"); }} '))
+        + 'if (/(\\d+)/.test("abc 123")) { console.log("$1=" + RegExp.$1); }\n'
+    ): (
+        'ran\n$1=123\n',
+        'hashText(textOf(program), 25)',
+        str(PROGRAM_25),
+    ),
+}
+
+#: Programs wrapped in the older hash guard whose helpers carry a check the obfuscator inserted,
+#: mapped to what Node prints and to the constant compared. The deobfuscation keeps the hash call,
+#: which runs the inserted check where it ran, although the comparison is gone.
+A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK = {
+    wrapped(PROGRAM_READING_TRIPPED_25, CONTEXT_HELPERS, PROGRAM_READING_TRIPPED, 'var ctx = globalThis;\n'): (
+        'ran string\n', str(PROGRAM_READING_TRIPPED_25)),
+    wrapped(PROGRAM_25, CRASH_HELPERS, PROGRAM, 'var ctx = globalThis;\n'): ('ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_READING_A_KEY_25, DATED_HELPERS, PROGRAM_READING_A_KEY): (
+        'ran\n', str(PROGRAM_READING_A_KEY_25)),
+    wrapped(
+        PROGRAM_25,
+        OLD_HELPERS.replace('function textOf(x) { ', 'function textOf(x) { if (Date.now() > 0) { console.log("dated"); } '),
+    ): ('dated\nran\n', str(PROGRAM_25)),
 }
 
 SET_A_LINE_BREAK = r'function () { return "a\nb"; }'
@@ -308,9 +355,23 @@ A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE = {
         'Object.freeze(guarded);\ntry { console.log(guarded(21)); } catch (e) { console.log(e.constructor.name); }\n',
     ): ('TypeError\n', str(DOUBLE_42)),
     wrapped(PROGRAM_25 + 1): ('tampered\n', str(PROGRAM_25 + 1)),
-    wrapped(PROGRAM_READING_TRIPPED_25, CONTEXT_HELPERS, PROGRAM_READING_TRIPPED, 'var ctx = globalThis;\n'): (
-        'ran string\n', str(PROGRAM_READING_TRIPPED_25)),
-    wrapped(PROGRAM_25, CRASH_HELPERS, PROGRAM, 'var ctx = globalThis;\n'): ('ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { seed = 1; } '), PROGRAM): (
+        'ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { return 1; } '), PROGRAM): (
+        'ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_at_the_start_of_the_hash('if (Date.now() < 0) { imul = null; } '), PROGRAM): (
+        'ran\n', str(PROGRAM_25)),
+    wrapped(
+        PROGRAM_25,
+        inserted_at_the_start_of_the_hash('if (Date.now() < 0) { String.prototype.charCodeAt = function () { return 0; }; } '),
+        PROGRAM,
+    ): ('ran\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { with ({}) { h2 = 0; } } '), PROGRAM): (
+        'tampered\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { eval("h2 = 0"); } '), PROGRAM): (
+        'tampered\n', str(PROGRAM_25)),
+    wrapped(PROGRAM_25, inserted_before_the_hash_returns('if (Date.now() > 0) { function h2() {} } '), PROGRAM): (
+        'tampered\n', str(PROGRAM_25)),
     checked(LINE_BREAK_CHECK.replace('const t = function ()', 'const t = async function ()')): (
         'tampered\nran\n',
         LINE_BREAK_MARKER,
@@ -403,11 +464,25 @@ class TestTheCheckTheInputTextDecidesIsGone(TestBase):
                 self.assertNotIn(marker, deobfuscate_source(source, module=True))
 
     def test_the_hash_call_stays_where_its_match_statics_may_be_read(self):
-        for source, (_, kept) in A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED.items():
+        for source, (_, kept, constant) in A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED.items():
             with self.subTest(source):
                 text = deobfuscate_source(source, module=True)
                 self.assertIn(kept, text)
-                self.assertNotIn(str(DOUBLE_42), text)
+                self.assertNotIn(constant, text)
+
+    def test_the_hash_call_stays_where_its_helpers_carry_an_inserted_check(self):
+        for source, (_, constant) in A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK.items():
+            with self.subTest(source):
+                text = deobfuscate_source(source, module=True)
+                self.assertIn('hashText(textOf(program), 25);', text)
+                self.assertNotIn(constant, text)
+
+    def test_a_hash_call_nothing_reads_goes_once_its_inserted_check_is_decided(self):
+        source = wrapped(
+            PROGRAM_25,
+            inserted_at_the_start_of_the_hash(F'if ({INSERTED_LINE_BREAK_CHECK}) {{ console.log("tampered"); }} '),
+        )
+        self.assertNotIn('hashText', deobfuscate_source(source, module=True))
 
 
 class TestTheCheckTheInputTextDoesNotDecideStays(TestBase):
@@ -438,7 +513,11 @@ class TestNodePrintsTheSameAboutASelfCheck(TestBase):
 
     def test_a_decided_check_whose_hash_is_observed_prints_what_the_program_prints(self):
         self._assert_each_still_prints({
-            source: prints for source, (prints, _) in A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED.items()})
+            source: prints for source, (prints, _, _) in A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED.items()})
+
+    def test_a_decided_check_over_helpers_carrying_an_inserted_check_prints_what_the_program_prints(self):
+        self._assert_each_still_prints({
+            source: prints for source, (prints, _) in A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK.items()})
 
     def test_a_check_left_standing_prints_what_the_program_prints(self):
         self._assert_each_still_prints({

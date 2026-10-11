@@ -53,19 +53,15 @@ from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
 )
 from test.lib.scripts.js.deobfuscation.test_selfchecks import (
-    DATED_HELPERS,
     DOUBLE,
     DOUBLE_42,
     NEW_HELPERS,
-    PROGRAM_READING_A_KEY,
-    PROGRAM_READING_A_KEY_25,
     SET_A_LINE_BREAK,
     checked,
     NAME_OF,
     NAME_OF_5,
     checked_by_name,
     guarded,
-    wrapped,
 )
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
@@ -4561,35 +4557,6 @@ class TestAClosureANestedRunReplacedReadsThatRun(TestBase):
     )
     def test_the_closure_reads_its_own_run(self):
         rows = A_CLOSURE_A_NESTED_RUN_REPLACED
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
-
-
-#: Self-checks the input text decides that the deobfuscation leaves standing and then trips,
-#: mapped to what Node prints: the older hash guard whose helper holds a date check the obfuscator
-#: inserted into it.
-A_DECIDED_SELF_CHECK_LEFT_TO_TRIP = {
-    wrapped(PROGRAM_READING_A_KEY_25, DATED_HELPERS, PROGRAM_READING_A_KEY):
-        'ran\n',
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestADecidedSelfCheckIsFoldedWhereverItStands(TestBase):
-    """
-    `refinery.lib.scripts.js.deobfuscation.selfchecks` decides the older hash guard only where its
-    helpers equal their templates; a date, host or debugger check the obfuscator inserts into the
-    hash helper is a statement the template does not hold, and removing the hash call would drop
-    that check, so the guard stays and trips. The fix is keeping the call and folding only the
-    comparison, which needs the helper read as its template after statements that never return and
-    write none of its names.
-    """
-
-    @unittest.expectedFailure
-    def test_the_check_does_not_trip(self):
-        rows = A_DECIDED_SELF_CHECK_LEFT_TO_TRIP
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),

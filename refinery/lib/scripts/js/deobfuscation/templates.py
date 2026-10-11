@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import functools
 
-from typing import Iterable, NamedTuple
+from typing import Collection, Iterable, NamedTuple
 
 from refinery.lib.scripts import (
     Expression,
     Node,
     _clone_node,
+    _remove_from_parent,
     _replace_in_parent,
     canonical,
     set_child,
@@ -92,7 +93,9 @@ class NormalForm:
     The names *placeholders* maps by the identity of their binding stand for the placeholder they
     are mapped to, and so does every node *nodes* maps by its identity, whatever it spells: the
     literal holding a decoder's alphabet, or the callee of the call it returns through. The names
-    *empty* holds by the identity of their binding hold an empty function.
+    *empty* holds by the identity of their binding hold an empty function. A statement of the
+    function *left_out* holds is no part of the form, with every name it spells: another transform
+    inserted it, and the template does not hold it.
     """
 
     def __init__(
@@ -101,17 +104,21 @@ class NormalForm:
         placeholders: dict[int, str],
         empty: set[int],
         nodes: dict[int, str] | None = None,
+        left_out: Collection[Node] = (),
     ):
         self.model = model
         self.placeholders = placeholders
         self.empty = empty
         self.nodes = nodes or {}
+        self.left_out = left_out
 
     def of(self, function: JsFunctionNode) -> Shape | None:
         renames: dict[int, str] = {}
         own: dict[int, str] = {}
+        left_out = {id(statement) for statement in self.left_out}
+        unread = {id(node) for statement in self.left_out for node in statement.walk()}
         for node in function.walk():
-            if not isinstance(node, JsIdentifier):
+            if not isinstance(node, JsIdentifier) or id(node) in unread:
                 continue
             binding = self.model.resolve(node) or self.model.binding_of(node)
             if binding is None:
@@ -128,6 +135,7 @@ class NormalForm:
                 renames[id(node)] = '#outer'
         clone = _clone_node(function)
         swaps: list[tuple[Node, str]] = []
+        dropped: list[Node] = []
         for original, copy in zip(function.walk(), clone.walk()):
             if type(original) is not type(copy):
                 return None
@@ -135,8 +143,13 @@ class NormalForm:
                 set_value(copy, 'name', renames[id(original)])
             if id(original) in self.nodes:
                 swaps.append((copy, self.nodes[id(original)]))
+            if id(original) in left_out:
+                dropped.append(copy)
         for copy, placeholder in swaps:
             _replace_in_parent(copy, JsIdentifier(name=placeholder))
+        for copy in dropped:
+            if not _remove_from_parent(copy):
+                return None
         self._normalize(clone)
         return Shape(
             bool(getattr(clone, 'generator', False)),
@@ -277,16 +290,17 @@ def matches(
     templates: Iterable[Template],
     placeholders: dict[int, str],
     nodes: dict[int, str] | None = None,
+    left_out: Collection[Node] = (),
 ) -> bool:
     """
     Whether *function* has the normal form of one of *templates*, the names *placeholders* maps and
-    the nodes *nodes* maps standing for the placeholders they are mapped to. A function whose number
-    of parameters no template has is refused before its form is built, which costs a copy of the
-    whole function.
+    the nodes *nodes* maps standing for the placeholders they are mapped to, and the statements of
+    *left_out* left out. A function whose number of parameters no template has is refused before
+    its form is built, which costs a copy of the whole function.
     """
     shapes = [template_form(template) for template in templates]
     if all(len(function.params) != len(shape.params) for shape in shapes):
         return False
     empty = empty_functions_called(model, function)
-    form = NormalForm(model, placeholders, empty, nodes).of(function)
+    form = NormalForm(model, placeholders, empty, nodes, left_out).of(function)
     return form is not None and form in shapes
