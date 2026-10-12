@@ -190,6 +190,96 @@ class TestAu3ControlFlowDeflattening(TestAu3):
             EndFunc
             ''')
 
+    def test_the_state_assignment_stays_when_error_text_holds_the_name_without_a_dollar(self):
+        self._assertSplicesTo(
+            '''
+            Func f()
+                MsgBox(0, 0, Eval("state") + +
+                While 1
+                    $state = 2
+                    Switch $state
+                    Case 2
+                        MsgBox(0, 0, 2)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            Func f()
+                MsgBox(0, 0, Eval("state") + +
+                $state = 2
+                MsgBox(0, 0, 2)
+            EndFunc
+            ''')
+
+    def test_the_state_assignment_stays_when_the_tree_holds_an_include(self):
+        self._assertSplicesTo(
+            '''
+            #include <reader.au3>
+            While 1
+                $state = 2
+                Switch $state
+                Case 2
+                    MsgBox(0, 0, 2)
+                    ExitLoop
+                EndSwitch
+            Wend
+            ''',
+            '''
+            #include <reader.au3>
+            $state = 2
+            MsgBox(0, 0, 2)
+            ''')
+
+    def test_the_state_assignment_stays_in_a_function_when_the_tree_holds_an_include(self):
+        self._assertSplicesTo(
+            '''
+            #include <reader.au3>
+            Func f()
+                While 1
+                    $state = 2
+                    Switch $state
+                    Case 2
+                        MsgBox(0, 0, 2)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            #include <reader.au3>
+            Func f()
+                $state = 2
+                MsgBox(0, 0, 2)
+            EndFunc
+            ''')
+
+    def test_the_state_assignment_stays_for_a_declared_local_when_the_tree_holds_an_include(self):
+        self._assertSplicesTo(
+            '''
+            #include <reader.au3>
+            Func f()
+                Local $state
+                While 1
+                    $state = 2
+                    Switch $state
+                    Case 2
+                        MsgBox(0, 0, 2)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            #include <reader.au3>
+            Func f()
+                Local $state
+                $state = 2
+                MsgBox(0, 0, 2)
+            EndFunc
+            ''')
+
     def test_the_first_of_two_matching_labels_wins(self):
         self._assertSplicesTo(
             '''
@@ -271,6 +361,29 @@ class TestAu3ControlFlowDeflattening(TestAu3):
                         ExitLoop
                     Case 3
                         MsgBox(0, 0, 3)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            Func f()
+                MsgBox(0, 0, 1)
+            EndFunc
+            ''')
+
+    def test_a_constant_discriminant_splices_to_the_case_the_discriminant_matches(self):
+        self._assertSplicesTo(
+            '''
+            Func f()
+                While 1
+                    $state = "1"
+                    Switch 1
+                    Case "1x"
+                        MsgBox(0, 0, 1)
+                        ExitLoop
+                    Case "1"
+                        MsgBox(0, 0, 2)
                         ExitLoop
                     EndSwitch
                 Wend

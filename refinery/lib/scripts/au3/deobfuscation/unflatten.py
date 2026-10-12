@@ -7,9 +7,13 @@ flattener scaffolding: the dead cases, the state deltas inside them, the wrapper
 
 Which case runs is the interpreter's rule, not a rederived matcher: cases scan in source order, a
 `Case Else` is the live case the moment it is reached — before any later label is consulted — and
-a label matches by `=` comparison or by range containment, both through the value tables. A label
-the shared evaluator cannot decide refuses the whole region: the runtime value could match it, so
-no later case may be assumed live. The constants themselves are read through the evaluator
+a label matches by `=` comparison or by range containment, both through the value tables. The
+scan runs on the value the discriminant holds at runtime — the state the init just wrote when the
+discriminant is the state variable, the pinned constant when the discriminant is one itself —
+because the interpreter dispatches on the discriminant, and two values that compare `=`-equal
+can still part ways on a label when one is a string and the other a number. A label the shared
+evaluator cannot decide refuses the whole region: the runtime value could match it, so no later
+case may be assumed live. The constants themselves are read through the evaluator
 `refinery.lib.scripts.au3.analysis.constants`, exactly as the fold reads them, so a disguised
 state (`While(821 - 212)`, `Case BitXOR(a, b)`) splices without waiting for a fold to rewrite it.
 
@@ -18,10 +22,12 @@ leaves only when nothing can read the storage it writes: no occurrence of the na
 case body, none outside the region anywhere in the script — an error node's text included, which
 is live source the real AutoIt runs — no string or directive spelling the name, no constant of
 that name (dropping a fatal write to a constant would let the script continue where the original
-dies), and no computed-name channel that could reach the storage: one in the region's own scope
-when the write provably targets a local of it, any channel anywhere when it targets the global or
-proves nothing. Two regions sharing one state name need no pairing machinery — each sees the
-other's occurrences and keeps its assignment.
+dies), no include anywhere in the script — an included file is outside every fact the tree holds
+and may itself be spliced into the region's own function — and no computed-name channel that
+could reach the storage: one in the region's own scope when the write provably targets a local
+of it, any channel anywhere when it targets the global or proves nothing.
+Two regions sharing one state name need no pairing machinery — each sees the other's
+occurrences and keeps its assignment.
 
 What the splice deletes — the `While` test, the dead cases, the trailing `ExitLoop`, the state
 assignment when it leaves — must hold no function declaration, directive, or include, which are
@@ -156,7 +162,7 @@ class Au3ControlFlowDeflattening(Transformer):
                 error_texts.append(node.text)
         error_texts.extend(error.text for error in script.errors)
         self._occurrences = occurrences
-        self._error_text = '\n'.join(error_texts)
+        self._error_text = '\n'.join(error_texts).lower()
         self._channel_scopes = frozenset(filter(None, (
             ast.enclosing_function(channel) for channel in self._usage.channels
         )))
@@ -242,11 +248,13 @@ class Au3ControlFlowDeflattening(Transformer):
         if isinstance(discriminant, Au3Variable):
             if discriminant.name != name:
                 return None
+            dispatched = state
         else:
             spelled = constant_value(switch.discriminant, self._policy)
             if spelled is None or self._equal_state(state, spelled) is not True:
                 return None
-        live = self._live_case(switch.cases, state)
+            dispatched = spelled
+        live = self._live_case(switch.cases, dispatched)
         if live is None:
             return None
         body = live.body
@@ -281,26 +289,31 @@ class Au3ControlFlowDeflattening(Transformer):
         replacement.extend(tail)
         return replacement
 
-    def _live_case(self, cases: Sequence[Au3SwitchCase], state: Au3Value) -> Au3SwitchCase | None:
+    def _live_case(
+        self,
+        cases: Sequence[Au3SwitchCase],
+        dispatched: Au3Value,
+    ) -> Au3SwitchCase | None:
         """
-        The one case a dispatcher region ever runs, read with the interpreter's in-order scan: a
-        `Case Else` is the live case the moment it is reached, and a case with labels is live when
-        one of its labels matches *state*. A label that cannot decide refuses the region.
+        The one case a dispatcher region ever runs, read with the interpreter's in-order scan over
+        *dispatched* — the value the switch dispatches on: a `Case Else` is the live case the
+        moment it is reached, and a case with labels is live when one of its labels matches the
+        dispatched value. A label that cannot decide refuses the region.
         """
         for case in cases:
             if case.values is None:
                 return case
             for label in case.values:
-                verdict = self._label_matches(state, label)
+                verdict = self._label_matches(dispatched, label)
                 if verdict is None:
                     return None
                 if verdict:
                     return case
         return None
 
-    def _label_matches(self, state: Au3Value, label: Node) -> bool | None:
+    def _label_matches(self, dispatched: Au3Value, label: Node) -> bool | None:
         """
-        Whether *label* matches the state — a single label by `=` comparison, a range by
+        Whether *label* matches the dispatched value — a single label by `=` comparison, a range by
         containment, both through the value tables — or `None` where the match cannot be decided.
         """
         if isinstance(label, Au3CaseRange):
@@ -308,15 +321,15 @@ class Au3ControlFlowDeflattening(Transformer):
             high = constant_value(label.end, self._policy)
             if low is None or high is None:
                 return None
-            within = compare('<=', low, state)
-            ending = compare('<=', state, high)
+            within = compare('<=', low, dispatched)
+            ending = compare('<=', dispatched, high)
             if within is None or ending is None:
                 return None
             return truthy(within) is True and truthy(ending) is True
         value = constant_value(label, self._policy)
         if value is None:
             return None
-        return self._equal_state(state, value)
+        return self._equal_state(dispatched, value)
 
     def _equal_state(self, one: Au3Value, two: Au3Value) -> bool | None:
         """
@@ -381,12 +394,16 @@ class Au3ControlFlowDeflattening(Transformer):
         Whether the state assignment stays: always sound, so it leaves only when nothing can read
         the storage it writes — no occurrence of the name in the live case body, where a read would
         see the pre-region value once the assignment is gone, none outside the region anywhere in
-        the script, no error text or string or directive spelling it, no constant of that name, and
-        no computed-name channel that could reach the storage — one in the region's own scope when
-        the write provably targets a local of it, any channel anywhere when it does not.
+        the script, no error text or string or directive spelling it, no constant of that name,
+        and no computed-name channel that could reach the storage — one in the region's own scope
+        when the write provably targets a local of it, any channel anywhere when it does not — and
+        no include anywhere in the script, whose file is outside every fact the tree holds and may
+        itself be spliced into the region's own function.
         """
         assert self._scopes is not None
         assert self._usage is not None
+        if self._scopes.holds_an_include:
+            return True
         for statement in live_body:
             for node in statement.walk():
                 if isinstance(node, Au3Variable) and node.name == name:
@@ -394,7 +411,7 @@ class Au3ControlFlowDeflattening(Transformer):
         for occurrence in self._occurrences.get(name, ()):
             if not occurrence.is_descendant_of(loop):
                 return True
-        if F'${name}' in self._error_text:
+        if name in self._error_text:
             return True
         if self._usage.spells(name):
             return True
