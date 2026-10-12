@@ -16,10 +16,13 @@ and a call kills what its callee may write. `Const` and `Enum` names are never k
 refuses to run a script that reassigns one. A `Static` never binds at all: its value survives
 the call that wrote it, so no single pass can know it.
 
-A binding is taken only from a shape the fold leaves behind — a literal, a run-time-constant
-macro, a unary minus over a number, an array literal of such, a `Binary("0x…")` call — plus the
-compound assignments, which combine their operands through the operator table. Everything else
-is a kill.
+A binding is taken from the value the constant evaluator proves — see
+`refinery.lib.scripts.au3.analysis.constants`, asked over the state's own lookups, so an
+arithmetic over proven reads binds what it computes and one pass collapses a chain of derived
+constants. The compound assignments take the same evaluator's bounded combination. A value past
+the payload bound is data, not a constant: its reads are never recorded, and a combination that
+would leave the bound binds nothing, so no accumulator grows a state past what the script itself
+spells. Everything the evaluator refuses is a kill.
 """
 from __future__ import annotations
 
@@ -30,11 +33,15 @@ from collections.abc import Mapping
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
+from refinery.lib.scripts.au3.analysis.constants import (
+    combine,
+    constant_value,
+    within_limit,
+)
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
     apply_binary,
-    literal_value,
     of_int,
 )
 from refinery.lib.scripts.au3.model import (
@@ -61,6 +68,11 @@ from refinery.lib.scripts.au3.model import (
     Expression,
 )
 from refinery.lib.scripts.au3.parser import Au3Parser
+
+#: The payload beyond which a value the walk proves is data, not a constant: a read of such a
+#: value is never recorded, and a combination that would leave the bound binds nothing, so no
+#: state grows past what the script itself spells.
+_MAX_PROPAGATED_PAYLOAD = 4096
 
 
 @dataclass(frozen=True)
@@ -369,6 +381,14 @@ class _Walker:
         self.values: dict[Au3Variable, Au3Value] = {}
         self.entries: dict[Au3Call, dict[str, Au3Value]] = {}
 
+    def _proven(self, expression: Expression | None, state: _State) -> Au3Value | None:
+        """
+        The value the constant evaluator proves for *expression* over the state the walk has
+        reached, within the payload bound.
+        """
+        return constant_value(
+            expression, self.functions, state.lookup, _MAX_PROPAGATED_PAYLOAD)
+
     def walk_scope(self, scope: Au3FunctionDeclaration | None, body: list[Statement]) -> None:
         state = _State.empty()
         for stmt in body:
@@ -435,7 +455,7 @@ class _Walker:
             if variable is None:
                 continue
             if stmt.is_const:
-                value = literal_value(declarator.initializer, self.functions)
+                value = self._proven(declarator.initializer, state)
                 if value is None:
                     state.kill(variable.name)
                 else:
@@ -447,7 +467,7 @@ class _Walker:
             state.bind(
                 variable.name,
                 self.scope_model.binding(scope, stmt, variable.name),
-                literal_value(declarator.initializer, self.functions))
+                self._proven(declarator.initializer, state))
 
     def visit_enum(
         self,
@@ -466,7 +486,7 @@ class _Walker:
             variable = declarator.variable
             if declarator.initializer is not None:
                 self.visit_expression(scope, declarator.initializer, state)
-                value = literal_value(declarator.initializer, self.functions)
+                value = self._proven(declarator.initializer, state)
                 if value is None or variable is None:
                     counter = None
                     if variable is not None:
@@ -517,15 +537,18 @@ class _Walker:
             state.kill(variable.name)
             return
         if assignment.operator == '=':
-            state.bind(variable.name, binding, literal_value(assignment.value, self.functions))
+            state.bind(variable.name, binding, self._proven(assignment.value, state))
             return
         current = state.lookup(variable.name)
-        operand = literal_value(assignment.value, self.functions)
+        operand = self._proven(assignment.value, state)
         if current is None or operand is None:
             state.bind(variable.name, binding, None)
             return
         operator = assignment.operator.rstrip('=')
-        state.bind(variable.name, binding, apply_binary(operator, current, operand))
+        state.bind(
+            variable.name,
+            binding,
+            combine(operator, current, operand, _MAX_PROPAGATED_PAYLOAD))
 
     def visit_target(
         self,
@@ -556,7 +579,7 @@ class _Walker:
             return
         if isinstance(node, Au3Variable):
             value = state.lookup(node.name)
-            if value is not None:
+            if value is not None and within_limit(value, _MAX_PROPAGATED_PAYLOAD):
                 self.values[node] = value
             return
         if isinstance(node, Au3Assignment):

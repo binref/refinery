@@ -6,12 +6,14 @@ payload behind.
 
 The interpreter owns no semantics of its own: the operators and coercions are
 `refinery.lib.scripts.au3.analysis.values`, the builtins its table, the functions the scope
-model. What it owns is the run: the storage rules a function body follows (a read finds the
-local first and a global second; a write finds only a local the body or a loop created), the
-control flow, and the budget that keeps a runaway loop from running forever. Every refusal and
-every budget overrun answers `None` from `call` — the call site stands unchanged. A loop or case
-signal that reaches a function boundary is one of those refusals: no construct consumed it, which
-is a shape AutoIt refuses to load.
+model, and the expression evaluation is the constant evaluator
+`refinery.lib.scripts.au3.analysis.constants`, asked with a frame-backed lookup and a call hook
+that reaches the script functions the interpreter runs. What it owns is the run: the storage
+rules a function body follows (a read finds the local first and a global second; a write finds
+only a local the body or a loop created), the control flow, and the budget that keeps a runaway
+loop from running forever. Every refusal and every budget overrun answers `None` from `call` —
+the call site stands unchanged. A loop or case signal that reaches a function boundary is one of
+those refusals: no construct consumed it, which is a shape AutoIt refuses to load.
 
 The gate is the may-write summary: only a function whose summary is the empty set runs, because
 only then does nothing it reaches change a global, and only then do the values the walk proved
@@ -29,16 +31,15 @@ from typing import cast
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES, evaluate_builtin
+from refinery.lib.scripts.au3.analysis.constants import constant_value
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
     Kind,
     apply_binary,
-    apply_unary,
     compare,
     literal_value,
     of_array,
-    of_bool,
     of_int,
     of_number,
     of_string,
@@ -49,8 +50,6 @@ from refinery.lib.scripts.au3.model import (
     Au3ArrayAccess,
     Au3ArrayLiteral,
     Au3Assignment,
-    Au3BinaryExpression,
-    Au3Call,
     Au3CaseRange,
     Au3ContinueCaseStatement,
     Au3ContinueLoopStatement,
@@ -63,15 +62,12 @@ from refinery.lib.scripts.au3.model import (
     Au3ForStatement,
     Au3FunctionDeclaration,
     Au3IfStatement,
-    Au3ParenExpression,
     Au3ReDimStatement,
     Au3ReturnStatement,
     Au3ScopeKind,
     Au3SelectStatement,
     Au3SwitchCase,
     Au3SwitchStatement,
-    Au3Ternary,
-    Au3UnaryExpression,
     Au3Variable,
     Au3VariableDeclaration,
     Au3VariableDeclarator,
@@ -85,7 +81,16 @@ _MAX_INTERPRETER_PAYLOAD_LEN = 1_000_000
 _MAX_INTERPRETER_ARRAY_LEN = 1_000_000
 _MAX_INTERPRETER_DEPTH = 64
 
-_COMPARISONS = frozenset(('=', '==', '<>', '<', '>', '<=', '>='))
+
+def _over_payload(value: Au3Value) -> bool:
+    """
+    Whether *value* leaves the payload bound the run holds over every string and binary it
+    evaluates.
+    """
+    return (
+        value.kind in (Kind.STRING, Kind.BINARY)
+        and len(cast(str | bytes, value.payload)) > _MAX_INTERPRETER_PAYLOAD_LEN
+    )
 
 
 class _Refusal(Exception):
@@ -506,70 +511,82 @@ class Au3Interpreter:
 
     def _eval(self, node: Expression | None, frame: _Frame) -> Au3Value:
         value = self._eval_expression(node, frame)
-        if value.kind in (Kind.STRING, Kind.BINARY):
-            if len(cast(str | bytes, value.payload)) > _MAX_INTERPRETER_PAYLOAD_LEN:
-                raise _Refusal
+        if _over_payload(value):
+            raise _Refusal
         return value
 
     def _eval_expression(self, node: Expression | None, frame: _Frame) -> Au3Value:
         if node is None:
             raise _Refusal
-        if isinstance(node, Au3ParenExpression):
-            return self._eval(node.expression, frame)
-        if isinstance(node, Au3Variable):
-            return frame.read(node.name)
-        if isinstance(node, Au3Assignment):
-            return self._eval_assignment(node, frame)
-        if isinstance(node, Au3UnaryExpression):
-            result = apply_unary(node.operator, self._eval(node.operand, frame))
-            if result is None:
+        if isinstance(node, (Au3Assignment, Au3ArrayAccess, Au3ArrayLiteral)):
+            special = self._eval_special(node, frame)
+            if special is None:
                 raise _Refusal
-            return result
-        if isinstance(node, Au3BinaryExpression):
-            return self._eval_binary(node, frame)
-        if isinstance(node, Au3Ternary):
-            branch = node.consequent if self._decides(node.condition, frame) else node.alternate
-            return self._eval(branch, frame)
-        if isinstance(node, Au3ArrayAccess):
-            return self._element(self._eval(node.array, frame), self._eval(node.index, frame))
-        if isinstance(node, Au3ArrayLiteral):
-            elements = [self._eval(element, frame) for element in node.elements]
-            if any(element.kind is Kind.ARRAY for element in elements):
-                raise _Refusal
-            return of_array(tuple(elements))
-        if isinstance(node, Au3Call):
-            return self._eval_call(node, frame)
-        value = literal_value(node, self.function_names)
+            return special
+        value = constant_value(
+            node,
+            self.function_names,
+            lookup=lambda name: self._frame_value(name, frame),
+            limit=_MAX_INTERPRETER_PAYLOAD_LEN,
+            call=lambda name, arguments: self._run_call(name, arguments, frame),
+            fallback=lambda expression: self._eval_special(expression, frame),
+        )
         if value is None:
             raise _Refusal
         return value
 
-    def _eval_binary(self, node: Au3BinaryExpression, frame: _Frame) -> Au3Value:
-        if node.operator in ('and', 'or'):
-            return self._eval_logical(node, frame)
-        left = self._eval(node.left, frame)
-        right = self._eval(node.right, frame)
-        result = (
-            compare(node.operator, left, right)
-            if node.operator in _COMPARISONS
-            else apply_binary(node.operator, left, right)
-        )
-        if result is None:
-            raise _Refusal
-        return result
+    def _eval_special(self, node: Expression, frame: _Frame) -> Au3Value | None:
+        """
+        The value of an expression only the run can hold — an assignment, an array access, an
+        array literal — asked where it stands inside an expression the constant evaluator walks,
+        or `None` where the run refuses it.
+        """
+        try:
+            if isinstance(node, Au3Assignment):
+                return self._eval_assignment(node, frame)
+            if isinstance(node, Au3ArrayAccess):
+                return self._element(self._eval(node.array, frame), self._eval(node.index, frame))
+            if isinstance(node, Au3ArrayLiteral):
+                elements = [self._eval(element, frame) for element in node.elements]
+                if any(element.kind is Kind.ARRAY for element in elements):
+                    return None
+                return of_array(tuple(elements))
+        except _Refusal:
+            return None
+        return None
 
-    def _eval_logical(self, node: Au3BinaryExpression, frame: _Frame) -> Au3Value:
-        verdict = truthy(self._eval(node.left, frame))
-        if verdict is None:
-            raise _Refusal
-        if node.operator == 'and' and not verdict:
-            return of_bool(False)
-        if node.operator == 'or' and verdict:
-            return of_bool(True)
-        result = apply_binary(node.operator, of_bool(verdict), self._eval(node.right, frame))
-        if result is None:
-            raise _Refusal
-        return result
+    def _frame_value(self, name: str, frame: _Frame) -> Au3Value | None:
+        """
+        The value a variable read holds in *frame*, or `None` where the run stored none.
+        """
+        try:
+            return frame.read(name)
+        except _Refusal:
+            return None
+
+    def _run_call(
+        self,
+        name: str,
+        arguments: tuple[Au3Value, ...],
+        frame: _Frame,
+    ) -> Au3Value | None:
+        """
+        The value of one call inside a run: a script function the interpreter runs — the
+        precedence a call site has over the builtin of the same name — then the builtin table.
+        Every argument answers the payload bound first, the bound the run holds over every value
+        it evaluates.
+        """
+        if any(_over_payload(argument) for argument in arguments):
+            return None
+        function = self.functions.get(name)
+        if function is not None:
+            try:
+                return self._call(function, list(arguments), frame.globals, frame.budget)
+            except _Refusal:
+                return None
+        if name not in BUILTIN_NAMES:
+            return None
+        return evaluate_builtin(name, tuple(arguments))
 
     def _eval_assignment(self, node: Au3Assignment, frame: _Frame) -> Au3Value:
         variable = ast.store_target_variable(node.target)
@@ -616,21 +633,6 @@ class Au3Interpreter:
             raise _Refusal
         array.elements[subscript] = value
         return value
-
-    def _eval_call(self, node: Au3Call, frame: _Frame) -> Au3Value:
-        callee = ast.direct_callee(node)
-        if callee is None:
-            raise _Refusal
-        arguments = [self._eval(argument, frame) for argument in node.arguments]
-        function = self.functions.get(callee.name)
-        if function is not None:
-            return self._call(function, arguments, frame.globals, frame.budget)
-        if callee.name not in BUILTIN_NAMES:
-            raise _Refusal
-        result = evaluate_builtin(callee.name, tuple(arguments))
-        if result is None:
-            raise _Refusal
-        return result
 
     def _element(self, array: Au3Value, index: Au3Value) -> Au3Value:
         if array.kind is not Kind.ARRAY:

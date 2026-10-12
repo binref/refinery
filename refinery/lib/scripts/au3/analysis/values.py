@@ -755,6 +755,22 @@ def _rendered_piece(character: str, functions: frozenset[str]) -> Expression | N
     return None
 
 
+#: The nodes beyond which a rendered literal is a tree of its own: a NUL-heavy string renders as
+#: a chain of several nodes per character, so a substitution installing one would build chains
+#: deeper than the walks the pipeline runs over its own product survive, multiplying a tree where
+#: the payload it spells only copies it. The transforms that install a rendered literal in place
+#: of one read refuse past it.
+MAX_RENDERED_NODES = 1024
+
+
+def within_node_bound(node: Node) -> bool:
+    """
+    Whether the subtree at *node* is small enough for a substitution to install: no more nodes
+    than `MAX_RENDERED_NODES`.
+    """
+    return sum(1 for _ in node.walk()) <= MAX_RENDERED_NODES
+
+
 def render_at(
     node: Node,
     value: Au3Value,

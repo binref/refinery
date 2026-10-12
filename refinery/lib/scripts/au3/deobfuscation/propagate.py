@@ -15,39 +15,101 @@ only inside a declarator's initializer, through array literals alone. A binary s
 which an array literal initializer may not accept — so a binary never replaces a read inside one.
 The model is held from the root visit on: replacing a read with its provable value changes no
 value the walk learned, so the pass's own edits cannot make its snapshot wrong.
+
+One replacement is refused for its size alone. A rendered literal with more nodes than
+`MAX_RENDERED_NODES` would build chains deeper than the walks the pipeline runs over its own
+product survive. And each name owns a growth budget: every read of it may charge the rendered
+length of its replacement minus the spelling the read already occupies, and a name whose charges
+exceed `max(_MIN_GROWTH_BUDGET, _GROWTH_RATIO × script length)` keeps its reads, because a
+payload spelled at every read multiplies the tree where the definition it comes from already
+spells it once. No credit is given for a definition that stops being read — removing the
+definition is the dead code elimination's to decide, not this pass's.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.propagation import Au3PropagationModel
-from refinery.lib.scripts.au3.analysis.values import render_at
+from refinery.lib.scripts.au3.analysis.values import (
+    Au3Value,
+    Kind,
+    render_at,
+    render_literal,
+    within_node_bound,
+)
 from refinery.lib.scripts.au3.model import (
     Au3Script,
     Au3Variable,
 )
+from refinery.lib.scripts.au3.synth import Au3Synthesizer
+
+#: The share of the script's own length a single name's inlined reads may add.
+_GROWTH_RATIO = 0.2
+
+#: The growth every name is granted even in a script too small for the ratio to fund it.
+_MIN_GROWTH_BUDGET = 256
 
 
 class Au3ConstantPropagation(Transformer):
     """
     Replaces a variable read the propagation model proves a value for with the literal of that
-    value, wherever that literal is legal in the position the read occupies.
+    value, wherever that literal is legal in the position the read occupies and small enough to
+    install.
     """
 
     def __init__(self):
         super().__init__()
         self._model = Au3PropagationModel({}, {}, {})
         self._functions: frozenset[str] = frozenset()
+        self._blocked: frozenset[str] = frozenset()
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
             cache = model_cache(self, node)
             self._model = cache.propagation
             self._functions = cache.scopes.function_names
+            self._blocked = self._names_past_budget(node)
         self.generic_visit(node)
         if not isinstance(node, Au3Variable):
+            return None
+        if node.name in self._blocked:
             return None
         value = self._model.value_at(node)
         if value is None:
             return None
-        return render_at(node, value, self._functions)
+        replacement = render_at(node, value, self._functions)
+        if replacement is None or not within_node_bound(replacement):
+            return None
+        return replacement
+
+    def _names_past_budget(self, root: Au3Script) -> frozenset[str]:
+        """
+        The names whose recorded reads, each charged the rendered length of its replacement
+        minus the length the read already spells, together exceed their budget of
+        `max(_MIN_GROWTH_BUDGET, _GROWTH_RATIO × script length)`.
+        """
+        budget = max(
+            _MIN_GROWTH_BUDGET,
+            int(len(Au3Synthesizer().convert(root)) * _GROWTH_RATIO),
+        )
+        charges: dict[str, int] = {}
+        sizes: dict[Au3Value, int | None] = {}
+        for occurrence, value in self._model.values.items():
+            if value.kind is Kind.ARRAY and not ast.in_declaration_initializer(occurrence):
+                continue
+            if value not in sizes:
+                rendered = render_literal(value, self._functions)
+                sizes[value] = (
+                    None
+                    if rendered is None or not within_node_bound(rendered)
+                    else len(Au3Synthesizer().convert(rendered))
+                )
+            length = sizes[value]
+            if length is None:
+                continue
+            charges[occurrence.name] = (
+                charges.get(occurrence.name, 0)
+                + max(0, length - len(occurrence.raw))
+            )
+        return frozenset(name for name, total in charges.items() if total > budget)

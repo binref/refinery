@@ -50,6 +50,19 @@ class TestAu3ConstantFolding(TestAu3):
             self._apply('$x = StringLen(@CR)', Au3ConstantFolding),
             '$x = 1\n')
 
+    def test_a_builtin_call_folds_over_arguments_the_evaluator_proves(self):
+        """
+        A call folds over a compound argument — an operator or another builtin's result — the
+        same way it folds over a literal, because the evaluator proves the argument's value in
+        one pass instead of waiting for a fold of the argument first.
+        """
+        self.assertEqual(
+            self._apply('$x = StringLen("a" & "bc")', Au3ConstantFolding),
+            '$x = 3\n')
+        self.assertEqual(
+            self._apply('$x = StringLen(BinaryToString("0x414243"))', Au3ConstantFolding),
+            '$x = 3\n')
+
     def test_binary_concatenation_folds_over_the_binary_spelling(self):
         """
         A `Binary("0x…")` call is the literal spelling of its value, so the operands read as

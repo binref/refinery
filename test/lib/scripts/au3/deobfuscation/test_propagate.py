@@ -1,7 +1,8 @@
 """
 Constant propagation on its own: which reads a provable value replaces, and the refusals —
 positions where the value is not known (branch disagreement, loop writes, unproven targets) and
-positions where the literal that spells the value is not legal AutoIt3.
+positions where the literal that spells the value is not legal AutoIt3, is past the node bound,
+or is past the growth budget its name owns.
 """
 from __future__ import annotations
 
@@ -9,7 +10,10 @@ import unittest
 
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
+from refinery.lib.scripts.au3.deobfuscation import deobfuscate
 from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
+from refinery.lib.scripts.au3.parser import Au3Parser
+from refinery.lib.scripts.au3.synth import Au3Synthesizer
 
 
 class TestAu3ConstantPropagation(TestAu3):
@@ -491,3 +495,146 @@ class TestAu3ConstantPropagation(TestAu3):
                 $y = $x + 1
                 '''),
             '$y = 6\n')
+
+    def test_derived_constants_collapse_in_one_pass(self):
+        """
+        A binding is taken from the value the evaluator proves, not the shape the fold leaves
+        behind, so a chain of derived constants propagates to its end without a fold between.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $a = 1 + 2
+                Local $b = $a * 3
+                Local $c = $b + 1
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $a = 1 + 2\nLocal $b = 3 * 3\nLocal $c = 9 + 1\n')
+
+    def test_a_builtin_result_binds(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $n = StringLen("ab")
+                $y = $n
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $n = StringLen("ab")\n$y = 2\n')
+
+    def test_a_value_past_the_payload_bound_is_never_inlined(self):
+        self.assertEqual(
+            self._apply(
+                F'''
+                Local $s = "{"a" * 5000}"
+                $y = $s
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Local $s = "{"a" * 5000}"\n$y = $s\n')
+
+    def test_a_compound_assignment_within_the_bound_binds(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $s = "a"
+                $s &= "bc"
+                $y = $s
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $s = "a"\n$s &= "bc"\n$y = "abc"\n')
+
+    def test_a_compound_assignment_past_the_bound_binds_nothing(self):
+        self.assertEqual(
+            self._apply(
+                F'''
+                Local $s = "a"
+                $s &= "{"b" * 5000}"
+                $y = $s
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Local $s = "a"\n$s &= "{"b" * 5000}"\n$y = $s\n')
+
+    def test_an_array_past_the_payload_bound_is_never_recorded(self):
+        self.assertEqual(
+            self._apply(
+                F'''
+                Local $a = StringSplit("{"a," * 5000}a", ",")
+                Local $b[1] = [$a]
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Local $a = StringSplit("{"a," * 5000}a", ",")\nLocal $b[1] = [$a]\n')
+
+    def test_a_rendered_chain_past_the_node_bound_is_refused(self):
+        """
+        A NUL-heavy string renders as several nodes per character, so a value whose spelling
+        outgrows the node bound keeps its reads however small its payload is.
+        """
+        self.assertEqual(
+            self._apply(
+                F'''
+                Global Const $c = StringReplace("{"x" * 400}", "x", Chr(0))
+                $y = $c
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Global Const $c = StringReplace("{"x" * 400}", "x", Chr(0))\n$y = $c\n')
+
+    def test_a_rendered_chain_within_the_node_bound_is_installed(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Global Const $c = StringReplace("xx", "x", Chr(0))
+                $y = $c
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Global Const $c = StringReplace("xx", "x", Chr(0))\n$y = Chr(0) & Chr(0)\n')
+
+    def test_a_name_past_its_growth_budget_keeps_its_reads(self):
+        """
+        Every read of a name charges the length its replacement adds, and a payload spelled at
+        every read would multiply the tree where the definition already spells it once.
+        """
+        reads = '\n'.join(F'$y{i} = $c' for i in range(1, 11))
+        self.assertEqual(
+            self._apply(
+                F'''
+                Global Const $c = "{"v" * 100}"
+                {reads}
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Global Const $c = "{"v" * 100}"\n{reads}\n')
+
+    def test_a_name_within_its_growth_budget_is_inlined(self):
+        self.assertEqual(
+            self._apply(
+                F'''
+                Global Const $c = "{"v" * 100}"
+                $y = $c
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Global Const $c = "{"v" * 100}"\n$y = "{"v" * 100}"\n')
+
+    def test_a_derived_constant_chain_settles_within_a_small_step_budget(self):
+        """
+        One propagation pass carries a chain of derived constants to its end, so the pipeline
+        settles it in a handful of passes — where a walk that bound only literal shapes needed a
+        fold between every two links and a step budget on the order of the chain's length.
+        """
+        chain = '\n'.join(
+            ['Local $a0 = 1 + 2'] + [F'Local $a{i} = $a{i - 1} + {i}' for i in range(1, 9)])
+        ast = Au3Parser(chain).parse()
+        deobfuscate(ast, max_steps=8)
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            '\n'.join(
+                F'Local $a{i} = {value}'
+                for i, value in enumerate((3, 4, 6, 9, 13, 18, 24, 31, 39))
+            ) + '\n')

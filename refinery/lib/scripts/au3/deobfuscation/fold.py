@@ -2,15 +2,15 @@
 Constant folding: replacing an expression whose value every ingredient pins with the literal that
 spells it.
 
-Operators and coercions evaluate through `refinery.lib.scripts.au3.analysis.values`, builtin calls
-through `refinery.lib.scripts.au3.analysis.builtins`; both refuse the unpinned case, and a
-refusal here leaves the expression standing. A call folds only when no script function shares the
-callee's name, because a script function shadows the builtin.
+Evaluation is the constant evaluator `refinery.lib.scripts.au3.analysis.constants`, asked
+unbounded — what the source already spells is already in the tree — so a fold over string
+literals of any size stands. A call folds only when no script function shares the callee's name,
+because a script function shadows the builtin; both refusals leave the expression standing.
 
-`And`/`Or` fold to their boolean value once both operands' truth is known, and to the decided side
-alone when the left operand already decides — AutoIt never runs the right side there (probe4 60,
-61), so a call on the skipped side is dropped soundly. A ternary over a literal condition folds to
-its chosen branch, the only side AutoIt evaluates (probe4 66, 67).
+`And`/`Or` fold to their boolean value once both operands' truth is known, and to the decided
+side alone when the left operand already decides — AutoIt never runs the right side there (probe4
+60, 61), so a call on the skipped side is dropped soundly. A ternary over a literal condition
+folds to its chosen branch, the only side AutoIt evaluates (probe4 66, 67).
 
 A fold that lands on an array value installs only where a declaration initializes, because an
 array literal is legal AutoIt nowhere else — a `StringSplit` over constants in any other
@@ -24,15 +24,11 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES, evaluate_builtin
 from refinery.lib.scripts.au3.analysis.cache import model_cache
+from refinery.lib.scripts.au3.analysis.constants import constant_value
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
-    apply_binary,
-    apply_unary,
-    compare,
     literal_value,
-    of_bool,
     render_at,
     truthy,
 )
@@ -70,56 +66,12 @@ class Au3ConstantFolding(Transformer):
         return replacement
 
     def _folded(self, node: Node) -> Node | None:
-        if isinstance(node, Au3Macro):
-            value = literal_value(node, self._functions)
-            return None if value is None else self._rendered(node, value)
-        if isinstance(node, Au3UnaryExpression):
-            operand = literal_value(node.operand, self._functions)
-            if operand is None:
-                return None
-            return self._rendered(node, apply_unary(node.operator, operand))
-        if isinstance(node, Au3BinaryExpression):
-            value = self._binary_value(node)
-            return None if value is None else self._rendered(node, value)
         if isinstance(node, Au3Ternary):
             return self._ternary_branch(node)
-        if isinstance(node, Au3Call):
-            return self._folded_call(node)
-        return None
-
-    def _binary_value(self, node: Au3BinaryExpression) -> Au3Value | None:
-        if node.operator in ('and', 'or'):
-            return self._logical_value(node)
-        left = literal_value(node.left, self._functions)
-        right = literal_value(node.right, self._functions)
-        if left is None or right is None:
+        if not isinstance(node, (Au3Macro, Au3UnaryExpression, Au3BinaryExpression, Au3Call)):
             return None
-        if node.operator in ('=', '==', '<>', '<', '>', '<=', '>='):
-            return compare(node.operator, left, right)
-        return apply_binary(node.operator, left, right)
-
-    def _logical_value(self, node: Au3BinaryExpression) -> Au3Value | None:
-        """
-        The boolean an `And`/`Or` answers: the decided left operand alone when it already
-        decides — AutoIt never runs the right side there (probe4 60, 61) — and otherwise the
-        truth of both operands.
-        """
-        if node.left is None or node.right is None:
-            return None
-        left = literal_value(node.left, self._functions)
-        if left is None:
-            return None
-        verdict = truthy(left)
-        if verdict is None:
-            return None
-        if node.operator == 'and' and not verdict:
-            return of_bool(False)
-        if node.operator == 'or' and verdict:
-            return of_bool(True)
-        right = literal_value(node.right, self._functions)
-        if right is None:
-            return None
-        return apply_binary(node.operator, left, right)
+        value = constant_value(node, self._functions)
+        return None if value is None else self._rendered(node, value)
 
     def _ternary_branch(self, node: Au3Ternary) -> Node | None:
         """
@@ -139,20 +91,6 @@ class Au3ConstantFolding(Transformer):
         if ast.contains_an_array_literal(branch) and not ast.in_declaration_initializer(node):
             return None
         return branch
-
-    def _folded_call(self, node: Au3Call) -> Node | None:
-        callee = ast.direct_callee(node)
-        if callee is None or callee.name in self._functions:
-            return None
-        if callee.name not in BUILTIN_NAMES:
-            return None
-        arguments = []
-        for argument in node.arguments:
-            value = literal_value(argument, self._functions)
-            if value is None:
-                return None
-            arguments.append(value)
-        return self._rendered(node, evaluate_builtin(callee.name, tuple(arguments)))
 
     def _rendered(self, node: Node, value: Au3Value | None) -> Node | None:
         """

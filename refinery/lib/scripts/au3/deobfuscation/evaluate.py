@@ -11,6 +11,10 @@ whole statement produces no value, and a bare literal is not a statement, so tha
 the dead-code phase to remove. The visit is bottom-up, so a decoder fed by another decoder —
 `nvb(sjw("…"), 8)` — resolves in one pass: the inner call is replaced before the outer one is
 asked.
+
+The literal it installs faces the same render gates the propagation pass obeys, including the
+node bound: a decoder whose result spells as a chain deeper than the walks over the pass's own
+product survive leaves the call standing.
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter
 from refinery.lib.scripts.au3.analysis.propagation import Au3PropagationModel
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
-from refinery.lib.scripts.au3.analysis.values import literal_value, render_at
+from refinery.lib.scripts.au3.analysis.values import literal_value, render_at, within_node_bound
 from refinery.lib.scripts.au3.model import (
     Au3Call,
     Au3ExpressionStatement,
@@ -73,4 +77,7 @@ class Au3FunctionEvaluation(Transformer):
             function, arguments, self._propagation.entry_globals(node))
         if result is None:
             return None
-        return render_at(node, result, self._scopes.function_names)
+        replacement = render_at(node, result, self._scopes.function_names)
+        if replacement is None or not within_node_bound(replacement):
+            return None
+        return replacement
