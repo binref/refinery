@@ -13,6 +13,7 @@ import inspect
 from test import TestBase
 from typing import cast
 
+from refinery.lib.scripts.au3.analysis.existence import build_existence_model
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter
 from refinery.lib.scripts.au3.analysis.propagation import build_propagation_model
 from refinery.lib.scripts.au3.analysis.scopes import build_scope_model
@@ -390,7 +391,8 @@ class TestAu3Interpreter(TestBase):
     ) -> Au3Value | None:
         root = Au3Parser(inspect.cleandoc(source)).parse()
         scope_model = build_scope_model(root)
-        summaries = build_propagation_model(root, scope_model).summaries
+        existence = build_existence_model(root, scope_model)
+        summaries = build_propagation_model(root, scope_model, existence).summaries
         return Au3Interpreter(scope_model, summaries).call(
             scope_model.functions[name], arguments, globals or {})
 
@@ -552,10 +554,26 @@ class TestAu3Interpreter(TestBase):
             with self.subTest(source=inspect.cleandoc(source).strip()):
                 self.assertIsNone(self._result('f', source=source))
 
-    def test_a_function_that_writes_a_global_refuses(self):
+    def test_a_function_that_writes_an_implicit_local_runs(self):
+        """
+        A bare write inside a function creates a local of that function — nothing outside it
+        can observe the name (probe10c) — so the call runs and the write answers the read.
+        """
+        result = self._result(
+            'f',
+            source='''
+            Func f()
+                $g = 1
+                Return $g
+            EndFunc
+            ''')
+        self.assertEqual(to_string(result), '1')
+
+    def test_a_function_that_writes_a_declared_global_refuses(self):
         self.assertIsNone(self._result(
             'f',
             source='''
+            Global $g
             Func f()
                 $g = 1
             EndFunc
@@ -755,3 +773,62 @@ class TestAu3Interpreter(TestBase):
                 Return $e
             EndFunc
             '''))
+
+    def _probed(
+        self,
+        name: str,
+        source: str,
+        *sources: str,
+    ) -> Au3Value | None:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        scope_model = build_scope_model(root)
+        return Au3Interpreter(scope_model, {}).probe(
+            scope_model.functions[name], tuple(_value(source) for source in sources))
+
+    def test_a_probe_of_a_decoder_with_implicit_locals_answers(self):
+        """
+        The probe10 decoder, verbatim: every intermediate lives in an implicit local, and the
+        probe — no summary gate, no globals — runs it and answers the pinned decodings.
+        """
+        decoder = '''
+            Func decode10($hx, $ky)
+                $d_bin = BinaryToString($hx, 1)
+                $d_out = ""
+                For $d_i = 1 To StringLen($d_bin)
+                    $d_c = AscW(StringMid($d_bin, $d_i, 1))
+                    $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))
+                    $d_out &= ChrW(BitXOR($d_c, $d_k))
+                Next
+                Return $d_out
+            EndFunc
+            '''
+        self.assertEqual(
+            to_string(self._probed(
+                'decode10', decoder, '"0x31275C23300271"', '"AU3"')),
+            'probe10')
+        self.assertEqual(
+            to_string(self._probed(
+                'decode10', decoder, '"0x2530502E31563325412E3756"', '"AU3"')),
+            'decoderprobe')
+
+    def test_a_probe_of_a_nested_script_call_refuses(self):
+        self.assertIsNone(self._probed(
+            'f',
+            '''
+            Func g()
+                Return 1
+            EndFunc
+            Func f()
+                Return g()
+            EndFunc
+            '''))
+
+    def test_a_probe_of_a_read_before_any_write_refuses(self):
+        self.assertIsNone(self._probed(
+            'f',
+            '''
+            Func f($p)
+                Return $q & $p
+            EndFunc
+            ''',
+            '"x"'))

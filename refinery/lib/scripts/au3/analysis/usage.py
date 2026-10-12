@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import NAME_PARAMETERS
-from refinery.lib.scripts.au3.analysis.propagation import execute_kills
+from refinery.lib.scripts.au3.analysis.existence import execute_kills
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,

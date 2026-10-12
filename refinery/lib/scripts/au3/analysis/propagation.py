@@ -3,6 +3,11 @@ The constant-binding walk: which variable holds which value at every read, and w
 every script function may write. The propagate transform reads the read values; Phase 3's
 interpreter reads both.
 
+The may-write summary is refined by the existence census — see
+`refinery.lib.scripts.au3.analysis.existence`: a bare write inside a function creates a local
+of that function, so it counts as a global write only where the census proves a global of the
+name may exist when the tree runs.
+
 The walk is one abstract pass per scope — the script body and every function body, each
 starting from nothing: a global constant is not seeded into a function walk, because a local of
 the same name in the function shadows it and an unseen `#include` cannot be told apart from one
@@ -38,6 +43,11 @@ from refinery.lib.scripts.au3.analysis.constants import (
     constant_value,
     within_limit,
 )
+from refinery.lib.scripts.au3.analysis.existence import (
+    Au3ExistenceModel,
+    assign_kills,
+    execute_kills,
+)
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
@@ -59,7 +69,6 @@ from refinery.lib.scripts.au3.model import (
     Au3ReDimStatement,
     Au3Script,
     Au3SelectStatement,
-    Au3StringLiteral,
     Au3SwitchStatement,
     Au3Variable,
     Au3VariableDeclaration,
@@ -67,7 +76,6 @@ from refinery.lib.scripts.au3.model import (
     Au3WithStatement,
     Expression,
 )
-from refinery.lib.scripts.au3.parser import Au3Parser
 
 #: The payload beyond which a value the walk proves is data, not a constant: a read of such a
 #: value is never recorded, and a combination that would leave the bound binds nothing, so no
@@ -193,38 +201,6 @@ def _byref_variables(call: Au3Call, function: Au3FunctionDeclaration) -> set[str
     return names
 
 
-def execute_kills(call: Au3Call) -> set[str] | None:
-    """
-    The names an `Execute` call may write: a constant argument spells one expression, so only a
-    call inside it can write anything; a parse failure answers `""` and writes nothing. Any other
-    argument can execute arbitrary code.
-    """
-    if len(call.arguments) != 1:
-        return None
-    literal = ast.unwrap_parens(call.arguments[0])
-    if not isinstance(literal, Au3StringLiteral):
-        return None
-    expression = Au3Parser(literal.value).parse_expression()
-    if expression is None:
-        return set()
-    if ast.contains_a_call(expression):
-        return None
-    return set()
-
-
-def assign_kills(call: Au3Call) -> set[str] | None:
-    """
-    The names an `Assign` call may write: a constant first argument names one variable, anything
-    else may name any.
-    """
-    if not call.arguments:
-        return set()
-    literal = ast.unwrap_parens(call.arguments[0])
-    if not isinstance(literal, Au3StringLiteral):
-        return None
-    return {literal.value.lstrip('$').lower()}
-
-
 def _call_kills(
     call: Au3Call,
     scope_model: Au3ScopeModel,
@@ -283,6 +259,7 @@ def _written_names(
 def _function_scan(
     function: Au3FunctionDeclaration,
     scope_model: Au3ScopeModel,
+    existence: Au3ExistenceModel,
 ) -> tuple[set[str], bool, set[str]]:
     """
     What one function may write by itself, ignoring its calls: the global names its provable
@@ -290,6 +267,10 @@ def _function_scan(
     A variable handed to the `ByRef` parameter of a script function is written by that call, so
     it counts as a write of this function. A write to a `ByRef` parameter of this function is a
     write of its local: the variable behind it belongs to the caller, which counts it there.
+    A bare write creates a local — the interpreter's frame and the running script agree — so it
+    counts only where the existence census proves a global of that name may exist. A tree that
+    may set `MustDeclareVars` makes every bare write fatal, so the scan answers that it may
+    write any global rather than lean on the census.
     """
     names: set[str] = set()
     everything = False
@@ -301,7 +282,14 @@ def _function_scan(
             statement = ast.owning_statement(node)
             if statement is None:
                 continue
-            if scope_model.binding(function, statement, node.name) is not Binding.LOCAL:
+            binding = scope_model.binding(function, statement, node.name)
+            if binding is Binding.LOCAL:
+                continue
+            if (
+                binding is Binding.GLOBAL
+                or existence.implicit_writes_are_fatal
+                or existence.global_may_exist(node.name)
+            ):
                 names.add(node.name)
             continue
         if not isinstance(node, Au3Call):
@@ -316,7 +304,14 @@ def _function_scan(
             if statement is None:
                 continue
             for name in _byref_variables(node, scope_model.functions[callee.name]):
-                if scope_model.binding(function, statement, name) is not Binding.LOCAL:
+                binding = scope_model.binding(function, statement, name)
+                if binding is Binding.LOCAL:
+                    continue
+                if (
+                    binding is Binding.GLOBAL
+                    or existence.implicit_writes_are_fatal
+                    or existence.global_may_exist(name)
+                ):
                     names.add(name)
             continue
         if callee.name not in BUILTIN_NAMES:
@@ -335,14 +330,17 @@ def _function_scan(
     return names, everything, callees
 
 
-def _build_summaries(scope_model: Au3ScopeModel) -> dict[str, frozenset[str] | None]:
+def _build_summaries(
+    scope_model: Au3ScopeModel,
+    existence: Au3ExistenceModel,
+) -> dict[str, frozenset[str] | None]:
     """
     The may-write summary of every script function: its own global writes plus those of every
     script function it reaches, transitively, merged by worklist fixpoint. `None` is the summary
     of a function that may write any global.
     """
     scanned = {
-        name: _function_scan(function, scope_model)
+        name: _function_scan(function, scope_model, existence)
         for name, function in scope_model.functions.items()
     }
     summaries = {
@@ -780,12 +778,17 @@ class _Walker:
         state.replace_with(result)
 
 
-def build_propagation_model(root: Au3Script, scope_model: Au3ScopeModel) -> Au3PropagationModel:
+def build_propagation_model(
+    root: Au3Script,
+    scope_model: Au3ScopeModel,
+    existence: Au3ExistenceModel,
+) -> Au3PropagationModel:
     """
     Walk every scope of *root* — the script body and every function body — and record the value
-    at each variable read the walk reaches, along with the may-write summaries the calls rest on.
+    at each variable read the walk reaches, along with the may-write summaries the calls rest on,
+    over the global-existence answer of *existence*.
     """
-    summaries = _build_summaries(scope_model)
+    summaries = _build_summaries(scope_model, existence)
     walker = _Walker(scope_model, summaries)
     for scope, body in ast.scope_bodies(root):
         walker.walk_scope(scope, body)

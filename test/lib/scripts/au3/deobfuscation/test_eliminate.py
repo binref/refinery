@@ -387,6 +387,8 @@ class TestAu3DeadCodeElimination(TestAu3):
     def test_a_local_read_in_the_branch_that_declares_it_is_kept(self):
         self._assertKept(
             '''
+            Global $y
+
             Func f($c, $z)
                 If $c Then
                     Local $x = $z
@@ -401,6 +403,8 @@ class TestAu3DeadCodeElimination(TestAu3):
     def test_a_local_read_after_the_branch_that_declares_it_is_kept(self):
         self._assertKept(
             '''
+            Global $y
+
             Func f($c, $z)
                 If $c Then
                     Local $x = $z
@@ -746,8 +750,14 @@ class TestAu3DeadCodeElimination(TestAu3):
             ''')
 
     def test_a_call_whose_argument_is_impure_is_kept(self):
+        """
+        The global the argument writes is read after the call, so no earlier removal of its
+        declaration can empty the write summary the call's survival rests on.
+        """
         self._assertKept(
             '''
+            Global $g
+
             Func imp()
                 $g = 1
             EndFunc
@@ -756,6 +766,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             EndFunc
 
             f(imp())
+            MsgBox(0, 0, $g)
             ''')
 
     def test_a_builtin_call_statement_is_kept(self):

@@ -19,6 +19,14 @@ The gate is the may-write summary: only a function whose summary is the empty se
 only then does nothing it reaches change a global, and only then do the values the walk proved
 at the call site hold for the whole run. The globals the run may read are exactly what
 `Au3PropagationModel.entry_globals` hands over.
+
+`probe` is the second entry point, and it replaces nothing: it runs one function body over an
+empty world to learn a value — the payload of an `Execute`, the name a computed `Call` spells —
+so it needs no summary and no entry globals. Its soundness is the one frame it runs: a read of
+a name the run never wrote refuses, and a read after a write sees the value the run itself
+stored either way, whatever storage an implicit write targets in the script. A nested call
+into a script function refuses there — a callee's implicit write lands in the callee's frame
+under the probe but in a global in the script, so the caller's later read of that name diverges.
 """
 from __future__ import annotations
 
@@ -147,12 +155,20 @@ class _Budget:
 class _Frame:
     """
     The storage one running function sees: its locals and the globals the call site proved, and
-    the evaluation policy over them, its hooks bound to this frame alone.
+    the evaluation policy over them, its hooks bound to this frame alone. A write to a name the
+    run never declared declares it — the local AutoIt itself creates — and a read of a name no
+    storage holds refuses.
     """
 
-    def __init__(self, globals: Mapping[str, Au3Value], budget: _Budget):
+    def __init__(
+        self,
+        globals: Mapping[str, Au3Value],
+        budget: _Budget,
+        probing: bool = False,
+    ):
         self.globals = globals
         self.budget = budget
+        self.probing = probing
         self.locals: dict[str, Au3Value | _Array] = {}
         self.policy: Policy = Policy(frozenset())
 
@@ -168,11 +184,6 @@ class _Frame:
         return value
 
     def write(self, name: str, value: Au3Value) -> None:
-        if name not in self.locals:
-            raise _Refusal
-        self.locals[name] = _stored(value)
-
-    def declare(self, name: str, value: Au3Value) -> None:
         self.locals[name] = _stored(value)
 
     def array(self, name: str) -> _Array:
@@ -202,6 +213,7 @@ class Au3Interpreter:
         self.functions = scope_model.functions
         self.function_names = scope_model.function_names
         self.summaries = summaries
+        self.probe_steps = 0
 
     def call(
         self,
@@ -214,21 +226,46 @@ class Au3Interpreter:
         except _Refusal:
             return None
 
+    def probe(
+        self,
+        function: Au3FunctionDeclaration,
+        arguments: Sequence[Au3Value],
+    ) -> Au3Value | None:
+        """
+        The value one ungated run of *function*'s body answers over an empty world: no summary
+        gate, no globals, and a nested script-function call refusing. The run computes a value —
+        it replaces nothing — so it needs no effect soundness: a read of a name the run never
+        wrote refuses, and a read after a write sees the value the run itself stored, whatever
+        storage an implicit write targets in the script. The steps every probe spends accumulate
+        on `probe_steps`, where a caller that owns many probes bounds their total.
+        """
+        budget = _Budget()
+        try:
+            return self._call(function, list(arguments), {}, budget, probing=True)
+        except _Refusal:
+            return None
+        finally:
+            self.probe_steps += budget.steps
+
     def _call(
         self,
         function: Au3FunctionDeclaration,
         arguments: list[Au3Value],
         globals: Mapping[str, Au3Value],
         budget: _Budget,
+        probing: bool = False,
     ) -> Au3Value:
         name = function.name.name if function.name is not None else None
-        if name is None or self.summaries.get(name) != frozenset():
+        if name is None or (
+            not probing
+            and self.summaries.get(name) != frozenset()
+        ):
             raise _Refusal
         if len(arguments) > len(function.params):
             raise _Refusal
         budget.spend()
         budget.depth += 1
-        frame = _Frame(globals, budget)
+        frame = _Frame(globals, budget, probing)
         frame.policy = self._policy(frame)
         try:
             if budget.depth > _MAX_INTERPRETER_DEPTH:
@@ -245,7 +282,7 @@ class Au3Interpreter:
                     value = literal_value(parameter.default, self.function_names)
                     if value is None:
                         raise _Refusal
-                frame.declare(variable.name, value)
+                frame.write(variable.name, value)
             self._run_body(function.body, frame)
             return of_int(0)
         except _Return as returned:
@@ -326,7 +363,7 @@ class Au3Interpreter:
             value = of_string('')
             if declarator.initializer is not None:
                 value = self._eval(declarator.initializer, frame)
-            frame.declare(variable.name, value)
+            frame.write(variable.name, value)
             return
         if len(declarator.dimensions) != 1:
             raise _Refusal
@@ -335,7 +372,7 @@ class Au3Interpreter:
             initializer = self._eval(declarator.initializer, frame)
             if initializer.kind is not Kind.ARRAY:
                 raise _Refusal
-            frame.declare(variable.name, initializer)
+            frame.write(variable.name, initializer)
             return
         size = self._subscript(self._eval(dimension, frame))
         if not 1 <= size <= _MAX_INTERPRETER_ARRAY_LEN:
@@ -349,7 +386,7 @@ class Au3Interpreter:
                 if index >= size:
                     break
                 elements[index] = element
-        frame.declare(variable.name, of_array(tuple(elements)))
+        frame.write(variable.name, of_array(tuple(elements)))
 
     def _run_enum(self, statement: Au3EnumDeclaration, frame: _Frame) -> None:
         if statement.scope is Au3ScopeKind.GLOBAL:
@@ -362,12 +399,12 @@ class Au3Interpreter:
                 raise _Refusal
             if declarator.initializer is not None:
                 value = self._eval(declarator.initializer, frame)
-                frame.declare(variable.name, value)
+                frame.write(variable.name, value)
                 counter = apply_binary(statement.step_operator, value, step)
                 continue
             if counter is None:
                 raise _Refusal
-            frame.declare(variable.name, counter)
+            frame.write(variable.name, counter)
             counter = apply_binary(statement.step_operator, counter, step)
 
     def _run_redim(self, statement: Au3ReDimStatement, frame: _Frame) -> None:
@@ -422,7 +459,7 @@ class Au3Interpreter:
         number = to_number(step)
         if number is None or number == 0:
             raise _Refusal
-        frame.declare(variable.name, of_number(start))
+        frame.write(variable.name, of_number(start))
         while True:
             relation = '<=' if number > 0 else '>='
             within = compare(relation, frame.read(variable.name), of_number(limit))
@@ -445,7 +482,7 @@ class Au3Interpreter:
             raise _Refusal
         for element in cast(tuple[Au3Value, ...], iterable.payload):
             frame.budget.spend()
-            frame.declare(variable.name, element)
+            frame.write(variable.name, element)
             if not self._run_loop_body(statement.body, frame):
                 return
 
@@ -595,6 +632,8 @@ class Au3Interpreter:
             return None
         function = self.functions.get(name)
         if function is not None:
+            if frame.probing:
+                return None
             try:
                 return self._call(function, list(arguments), frame.globals, frame.budget)
             except _Refusal:

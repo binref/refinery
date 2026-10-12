@@ -269,3 +269,115 @@ class TestAu3FunctionEvaluation(TestAu3):
             '    Return DllCall("kernel32.dll", "bool", "CloseHandle", "handle", $h)\n'
             'EndFunc\n'
             '$r = close_handle(0)\n')
+
+    def test_a_decoder_with_implicit_locals_becomes_the_literal_of_its_result(self):
+        """
+        The probe10 decoder, verbatim: every intermediate lives in an implicit local — a bare
+        write the census cannot tie to a global — so the summary stays empty and the call
+        becomes the pinned decoding.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func decode10($hx, $ky)
+                    $d_bin = BinaryToString($hx, 1)
+                    $d_out = ""
+                    For $d_i = 1 To StringLen($d_bin)
+                        $d_c = AscW(StringMid($d_bin, $d_i, 1))
+                        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))
+                        $d_out &= ChrW(BitXOR($d_c, $d_k))
+                    Next
+                    Return $d_out
+                EndFunc
+
+                $x = decode10("0x31275C23300271", "AU3")
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Func decode10($hx, $ky)\n'
+            '    $d_bin = BinaryToString($hx, 1)\n'
+            '    $d_out = ""\n'
+            '    For $d_i = 1 To StringLen($d_bin)\n'
+            '        $d_c = AscW(StringMid($d_bin, $d_i, 1))\n'
+            '        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))\n'
+            '        $d_out &= ChrW(BitXOR($d_c, $d_k))\n'
+            '    Next\n'
+            '    Return $d_out\n'
+            'EndFunc\n'
+            '$x = "probe10"\n')
+
+    def test_a_decoder_whose_implicit_name_a_script_level_write_spells_stays(self):
+        """
+        A script-level write creates a global, so a bare write of the same name inside the
+        function may reach it — the load-bearing case the summary must keep refusing.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $d_out = "touched"
+
+                Func decode10($hx, $ky)
+                    $d_bin = BinaryToString($hx, 1)
+                    $d_out = ""
+                    For $d_i = 1 To StringLen($d_bin)
+                        $d_c = AscW(StringMid($d_bin, $d_i, 1))
+                        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))
+                        $d_out &= ChrW(BitXOR($d_c, $d_k))
+                    Next
+                    Return $d_out
+                EndFunc
+
+                $x = decode10("0x31275C23300271", "AU3")
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            '$d_out = "touched"\n'
+            'Func decode10($hx, $ky)\n'
+            '    $d_bin = BinaryToString($hx, 1)\n'
+            '    $d_out = ""\n'
+            '    For $d_i = 1 To StringLen($d_bin)\n'
+            '        $d_c = AscW(StringMid($d_bin, $d_i, 1))\n'
+            '        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))\n'
+            '        $d_out &= ChrW(BitXOR($d_c, $d_k))\n'
+            '    Next\n'
+            '    Return $d_out\n'
+            'EndFunc\n'
+            '$x = decode10("0x31275C23300271", "AU3")\n')
+
+    def test_a_decoder_under_mustdeclarevars_stays(self):
+        """
+        The tree may set `MustDeclareVars`, which makes every implicit write fatal, so the
+        summary refinement refuses to lean on the census and the call stands.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Opt("MustDeclareVars", 1)
+
+                Func decode10($hx, $ky)
+                    $d_bin = BinaryToString($hx, 1)
+                    $d_out = ""
+                    For $d_i = 1 To StringLen($d_bin)
+                        $d_c = AscW(StringMid($d_bin, $d_i, 1))
+                        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))
+                        $d_out &= ChrW(BitXOR($d_c, $d_k))
+                    Next
+                    Return $d_out
+                EndFunc
+
+                $x = decode10("0x31275C23300271", "AU3")
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Opt("MustDeclareVars", 1)\n'
+            'Func decode10($hx, $ky)\n'
+            '    $d_bin = BinaryToString($hx, 1)\n'
+            '    $d_out = ""\n'
+            '    For $d_i = 1 To StringLen($d_bin)\n'
+            '        $d_c = AscW(StringMid($d_bin, $d_i, 1))\n'
+            '        $d_k = AscW(StringMid($ky, Mod($d_i - 1, StringLen($ky)) + 1, 1))\n'
+            '        $d_out &= ChrW(BitXOR($d_c, $d_k))\n'
+            '    Next\n'
+            '    Return $d_out\n'
+            'EndFunc\n'
+            '$x = decode10("0x31275C23300271", "AU3")\n')

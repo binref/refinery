@@ -372,6 +372,25 @@ def _evaluate_asc(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     return of_int(ord(first))
 
 
+def _evaluate_ascw(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
+    """
+    The UTF-16 code unit of the first character: codepage-independent — `65` over `"A"`, `233`
+    over U+00E9 — with a character beyond the BMP answering its high surrogate and the empty
+    string zero (probe10).
+    """
+    if len(arguments) != 1:
+        return None
+    text = as_string(arguments[0])
+    if text is None:
+        return None
+    if not text:
+        return of_int(0)
+    first = ord(text[0])
+    if first > 0xFFFF:
+        return of_int(0xD800 + ((first - 0x10000) >> 10))
+    return of_int(first)
+
+
 def _evaluate_dec(arguments: tuple[Au3Value, ...]) -> Au3Value | None:
     """
     The hex reading of a string: unsigned by default, flag 1 reads the low 32 bits signed
@@ -771,6 +790,7 @@ _EVALUATORS: dict[str, _Evaluator] = {
     'chr'             : _chr_evaluator(255),
     'chrw'            : _chr_evaluator(65535),
     'asc'             : _evaluate_asc,
+    'ascw'            : _evaluate_ascw,
     'dec'             : _evaluate_dec,
     'hex'             : _evaluate_hex,
     'string'          : _evaluate_string,
@@ -818,7 +838,7 @@ BUILTIN_NAMES = frozenset(_EVALUATORS) | {'execute', 'assign'}
 #: a name AutoIt does not define is fatal and cannot stand in a script that runs, so a spurious
 #: entry costs conservatism where a missing one is a hole — `DllCallbackRegister` lists both
 #: leading positions for exactly that reason. `Execute` is absent because
-#: `refinery.lib.scripts.au3.analysis.propagation.execute_kills` answers what its payload can do.
+#: `refinery.lib.scripts.au3.analysis.existence.execute_kills` answers what its payload can do.
 NAME_PARAMETERS: dict[str, frozenset[int]] = {
     'call'                   : frozenset({0}),
     'assign'                 : frozenset({0}),

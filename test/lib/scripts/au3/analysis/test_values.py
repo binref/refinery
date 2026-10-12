@@ -490,6 +490,20 @@ class TestAu3Values(TestBase):
             with self.subTest(name=name, sources=sources):
                 self.assertEqual(self._called(name, *sources), expected)
 
+    def test_ascw_answers_the_first_utf16_code_unit(self):
+        """
+        `AscW` is codepage-independent: the code unit of the first character — the high surrogate
+        of one beyond the BMP — and zero over the empty string (probe10).
+        """
+        for sources, expected in (
+            (('"A"',), '65'),
+            (('"é"',), '233'),
+            (('"\U00010437"',), '55297'),
+            (('""',), '0'),
+        ):
+            with self.subTest(sources=sources):
+                self.assertEqual(self._called('ascw', *sources), expected)
+
     def test_dec_and_hex_answer_in_the_probed_widths(self):
         for name, sources, expected in (
             ('dec', ('"FF"',), '255'),
