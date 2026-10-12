@@ -9,7 +9,6 @@ from refinery.lib.scripts.au3.deobfuscation import deobfuscate
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
 
-
 #: The decoder bodies the obfuscated sample carries in front of its payload function: every
 #: decoder call the fixture holds resolves through them, in both the single and the composed form.
 FIXTURE_HELPERS = inspect.cleandoc('''
@@ -170,6 +169,57 @@ class TestAu3Deobfuscation(TestBase):
             once = Au3Synthesizer().convert(ast)
             self.assertEqual(deobfuscate(ast), 0)
             self.assertEqual(Au3Synthesizer().convert(ast), once)
+
+    def test_a_deep_concatenation_chain_in_a_decoder_settles(self):
+        """
+        The decoder shape obfuscated scripts spell: a parameter concatenated with hundreds of
+        constant pieces. The run resolves the call over it without exhausting the interpreter
+        stack, and the chain that stays standing still prints.
+        """
+        chain = ' & '.join(F'"a{i}"' for i in range(300))
+        resolved = 'x' + ''.join(F'a{i}' for i in range(300))
+        source = (
+            'Func dec($p)\n'
+            F'    Local $q = $p & {chain}\n'
+            '    Return $q\n'
+            'EndFunc\n'
+            'Local $x = dec("x")\n'
+        )
+        ast = Au3Parser(source).parse()
+        self.assertGreater(deobfuscate(ast), 0)
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            'Func dec($p)\n'
+            F'    Local $q = $p & {chain}\n'
+            '    Return $q\n'
+            'EndFunc\n'
+            F'Local $x = "{resolved}"\n'
+        )
+
+    def test_a_nul_heavy_value_settles_with_its_call_standing(self):
+        """
+        A value whose every character needs its own chain piece would spell a `Chr` chain
+        hundreds of levels deep, so the renderer refuses it and the pipeline settles with the
+        producing call standing instead of exhausting the stack printing it.
+        """
+        payload = 'x' * 250
+        source = (
+            'Global $s\n'
+            'Global $c\n'
+            F'$s = "{payload}"\n'
+            '$c = StringReplace($s, "x", Chr(0))\n'
+            '$y = $c\n'
+        )
+        ast = Au3Parser(source).parse()
+        self.assertGreater(deobfuscate(ast), 0)
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            'Global $s\n'
+            'Global $c\n'
+            F'$s = "{payload}"\n'
+            F'$c = StringReplace("{payload}", "x", Chr(0))\n'
+            '$y = $c\n'
+        )
 
     def test_no_parse_errors_on_wellformed_input(self):
         for source in self.SOURCES:

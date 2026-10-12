@@ -14,6 +14,7 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.au3.analysis.constants import (
+    Policy,
     combine,
     constant_value,
     within_limit,
@@ -33,7 +34,7 @@ class TestAu3Constants(TestBase):
 
     def _evaluated(self, source: str, **kwargs):
         expression = Au3Parser(source).parse_expression()
-        result = constant_value(expression, kwargs.pop('functions', frozenset()), **kwargs)
+        result = constant_value(expression, Policy(kwargs.pop('functions', frozenset()), **kwargs))
         return None if result is None else to_string(result)
 
     def test_a_literal_shape_is_read_back_over_any_limit(self):

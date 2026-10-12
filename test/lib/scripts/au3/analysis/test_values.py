@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import Expression
 from refinery.lib.scripts.au3.analysis.builtins import evaluate_builtin
 from refinery.lib.scripts.au3.analysis.values import (
     apply_binary,
@@ -622,6 +623,26 @@ class TestAu3Values(TestBase):
     def test_a_chain_piece_is_refused_when_its_builtin_is_shadowed(self):
         self.assertIsNone(
             literal_value(Au3Parser('"a" & Chr(0)').parse_expression(), frozenset({'chr'})))
+
+    def test_a_shared_memo_answers_what_an_unmemoized_read_answers(self):
+        """
+        The constant evaluator shares one memo across every read of a tree, so a read through it
+        answers exactly the value the same node answers without one — refusals included — both
+        when the memo fills around the node's own descent and when it answers from a full memo.
+        """
+        tree = Au3Parser(
+            '$x = "a" & "b" & @CR & Chr(0) & Binary("0x41") & $y & -1 & True & [1, "s"] & f(1)\n'
+        ).parse()
+        expressions = [node for node in tree.walk() if isinstance(node, Expression)]
+        memo: dict = {}
+        for expression in expressions:
+            self.assertEqual(
+                literal_value(expression, frozenset(), memo),
+                literal_value(expression, frozenset()))
+        for expression in expressions:
+            self.assertEqual(
+                literal_value(expression, frozenset(), memo),
+                literal_value(expression, frozenset()))
         self.assertIsNone(
             literal_value(
                 Au3Parser('"a" & ChrW(55296)').parse_expression(), frozenset({'chrw'})))

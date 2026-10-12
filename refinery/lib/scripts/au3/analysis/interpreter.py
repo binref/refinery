@@ -23,15 +23,13 @@ at the call site hold for the whole run. The globals the run may read are exactl
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-
 from dataclasses import dataclass
-
 from typing import cast
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES, evaluate_builtin
-from refinery.lib.scripts.au3.analysis.constants import constant_value
+from refinery.lib.scripts.au3.analysis.constants import Policy, constant_value, within_limit
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
@@ -82,14 +80,18 @@ _MAX_INTERPRETER_ARRAY_LEN = 1_000_000
 _MAX_INTERPRETER_DEPTH = 64
 
 
-def _over_payload(value: Au3Value) -> bool:
+def _nested_array(value: Au3Value) -> bool:
     """
-    Whether *value* leaves the payload bound the run holds over every string and binary it
-    evaluates.
+    Whether *value* is an array holding an array — the one array shape the run refuses wherever
+    it reaches one: an argument, a ternary branch, or a result the evaluator's literal path
+    hands in, exactly as the array literal the run builds itself is refused.
     """
     return (
-        value.kind in (Kind.STRING, Kind.BINARY)
-        and len(cast(str | bytes, value.payload)) > _MAX_INTERPRETER_PAYLOAD_LEN
+        value.kind is Kind.ARRAY
+        and any(
+            element.kind is Kind.ARRAY
+            for element in cast(tuple[Au3Value, ...], value.payload)
+        )
     )
 
 
@@ -144,13 +146,15 @@ class _Budget:
 
 class _Frame:
     """
-    The storage one running function sees: its locals and the globals the call site proved.
+    The storage one running function sees: its locals and the globals the call site proved, and
+    the evaluation policy over them, its hooks bound to this frame alone.
     """
 
     def __init__(self, globals: Mapping[str, Au3Value], budget: _Budget):
         self.globals = globals
         self.budget = budget
         self.locals: dict[str, Au3Value | _Array] = {}
+        self.policy: Policy = Policy(frozenset())
 
     def read(self, name: str) -> Au3Value:
         local = self.locals.get(name)
@@ -225,6 +229,7 @@ class Au3Interpreter:
         budget.spend()
         budget.depth += 1
         frame = _Frame(globals, budget)
+        frame.policy = self._policy(frame)
         try:
             if budget.depth > _MAX_INTERPRETER_DEPTH:
                 raise _Refusal
@@ -509,9 +514,22 @@ class Au3Interpreter:
                 raise _ContinueLoop(signal.level - 1)
         return True
 
+    def _policy(self, frame: _Frame) -> Policy:
+        """
+        The evaluation over one frame: its lookup reads the frame, its call hook runs the script
+        functions the callee names, and its fallback answers the shapes only the run holds.
+        """
+        return Policy(
+            self.function_names,
+            lookup=lambda name: self._frame_value(name, frame),
+            limit=_MAX_INTERPRETER_PAYLOAD_LEN,
+            call=lambda name, arguments: self._run_call(name, arguments, frame),
+            fallback=lambda expression: self._eval_special(expression, frame),
+        )
+
     def _eval(self, node: Expression | None, frame: _Frame) -> Au3Value:
         value = self._eval_expression(node, frame)
-        if _over_payload(value):
+        if not within_limit(value, _MAX_INTERPRETER_PAYLOAD_LEN) or _nested_array(value):
             raise _Refusal
         return value
 
@@ -523,14 +541,7 @@ class Au3Interpreter:
             if special is None:
                 raise _Refusal
             return special
-        value = constant_value(
-            node,
-            self.function_names,
-            lookup=lambda name: self._frame_value(name, frame),
-            limit=_MAX_INTERPRETER_PAYLOAD_LEN,
-            call=lambda name, arguments: self._run_call(name, arguments, frame),
-            fallback=lambda expression: self._eval_special(expression, frame),
-        )
+        value = constant_value(node, frame.policy)
         if value is None:
             raise _Refusal
         return value
@@ -573,10 +584,14 @@ class Au3Interpreter:
         """
         The value of one call inside a run: a script function the interpreter runs — the
         precedence a call site has over the builtin of the same name — then the builtin table.
-        Every argument answers the payload bound first, the bound the run holds over every value
-        it evaluates.
+        Every argument answers the bounds first: the payload bound the run holds over every
+        value it evaluates, and the refusal of an array holding an array.
         """
-        if any(_over_payload(argument) for argument in arguments):
+        if any(
+            not within_limit(argument, _MAX_INTERPRETER_PAYLOAD_LEN)
+            or _nested_array(argument)
+            for argument in arguments
+        ):
             return None
         function = self.functions.get(name)
         if function is not None:

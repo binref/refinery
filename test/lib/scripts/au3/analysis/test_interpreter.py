@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import inspect
 
-from typing import cast
-
 from test import TestBase
+from typing import cast
 
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter
 from refinery.lib.scripts.au3.analysis.propagation import build_propagation_model
@@ -599,6 +598,30 @@ class TestAu3Interpreter(TestBase):
                 Return $a[5]
             EndFunc
             '''))
+
+    def test_a_nested_array_refuses_wherever_it_reaches_the_run(self):
+        """
+        An array holding an array is the one array shape the run refuses wherever the
+        evaluator's literal path hands one in — an argument a call evaluates, or the branch a
+        ternary chooses — exactly as the array literal the run builds itself is refused.
+        """
+        for source in (
+            '''
+            Func g($p)
+                Return $p
+            EndFunc
+            Func f()
+                Return g([1, [2]])
+            EndFunc
+            ''',
+            '''
+            Func f()
+                Return True ? [1, [2]] : 0
+            EndFunc
+            ''',
+        ):
+            with self.subTest(source=inspect.cleandoc(source).strip()):
+                self.assertIsNone(self._result('f', source=source))
 
     def test_an_endless_loop_refuses(self):
         self.assertIsNone(self._result(

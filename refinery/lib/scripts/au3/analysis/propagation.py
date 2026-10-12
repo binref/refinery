@@ -26,14 +26,14 @@ spells. Everything the evaluator refuses is a kill.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
 from refinery.lib.scripts.au3.analysis.constants import (
+    Policy,
     combine,
     constant_value,
     within_limit,
@@ -380,14 +380,23 @@ class _Walker:
         self.functions = scope_model.function_names
         self.values: dict[Au3Variable, Au3Value] = {}
         self.entries: dict[Au3Call, dict[str, Au3Value]] = {}
+        self._literals: dict[Expression, Au3Value | None] = {}
 
     def _proven(self, expression: Expression | None, state: _State) -> Au3Value | None:
         """
         The value the constant evaluator proves for *expression* over the state the walk has
-        reached, within the payload bound.
+        reached, within the payload bound. One memo of literal attempts serves the whole walk:
+        the tree stands still while the walk reads it.
         """
         return constant_value(
-            expression, self.functions, state.lookup, _MAX_PROPAGATED_PAYLOAD)
+            expression,
+            Policy(
+                self.functions,
+                lookup=state.lookup,
+                limit=_MAX_PROPAGATED_PAYLOAD,
+                literals=self._literals,
+            ),
+        )
 
     def walk_scope(self, scope: Au3FunctionDeclaration | None, body: list[Statement]) -> None:
         state = _State.empty()

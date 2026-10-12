@@ -3,24 +3,28 @@ The one constant evaluator: the value an expression provably holds, over the ope
 `refinery.lib.scripts.au3.analysis.values` and the builtin table of
 `refinery.lib.scripts.au3.analysis.builtins`, under a bound the caller chooses.
 
-Three policies share it. The fold asks unbounded, because what the source already spells is
-already in the tree. The propagation walk asks with its payload bound, because a value it proves
-enters its state and may be spelled at every read of the name — before this module, the walk
-bound a variable only to a shape the fold leaves behind, so every literal the fold revealed was
-consumed by a later pass, one rewrite per full traversal and model rebuild. The interpreter asks
-with its own payload bound and a call hook, because a call inside a body it runs may reach a
-script function no builtin table owns.
+Three policies share it, one `Policy` each. The fold asks unbounded, because what the source
+already spells is already in the tree. The propagation walk asks with its payload bound,
+because a value it proves enters its state and may be spelled at every read of the name —
+before this module, the walk bound a variable only to a shape the fold leaves behind, so every
+literal the fold revealed was consumed by a later pass, one rewrite per full traversal and model
+rebuild. The interpreter asks with its own payload bound and a call hook, because a call inside
+a body it runs may reach a script function no builtin table owns.
 
 A literal shape is never bounded — what the source spells is already in the tree — so the
 walk's recording gate, not the evaluator, keeps an oversized literal out of the values it hands
 on. The bound itself is complete over the domain: a string and a binary count their payload, an
 array its element count and the recursive payload of its elements, so no kind grows past a bound
 the string case closed.
+
+Every policy carries a memo of literal attempts, alive exactly as long as the tree it was
+computed over stands: the fold asks the evaluator once per node bottom-up, so a chain nothing
+proves pays its literal descent once instead of once per level above it.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
-
+from dataclasses import dataclass, field
 from typing import cast
 
 from refinery.lib.scripts.au3 import ast
@@ -59,52 +63,64 @@ Fallback = Callable[[Expression], Au3Value | None]
 _COMPARISONS = frozenset(('=', '==', '<>', '<', '>', '<=', '>='))
 
 
-def constant_value(
-    expression: Expression | None,
-    functions: frozenset[str],
-    lookup: Lookup | None = None,
-    limit: int | None = None,
-    call: CallHook | None = None,
-    fallback: Fallback | None = None,
-) -> Au3Value | None:
+@dataclass
+class Policy:
     """
-    The value *expression* provably holds, or `None` when nothing does: a literal shape, read
-    back uncapped; a variable read through *lookup*, within *limit*; an operator over proven
-    operands; a ternary over a proven condition, evaluating its chosen branch alone (probe4 66,
-    67); or a call — the builtin table's answer when *call* is `None`, refusing a name a script
-    function shadows because the shadow would run foreign code, and the hook's otherwise. A shape
-    none of these owns is the *fallback*'s, when one is given.
+    The question one caller asks: the functions the script declares — a script function shadows
+    the builtin of the same name — the lookup that answers a variable read, the payload bound, the
+    hook that owns a call the builtin table does not, the fallback for the shapes only the caller
+    holds, and the memo of literal attempts, alive exactly as long as the tree it is computed
+    over stands.
+    """
+
+    functions: frozenset[str]
+    lookup: Lookup | None = None
+    limit: int | None = None
+    call: CallHook | None = None
+    fallback: Fallback | None = None
+    literals: dict[Expression, Au3Value | None] = field(default_factory=dict)
+
+
+def constant_value(expression: Expression | None, policy: Policy) -> Au3Value | None:
+    """
+    The value *expression* provably holds under *policy*, or `None` when nothing does: a literal
+    shape, read back uncapped; a variable read through the policy's lookup, within its bound; an
+    operator over proven operands; a ternary over a proven condition, evaluating its chosen
+    branch alone (probe4 66, 67); or a call — the builtin table's answer when the policy carries
+    no hook, refusing a name a script function shadows because the shadow would run foreign
+    code, and the hook's otherwise. A shape none of these owns is the policy's fallback's, when
+    one is given.
 
     `And`/`Or` answer their decided side alone once the left operand decides, because AutoIt
     never runs the right side there (probe4 60, 61). Every operator comes from the value tables,
     which refuse each unpinned case; `&`, the one operator whose result grows with its operands,
-    refuses over *limit*, and so does a builtin's result.
+    refuses over the bound, and so does a builtin's result.
     """
-    value = literal_value(expression, functions)
+    value = literal_value(expression, policy.functions, policy.literals)
     if value is not None:
         return value
     node = ast.unwrap_parens(expression)
     if isinstance(node, Au3Variable):
-        if lookup is None:
+        if policy.lookup is None:
             return None
-        value = lookup(node.name)
-        if value is None or not within_limit(value, limit):
+        value = policy.lookup(node.name)
+        if value is None or not within_limit(value, policy.limit):
             return None
         return value
     if isinstance(node, Au3UnaryExpression):
-        operand = constant_value(node.operand, functions, lookup, limit, call, fallback)
+        operand = constant_value(node.operand, policy)
         if operand is None:
             return None
         return apply_unary(node.operator, operand)
     if isinstance(node, Au3BinaryExpression):
-        return _binary_value(node, functions, lookup, limit, call, fallback)
+        return _binary_value(node, policy)
     if isinstance(node, Au3Ternary):
-        return _ternary_value(node, functions, lookup, limit, call, fallback)
+        return _ternary_value(node, policy)
     if isinstance(node, Au3Call):
-        return _call_value(node, functions, lookup, limit, call, fallback)
-    if not isinstance(node, Expression) or fallback is None:
+        return _call_value(node, policy)
+    if not isinstance(node, Expression) or policy.fallback is None:
         return None
-    return fallback(node)
+    return policy.fallback(node)
 
 
 def within_limit(value: Au3Value, limit: int | None) -> bool:
@@ -154,18 +170,11 @@ def _payload_size(value: Au3Value) -> int:
     return 0
 
 
-def _binary_value(
-    node: Au3BinaryExpression,
-    functions: frozenset[str],
-    lookup: Lookup | None,
-    limit: int | None,
-    call: CallHook | None,
-    fallback: Fallback | None,
-) -> Au3Value | None:
+def _binary_value(node: Au3BinaryExpression, policy: Policy) -> Au3Value | None:
     if node.left is None or node.right is None:
         return None
     if node.operator in ('and', 'or'):
-        left = constant_value(node.left, functions, lookup, limit, call, fallback)
+        left = constant_value(node.left, policy)
         if left is None:
             return None
         verdict = truthy(left)
@@ -175,64 +184,53 @@ def _binary_value(
             return of_bool(False)
         if node.operator == 'or' and verdict:
             return of_bool(True)
-        right = constant_value(node.right, functions, lookup, limit, call, fallback)
+        right = constant_value(node.right, policy)
         if right is None:
             return None
         return apply_binary(node.operator, left, right)
-    left = constant_value(node.left, functions, lookup, limit, call, fallback)
-    right = constant_value(node.right, functions, lookup, limit, call, fallback)
+    left = constant_value(node.left, policy)
+    right = constant_value(node.right, policy)
     if left is None or right is None:
         return None
     if node.operator in _COMPARISONS:
         return compare(node.operator, left, right)
     result = apply_binary(node.operator, left, right)
-    if result is None or not within_limit(result, limit):
+    if result is None or not within_limit(result, policy.limit):
         return None
     return result
 
 
-def _ternary_value(
-    node: Au3Ternary,
-    functions: frozenset[str],
-    lookup: Lookup | None,
-    limit: int | None,
-    call: CallHook | None,
-    fallback: Fallback | None,
-) -> Au3Value | None:
-    condition = constant_value(node.condition, functions, lookup, limit, call, fallback)
+def _ternary_value(node: Au3Ternary, policy: Policy) -> Au3Value | None:
+    condition = constant_value(node.condition, policy)
     if condition is None:
         return None
     verdict = truthy(condition)
     if verdict is None:
         return None
     branch = node.consequent if verdict else node.alternate
-    return constant_value(branch, functions, lookup, limit, call, fallback)
+    return constant_value(branch, policy)
 
 
-def _call_value(
-    node: Au3Call,
-    functions: frozenset[str],
-    lookup: Lookup | None,
-    limit: int | None,
-    call: CallHook | None,
-    fallback: Fallback | None,
-) -> Au3Value | None:
+def _call_value(node: Au3Call, policy: Policy) -> Au3Value | None:
     callee = ast.direct_callee(node)
     if callee is None:
         return None
-    if call is None and (callee.name in functions or callee.name not in BUILTIN_NAMES):
+    if (
+        policy.call is None
+        and (callee.name in policy.functions or callee.name not in BUILTIN_NAMES)
+    ):
         return None
     arguments = []
     for argument in node.arguments:
-        value = constant_value(argument, functions, lookup, limit, call, fallback)
+        value = constant_value(argument, policy)
         if value is None:
             return None
         arguments.append(value)
     result = (
-        call(callee.name, tuple(arguments))
-        if call is not None
+        policy.call(callee.name, tuple(arguments))
+        if policy.call is not None
         else evaluate_builtin(callee.name, tuple(arguments))
     )
-    if result is None or not within_limit(result, limit):
+    if result is None or not within_limit(result, policy.limit):
         return None
     return result

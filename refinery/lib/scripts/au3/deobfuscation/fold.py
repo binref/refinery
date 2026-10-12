@@ -5,7 +5,9 @@ spells it.
 Evaluation is the constant evaluator `refinery.lib.scripts.au3.analysis.constants`, asked
 unbounded — what the source already spells is already in the tree — so a fold over string
 literals of any size stands. A call folds only when no script function shares the callee's name,
-because a script function shadows the builtin; both refusals leave the expression standing.
+because a script function shadows the builtin; both refusals leave the expression standing. The
+render gates own the spelling: a value whose literal runs deeper than the renderer's bound
+leaves the expression standing too, because no synthesizer prints such a chain.
 
 `And`/`Or` fold to their boolean value once both operands' truth is known, and to the decided
 side alone when the left operand already decides — AutoIt never runs the right side there (probe4
@@ -25,9 +27,8 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
-from refinery.lib.scripts.au3.analysis.constants import constant_value
+from refinery.lib.scripts.au3.analysis.constants import Policy, constant_value
 from refinery.lib.scripts.au3.analysis.values import (
-    Au3Value,
     literal_value,
     render_at,
     truthy,
@@ -51,12 +52,12 @@ class Au3ConstantFolding(Transformer):
 
     def __init__(self):
         super().__init__()
-        self._functions: frozenset[str] = frozenset()
+        self._policy = Policy(frozenset())
         self._synthesizer = Au3Synthesizer()
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
-            self._functions = model_cache(self, node).scopes.function_names
+            self._policy = Policy(model_cache(self, node).scopes.function_names)
         self.generic_visit(node)
         replacement = self._folded(node)
         if replacement is None:
@@ -70,8 +71,10 @@ class Au3ConstantFolding(Transformer):
             return self._ternary_branch(node)
         if not isinstance(node, (Au3Macro, Au3UnaryExpression, Au3BinaryExpression, Au3Call)):
             return None
-        value = constant_value(node, self._functions)
-        return None if value is None else self._rendered(node, value)
+        value = constant_value(node, self._policy)
+        if value is None:
+            return None
+        return render_at(node, value, self._policy.functions)
 
     def _ternary_branch(self, node: Au3Ternary) -> Node | None:
         """
@@ -79,7 +82,7 @@ class Au3ConstantFolding(Transformer):
         (probe4 66, 67). A branch holding an array literal spells only where a declaration
         initializes, so the fold refuses anywhere else.
         """
-        condition = literal_value(node.condition, self._functions)
+        condition = literal_value(node.condition, self._policy.functions)
         if condition is None:
             return None
         verdict = truthy(condition)
@@ -91,12 +94,3 @@ class Au3ConstantFolding(Transformer):
         if ast.contains_an_array_literal(branch) and not ast.in_declaration_initializer(node):
             return None
         return branch
-
-    def _rendered(self, node: Node, value: Au3Value | None) -> Node | None:
-        """
-        The literal spelling of *value* where *node* stands, or `None` where none spells it or
-        the position does not accept the spelling.
-        """
-        if value is None:
-            return None
-        return render_at(node, value, self._functions)

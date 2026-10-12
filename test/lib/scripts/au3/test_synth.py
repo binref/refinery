@@ -71,6 +71,14 @@ class TestAu3Synthesizer(TestBase):
     def test_concat(self):
         self._round_trip('$s = "a" & "b" & $c\n')
 
+    def test_a_concatenation_chain_hundreds_of_pieces_deep(self):
+        """
+        An obfuscated script spells a concatenation chain hundreds of pieces deep, which prints
+        from a loop over the left spine rather than one recursion frame per level.
+        """
+        chain = ' & '.join(F'"a{i}"' for i in range(300))
+        self.assertEqual(self._round_trip(F'$q = {chain}\n'), F'$q = {chain}\n')
+
     def test_comparison(self):
         for operator in ('=', '==', '<>', '<', '>', '<=', '>='):
             self._round_trip(F'$x {operator} $y\n')

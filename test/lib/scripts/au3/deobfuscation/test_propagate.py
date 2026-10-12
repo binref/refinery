@@ -1,7 +1,7 @@
 """
 Constant propagation on its own: which reads a provable value replaces, and the refusals —
 positions where the value is not known (branch disagreement, loop writes, unproven targets) and
-positions where the literal that spells the value is not legal AutoIt3, is past the node bound,
+positions where the literal that spells the value is not legal AutoIt3, is past the depth bound,
 or is past the growth budget its name owns.
 """
 from __future__ import annotations
@@ -569,10 +569,10 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             F'Local $a = StringSplit("{"a," * 5000}a", ",")\nLocal $b[1] = [$a]\n')
 
-    def test_a_rendered_chain_past_the_node_bound_is_refused(self):
+    def test_a_rendered_chain_past_the_depth_bound_is_refused(self):
         """
-        A NUL-heavy string renders as several nodes per character, so a value whose spelling
-        outgrows the node bound keeps its reads however small its payload is.
+        A NUL-heavy string renders as one chain level per character, so a value whose spelling
+        outgrows the depth bound keeps its reads however small its payload is.
         """
         self.assertEqual(
             self._apply(
@@ -584,7 +584,7 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             F'Global Const $c = StringReplace("{"x" * 400}", "x", Chr(0))\n$y = $c\n')
 
-    def test_a_rendered_chain_within_the_node_bound_is_installed(self):
+    def test_a_rendered_chain_within_the_depth_bound_is_installed(self):
         self.assertEqual(
             self._apply(
                 '''
@@ -621,6 +621,49 @@ class TestAu3ConstantPropagation(TestAu3):
                 Au3ConstantPropagation,
             ),
             F'Global Const $c = "{"v" * 100}"\n$y = "{"v" * 100}"\n')
+
+    def test_a_local_keeps_its_budget_apart_from_a_same_named_global(self):
+        """
+        The budget is charged per definition, so a local that shares its name with a global past
+        the global's budget still inlines the local's own reads.
+        """
+        reads = '\n'.join(F'$y{i} = $c' for i in range(1, 11))
+        self.assertEqual(
+            self._apply(
+                F'''
+                Global Const $c = "{"v" * 100}"
+                {reads}
+                Func f()
+                    Local $c = 5
+                    $z = $c
+                EndFunc
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Global Const $c = "{"v" * 100}"\n{reads}\n'
+            'Func f()\n'
+            '    Local $c = 5\n'
+            '    $z = 5\n'
+            'EndFunc\n')
+
+    def test_a_wide_array_literal_inlines_on_its_budget_alone(self):
+        """
+        A wide array literal is two levels deep however many elements it holds, so the depth
+        bound never refuses it and the growth budget alone decides the inline.
+        """
+        elements = ', '.join(str(i) for i in range(1100))
+        self.assertEqual(
+            self._apply(
+                F'''
+                Global Const $pad = "{"p" * 30000}"
+                Local $a[1100] = [{elements}]
+                Local $b[1] = [$a]
+                ''',
+                Au3ConstantPropagation,
+            ),
+            F'Global Const $pad = "{"p" * 30000}"\n'
+            F'Local $a[1100] = [{elements}]\n'
+            F'Local $b[1] = [[{elements}]]\n')
 
     def test_a_derived_constant_chain_settles_within_a_small_step_budget(self):
         """

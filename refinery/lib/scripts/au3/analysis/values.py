@@ -518,6 +518,7 @@ def apply_unary(operator: str, operand: Au3Value) -> Au3Value | None:
 def literal_value(
     expression: Expression | None,
     functions: frozenset[str],
+    memo: dict[Expression, Au3Value | None] | None = None,
 ) -> Au3Value | None:
     """
     The value an expression holds when it is nothing but a literal shape: a number, a string, a
@@ -529,7 +530,27 @@ def literal_value(
 
     *functions* names the script's own functions, because a script function named `Binary` shadows
     the builtin and the call would run foreign code: while one exists, the call is not a literal.
+
+    A *memo* remembers one answer per node for as long as the tree it was computed over stands:
+    the constant evaluator asks the same subtree at every level of the expressions above it, so
+    a chain nothing proves pays its whole descent once, not once per level above it.
     """
+    if expression is None:
+        return None
+    if memo is None:
+        return _literal_shape(expression, functions, None)
+    if expression in memo:
+        return memo[expression]
+    value = _literal_shape(expression, functions, memo)
+    memo[expression] = value
+    return value
+
+
+def _literal_shape(
+    expression: Expression | None,
+    functions: frozenset[str],
+    memo: dict[Expression, Au3Value | None] | None,
+) -> Au3Value | None:
     node = ast.unwrap_parens(expression)
     if isinstance(node, Au3IntLiteral):
         return of_int(min(node.value, INT64_MAX))
@@ -547,8 +568,8 @@ def literal_value(
     if isinstance(node, Au3BinaryExpression):
         if node.operator != '&' or node.left is None or node.right is None:
             return None
-        one = literal_value(node.left, functions)
-        two = literal_value(node.right, functions)
+        one = literal_value(node.left, functions, memo)
+        two = literal_value(node.right, functions, memo)
         if one is None or two is None:
             return None
         return apply_binary('&', one, two)
@@ -560,14 +581,14 @@ def literal_value(
     if isinstance(node, Au3UnaryExpression):
         if node.operator != '-' or node.operand is None:
             return None
-        inner = literal_value(node.operand, functions)
+        inner = literal_value(node.operand, functions, memo)
         if inner is None:
             return None
         return apply_unary('-', inner)
     if isinstance(node, Au3ArrayLiteral):
         elements = []
         for element in node.elements:
-            value = literal_value(element, functions)
+            value = literal_value(element, functions, memo)
             if value is None:
                 return None
             elements.append(value)
@@ -646,10 +667,21 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
       characters `0x`;
     - an array, spelled as an array literal, only when every element renders.
 
+    A render deeper than `MAX_RENDERED_DEPTH` spells none either: the synthesizer emits a tree
+    by recursion and cannot print one that deep, so the value keeps whatever spelling it
+    already has.
+
     A negative number is spelled as the unary minus over the positive literal, because the lexer
     reads a sign as an operator: a literal holding `-3` would print text that re-parses as a
     different tree than the one that holds it.
     """
+    rendered = _render_value(value, functions)
+    if rendered is None or not _within_depth(rendered):
+        return None
+    return rendered
+
+
+def _render_value(value: Au3Value, functions: frozenset[str]) -> Expression | None:
     if value.kind is Kind.INT:
         return _render_int(cast(int, value.payload))
     if value.kind is Kind.DOUBLE:
@@ -680,7 +712,7 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
     if value.kind is Kind.ARRAY:
         elements = []
         for element in cast(tuple[Au3Value, ...], value.payload):
-            rendered = render_literal(element, functions)
+            rendered = _render_value(element, functions)
             if rendered is None:
                 return None
             elements.append(rendered)
@@ -755,20 +787,26 @@ def _rendered_piece(character: str, functions: frozenset[str]) -> Expression | N
     return None
 
 
-#: The nodes beyond which a rendered literal is a tree of its own: a NUL-heavy string renders as
-#: a chain of several nodes per character, so a substitution installing one would build chains
-#: deeper than the walks the pipeline runs over its own product survive, multiplying a tree where
-#: the payload it spells only copies it. The transforms that install a rendered literal in place
-#: of one read refuse past it.
-MAX_RENDERED_NODES = 1024
+#: The depth beyond which a rendered literal is refused: the synthesizer emits a tree by
+#: recursion, several stack frames per level, and dies just past two hundred levels under the
+#: default recursion limit, so a chain deeper than this would crash every pass that prints the
+#: pipeline's own product. An array literal emits breadth-wise in a loop, so only depth counts
+#: against the bound, never the element count.
+MAX_RENDERED_DEPTH = 128
 
 
-def within_node_bound(node: Node) -> bool:
+def _within_depth(node: Node) -> bool:
     """
-    Whether the subtree at *node* is small enough for a substitution to install: no more nodes
-    than `MAX_RENDERED_NODES`.
+    Whether the subtree at *node* stays within `MAX_RENDERED_DEPTH`.
     """
-    return sum(1 for _ in node.walk()) <= MAX_RENDERED_NODES
+    stack: list[tuple[Node, int]] = [(node, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > MAX_RENDERED_DEPTH:
+            return False
+        for child in current.children():
+            stack.append((child, depth + 1))
+    return True
 
 
 def render_at(

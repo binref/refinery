@@ -13,8 +13,8 @@ the dead-code phase to remove. The visit is bottom-up, so a decoder fed by anoth
 asked.
 
 The literal it installs faces the same render gates the propagation pass obeys, including the
-node bound: a decoder whose result spells as a chain deeper than the walks over the pass's own
-product survive leaves the call standing.
+depth bound: a decoder whose result spells as a chain deeper than the recursive emitter prints
+leaves the call standing.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter
 from refinery.lib.scripts.au3.analysis.propagation import Au3PropagationModel
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
-from refinery.lib.scripts.au3.analysis.values import literal_value, render_at, within_node_bound
+from refinery.lib.scripts.au3.analysis.values import literal_value, render_at
 from refinery.lib.scripts.au3.model import (
     Au3Call,
     Au3ExpressionStatement,
@@ -77,7 +77,4 @@ class Au3FunctionEvaluation(Transformer):
             function, arguments, self._propagation.entry_globals(node))
         if result is None:
             return None
-        replacement = render_at(node, result, self._scopes.function_names)
-        if replacement is None or not within_node_bound(replacement):
-            return None
-        return replacement
+        return render_at(node, result, self._scopes.function_names)

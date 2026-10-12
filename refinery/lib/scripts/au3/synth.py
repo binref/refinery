@@ -131,9 +131,25 @@ class Au3Synthesizer(Synthesizer):
         return child
 
     def _emit_binary(self, node: Au3BinaryExpression):
-        self._emit_child(node.left, node)
-        self._write(F' {node.operator} ')
-        self._emit_child(node.right, node)
+        """
+        The left spine is emitted by a loop, not recursion: a concatenation chain hundreds of
+        pieces deep is a shape obfuscated scripts spell and the renders install, and one
+        recursion frame per level would exhaust the interpreter stack before the chain was
+        printed. The walk stops at any left child that needs brackets, which `_emit_child`
+        then prints with them.
+        """
+        spine: list[Au3BinaryExpression] = [node]
+        current: Node | None = node.left
+        while (
+            isinstance(current, Au3BinaryExpression)
+            and not needs_parens(current, spine[-1])
+        ):
+            spine.append(current)
+            current = current.left
+        self._emit_child(current, spine[-1])
+        for parent in reversed(spine):
+            self._write(F' {parent.operator} ')
+            self._emit_child(parent.right, parent)
 
     visit_Au3BinaryExpression = _emit_binary
 
