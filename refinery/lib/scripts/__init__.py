@@ -1120,6 +1120,23 @@ class Synthesizer(Visitor):
         nc = len(text)
         self._col = (nc - br - 1) if (br := text.rfind('\n')) >= 0 else (self._col + nc)
 
+    def _capture_output(self) -> tuple[int, int]:
+        """
+        The state of the output buffer — how much it holds and the column it ends at — for a
+        later `_rewind_output` to take every write since back.
+        """
+        return self._parts.tell(), self._col
+
+    def _rewind_output(self, captured: tuple[int, int]) -> None:
+        """
+        Take back every write since `_capture_output` returned *captured*: the caller writes a
+        candidate spelling, reads where it landed, then rewinds and writes the form it chose.
+        """
+        position, column = captured
+        self._parts.seek(position)
+        self._parts.truncate()
+        self._col = column
+
     def _newline(self):
         self._parts.write('\n')
         indent = self._indent * self._depth

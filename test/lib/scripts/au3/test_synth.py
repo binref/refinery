@@ -7,6 +7,14 @@ from refinery.lib.scripts.au3.model import Au3ExpressionStatement
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
 
+#: A statement the interpreter accepts only as a continued line. The fidelity harvest reads the
+#: string like any other program this package holds, so the continuation has to round-trip
+#: through the parser the same way a one-line statement does.
+CONTINUED_ASSIGNMENT = (
+    '$x = "aaaaaaaaaaaaaaaaaaaa" & _\n'
+    '"bbbbbbbbbbbbbbbbbbbb"\n'
+)
+
 
 class TestAu3Synthesizer(TestBase):
 
@@ -32,6 +40,20 @@ class TestAu3Synthesizer(TestBase):
             F'First: {out1!r}\nSecond: {out2!r}',
         )
         return out1
+
+    def _continued(self, source: str, line_length: int) -> str:
+        """
+        The source printed under a line length small enough to force continuations, asserted to
+        re-parse cleanly before the caller checks its shape.
+        """
+        out = Au3Synthesizer(line_length=line_length).convert(Au3Parser(source).parse())
+        reparsed = Au3Parser(out).parse()
+        self.assertEqual(
+            reparsed.errors, [],
+            F'Continued output does not re-parse cleanly for {source!r}:\n'
+            F'Output: {out!r}\nErrors: {[e.message for e in reparsed.errors]}',
+        )
+        return out
 
     def test_int_literal(self):
         self.assertEqual(self._round_trip('42\n'), '42\n')
@@ -78,6 +100,78 @@ class TestAu3Synthesizer(TestBase):
         """
         chain = ' & '.join(F'"a{i}"' for i in range(300))
         self.assertEqual(self._round_trip(F'$q = {chain}\n'), F'$q = {chain}\n')
+
+    def test_a_statement_past_the_line_length_is_continued_behind_the_operator(self):
+        out = self._continued(
+            '$x = "aaaaaaaaaaaaaaaaaaaa" & "bbbbbbbbbbbbbbbbbbbb" & "cccccccccccccccccccc"\n', 40)
+        self.assertEqual(out, (
+            '$x = "aaaaaaaaaaaaaaaaaaaa" &  _\n'
+            '"bbbbbbbbbbbbbbbbbbbb" &  _\n'
+            '"cccccccccccccccccccc"\n'
+        ))
+
+    def test_a_call_is_continued_between_arguments(self):
+        out = self._continued('MsgBox(0, "title", "text")\n', 20)
+        self.assertEqual(out, 'MsgBox(0,  _\n"title",  _\n"text")\n')
+
+    def test_a_return_is_continued_behind_its_keyword(self):
+        out = self._continued(
+            'Func f()\nReturn "aaaaaaaaaaaaaaaaaaaaaaaaaaaa"\nEndFunc\n', 30)
+        self.assertEqual(
+            out, 'Func f()\n    Return  _\n"aaaaaaaaaaaaaaaaaaaaaaaaaaaa"\nEndFunc\n')
+
+    def test_an_array_literal_is_continued_between_elements(self):
+        out = self._continued('Local $a = ["aaaaaaaa", "bbbbbbbb"]\n', 25)
+        self.assertEqual(out, 'Local $a = [ _\n"aaaaaaaa",  _\n"bbbbbbbb"]\n')
+
+    def test_continued_output_reparses_to_the_same_program(self):
+        """
+        A continuation changes only where the line breaks fall, never the program the lines spell,
+        so the tree under a continued print is the tree that went in.
+        """
+        for source in (
+            '$x = "aaaaaaaaaaaaaaaaaaaa" & "bbbbbbbbbbbbbbbbbbbb" & $c & f(1, "dd")\n',
+            'MsgBox(0, "title", "text", $i, $j)\n',
+            'Local $a = ["aaaaaaaa", "bbbbbbbb", $c], $b[2], $d\n',
+            'Func f($p, $q = "eeee")\nReturn $p & "ffffffffffffffff"\nEndFunc\n',
+            'If $aaaaaaa & "bbbbbbbb" Then\n$c = 1\nEndIf\n',
+        ):
+            with self.subTest(source=source):
+                tree = Au3Parser(source).parse()
+                printed = Au3Synthesizer(line_length=24).convert(tree)
+                self.assertGreater(
+                    len(printed.splitlines()), len(Au3Synthesizer().convert(tree).splitlines()))
+                self.assertEqual(canonical(tree), canonical(Au3Parser(printed).parse()))
+
+    def test_a_long_concatenation_fits_the_interpreters_line_limit(self):
+        """
+        The interpreter refuses a physical line past 4094 characters, so a chain whose pieces
+        outgrow one is continued behind the `&` at column zero: every line of the output fits the
+        limit and every continued line starts with the piece that would not.
+        """
+        chain = ' & '.join(F'"{"a" * 3000}"' for _ in range(6))
+        out = self._round_trip(F'$q = {chain}\n')
+        lines = out.splitlines()
+        self.assertGreater(len(lines), 2)
+        for line in lines:
+            self.assertLessEqual(len(line), 4094)
+        for line in lines[:-1]:
+            self.assertTrue(line.endswith(' _'))
+        for line in lines[1:]:
+            self.assertTrue(line.startswith('"'))
+
+    def test_call_arguments_fill_each_line_to_the_limit(self):
+        """
+        A call with thousands of arguments is continued between them, and each line before the
+        last carries as many arguments as the limit admits.
+        """
+        source = F'f({", ".join(str(i) for i in range(2000))})\n'
+        out = self._round_trip(source)
+        lines = out.splitlines()
+        self.assertGreater(len(lines), 1)
+        for line in lines:
+            self.assertLessEqual(len(line), 4094)
+        self.assertGreater(len(lines[0]), 4000)
 
     def test_comparison(self):
         for operator in ('=', '==', '<>', '<', '>', '<=', '>='):

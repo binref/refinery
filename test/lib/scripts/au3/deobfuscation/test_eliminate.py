@@ -769,6 +769,21 @@ class TestAu3DeadCodeElimination(TestAu3):
             MsgBox(0, 0, $g)
             ''')
 
+    def test_a_call_whose_function_redims_an_undeclared_array_is_kept(self):
+        """
+        A `ReDim` resizes an array that exists and creates none, so over a name no local and no
+        global holds it ends the script, and the call that reaches it is not effect-free.
+        """
+        self._assertKept(
+            '''
+            Func f()
+                ReDim $q[2]
+            EndFunc
+
+            f()
+            MsgBox(0, "", "after")
+            ''')
+
     def test_a_builtin_call_statement_is_kept(self):
         self._assertKept(
             '''

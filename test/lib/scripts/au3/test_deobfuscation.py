@@ -241,3 +241,51 @@ class TestAu3Deobfuscation(TestBase):
         deobfuscate(ast)
         self.assertEqual(deobfuscate(ast), 0)
         self.assertEqual(Au3Synthesizer().convert(ast), FIXTURE_DEOBFUSCATED)
+
+    def test_the_pipeline_output_fits_the_interpreters_line_limit(self):
+        """
+        The interpreter refuses a physical line past 4094 characters, so a value the pipeline
+        folds into one longer than a line is spelled as pieces the synthesizer continues behind —
+        through every shape that produces one: a folded chain, a multibyte payload, an accumulator
+        run, a call with thousands of arguments, and an array literal holding a folded chain.
+        """
+        chain = ' & '.join(
+            [F'"{"a" * 100}"' for _ in range(40)] + [F'"{"a" * 90}"'])
+        multibyte = ' & '.join(
+            [F'"{"é" * 100}"' for _ in range(40)] + [F'"{"é" * 90}"'])
+        accumulator = '\n'.join(
+            ['Global $v = ""']
+            + [F'$v = $v & "{"a" * 1363}"' for _ in range(3)]
+            + ['$w = $v'])
+        for label, source in (
+            ('a folded chain', F'Local $x = {chain}\n'),
+            ('a folded multibyte chain', F'Local $x = {multibyte}\n'),
+            ('a padded accumulator run', F'Global Const $pad = "{"p" * 80000}"\n{accumulator}\n'),
+            ('a call with thousands of arguments', F'f({", ".join(str(i) for i in range(3000))})\n'),
+            ('an array literal over a folded chain', F'Local $a = [{chain}, 1]\n'),
+        ):
+            with self.subTest(label=label):
+                ast = Au3Parser(source).parse()
+                deobfuscate(ast)
+                out = Au3Synthesizer().convert(ast)
+                for line in out.splitlines():
+                    self.assertLessEqual(len(line), 4094, F'in output:\n{out}')
+
+    def test_the_line_limit_fixtures_settle(self):
+        chain = ' & '.join(
+            [F'"{"a" * 100}"' for _ in range(40)] + [F'"{"a" * 90}"'])
+        accumulator = '\n'.join(
+            ['Global $v = ""']
+            + [F'$v = $v & "{"a" * 1363}"' for _ in range(3)]
+            + ['$w = $v'])
+        for source in (
+            F'Local $x = {chain}\n',
+            F'Global Const $pad = "{"p" * 80000}"\n{accumulator}\n',
+            F'Local $a = [{chain}, 1]\n',
+        ):
+            with self.subTest(source=len(source)):
+                ast = Au3Parser(source).parse()
+                deobfuscate(ast)
+                once = Au3Synthesizer().convert(ast)
+                self.assertEqual(deobfuscate(ast), 0)
+                self.assertEqual(Au3Synthesizer().convert(ast), once)

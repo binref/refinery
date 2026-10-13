@@ -6,7 +6,8 @@ interpreter reads both.
 The may-write summary is refined by the existence census — see
 `refinery.lib.scripts.au3.analysis.existence`: a bare write inside a function creates a local
 of that function, so it counts as a global write only where the census proves a global of the
-name may exist when the tree runs.
+name may exist when the tree runs. A `ReDim` creates no storage, so the refinement leaves it
+counted.
 
 The walk is one abstract pass per scope — the script body and every function body, each
 starting from nothing: a global constant is not seeded into a function walk, because a local of
@@ -28,10 +29,17 @@ constants. The compound assignments take the same evaluator's bounded combinatio
 the payload bound is data, not a constant: its reads are never recorded, and a combination that
 would leave the bound binds nothing, so no accumulator grows a state past what the script itself
 spells. Everything the evaluator refuses is a kill.
+
+A binding the bound refuses is asked once more without it, but only where reads stand behind
+it: an answer past the bound is an accumulator the walk can never fold into one legal
+statement, so every read the run recorded is retracted and the run passes through as written
+instead of half-folded. The reads behind a binding are its lineage — the reads the value
+flowed from, carried through assignments, declarations, and compound operators, joined where
+branches agree — and a binding with no reads behind it is refused as before.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement
@@ -82,6 +90,25 @@ from refinery.lib.scripts.au3.model import (
 #: state grows past what the script itself spells.
 _MAX_PROPAGATED_PAYLOAD = 4096
 
+#: One recorded read behind a binding: the read site itself, the lineage of the name the site
+#: read, or two lineages joined. A growing accumulator run shares its earlier lineage with
+#: every later binding, so the structure is walked by identity and a shared subtree once.
+_Lineage = None | Au3Variable | tuple['_Lineage', '_Lineage']
+
+
+def _lineage_reads(lineage: _Lineage) -> Iterator[Au3Variable]:
+    stack: list[_Lineage] = [lineage]
+    seen: set[int] = set()
+    while stack:
+        item = stack.pop()
+        if item is None or id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, tuple):
+            stack.extend(item)
+        else:
+            yield item
+
 
 @dataclass(frozen=True)
 class Au3PropagationModel:
@@ -121,13 +148,16 @@ class Au3PropagationModel:
 class _State:
     constants: dict[str, Au3Value]
     variables: dict[str, tuple[Binding, Au3Value]]
+    lineage: dict[str, _Lineage]
+    version: int = 0
 
     @classmethod
     def empty(cls) -> _State:
-        return cls({}, {})
+        return cls({}, {}, {})
 
     def copy(self) -> _State:
-        return _State(dict(self.constants), dict(self.variables))
+        return _State(
+            dict(self.constants), dict(self.variables), dict(self.lineage), self.version)
 
     def lookup(self, name: str) -> Au3Value | None:
         value = self.constants.get(name)
@@ -138,28 +168,53 @@ class _State:
             return None
         return entry[1]
 
-    def bind(self, name: str, binding: Binding, value: Au3Value | None) -> None:
-        self.constants.pop(name, None)
+    def bind(self, name: str, binding: Binding, value: Au3Value | None, lineage: _Lineage) -> None:
+        changed = self.constants.pop(name, None) is not None
         if value is None:
-            self.variables.pop(name, None)
+            changed = self.variables.pop(name, None) is not None or changed
+            changed = self.lineage.pop(name, None) is not None or changed
         else:
+            if not changed and self.variables.get(name) != (binding, value):
+                changed = True
             self.variables[name] = (binding, value)
+            self.lineage[name] = lineage
+        if changed:
+            self.version += 1
+
+    def bind_constant(self, name: str, value: Au3Value, lineage: _Lineage) -> None:
+        if self.constants.get(name) != value:
+            self.version += 1
+        self.constants[name] = value
+        self.lineage[name] = lineage
 
     def kill(self, name: str) -> None:
-        self.constants.pop(name, None)
-        self.variables.pop(name, None)
+        if (
+            self.constants.pop(name, None) is not None
+            or self.variables.pop(name, None) is not None
+            or self.lineage.pop(name, None) is not None
+        ):
+            self.version += 1
 
     def kill_all(self) -> None:
-        self.variables.clear()
+        if self.variables:
+            self.version += 1
+            for name in self.variables:
+                self.lineage.pop(name, None)
+            self.variables.clear()
 
     def replace_with(self, other: _State) -> None:
+        if self.constants != other.constants or self.variables != other.variables:
+            self.version += 1
         self.constants = other.constants
         self.variables = other.variables
+        self.lineage = other.lineage
 
 
 def _join_states(one: _State, two: _State) -> _State:
     """
-    The state both *one* and *two* agree on: a name survives only with the same binding in both.
+    The state both *one* and *two* agree on: a name survives only with the same binding in both,
+    and the lineage of a surviving name is the union of theirs — the reads either branch's value
+    flowed from.
     """
     constants = {
         name: value
@@ -171,7 +226,11 @@ def _join_states(one: _State, two: _State) -> _State:
         for name, entry in one.variables.items()
         if two.variables.get(name) == entry
     }
-    return _State(constants, variables)
+    lineage = {
+        name: (one.lineage.get(name), two.lineage.get(name))
+        for name in constants.keys() | variables.keys()
+    }
+    return _State(constants, variables, lineage)
 
 
 def _argument_variables(call: Au3Call) -> set[str]:
@@ -182,20 +241,6 @@ def _argument_variables(call: Au3Call) -> set[str]:
     names = set()
     for argument in call.arguments:
         node = ast.unwrap_parens(argument)
-        if isinstance(node, Au3Variable):
-            names.add(node.name)
-    return names
-
-
-def _byref_variables(call: Au3Call, function: Au3FunctionDeclaration) -> set[str]:
-    """
-    The names a call passes into the `ByRef` parameters of *function*.
-    """
-    names = set()
-    for index, parameter in enumerate(function.params):
-        if not parameter.by_ref or index >= len(call.arguments):
-            continue
-        node = ast.unwrap_parens(call.arguments[index])
         if isinstance(node, Au3Variable):
             names.add(node.name)
     return names
@@ -216,7 +261,8 @@ def _call_kills(
         return None, _argument_variables(call)
     if callee.name in scope_model.functions:
         summary = summaries.get(callee.name)
-        byref = _byref_variables(call, scope_model.functions[callee.name])
+        function = scope_model.functions[callee.name]
+        byref = {variable.name for variable in ast.byref_arguments(function, call.arguments)}
         if summary is None:
             return None, byref
         return set(summary), byref
@@ -256,6 +302,28 @@ def _written_names(
     return names
 
 
+def _counts_as_global_write(
+    binding: Binding,
+    name: str,
+    creates_storage: bool,
+    existence: Au3ExistenceModel,
+) -> bool:
+    """
+    Whether a write of *name* inside a function, whose storage *binding* answers, counts as a
+    write of a global. A provable local never counts and a provable global always does. A write
+    that proves nothing creates a local where no global of the name exists, so it counts only
+    where the census answers that one may exist, or where the tree may make every implicit write
+    fatal. A write that creates no storage — a `ReDim`, which resizes an array that exists or
+    ends the script — is outside that refinement and counts wherever no local provably holds
+    the name.
+    """
+    if binding is Binding.LOCAL:
+        return False
+    if binding is Binding.GLOBAL or not creates_storage:
+        return True
+    return existence.implicit_writes_are_fatal or existence.global_may_exist(name)
+
+
 def _function_scan(
     function: Au3FunctionDeclaration,
     scope_model: Au3ScopeModel,
@@ -265,12 +333,10 @@ def _function_scan(
     What one function may write by itself, ignoring its calls: the global names its provable
     writes target, whether it may write any global at all, and the script functions it calls.
     A variable handed to the `ByRef` parameter of a script function is written by that call, so
-    it counts as a write of this function. A write to a `ByRef` parameter of this function is a
-    write of its local: the variable behind it belongs to the caller, which counts it there.
-    A bare write creates a local — the interpreter's frame and the running script agree — so it
-    counts only where the existence census proves a global of that name may exist. A tree that
-    may set `MustDeclareVars` makes every bare write fatal, so the scan answers that it may
-    write any global rather than lean on the census.
+    it counts as a write of this function — a bare write the call performs where it stands, not
+    one of the declaration or the loop header that may hold the call. A write to a `ByRef`
+    parameter of this function is a write of its local: the variable behind it belongs to the
+    caller, which counts it there. Whether any other write counts is `_counts_as_global_write`.
     """
     names: set[str] = set()
     everything = False
@@ -283,13 +349,8 @@ def _function_scan(
             if statement is None:
                 continue
             binding = scope_model.binding(function, statement, node.name)
-            if binding is Binding.LOCAL:
-                continue
-            if (
-                binding is Binding.GLOBAL
-                or existence.implicit_writes_are_fatal
-                or existence.global_may_exist(node.name)
-            ):
+            creates_storage = not isinstance(statement, Au3ReDimStatement)
+            if _counts_as_global_write(binding, node.name, creates_storage, existence):
                 names.add(node.name)
             continue
         if not isinstance(node, Au3Call):
@@ -300,19 +361,11 @@ def _function_scan(
             continue
         if callee.name in scope_model.functions:
             callees.add(callee.name)
-            statement = ast.owning_statement(node)
-            if statement is None:
-                continue
-            for name in _byref_variables(node, scope_model.functions[callee.name]):
-                binding = scope_model.binding(function, statement, name)
-                if binding is Binding.LOCAL:
-                    continue
-                if (
-                    binding is Binding.GLOBAL
-                    or existence.implicit_writes_are_fatal
-                    or existence.global_may_exist(name)
-                ):
-                    names.add(name)
+            target = scope_model.functions[callee.name]
+            for variable in ast.byref_arguments(target, node.arguments):
+                binding = scope_model.binding(function, node, variable.name)
+                if _counts_as_global_write(binding, variable.name, True, existence):
+                    names.add(variable.name)
             continue
         if callee.name not in BUILTIN_NAMES:
             everything = True
@@ -379,6 +432,10 @@ class _Walker:
         self.values: dict[Au3Variable, Au3Value] = {}
         self.entries: dict[Au3Call, dict[str, Au3Value]] = {}
         self._literals: dict[Expression, Au3Value | None] = {}
+        self._reads: list[_Lineage] = []
+        self._snapshot_state: _State | None = None
+        self._snapshot_version = 0
+        self._snapshot: dict[str, Au3Value] = {}
 
     def _proven(self, expression: Expression | None, state: _State) -> Au3Value | None:
         """
@@ -395,6 +452,81 @@ class _Walker:
                 literals=self._literals,
             ),
         )
+
+    def _unproven(self, expression: Expression | None, state: _State) -> Au3Value | None:
+        """
+        The value the constant evaluator proves for *expression* over the same state with the
+        payload bound lifted — the second question an overflow decision asks, whose answer never
+        enters the state.
+        """
+        return constant_value(
+            expression,
+            Policy(
+                self.functions,
+                lookup=state.lookup,
+                limit=None,
+                literals=self._literals,
+            ),
+        )
+
+    def _reads_of(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        expression: Expression | None,
+        state: _State,
+    ) -> _Lineage:
+        """
+        Visit *expression* and collect the reads a binding consumes: the lineage the binding
+        retracts when the run behind it overflows. A nested assignment collects its own, so its
+        reads belong to its binding alone.
+        """
+        self._reads.append(None)
+        self.visit_expression(scope, expression, state)
+        return self._reads.pop()
+
+    def _bind_proven(
+        self,
+        expression: Expression | None,
+        state: _State,
+        lineage: _Lineage,
+    ) -> Au3Value | None:
+        """
+        The value a binding takes from the bounded evaluator, with the overflow decision a
+        lineage behind it needs. A proof that fails with no reads behind it is refused as
+        before. One with reads asks the evaluator once more without the payload bound: an
+        answer past it is an accumulator the walk cannot finish folding, so every read the run
+        recorded is retracted and the run passes through as written; an answer within it binds.
+        """
+        value = self._proven(expression, state)
+        if value is None and lineage is not None:
+            value = self._unproven(expression, state)
+            if value is not None and not within_limit(value, _MAX_PROPAGATED_PAYLOAD):
+                self._retract(lineage)
+                return None
+        return value
+
+    def _bind_combined(
+        self,
+        operator: str,
+        current: Au3Value,
+        operand: Au3Value,
+        lineage: _Lineage,
+    ) -> Au3Value | None:
+        """
+        The same decision for a compound assignment, whose bounded combination is refused where
+        the accumulated result would leave the payload bound.
+        """
+        value = combine(operator, current, operand, _MAX_PROPAGATED_PAYLOAD)
+        if value is None and lineage is not None:
+            value = combine(operator, current, operand, None)
+            if value is not None and not within_limit(value, _MAX_PROPAGATED_PAYLOAD):
+                self._retract(lineage)
+                return None
+        return value
+
+    def _retract(self, lineage: _Lineage) -> None:
+        for node in _lineage_reads(lineage):
+            self.values.pop(node, None)
 
     def walk_scope(self, scope: Au3FunctionDeclaration | None, body: list[Statement]) -> None:
         state = _State.empty()
@@ -457,16 +589,16 @@ class _Walker:
         for declarator in stmt.declarations:
             for dimension in declarator.dimensions:
                 self.visit_expression(scope, dimension, state)
-            self.visit_expression(scope, declarator.initializer, state)
+            lineage = self._reads_of(scope, declarator.initializer, state)
             variable = declarator.variable
             if variable is None:
                 continue
             if stmt.is_const:
-                value = self._proven(declarator.initializer, state)
+                value = self._bind_proven(declarator.initializer, state, lineage)
                 if value is None:
                     state.kill(variable.name)
                 else:
-                    state.constants[variable.name] = value
+                    state.bind_constant(variable.name, value, lineage)
                 continue
             if stmt.is_static:
                 state.kill(variable.name)
@@ -474,7 +606,8 @@ class _Walker:
             state.bind(
                 variable.name,
                 self.scope_model.binding(scope, stmt, variable.name),
-                self._proven(declarator.initializer, state))
+                self._bind_proven(declarator.initializer, state, lineage),
+                lineage)
 
     def visit_enum(
         self,
@@ -488,26 +621,29 @@ class _Walker:
         initializer is not a literal.
         """
         counter: Au3Value | None = of_int(0)
+        counter_lineage: _Lineage = None
         step = of_int(stmt.step_value)
         for declarator in stmt.declarations:
             variable = declarator.variable
             if declarator.initializer is not None:
-                self.visit_expression(scope, declarator.initializer, state)
-                value = self._proven(declarator.initializer, state)
+                lineage = self._reads_of(scope, declarator.initializer, state)
+                value = self._bind_proven(declarator.initializer, state, lineage)
                 if value is None or variable is None:
                     counter = None
+                    counter_lineage = None
                     if variable is not None:
                         state.kill(variable.name)
                 else:
-                    state.constants[variable.name] = value
+                    state.bind_constant(variable.name, value, lineage)
                     counter = apply_binary(stmt.step_operator, value, step)
+                    counter_lineage = lineage
                 continue
             if variable is None:
                 continue
             if counter is None:
                 state.kill(variable.name)
                 continue
-            state.constants[variable.name] = counter
+            state.bind_constant(variable.name, counter, counter_lineage)
             counter = apply_binary(stmt.step_operator, counter, step)
 
     def visit_redim(
@@ -528,7 +664,7 @@ class _Walker:
         assignment: Au3Assignment,
         state: _State,
     ) -> None:
-        self.visit_expression(scope, assignment.value, state)
+        lineage = self._reads_of(scope, assignment.value, state)
         self.visit_target(scope, assignment.target, state)
         variable = ast.store_target_variable(assignment.target)
         if variable is None:
@@ -544,18 +680,26 @@ class _Walker:
             state.kill(variable.name)
             return
         if assignment.operator == '=':
-            state.bind(variable.name, binding, self._proven(assignment.value, state))
+            state.bind(
+                variable.name,
+                binding,
+                self._bind_proven(assignment.value, state, lineage),
+                lineage)
             return
         current = state.lookup(variable.name)
         operand = self._proven(assignment.value, state)
+        if operand is None and lineage is not None:
+            operand = self._unproven(assignment.value, state)
+        combined = (state.lineage.get(variable.name), lineage)
         if current is None or operand is None:
-            state.bind(variable.name, binding, None)
+            state.bind(variable.name, binding, None, None)
             return
         operator = assignment.operator.rstrip('=')
         state.bind(
             variable.name,
             binding,
-            combine(operator, current, operand, _MAX_PROPAGATED_PAYLOAD))
+            self._bind_combined(operator, current, operand, combined),
+            combined)
 
     def visit_target(
         self,
@@ -588,6 +732,8 @@ class _Walker:
             value = state.lookup(node.name)
             if value is not None and within_limit(value, _MAX_PROPAGATED_PAYLOAD):
                 self.values[node] = value
+                if self._reads:
+                    self._reads[-1] = ((node, state.lineage.get(node.name)), self._reads[-1])
             return
         if isinstance(node, Au3Assignment):
             self.visit_assignment(scope, node, state)
@@ -635,10 +781,7 @@ class _Walker:
             and callee is not None
             and self.summaries.get(callee.name) == frozenset()
         ):
-            self.entries[call] = {
-                **state.constants,
-                **{name: entry[1] for name, entry in state.variables.items()},
-            }
+            self.entries[call] = self._entry_snapshot(state)
         for name in byref:
             state.kill(name)
         if kills is None:
@@ -646,6 +789,22 @@ class _Walker:
         else:
             for name in kills:
                 state.kill(name)
+
+    def _entry_snapshot(self, state: _State) -> dict[str, Au3Value]:
+        """
+        The globals the walk proves where a call stands, built once per state the calls share:
+        a state's version rises only where its content changes, so calls no change separates
+        hold one snapshot in common and a tree of many calls over many constants costs one copy
+        rather than one per call.
+        """
+        if self._snapshot_state is not state or self._snapshot_version != state.version:
+            self._snapshot = {
+                **state.constants,
+                **{name: entry[1] for name, entry in state.variables.items()},
+            }
+            self._snapshot_state = state
+            self._snapshot_version = state.version
+        return self._snapshot
 
     def visit_if(
         self,

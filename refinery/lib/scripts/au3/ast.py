@@ -11,9 +11,9 @@ layer instead.
 """
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, Sequence
 
-from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts import Expression, Node, Statement
 from refinery.lib.scripts.au3.model import (
     Au3ArrayAccess,
     Au3ArrayLiteral,
@@ -231,3 +231,19 @@ def contains_an_array_literal(node: Node) -> bool:
     where a declaration initializes.
     """
     return any(isinstance(item, Au3ArrayLiteral) for item in node.walk())
+
+
+def byref_arguments(
+    function: Au3FunctionDeclaration,
+    arguments: Sequence[Expression],
+) -> Iterator[Au3Variable]:
+    """
+    The variables *arguments* hand into the `ByRef` parameters of *function*, position by
+    position, through any number of parentheses.
+    """
+    for parameter, argument in zip(function.params, arguments):
+        if not parameter.by_ref:
+            continue
+        node = unwrap_parens(argument)
+        if isinstance(node, Au3Variable):
+            yield node

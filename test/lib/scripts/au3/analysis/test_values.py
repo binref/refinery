@@ -20,21 +20,43 @@ from test import TestBase
 from refinery.lib.scripts import Expression
 from refinery.lib.scripts.au3.analysis.builtins import evaluate_builtin
 from refinery.lib.scripts.au3.analysis.values import (
+    MAX_RENDERED_DEPTH,
     apply_binary,
     apply_unary,
     compare,
     literal_value,
+    of_binary,
     of_bool,
+    of_int,
     of_string,
     render_literal,
     to_string,
     truthy,
 )
+from refinery.lib.scripts.au3.limits import MAX_PIECE_SPELLING
+from refinery.lib.scripts.au3.model import Au3BinaryExpression, Au3Call, Au3StringLiteral
 from refinery.lib.scripts.au3.parser import Au3Parser
 
 
 def _value(source: str):
     return literal_value(Au3Parser(source).parse_expression(), frozenset())
+
+
+def _chain_pieces(node):
+    """
+    The pieces of a left-associated `&` chain, a lone node counting as a chain of one.
+    """
+    if isinstance(node, Au3BinaryExpression) and node.operator == '&':
+        return _chain_pieces(node.left) + [node.right]
+    return [node]
+
+
+def _encoded(text: str) -> int:
+    """
+    The characters the literal spelling of *text* occupies: the enclosing quotes plus one per
+    character, doubled where the text holds the quote itself.
+    """
+    return 2 + len(text) + text.count('"')
 
 
 class TestAu3Values(TestBase):
@@ -196,6 +218,20 @@ class TestAu3Values(TestBase):
         left-operand reading refuses.
         """
         self.assertIsNone(apply_binary('+', _value('"99999999999999999999"'), _value('0')))
+
+    def test_a_digit_run_past_the_python_conversion_limit_reads_like_a_short_one(self):
+        """
+        Python refuses to convert more than 4300 decimal digits by default; the length of a
+        spelling must not decide its reading, so a long run past int64 still refuses and a long
+        zero padding still reads as the digits after it.
+        """
+        padding = '0' * 5000
+        zero = of_int(0)
+        self.assertIsNone(apply_binary('+', of_string(F'1{padding}'), zero))
+        self.assertEqual(
+            apply_binary('+', of_string(F'{padding}7'), zero),
+            apply_binary('+', of_string('07'), zero),
+        )
 
     def test_a_sign_types_like_a_left_operand(self):
         """
@@ -670,6 +706,67 @@ class TestAu3Values(TestBase):
     def test_rendering_a_string_no_literal_spells_is_refused_under_a_shadow(self):
         self.assertIsNone(render_literal(of_string('\x00'), frozenset({'chr'})))
         self.assertIsNone(render_literal(of_string('\ud800'), frozenset({'chrw'})))
+
+    def test_a_string_whose_spelling_fits_a_line_stays_one_literal(self):
+        self.assertIsInstance(
+            render_literal(of_string('a' * (MAX_PIECE_SPELLING - 2)), frozenset()),
+            Au3StringLiteral)
+
+    def test_a_string_whose_spelling_outgrows_a_line_is_cut_into_piece_literals(self):
+        """
+        The budget counts the enclosing quotes and doubles the quote character, so a long text
+        splits where the next piece still fits a line: every piece is a plain string literal
+        whose spelling stays within the budget, the pieces join back into the text, and the
+        chain reads back as the value it spells.
+        """
+        for text in (
+            'a' * (MAX_PIECE_SPELLING - 1),
+            '"' * (MAX_PIECE_SPELLING - 2),
+            'ab' * MAX_PIECE_SPELLING,
+        ):
+            with self.subTest(length=len(text)):
+                rendered = render_literal(of_string(text), frozenset())
+                pieces = _chain_pieces(rendered)
+                self.assertGreater(len(pieces), 1)
+                for piece in pieces:
+                    self.assertIsInstance(piece, Au3StringLiteral)
+                    self.assertLessEqual(_encoded(piece.value), MAX_PIECE_SPELLING)
+                self.assertEqual(''.join(piece.value for piece in pieces), text)
+                self.assertEqual(self._printed(literal_value(rendered, frozenset())), text)
+
+    def test_a_piece_boundary_composes_with_the_characters_no_literal_spells(self):
+        """
+        A character no literal expresses ends the run it lands in, so a long text holding one
+        cuts around it and the macro or call piece lands between two literal pieces.
+        """
+        for character in ('\x00', '\r\n', '\ud800'):
+            with self.subTest(character=repr(character)):
+                text = 'a' * (MAX_PIECE_SPELLING + 100) + character + 'b' * 10
+                rendered = render_literal(of_string(text), frozenset())
+                pieces = _chain_pieces(rendered)
+                self.assertGreater(len(pieces), 2)
+                self.assertNotIsInstance(pieces[-2], Au3StringLiteral)
+                self.assertEqual(self._printed(literal_value(rendered, frozenset())), text)
+
+    def test_a_binary_past_the_piece_budget_spells_as_joined_binary_calls(self):
+        """
+        A binary whose hex digits outgrow a line is cut into one `Binary("0x…")` call per piece
+        of bytes, joined by `&`, and the chain reads back as the binary it spells; one within
+        the budget stays a single call.
+        """
+        small = render_literal(of_binary(bytes(range(20))), frozenset())
+        self.assertIsInstance(small, Au3Call)
+        payload = bytes(range(256)) * 20
+        rendered = render_literal(of_binary(payload), frozenset())
+        pieces = _chain_pieces(rendered)
+        self.assertGreater(len(pieces), 1)
+        for piece in pieces:
+            self.assertIsInstance(piece, Au3Call)
+        self.assertEqual(literal_value(rendered, frozenset()), of_binary(payload))
+
+    def test_a_chain_past_the_rendered_depth_is_refused(self):
+        text = 'a' * ((MAX_RENDERED_DEPTH + 1) * (MAX_PIECE_SPELLING - 2))
+        self.assertIsNone(render_literal(of_string(text), frozenset()))
 
     def test_a_number_argument_to_a_binary_function_is_refused(self):
         """

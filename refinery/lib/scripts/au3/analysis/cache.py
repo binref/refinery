@@ -13,6 +13,7 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.au3.analysis.aliases import Au3AliasModel, build_alias_model
 from refinery.lib.scripts.au3.analysis.existence import (
     Au3ExistenceModel,
+    Au3ProbeMemo,
     build_existence_model,
 )
 from refinery.lib.scripts.au3.analysis.propagation import (
@@ -31,7 +32,9 @@ class Au3ModelCache(ModelCacheBase):
     transforms ask which storage a write targets and which names are constant, the existence
     census the summary refinement leans on, the alias map the indirection rewrite reads, the
     propagation model the constant substitution reads, and the usage model the dead-code
-    elimination reads — each dropped, together, whenever this root's tree changes.
+    elimination reads — each dropped, together, whenever this root's tree changes. The probes
+    the census makes are remembered for the whole run instead: their answers depend on what each
+    probe reads, not on the tree version.
     """
 
     _SLOTS = (
@@ -49,6 +52,10 @@ class Au3ModelCache(ModelCacheBase):
     _propagation: Au3PropagationModel | None
     _usage: Au3UsageModel | None
 
+    def __init__(self, root: Node, options: object | None = None):
+        super().__init__(root, options)
+        self._probes = Au3ProbeMemo()
+
     @property
     def scopes(self) -> Au3ScopeModel:
         return self._lazy('_scopes', lambda: build_scope_model(self.root))
@@ -59,7 +66,10 @@ class Au3ModelCache(ModelCacheBase):
         The names a global may take when the root runs, and whether the tree may make every
         implicit write fatal by setting `MustDeclareVars`.
         """
-        return self._lazy('_existence', lambda: build_existence_model(self.root, self.scopes))
+        return self._lazy(
+            '_existence',
+            lambda: build_existence_model(self.root, self.scopes, self._probes),
+        )
 
     @property
     def aliases(self) -> Au3AliasModel:
@@ -77,8 +87,10 @@ class Au3ModelCache(ModelCacheBase):
         The value at every variable read and the may-write summary of every script function, over
         the scope model's binding answers.
         """
-        return self._lazy('_propagation', lambda: build_propagation_model(
-            self.root, self.scopes, self.existence))
+        return self._lazy(
+            '_propagation',
+            lambda: build_propagation_model(self.root, self.scopes, self.existence),
+        )
 
     @property
     def usage(self) -> Au3UsageModel:

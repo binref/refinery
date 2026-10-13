@@ -25,6 +25,14 @@ class TestAu3(TestBase):
     def _apply(self, source: str, *transforms) -> str:
         return Au3Synthesizer().convert(self._transform(source, *transforms))
 
+    def _laid_out(self, source: str) -> str:
+        """
+        The spelling of *source* the synthesizer writes, so an assertion over a script whose
+        lines a statement alone cannot hold compares what the statements say and not where the
+        synthesizer broke them.
+        """
+        return Au3Synthesizer().convert(Au3Parser(inspect.cleandoc(source)).parse())
+
     def _assertDeobfuscatesTo(self, source: str, expected: str) -> None:
         """
         Both arguments are written as ordinary indented AutoIt3, and `expected` is rendered

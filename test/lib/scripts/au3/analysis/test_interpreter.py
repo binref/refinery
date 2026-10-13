@@ -782,8 +782,11 @@ class TestAu3Interpreter(TestBase):
     ) -> Au3Value | None:
         root = Au3Parser(inspect.cleandoc(source)).parse()
         scope_model = build_scope_model(root)
-        return Au3Interpreter(scope_model, {}).probe(
-            scope_model.functions[name], tuple(_value(source) for source in sources))
+        probe = Au3Interpreter(scope_model, {}).probe(
+            scope_model.functions[name],
+            tuple(_value(source) for source in sources),
+        )
+        return probe.value
 
     def test_a_probe_of_a_decoder_with_implicit_locals_answers(self):
         """
@@ -803,13 +806,13 @@ class TestAu3Interpreter(TestBase):
             EndFunc
             '''
         self.assertEqual(
-            to_string(self._probed(
-                'decode10', decoder, '"0x31275C23300271"', '"AU3"')),
-            'probe10')
+            self._probed('decode10', decoder, '"0x31275C23300271"', '"AU3"'),
+            of_string('probe10'),
+        )
         self.assertEqual(
-            to_string(self._probed(
-                'decode10', decoder, '"0x2530502E31563325412E3756"', '"AU3"')),
-            'decoderprobe')
+            self._probed('decode10', decoder, '"0x2530502E31563325412E3756"', '"AU3"'),
+            of_string('decoderprobe'),
+        )
 
     def test_a_probe_of_a_nested_script_call_refuses(self):
         self.assertIsNone(self._probed(

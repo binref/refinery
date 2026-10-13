@@ -9,11 +9,12 @@ The interpreter owns no semantics of its own: the operators and coercions are
 model, and the expression evaluation is the constant evaluator
 `refinery.lib.scripts.au3.analysis.constants`, asked with a frame-backed lookup and a call hook
 that reaches the script functions the interpreter runs. What it owns is the run: the storage
-rules a function body follows (a read finds the local first and a global second; a write finds
-only a local the body or a loop created), the control flow, and the budget that keeps a runaway
-loop from running forever. Every refusal and every budget overrun answers `None` from `call` —
-the call site stands unchanged. A loop or case signal that reaches a function boundary is one of
-those refusals: no construct consumed it, which is a shape AutoIt refuses to load.
+rules a function body follows (a read finds the local first and a global second, and a write
+stores a local of the run — the storage AutoIt writes wherever the gate below lets a function
+run), the control flow, and the budget that keeps a runaway loop from running forever. Every
+refusal and every budget overrun answers `None` from `call` — the call site stands unchanged. A
+loop or case signal that reaches a function boundary is one of those refusals: no construct
+consumed it, which is a shape AutoIt refuses to load.
 
 The gate is the may-write summary: only a function whose summary is the empty set runs, because
 only then does nothing it reaches change a global, and only then do the values the walk proved
@@ -199,6 +200,16 @@ def _stored(value: Au3Value) -> Au3Value | _Array:
     return value
 
 
+@dataclass(frozen=True)
+class Au3Probe:
+    """
+    What one probe learned: the value its run answered — `None` where the run refused — and the
+    steps the run spent, which a caller that owns many probes bounds in total.
+    """
+    value: Au3Value | None
+    steps: int
+
+
 class Au3Interpreter:
     """
     Runs one script function of a tree over the value domain. Constructed once per tree version
@@ -213,7 +224,6 @@ class Au3Interpreter:
         self.functions = scope_model.functions
         self.function_names = scope_model.function_names
         self.summaries = summaries
-        self.probe_steps = 0
 
     def call(
         self,
@@ -230,22 +240,20 @@ class Au3Interpreter:
         self,
         function: Au3FunctionDeclaration,
         arguments: Sequence[Au3Value],
-    ) -> Au3Value | None:
+    ) -> Au3Probe:
         """
-        The value one ungated run of *function*'s body answers over an empty world: no summary
-        gate, no globals, and a nested script-function call refusing. The run computes a value —
-        it replaces nothing — so it needs no effect soundness: a read of a name the run never
-        wrote refuses, and a read after a write sees the value the run itself stored, whatever
-        storage an implicit write targets in the script. The steps every probe spends accumulate
-        on `probe_steps`, where a caller that owns many probes bounds their total.
+        One ungated run of *function*'s body over an empty world: no summary gate, no globals,
+        and a nested script-function call refusing. The run computes a value — it replaces
+        nothing — so it needs no effect soundness: a read of a name the run never wrote refuses,
+        and a read after a write sees the value the run itself stored, whatever storage an
+        implicit write targets in the script.
         """
         budget = _Budget()
         try:
-            return self._call(function, list(arguments), {}, budget, probing=True)
+            value = self._call(function, list(arguments), {}, budget, probing=True)
         except _Refusal:
-            return None
-        finally:
-            self.probe_steps += budget.steps
+            value = None
+        return Au3Probe(value, budget.steps)
 
     def _call(
         self,

@@ -27,6 +27,7 @@ from typing import cast
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.lexer import LINE_BREAKS, encode_au3_string
+from refinery.lib.scripts.au3.limits import MAX_PIECE_SPELLING
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
     Au3BinaryExpression,
@@ -45,6 +46,10 @@ from refinery.lib.scripts.au3.model import (
 #: wraps or promotes on int64 overflow is not a fact any probe pinned.
 INT64_MIN = -0x8000000000000000
 INT64_MAX = 0x7FFFFFFFFFFFFFFF
+
+#: The most decimal digits an int64 magnitude spells: a longer run is out of range without being
+#: converted, a conversion Python refuses past its integer string-digit limit.
+_INT64_DIGITS = len(str(INT64_MAX))
 
 #: The hex digits, shared with the builtin table's `Dec` reader: the one alphabet both spell and
 #: read a `0x…` payload in.
@@ -231,7 +236,12 @@ def _prefix_number(text: str) -> int | float | None:
     if any(c in matched for c in '.eE'):
         result = float(matched)
         return result if math.isfinite(result) else None
-    result = int(matched)
+    digits = matched.lstrip('+-').lstrip('0')
+    if len(digits) > _INT64_DIGITS:
+        return None
+    result = int(digits or '0')
+    if matched.startswith('-'):
+        result = -result
     if result > INT64_MAX or result < INT64_MIN:
         return None
     return result
@@ -669,7 +679,8 @@ def render_literal(value: Au3Value, functions: frozenset[str]) -> Expression | N
 
     A render deeper than `MAX_RENDERED_DEPTH` spells none either: the synthesizer emits a tree
     by recursion and cannot print one that deep, so the value keeps whatever spelling it
-    already has.
+    already has. A literal whose spelling outgrows a line is cut into pieces that each fit
+    one and joined by `&`, so the synthesizer can break behind every piece.
 
     A negative number is spelled as the unary minus over the positive literal, because the lexer
     reads a sign as an operator: a literal holding `-3` would print text that re-parses as a
@@ -704,11 +715,7 @@ def _render_value(value: Au3Value, functions: frozenset[str]) -> Expression | No
         payload = cast(bytes, value.payload)
         if not payload:
             return None
-        digits = '0x' + payload.hex().upper()
-        return Au3Call(
-            callee=Au3Identifier(name='binary', raw='Binary'),
-            arguments=[Au3StringLiteral(value=digits, raw=encode_au3_string(digits))],
-        )
+        return _render_binary(payload)
     if value.kind is Kind.ARRAY:
         elements = []
         for element in cast(tuple[Au3Value, ...], value.payload):
@@ -720,23 +727,66 @@ def _render_value(value: Au3Value, functions: frozenset[str]) -> Expression | No
     return None
 
 
+#: The bytes one `Binary("0x…")` piece of a split binary spells: the call's wrapper leaves the
+#: rest of the piece budget to its hex digits, two per byte.
+_BINARY_PIECE_BYTES = (MAX_PIECE_SPELLING - len('Binary("0x")')) // 2
+
+
+def _encoded_length(text: str) -> int:
+    """
+    The characters the literal spelling of *text* occupies: the enclosing quotes plus one per
+    character, doubled where the text holds the quote itself.
+    """
+    return 2 + len(text) + text.count('"')
+
+
+def _render_binary(payload: bytes) -> Expression:
+    """
+    The spelling of a binary: the `Binary("0x…")` call it round-trips through, cut into one call
+    per piece of bytes where the whole would outgrow a line, joined by `&` — the concatenation
+    `literal_value` reads back.
+    """
+    chunks = [
+        payload[at:at + _BINARY_PIECE_BYTES]
+        for at in range(0, len(payload), _BINARY_PIECE_BYTES)
+    ]
+    result: Expression = _binary_call(chunks[0])
+    for chunk in chunks[1:]:
+        result = Au3BinaryExpression(operator='&', left=result, right=_binary_call(chunk))
+    return result
+
+
+def _binary_call(chunk: bytes) -> Au3Call:
+    digits = '0x' + chunk.hex().upper()
+    return Au3Call(
+        callee=Au3Identifier(name='binary', raw='Binary'),
+        arguments=[Au3StringLiteral(value=digits, raw=encode_au3_string(digits))],
+    )
+
+
 def _render_string(text: str, functions: frozenset[str]) -> Expression | None:
     """
-    The spelling of a string: the literal itself when every character spells, and otherwise the
-    left-associated `&` chain of the literal runs and the pieces that spell the characters no
-    literal expresses (probe5 14 loads such a chain as an array element). The chain is refused
-    where a script function shadows the builtin one of its pieces names.
+    The spelling of a string: the literal itself when every character spells and its spelling
+    fits a single line, and otherwise the left-associated `&` chain of the literal runs and the
+    pieces that spell the characters no literal expresses (probe5 14 loads such a chain as an
+    array element). A run whose spelling outgrows a line is cut where the next piece still fits
+    one, so a long value re-renders as a chain the synthesizer breaks behind continuations
+    rather than as a line the interpreter refuses. The chain is refused where a script function
+    shadows the builtin one of its pieces names.
     """
-    if _spellable(text):
+    if _spellable(text) and _encoded_length(text) <= MAX_PIECE_SPELLING:
         return Au3StringLiteral(value=text, raw=encode_au3_string(text))
     pieces: list[Expression] = []
     run: list[str] = []
+    length = len('""')
 
     def flush() -> None:
+        nonlocal length
         if run:
             spelled = ''.join(run)
             pieces.append(Au3StringLiteral(value=spelled, raw=encode_au3_string(spelled)))
             run.clear()
+            length = len('""')
 
     index = 0
     while index < len(text):
@@ -747,7 +797,11 @@ def _render_string(text: str, functions: frozenset[str]) -> Expression | None:
             continue
         character = text[index]
         if _spellable(character):
+            width = 2 if character == '"' else 1
+            if length + width > MAX_PIECE_SPELLING:
+                flush()
             run.append(character)
+            length += width
         else:
             piece = _rendered_piece(character, functions)
             if piece is None:

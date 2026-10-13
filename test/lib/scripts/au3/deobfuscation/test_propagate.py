@@ -357,6 +357,74 @@ class TestAu3ConstantPropagation(TestAu3):
             'relay($x)\n'
             '$y = $x\n')
 
+    def test_a_byref_write_inside_a_local_initializer_kills_the_variable(self):
+        """
+        The call writes the variable it hands over by reference wherever it stands, so the local
+        the surrounding declaration claims for another name proves nothing about it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+
+                Func modify(ByRef $p)
+                    $p = 1
+                EndFunc
+
+                Func f()
+                    Local $n = modify($x)
+                EndFunc
+
+                f()
+                $y = $x
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\n'
+            'Func modify(ByRef $p)\n'
+            '    $p = 1\n'
+            'EndFunc\n'
+            'Func f()\n'
+            '    Local $n = modify($x)\n'
+            'EndFunc\n'
+            'f()\n'
+            '$y = $x\n')
+
+    def test_a_byref_write_inside_a_loop_bound_kills_the_variable(self):
+        """
+        The loop header claims its own variable as a local, which proves nothing about the
+        variable a call in its bound hands over by reference.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+
+                Func modify(ByRef $p)
+                    $p = 1
+                EndFunc
+
+                Func f()
+                    For $i = 1 To modify($x)
+                    Next
+                EndFunc
+
+                f()
+                $y = $x
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\n'
+            'Func modify(ByRef $p)\n'
+            '    $p = 1\n'
+            'EndFunc\n'
+            'Func f()\n'
+            '    For $i = 1 To modify($x)\n'
+            '    Next\n'
+            'EndFunc\n'
+            'f()\n'
+            '$y = $x\n')
+
     def test_an_indexed_store_kills_the_whole_array(self):
         """
         A store through an index mutates one element, so the array as a value is no longer the
@@ -532,7 +600,7 @@ class TestAu3ConstantPropagation(TestAu3):
                 ''',
                 Au3ConstantPropagation,
             ),
-            F'Local $s = "{"a" * 5000}"\n$y = $s\n')
+            F'Local $s =  _\n"{"a" * 5000}"\n$y = $s\n')
 
     def test_a_compound_assignment_within_the_bound_binds(self):
         self.assertEqual(
@@ -556,18 +624,78 @@ class TestAu3ConstantPropagation(TestAu3):
                 ''',
                 Au3ConstantPropagation,
             ),
-            F'Local $s = "a"\n$s &= "{"b" * 5000}"\n$y = $s\n')
+            F'Local $s = "a"\n$s &=  _\n"{"b" * 5000}"\n$y = $s\n')
+
+    def test_an_accumulator_run_within_the_bound_folds(self):
+        """
+        A run of assignments that stays within the payload bound folds like any other chain of
+        derived constants: every read of the growing name is replaced by the value that stands
+        there. The padding funds the growth budget a payload spelled at every read charges.
+        """
+        source = F'''
+            Global Const $pad = "{"p" * 30000}"
+            Global $v = "{"a" * 2000}"
+            $v = $v & "{"b" * 2000}"
+            $w = $v
+            '''
+        expected = F'''
+            Global Const $pad = "{"p" * 30000}"
+            Global $v = "{"a" * 2000}"
+            $v = "{"a" * 2000}" & "{"b" * 2000}"
+            $w = "{"a" * 2000}{"b" * 2000}"
+            '''
+        self.assertEqual(self._apply(source, Au3ConstantPropagation), self._laid_out(expected))
+
+    def test_an_accumulator_run_past_the_bound_keeps_only_its_mid_run_consumers(self):
+        """
+        The run is refused whole: the reads it flowed from leave the walk's records, so the
+        statements that grow the name pass through as written, while a consumer between the links
+        keeps the mid-run value it read.
+        """
+        source = F'''
+            Global Const $pad = "{"p" * 20000}"
+            Global $v = "{"a" * 2000}"
+            $w = $v
+            $v = $v & "{"b" * 2100}"
+            '''
+        expected = F'''
+            Global Const $pad = "{"p" * 20000}"
+            Global $v = "{"a" * 2000}"
+            $w = "{"a" * 2000}"
+            $v = $v & "{"b" * 2100}"
+            '''
+        self.assertEqual(self._apply(source, Au3ConstantPropagation), self._laid_out(expected))
+
+    def test_a_compound_accumulator_run_past_the_bound_is_refused_whole(self):
+        """
+        The same refusal through `&=`: the read that seeded the growing name is retracted with the
+        run, while a read of the seed that fed nothing keeps its value.
+        """
+        source = F'''
+            Global Const $pad = "{"p" * 20000}"
+            Global $seed = "{"a" * 2000}"
+            Global $v = $seed
+            $v &= "{"b" * 2100}"
+            $w = $seed
+            '''
+        expected = F'''
+            Global Const $pad = "{"p" * 20000}"
+            Global $seed = "{"a" * 2000}"
+            Global $v = $seed
+            $v &= "{"b" * 2100}"
+            $w = "{"a" * 2000}"
+            '''
+        self.assertEqual(self._apply(source, Au3ConstantPropagation), self._laid_out(expected))
 
     def test_an_array_past_the_payload_bound_is_never_recorded(self):
+        source = F'''
+            Local $a = StringSplit("{"a," * 5000}a", ",")
+            Local $b[1] = [$a]
+            '''
         self.assertEqual(
-            self._apply(
-                F'''
-                Local $a = StringSplit("{"a," * 5000}a", ",")
-                Local $b[1] = [$a]
-                ''',
-                Au3ConstantPropagation,
-            ),
-            F'Local $a = StringSplit("{"a," * 5000}a", ",")\nLocal $b[1] = [$a]\n')
+            self._apply(source, Au3ConstantPropagation),
+            self._laid_out(source),
+        )
 
     def test_a_rendered_chain_past_the_depth_bound_is_refused(self):
         """
@@ -652,18 +780,20 @@ class TestAu3ConstantPropagation(TestAu3):
         bound never refuses it and the growth budget alone decides the inline.
         """
         elements = ', '.join(str(i) for i in range(1100))
+        source = F'''
+            Global Const $pad = "{"p" * 30000}"
+            Local $a[1100] = [{elements}]
+            Local $b[1] = [$a]
+            '''
+        expected = F'''
+            Global Const $pad = "{"p" * 30000}"
+            Local $a[1100] = [{elements}]
+            Local $b[1] = [[{elements}]]
+            '''
         self.assertEqual(
-            self._apply(
-                F'''
-                Global Const $pad = "{"p" * 30000}"
-                Local $a[1100] = [{elements}]
-                Local $b[1] = [$a]
-                ''',
-                Au3ConstantPropagation,
-            ),
-            F'Global Const $pad = "{"p" * 30000}"\n'
-            F'Local $a[1100] = [{elements}]\n'
-            F'Local $b[1] = [[{elements}]]\n')
+            self._apply(source, Au3ConstantPropagation),
+            self._laid_out(expected),
+        )
 
     def test_a_derived_constant_chain_settles_within_a_small_step_budget(self):
         """

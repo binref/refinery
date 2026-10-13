@@ -363,8 +363,7 @@ class JsSynthesizer(Synthesizer):
         if len(self._indent) * self._depth > self._line_length:
             self._emit_one_to_a_line(nodes, lead_newline, wrap_sequences)
             return True
-        save_pos = self._parts.tell()
-        save_col = self._col
+        save = self._capture_output()
         save_cut = self._cut
         save_ends_line = self._ends_line
         overflow = False
@@ -377,9 +376,7 @@ class JsSynthesizer(Synthesizer):
                 break
         if not overflow:
             return False
-        self._parts.seek(save_pos)
-        self._parts.truncate()
-        self._col = save_col
+        self._rewind_output(save)
         self._cut = save_cut
         self._ends_line = save_ends_line
         self._emit_one_to_a_line(nodes, lead_newline, wrap_sequences)

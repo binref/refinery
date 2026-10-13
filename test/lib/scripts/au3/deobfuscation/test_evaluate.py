@@ -381,3 +381,144 @@ class TestAu3FunctionEvaluation(TestAu3):
             '    Return $d_out\n'
             'EndFunc\n'
             '$x = decode10("0x31275C23300271", "AU3")\n')
+
+    def test_a_decoder_under_a_mustdeclarevars_that_a_later_zero_follows_stays(self):
+        """
+        Which setting is in force when the call runs depends on the order the calls run in, not
+        on where they stand: here the function that sets the option runs after the zero.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func strict()
+                    Opt("MustDeclareVars", 1)
+                EndFunc
+
+                Func decode()
+                    $d = "x"
+                    Return $d
+                EndFunc
+
+                Opt("MustDeclareVars", 0)
+                strict()
+                $r = decode()
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Func strict()\n'
+            '    Opt("MustDeclareVars", 1)\n'
+            'EndFunc\n'
+            'Func decode()\n'
+            '    $d = "x"\n'
+            '    Return $d\n'
+            'EndFunc\n'
+            'Opt("MustDeclareVars", 0)\n'
+            'strict()\n'
+            '$r = decode()\n')
+
+    def test_a_function_that_writes_a_command_line_constant_stays(self):
+        """
+        `$CmdLineRaw` exists in every script, so the bare write inside the function reaches the
+        constant — a fatal error — instead of creating a local the call could run over.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    $CmdLineRaw = "x"
+                    Return $CmdLineRaw
+                EndFunc
+
+                $r = f()
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Func f()\n'
+            '    $CmdLineRaw = "x"\n'
+            '    Return $CmdLineRaw\n'
+            'EndFunc\n'
+            '$r = f()\n')
+
+    def test_a_function_that_writes_a_name_an_unparsed_declaration_spells_stays(self):
+        """
+        The first line does not parse here, but it may be the `Global` declaration AutoIt runs,
+        so the bare write inside the function may reach that global.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $x = 1.
+
+                Func f()
+                    $x = "y"
+                    Return $x
+                EndFunc
+
+                $r = f()
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Global $x = 1.\n'
+            'Func f()\n'
+            '    $x = "y"\n'
+            '    Return $x\n'
+            'EndFunc\n'
+            '$r = f()\n')
+
+    def test_a_decoder_whose_implicit_name_an_expanded_literal_spells_stays(self):
+        """
+        Under `ExpandVarStrings`, the literal `"$n$"` names the global `q` that the bare write
+        inside the function then reaches, and the message box reads what the call wrote there.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Opt("ExpandVarStrings", 1)
+                $n = "q"
+                Assign("$n$", "global!")
+
+                Func dec($s)
+                    $q = StringReverse($s)
+                    Return $q
+                EndFunc
+
+                $r = dec("cba")
+                MsgBox(0, $r, $q)
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Opt("ExpandVarStrings", 1)\n'
+            '$n = "q"\n'
+            'Assign("$n$", "global!")\n'
+            'Func dec($s)\n'
+            '    $q = StringReverse($s)\n'
+            '    Return $q\n'
+            'EndFunc\n'
+            '$r = dec("cba")\n'
+            'MsgBox(0, $r, $q)\n')
+
+    def test_a_call_after_a_binding_sees_the_globals_it_proves(self):
+        """
+        Every script-level call sees the globals proven where it stands, not those an earlier
+        call proved: the first call runs before the global is written and stays, the one after
+        the write folds over it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func dec($s)
+                    Return $g & $s
+                EndFunc
+
+                $x = dec("a")
+                $g = "1"
+                $r = dec("b")
+                ''',
+                Au3FunctionEvaluation,
+            ),
+            'Func dec($s)\n'
+            '    Return $g & $s\n'
+            'EndFunc\n'
+            '$x = dec("a")\n'
+            '$g = "1"\n'
+            '$r = "1b"\n')
