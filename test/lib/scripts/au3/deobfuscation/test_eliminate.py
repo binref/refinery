@@ -213,6 +213,28 @@ class TestAu3DeadCodeElimination(TestAu3):
             'Global $n = "q"\n'
             'HotKeySet("^a", $n)\n')
 
+    def test_a_nonliteral_list_view_sort_name_is_kept(self):
+        """
+        The sort registration passes arguments to the function it names, so a computed name may
+        reach a function no call names — the same hole a non-literal `HotKeySet` name leaves.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func p()
+                EndFunc
+
+                Global $n = "q"
+
+                GUICtrlRegisterListViewSort(0, $n)
+                ''',
+                Au3DeadCodeElimination,
+            ),
+            'Func p()\n'
+            'EndFunc\n'
+            'Global $n = "q"\n'
+            'GUICtrlRegisterListViewSort(0, $n)\n')
+
     def test_an_unparseable_line_leaves_the_whole_tree_unchanged(self):
         self._assertKept(
             '''

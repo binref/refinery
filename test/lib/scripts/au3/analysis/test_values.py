@@ -33,6 +33,7 @@ from refinery.lib.scripts.au3.analysis.values import (
     to_string,
     truthy,
 )
+from refinery.lib.scripts.au3.lexer import encode_au3_string
 from refinery.lib.scripts.au3.limits import MAX_PIECE_SPELLING
 from refinery.lib.scripts.au3.model import Au3BinaryExpression, Au3Call, Au3StringLiteral
 from refinery.lib.scripts.au3.parser import Au3Parser
@@ -53,10 +54,10 @@ def _chain_pieces(node):
 
 def _encoded(text: str) -> int:
     """
-    The characters the literal spelling of *text* occupies: the enclosing quotes plus one per
-    character, doubled where the text holds the quote itself.
+    The characters the literal spelling of *text* occupies, read off the encoder that writes the
+    spelling itself rather than off a formula restating the renderer's budget.
     """
-    return 2 + len(text) + text.count('"')
+    return len(encode_au3_string(text))
 
 
 class TestAu3Values(TestBase):

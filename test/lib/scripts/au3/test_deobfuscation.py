@@ -6,6 +6,7 @@ from test import TestBase
 from test.units.pattern.test_resub import AUTOIT_OBFUSCATED
 
 from refinery.lib.scripts.au3.deobfuscation import deobfuscate
+from refinery.lib.scripts.au3.limits import MAX_PIECE_SPELLING
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
 
@@ -247,7 +248,8 @@ class TestAu3Deobfuscation(TestBase):
         The interpreter refuses a physical line past 4094 characters, so a value the pipeline
         folds into one longer than a line is spelled as pieces the synthesizer continues behind —
         through every shape that produces one: a folded chain, a multibyte payload, an accumulator
-        run, a call with thousands of arguments, and an array literal holding a folded chain.
+        run, a call with thousands of arguments, an array literal holding a folded chain, and a
+        For limit followed by a `Step`, the widest separator a placed atom answers for.
         """
         chain = ' & '.join(
             [F'"{"a" * 100}"' for _ in range(40)] + [F'"{"a" * 90}"'])
@@ -257,12 +259,14 @@ class TestAu3Deobfuscation(TestBase):
             ['Global $v = ""']
             + [F'$v = $v & "{"a" * 1363}"' for _ in range(3)]
             + ['$w = $v'])
+        for_limit = F'Global $v = "{"a" * (MAX_PIECE_SPELLING - 2)}"\nFor $i = 0 To $v Step 1\nNext\n'
         for label, source in (
             ('a folded chain', F'Local $x = {chain}\n'),
             ('a folded multibyte chain', F'Local $x = {multibyte}\n'),
             ('a padded accumulator run', F'Global Const $pad = "{"p" * 80000}"\n{accumulator}\n'),
             ('a call with thousands of arguments', F'f({", ".join(str(i) for i in range(3000))})\n'),
             ('an array literal over a folded chain', F'Local $a = [{chain}, 1]\n'),
+            ('a For limit followed by a step', F'Global Const $pad = "{"p" * 80000}"\n{for_limit}'),
         ):
             with self.subTest(label=label):
                 ast = Au3Parser(source).parse()
@@ -278,10 +282,12 @@ class TestAu3Deobfuscation(TestBase):
             ['Global $v = ""']
             + [F'$v = $v & "{"a" * 1363}"' for _ in range(3)]
             + ['$w = $v'])
+        for_limit = F'Global $v = "{"a" * (MAX_PIECE_SPELLING - 2)}"\nFor $i = 0 To $v Step 1\nNext\n'
         for source in (
             F'Local $x = {chain}\n',
             F'Global Const $pad = "{"p" * 80000}"\n{accumulator}\n',
             F'Local $a = [{chain}, 1]\n',
+            F'Global Const $pad = "{"p" * 80000}"\n{for_limit}',
         ):
             with self.subTest(source=len(source)):
                 ast = Au3Parser(source).parse()

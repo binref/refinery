@@ -18,8 +18,8 @@ CONTINUED_ASSIGNMENT = (
 
 class TestAu3Synthesizer(TestBase):
 
-    def _round_trip(self, source: str) -> str:
-        synth = Au3Synthesizer()
+    def _round_trip(self, source: str, line_length: int | None = None) -> str:
+        synth = Au3Synthesizer() if line_length is None else Au3Synthesizer(line_length=line_length)
         ast1 = Au3Parser(source).parse()
         self.assertEqual(
             ast1.errors, [],
@@ -46,14 +46,7 @@ class TestAu3Synthesizer(TestBase):
         The source printed under a line length small enough to force continuations, asserted to
         re-parse cleanly before the caller checks its shape.
         """
-        out = Au3Synthesizer(line_length=line_length).convert(Au3Parser(source).parse())
-        reparsed = Au3Parser(out).parse()
-        self.assertEqual(
-            reparsed.errors, [],
-            F'Continued output does not re-parse cleanly for {source!r}:\n'
-            F'Output: {out!r}\nErrors: {[e.message for e in reparsed.errors]}',
-        )
-        return out
+        return self._round_trip(source, line_length)
 
     def test_int_literal(self):
         self.assertEqual(self._round_trip('42\n'), '42\n')

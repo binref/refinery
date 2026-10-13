@@ -153,8 +153,9 @@ def spelled_name(text: str) -> str:
 def execute_kills(call: Au3Call) -> set[str] | None:
     """
     The names an `Execute` call may write: a constant argument spells one expression, so only a
-    call inside it can write anything; a parse failure answers `""` and writes nothing. Any other
-    argument can execute arbitrary code.
+    call inside it can write anything; a parse failure may still be a payload AutoIt runs — this
+    parser's refusal is not AutoIt's — so it answers any name except the empty payload AutoIt
+    answers `""` for (probe3). Any other argument can execute arbitrary code.
     """
     if len(call.arguments) != 1:
         return None
@@ -163,7 +164,7 @@ def execute_kills(call: Au3Call) -> set[str] | None:
         return None
     expression = parse_payload(literal.value)
     if expression is None:
-        return set()
+        return set() if not literal.value.strip() else None
     if ast.contains_a_call(expression):
         return None
     return set()
@@ -457,7 +458,7 @@ class _Census:
         for token in Au3Lexer(source=text).tokenize():
             kind = token.kind
             if kind is Au3TokenKind.VARIABLE:
-                self.names.add(token.value[1:].lower())
+                self.names.add(spelled_name(token.value))
             elif kind is Au3TokenKind.IDENTIFIER and token.value.lower() in _CHANNEL_BUILTINS:
                 raise _Poison
             elif kind in _DECLARATION_KEYWORDS:

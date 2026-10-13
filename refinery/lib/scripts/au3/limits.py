@@ -11,6 +11,6 @@ the interpreter itself; the probe scripts and outputs live in `temp/au3_semantic
 MAX_LINESIZE = 4094
 
 #: The longest encoded spelling one literal piece may carry: behind a piece on its line stand the
-#: separator that joins the next piece, the continuation marker that ends the line there, and
-#: the quotes that enclose the piece itself.
-MAX_PIECE_SPELLING = MAX_LINESIZE - len(' & ') - len(' _') - len('""')
+#: widest separator that may follow it — ` Step `, which follows a `For` limit — the continuation
+#: marker that ends the line there, and the quotes that enclose the piece itself.
+MAX_PIECE_SPELLING = MAX_LINESIZE - len(' Step ') - len(' _') - len('""')

@@ -228,6 +228,37 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Local $x = 5\nUnknown()\n$y = $x\n')
 
+    def test_an_execute_payload_the_parser_cannot_read_kills_the_globals(self):
+        """
+        A payload this parser reads as nothing may still be one AutoIt runs, so the call may
+        write any name — while the empty payload AutoIt answers `""` for (probe3) writes
+        nothing and the binding survives it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $w = "orig"
+                Execute('Assign("w", 1.)')
+                Global $m = $w
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Global $w = "orig"\n'
+            'Execute(\'Assign("w", 1.)\')\n'
+            'Global $m = $w\n')
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $w = "orig"
+                Execute("")
+                Global $m = $w
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Global $w = "orig"\n'
+            'Execute("")\n'
+            'Global $m = "orig"\n')
+
     def test_a_script_function_call_kills_only_what_it_may_write(self):
         self.assertEqual(
             self._apply(

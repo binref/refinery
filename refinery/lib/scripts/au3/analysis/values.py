@@ -734,10 +734,10 @@ _BINARY_PIECE_BYTES = (MAX_PIECE_SPELLING - len('Binary("0x")')) // 2
 
 def _encoded_length(text: str) -> int:
     """
-    The characters the literal spelling of *text* occupies: the enclosing quotes plus one per
-    character, doubled where the text holds the quote itself.
+    The characters the literal spelling of *text* occupies: the length `encode_au3_string`
+    writes, so the encoder stays the one spelling of the literal budget.
     """
-    return 2 + len(text) + text.count('"')
+    return len(encode_au3_string(text))
 
 
 def _render_binary(payload: bytes) -> Expression:

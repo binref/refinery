@@ -31,7 +31,7 @@ class TestAu3(TestBase):
         lines a statement alone cannot hold compares what the statements say and not where the
         synthesizer broke them.
         """
-        return Au3Synthesizer().convert(Au3Parser(inspect.cleandoc(source)).parse())
+        return self._apply(source)
 
     def _assertDeobfuscatesTo(self, source: str, expected: str) -> None:
         """

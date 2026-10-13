@@ -852,6 +852,7 @@ NAME_PARAMETERS: dict[str, frozenset[int]] = {
     'dllcallbackregister'   : frozenset({0, 1}),
     'hotkeyset'              : frozenset({1}),
     'guiregistermsg'         : frozenset({1}),
+    'guictrlregisterlistviewsort': frozenset({1}),
     'guisetonevent'          : frozenset({1}),
     'guictrlsetonevent'      : frozenset({1}),
     'traysetonevent'         : frozenset({1}),
