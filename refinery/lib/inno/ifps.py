@@ -1252,16 +1252,17 @@ class IFPSFile(Struct):
                 F'[{self.MinVer},{self.MaxVer}].')
 
         self._known_type_names = {
-            TC.U08   : {'Byte', 'Boolean'},
-            TC.S08   : {'ShortInt'},
-            TC.U16   : {'Word'},
-            TC.S16   : {'SmallInt'},
-            TC.S32   : {'Integer', 'LongInt'},
-            TC.U32   : {'LongWord', 'Cardinal', 'HWND', 'TSetupProcessorArchitecture'},
-            TC.Char  : {'AnsiChar'},
-            TC.PChar : {'PAnsiChar'},
-            TC.S64   : {'Int64', 'NativeInt'},
-            TC.U64   : {'UInt64', 'NativeUInt'},
+            TC.U08        : {'Byte', 'Boolean'},
+            TC.S08        : {'ShortInt'},
+            TC.U16        : {'Word'},
+            TC.S16        : {'SmallInt'},
+            TC.S32        : {'Integer', 'LongInt'},
+            TC.U32        : {'LongWord', 'Cardinal', 'HWND', 'TSetupProcessorArchitecture'},
+            TC.Char       : {'AnsiChar'},
+            TC.PChar      : {'PAnsiChar'},
+            TC.AnsiString : {'AnyString'},
+            TC.S64        : {'Int64', 'NativeInt'},
+            TC.U64        : {'UInt64', 'NativeUInt'},
         }
 
         self._load_types()
@@ -1304,8 +1305,9 @@ class IFPSFile(Struct):
                         break
                 else:
                     code = TC.WideString if self.unicode else TC.AnsiString
-                    type = TPrimitive(code, symbol=name)
-                return add_type(name, type)
+                    return add_type(name, TPrimitive(code, symbol=name))
+                tbn[name] = type
+                return type
 
             for name in tbn:
                 missing_types.discard(name)
@@ -1351,9 +1353,6 @@ class IFPSFile(Struct):
             if (name := 'String') in missing_types:
                 make_string(name)
 
-            if (name := 'AnyString') in missing_types:
-                add_type(name, TPrimitive(TC.AnsiString, symbol=name))
-
             if (name := 'TArrayOfString') in missing_types:
                 add_type(name, TArray(TC.Array, make_string()))
 
@@ -1365,7 +1364,7 @@ class IFPSFile(Struct):
                     tbn['LongWord'],
                     tbn['Word'],
                     tbn['Word'],
-                    TStaticArray(tbn['Byte'], 8)
+                    TStaticArray(TC.StaticArray, tbn['Byte'], 8)
                 ), symbol=name))
 
     def _load_types(self):

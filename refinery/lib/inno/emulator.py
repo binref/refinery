@@ -181,10 +181,8 @@ class Variable(VariableBase, Generic[_T]):
         super().__init__(type, spec)
         self.path = path
         self._range = type.code.integer_range
-
-        if data is None:
-            self.setdefault()
-        else:
+        self.setdefault()
+        if data is not None:
             self.set(data)
 
     def setdefault(self):
@@ -224,7 +222,7 @@ class Variable(VariableBase, Generic[_T]):
                 return float(value)
             raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
         if (valid := self._range) is not None and isinstance(value, int) and value not in valid:
-            return value & (len(valid) - 1)
+            return value & (valid.stop - valid.start - 1)
         return value
 
     def resize(self, n: int):
@@ -335,11 +333,12 @@ class OpCodeNotImplemented(NotImplementedError):
 
 class EmulatorException(RuntimeError):
     """
-    A generic exception representing any error that occurs during emulation.
+    A generic exception representing any error that occurs during emulation. It ends the emulation;
+    the emulated script cannot handle it.
     """
 
 
-class AbortEmulation(Exception):
+class AbortEmulation(EmulatorException):
     """
     This exception can be raised by an external function handler to signal the emulator that script
     execution should be aborted.
@@ -356,31 +355,31 @@ class IFPSException(RuntimeError):
         self.parent = parent
 
 
-class EmulatorTimeout(TimeoutError):
+class EmulatorTimeout(EmulatorException, TimeoutError):
     """
     The emulation timed out based on the given time limit in the configuration.
     """
 
 
-class EmulatorExecutionLimit(TimeoutError):
+class EmulatorExecutionLimit(EmulatorException, TimeoutError):
     """
     The emulation timed out based on the given execution limit in the configuration.
     """
 
 
-class EmulatorMaxStack(MemoryError):
+class EmulatorMaxStack(EmulatorException, MemoryError):
     """
     The emulation was aborted because the stack limit given in the configuration was exceeded.
     """
 
 
-class EmulatorMaxCalls(MemoryError):
+class EmulatorMaxCalls(EmulatorException, MemoryError):
     """
     The emulation was aborted because the call stack limit given in the configuration was exceeded.
     """
 
 
-class EmulatorMaxArray(MemoryError):
+class EmulatorMaxArray(EmulatorException, MemoryError):
     """
     The script requested an array longer than the array length limit given in the configuration.
     """
@@ -724,8 +723,8 @@ class IFPSEmulator:
 
     def reset(self):
         """
-        Reset the emulator timing, FPU word, mutexes, trace, and stack. The script starts over
-        with new global variables that hold their default values.
+        Reset the emulator timing, FPU word, mutexes, and stack. The script starts over with new
+        global variables that hold their default values.
         """
         self.seconds_slept = 0.0
         self.clock = 0
@@ -903,9 +902,9 @@ class IFPSEmulator:
                         return_value = handler.call(*args)
                         if inspect.isgenerator(return_value):
                             return_value = yield from return_value
-                    except GeneratorExit:
+                    except EmulatorException:
                         raise
-                    except BaseException as b:
+                    except Exception as b:
                         pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', copy_exception(b))
                     else:
                         if not handler.void:
@@ -1052,13 +1051,15 @@ class IFPSEmulator:
                             sp = len(stack) - 1
                             exceptions = []
                             break
-                    elif opc in (Op.SetPtr, Op.SetPtrToCopy):
-                        copy = False
-                        if opc == Op.SetPtrToCopy:
-                            copy = True
+                    elif opc == Op.SetPtr:
+                        getvar(insn.op(0)).setptr(getvar(insn.op(1)))
+                    elif opc == Op.SetPtrToCopy:
                         dst = getvar(insn.op(0))
-                        src = getvar(insn.op(1))
-                        dst.setptr(src, copy=copy)
+                        src = insn.op(1)
+                        if (constant := src.value) is None:
+                            dst.setptr(getvar(src), copy=True)
+                        else:
+                            dst.setptr(Variable(constant.type, data=constant.value))
                     elif opc == Op.BooleanNot:
                         setval(a := insn.op(0), not getval(a))
                     elif opc == Op.IntegerNot:
@@ -1126,8 +1127,6 @@ class IFPSEmulator:
                     del stack[eh.depth:]
                     eh.current = et
                     ip = tp
-                except AbortEmulation:
-                    raise
                 except EmulatorException:
                     raise
                 except Exception as RE:
@@ -1306,7 +1305,8 @@ class IFPSEmulator:
     def IsAdmin(self) -> bool:
         return self.config.admin
 
-    @external(alias='Sleep')
+    @external(name='Sleep')
+    @external()
     def kernel32__Sleep(self, ms: int):
         seconds = ms / 1000.0
         self.seconds_slept += seconds
