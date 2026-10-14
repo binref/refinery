@@ -2849,22 +2849,37 @@ class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
     every change. Each receiver it judges, and each concatenation it reads, is read once.
     """
 
-    def test_eight_hundred_fields_defined_on_this_in_one_constructor_build_within_a_second(self):
-        fields = ' '.join(F'Object.defineProperty(this, "f{k}", {{ value: {k} }});' for k in range(800))
-        ast = JsParser(F'function Foo() {{ {fields} }} new Foo();').parse()
-        model = build_semantic_model(ast)
-        start = time.perf_counter()
-        build_effects(model)
-        self.assertLess(time.perf_counter() - start, 1.0)
+    @staticmethod
+    def _fastest_build(source: str) -> float:
+        # The fastest of three builds is compared, so a pause of the machine during one build cannot
+        # decide the test.
+        times: list[float] = []
+        for _ in range(3):
+            model = build_semantic_model(JsParser(source).parse())
+            start = time.perf_counter()
+            build_effects(model)
+            times.append(time.perf_counter() - start)
+        return min(times)
 
-    def test_forty_concatenations_of_five_hundred_strings_beside_an_install_on_this_build_within_a_second(self):
-        chain = ' + '.join(F'"p{k}"' for k in range(500))
-        chains = ' '.join(F'var s{k} = {chain};' for k in range(40))
-        ast = JsParser(F'function P() {{ this.toString = function () {{ return "p"; }}; }} new P(); {chains}').parse()
-        model = build_semantic_model(ast)
-        start = time.perf_counter()
-        build_effects(model)
-        self.assertLess(time.perf_counter() - start, 1.0)
+    def _assert_build_grows_with_the_program(self, small: str, large: str):
+        small_time = self._fastest_build(small)
+        large_time = self._fastest_build(large)
+        # A build growing with the square of the program takes about the square of the size ratio,
+        # which the bound of three times the size ratio refuses.
+        self.assertLess(large_time / small_time, 3 * len(large) / len(small))
+
+    def test_fields_defined_on_this_in_one_constructor_build_in_time_that_grows_with_the_program(self):
+        def program(count: int) -> str:
+            fields = ' '.join(F'Object.defineProperty(this, "f{k}", {{ value: {k} }});' for k in range(count))
+            return F'function Foo() {{ {fields} }} new Foo();'
+        self._assert_build_grows_with_the_program(program(100), program(800))
+
+    def test_concatenations_beside_an_install_on_this_build_in_time_that_grows_with_their_length(self):
+        def program(length: int) -> str:
+            chain = ' + '.join(F'"p{k}"' for k in range(length))
+            chains = ' '.join(F'var s{k} = {chain};' for k in range(40))
+            return F'function P() {{ this.toString = function () {{ return "p"; }}; }} new P(); {chains}'
+        self._assert_build_grows_with_the_program(program(50), program(500))
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:
