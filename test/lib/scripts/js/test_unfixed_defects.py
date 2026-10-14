@@ -2790,6 +2790,94 @@ class TestADirectEvalInADefaultDeclaresWhereItRuns(TestBase):
     """
 
 
+#: Programs running a direct `eval` in the body of a function that declares a `var` named like an
+#: outer variable the function reads after it, mapped to the behavior an engine gives them.
+A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = {
+    'a var the eval declares, read by the body': Program(
+        a_program("""
+            var v = 1;
+            function f(c) { eval(c); return v; }
+            console.log(f("var v = 2"));
+            """),
+        prints('2'),
+    ),
+    'a var the eval declares, read by a function the body declares': Program(
+        a_program("""
+            var v = 1;
+            function f(c) { eval(c); function g() { return v; } return g(); }
+            console.log(f("var v = 2"));
+            """),
+        prints('2'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME)
+class TestADirectEvalInABodyDeclaresWhereItRuns(TestBase):
+    """
+    The defect of `TestADirectEvalInADefaultDeclaresWhereItRuns` without the parameter default: a
+    direct `eval` in sloppy code declares a `var` in the variable scope of the function it runs in,
+    so a read of that name after it finds what the `eval` put there, not the outer variable.
+    Constant inlining resolves the read to the outer declaration and folds the value written there.
+    The question it has to ask is one the model answers
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.direct_eval_declares_below`), and only an
+    outer variable of the script or the module is folded this way: a local of an enclosing function
+    is refused because a direct `eval` reaches it. A program running code it is handed is possible
+    in real input; the defect needs that code to declare a name the function also reads from
+    outside.
+    """
+
+
+#: Programs whose direct `eval` of a string no fold can read assigns a variable of the file that a
+#: function reads, called after the `eval`, mapped to the behavior an engine gives them.
+A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
+    'the eval at the top of the file': Program(
+        a_program("""
+            var s = "abc";
+            function f(n) { return s.slice(n); }
+            eval(Date.now() > 0 ? "s = 'xyz'" : "");
+            console.log(f(Math.random() > 2 ? 0 : 1));
+            """),
+        prints('yz'),
+    ),
+    'the eval in another function': Program(
+        a_program("""
+            var s = "abc";
+            function f(n) { return s.slice(n); }
+            function g() { eval(Date.now() > 0 ? "s = 'xyz'" : ""); }
+            g();
+            console.log(f(Math.random() > 2 ? 0 : 1));
+            """),
+        prints('yz'),
+    ),
+    'the long string of a slicing accessor': Program(
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'eval(Date.now() > 0 ? "strs = " + JSON.stringify("XXlrCD^") : "");\n'
+        + 'console.log(S(2, 5));\n',
+        prints('Fizz'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION)
+class TestAVariableAnUnreadableEvalMayAssignIsNotWrittenIntoAFunctionReadingIt(TestBase):
+    """
+    A direct `eval` of a string nothing can fold may assign any variable it can see. Constant
+    inlining orders a read in the scope of the variable against such an `eval` and keeps the read
+    standing after it, but writes the value into a function reading the variable when the value
+    runs before every call of that function
+    (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before_every_invocation`),
+    without asking whether an `eval` runs between the two. The base91 pass then keeps the call of
+    an accessor whose long string was written into it, and the call slices the old string. A
+    program running code it is handed is possible in real input; the defect needs that code to
+    assign a variable of the file that holds one value otherwise.
+    """
+
+
 #: A classic script reaching one of its own top-level declarations through a name the file itself
 #: installs on the global object — by a write through the object, or by assigning a name it never
 #: declares — mapped to the behavior a host gives it. The installing statement is what every row has
@@ -4456,6 +4544,15 @@ A_VAR_INITIALIZED_INSIDE_A_WITH_BODY = {
             """),
         prints('undefined!'),
     ),
+    'a string read in its own scope and by a function': Program(
+        a_program("""
+            var o = { x: "from o" };
+            with (o) { var x = "declared"; }
+            function f() { return x; }
+            console.log(typeof x, f());
+            """),
+        prints('undefined undefined'),
+    ),
 }
 
 
@@ -4878,7 +4975,7 @@ A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
     (
         SLICED
         + 'var o = { bufferToString: function (b) { return "bytes:" + b.length; } };\n'
-        + 'with (o) { var S_decode = function (str) { ' + decoder_body() + ' }; }\n'
+        + F'with (o) {{ var S_decode = function (str) {{ {decoder_body()} }}; }}\n'
         + slicing('S', 'S_decode') + '\n'
         + 'console.log(S(2, 5), S(16, 4));\n'
     ):
@@ -5001,70 +5098,9 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                 )
 
 
-#: Programs writing a value into a variable declared without one in a statement that completes
-#: without the write on the run shown, and reading the variable in a function called after that
-#: statement, mapped to the behavior an engine gives them.
-A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION = {
-    'a store below and, read by a function with a parameter': Program(
-        a_program("""
-            var c;
-            Math.random() > 2 && (c = 5);
-            function f(x) { return x + c; }
-            console.log(f(Math.random() > 2 ? 1 : 2));
-            """),
-        prints('NaN'),
-    ),
-    'a store below and, read by a recursive function': Program(
-        a_program("""
-            var c;
-            Math.random() > 2 && (c = 5);
-            function f(n) { return n <= 0 ? c : f(n - 1); }
-            console.log(f(2));
-            """),
-        prints('undefined'),
-    ),
-    'a store in an arm of a conditional, read by a recursive function': Program(
-        a_program("""
-            var c;
-            Math.random() > 2 ? (c = 5) : 0;
-            function f(n) { return n <= 0 ? c : f(n - 1); }
-            console.log(f(2));
-            """),
-        prints('undefined'),
-    ),
-    'a store behind a logical assignment, read by a recursive function': Program(
-        a_program("""
-            var c, y = 1;
-            y ||= (c = 5);
-            function f(n) { return n <= 0 ? c : f(n - 1); }
-            console.log(f(2));
-            """),
-        prints('undefined'),
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION)
-class TestAValueStoredOnSomeRunsIsNotWrittenIntoTheFunctionReadingIt(TestBase):
-    """
-    Constant inlining writes the one value a variable is given into a function reading it when the
-    store runs before every call of that function. The ordering queries of
-    `refinery.lib.scripts.js.analysis.dominance.DominanceModel` that it asks answer whether the
-    statement holding the store has completed, not whether the store has run, and a store below
-    `&&`, in an arm of `?:` or behind `||=` is skipped on runs that complete its statement. The
-    function then reads the variable unset while the deobfuscation writes `5` into it. A reader the
-    evaluator folds asks `DominanceModel.binding_established_before`, which also asks whether the
-    store runs with its statement; a reader it leaves is reached by this defect. Minifiers spell
-    `if (x) c = 5;` as `x && (c = 5)`, so the shape is possible in real code, but only where the
-    variable is declared without a value and written nowhere else, which none of the real samples
-    holds.
-    """
-
-
 #: Programs declaring a function in a block and reading its name outside that block, mapped to the
-#: behavior an engine gives them: a read before the block declares the function, and a variable
-#: the declaration replaces once it runs.
+#: behavior an engine gives them: a read before the block declares the function, and a variable the
+#: declaration replaces once it runs, read by a function and in its own scope.
 A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT = {
     'a call reading the name before the block declares the function': Program(
         a_program("""
@@ -5089,6 +5125,15 @@ A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT = {
             """),
         prints('abc', 'function'),
     ),
+    'a variable the block function replaces once its declaration runs, read in its own scope': Program(
+        a_program("""
+            var t = "abc";
+            console.log(t);
+            { function t() {} }
+            console.log(typeof t);
+            """),
+        prints('abc', 'function'),
+    ),
 }
 
 
@@ -5099,9 +5144,15 @@ class TestAFunctionDeclaredInABlockIsReadOutsideItOnlyOnceItsDeclarationRuns(Tes
     Outside strict code, a function declared in a block has two bindings: one of the block, holding
     the function from the moment the block is entered, and a variable of the enclosing function,
     which receives the function when the declaration runs. The semantic model keeps one binding for
-    both. So the evaluator writes the body of `g` into the block, where `f` names the binding of the
-    block and holds the function before the declaration, and the first program no longer throws; and
-    constant inlining does not count the declaration as a write of `t`, and writes `"abc"` into `g`.
-    No program reads a block function outside its block before the block declares it, or declares a
-    block function named like a variable of its own.
+    both, so the evaluator writes the body of `g` into the block, where `f` names the binding of the
+    block and holds the function before the declaration, and the first program no longer throws.
+
+    The model does list the declaration as a second value of `t`. Constant inlining does not ask it:
+    it collects the values of a name from the declarations of variables and the writes it finds,
+    passes over a function declaration, and writes `"abc"` into `g`, which two bindings would not
+    change. The read in the scope of `t` is reached through the one binding: the reaching query
+    counts the declaration as a write only where it copies a function into a binding of its own
+    (`refinery.lib.scripts.js.analysis.model.annex_b_copies_into`), and the binding of `t` is a
+    variable declared twice. No program reads a block function outside its block before the block
+    declares it, or declares a block function named like a variable of its own.
     """
