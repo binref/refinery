@@ -13,8 +13,13 @@ script function probed through
 `refinery.lib.scripts.au3.analysis.interpreter.Au3Interpreter.probe` — the variable names every
 call hands to a `ByRef` parameter, and the registrations whose registered function receives
 arguments, which must name a script function literally. Source text the parser could not read
-— an error node, or a payload this parser reads as nothing — is read token by token, and every
-variable it spells may be a global. A channel the census cannot read — an include it cannot
+— an error node in the tree, or a payload this parser reads as nothing — is read through
+`refinery.lib.scripts.au3.analysis.unparsed.read_unparsed`, and every
+variable it spells may be a global. The parser's record list is not an input: its texts also
+live in the tree — an error node is its own record, and a repair record names a token of a line
+the parser went on to read — while the list itself outlives the edits that remove those lines,
+so a census over it would stay poisoned over a tree its own transforms had cleaned. A channel
+the census cannot read — an include it cannot
 see, a computed `Assign` name, an unresolvable payload or `Call` name, an indirect callee, a
 forwarding `Call` of `Call`, a registration whose name is not a literal script function, a
 registration or an option set through a `Call` whose sole argument may be a `CallArgArray`
@@ -48,6 +53,7 @@ from refinery.lib.scripts import UnspellableNode
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter, Au3Probe
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
+from refinery.lib.scripts.au3.analysis.unparsed import read_unparsed, spelled_name
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
     Kind,
@@ -55,7 +61,6 @@ from refinery.lib.scripts.au3.analysis.values import (
     to_number,
     truthy,
 )
-from refinery.lib.scripts.au3.lexer import Au3Lexer
 from refinery.lib.scripts.au3.model import (
     Au3Call,
     Au3EnumDeclaration,
@@ -72,7 +77,6 @@ from refinery.lib.scripts.au3.model import (
 )
 from refinery.lib.scripts.au3.parser import Au3Parser
 from refinery.lib.scripts.au3.synth import Au3Synthesizer
-from refinery.lib.scripts.au3.token import Au3Token, Au3TokenKind
 
 #: The globals every script holds before its first statement runs: the command-line constants
 #: exist whether or not parameters are passed, so a bare write of either inside a function
@@ -111,20 +115,6 @@ _CHANNEL_BUILTINS = frozenset({
     *_OPTION_SETTERS,
 })
 
-#: The tokens after which an opening parenthesis calls a computed callee rather than a name.
-_COMPUTED_CALLEE_ENDS = frozenset({
-    Au3TokenKind.VARIABLE,
-    Au3TokenKind.RPAREN,
-    Au3TokenKind.RBRACKET,
-})
-
-#: The keywords of a function declaration, whose `ByRef` positions the census reads only from a
-#: parsed declaration.
-_DECLARATION_KEYWORDS = frozenset({
-    Au3TokenKind.FUNC,
-    Au3TokenKind.BYREF,
-})
-
 #: The total steps every probe the census makes may spend together: a tree that exhausts them
 #: answers that any name may be a global. Roughly forty times what the a3x sample this model
 #: was built over spends across all of its probes.
@@ -138,16 +128,6 @@ def parse_payload(text: str) -> Expression | None:
     expression can.
     """
     return Au3Parser(text).parse_expression()
-
-
-def spelled_name(text: str) -> str:
-    """
-    The name *text* spells where AutoIt looks a variable, a function, or an option up by a
-    string: without a leading `$`, case-folded, and cut at the first NUL. Whether AutoIt reads
-    past a NUL there is unpinned; no name holds one, so the cut is the one reading under which
-    such a string names anything.
-    """
-    return text.partition('\0')[0].lstrip('$').lower()
 
 
 def execute_kills(call: Au3Call) -> set[str] | None:
@@ -449,27 +429,19 @@ class _Census:
 
     def _examine_unparsed(self, text: str) -> None:
         """
-        Source text the parser could not read, which AutoIt may still run, read token by token:
-        every variable it spells may be a global, and text that names a channel builtin, opens a
-        call on a computed callee, or declares a function — whose `ByRef` positions only a
-        parsed declaration shows — is a channel the census cannot read.
+        Source text the parser could not read, which AutoIt may still run, read through
+        `read_unparsed`: every variable it spells may be a global, and text that names a channel
+        builtin, opens a call on a computed callee, or declares a function — whose `ByRef`
+        positions only a parsed declaration shows — is a channel the census cannot read.
         """
-        previous: Au3Token | None = None
-        for token in Au3Lexer(source=text).tokenize():
-            kind = token.kind
-            if kind is Au3TokenKind.VARIABLE:
-                self.names.add(spelled_name(token.value))
-            elif kind is Au3TokenKind.IDENTIFIER and token.value.lower() in _CHANNEL_BUILTINS:
-                raise _Poison
-            elif kind in _DECLARATION_KEYWORDS:
-                raise _Poison
-            elif (
-                kind is Au3TokenKind.LPAREN
-                and previous is not None
-                and previous.kind in _COMPUTED_CALLEE_ENDS
-            ):
-                raise _Poison
-            previous = token
+        unparsed = read_unparsed(text)
+        if (
+            unparsed.computed_callee
+            or unparsed.declares_function
+            or unparsed.identifiers & _CHANNEL_BUILTINS
+        ):
+            raise _Poison
+        self.names.update(unparsed.variables)
 
     def _resolve_string(self, expression: Expression | None) -> str | None:
         """

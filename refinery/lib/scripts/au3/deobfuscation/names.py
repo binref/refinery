@@ -106,15 +106,13 @@ def _tree_facts(root: Au3Script, scopes: Au3ScopeModel) -> _TreeFacts:
     """
     The facts the whole tree decides. The callee spellings are the census's to read — see
     `callee_census` — and answer the error-state and the option-setter questions; a parse error
-    is the parser's own record plus any error node it recovered, live source text or a repaired
-    construct no walk reads, so its tree is refused outright rather than reasoned about. The
-    spelling of the option the tree sets is unpinned either way — only that the tree may set
-    `MustDeclareVars` is a fact here.
+    is any error node the parser recovered, live source text or a repaired construct no walk
+    reads, so its tree is refused outright rather than reasoned about. The spelling of the option
+    the tree sets is unpinned either way — only that the tree may set `MustDeclareVars` is a fact
+    here.
     """
     census = callee_census(root, scopes.functions)
-    parse_error = bool(root.errors) or any(
-        isinstance(node, Au3ErrorNode) for node in root.walk()
-    )
+    parse_error = any(isinstance(node, Au3ErrorNode) for node in root.walk())
     return _TreeFacts(
         census.observes_error_state(),
         parse_error,

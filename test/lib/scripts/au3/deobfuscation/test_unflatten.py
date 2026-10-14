@@ -213,6 +213,28 @@ class TestAu3ControlFlowDeflattening(TestAu3):
             EndFunc
             ''')
 
+    def test_the_state_assignment_leaves_when_error_text_holds_only_a_substring(self):
+        self._assertSplicesTo(
+            '''
+            Func f()
+                $stx = 1 + +
+                While 1
+                    $st = 2
+                    Switch $st
+                    Case 2
+                        MsgBox(0, 0, 2)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            Func f()
+                $stx = 1 + +
+                MsgBox(0, 0, 2)
+            EndFunc
+            ''')
+
     def test_the_state_assignment_stays_when_the_tree_holds_an_include(self):
         self._assertSplicesTo(
             '''

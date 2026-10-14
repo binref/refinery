@@ -23,8 +23,13 @@ On any statement the parser cannot read, it resynchronizes just past the next NE
 re-reads the statement's source text verbatim into an `Au3ErrorNode`, so malformed input still
 yields a tree that covers every character of the file and can be scored by `guess_language`.
 Missing tokens are synthesized with `_expect`, which records the error without abandoning the
-statement. Stray block terminators become one-token error statements rather than consuming the
-rest of their line.
+statement — except on a single line: a statement there that needed such a repair, or that is
+followed by more text on its line, is abandoned and its whole line recovered verbatim, because
+the interpreter rejects the line when it reaches it, so a repaired reading would be code that
+never runs as written. Only multi-line blocks keep their repairs. A line holding a block closer
+or divider keeps the repaired reading, since recovering it whole would swallow the boundary and
+move every statement after it into the wrong block. Stray block terminators become one-token
+error statements rather than consuming the rest of their line.
 
 The single-line form of `If` parses to the same tree as the block form (`body` holds one
 statement), so the synthesizer can always print block form. A leading-dot member access builds
@@ -334,9 +339,9 @@ class Au3Parser:
             comments = self._trivia.pop(self._index, None)
             start = self._current.offset
             mark = self._index
+            recorded = len(self._errors)
             try:
                 stmt = self._parse_statement()
-                self._terminate_statement(stmt)
             except RecursionError:
                 raise
             except Exception:
@@ -345,6 +350,14 @@ class Au3Parser:
                     error.leading_comments[:0] = comments
                 body.append(error)
                 continue
+            if self._statement_is_abandoned(stmt, mark, recorded):
+                del self._errors[recorded:]
+                error = self._recover_statement(start, mark)
+                if comments:
+                    error.leading_comments[:0] = comments
+                body.append(error)
+                continue
+            self._terminate_statement(stmt)
             if comments:
                 stmt.leading_comments[:0] = comments
             body.append(stmt)
@@ -353,6 +366,31 @@ class Au3Parser:
             body[-1].trailing_comments.extend(trailing)
             trailing = []
         return body, trailing
+
+    def _statement_is_abandoned(self, stmt: Statement, mark: int, recorded: int) -> bool:
+        """
+        Whether *stmt* leaves the tree for the verbatim text of its whole line: it spans a single
+        line — no line break between its first token and the parser's position after it — and
+        either a token it needed was synthesized while it was read or more text follows it on its
+        line, so the interpreter rejects the line when it reaches it and a repaired reading would
+        be code that never runs as written. A stray closer or divider is itself such a statement,
+        and a line that holds one keeps the repaired reading instead: recovering it whole would
+        swallow the boundary and move every statement after it into the wrong block.
+        """
+        if isinstance(stmt, Au3ErrorNode):
+            return False
+        if any(tok.kind is K.NEWLINE for tok in self._tokens[mark:self._index]):
+            return False
+        if len(self._errors) == recorded and self._at(K.NEWLINE, K.EOF):
+            return False
+        index = mark
+        while True:
+            kind = self._tokens[index].kind
+            if kind in (K.NEWLINE, K.EOF):
+                return True
+            if kind in _STRAY_TERMINATORS:
+                return False
+            index += 1
 
     def _terminate_statement(self, stmt: Statement):
         if self._at(K.NEWLINE):

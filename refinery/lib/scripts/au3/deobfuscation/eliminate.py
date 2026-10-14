@@ -17,9 +17,11 @@ reached from outside the tree, so only its dead locals and effect-free statement
 channel gate: a computed-name channel outside the functions this sweep removes blocks function
 and global removal for the whole visit, because the name it computes may reach anything, and a
 channel inside a function blocks that function's local removal, because a dynamic payload runs
-in the scope it stands in and can name a local of it. The error-node gate: a tree that failed to
-parse anywhere blocks the whole pass, because the raw error text is live source the real AutoIt
-runs and no model here reads.
+in the scope it stands in and can name a local of it. Error text counts as a reference to every
+name it spells, and as a channel when it names one, which the usage model reads; a function
+whose subtree holds error text with an AutoIt block keyword is not removed, because deleting
+the function could move where the real parser's block boundaries fall, and with them which code
+is live at all.
 
 What a removal may not hide: an initializer or dimension that could terminate the script — a
 division, an exponentiation, an array subscript, a call of the wrong arity — keeps its
@@ -66,8 +68,6 @@ class Au3DeadCodeElimination(Transformer):
         return None
 
     def _sweep(self, script: Au3Script) -> None:
-        if script.errors or any(isinstance(node, Au3ErrorNode) for node in script.walk()):
-            return
         cache = model_cache(self, script)
         self._scopes = cache.scopes
         self._usage = cache.usage
@@ -76,6 +76,7 @@ class Au3DeadCodeElimination(Transformer):
         )))
         entry_open = self._entry_is_open(script)
         removable = self._uncalled() if entry_open else set()
+        removable = self._without_block_keyword_text(removable)
         removable = self._without_nested_survivors(removable)
         blocked = self._channels_block(removable)
         if blocked:
@@ -116,6 +117,24 @@ class Au3DeadCodeElimination(Transformer):
             for name in usage.functions
             if usage.call_counts.get(name, 0) == 0
             and not usage.spells(name)
+        }
+
+    def _without_block_keyword_text(self, removable: set[str]) -> set[str]:
+        """
+        *removable* minus every function whose subtree holds error text with an AutoIt block
+        keyword, read from the usage model: deleting the function could move where the real
+        parser's block boundaries fall, and with them which code is live at all.
+        """
+        usage = self._usage
+        assert usage is not None
+        return {
+            name
+            for name in removable
+            if not any(
+                usage.unparsed[node].block_keyword
+                for node in usage.functions[name].walk()
+                if isinstance(node, Au3ErrorNode)
+            )
         }
 
     def _without_nested_survivors(self, removable: set[str]) -> set[str]:

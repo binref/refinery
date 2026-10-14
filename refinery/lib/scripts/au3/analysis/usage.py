@@ -7,6 +7,18 @@ the module that pinned it: the bindings by `refinery.lib.scripts.au3.analysis.sc
 summaries by `refinery.lib.scripts.au3.analysis.propagation`, the builtin knowledge by
 `refinery.lib.scripts.au3.analysis.builtins`.
 
+Source text the parser could not read — an error node in the tree — is live source AutoIt may run
+when it reaches it, so the model reads it through
+`refinery.lib.scripts.au3.analysis.unparsed.read_unparsed` and counts every name it spells as a
+reference: a call, a binding that may fall either side, a spelling. Text that opens a call on a
+computed callee or names the builtin `Call` makes any callee possible — the text cannot show the
+literalness of `Call`'s argument, and whether a name it spells shadows a builtin is unpinned — an
+`Execute` it spells joins the names the census counts, and the error-state macros it spells count
+as reads. The model holds the facts of every error node keyed by its node and the variables of
+every error node, for the transforms that ask them. The parser's record list is not an input: it
+outlives the edits that remove the nodes it names, so a model over it would keep refusing a tree
+its own transforms had cleaned.
+
 An expression is effect-free when evaluating it writes nothing observable and cannot terminate
 the script. Termination is what the arithmetic refuses: a division by zero ends the script
 (pinned by the probe corpus), an out-of-range subscript ends it the same way, and a wrong-arity
@@ -36,6 +48,7 @@ from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import NAME_PARAMETERS
 from refinery.lib.scripts.au3.analysis.existence import execute_kills
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
+from refinery.lib.scripts.au3.analysis.unparsed import Au3UnparsedText, read_unparsed
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
     Au3BinaryExpression,
@@ -44,6 +57,7 @@ from refinery.lib.scripts.au3.model import (
     Au3DefaultLiteral,
     Au3Directive,
     Au3EnumDeclarator,
+    Au3ErrorNode,
     Au3ExitStatement,
     Au3FloatLiteral,
     Au3FunctionDeclaration,
@@ -81,19 +95,23 @@ class Au3UsageModel:
     """
     What one tree version does with its names, built once per tree version by
     `build_usage_model`: the script's functions, the direct-identifier call count of each, the
-    functions that are pure, the calls that may consume a computed name, the lowercased text of
-    every string literal and directive, the local storage an occurrence in a scope may bind,
-    per scope, and the storage every occurrence provably binds globally, per name, the script
-    level among the readers as `None`.
+    functions that are pure, the calls and error nodes that may consume a computed name, the
+    lowercased text of every string literal and directive, the local storage an occurrence in a
+    scope may bind, per scope, and the storage every occurrence provably binds globally, per name,
+    the script level among the readers as `None`. The facts of every error node are held keyed by
+    their node, and the variables of every error node answer the transforms that ask which names
+    unread text may reference.
     """
 
     functions: dict[str, Au3FunctionDeclaration]
     call_counts: dict[str, int]
     pure_functions: frozenset[str]
-    channels: frozenset[Au3Call]
+    channels: frozenset[Au3Call | Au3ErrorNode]
     spellings: str
     local_bindings: dict[Au3FunctionDeclaration, frozenset[str]]
     global_bindings: dict[str, frozenset[Au3FunctionDeclaration | None]]
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText]
+    unparsed_variables: frozenset[str]
 
     def spells(self, name: str) -> bool:
         """
@@ -149,11 +167,15 @@ def callee_census(
     Count what the calls of *root* name. A member callee is the one exception to every reader: it
     dispatches through an object and reaches no builtin and no script function. A script function
     named `Call` shadows the builtin, so its first argument is an ordinary argument rather than a
-    name.
+    name. Source text the parser could not read is read through `read_unparsed`: a computed callee
+    it opens, or a `Call` it spells — whose argument's literalness the text cannot show — makes
+    any callee possible, an `Execute` it spells joins the names, and the error-state macros it
+    spells count as reads.
     """
     callees: set[str] = set()
     computed_callee = False
     reads_error_macros = False
+    texts: list[str] = []
     for node in root.walk():
         if isinstance(node, Au3Macro):
             reads_error_macros = reads_error_macros or node.name in _ERROR_MACROS
@@ -172,6 +194,21 @@ def callee_census(
                         callees.add(literal.value.lower())
             elif not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
                 computed_callee = True
+        elif isinstance(node, Au3ErrorNode):
+            texts.append(node.text)
+    for text in texts:
+        unparsed = read_unparsed(text)
+        computed_callee = (
+            computed_callee
+            or unparsed.computed_callee
+            or 'call' in unparsed.identifiers
+        )
+        reads_error_macros = (
+            reads_error_macros
+            or not _ERROR_MACROS.isdisjoint(unparsed.macros)
+        )
+        if 'execute' in unparsed.identifiers:
+            callees.add('execute')
     return Au3CalleeCensus(frozenset(callees), computed_callee, reads_error_macros)
 
 
@@ -352,6 +389,7 @@ def _build_purity(
 def _collect_bindings(
     root: Au3Script,
     scope_model: Au3ScopeModel,
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
 ) -> tuple[
     dict[Au3FunctionDeclaration, frozenset[str]],
     dict[str, frozenset[Au3FunctionDeclaration | None]],
@@ -364,7 +402,8 @@ def _collect_bindings(
     when a call leaves its argument out. The declarator variables themselves are excluded — the
     declarations are what the answers are asked about. A write that proves nothing binds no
     storage: its value reaches a global only through a read somewhere, and that read is the
-    occurrence that protects the name.
+    occurrence that protects the name. A variable of unread text counts as an occurrence that
+    may bind either a local of its node's scope or the global.
     """
     local: dict[Au3FunctionDeclaration, set[str]] = {}
     global_names: dict[str, set[Au3FunctionDeclaration | None]] = {}
@@ -396,22 +435,34 @@ def _collect_bindings(
             ):
                 assert scope is not None
                 local.setdefault(scope, set()).add(node.name)
+    for node, facts in unparsed.items():
+        scope = ast.enclosing_function(node)
+        for name in facts.variables:
+            global_names.setdefault(name, set()).add(scope)
+            if scope is not None:
+                local.setdefault(scope, set()).add(name)
     return (
         {scope: frozenset(names) for scope, names in local.items()},
         {name: frozenset(scopes) for name, scopes in global_names.items()},
     )
 
 
-def _collect_channels(root: Au3Script, scope_model: Au3ScopeModel) -> frozenset[Au3Call]:
+def _collect_channels(
+    root: Au3Script,
+    scope_model: Au3ScopeModel,
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
+) -> frozenset[Au3Call | Au3ErrorNode]:
     """
-    Every call that may consume a computed name: a callee that is neither an identifier nor a
-    member access, an `Execute` whose payload `execute_kills` refuses, and a non-literal in a
-    name-parameter position of a builtin the table knows. A member callee dispatches through an
-    object and reaches no script function or variable, so it is the one non-identifier callee
-    that is not a channel. A call naming a script function is answered by the call-count and
-    spelling facts instead.
+    Every call and error node that may consume a computed name: a callee that is neither an
+    identifier nor a member access, an `Execute` whose payload `execute_kills` refuses, and a
+    non-literal in a name-parameter position of a builtin the table knows. A member callee
+    dispatches through an object and reaches no script function or variable, so it is the one
+    non-identifier callee that is not a channel. A call naming a script function is answered by
+    the call-count and spelling facts instead. An error node joins when its text opens a call on
+    a computed callee or spells `Execute` or a name-parameter builtin — whether a name it spells
+    shadows the builtin is unresolvable in unread text, so a name it spells always counts.
     """
-    channels: set[Au3Call] = set()
+    channels: set[Au3Call | Au3ErrorNode] = set()
     for node in root.walk():
         if not isinstance(node, Au3Call):
             continue
@@ -432,10 +483,21 @@ def _collect_channels(root: Au3Script, scope_model: Au3ScopeModel) -> frozenset[
             if not isinstance(ast.unwrap_parens(node.arguments[index]), Au3StringLiteral):
                 channels.add(node)
                 break
+    for node, facts in unparsed.items():
+        if (
+            facts.computed_callee
+            or 'execute' in facts.identifiers
+            or not NAME_PARAMETERS.keys().isdisjoint(facts.identifiers)
+        ):
+            channels.add(node)
     return frozenset(channels)
 
 
-def _collect_call_counts(root: Au3Script, scope_model: Au3ScopeModel) -> dict[str, int]:
+def _collect_call_counts(
+    root: Au3Script,
+    scope_model: Au3ScopeModel,
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
+) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for node in root.walk():
         if not isinstance(node, Au3Call):
@@ -443,17 +505,37 @@ def _collect_call_counts(root: Au3Script, scope_model: Au3ScopeModel) -> dict[st
         callee = ast.direct_callee(node)
         if callee is not None and callee.name in scope_model.functions:
             counts[callee.name] += 1
+    for facts in unparsed.values():
+        for identifier in facts.identifiers:
+            if identifier in scope_model.functions:
+                counts[identifier] += 1
     return dict(counts)
 
 
-def _collect_spellings(root: Au3Script) -> str:
+def _collect_spellings(
+    root: Au3Script,
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
+) -> str:
     pieces = []
     for node in root.walk():
         if isinstance(node, Au3StringLiteral):
             pieces.append(node.value)
         elif isinstance(node, Au3Directive):
             pieces.append(node.text)
+    for facts in unparsed.values():
+        pieces.extend(facts.strings)
     return '\n'.join(pieces).lower()
+
+
+def _collect_unparsed(root: Au3Script) -> dict[Au3ErrorNode, Au3UnparsedText]:
+    """
+    The facts of every error node in *root*, keyed by the node.
+    """
+    return {
+        node: read_unparsed(node.text)
+        for node in root.walk()
+        if isinstance(node, Au3ErrorNode)
+    }
 
 
 def build_usage_model(
@@ -465,13 +547,21 @@ def build_usage_model(
     Collect what *root* does with its names over the scope model's bindings and the propagation
     walk's may-write summaries.
     """
-    local_bindings, global_bindings = _collect_bindings(root, scope_model)
+    unparsed = _collect_unparsed(root)
+    unparsed_variables = {
+        name
+        for facts in unparsed.values()
+        for name in facts.variables
+    }
+    local_bindings, global_bindings = _collect_bindings(root, scope_model, unparsed)
     return Au3UsageModel(
         functions=scope_model.functions,
-        call_counts=_collect_call_counts(root, scope_model),
+        call_counts=_collect_call_counts(root, scope_model, unparsed),
         pure_functions=_build_purity(root, scope_model, summaries),
-        channels=_collect_channels(root, scope_model),
-        spellings=_collect_spellings(root),
+        channels=_collect_channels(root, scope_model, unparsed),
+        spellings=_collect_spellings(root, unparsed),
         local_bindings=local_bindings,
         global_bindings=global_bindings,
+        unparsed=unparsed,
+        unparsed_variables=frozenset(unparsed_variables),
     )

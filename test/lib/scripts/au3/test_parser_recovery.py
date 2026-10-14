@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import unittest
+
 from test import TestBase
 
 from refinery.lib.scripts.au3.model import (
     Au3ErrorNode,
+    Au3FunctionDeclaration,
     Au3IfStatement,
+    Au3SwitchStatement,
     Au3WhileStatement,
 )
 from refinery.lib.scripts.au3.parser import Au3Parser
@@ -169,3 +173,92 @@ class TestAu3ParserRecovery(TestBase):
                 self.assertIsInstance(script.body[0], Au3ErrorNode)
                 self.assertEqual(
                     [node for node in script.walk() if getattr(node, 'name', None) == ''], [])
+
+    def test_comma_after_assignment_recovers_whole_line(self):
+        script = self._parse('$a = 1, $b = 2\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, '$a = 1, $b = 2')
+        self.assertEqual(script.errors, [script.body[0]])
+
+    def test_juxtaposed_calls_inside_execute_recovers_whole_line(self):
+        script = self._parse('$x = Execute(f(1) g(2))\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, '$x = Execute(f(1) g(2))')
+        self.assertEqual(script.errors, [script.body[0]])
+
+    def test_missing_closing_paren_recovers_whole_line(self):
+        script = self._parse('$a = f(1\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, '$a = f(1')
+        self.assertEqual(script.errors, [script.body[0]])
+
+    def test_single_line_if_with_trailing_text_recovers_whole_line(self):
+        script = self._parse('If 1 Then $a = 1, $b = 2\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, 'If 1 Then $a = 1, $b = 2')
+        self.assertEqual(script.errors, [script.body[0]])
+
+    def test_return_with_trailing_text_recovers_whole_line(self):
+        script = self._parse('Return 1, 2\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, 'Return 1, 2')
+        self.assertEqual(script.errors, [script.body[0]])
+
+    def test_recovered_line_excludes_its_trailing_comment(self):
+        script = self._parse('$a = 1, $b = 2 ; note\n')
+        error = script.body[0]
+        self.assertEqual(error.text, '$a = 1, $b = 2')
+        self.assertEqual(error.trailing_comments, ['; note'])
+
+    def test_continuation_line_is_recovered_across_both_physical_lines(self):
+        script = self._parse('$a = 1, _\n$b = 2\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, '$a = 1, _\n$b = 2')
+
+    def test_boundary_after_statement_keeps_following_statement_top_level(self):
+        script = self._parse('If 0 Then\n$a = 1 EndIf\nlive()\n')
+        self.assertEqual(len(script.body), 2)
+        self.assertIsInstance(script.body[0], Au3IfStatement)
+        self.assertEqual(script.body[1].expression.callee.name, 'live')
+
+    def test_boundary_case_keeps_next_case_body_separate(self):
+        script = self._parse('Switch $x\nCase 1\n$y = 1 Case 2\n$z = 2\nEndSwitch\n')
+        switch = script.body[0]
+        self.assertIsInstance(switch, Au3SwitchStatement)
+        self.assertEqual(len(switch.cases), 2)
+        self.assertEqual(switch.cases[0].body[0].expression.target.name, 'y')
+        self.assertEqual(switch.cases[1].body[0].expression.target.name, 'z')
+
+    def test_repaired_statement_before_boundary_keeps_the_boundary(self):
+        script = self._parse('If $x Then\n$a = f(1 EndIf\n')
+        self.assertEqual(len(script.body), 1)
+        node = script.body[0]
+        self.assertIsInstance(node, Au3IfStatement)
+        self.assertEqual(
+            [nested for nested in node.walk() if isinstance(nested, Au3ErrorNode)], [])
+        call = node.body[0].expression.value
+        self.assertEqual(call.callee.name, 'f')
+        self.assertEqual(len(call.arguments), 1)
+
+    def test_unclosed_final_function_holds_rest_of_file_as_its_body(self):
+        script = self._parse('Func F()\n$a = 1\n')
+        self.assertEqual(len(script.body), 1)
+        func = script.body[0]
+        self.assertIsInstance(func, Au3FunctionDeclaration)
+        self.assertEqual(func.body[0].expression.target.name, 'a')
+
+    @unittest.expectedFailure
+    def test_text_after_block_header_is_not_a_statement(self):
+        script = self._parse('While 1 junk\nWend\n')
+        self.assertEqual(len(script.body[0].body), 0)
+
+    @unittest.expectedFailure
+    def test_text_after_block_closer_is_not_a_statement(self):
+        script = self._parse('If $x Then\nEndIf $y = 1\n')
+        self.assertEqual(len(script.body), 1)

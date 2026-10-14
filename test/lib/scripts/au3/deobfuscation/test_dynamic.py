@@ -428,11 +428,10 @@ class TestAu3DynamicNameFlattening(TestAu3):
             'Func f()\n    Local $x\n    Assign("x", 1)\n    $r = Eval("x")\n    Call("f")\n'
             'EndFunc\n$x = = 1\n')
 
-    def test_an_unterminated_construct_keeps_every_rule(self):
+    def test_a_construct_the_parser_closed_itself_flattens(self):
         """
-        A construct the parser closed itself leaves no error node in the tree, but the parser's
-        own error record names it — source the real AutoIt refuses to load — so every rule
-        refuses rather than rewrite around the repair.
+        A construct the parser closed itself leaves no error node in the tree, and the record it
+        left spells no name any rule asks about, so the tree flattens as a clean one does.
         """
         self.assertEqual(
             self._apply(
@@ -440,12 +439,13 @@ class TestAu3DynamicNameFlattening(TestAu3):
                 Func f()
                     Local $x
                     Assign("x", 1)
+                    Call("f")
                     If True Then
                         $y = 1
                 ''',
                 Au3DynamicNameFlattening,
             ),
-            'Func f()\n    Local $x\n    Assign("x", 1)\n    If True Then\n'
+            'Func f()\n    Local $x\n    $x = 1\n    f()\n    If True Then\n'
             '        $y = 1\n    EndIf\nEndFunc\n')
 
     def test_an_assign_behind_a_preceding_local_flattens(self):

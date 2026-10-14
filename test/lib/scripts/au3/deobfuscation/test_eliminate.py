@@ -1,6 +1,6 @@
 """
 The Phase 4 transform on its own: which functions, declarations and statements a single sweep
-removes, and which gate — entry, channel, or parse error — keeps what would otherwise go. The
+removes, and which gate — entry, channel, or unread text — keeps what would otherwise go. The
 fixpoint cases run through the whole pipeline, because the group's run loop is what sweeps again.
 """
 from __future__ import annotations
@@ -235,13 +235,111 @@ class TestAu3DeadCodeElimination(TestAu3):
             'Global $n = "q"\n'
             'GUICtrlRegisterListViewSort(0, $n)\n')
 
-    def test_an_unparseable_line_leaves_the_whole_tree_unchanged(self):
+    def test_an_uncalled_function_with_error_text_is_removed(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                Func dead()
+                EndFunc
+
+                $x = = 1
+                ''',
+                Au3DeadCodeElimination,
+            ),
+            '$x = = 1\n')
+
+    def test_a_function_called_only_from_error_text_is_kept(self):
         self._assertKept(
             '''
             Func dead()
             EndFunc
 
-            $x = = 1
+            Func live()
+                $g = 1
+            EndFunc
+
+            live()
+
+            $x = = dead()
+            ''')
+
+    def test_a_function_whose_error_text_holds_a_block_keyword_is_kept(self):
+        self._assertKept(
+            '''
+            Func dead()
+                $x = = "EndIf"
+            EndFunc
+
+            MsgBox(0, 0, 0)
+            ''')
+
+    def test_a_declarator_read_only_in_error_text_is_kept(self):
+        self._assertKept(
+            '''
+            Global $g
+
+            MsgBox(0, 0, 0)
+
+            $g = = 1
+            ''')
+
+    def test_error_text_naming_execute_blocks_global_removal(self):
+        self._assertKept(
+            '''
+            Global $g
+
+            MsgBox(0, 0, 0)
+
+            $x = = Execute("y")
+            ''')
+
+    def test_a_record_without_an_error_node_still_sweeps(self):
+        """
+        A construct the parser closed itself leaves no error node in the tree, and the record it
+        left spells no name, so the sweep removes what a clean tree would.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func dead()
+                EndFunc
+
+                Func live()
+                    $g = 1
+                EndFunc
+
+                live()
+
+                Func f()
+                    $y = 1
+                ''',
+                Au3DeadCodeElimination,
+            ),
+            'Func live()\n'
+            '    $g = 1\n'
+            'EndFunc\n'
+            'live()\n')
+
+    def test_an_effect_free_call_survives_error_text_naming_execute(self):
+        self._assertKept(
+            '''
+            Func f()
+            EndFunc
+
+            f()
+
+            $x = = 1 & Execute("y")
+            ''')
+
+    def test_an_effect_free_call_survives_error_text_reading_error_state(self):
+        self._assertKept(
+            '''
+            Func f()
+            EndFunc
+
+            f()
+
+            $x = = 1 & @error
             ''')
 
     def test_an_unbound_global_is_removed(self):

@@ -16,6 +16,11 @@ class Au3ScopeKind(enum.Enum):
 @dataclass(repr=False, eq=False)
 class Au3Script(Node):
     body: list[Statement] = field(default_factory=list)
+    #: Every diagnostic the parser recorded: the error nodes it recovered whole and the repairs it
+    #: synthesized. No pass reads the list: its texts also live in the tree — an error node is its
+    #: own record, and a repair record names a token of a line the parser went on to read — while
+    #: the list outlives the edits that remove those lines, so a pass over it would refuse a tree
+    #: its own transforms had cleaned.
     errors: list[Au3ErrorNode] = field(default_factory=list)
 
     def early_errors(self) -> list[Au3WithMember]:
