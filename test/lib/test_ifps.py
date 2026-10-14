@@ -234,3 +234,15 @@ class TestIPFSEmulator(TestBase):
         once = min(expand_all(False) for _ in range(3))
         # A reset that rebuilds the 61 global variables of this script makes the ratio about 400.
         self.assertLess(each / once, 10)
+
+    def test_a_compiled_prefix_check_finds_the_prefix_with_pos(self):
+        emulator = self._installer_emulator()
+        starts_with = emulator.symbols['STARTSWITH']
+        self.assertTrue(emulator.emulate_function(starts_with, 'Install', 'Install.exe').value)
+        self.assertFalse(emulator.emulate_function(starts_with, 'exe', 'Install.exe').value)
+        self.assertFalse(emulator.emulate_function(starts_with, '&', '').value)
+        self.assertFalse(emulator.emulate_function(starts_with, '', 'Install').value)
+
+    def test_removing_accelerator_keys_from_an_empty_caption_ends(self):
+        emulator = self._installer_emulator(max_opcodes=10_000)
+        list(emulator.emulate_function(emulator.symbols['REMOVEACCELERATORKEY'], ''))

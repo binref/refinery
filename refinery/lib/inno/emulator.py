@@ -1887,7 +1887,9 @@ class IFPSEmulator:
         return count
 
     @external()
-    def Pos(self, string: str, sub: str) -> int:
+    def Pos(self, sub: str, string: str) -> int:
+        if not sub:
+            return 0
         return string.find(sub) + 1
 
     @external()
