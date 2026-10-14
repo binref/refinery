@@ -1,5 +1,6 @@
 import contextlib
 import pytest
+import time
 
 from unittest import mock
 
@@ -23,6 +24,17 @@ def _failing_external(name: str):
 
     with mock.patch.dict(registry, {name: registry[name]._replace(call=fail)}):
         yield
+
+
+def _strings_in(document):
+    if isinstance(document, dict):
+        for value in document.values():
+            yield from _strings_in(value)
+    elif isinstance(document, list):
+        for value in document:
+            yield from _strings_in(value)
+    elif isinstance(document, str):
+        yield document
 
 
 class TestIPFSEmulator(TestBase):
@@ -191,3 +203,34 @@ class TestIPFSEmulator(TestBase):
         byte_list.resize(2)
         byte_list.resize(4)
         self.assertEqual([byte_list.at(k).name for k in range(len(byte_list))], [F'{byte_list.name}[{k}]' for k in range(4)])
+
+    def test_a_reset_restores_the_globals_that_a_script_changed(self):
+        from refinery.lib.inno.emulator import PageID
+        emulator = self._installer_emulator()
+        fresh = [variable.get() for variable in emulator.globals]
+        list(emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpWelcome))
+        self.assertNotEqual([variable.get() for variable in emulator.globals], fresh)
+        emulator.reset()
+        self.assertEqual([variable.get() for variable in emulator.globals], fresh)
+
+    def test_a_reset_before_each_constant_expansion_costs_little_more_than_the_expansion(self):
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.structures import struct_to_json
+        inno = InnoArchive(self.download_sample(_INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS))
+        emulator = inno.emulator
+        assert emulator is not None
+        strings = [*_strings_in(struct_to_json(inno.setup_info)), *_strings_in(struct_to_json(inno.setup_data))]
+
+        def expand_all(reset_before_each: bool) -> float:
+            start = time.perf_counter()
+            emulator.reset()
+            for string in strings:
+                if reset_before_each:
+                    emulator.reset()
+                emulator.expand_constant(string)
+            return time.perf_counter() - start
+
+        each = min(expand_all(True) for _ in range(3))
+        once = min(expand_all(False) for _ in range(3))
+        # A reset that rebuilds the 61 global variables of this script makes the ratio about 400.
+        self.assertLess(each / once, 10)

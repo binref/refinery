@@ -702,15 +702,16 @@ class IFPSEmulator:
 
         if isinstance(archive, InnoArchive):
             self.setup_info = archive.setup_info
-            self.ifps = ifps = archive.ifps
+            ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
         else:
             self.setup_info = None
-            self.ifps = ifps = archive
+            ifps = archive
+        self.ifps = ifps
         self.config = options or IFPSEmulatorConfig(**more)
         self._wizard_form = _WizardForm()
-        self.globals = [Variable(v.type, v.spec) for v in ifps.globals]
+        self._globals: list[Variable] | None = None
         self.stack: list[Variable] = []
         self.mutexes: set[str] = set()
         self.symbols: dict[str, Function] = CaseInsensitiveDict()
@@ -723,8 +724,8 @@ class IFPSEmulator:
 
     def reset(self):
         """
-        Reset the emulator timing, FPU word, mutexes, trace, and stack. All global variables are
-        set to their default values.
+        Reset the emulator timing, FPU word, mutexes, trace, and stack. The script starts over
+        with new global variables that hold their default values.
         """
         self.seconds_slept = 0.0
         self.clock = 0
@@ -732,11 +733,19 @@ class IFPSEmulator:
         self.jumpflag = False
         self.mutexes.clear()
         self.stack.clear()
-        for v in self.globals:
-            v.setdefault()
+        self._globals = None
         self._win32api_last_error = 0
         self._win32api_sorted_process_ids = sorted(self.config.processes)
         return self
+
+    @property
+    def globals(self) -> list[Variable]:
+        """
+        The global variables of the script.
+        """
+        if (script_globals := self._globals) is None:
+            script_globals = self._globals = [Variable(v.type, v.spec) for v in self.ifps.globals]
+        return script_globals
 
     def unimplemented(self, function: Function):
         """
@@ -790,7 +799,7 @@ class IFPSEmulator:
                     i -= 1
                 return self.stack[sp - i]
             if t is VariableType.Global:
-                return self.globals[i]
+                return script_globals[i]
             if t is VariableType.Local:
                 return self.stack[sp + i]
             raise TypeError
@@ -818,6 +827,7 @@ class IFPSEmulator:
             getvar(op).set(new)
 
         callstack: list[_CallState] = []
+        script_globals = self.globals
         exec_start = process_time()
         stack = self.stack
         _cfg_max_call_stack = self.config.max_call_stack
