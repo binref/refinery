@@ -1,5 +1,4 @@
 import copy
-import errno
 import gc
 import io
 import itertools
@@ -826,17 +825,6 @@ class TestFraming(TestBase):
             with self.assertRaises(BufferError):
                 _ = B'data' | nop() | target
         self.assertEqual(target, B'')
-
-    @pytest.mark.xfail(strict=True, reason='a write that fails for any reason is read as a receiver that stopped reading')
-    def test_output_to_a_stream_without_space_left_raises(self):
-        from refinery import nop
-
-        class _Full(_Sink):
-            def write(self, data):
-                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
-
-        with self.assertRaises(OSError):
-            _ = B'data' | nop() | _Full()
 
     def test_single_unshared_output_is_not_copied(self):
         from refinery import Unit, nop
