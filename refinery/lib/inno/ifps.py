@@ -1352,7 +1352,7 @@ class IFPSFile(Struct):
                 make_string(name)
 
             if (name := 'AnyString') in missing_types:
-                make_string(name)
+                add_type(name, TPrimitive(TC.AnsiString, symbol=name))
 
             if (name := 'TArrayOfString') in missing_types:
                 add_type(name, TArray(TC.Array, make_string()))

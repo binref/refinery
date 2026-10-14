@@ -246,3 +246,8 @@ class TestIPFSEmulator(TestBase):
     def test_removing_accelerator_keys_from_an_empty_caption_ends(self):
         emulator = self._installer_emulator(max_opcodes=10_000)
         list(emulator.emulate_function(emulator.symbols['REMOVEACCELERATORKEY'], ''))
+
+    def test_a_parameter_that_takes_any_string_type_is_shown_as_any_string(self):
+        decl = self._installer_emulator().symbols['Pos'].decl
+        assert decl is not None
+        self.assertEqual([str(parameter.type) for parameter in decl.parameters], ['AnyString', 'AnyString'])
