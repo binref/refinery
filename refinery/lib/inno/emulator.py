@@ -43,8 +43,9 @@ from typing import (
 from urllib.parse import unquote
 
 from refinery.lib import json
-from refinery.lib.inno import CaseInsensitiveDict
+from refinery.lib.inno import CaseInsensitiveDict, delphi
 from refinery.lib.inno.archive import Flags, InnoArchive
+from refinery.lib.inno.delphi import VarRec, VType
 from refinery.lib.inno.ifps import (
     TC,
     AOp,
@@ -477,6 +478,43 @@ class IFPSEmulatedFunction(NamedTuple):
         The argument count for this handler.
         """
         return len(self.spec)
+
+
+_OPEN_ARRAY_KINDS = {
+    TC.U08           : VType.Integer,
+    TC.S08           : VType.Integer,
+    TC.U16           : VType.Integer,
+    TC.S16           : VType.Integer,
+    TC.U32           : VType.Integer,
+    TC.S32           : VType.Integer,
+    TC.S64           : VType.Int64,
+    TC.Single        : VType.Extended,
+    TC.Double        : VType.Extended,
+    TC.Extended      : VType.Extended,
+    TC.Char          : VType.Char,
+    TC.WideChar      : VType.WideChar,
+    TC.AnsiString    : VType.AnsiString,
+    TC.PChar         : VType.PChar,
+    TC.WideString    : VType.WideString,
+    TC.UnicodeString : VType.UnicodeString,
+    TC.Variant       : VType.Variant,
+    TC.Class         : VType.Object,
+    TC.Interface     : VType.Interface,
+}
+
+
+def _open_array_element(element: Variable) -> VarRec:
+    """
+    Converts an element of an `array of const` into the argument that Pascal Script passes for it
+    to a function of Delphi. Pascal Script passes an element of any other type as the Integer 0.
+    """
+    target = element.deref()
+    if (kind := _OPEN_ARRAY_KINDS.get(target.type.code)) is None:
+        return VarRec(VType.Integer, 0)
+    value = target.get()
+    if kind is VType.Integer:
+        value = ((int(value) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+    return VarRec(kind, value)
 
 
 def _now_in_whole_seconds() -> datetime:
@@ -1704,13 +1742,9 @@ class IFPSEmulator:
         return fmt.format(*args)
 
     @external()
-    def Format(self, fmt: str, args: list[str | int | float]) -> str:
-        try:
-            formatted = fmt % tuple(args)
-        except Exception:
-            raise IFPSException('invalid format')
-        else:
-            return formatted
+    def Format(self, fmt: str, args: Variable[list]) -> str:
+        elements = args.deref()
+        return delphi.format(fmt, [_open_array_element(elements.at(k)) for k in range(len(elements))])
 
     @external()
     def SetupMessage(self, id: int) -> str:

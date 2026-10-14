@@ -86,7 +86,6 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(TestBase):
     def test_float_constants(self):
         self.assertEmulatedAsLogged('ORACLECONSTANTS')
 
-    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='Format follows Python instead of Delphi')
     def test_format(self):
         self.assertEmulatedAsLogged('ORACLEFORMAT')
 

@@ -21,13 +21,13 @@ _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b3
 
 
 @contextlib.contextmanager
-def _replaced_external(name: str, call: Callable, **changes):
+def _replaced_external(name: str, call: Callable, namespace: str = '', **changes):
     """
     Replaces the emulated external function of the given name with the given callable. Other fields
     of its emulation info can be changed by keyword.
     """
     from refinery.lib.inno.emulator import IFPSEmulator
-    registry = IFPSEmulator.external_symbols['']
+    registry = IFPSEmulator.external_symbols[namespace]
     with mock.patch.dict(registry, {name: registry[name]._replace(call=call, **changes)}):
         yield
 
@@ -486,13 +486,19 @@ class TestIPFSEmulator(TestBase):
             [TC.UnicodeString, TC.UnicodeString, TC.U32, TC.U32, TC.UnicodeString],
         ])
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='Format writes a negative Integer in hex with a minus sign')
+    def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
+        from refinery.lib.inno.emulator import NewFunctionCall
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD, log_calls=True)
+        with (
+            _failing_method('TDownloadWizardPage', 'Download', 0),
+            _replaced_external('GetLastError', lambda _: error_code, namespace='kernel32'),
+        ):
+            call = emulator.emulate_function(emulator.symbols['DOWNLOADFILE'], 'url', 'path')
+            return [event.args[0] for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
+
     def test_a_negative_error_code_is_formatted_in_hex_as_its_bit_pattern(self):
-        emulator = self._script_emulator(_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX)
-        message = next(string for string in emulator.ifps.strings if string.startswith('Error downloading'))
-        error = 0x80072EE7 - (1 << 32)
-        formatted = emulator.Format(message, ['url', 'path', error, error, 'reason'])
-        self.assertIn('failed with code -2147012889 (0x80072EE7)', formatted)
+        *_, message = self._messages_of_a_failed_download(0x80072EE7)
+        self.assertIn('failed with code -2147012889 (0x80072EE7)', message)
 
     @pytest.mark.xfail(
         strict=True,
