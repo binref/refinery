@@ -3,7 +3,13 @@ import pytest
 import re
 
 from refinery.lib.inno.archive import InnoArchive
-from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
+from refinery.lib.inno.emulator import (
+    EmulatorException,
+    IFPSEmulatorConfig,
+    IFPSException,
+    InnoSetupEmulator,
+    NewFunctionCall,
+)
 from refinery.lib.inno.ifps import Operand
 
 from .. import TestBase
@@ -47,50 +53,55 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(TestBase):
         self.assertTrue(real)
         self.assertEqual(emulated, real)
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(
+        strict=True, raises=AssertionError, reason='a signed integer variable holds the unsigned bit pattern of a negative value'
+    )
     def test_stores(self):
         self.assertEmulatedAsLogged('ORACLESTORES')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='a signed integer that overflows holds a value outside its range')
     def test_arithmetic(self):
         self.assertEmulatedAsLogged('ORACLEARITHMETIC')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='div and mod round toward negative infinity instead of toward zero')
     def test_division(self):
         self.assertEmulatedAsLogged('ORACLEDIVISION')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(
+        strict=True, raises=EmulatorException, reason='shr shifts in sign bits and a negative shift count ends the emulation'
+    )
     def test_shifts(self):
         self.assertEmulatedAsLogged('ORACLESHIFTS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(
+        strict=True, raises=AssertionError, reason='an Integer and a Cardinal with the same bit pattern compare as different numbers'
+    )
     def test_comparisons(self):
         self.assertEmulatedAsLogged('ORACLECOMPARISONS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='an Integer compared with a Currency does not raise')
     def test_comparisons_of_an_integer_with_a_currency_and_a_variant(self):
         self.assertEmulatedAsLogged('ORACLEMIXEDCOMPARISONS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
     def test_float_constants(self):
         self.assertEmulatedAsLogged('ORACLECONSTANTS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='Format follows Python instead of Delphi')
     def test_format(self):
         self.assertEmulatedAsLogged('ORACLEFORMAT')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='floats are not converted to text as Delphi converts them')
     def test_floats(self):
         self.assertEmulatedAsLogged('ORACLEFLOATS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=EmulatorException, reason='in on a set ends the emulation')
     def test_sets(self):
         self.assertEmulatedAsLogged('ORACLESETS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='a Boolean holding 2 is false')
     def test_booleans(self):
         self.assertEmulatedAsLogged('ORACLEBOOLEANS')
 
-    @pytest.mark.xfail(strict=True, raises=OverflowError, reason='an Extended constant beyond the Double range fails to parse')
+    @pytest.mark.xfail(strict=True, raises=EmulatorException, reason='Variant operators follow Python instead of Delphi')
     def test_variants(self):
         self.assertEmulatedAsLogged('ORACLEVARIANTS')

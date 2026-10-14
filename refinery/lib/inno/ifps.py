@@ -8,6 +8,7 @@ import abc
 import enum
 import io
 import itertools
+import math
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -51,8 +52,10 @@ def extended(_data: bytes):
             return sign * float('NaN')
     else:
         exponent = exponent - 16383
-    mantissa = data / (1 << 64)
-    return sign * mantissa * (2 ** exponent)
+    try:
+        return sign * math.ldexp(data, exponent - 63)
+    except OverflowError:
+        return sign * float('Inf')
 
 
 def represent(cls: _E) -> _E:
