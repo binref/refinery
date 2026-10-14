@@ -134,3 +134,18 @@ class TestIPFSEmulator(TestBase):
         for _ in call:
             pass
         self.assertEqual(call.value, 'session')
+
+    def test_an_unsigned_integer_variable_wraps_every_assigned_value_into_its_range(self):
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        for code, value, wrapped in (
+            (TC.U08, -1, 0xFF),
+            (TC.U16, 0x12345, 0x2345),
+            (TC.U08, chr(0x20AC), 0xAC),
+            (TC.U16, -1.0, 0xFFFF),
+            (TC.U32, float(1 << 32), 0),
+        ):
+            with self.subTest(type=code.name, value=repr(value)):
+                variable = Variable(TPrimitive(code))
+                variable.set(value)
+                self.assertEqual(variable.get(), wrapped)

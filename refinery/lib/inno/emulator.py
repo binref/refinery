@@ -214,16 +214,14 @@ class Variable(VariableBase, Generic[_T]):
 
     def _wrap(self, value: Value | _T, key: int | None = None) -> _T:
         if (t := self.type.py_type(key)) and not isinstance(value, t):
-            if issubclass(t, int):
-                if isinstance(value, str) and len(value) == 1:
-                    return ord(value[0])
-                if isinstance(value, float):
-                    return int(value)
-            elif isinstance(value, int):
-                if issubclass(t, str):
-                    return chr(value)
-                if issubclass(t, float):
-                    return float(value)
+            if issubclass(t, int) and isinstance(value, str) and len(value) == 1:
+                return self._wrap(ord(value), key)
+            if issubclass(t, int) and isinstance(value, float):
+                return self._wrap(int(value), key)
+            if issubclass(t, str) and isinstance(value, int):
+                return chr(value)
+            if issubclass(t, float) and isinstance(value, int):
+                return float(value)
             raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
         if (valid := self._range) is not None and isinstance(value, int) and value not in valid:
             return value & (len(valid) - 1)
