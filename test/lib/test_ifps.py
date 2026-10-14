@@ -5,7 +5,7 @@ import time
 from typing import Callable
 from unittest import mock
 
-from refinery.lib.inno.emulator import EmulatorException, EmulatorExecutionLimit, IFPSException
+from refinery.lib.inno.emulator import EmulatorException, IFPSException
 
 from .. import TestBase
 
@@ -193,11 +193,6 @@ class TestIPFSEmulator(TestBase):
                 variable.set(value)
                 self.assertEqual(variable.get(), wrapped)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='a signed integer variable holds the unsigned bit pattern of a value outside its range',
-    )
     def test_a_signed_integer_variable_wraps_an_assigned_value_into_its_range(self):
         from refinery.lib.inno.emulator import Variable
         from refinery.lib.inno.ifps import TC, TPrimitive
@@ -208,7 +203,6 @@ class TestIPFSEmulator(TestBase):
             held.append(variable.get())
         self.assertEqual(held, [-56, -0x80000000])
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='an Integer assigned a Boolean holds True or False instead of 1 or 0')
     def test_an_integer_cast_from_a_boolean_is_written_as_a_number(self):
         """
         Pascal Script compiles the cast `Integer(B)` of a Boolean `B` as a plain assignment.
@@ -454,17 +448,11 @@ class TestIPFSEmulator(TestBase):
         inno = InnoArchive(self.download_sample(_INSTALLER_WITH_A_DIRECTORY_PAGE))
         self.assertEqual(inno.files[0].path, 'data/$InputDir0/HalfTime.dll')
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='an Integer is compared with a Cardinal constant by value, not by bit pattern',
-    )
     def test_a_negative_hresult_matches_the_case_label_of_its_bit_pattern(self):
         emulator = self._script_emulator(_SCRIPT_THAT_NAMES_HRESULTS)
         e_notimpl = 0x80004001 - (1 << 32)
         self.assertEqual(emulator.emulate_function(emulator.symbols['HRESULT2STR'], e_notimpl).value, 'NOTIMPL')
 
-    @pytest.mark.xfail(strict=True, raises=EmulatorExecutionLimit, reason='shr on a negative Integer shifts in sign bits')
     def test_a_negative_integer_converts_to_the_hex_digits_of_its_bit_pattern(self):
         emulator = self._script_emulator(_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX, max_opcodes=10_000)
         self.assertEqual(emulator.emulate_function(emulator.symbols['DECTOHEX'], -16, 8).value, 'FFFFFFF0')
@@ -499,6 +487,11 @@ class TestIPFSEmulator(TestBase):
     def test_a_negative_error_code_is_formatted_in_hex_as_its_bit_pattern(self):
         *_, message = self._messages_of_a_failed_download(0x80072EE7)
         self.assertIn('failed with code -2147012889 (0x80072EE7)', message)
+
+    def test_a_negative_error_code_gets_the_description_of_its_bit_pattern(self):
+        *_, message = self._messages_of_a_failed_download(0x80072EE7)
+        description = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD).SysErrorMessage(0x80072EE7)
+        self.assertTrue(message.endswith(description))
 
     @pytest.mark.xfail(
         strict=True,

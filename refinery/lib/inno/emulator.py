@@ -60,6 +60,7 @@ from refinery.lib.inno.ifps import (
     TArray,
     TPrimitive,
     TRecord,
+    TSet,
     TStaticArray,
     Value,
     VariableBase,
@@ -222,8 +223,9 @@ class Variable(VariableBase, Generic[_T]):
             if issubclass(t, float) and isinstance(value, int):
                 return float(value)
             raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
-        if (valid := self._range) is not None and isinstance(value, int) and value not in valid:
-            return value & (valid.stop - valid.start - 1)
+        if (valid := self._range) is not None and isinstance(value, int):
+            start = valid.start
+            return start + (value - start) % (valid.stop - start)
         return value
 
     def resize(self, n: int):
@@ -403,6 +405,189 @@ class EmulatorMaxArray(EmulatorException, MemoryError):
     """
     The script requested an array longer than the array length limit given in the configuration.
     """
+
+
+def _type_mismatch() -> IFPSException:
+    return IFPSException('Type Mismatch')
+
+
+def _signed32(value: int) -> int:
+    return ((value + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+
+
+def _ordinal(code: TC, value) -> int:
+    """
+    Reads an operand as Pascal Script reads it for integer arithmetic and comparisons: an integer as
+    its value and a character as its code point. Any other operand is a type mismatch.
+    """
+    if code.integer:
+        return value
+    if code.character:
+        return ord(value)
+    raise _type_mismatch()
+
+
+def _truncated_division(a: int, b: int) -> tuple[int, int]:
+    """
+    Divides as Delphi's `div` and `mod` do: The quotient is truncated toward zero, and the remainder
+    has the sign of the dividend.
+    """
+    if b == 0:
+        raise ZeroDivisionError('division by zero')
+    quotient = abs(a) // abs(b)
+    if (a < 0) != (b < 0):
+        quotient = -quotient
+    return quotient, a - quotient * b
+
+
+def _python_division(a, b):
+    return a // b if isinstance(a, int) and isinstance(b, int) else a / b
+
+
+_PYTHON_ARITHMETIC = {
+    AOp.Add: operator.add,
+    AOp.Sub: operator.sub,
+    AOp.Mul: operator.mul,
+    AOp.Div: _python_division,
+    AOp.Mod: operator.mod,
+    AOp.Shl: operator.lshift,
+    AOp.Shr: operator.rshift,
+    AOp.And: operator.and_,
+    AOp.BOr: operator.or_,
+    AOp.Xor: operator.xor,
+}
+
+_SET_ARITHMETIC = {
+    AOp.Add: operator.or_,
+    AOp.Sub: lambda a, b: a & ~b,
+    AOp.Mul: operator.and_,
+}
+
+
+def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b) -> int:
+    """
+    Pascal Script's arithmetic for a destination of an integer type. Addition, subtraction,
+    multiplication, and the bitwise operators give the bits that the destination keeps however the
+    operands are read. For division and shifts, the destination's type decides how the source is
+    read and how wide the computation is: 64 bits for an Int64 destination and for a 32-bit
+    destination with an Int64 source, 32 bits otherwise, unsigned for an unsigned destination.
+    """
+    b = _ordinal(source, b)
+    if aop is AOp.Add:
+        return a + b
+    if aop is AOp.Sub:
+        return a - b
+    if aop is AOp.Mul:
+        return a * b
+    if aop is AOp.And:
+        return a & b
+    if aop is AOp.BOr:
+        return a | b
+    if aop is AOp.Xor:
+        return a ^ b
+    wide = target.width > 4
+    if aop is AOp.Shl:
+        return a << (b & (63 if wide else 31))
+    if aop is AOp.Shr:
+        if wide:
+            return (a & 0xFFFFFFFFFFFFFFFF) >> (b & 63)
+        return (a & 0xFFFFFFFF) >> (b & 31)
+    if wide or (target.width == 4 and source.width > 4):
+        pass
+    elif target.signed:
+        b = _signed32(b)
+        if a == -0x80000000 and b == -1:
+            raise OverflowError('Integer overflow')
+    else:
+        b &= 0xFFFFFFFF
+    quotient, remainder = _truncated_division(a, b)
+    if aop is AOp.Div:
+        return quotient
+    if aop is AOp.Mod:
+        return remainder
+    raise TypeError(F'Unknown arithmetic operator {aop!r}.')
+
+
+def _calculate(aop: AOp, target: TC, a, source: TC, b):
+    """
+    Pascal Script's arithmetic for a destination with type code `target` that holds `a` and a
+    source with type code `source` that holds `b`. Python's operators compute it for destinations
+    of other types than integers and sets, and for Variant sources.
+    """
+    if source is not TC.Variant:
+        if target.integer:
+            return _integer_arithmetic(aop, target, a, source, b)
+        if target is TC.Set:
+            if (calculate := _SET_ARITHMETIC.get(aop)) is None:
+                raise _type_mismatch()
+            return calculate(a, b)
+    return _PYTHON_ARITHMETIC[aop](a, b)
+
+
+_PYTHON_COMPARISON = {
+    COp.GE: operator.ge,
+    COp.LE: operator.le,
+    COp.GT: operator.gt,
+    COp.LT: operator.lt,
+    COp.NE: operator.ne,
+    COp.EQ: operator.eq,
+    COp.IN: lambda a, b: a in b,
+    COp.IS: operator.is_,
+}
+
+
+def _integer_comparands(left: TC, a: int, right: TC, b) -> tuple:
+    """
+    Reads the operands of a comparison whose left operand has an integer type as Pascal Script
+    reads them. The left operand's type decides how the right operand is read.
+    """
+    if left is TC.S32:
+        if right is TC.U32:
+            return a, _signed32(b)
+        if right.integer or right in (TC.Single, TC.Double, TC.Extended):
+            return a, b
+        if right.character:
+            return a, ord(b)
+        raise _type_mismatch()
+    if left is TC.U08 and right in (TC.AnsiString, TC.PChar):
+        return chr(a), b
+    b = _ordinal(right, b)
+    if left.width > 4:
+        return a, b
+    if left.signed:
+        return a, _signed32(b)
+    return a, b & 0xFFFFFFFF
+
+
+def _set_contains(members: int, set_type: TSet, code: TC, element) -> bool:
+    ordinal = _ordinal(code, element) & 0xFFFFFFFF
+    if ordinal >= set_type.size:
+        raise IFPSException('Out of Record Fields Range')
+    return bool((members >> ordinal) & 1)
+
+
+def _compare(cop: COp, left: IFPSType, a, right: IFPSType, b) -> bool:
+    """
+    Pascal Script's comparison of `a`, which has the type `left`, with `b`, which has the type
+    `right`. Python's operators compare operands of other types than integers and sets, and
+    Variants.
+    """
+    lc = left.code
+    rc = right.code
+    if cop is COp.IN:
+        if isinstance(right, TSet) and lc is not TC.Variant:
+            return _set_contains(b, right, lc, a)
+    elif cop is not COp.IS and lc is not TC.Variant and rc is not TC.Variant:
+        if lc.integer:
+            a, b = _integer_comparands(lc, a, rc, b)
+        elif lc is TC.Set:
+            if cop is COp.GE:
+                return b & ~a == 0
+            if cop is COp.LE:
+                return a & ~b == 0
+            if cop is not COp.EQ and cop is not COp.NE:
+                raise _type_mismatch()
+    return _PYTHON_COMPARISON[cop](a, b)
 
 
 @dataclass
@@ -842,12 +1027,6 @@ class IFPSEmulator:
         Begin emulating at the start of the given function.
         """
 
-        def operator_div(a, b):
-            return a // b if isinstance(a, int) and isinstance(b, int) else a / b
-
-        def operator_in(a, b):
-            return a in b
-
         def resolve(spec: VariableSpec) -> Variable:
             t, i = spec.type, spec.index
             if t is VariableType.Argument:
@@ -876,6 +1055,12 @@ class IFPSEmulator:
             if op.immediate:
                 return op.value.value
             return getvar(op).get()
+
+        def gettyped(op: Operand) -> tuple[IFPSType, Any]:
+            if op.immediate and (constant := op.value) is not None:
+                return constant.type, constant.value
+            var = getvar(op).deref()
+            return var.type, var.get()
 
         def setval(op: Operand, new):
             if op.immediate:
@@ -1008,25 +1193,12 @@ class IFPSEmulator:
                     elif opc == Op.Calculate:
                         if not isinstance((aop := insn.operator), AOp):
                             raise TypeError(F'Operator for {opc} was of type {aop.__class__.__name__} rather than AOp.')
-                        calculate = {
-                            AOp.Add: operator.add,
-                            AOp.Sub: operator.sub,
-                            AOp.Mul: operator.mul,
-                            AOp.Div: operator_div,
-                            AOp.Mod: operator.mod,
-                            AOp.Shl: operator.lshift,
-                            AOp.Shr: operator.rshift,
-                            AOp.And: operator.and_,
-                            AOp.BOr: operator.or_,
-                            AOp.Xor: operator.xor,
-                        }[aop]
-                        src = insn.op(1)
-                        dst = insn.op(0)
-                        sv = getval(src)
-                        dv = getval(dst)
+                        target = getvar(insn.op(0)).deref()
+                        st, sv = gettyped(insn.op(1))
+                        dv = target.get()
                         fpu = isinstance(sv, float) or isinstance(dv, float)
                         try:
-                            result = calculate(dv, sv)
+                            result = _calculate(aop, target.type.code, dv, st.code, sv)
                             if fpu and not isinstance(result, float):
                                 raise FloatingPointError
                         except FloatingPointError as FPE:
@@ -1044,7 +1216,7 @@ class IFPSEmulator:
                                 result = float('nan')
                             else:
                                 raise IFPSException('division by zero', ZDE) from ZDE
-                        setval(dst, result)
+                        target.set(result)
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
                         stack.append(getval(insn.op(0)))
@@ -1083,20 +1255,9 @@ class IFPSEmulator:
                     elif opc == Op.Compare:
                         if not isinstance((cop := insn.operator), COp):
                             raise TypeError(F'Operator for {opc} was of type {cop.__class__.__name__} rather than COp.')
-                        compare = {
-                            COp.GE: operator.ge,
-                            COp.LE: operator.le,
-                            COp.GT: operator.gt,
-                            COp.LT: operator.lt,
-                            COp.NE: operator.ne,
-                            COp.EQ: operator.eq,
-                            COp.IN: operator_in,
-                            COp.IS: operator.is_,
-                        }[cop]
-                        d = getvar(insn.op(0))
-                        a = getval(insn.op(1))
-                        b = getval(insn.op(2))
-                        d.set(compare(a, b))
+                        lt, lv = gettyped(insn.op(1))
+                        rt, rv = gettyped(insn.op(2))
+                        getvar(insn.op(0)).set(_compare(cop, lt, lv, rt, rv))
                     elif opc == Op.CallVar:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
@@ -1125,7 +1286,7 @@ class IFPSEmulator:
                         setval(a := insn.op(0), -getval(a))
                     elif opc == Op.SetFlag:
                         condition, negated = insn.operands
-                        self.jumpflag = getval(condition) ^ negated
+                        self.jumpflag = bool(getval(condition)) ^ negated
                     elif opc == Op.JumpFlag:
                         if self.jumpflag:
                             ip = insn.operands[0]
@@ -2181,7 +2342,7 @@ class IFPSEmulator:
 
     @external()
     def SysErrorMessage(self, code: int) -> str:
-        return F'[description for error {code:08X}]'
+        return F'[description for error {code & 0xFFFFFFFF:08X}]'
 
     @external()
     def MinimizePathName(self, path: str, font: object, max_len: int) -> str:

@@ -215,6 +215,27 @@ class TC(enum.IntEnum):
         """
         return _TC_INTEGER_RANGE.get(self)
 
+    @property
+    def integer(self) -> bool:
+        """
+        Indicates whether the code represents an integer type.
+        """
+        return self in _TC_INTEGER_RANGE
+
+    @property
+    def signed(self) -> bool:
+        """
+        Indicates whether the code represents a signed integer type.
+        """
+        return (valid := self.integer_range) is not None and valid.start < 0
+
+    @property
+    def character(self) -> bool:
+        """
+        Indicates whether the code represents a character type.
+        """
+        return self in _TC_CHARACTER
+
 
 _TC_NON_PRIMITIVE = frozenset((
     TC.Class,
@@ -230,6 +251,11 @@ _TC_CONTAINER = frozenset((
     TC.StaticArray,
     TC.Array,
     TC.Record,
+))
+
+_TC_CHARACTER = frozenset((
+    TC.Char,
+    TC.WideChar,
 ))
 
 _TC_WIDTH = {
