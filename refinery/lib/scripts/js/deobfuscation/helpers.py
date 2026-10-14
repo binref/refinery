@@ -128,6 +128,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.numbers import (
     canonical_array_index,
+    exact_integer,
     is_negative_zero,
     js_number_to_string,
     js_string_to_number,
@@ -1493,6 +1494,14 @@ def name_is_unbound(node: JsIdentifier, model: SemanticModel) -> bool:
         and not model.read_has_dynamic_effect(node)
         and not model.free_name_reachable_by_direct_eval(node)
     )
+
+
+def integer_literal(node: Node | None) -> int | None:
+    """
+    The value of the numeric literal *node* when it is a finite integer.
+    """
+    node = strip_parens(node)
+    return exact_integer(node.value) if isinstance(node, JsNumericLiteral) else None
 
 
 def names_global_value(node: JsIdentifier, model: SemanticModel) -> bool:

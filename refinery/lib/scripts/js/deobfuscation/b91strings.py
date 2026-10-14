@@ -39,6 +39,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     denoted_value,
+    integer_literal,
     make_string_literal,
     nothing_still_names,
     reaches_script_completion,
@@ -64,7 +65,6 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     strip_parens,
 )
-from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.utf16 import to_code_units
 
@@ -291,25 +291,22 @@ def _declared_outside(model: SemanticModel, function: Node, callee: Node | None)
     if not isinstance(callee, JsIdentifier):
         return False
     binding = model.resolve(callee)
-    return binding is None or not _declared_in(binding, function)
-
-
-def _declared_in(binding: Binding, function: Node) -> bool:
-    """
-    Whether *binding* is a name *function* or a function inside it declares.
-    """
-    scope = binding.scope.node
-    return scope is function or scope.is_descendant_of(function)
+    return binding is None or not binding.declared_within(function)
 
 
 def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     """
     The decoder *held* is, when it is the decoder template: its alphabet is the one string literal
     of its own that is a base91 alphabet, and the call it returns through calls a function it does
-    not declare, which turns the decoded bytes into a string.
+    not declare, which turns the decoded bytes into a string. The name holding it is asked about
+    reflection as the name of a table is (`_table_value`): an accessor reading a table it spells out
+    has no such name to ask, and code reaching the scope of the machinery may rebind the decoder as
+    well as the table.
     """
     function = held.function
     if len(function.params) != 1:
+        return None
+    if model.reflection_can_reach(held.binding, module_scope=True):
         return None
     alphabets = [
         node for node in walk_scope(function, include_root_body=True)
@@ -340,7 +337,7 @@ def _outer(model: SemanticModel, function: Node, node: Node | None) -> Binding |
     node = strip_parens(node)
     if not isinstance(node, JsIdentifier) or (binding := model.resolve(node)) is None:
         return None
-    if _declared_in(binding, function):
+    if binding.declared_within(function):
         return None
     return binding
 
@@ -411,11 +408,11 @@ def _slicing_parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | N
     return _Parts(decoder, table, None)
 
 
-def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _StringArray | None:
+def _table_value(effects: EffectModel, table: Binding | JsStringLiteral) -> tuple[bool, object]:
     """
-    The strings the name *table* holds wherever it is in place: the one array of at least ten
-    strings the text gives it, in a container nothing changes or hands out
-    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`).
+    What *table* denotes as `refinery.lib.scripts.js.deobfuscation.helpers.denoted_value` reads it:
+    the string a literal spells, or the one value the name *table* holds wherever it is in place,
+    unless code the model cannot read may reach that name.
 
     The table is machinery under a name the obfuscator makes up, like the decoder, the accessor and
     the cache. A constant of the program is also asked whether a host or code running in the global
@@ -426,34 +423,39 @@ def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _St
     scoped to the file. A script the obfuscator writes stores on the global object under keys this
     very table holds, and the wider question would refuse the table of every script.
     """
+    model = effects.model
+    if isinstance(table, JsStringLiteral):
+        return denoted_value(table, model)
+    if model.reflection_can_reach(table, module_scope=True):
+        return False, None
+    return denoted_value(model.singular_value(table), model)
+
+
+def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _StringArray | None:
+    """
+    The strings the name *table* holds (`_table_value`): the one array of at least ten strings the
+    text gives it, in a container nothing changes or hands out
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`).
+    """
     if not isinstance(table, Binding):
         return None
-    model = effects.model
-    known, value = denoted_value(model.singular_value(table), model)
+    known, value = _table_value(effects, table)
     if not known or not isinstance(value, list) or len(value) < 10:
         return None
     strings = [string for string in value if isinstance(string, str)]
     if len(strings) != len(value) or not effects.binding_is_immutable_container(table):
-        return None
-    if model.reflection_can_reach(table, module_scope=True):
         return None
     return _StringArray(table, strings)
 
 
 def _long_string(effects: EffectModel, table: Binding | JsStringLiteral) -> _LongString | None:
     """
-    The string *table* spells out, or the string the name *table* holds wherever it is in place,
-    asked about reflection as `_string_array` asks.
+    The string *table* spells out, or the string the name *table* holds (`_table_value`).
     """
-    if isinstance(table, JsStringLiteral):
-        return None if table.value is None else _LongString(None, table.value)
-    model = effects.model
-    known, value = denoted_value(model.singular_value(table), model)
+    known, value = _table_value(effects, table)
     if not known or not isinstance(value, str):
         return None
-    if model.reflection_can_reach(table, module_scope=True):
-        return None
-    return _LongString(table, value)
+    return _LongString(table if isinstance(table, Binding) else None, value)
 
 
 _KINDS = (
@@ -464,22 +466,31 @@ _KINDS = (
 
 def _parts(model: SemanticModel, function: JsFunctionNode) -> tuple[_Kind, _Parts] | None:
     """
-    The kind of accessor *function* is and its parts, if it is one.
+    The first kind of accessor whose reader of parts recognizes *function*, and what stands where
+    the templates of that kind have their decoder, table and cache. Whether *function* has the
+    normal form of one of those templates is asked apart from this (`_is_accessor`), after the
+    cheaper questions, since building that form copies the whole function.
     """
     for kind in _KINDS:
-        if (parts := kind.parts(model, function)) is None:
-            continue
-        placeholders = {id(parts.decoder): 'DECODE'}
-        nodes: dict[int, str] = {}
-        if isinstance(parts.table, Binding):
-            placeholders[id(parts.table)] = 'TABLE'
-        else:
-            nodes[id(parts.table)] = 'TABLE'
-        if parts.cache is not None:
-            placeholders[id(parts.cache)] = 'CACHE'
-        if matches(model, function, kind.templates, placeholders, nodes):
+        if (parts := kind.parts(model, function)) is not None:
             return kind, parts
     return None
+
+
+def _is_accessor(model: SemanticModel, function: JsFunctionNode, kind: _Kind, parts: _Parts) -> bool:
+    """
+    Whether *function* has the normal form of a template of *kind*, with the names and the literal
+    of *parts* standing for the placeholders they fill.
+    """
+    placeholders = {id(parts.decoder): 'DECODE'}
+    nodes: dict[int, str] = {}
+    if isinstance(parts.table, Binding):
+        placeholders[id(parts.table)] = 'TABLE'
+    else:
+        nodes[id(parts.table)] = 'TABLE'
+    if parts.cache is not None:
+        placeholders[id(parts.cache)] = 'CACHE'
+    return matches(model, function, kind.templates, placeholders, nodes)
 
 
 def _accessor(
@@ -493,10 +504,13 @@ def _accessor(
     holding strings. What a table holds is kept in *tables* by the identity of the kind reading it
     and of what stands for it, since every accessor of a kind reads the one table.
     """
-    if (found := _parts(effects.model, held.function)) is None:
+    model = effects.model
+    if (found := _parts(model, held.function)) is None:
         return None
     kind, parts = found
     if (decoder := decoders.get(id(parts.decoder))) is None:
+        return None
+    if not _is_accessor(model, held.function, kind, parts):
         return None
     if (key := (id(kind), id(parts.table))) not in tables:
         tables[key] = kind.table(effects, parts.table)
@@ -527,7 +541,11 @@ def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
             return False
         if (known := accessors.get(id(function))) is None:
             found = _parts(model, function)
-            known = accessors[id(function)] = found is not None and found[1].cache is cache
+            known = accessors[id(function)] = (
+                found is not None
+                and found[1].cache is cache
+                and _is_accessor(model, function, *found)
+            )
         if not known:
             return False
     return True
@@ -548,7 +566,7 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
         call = enclosing_operator(read)
         if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not read:
             continue
-        numbers = [number for argument in call.arguments if (number := _integer(argument)) is not None]
+        numbers = [number for argument in call.arguments if (number := integer_literal(argument)) is not None]
         if len(numbers) != len(call.arguments) or (encoded := accessor.table.encoded(numbers)) is None:
             continue
         if not all(dominance.binding_established_before(binding, call) for binding in bindings):
@@ -560,15 +578,6 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
         if decoded.startswith('\N{BYTE ORDER MARK}'):
             continue
         yield call, decoded
-
-
-def _integer(argument: Node) -> int | None:
-    """
-    The integer *argument* spells, if it is a number literal of one.
-    """
-    if not isinstance(argument, JsNumericLiteral):
-        return None
-    return exact_integer(argument.value)
 
 
 def _stands_in_a_list(definition: Node) -> bool:

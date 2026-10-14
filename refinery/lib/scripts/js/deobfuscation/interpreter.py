@@ -1834,10 +1834,7 @@ class JsInterpreter:
         in place. So an ordering asked against the call being folded, which stands outside every
         such run, does not answer for the name.
         """
-        owner = binding.scope.node
-        return any(
-            owner is function or owner.is_descendant_of(function) for function in self._entered
-        )
+        return any(binding.declared_within(function) for function in self._entered)
 
     def constant_of(self, node: JsIdentifier) -> tuple[bool, Value]:
         """

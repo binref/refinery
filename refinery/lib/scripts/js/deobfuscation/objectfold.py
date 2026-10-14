@@ -133,16 +133,6 @@ def _function_observes_its_identity(func: JsFunctionExpression) -> bool:
     return False
 
 
-def _binding_inside(binding: Binding, value: Node) -> bool:
-    """
-    Whether *binding* is declared inside *value* — its scope is introduced by *value* or a node nested
-    within it — so that a clone of *value* carries the binding along and a reference to it stays bound
-    to the same declaration wherever the clone lands.
-    """
-    node = binding.scope.node
-    return node is value or node.is_descendant_of(value)
-
-
 def _free_external_bindings(
     model: SemanticModel, value: Node
 ) -> Iterator[tuple[JsIdentifier, Binding | None]]:
@@ -157,7 +147,7 @@ def _free_external_bindings(
         if not isinstance(node, JsIdentifier) or not model.is_reference(node):
             continue
         binding = model.resolve(node)
-        if binding is not None and _binding_inside(binding, value):
+        if binding is not None and binding.declared_within(value):
             continue
         yield node, binding
 
@@ -591,7 +581,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             if not isinstance(node, JsIdentifier) or not model.is_reference(node):
                 continue
             binding = model.resolve(node)
-            if binding is None or _binding_inside(binding, value):
+            if binding is None or binding.declared_within(value):
                 continue
             if not effects.binding_is_immutable_container(binding, member_calls_mutate=True, exclude=value):
                 return True
@@ -616,7 +606,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             if not isinstance(node, JsIdentifier) or not model.is_reference(node):
                 continue
             binding = model.resolve(node)
-            if binding is None or _binding_inside(binding, value):
+            if binding is None or binding.declared_within(value):
                 continue
             if binding.is_lexical and not dominance.binding_established_before(binding, node):
                 return True

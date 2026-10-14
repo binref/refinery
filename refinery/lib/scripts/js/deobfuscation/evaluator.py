@@ -784,8 +784,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 if model.lookup(child.name, call_scope) is not None:
                     return True
                 continue
-            owner = binding.scope.node
-            if owner is not func and not owner.is_descendant_of(func):
+            if not binding.declared_within(func):
                 if model.lookup(child.name, call_scope) is not binding:
                     return True
                 continue
@@ -793,7 +792,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 if not model.binding_never_reassigned(binding):
                     return True
                 continue
-            if owner is node or owner.is_descendant_of(node):
+            if binding.declared_within(node):
                 continue
             return True
         return False

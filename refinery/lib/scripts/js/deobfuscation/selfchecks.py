@@ -61,6 +61,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
     ScriptLevelTransformer,
+    integer_literal,
     reaches_script_completion,
     remove_declarator,
     walk_scope,
@@ -85,7 +86,6 @@ from refinery.lib.scripts.js.model import (
     JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
-    JsNumericLiteral,
     JsReturnStatement,
     JsScript,
     JsSwitchStatement,
@@ -99,7 +99,6 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.numbers import exact_integer
 from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.utf16 import to_code_units
 
@@ -146,14 +145,6 @@ _POLYFILL_TEMPLATE = Template(
 """
 The 32-bit multiplication the obfuscator falls back to where `Math.imul` is missing.
 """
-
-
-def _integer(node: Node | None) -> int | None:
-    """
-    The value of the numeric literal *node* when it is a finite integer.
-    """
-    node = strip_parens(node)
-    return exact_integer(node.value) if isinstance(node, JsNumericLiteral) else None
 
 
 def _leaves(jump: JsBreakStatement | JsContinueStatement, statement: Node) -> bool:
@@ -203,10 +194,9 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
         if binding is None or id(binding) in checked:
             continue
         checked.add(id(binding))
-        scope = binding.scope.node
-        if scope is not function and not scope.is_descendant_of(function):
+        if not binding.declared_within(function):
             continue
-        if scope.is_descendant_of(statement):
+        if binding.scope.node.is_descendant_of(statement):
             continue
         for use in chain(binding.declarations, binding.reads, binding.writes):
             if use is not statement and not use.is_descendant_of(statement):
@@ -312,8 +302,7 @@ class _HelperRecognizer:
             binding = self.model.resolve(node.callee)
             if binding is None:
                 continue
-            scope = binding.scope.node
-            if scope is function or scope.is_descendant_of(function):
+            if binding.declared_within(function):
                 continue
             yield node, binding
 
@@ -398,7 +387,7 @@ class _HelperRecognizer:
         call = strip_parens(call)
         if not isinstance(call, JsCallExpression) or len(call.arguments) != 2:
             return None
-        seed = _integer(call.arguments[1])
+        seed = integer_literal(call.arguments[1])
         if seed is None:
             return None
         helper_name, helper = self.function_held_by(call.callee)
@@ -495,8 +484,7 @@ def _helper_names(model: SemanticModel, function: Node, found: dict[int, Binding
         binding = model.resolve(node.callee)
         if binding is None or id(binding) in found:
             continue
-        scope = binding.scope.node
-        if scope is function or scope.is_descendant_of(function):
+        if binding.declared_within(function):
             continue
         found[id(binding)] = binding
         value = strip_parens(model.singular_value(binding))
@@ -675,7 +663,7 @@ class JsSelfCheckFolding(ScriptLevelTransformer):
         if not isinstance(test, JsBinaryExpression) or test.operator not in ('==', '==='):
             return None
         name = strip_parens(test.left)
-        expected = _integer(test.right)
+        expected = integer_literal(test.right)
         if not isinstance(name, JsIdentifier) or expected is None:
             return None
         binding = model.resolve(name)

@@ -296,6 +296,15 @@ class Binding:
         if scope is None or scope.closure_home is not self.scope.closure_home:
             self.captured = True
 
+    def declared_within(self, node: Node) -> bool:
+        """
+        Whether the scope declaring this binding is introduced by *node* or by a node inside it, so
+        that the binding belongs to *node*: a copy of *node* carries it along, and a name *node*
+        reads that resolves elsewhere comes from outside.
+        """
+        owner = self.scope.node
+        return owner is node or owner.is_descendant_of(node)
+
     @property
     def is_read(self) -> bool:
         """

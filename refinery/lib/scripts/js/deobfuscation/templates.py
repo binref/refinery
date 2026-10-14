@@ -122,7 +122,7 @@ class NormalForm:
                 renames[id(node)] = self.placeholders[id(binding)]
             elif id(binding) in self.empty:
                 renames[id(node)] = '#empty'
-            elif binding.scope.node is function or binding.scope.node.is_descendant_of(function):
+            elif binding.declared_within(function):
                 renames[id(node)] = own.setdefault(id(binding), F'#v{len(own)}')
             else:
                 renames[id(node)] = '#outer'

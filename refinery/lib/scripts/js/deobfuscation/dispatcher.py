@@ -216,11 +216,6 @@ def _is_data_property(prop: JsProperty) -> bool:
     return not prop.method and prop.kind == JsPropertyKind.INIT and property_key(prop) is not None
 
 
-def _declared_within(binding: Binding, node: Node) -> bool:
-    owner = binding.scope.node
-    return owner is node or owner.is_descendant_of(node)
-
-
 @dataclass
 class _Dispatcher:
     """
@@ -399,7 +394,7 @@ class _TemplateReader:
             first, *others = self.referenced[role]
             binding = bindings[role] = _present(model.resolve(first))
             _require(all(model.resolve(reference) is binding for reference in others))
-            _require(not _declared_within(binding, self.function))
+            _require(not binding.declared_within(self.function))
         own = _present(model.binding_of(_as(self.function.id, JsIdentifier)))
         _require(len(own.declarations) == 1)
         _require(len({own, *bindings.values()}) == len(bindings) + 1)
@@ -566,8 +561,8 @@ def _read_entry(
         binding = model.lookup(node.name, model.scope_of(node), cross_dynamic=True)
         if (
             binding is not None
-            and _declared_within(binding, dispatcher.declaration)
-            and not _declared_within(binding, function)
+            and binding.declared_within(dispatcher.declaration)
+            and not binding.declared_within(function)
         ):
             return None
     return _Entry(function, unpacking)
