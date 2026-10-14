@@ -74,6 +74,15 @@ class TestIPFSEmulator(TestBase):
                     0x40000, lambda: self._emulate_with_an_argument_that_is_not_a_number(data, name)
                 )
 
+    def _emulate_the_installation(self, data: bytearray):
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        from refinery.lib.inno.ifps import IFPSFile
+        list(InnoSetupEmulator(IFPSFile.Parse(bytearray(data))).emulate_installation())
+
+    def test_an_emulated_installation_leaves_nothing_to_the_collector(self):
+        data = self.download_sample('a3c40be74f061bd25a3e4b264602f4ace5652eed0ca020362a6d56d336bc650f')
+        self.assertCollectorFreesLessThan(0x40000, lambda: self._emulate_the_installation(data))
+
     def test_an_exception_handler_of_a_script_runs_on_the_stack_of_its_try_block(self):
         from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
         from refinery.lib.inno.ifps import IFPSFile
