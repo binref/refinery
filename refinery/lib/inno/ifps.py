@@ -11,7 +11,6 @@ import itertools
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from functools import WRAPPER_ASSIGNMENTS, update_wrapper
 from typing import (
     Callable,
     Generator,
@@ -25,7 +24,6 @@ from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
 from refinery.lib.structures import Struct, StructReader
 
 _E = TypeVar('_E', bound=type[enum.Enum])
-_C = TypeVar('_C', bound=type)
 
 _TAB = '\x20\x20'
 
@@ -246,27 +244,15 @@ class TC(enum.IntEnum):
 
 
 @dataclass
-class IFPSTypeMixin:
-    """
-    A helper class to mix additional properties into various IFPS type classes.
-    """
-    symbol: str | None = None
-    attributes: list[FunctionAttribute] | None = None
-
-    def __str__(self):
-        if self.symbol is not None:
-            return self.symbol
-        return super().__str__()
-
-
-@dataclass
 class IFPSTypeBase(abc.ABC):
     """
     The base class for any IFPS type.
     """
     code: TC
+    symbol: str | None = field(default=None, kw_only=True)
+    attributes: list[FunctionAttribute] | None = field(default=None, kw_only=True)
 
-    def simple(self, nested=False):
+    def simple(self, nested: bool = False) -> bool:
         """
         Indicate whether the type requires more than one line to pretty print.
         """
@@ -309,22 +295,12 @@ class IFPSTypeBase(abc.ABC):
         return self.code.container
 
     def __str__(self):
+        if self.symbol is not None:
+            return self.symbol
         return self.display(0)
 
 
-def ifpstype(cls: _C) -> _C | type[IFPSTypeMixin]:
-    """
-    A decorator for IFPS types to mix the `refinery.lib.inno.ifps.IFPSTypeMixin` into the dataclass
-    definition.
-    """
-    cls = dataclass(cls)
-    mix = type(cls.__qualname__, (IFPSTypeMixin, cls), {})
-    assigned = set(WRAPPER_ASSIGNMENTS) - {'__annotations__'}
-    update_wrapper(mix, cls, assigned=assigned, updated=())
-    return dataclass(mix)
-
-
-@ifpstype
+@dataclass
 class TPrimitive(IFPSTypeBase):
     """
     A primitive IFPS type.
@@ -365,7 +341,7 @@ class TPrimitive(IFPSTypeBase):
             return tc()
 
 
-@ifpstype
+@dataclass
 class TProcPtr(IFPSTypeBase):
     """
     The procedure pointer IFPS type.
@@ -393,7 +369,7 @@ class TProcPtr(IFPSTypeBase):
         return F'{name}({args})'
 
 
-@ifpstype
+@dataclass
 class TInterface(IFPSTypeBase):
     """
     An IFPS type representing a COM interface.
@@ -411,7 +387,7 @@ class TInterface(IFPSTypeBase):
         return F'{display}({self.uuid!s})'
 
 
-@ifpstype
+@dataclass
 class TClass(IFPSTypeBase):
     """
     An IFPS type representing an IFPS class.
@@ -425,7 +401,7 @@ class TClass(IFPSTypeBase):
         return None
 
 
-@ifpstype
+@dataclass
 class TSet(IFPSTypeBase):
     """
     An IFPS type representing a bit vector.
@@ -448,12 +424,12 @@ class TSet(IFPSTypeBase):
         return F'{display}({self.size})'
 
 
-@ifpstype
+@dataclass
 class TArray(IFPSTypeBase):
     """
     An IFPS type representing a dynamic array.
     """
-    type: TPrimitive
+    type: IFPSType
 
     def py_type(self, key: int | None = None):
         if key is None:
@@ -469,16 +445,16 @@ class TArray(IFPSTypeBase):
         display = F'{_TAB * indent}{self.type!s}'
         return F'array of {display}'
 
-    def simple(self, nested=False):
+    def simple(self, nested: bool = False) -> bool:
         return self.type.simple(nested)
 
 
-@ifpstype
+@dataclass
 class TStaticArray(IFPSTypeBase):
     """
     An IFPS type representing a static array (i.e. a tuple).
     """
-    type: TPrimitive
+    type: IFPSType
     size: int
     offset: int | None = None
 
@@ -496,16 +472,16 @@ class TStaticArray(IFPSTypeBase):
         display = F'{_TAB * indent}{self.type!s}'
         return F'{display}[{self.size}]'
 
-    def simple(self, nested=False):
+    def simple(self, nested: bool = False) -> bool:
         return self.type.simple(nested)
 
 
-@ifpstype
+@dataclass
 class TRecord(IFPSTypeBase):
     """
     An IFPS type representing a structure.
     """
-    members: tuple[TPrimitive, ...]
+    members: tuple[IFPSType, ...]
 
     @property
     def size(self):
@@ -521,7 +497,7 @@ class TRecord(IFPSTypeBase):
             return [member.default() for member in self.members]
         return self.members[key].default()
 
-    def simple(self, nested=False):
+    def simple(self, nested: bool = False) -> bool:
         if nested:
             return False
         if len(self.members) > 10:
@@ -619,7 +595,7 @@ class DeclSpecParam:
     """
     True if this parameter is passed by value, not by reference.
     """
-    type: TPrimitive | None = None
+    type: IFPSType | None = None
     """
     The type of this parameter.
     """
@@ -1612,8 +1588,8 @@ class IFPSFile(Struct):
                 continue
             for instruction in function.body:
                 if instruction.opcode is Op.Call:
-                    t: Function = self.functions[instruction.operands[0]]
-                    instruction.operands[0] = t
+                    callee = self.functions[instruction.operands[0]]
+                    instruction.operands[0] = callee
 
     def _load_variables(self):
         reader = self.reader
