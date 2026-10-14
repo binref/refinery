@@ -253,21 +253,27 @@ class Variable(VariableBase, Generic[_T]):
         if not isinstance(var, Variable):
             raise TypeError
         if copy:
-            var = Variable(var.type, data=var.get())
+            var = Variable(var.type, data=var)
         self.data = var
 
     def set(self, value: _T | Sequence | Variable):
         """
         Assign a new value to the variable. This can either be an immediate value or a variable.
-        For container types, it can also be a sequence of those.
+        For container types, it can also be a sequence of those. A container variable is copied
+        element by element, and a pointer element as Pascal Script copies it: A pointer to a
+        variable of the script points to the same variable, and a pointer that owns its target
+        points to a copy of that target.
         """
-        if isinstance(value, Variable):
-            value = value.get()
-        elif isinstance(value, (Enum, Value)):
-            value = value.value
         if self.pointer:
             return self.deref().set(value)
-        elif self.container:
+        if isinstance(value, Variable):
+            source = value.deref()
+            if self.container and source.container:
+                return self._copy_elements(source)
+            value = source.get()
+        elif isinstance(value, (Enum, Value)):
+            value = value.value
+        if self.container:
             if not isinstance(value, (list, tuple)):
                 raise TypeError
             self.resize(len(value))
@@ -275,6 +281,19 @@ class Variable(VariableBase, Generic[_T]):
                 self.data[k].set(v)
         else:
             self.data = self._wrap(value)
+
+    def _copy_elements(self, source: Variable):
+        if not isinstance(elements := source.data, list):
+            raise TypeError
+        self.resize(len(elements))
+        for k, copied in enumerate(elements):
+            element = self.at(k)
+            if not element.pointer:
+                element.set(copied)
+            elif isinstance(target := copied.data, Variable):
+                element.setptr(target, copy=target.spec is None)
+            else:
+                raise TypeError
 
     def get(self) -> _T:
         """

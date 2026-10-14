@@ -14,19 +14,36 @@ _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd861
 _SCRIPT_THAT_NAMES_HRESULTS = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_SLEEPS = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_WRITES_NUMBERS_IN_HEX = _SCRIPT_WITH_TRY_FINALLY
+_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD = _SCRIPT_WITH_TRY_FINALLY
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 
 
 @contextlib.contextmanager
-def _replaced_external(name: str, call: Callable):
+def _replaced_external(name: str, call: Callable, **changes):
     """
-    Replaces the emulated external function of the given name with the given callable.
+    Replaces the emulated external function of the given name with the given callable. Other fields
+    of its emulation info can be changed by keyword.
     """
     from refinery.lib.inno.emulator import IFPSEmulator
     registry = IFPSEmulator.external_symbols['']
-    with mock.patch.dict(registry, {name: registry[name]._replace(call=call)}):
+    with mock.patch.dict(registry, {name: registry[name]._replace(call=call, **changes)}):
+        yield
+
+
+@contextlib.contextmanager
+def _failing_method(classname: str, name: str, argc: int):
+    """
+    Emulates the method of the given class and name, which the emulator does not implement, as one
+    that raises an error.
+    """
+    from refinery.lib.inno.emulator import IFPSEmulatedFunction, IFPSEmulator
+
+    def fail(*_):
+        raise RuntimeError(F'{classname}.{name} failed')
+
+    with mock.patch.dict(IFPSEmulator.external_symbols, {classname: {name: IFPSEmulatedFunction(fail, [False] * argc)}}):
         yield
 
 
@@ -451,6 +468,23 @@ class TestIPFSEmulator(TestBase):
     def test_a_negative_integer_converts_to_the_hex_digits_of_its_bit_pattern(self):
         emulator = self._script_emulator(_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX, max_opcodes=10_000)
         self.assertEqual(emulator.emulate_function(emulator.symbols['DECTOHEX'], -16, 8).value, 'FFFFFFF0')
+
+    def test_format_receives_each_argument_with_its_type(self):
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC
+        received = []
+
+        def record(_, fmt: str, args: Variable) -> str:
+            received.append([args.at(k).deref().type.code for k in range(len(args.deref()))])
+            return fmt
+
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD)
+        with _failing_method('TDownloadWizardPage', 'Download', 0), _replaced_external('Format', record, spec=[False, True]):
+            list(emulator.emulate_function(emulator.symbols['DOWNLOADFILE'], 'url', 'path'))
+        self.assertEqual(received, [
+            [TC.UnicodeString, TC.UnicodeString],
+            [TC.UnicodeString, TC.UnicodeString, TC.U32, TC.U32, TC.UnicodeString],
+        ])
 
     @pytest.mark.xfail(strict=True, raises=AssertionError, reason='Format writes a negative Integer in hex with a minus sign')
     def test_a_negative_error_code_is_formatted_in_hex_as_its_bit_pattern(self):
