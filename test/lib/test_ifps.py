@@ -4,6 +4,8 @@ import time
 
 from unittest import mock
 
+from refinery.lib.inno.emulator import EmulatorException
+
 from .. import TestBase
 
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
@@ -274,3 +276,24 @@ class TestIPFSEmulator(TestBase):
                         (handler.argc, not handler.void),
                         (declaration.argc + receiver, returns),
                     )
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=EmulatorException,
+        reason='a script function that expands a code constant clears the stack of its caller',
+    )
+    def test_a_script_that_expands_a_code_constant_keeps_its_own_stack(self):
+        """
+        The replaced `Log` stands in for a script function that calls `ExpandConstant` with a code
+        constant: the catch block of `GETADSERVERRESPONSE` logs and then returns `False`.
+        """
+        from refinery.lib.inno.emulator import IFPSEmulator
+        registry = IFPSEmulator.external_symbols['']
+
+        def log_by_expanding_a_code_constant(emulator: IFPSEmulator, _: str):
+            emulator.expand_constant('{code:GETAPPPATH|x}')
+
+        with _failing_external('SetLength'), mock.patch.dict(
+            registry, {'Log': registry['Log']._replace(call=log_by_expanding_a_code_constant)}
+        ):
+            self.assertEqual(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE'), 0)
