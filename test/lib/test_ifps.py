@@ -11,6 +11,7 @@ from .. import TestBase
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
 _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
+_INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 
 
 @contextlib.contextmanager
@@ -297,3 +298,42 @@ class TestIPFSEmulator(TestBase):
             registry, {'Log': registry['Log']._replace(call=log_by_expanding_a_code_constant)}
         ):
             self.assertEqual(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE'), 0)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='an Inno Setup declaration replaces the declaration of a script function of the same name',
+    )
+    def test_a_script_function_named_like_an_inno_function_keeps_its_own_declaration(self):
+        function = self._installer_emulator().symbols['IsDotNetInstalled']
+        assert function.decl is not None
+        self.assertEqual(function.decl.parameters, [])
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='an Inno Setup declaration renames the types of a script function of the same name',
+    )
+    def test_a_type_is_only_named_cardinal_when_it_is_an_unsigned_32_bit_integer(self):
+        from refinery.lib.inno.ifps import TC
+        emulator = self._installer_emulator()
+        for type in emulator.ifps.types:
+            if str(type) == 'Cardinal':
+                self.assertEqual(type.code, TC.U32)
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='a declared String resolves to the first string type of the script')
+    def test_a_unicode_script_reads_a_declared_string_as_a_unicode_string(self):
+        from refinery.lib.inno.ifps import TC
+        decl = self._installer_emulator().symbols['Copy'].decl
+        assert decl is not None and decl.return_type is not None
+        self.assertEqual(decl.return_type.code, TC.UnicodeString)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='when a script reads and writes a property, its reader is named Set and its writer Get',
+    )
+    def test_a_file_placed_in_a_directory_from_a_wizard_page_keeps_that_directory(self):
+        from refinery.lib.inno.archive import InnoArchive
+        inno = InnoArchive(self.download_sample(_INSTALLER_WITH_A_DIRECTORY_PAGE))
+        self.assertEqual(inno.files[0].path, 'data/$InputDir0/HalfTime.dll')
