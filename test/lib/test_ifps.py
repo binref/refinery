@@ -4,12 +4,14 @@ import time
 
 from unittest import mock
 
-from refinery.lib.inno.emulator import EmulatorException
+from refinery.lib.inno.emulator import EmulatorException, EmulatorExecutionLimit
 
 from .. import TestBase
 
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
 _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
+_SCRIPT_THAT_NAMES_HRESULTS = _SCRIPT_WITH_NESTED_TRY
+_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX = _SCRIPT_WITH_TRY_FINALLY
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 
@@ -337,3 +339,31 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.archive import InnoArchive
         inno = InnoArchive(self.download_sample(_INSTALLER_WITH_A_DIRECTORY_PAGE))
         self.assertEqual(inno.files[0].path, 'data/$InputDir0/HalfTime.dll')
+
+    def _script_emulator(self, sample: str, **config):
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.ifps import IFPSFile
+        return InnoSetupEmulator(IFPSFile.Parse(self.download_sample(sample)), IFPSEmulatorConfig(**config))
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='an Integer is compared with a Cardinal constant by value, not by bit pattern',
+    )
+    def test_a_negative_hresult_matches_the_case_label_of_its_bit_pattern(self):
+        emulator = self._script_emulator(_SCRIPT_THAT_NAMES_HRESULTS)
+        e_notimpl = 0x80004001 - (1 << 32)
+        self.assertEqual(emulator.emulate_function(emulator.symbols['HRESULT2STR'], e_notimpl).value, 'NOTIMPL')
+
+    @pytest.mark.xfail(strict=True, raises=EmulatorExecutionLimit, reason='shr on a negative Integer shifts in sign bits')
+    def test_a_negative_integer_converts_to_the_hex_digits_of_its_bit_pattern(self):
+        emulator = self._script_emulator(_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX, max_opcodes=10_000)
+        self.assertEqual(emulator.emulate_function(emulator.symbols['DECTOHEX'], -16, 8).value, 'FFFFFFF0')
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='Format writes a negative Integer in hex with a minus sign')
+    def test_a_negative_error_code_is_formatted_in_hex_as_its_bit_pattern(self):
+        emulator = self._script_emulator(_SCRIPT_THAT_WRITES_NUMBERS_IN_HEX)
+        message = next(string for string in emulator.ifps.strings if string.startswith('Error downloading'))
+        error = 0x80072EE7 - (1 << 32)
+        formatted = emulator.Format(message, ['url', 'path', error, error, 'reason'])
+        self.assertIn('failed with code -2147012889 (0x80072EE7)', formatted)
