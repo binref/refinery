@@ -7,6 +7,7 @@ from .. import TestBase
 
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
 _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
+_INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 
 
 @contextlib.contextmanager
@@ -88,8 +89,9 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.ifps import IFPSFile
         data = self.download_sample('ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf')
         emulator = InnoSetupEmulator(IFPSFile.Parse(data), IFPSEmulatorConfig(log_calls=True))
-        call = emulator.emulate_function(emulator.symbols['GETADSERVERRESPONSE'])
-        logged = [event.args for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
+        with _failing_external('SetLength'):
+            call = emulator.emulate_function(emulator.symbols['GETADSERVERRESPONSE'])
+            logged = [event.args for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
         self.assertEqual(logged, [('Failed to get configuration',)])
         self.assertFalse(call.value)
 
@@ -149,3 +151,43 @@ class TestIPFSEmulator(TestBase):
                 variable = Variable(TPrimitive(code))
                 variable.set(value)
                 self.assertEqual(variable.get(), wrapped)
+
+    def _installer_emulator(self, **config):
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        data = self.download_sample(_INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS)
+        return InnoSetupEmulator(InnoArchive(data), IFPSEmulatorConfig(**config))
+
+    def test_setlength_resizes_a_list(self):
+        from refinery.lib.inno.emulator import PageID
+        emulator = self._installer_emulator()
+        byte_list = emulator.globals[60]
+        self.assertEqual(len(byte_list), 0)
+        list(emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpWelcome))
+        self.assertEqual(len(byte_list), 256)
+
+    def test_a_list_longer_than_the_configured_limit_is_refused(self):
+        from refinery.lib.inno.emulator import EmulatorMaxArray, IFPSException, PageID
+        emulator = self._installer_emulator(max_array_length=255)
+        with self.assertRaises(IFPSException) as raised:
+            list(emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpWelcome))
+        self.assertIsInstance(raised.exception.parent, EmulatorMaxArray)
+        self.assertEqual(len(emulator.globals[60]), 0)
+
+    def test_a_negative_length_empties_a_list_and_a_string(self):
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        emulator = self._installer_emulator()
+        byte_list = emulator.globals[60]
+        emulator.SetLength(byte_list, 5)
+        emulator.SetLength(byte_list, -2)
+        self.assertEqual(len(byte_list), 0)
+        string = Variable(TPrimitive(TC.UnicodeString), data='abcde')
+        emulator.SetLength(string, -2)
+        self.assertEqual(string.get(), '')
+
+    def test_a_list_grown_twice_names_its_elements_by_position(self):
+        byte_list = self._installer_emulator().globals[60]
+        byte_list.resize(2)
+        byte_list.resize(4)
+        self.assertEqual([byte_list.at(k).name for k in range(len(byte_list))], [F'{byte_list.name}[{k}]' for k in range(4)])

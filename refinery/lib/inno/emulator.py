@@ -230,21 +230,19 @@ class Variable(VariableBase, Generic[_T]):
     def resize(self, n: int):
         """
         This function is only valid for container type variables. It re-sizes the data list to
-        ensure that the container stores exactly `n` sub-variables.
+        ensure that the container stores exactly `n` sub-variables, or none if `n` is negative.
         """
         t = self.type
-        m = n - len(self.data)
         if t.code != TC.Array:
             if t.code not in (TC.StaticArray, TC.Record):
                 raise TypeError
             if n == t.size:
                 return
             raise ValueError(F'Attempt to resize {t} of size {t.size} to {n}.')
-        if m <= 0:
-            del self.data[n:]
-            return
-        for k in range(m):
-            self.data.append(Variable(t.type, self.spec, (*self.path, k)))
+        data = self.data
+        del data[max(n, 0):]
+        for k in range(len(data), n):
+            data.append(Variable(t.type, self.spec, (*self.path, k)))
 
     def setptr(self, var: Variable, copy: bool = False):
         """
@@ -382,6 +380,12 @@ class EmulatorMaxCalls(MemoryError):
     """
 
 
+class EmulatorMaxArray(MemoryError):
+    """
+    The script requested an array longer than the array length limit given in the configuration.
+    """
+
+
 @dataclass
 class ExceptionHandler:
     """
@@ -487,6 +491,7 @@ class IFPSEmulatorConfig:
     milliseconds_per_instruction: float = 0.0001
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
+    max_array_length: int = 0x100000
     max_call_stack: int = 4096
     environment: dict[str, str] = field(default_factory=dict)
     user_name: str = 'Frank'
@@ -1725,8 +1730,9 @@ class IFPSEmulator:
 
     @external()
     def SetArrayLength(self, array: Variable, n: int):
-        a = array.deref()
-        a.resize(n)
+        if 0 < (limit := self.config.max_array_length) < n:
+            raise EmulatorMaxArray(F'Requested array length {n} exceeds the limit {limit}.')
+        array.deref().resize(n)
 
     @external()
     def WizardForm(self) -> object:
@@ -2061,10 +2067,15 @@ class IFPSEmulator:
         return str(self.config.cwd / name)
 
     @external()
-    def SetLength(self, string: Variable[str], size: int):
-        old = string.get()
+    def SetLength(self, target: Variable, size: int):
+        target = target.deref()
+        if target.container:
+            self.SetArrayLength(target, size)
+            return
+        size = max(size, 0)
+        old = target.get()
         old = old.ljust(size, '\0')
-        string.set(old[:size])
+        target.set(old[:size])
 
     @external(alias='OemToCharBuff')
     def CharToOemBuff(self, string: str) -> str:
