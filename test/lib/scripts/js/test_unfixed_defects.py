@@ -4979,3 +4979,109 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                     completion_values([deobfuscated], evaluation),
                     completion_values([source], evaluation),
                 )
+
+
+#: Programs writing a value into a variable declared without one in a statement that completes
+#: without the write on the run shown, and reading the variable in a function called after that
+#: statement, mapped to the behavior an engine gives them.
+A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION = {
+    'a store below and, read by a function with a parameter': Program(
+        a_program("""
+            var c;
+            Math.random() > 2 && (c = 5);
+            function f(x) { return x + c; }
+            console.log(f(Math.random() > 2 ? 1 : 2));
+            """),
+        prints('NaN'),
+    ),
+    'a store below and, read by a recursive function': Program(
+        a_program("""
+            var c;
+            Math.random() > 2 && (c = 5);
+            function f(n) { return n <= 0 ? c : f(n - 1); }
+            console.log(f(2));
+            """),
+        prints('undefined'),
+    ),
+    'a store in an arm of a conditional, read by a recursive function': Program(
+        a_program("""
+            var c;
+            Math.random() > 2 ? (c = 5) : 0;
+            function f(n) { return n <= 0 ? c : f(n - 1); }
+            console.log(f(2));
+            """),
+        prints('undefined'),
+    ),
+    'a store behind a logical assignment, read by a recursive function': Program(
+        a_program("""
+            var c, y = 1;
+            y ||= (c = 5);
+            function f(n) { return n <= 0 ? c : f(n - 1); }
+            console.log(f(2));
+            """),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VALUE_STORED_ON_SOME_RUNS_READ_BY_A_FUNCTION)
+class TestAValueStoredOnSomeRunsIsNotWrittenIntoTheFunctionReadingIt(TestBase):
+    """
+    Constant inlining writes the one value a variable is given into a function reading it when the
+    store runs before every call of that function. The ordering queries of
+    `refinery.lib.scripts.js.analysis.dominance.DominanceModel` that it asks answer whether the
+    statement holding the store has completed, not whether the store has run, and a store below
+    `&&`, in an arm of `?:` or behind `||=` is skipped on runs that complete its statement. The
+    function then reads the variable unset while the deobfuscation writes `5` into it. A reader the
+    evaluator folds asks `DominanceModel.binding_established_before`, which also asks whether the
+    store runs with its statement; a reader it leaves is reached by this defect. Minifiers spell
+    `if (x) c = 5;` as `x && (c = 5)`, so the shape is possible in real code, but only where the
+    variable is declared without a value and written nowhere else, which none of the real samples
+    holds.
+    """
+
+
+#: Programs declaring a function in a block and reading its name outside that block, mapped to the
+#: behavior an engine gives them: a read before the block declares the function, and a variable
+#: the declaration replaces once it runs.
+A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT = {
+    'a call reading the name before the block declares the function': Program(
+        a_program("""
+            function g() { return f.length; }
+            {
+              var r;
+              try { r = g(); } catch (e) { r = e.constructor.name; }
+              console.log(r);
+              function f(a) { return 1; }
+            }
+            console.log(g());
+            """),
+        prints('TypeError', '1'),
+    ),
+    'a variable the block function replaces once its declaration runs': Program(
+        a_program("""
+            var t = "abc";
+            function g(n) { return n <= 0 ? t : g(n - 1); }
+            console.log(g(1));
+            { function t() {} }
+            console.log(typeof g(1));
+            """),
+        prints('abc', 'function'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT)
+class TestAFunctionDeclaredInABlockIsReadOutsideItOnlyOnceItsDeclarationRuns(TestBase):
+    """
+    Outside strict code, a function declared in a block has two bindings: one of the block, holding
+    the function from the moment the block is entered, and a variable of the enclosing function,
+    which receives the function when the declaration runs. The semantic model keeps one binding for
+    both. So the evaluator writes the body of `g` into the block, where `f` names the binding of the
+    block and holds the function before the declaration, and the first program no longer throws; and
+    constant inlining does not count the declaration as a write of `t`, and writes `"abc"` into `g`.
+    No program reads a block function outside its block before the block declares it, or declares a
+    block function named like a variable of its own.
+    """
