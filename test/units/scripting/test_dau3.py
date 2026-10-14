@@ -84,8 +84,8 @@ class TestDAu3(TestUnitBase):
         self.assertEqual(result, _A3X_STYLE_GOAL)
 
     def test_execute_chain_flattens(self):
-        result = B'$x = Execute("1 + 2 * 3")\n' | self.load() | str
-        self.assertEqual(result, '$x = 7\n')
+        result = B'MsgBox(0, 0, Execute("1 + 2 * 3"))\n' | self.load() | str
+        self.assertEqual(result, 'MsgBox(0, 0, 7)\n')
 
     def test_alias_chain_resolves(self):
         """
@@ -93,21 +93,19 @@ class TestDAu3(TestUnitBase):
         it resolves, the argument folds to the string literal the splice reads, and the decoded
         string is what the decoder returned. The first alias then leaves as dead code while the
         second stays: `e` is spelled in no string the tree holds, and `b` is a substring of
-        `"BinaryToString"`.
+        `"BinaryToString"`. The decoded store leaves with it — nothing reads `$v` — so the hex
+        payload leaving the output is what shows the decoder ran.
         """
         result = (
             B'Local $e = Execute\n'
             B'Local $b = $e("BinaryToString")\n'
             B'$v = $e($b("0x22414243" & "4422"))\n'
         ) | self.load() | str
-        self.assertEqual(result, (
-            'Local $b = Execute("BinaryToString")\n'
-            '$v = "ABCD"\n'
-        ))
+        self.assertEqual(result, 'Local $b = Execute("BinaryToString")\n')
 
     def test_constant_soup_folds(self):
         result = B'$x = 1 + 2 * 3\nMsgBox(0, "", $x)\n' | self.load() | str
-        self.assertEqual(result, '$x = 7\nMsgBox(0, "", 7)\n')
+        self.assertEqual(result, 'MsgBox(0, "", 7)\n')
 
     def test_idempotent(self):
         first = _PRETTY_INPUT.encode() | self.load() | bytes
@@ -115,13 +113,23 @@ class TestDAu3(TestUnitBase):
         self.assertEqual(first, second)
 
     def test_keyword_casing_normalized(self):
-        data = B'IF $X THEN\n$Y = 1\nENDIF\n'
+        data = (
+            B'IF $X THEN\n'
+            B'$Y = 1\n'
+            B'ENDIF\n'
+            B'MsgBox(0, 0, $Y)\n'
+        )
         result = data | self.load() | str
-        self.assertEqual(result, 'If $X Then\n    $Y = 1\nEndIf\n')
+        self.assertEqual(result, (
+            'If $X Then\n'
+            '    $Y = 1\n'
+            'EndIf\n'
+            'MsgBox(0, 0, $Y)\n'
+        ))
 
     def test_single_line_if_prints_block_form(self):
-        result = B'If $x Then $y = 1\n' | self.load() | str
-        self.assertEqual(result, 'If $x Then\n    $y = 1\nEndIf\n')
+        result = B'If $x Then MsgBox(0, 0, 1)\n' | self.load() | str
+        self.assertEqual(result, 'If $x Then\n    MsgBox(0, 0, 1)\nEndIf\n')
 
     def test_case_folded_source_is_stable(self):
         upper = B'If $FOO Then\n    $BAR = @SCRIPTDIR\nEndIf\n' | self.load() | str
@@ -129,44 +137,46 @@ class TestDAu3(TestUnitBase):
         self.assertEqual(upper.lower(), lower.lower())
 
     def test_malformed_input_still_yields_output(self):
-        result = B'$x = = 1\n$y = 2\n' | self.load() | bytes
-        self.assertEqual(result, B'$x = = 1\n$y = 2\n')
+        result = B'$x = = 1\n$y = 2\nMsgBox(0, 0, $y)\n' | self.load() | bytes
+        self.assertEqual(result, B'$x = = 1\nMsgBox(0, 0, 2)\n')
 
     def test_error_line_with_trailing_comment(self):
-        result = B'$x = = 1 ; note\n$y = 2\n' | self.load() | bytes
-        self.assertEqual(result, B'$x = = 1 ; note\n$y = 2\n')
+        result = B'$x = = 1 ; note\n$y = 2\nMsgBox(0, 0, $y)\n' | self.load() | bytes
+        self.assertEqual(result, B'$x = = 1 ; note\nMsgBox(0, 0, 2)\n')
 
     def test_crlf_input(self):
-        result = B'If $x Then\r\n    $y = 1\r\nEndIf\r\n' | self.load() | str
-        self.assertEqual(result, 'If $x Then\n    $y = 1\nEndIf\n')
+        data = B'If $x Then\r\n    $y = 1\r\nEndIf\r\nMsgBox(0, 0, $y)\r\n'
+        result = data | self.load() | str
+        self.assertEqual(result, 'If $x Then\n    $y = 1\nEndIf\nMsgBox(0, 0, $y)\n')
 
     def test_comments_survive_every_position(self):
         """
         A comment the header line of a block carries, one standing between a `Select` and its
-        first `Case`, and one standing alone in a body no statement follows: each was dropped
-        from the output or corrupted the parse around it before the round trip kept them. The
-        function stays alive through a call the emulation cannot run — an unknown argument — so
-        an uncalled function's removal cannot cost the test its comment coverage.
+        first `Case`, one standing alone in a body a statement follows, and one trailing a
+        `Func` header onto the line that closes it: each was dropped from the output or
+        corrupted the parse around it before the round trip kept them.
         """
         data = (
-            b'Select\n; pick one\nCase $x\n$y = 1\nEndSelect\n'
-            b'While $x ; loop\n$y = 2\nWend\n'
-            b'$z = F($y)\n'
-            b'Func F($p) ; setup\n; only a comment\nEndFunc\n'
+            b'Select\n; pick one\nCase $x\nMsgBox(0, 0, $x)\nEndSelect\n'
+            b'While $x ; loop\nMsgBox(0, 0, $x)\nWend\n'
+            b'Func F($p) ; setup\n; only a comment\nMsgBox(0, 0, $p)\nEndFunc\n'
+            b'F(1)\n'
         )
         result = data | self.load() | str
         self.assertEqual(result, (
             'Select\n'
             '; pick one\n'
             'Case $x\n'
-            '    $y = 1\n'
+            '    MsgBox(0, 0, $x)\n'
             'EndSelect\n'
             'While $x\n'
-            '    $y = 2\n'
+            '    MsgBox(0, 0, $x)\n'
             'Wend ; loop\n'
-            '$z = F($y)\n'
             'Func F($p)\n'
-            'EndFunc ; setup ; only a comment\n'
+            '    ; only a comment\n'
+            '    MsgBox(0, 0, $p)\n'
+            'EndFunc ; setup\n'
+            'F(1)\n'
         ))
 
     def test_comment_only_file(self):
@@ -174,8 +184,8 @@ class TestDAu3(TestUnitBase):
         self.assertEqual(result, '; nothing but a comment\n')
 
     def test_bom_input(self):
-        result = B'\xEF\xBB\xBF$x = 1\n' | self.load() | str
-        self.assertEqual(result, '$x = 1\n')
+        result = B'\xEF\xBB\xBFMsgBox(0, 0, 1)\n' | self.load() | str
+        self.assertEqual(result, 'MsgBox(0, 0, 1)\n')
 
     def test_empty_input(self):
         result = B'' | self.load() | str

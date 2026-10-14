@@ -130,7 +130,8 @@ def is_write_occurrence(node: Au3Variable) -> bool:
     """
     Whether this occurrence of a variable is one a store writes: a declarator, an enum entry, a
     parameter, a loop variable, or a ReDim target binds it, or it is the variable an assignment's
-    target chain is rooted in. Every other occurrence reads it.
+    target is. Every other occurrence reads it — the root of an indexed or member target among
+    them: `$a[0] = 1` reads `$a`, and the store writes the array, not the name.
     """
     parent = node.parent
     if isinstance(parent, (Au3VariableDeclarator, Au3EnumDeclarator, Au3Parameter, Au3ReDimTarget)):

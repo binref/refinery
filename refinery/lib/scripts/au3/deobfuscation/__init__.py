@@ -11,8 +11,8 @@ value for becomes that literal, and a dispatcher loop whose state a provable con
 the one case body it ever runs — `emulate` replaces what a script-defined function returns:
 the interpreter runs the call over the value domain and the call becomes the literal of its
 result — and `cleanup` removes what no live code reaches: a function no call names, a declarator
-no occurrence binds, and an effect-free statement, each only when no dynamic-name channel could
-observe the removal.
+no occurrence binds, an effect-free statement, and a plain assignment whose target nothing reads
+— each only when no dynamic-name channel could observe the removal.
 
 `fold` depends on `normalize` and re-triggers it: folding an `Execute` call's argument into the
 string literal it always was is what makes the next `normalize` pass see a flattenable call, and
@@ -36,6 +36,7 @@ from refinery.lib.scripts.au3.deobfuscation.indirect import Au3IndirectCallRewri
 from refinery.lib.scripts.au3.deobfuscation.names import Au3DynamicNameFlattening
 from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
 from refinery.lib.scripts.au3.deobfuscation.unflatten import Au3ControlFlowDeflattening
+from refinery.lib.scripts.au3.deobfuscation.unused import Au3UnusedVariableRemoval
 from refinery.lib.scripts.au3.model import Au3Script
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 
@@ -61,6 +62,7 @@ _emulate = TransformerGroup(
 _cleanup = TransformerGroup(
     'cleanup',
     Au3DeadCodeElimination,
+    Au3UnusedVariableRemoval,
 )
 
 _GROUP_DEPENDENCIES = {

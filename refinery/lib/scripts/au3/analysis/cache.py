@@ -22,7 +22,13 @@ from refinery.lib.scripts.au3.analysis.propagation import (
 )
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, build_scope_model
 from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel, build_usage_model
-from refinery.lib.scripts.au3.model import Au3Script
+from refinery.lib.scripts.au3.model import (
+    Au3Directive,
+    Au3EnumDeclaration,
+    Au3FunctionDeclaration,
+    Au3Script,
+    Au3VariableDeclaration,
+)
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
 
@@ -34,7 +40,9 @@ class Au3ModelCache(ModelCacheBase):
     propagation model the constant substitution reads, and the usage model the dead-code
     elimination reads — each dropped, together, whenever this root's tree changes. The probes
     the census makes are remembered for the whole run instead: their answers depend on what each
-    probe reads, not on the tree version.
+    probe reads, not on the tree version. Beside the models, the cache owns the one fact composed
+    over several of them — `entry_is_open`, whether the script runs from its own top-level
+    statements rather than from outside the tree.
     """
 
     _SLOTS = (
@@ -101,6 +109,28 @@ class Au3ModelCache(ModelCacheBase):
         """
         return self._lazy('_usage', lambda: build_usage_model(
             self.root, self.scopes, self.propagation.summaries))
+
+    @property
+    def entry_is_open(self) -> bool:
+        """
+        Whether the root runs from its own top-level statements: it holds a statement that is
+        neither a declaration, a function definition nor a directive, and no include — read from
+        the scope model in both spellings the parser answers with, and from the unread text the
+        usage model holds — because an included file's contents are called from outside the tree.
+        """
+        if self.scopes.holds_an_include:
+            return False
+        if self.usage.holds_unread_include():
+            return False
+        for statement in self.root.body:
+            if not isinstance(statement, (
+                Au3VariableDeclaration,
+                Au3EnumDeclaration,
+                Au3FunctionDeclaration,
+                Au3Directive,
+            )):
+                return True
+        return False
 
 
 def model_cache(transformer: Transformer, root: Node) -> Au3ModelCache:

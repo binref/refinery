@@ -36,7 +36,8 @@ so a zero elsewhere clears nothing.
 
 This module also owns what a dynamic-name channel writes: `execute_kills` and `assign_kills`,
 the answers the constant-binding walk, the alias map, and the usage model read, over the one
-payload parse they share.
+payload parse they share — and `call_target`, the callee a computed `Call` invocation resolves
+to, which the usage model's read-side channel walk reads beside it.
 
 A census runs once per tree version, and a run holds one `Au3ProbeMemo` across its versions, so
 a census asks the interpreter only for the probes no earlier census made.
@@ -79,7 +80,7 @@ from refinery.lib.scripts.au3.synth import Au3Synthesizer
 #: The globals every script holds before its first statement runs: the command-line constants
 #: exist whether or not parameters are passed, so a bare write of either inside a function
 #: reaches the constant — a fatal error — instead of creating a local.
-_PREDEFINED_GLOBALS = frozenset({'cmdline', 'cmdlineraw'})
+PREDEFINED_GLOBALS = frozenset({'cmdline', 'cmdlineraw'})
 
 #: The registration builtins whose registered function receives arguments the registration
 #: passes through, each mapped to the argument positions that hold the registered name: a name
@@ -159,6 +160,39 @@ def assign_kills(call: Au3Call) -> set[str] | None:
     if not isinstance(literal, Au3StringLiteral):
         return None
     return {spelled_name(literal.value)}
+
+
+def call_target(
+    name: str,
+    passed: Sequence[Expression],
+    function_names: frozenset[str],
+) -> str | None:
+    """
+    The callee a computed `Call` invocation of *name* resolves to over *passed*, the arguments it
+    forwards: the name the string spells, or `None` where the resolution refuses — a forwarding
+    `Call` of `Call`, and a registration or option setter whose sole forwarded argument may be
+    the array a `CallArgArray` expansion unpacks. Both read a position past the first, an element
+    no walk sees.
+    """
+    target = spelled_name(name)
+    if target == 'call':
+        return None
+    if (
+        len(passed) == 1
+        and (target in _REGISTRATION_NAME_POSITIONS or target in _OPTION_SETTERS)
+        and _may_expand(passed[0], function_names)
+    ):
+        return None
+    return target
+
+
+def _may_expand(argument: Expression, function_names: frozenset[str]) -> bool:
+    """
+    Whether *argument*, the sole one a computed `Call` passes on, may be the array a
+    `CallArgArray` expansion unpacks: only a literal scalar is not.
+    """
+    value = literal_value(argument, function_names)
+    return value is None or value.kind is Kind.ARRAY
 
 
 @dataclass(frozen=True)
@@ -261,7 +295,7 @@ class _Census:
         self.interpreter = Au3Interpreter(scope_model, {})
         self.memo = memo
         self.probe_steps = 0
-        self.names: set[str] = set(_PREDEFINED_GLOBALS)
+        self.names: set[str] = set(PREDEFINED_GLOBALS)
         self.implicit_writes_are_fatal = False
 
     def collect(self, root: Au3Script) -> Au3ExistenceModel:
@@ -363,36 +397,18 @@ class _Census:
     def _examine_computed_call(self, arguments: Sequence[Expression]) -> None:
         """
         A `Call` over a computed name: the name resolves to what it spells, and the target is
-        examined over the arguments that follow it. A target of `Call` itself poisons — a
-        forwarding chain is not examined recursively — and so does a registration or an option
-        setter whose sole argument may be the array a `CallArgArray` expansion unpacks: both
-        read a position past the first, an element no walk sees. Every other channel reads its
-        first argument as a string, which no array is.
+        examined over the arguments that follow it. A resolution `call_target` refuses poisons,
+        and so does a name the census cannot read.
         """
         if not arguments:
             return
         name = self._resolve_string(arguments[0])
         if name is None:
             raise _Poison
-        target = spelled_name(name)
-        if target == 'call':
+        target = call_target(name, arguments[1:], self.function_names)
+        if target is None:
             raise _Poison
-        passed = arguments[1:]
-        if (
-            len(passed) == 1
-            and (target in _REGISTRATION_NAME_POSITIONS or target in _OPTION_SETTERS)
-            and self._may_expand(passed[0])
-        ):
-            raise _Poison
-        self._examine_target(target, passed)
-
-    def _may_expand(self, argument: Expression) -> bool:
-        """
-        Whether *argument*, the sole one a computed `Call` passes on, may be the array a
-        `CallArgArray` expansion unpacks: only a literal scalar is not.
-        """
-        value = literal_value(argument, self.function_names)
-        return value is None or value.kind is Kind.ARRAY
+        self._examine_target(target, arguments[1:])
 
     def _examine_registered_name(self, argument: Expression) -> None:
         literal = ast.unwrap_parens(argument)

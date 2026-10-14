@@ -36,7 +36,6 @@ from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel
 from refinery.lib.scripts.au3.model import (
-    Au3Directive,
     Au3EnumDeclaration,
     Au3EnumDeclarator,
     Au3ExpressionStatement,
@@ -73,7 +72,7 @@ class Au3DeadCodeElimination(Transformer):
         self._channel_scopes = frozenset(filter(None, (
             ast.enclosing_function(channel) for channel in self._usage.channels
         )))
-        entry_open = self._entry_is_open(script)
+        entry_open = cache.entry_is_open
         removable = self._uncalled() if entry_open else set()
         removable = self._without_block_keyword_text(removable)
         removable = self._without_nested_survivors(removable)
@@ -84,28 +83,6 @@ class Au3DeadCodeElimination(Transformer):
         self._globals_may_leave = entry_open and not blocked
         if self._prune(script, 'body', None):
             self.mark_changed()
-
-    def _entry_is_open(self, script: Au3Script) -> bool:
-        """
-        Whether the script runs from its own top-level statements: it holds a statement that is
-        neither a declaration, a function definition nor a directive, and no include — read from
-        the scope model in both spellings the parser answers with, and from the unread text the
-        usage model holds — because an included file's contents are called from outside the
-        tree.
-        """
-        if self._scopes is not None and self._scopes.holds_an_include:
-            return False
-        if self._usage.holds_unread_include():
-            return False
-        for statement in script.body:
-            if not isinstance(statement, (
-                Au3VariableDeclaration,
-                Au3EnumDeclaration,
-                Au3FunctionDeclaration,
-                Au3Directive,
-            )):
-                return True
-        return False
 
     def _uncalled(self) -> set[str]:
         """

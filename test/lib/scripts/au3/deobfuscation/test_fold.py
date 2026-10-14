@@ -32,7 +32,7 @@ class TestAu3ConstantFolding(TestAu3):
         The fold re-renders a chain to the same text it holds, because `literal_value` reads the
         chain back — the symmetry that keeps a decoded payload's line breaks standing.
         """
-        self._assertKept('$x = "a" & @CRLF & "b"')
+        self._assertKept('MsgBox(0, 0, "a" & @CRLF & "b")')
 
     def test_a_comparison_folds_wherever_it_stands(self):
         self.assertEqual(

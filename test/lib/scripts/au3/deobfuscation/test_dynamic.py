@@ -1166,7 +1166,7 @@ class TestAu3DynamicNameFlattening(TestAu3):
             EndFunc
 
             Call("f")
-            $e = @error
+            MsgBox(0, 0, @error)
             ''',
             '''
             Func f()
@@ -1174,7 +1174,7 @@ class TestAu3DynamicNameFlattening(TestAu3):
             EndFunc
 
             f()
-            $e = @error
+            MsgBox(0, 0, @error)
             ''')
 
     def test_a_function_called_only_through_call_leaves(self):

@@ -127,12 +127,12 @@ class TestAu3Deobfuscation(TestBase):
     def test_constant_soup_folds_and_propagates(self):
         ast = Au3Parser(self.SOURCES[0]).parse()
         self.assertGreater(deobfuscate(ast), 0)
-        self.assertEqual(Au3Synthesizer().convert(ast), '$x = 7\nMsgBox(0, "", 7)\n')
+        self.assertEqual(Au3Synthesizer().convert(ast), 'MsgBox(0, "", 7)\n')
 
     def test_an_execute_call_splices_and_the_result_folds(self):
-        ast = Au3Parser('$x = Execute("1 + 2 * 3")\n').parse()
+        ast = Au3Parser('MsgBox(0, 0, Execute("1 + 2 * 3"))\n').parse()
         self.assertGreater(deobfuscate(ast), 0)
-        self.assertEqual(Au3Synthesizer().convert(ast), '$x = 7\n')
+        self.assertEqual(Au3Synthesizer().convert(ast), 'MsgBox(0, 0, 7)\n')
 
     def test_an_alias_chain_resolves_through_the_groups(self):
         """
@@ -141,7 +141,9 @@ class TestAu3Deobfuscation(TestBase):
         unmasks the second alias, the fold produces the literal the `Execute` splice reads, and
         the splice result is the string the decoder returned. The first alias then leaves as
         dead code while the second stays: `e` is spelled in no string the tree holds, and `b` is
-        a substring of `"BinaryToString"` — the spelling rule's honest output.
+        a substring of `"BinaryToString"` — the spelling rule's honest output. The decoded store
+        leaves with it, nothing reading `$v`, so the hex payload leaving the output is what
+        shows the decoder ran.
         """
         ast = Au3Parser(
             'Local $e = Execute\n'
@@ -149,10 +151,10 @@ class TestAu3Deobfuscation(TestBase):
             '$v = $e($b("0x22414243" & "4422"))\n'
         ).parse()
         self.assertGreater(deobfuscate(ast), 0)
-        self.assertEqual(Au3Synthesizer().convert(ast), (
-            'Local $b = Execute("BinaryToString")\n'
-            '$v = "ABCD"\n'
-        ))
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            'Local $b = Execute("BinaryToString")\n',
+        )
 
     def test_declarations_the_passes_do_not_own_stay_standing(self):
         """
@@ -201,7 +203,9 @@ class TestAu3Deobfuscation(TestBase):
         """
         A value whose every character needs its own chain piece would spell a `Chr` chain
         hundreds of levels deep, so the renderer refuses it and the pipeline settles with the
-        producing call standing instead of exhausting the stack printing it.
+        producing call standing instead of exhausting the stack printing it. The call stands
+        alone: every store that held its chain of aliases leaves as write-only once the value
+        settles.
         """
         payload = 'x' * 250
         source = (
@@ -215,11 +219,7 @@ class TestAu3Deobfuscation(TestBase):
         self.assertGreater(deobfuscate(ast), 0)
         self.assertEqual(
             Au3Synthesizer().convert(ast),
-            'Global $s\n'
-            'Global $c\n'
-            F'$s = "{payload}"\n'
-            F'$c = StringReplace("{payload}", "x", Chr(0))\n'
-            '$y = $c\n'
+            F'StringReplace("{payload}", "x", Chr(0))\n',
         )
 
     def test_no_parse_errors_on_wellformed_input(self):

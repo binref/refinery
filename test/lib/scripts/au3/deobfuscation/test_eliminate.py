@@ -53,7 +53,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             '''
             Func outer()
                 Func inner()
-                    $g = 1
+                    MsgBox(0, 0, 0)
                 EndFunc
             EndFunc
 
@@ -255,7 +255,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             EndFunc
 
             Func live()
-                $g = 1
+                MsgBox(0, 0, 0)
             EndFunc
 
             live()
@@ -420,7 +420,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             Global $g = 1
 
             Func f()
-                $x = $g
+                MsgBox(0, 0, $g)
             EndFunc
 
             f()
@@ -455,11 +455,11 @@ class TestAu3DeadCodeElimination(TestAu3):
             EndFunc
 
             Func c()
-                $y = $v
+                MsgBox(0, 0, $v)
             EndFunc
 
             a()
-            $y = c()
+            c()
             ''')
 
     def test_a_global_initialized_through_a_builtin_is_kept(self):
@@ -672,6 +672,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             Func f()
                 Dim $x
                 $x = 5
+                MsgBox(0, 0, $x)
             EndFunc
 
             f()
@@ -784,7 +785,7 @@ class TestAu3DeadCodeElimination(TestAu3):
             EndFunc
 
             f()
-            $e = @error
+            MsgBox(0, 0, @error)
             ''')
 
     def test_a_pure_call_is_kept_where_the_tree_calls_execute(self):

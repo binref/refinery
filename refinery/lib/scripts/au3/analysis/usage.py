@@ -2,22 +2,40 @@
 The usage model: what the script does with its names. The dead-code elimination in
 `refinery.lib.scripts.au3.deobfuscation.eliminate` asks it what a direct call names, which names
 a string or a directive spells, which calls may consume a computed name, which storage every
-variable occurrence binds or may bind, and which expressions are effect-free — each fact owned by
-the module that pinned it: the bindings by `refinery.lib.scripts.au3.analysis.scopes`, the may-write
-summaries by `refinery.lib.scripts.au3.analysis.propagation`, the builtin knowledge by
+variable occurrence binds or may bind, how often every name is read, and which expressions are
+effect-free — each fact owned by the module that pinned it: the bindings by
+`refinery.lib.scripts.au3.analysis.scopes`, the may-write summaries by
+`refinery.lib.scripts.au3.analysis.propagation`, the builtin knowledge by
 `refinery.lib.scripts.au3.analysis.builtins`.
 
 Source text the parser could not read — an error node in the tree — is live source AutoIt may run
 when it reaches it, so the model reads it through
 `refinery.lib.scripts.au3.analysis.unparsed.read_unparsed` and counts every name it spells as a
-reference: a call, a binding that may fall either side, a spelling. Text that opens a call on a
-computed callee or names the builtin `Call` makes any callee possible — the text cannot show the
-literalness of `Call`'s argument, and whether a name it spells shadows a builtin is unpinned — an
-`Execute` it spells joins the names the census counts, and the error-state macros it spells count
-as reads. The model holds the facts of every error node keyed by its node and the variables of
-every error node, for the transforms that ask them. The parser's record list is not an input: it
+reference: a call, a binding that may fall either side, a spelling, a read. Text that opens a call
+on a computed callee or names the builtin `Call` makes any callee possible — the text cannot show
+the literalness of `Call`'s argument, and whether a name it spells shadows a builtin is unpinned —
+an `Execute` it spells joins the names the census counts, and the error-state macros it spells
+count as reads. The model holds the facts of every error node keyed by its node and the variables
+of every error node, for the transforms that ask them. The parser's record list is not an input: it
 outlives the edits that remove the nodes it names, so a model over it would keep refusing a tree
 its own transforms had cleaned.
+
+Whether a call may read a name no census sees is the question beside the write-side channel one,
+and the same walk answers both. A computed callee reads — it could name `Eval`; so does an
+`Execute` whose payload the tree does not show as one literal expression, and a non-literal in a
+name-parameter position of a builtin the table knows: a literal there reaches a name only through
+a string the spelling corpus holds, which is what the spelling answer refuses a removal over. A
+literal `Execute` payload is parsed and its expression judged by the same shapes, recursed to a
+bounded depth; a payload that fails to parse may still be one AutoIt runs, so it reads — the
+empty payload AutoIt answers `""` for (probe3) reads nothing — and past the depth bound the
+payload is not parsed and reads. A `Call` invocation over a string literal resolves through
+`refinery.lib.scripts.au3.analysis.existence.call_target`, and the target is judged as if the tree
+called it directly; every refusal reads, because unread text cannot resolve what a name shadows.
+A script function's reads stand in the tree, and a member callee dispatches through an object
+and reads no script name. The read count of a name is collected beside its bindings: an
+occurrence reads when it is not a write occurrence — a compound assignment's target and a
+`ReDim` target among the readers, both read what they rewrite — and a variable of unread text
+counts as a read.
 
 An expression is effect-free when evaluating it writes nothing observable and cannot terminate
 the script. Termination is what the arithmetic refuses: a division by zero ends the script
@@ -40,17 +58,18 @@ from __future__ import annotations
 import itertools
 
 from collections import Counter
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import NAME_PARAMETERS
-from refinery.lib.scripts.au3.analysis.existence import execute_kills
+from refinery.lib.scripts.au3.analysis.existence import call_target, execute_kills, parse_payload
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding, INCLUDE_SPELLING
 from refinery.lib.scripts.au3.analysis.unparsed import Au3UnparsedText, read_unparsed
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
+    Au3Assignment,
     Au3BinaryExpression,
     Au3BooleanLiteral,
     Au3Call,
@@ -66,6 +85,7 @@ from refinery.lib.scripts.au3.model import (
     Au3Macro,
     Au3MemberAccess,
     Au3NullLiteral,
+    Au3ReDimTarget,
     Au3Script,
     Au3StringLiteral,
     Au3Ternary,
@@ -94,32 +114,43 @@ _EFFECT_FREE_READS = (
 class Au3UsageModel:
     """
     What one tree version does with its names, built once per tree version by
-    `build_usage_model`: the script's functions, the direct-identifier call count of each, the
-    functions that are pure, the calls and error nodes that may consume a computed name, the
-    lowercased text of every string literal and directive, parsed or unread, the local storage
-    an occurrence in a scope may bind, per scope, and the storage every occurrence provably binds
-    globally, per name, the script level among the readers as `None`. The facts of every error
-    node are held keyed by their node, and the variables of every error node answer the
-    transforms that ask which names unread text may reference.
+    `build_usage_model`: the script's functions, the direct-identifier call count of each, how
+    often every name is read — the variables of unread text among its readers — the functions
+    that are pure, the calls and error nodes that may consume a computed name, the calls and
+    error nodes that may read one that no census sees, the lowercased text of every string
+    literal and directive, parsed or unread, the local storage an occurrence in a scope may
+    bind, per scope, and the storage every occurrence provably binds globally, per name, the
+    script level among the readers as `None`. The facts of every error node are held keyed by
+    their node, and the variables of every error node answer the transforms that ask which
+    names unread text may reference.
     """
 
     functions: dict[str, Au3FunctionDeclaration]
     call_counts: dict[str, int]
+    read_counts: dict[str, int]
     pure_functions: frozenset[str]
     channels: frozenset[Au3Call | Au3ErrorNode]
+    reading_channels: frozenset[Au3Call | Au3ErrorNode]
     spellings: str
     local_bindings: dict[Au3FunctionDeclaration, frozenset[str]]
     global_bindings: dict[str, frozenset[Au3FunctionDeclaration | None]]
     unparsed: Mapping[Au3ErrorNode, Au3UnparsedText]
     unparsed_variables: frozenset[str]
+    _spelled: dict[str, bool] = field(default_factory=dict, compare=False, repr=False)
 
     def spells(self, name: str) -> bool:
         """
         Whether *name* — a function name, or a variable name without its `$` — is a substring of
         any string literal or directive the tree holds, parsed or unread: a computed name has to
         be built from string data, so a name some string spells is one no removal may take away.
+        The answer is memoized per name — the scan is linear in the corpus — and the model is
+        rebuilt per tree version, so a memo never outlives the facts it answered from.
         """
-        return name.lstrip('$') in self.spellings
+        answer = self._spelled.get(name)
+        if answer is None:
+            answer = name.lstrip('$') in self.spellings
+            self._spelled[name] = answer
+        return answer
 
     def holds_block_keyword_text(self, root: Node) -> bool:
         """
@@ -414,20 +445,27 @@ def _collect_bindings(
 ) -> tuple[
     dict[Au3FunctionDeclaration, frozenset[str]],
     dict[str, frozenset[Au3FunctionDeclaration | None]],
+    dict[str, int],
 ]:
     """
-    The storage every variable occurrence binds or may bind, over every scope of *root*: a write
-    through the scope model's write binding and a read through its read binding, an occurrence
-    that may reach a local of its scope through `may_bind_local`, and the variables of a
-    function's parameter defaults among the occurrences — a default evaluates in the function
-    when a call leaves its argument out. The declarator variables themselves are excluded — the
-    declarations are what the answers are asked about. A write that proves nothing binds no
-    storage: its value reaches a global only through a read somewhere, and that read is the
-    occurrence that protects the name. A variable of unread text counts as an occurrence that
-    may bind either a local of its node's scope or the global.
+    The storage every variable occurrence binds or may bind, over every scope of *root*, and how
+    often every name is read: a write through the scope model's write binding and a read through
+    its read binding, an occurrence that may reach a local of its scope through `may_bind_local`,
+    and the variables of a function's parameter defaults among the occurrences — a default
+    evaluates in the function when a call leaves its argument out. The declared variable of a
+    declarator is excluded — the declaration is what the answers are asked about — while a
+    bare-variable initializer reads like any other occurrence: it is not the declarator's own
+    variable. A write that proves nothing binds no storage: its value reaches a global only
+    through a read somewhere, and that read is the occurrence that protects the name. A variable
+    of unread text counts as an occurrence that may bind either a local of its node's scope or
+    the global. An occurrence
+    reads when it is not a write occurrence — a compound assignment's target and a `ReDim`
+    target among the readers, both read what they rewrite — and a variable of unread text counts
+    as a read of the name it spells.
     """
     local: dict[Au3FunctionDeclaration, set[str]] = {}
     global_names: dict[str, set[Au3FunctionDeclaration | None]] = {}
+    reads: Counter[str] = Counter()
     for scope, body in ast.scope_bodies(root):
         occurrences: Iterator[Node] = ast.scope_nodes(body)
         if scope is not None:
@@ -439,11 +477,21 @@ def _collect_bindings(
         for node in occurrences:
             if not isinstance(node, Au3Variable):
                 continue
-            if isinstance(node.parent, (Au3VariableDeclarator, Au3EnumDeclarator)):
+            parent = node.parent
+            if (
+                isinstance(parent, (Au3VariableDeclarator, Au3EnumDeclarator))
+                and parent.variable is node
+            ):
                 continue
             statement = ast.owning_statement(node)
             if statement is None:
                 continue
+            if (
+                not ast.is_write_occurrence(node)
+                or (isinstance(node.parent, Au3Assignment) and node.parent.operator != '=')
+                or isinstance(node.parent, Au3ReDimTarget)
+            ):
+                reads[node.name] += 1
             if ast.is_write_occurrence(node):
                 binding = scope_model.binding(scope, statement, node.name)
             else:
@@ -459,31 +507,43 @@ def _collect_bindings(
     for node, facts in unparsed.items():
         scope = ast.enclosing_function(node)
         for name in facts.variables:
+            reads[name] += 1
             global_names.setdefault(name, set()).add(scope)
             if scope is not None:
                 local.setdefault(scope, set()).add(name)
     return (
         {scope: frozenset(names) for scope, names in local.items()},
         {name: frozenset(scopes) for name, scopes in global_names.items()},
+        dict(reads),
     )
+
+
+#: The depth a literal `Execute` payload's read verdict recurses to: each level is one payload
+#: parse, and past the bound the payload is not parsed and counts as reading. Literal payloads
+#: are short and rare once the constant fold has run.
+_PAYLOAD_READ_DEPTH = 8
 
 
 def _collect_channels(
     root: Au3Script,
     scope_model: Au3ScopeModel,
     unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
-) -> frozenset[Au3Call | Au3ErrorNode]:
+) -> tuple[frozenset[Au3Call | Au3ErrorNode], frozenset[Au3Call | Au3ErrorNode]]:
     """
-    Every call and error node that may consume a computed name: a callee that is neither an
-    identifier nor a member access, an `Execute` whose payload `execute_kills` refuses, and a
-    non-literal in a name-parameter position of a builtin the table knows. A member callee
-    dispatches through an object and reaches no script function or variable, so it is the one
-    non-identifier callee that is not a channel. A call naming a script function is answered by
-    the call-count and spelling facts instead. An error node joins when its text opens a call on
-    a computed callee or spells `Execute` or a name-parameter builtin — whether a name it spells
-    shadows the builtin is unresolvable in unread text, so a name it spells always counts.
+    Every call and error node that may consume a computed name, and every call and error node
+    that may read one that no census sees — the write-side question and the read-side one,
+    answered by the same walk. A write channel: a callee that is neither an identifier nor a
+    member access, an `Execute` whose payload `execute_kills` refuses, and a non-literal in a
+    name-parameter position of a builtin the table knows. A read channel: the shapes
+    `_named_callee_reads` names. A member callee dispatches through an object and reaches no
+    script function or variable, so it is the one non-identifier callee that is neither. A call
+    naming a script function is answered by the call-count and spelling facts instead. An error
+    node joins both under one rule: its text opens a call on a computed callee or spells
+    `Execute` or a name-parameter builtin — whether a name it spells shadows the builtin is
+    unresolvable in unread text, so a name it spells always counts.
     """
     channels: set[Au3Call | Au3ErrorNode] = set()
+    reading: set[Au3Call | Au3ErrorNode] = set()
     for node in root.walk():
         if not isinstance(node, Au3Call):
             continue
@@ -491,9 +551,12 @@ def _collect_channels(
         if callee is None:
             if not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
                 channels.add(node)
+                reading.add(node)
             continue
         if callee.name in scope_model.functions:
             continue
+        if _named_callee_reads(callee.name, node.arguments, scope_model, _PAYLOAD_READ_DEPTH):
+            reading.add(node)
         if callee.name == 'execute':
             if execute_kills(node) is None:
                 channels.add(node)
@@ -511,7 +574,75 @@ def _collect_channels(
             or not NAME_PARAMETERS.keys().isdisjoint(facts.identifiers)
         ):
             channels.add(node)
-    return frozenset(channels)
+            reading.add(node)
+    return frozenset(channels), frozenset(reading)
+
+
+def _named_callee_reads(
+    name: str,
+    arguments: Sequence[Expression],
+    scope_model: Au3ScopeModel,
+    depth: int,
+) -> bool:
+    """
+    Whether a call to *name* over *arguments* — as the tree spells it, or as a `Call` invocation
+    over a string literal resolves it — may read a name no census sees: a computed callee could
+    name `Eval`, an `Execute` whose payload is not one literal expression can execute arbitrary
+    code, and a non-literal in a name-parameter position reaches a name through a value the tree
+    does not show. A script function's reads stand in the tree, and a member callee is answered
+    by the caller. Every resolution refusal reads: unread text cannot resolve what a name
+    shadows.
+    """
+    if name in scope_model.functions:
+        return False
+    if name == 'execute':
+        return _execute_reads(arguments, scope_model, depth)
+    if name == 'call':
+        literal = ast.unwrap_parens(arguments[0]) if arguments else None
+        if not isinstance(literal, Au3StringLiteral):
+            return True
+        target = call_target(literal.value, arguments[1:], scope_model.function_names)
+        return target is None or _named_callee_reads(target, arguments[1:], scope_model, depth)
+    for index in NAME_PARAMETERS.get(name, frozenset()):
+        if index >= len(arguments):
+            continue
+        if not isinstance(ast.unwrap_parens(arguments[index]), Au3StringLiteral):
+            return True
+    return False
+
+
+def _execute_reads(
+    arguments: Sequence[Expression],
+    scope_model: Au3ScopeModel,
+    depth: int,
+) -> bool:
+    """
+    Whether an `Execute` over *arguments* may read a name no census sees: a payload the tree does
+    not show as one literal expression can execute arbitrary code, and a literal one reads only
+    what its parsed expression holds of the shapes `_named_callee_reads` names, judged one depth
+    level down. A payload that fails to parse may still be one AutoIt runs, so it reads; the
+    empty payload AutoIt answers `""` for (probe3) reads nothing.
+    """
+    if depth <= 0 or len(arguments) != 1:
+        return True
+    literal = ast.unwrap_parens(arguments[0])
+    if not isinstance(literal, Au3StringLiteral):
+        return True
+    if not literal.value.strip():
+        return False
+    expression = parse_payload(literal.value)
+    if expression is None:
+        return True
+    for node in expression.walk():
+        if not isinstance(node, Au3Call):
+            continue
+        callee = ast.direct_callee(node)
+        if callee is None:
+            if not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
+                return True
+        elif _named_callee_reads(callee.name, node.arguments, scope_model, depth - 1):
+            return True
+    return False
 
 
 def _collect_call_counts(
@@ -575,12 +706,15 @@ def build_usage_model(
         for facts in unparsed.values()
         for name in facts.variables
     }
-    local_bindings, global_bindings = _collect_bindings(root, scope_model, unparsed)
+    local_bindings, global_bindings, read_counts = _collect_bindings(root, scope_model, unparsed)
+    channels, reading_channels = _collect_channels(root, scope_model, unparsed)
     return Au3UsageModel(
         functions=scope_model.functions,
         call_counts=_collect_call_counts(root, scope_model, unparsed),
+        read_counts=read_counts,
         pure_functions=_build_purity(root, scope_model, summaries, unparsed),
-        channels=_collect_channels(root, scope_model, unparsed),
+        channels=channels,
+        reading_channels=reading_channels,
         spellings=_collect_spellings(root, unparsed),
         local_bindings=local_bindings,
         global_bindings=global_bindings,
