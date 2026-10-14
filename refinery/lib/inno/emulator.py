@@ -1294,7 +1294,7 @@ class IFPSEmulator:
         return True
 
     @external(alias=[
-        'sArm64',
+        'IsArm64',
         'IsArm32Compatible',
         'Debugging',
         'IsUninstaller',
@@ -1597,7 +1597,7 @@ class IFPSEmulator:
         return False
 
     @external()
-    def Trunc(self, x: float) -> float:
+    def Trunc(self, x: float) -> int:
         return math.trunc(x)
 
     @external()
@@ -2090,9 +2090,9 @@ class IFPSEmulator:
         target.set(old[:size])
 
     @external(alias='OemToCharBuff')
-    def CharToOemBuff(self, string: str) -> str:
+    def CharToOemBuff(self, string: Variable[str]):
         # TODO
-        return string
+        ...
 
     @external()
     def Utf8Encode(self, string: str) -> str:

@@ -251,3 +251,26 @@ class TestIPFSEmulator(TestBase):
         decl = self._installer_emulator().symbols['Pos'].decl
         assert decl is not None
         self.assertEqual([str(parameter.type) for parameter in decl.parameters], ['AnyString', 'AnyString'])
+
+    def test_every_emulated_function_takes_and_returns_what_inno_setup_or_pascal_script_declares(self):
+        from refinery.lib import json
+        from refinery.lib.inno.emulator import IFPSEmulator
+        from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses
+        from refinery.lib.resources import datapath
+        with datapath('winapi.json').open('rb') as stream:
+            modules = json.loads(stream.read())
+        for namespace, handlers in IFPSEmulator.external_symbols.items():
+            if namespace in modules:
+                continue
+            declared = IFPSClasses.Classes[namespace].members if namespace else IFPSAPI
+            for name, handler in handlers.items():
+                with self.subTest(namespace=namespace, name=name):
+                    self.assertIn(name, declared)
+                    declaration = declared[name]
+                    # The handler of a method or of a property read takes the object as its first argument.
+                    receiver = bool(namespace) and declaration.kind not in ('getter', 'setter')
+                    returns = declaration.kind == 'property' or not declaration.void
+                    self.assertEqual(
+                        (handler.argc, not handler.void),
+                        (declaration.argc + receiver, returns),
+                    )

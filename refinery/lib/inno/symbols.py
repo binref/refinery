@@ -191,6 +191,11 @@ class IFPSAPI:
     function CheckForMutexes(Mutexes: String): Boolean;
     function CreateCallback(Method: AnyMethod): Longword;
     function DLLGetLastError(): LongInt;
+    function StrGet(var S: String; I: Integer): Char;
+    procedure StrSet(C: Char; I: Integer; var S: String);
+    function WStrGet(var S: AnyString; I: Integer): WideChar;
+    procedure WStrSet(C: AnyString; I: Integer; var S: AnyString);
+    function Trunc(E: Extended): LongInt;
     function Chr(B: Byte): Char;
     function Ord(C: Char): Byte;
     function Copy(S: AnyString; Index, Count: Integer): String;
