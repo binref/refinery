@@ -43,3 +43,7 @@ class TestAu3UnparsedReader(TestBase):
     def test_text_without_a_block_keyword(self):
         unparsed = read_unparsed('$a = f(1, $b[2])')
         self.assertFalse(unparsed.block_keyword)
+
+    def test_directives_of_a_mixed_line(self):
+        unparsed = read_unparsed('$a = 1 #forceref $x')
+        self.assertEqual(unparsed.directives, ('#forceref $x',))

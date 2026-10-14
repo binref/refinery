@@ -20,25 +20,24 @@ state (`While(821 - 212)`, `Case BitXOR(a, b)`) splices without waiting for a fo
 Keeping the state assignment is always sound — it executes exactly where the `While` stood — so it
 leaves only when nothing can read the storage it writes: no occurrence of the name in the live
 case body, none outside the region anywhere in the script, none spelled by unread source text —
-an error node's or a parse record's, which is live source the real AutoIt runs — no string or
-directive spelling the name, no constant of that name (dropping a fatal write to a constant
-would let the script continue where the original dies), no include anywhere in the script — an
-included file is outside every fact the tree holds and may itself be spliced into the region's
-own function — and no computed-name channel that could reach the storage: one in the region's
-own scope when the write provably targets a local of it, any channel anywhere when it targets
-the global or proves nothing.
+live source the real AutoIt runs — no string or directive spelling the name, no constant of that
+name (dropping a fatal write to a constant would let the script continue where the original
+dies), no include anywhere in the script, parsed or unread — an included file is outside every
+fact the tree holds and may itself be spliced into the region's own function — and no
+computed-name channel that could reach the storage: one in the region's own scope when the write
+provably targets a local of it, any channel anywhere when it targets the global or proves
+nothing.
 Two regions sharing one state name need no pairing machinery — each sees the other's
 occurrences and keeps its assignment.
 
 What the splice deletes — the `While` test, the dead cases, the trailing `ExitLoop`, the state
 assignment when it leaves — must hold no function declaration, directive, or include, which are
 load-bearing at load time or unreachable-shape declarations no runtime proof covers, and no error
-node whose text the usage model reads as holding an AutoIt block keyword: that text could shift
-where the real parser's
-block boundaries fall and with it which code is dead at all. Error text without one can still
-change how a dead case's statements decompose, but never where a block boundary falls; whether
-real AutoIt accepts those statement forms is the parser-recovery phase's question, stated here
-rather than paid for on every region the corpus offers.
+text the usage model reads as holding an AutoIt block keyword: that text could shift where the
+real parser's block boundaries fall and with it which code is dead at all. Error text without one
+can still change how a dead case's statements decompose, but never where a block boundary falls;
+whether real AutoIt accepts those statement forms is the parser-recovery phase's question, stated
+here rather than paid for on every region the corpus offers.
 
 The live body pays for the splice with its controls. Its last statement must end the loop — an
 `ExitLoop` of this loop, which is dropped, or a `Return` or `Exit`, which end everything the
@@ -79,7 +78,6 @@ from refinery.lib.scripts.au3.model import (
     Au3ContinueLoopStatement,
     Au3Directive,
     Au3DoUntilStatement,
-    Au3ErrorNode,
     Au3ExitLoopStatement,
     Au3ExitStatement,
     Au3ExpressionStatement,
@@ -380,16 +378,17 @@ class Au3ControlFlowDeflattening(Transformer):
         Whether the state assignment stays: always sound, so it leaves only when nothing can read
         the storage it writes — no occurrence of the name in the live case body, where a read would
         see the pre-region value once the assignment is gone, none outside the region anywhere in
-        the script, none in unread source text — an error node's or a parse record's — no string or
-        directive spelling it, no constant of that name, and no computed-name channel that could
-        reach the storage — one in the region's own scope when the write provably targets a local
-        of it, any channel anywhere when it does not — and no include anywhere in the script, whose
-        file is outside every fact the tree holds and may itself be spliced into the region's own
-        function.
+        the script, none in unread source text, no string or directive spelling it, no constant of
+        that name, and no computed-name channel that could reach the storage — one in the region's
+        own scope when the write provably targets a local of it, any channel anywhere when it does
+        not — and no include anywhere in the script, parsed or unread, whose file is outside every
+        fact the tree holds and may itself be spliced into the region's own function.
         """
         assert self._scopes is not None
         assert self._usage is not None
         if self._scopes.holds_an_include:
+            return True
+        if self._usage.holds_unread_include():
             return True
         for statement in live_body:
             for node in statement.walk():
@@ -414,15 +413,17 @@ class Au3ControlFlowDeflattening(Transformer):
         """
         Whether everything the splice deletes may leave: no function declaration, directive, or
         include — load-bearing at load time or unreachable-shape declarations no runtime proof
-        covers — and no error node whose text the usage model reads as holding an AutoIt block
-        keyword, because that text could shift where the real parser's block boundaries fall and
-        with it which code is dead at all.
+        covers — and no error text the usage model reads as holding an AutoIt block keyword,
+        because that text could shift where the real parser's block boundaries fall and with it
+        which code is dead at all.
         """
         usage = self._usage
         assert usage is not None
         for root in roots:
             if root is None:
                 continue
+            if usage.holds_block_keyword_text(root):
+                return False
             for node in root.walk():
                 if isinstance(node, (
                     Au3FunctionDeclaration,
@@ -430,7 +431,5 @@ class Au3ControlFlowDeflattening(Transformer):
                     Au3Include,
                     Au3IncludeOnce,
                 )):
-                    return False
-                if isinstance(node, Au3ErrorNode) and usage.unparsed[node].block_keyword:
                     return False
         return True

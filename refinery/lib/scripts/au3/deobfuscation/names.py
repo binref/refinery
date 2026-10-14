@@ -41,7 +41,7 @@ from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_chil
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
-from refinery.lib.scripts.au3.analysis.usage import callee_census
+from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel, callee_census
 from refinery.lib.scripts.au3.lexer import is_au3_identifier
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
@@ -102,16 +102,16 @@ class _TreeFacts:
     calls_autoit_set_option: bool
 
 
-def _tree_facts(root: Au3Script, scopes: Au3ScopeModel) -> _TreeFacts:
+def _tree_facts(root: Au3Script, usage: Au3UsageModel) -> _TreeFacts:
     """
     The facts the whole tree decides. The callee spellings are the census's to read — see
-    `callee_census` — and answer the error-state and the option-setter questions; a parse error
-    is any error node the parser recovered, live source text or a repaired construct no walk
-    reads, so its tree is refused outright rather than reasoned about. The spelling of the option
-    the tree sets is unpinned either way — only that the tree may set `MustDeclareVars` is a fact
-    here.
+    `callee_census` — over the usage model's functions and error-node facts, and they answer the
+    error-state and the option-setter questions; a parse error is any error node the parser
+    recovered, live source text or a repaired construct no walk reads, so its tree is refused
+    outright rather than reasoned about. The spelling of the option the tree sets is unpinned
+    either way — only that the tree may set `MustDeclareVars` is a fact here.
     """
-    census = callee_census(root, scopes.functions)
+    census = callee_census(root, usage.functions, usage.unparsed)
     parse_error = any(isinstance(node, Au3ErrorNode) for node in root.walk())
     return _TreeFacts(
         census.observes_error_state(),
@@ -146,8 +146,9 @@ class Au3DynamicNameFlattening(Transformer):
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
-            self._scopes = model_cache(self, node).scopes
-            self._facts = _tree_facts(node, self._scopes)
+            cache = model_cache(self, node)
+            self._scopes = cache.scopes
+            self._facts = _tree_facts(node, cache.usage)
         self.generic_visit(node)
         if not isinstance(node, Au3Call):
             return None

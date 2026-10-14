@@ -213,6 +213,33 @@ class TestAu3ControlFlowDeflattening(TestAu3):
             EndFunc
             ''')
 
+    def test_the_state_assignment_stays_when_a_directive_in_error_text_names_it(self):
+        """
+        The directive swallows the rest of its line as one token, so the state name it holds is
+        no variable fact — the directive line itself is what spells it.
+        """
+        self._assertSplicesTo(
+            '''
+            Func f()
+                $x = 1 #forceref $state
+                While 1
+                    $state = 2
+                    Switch $state
+                    Case 2
+                        MsgBox(0, 0, 2)
+                        ExitLoop
+                    EndSwitch
+                Wend
+            EndFunc
+            ''',
+            '''
+            Func f()
+                $x = 1 #forceref $state
+                $state = 2
+                MsgBox(0, 0, 2)
+            EndFunc
+            ''')
+
     def test_the_state_assignment_leaves_when_error_text_holds_only_a_substring(self):
         self._assertSplicesTo(
             '''

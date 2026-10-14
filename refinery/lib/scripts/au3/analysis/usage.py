@@ -47,7 +47,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.builtins import NAME_PARAMETERS
 from refinery.lib.scripts.au3.analysis.existence import execute_kills
-from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
+from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding, INCLUDE_SPELLING
 from refinery.lib.scripts.au3.analysis.unparsed import Au3UnparsedText, read_unparsed
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
@@ -96,11 +96,11 @@ class Au3UsageModel:
     What one tree version does with its names, built once per tree version by
     `build_usage_model`: the script's functions, the direct-identifier call count of each, the
     functions that are pure, the calls and error nodes that may consume a computed name, the
-    lowercased text of every string literal and directive, the local storage an occurrence in a
-    scope may bind, per scope, and the storage every occurrence provably binds globally, per name,
-    the script level among the readers as `None`. The facts of every error node are held keyed by
-    their node, and the variables of every error node answer the transforms that ask which names
-    unread text may reference.
+    lowercased text of every string literal and directive, parsed or unread, the local storage
+    an occurrence in a scope may bind, per scope, and the storage every occurrence provably binds
+    globally, per name, the script level among the readers as `None`. The facts of every error
+    node are held keyed by their node, and the variables of every error node answer the
+    transforms that ask which names unread text may reference.
     """
 
     functions: dict[str, Au3FunctionDeclaration]
@@ -116,10 +116,33 @@ class Au3UsageModel:
     def spells(self, name: str) -> bool:
         """
         Whether *name* — a function name, or a variable name without its `$` — is a substring of
-        any string literal or directive the tree holds: a computed name has to be built from
-        string data, so a name some string spells is one no removal may take away.
+        any string literal or directive the tree holds, parsed or unread: a computed name has to
+        be built from string data, so a name some string spells is one no removal may take away.
         """
         return name.lstrip('$') in self.spellings
+
+    def holds_block_keyword_text(self, root: Node) -> bool:
+        """
+        Whether *root*'s subtree holds error text the reader marks with an AutoIt block keyword:
+        deleting it could move where the real parser's block boundaries fall, and with them which
+        code is live at all.
+        """
+        return any(
+            self.unparsed[node].block_keyword
+            for node in root.walk()
+            if isinstance(node, Au3ErrorNode)
+        )
+
+    def holds_unread_include(self) -> bool:
+        """
+        Whether unread source text holds an include directive: the file it names is outside every
+        fact the tree holds, and may call anything a removal would take away.
+        """
+        return any(
+            INCLUDE_SPELLING.match(directive)
+            for facts in self.unparsed.values()
+            for directive in facts.directives
+        )
 
     def effect_free(self, expression: Expression | None) -> bool:
         """
@@ -162,20 +185,20 @@ class Au3CalleeCensus:
 def callee_census(
     root: Au3Script,
     functions: Mapping[str, Au3FunctionDeclaration],
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
 ) -> Au3CalleeCensus:
     """
     Count what the calls of *root* name. A member callee is the one exception to every reader: it
     dispatches through an object and reaches no builtin and no script function. A script function
     named `Call` shadows the builtin, so its first argument is an ordinary argument rather than a
-    name. Source text the parser could not read is read through `read_unparsed`: a computed callee
-    it opens, or a `Call` it spells — whose argument's literalness the text cannot show — makes
-    any callee possible, an `Execute` it spells joins the names, and the error-state macros it
-    spells count as reads.
+    name. Source text the parser could not read is read through the facts *unparsed* holds: a
+    computed callee it opens, or a `Call` it spells — whose argument's literalness the text cannot
+    show — makes any callee possible, an `Execute` it spells joins the names, and the error-state
+    macros it spells count as reads.
     """
     callees: set[str] = set()
     computed_callee = False
     reads_error_macros = False
-    texts: list[str] = []
     for node in root.walk():
         if isinstance(node, Au3Macro):
             reads_error_macros = reads_error_macros or node.name in _ERROR_MACROS
@@ -194,20 +217,17 @@ def callee_census(
                         callees.add(literal.value.lower())
             elif not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
                 computed_callee = True
-        elif isinstance(node, Au3ErrorNode):
-            texts.append(node.text)
-    for text in texts:
-        unparsed = read_unparsed(text)
+    for facts in unparsed.values():
         computed_callee = (
             computed_callee
-            or unparsed.computed_callee
-            or 'call' in unparsed.identifiers
+            or facts.computed_callee
+            or 'call' in facts.identifiers
         )
         reads_error_macros = (
             reads_error_macros
-            or not _ERROR_MACROS.isdisjoint(unparsed.macros)
+            or not _ERROR_MACROS.isdisjoint(facts.macros)
         )
-        if 'execute' in unparsed.identifiers:
+        if 'execute' in facts.identifiers:
             callees.add('execute')
     return Au3CalleeCensus(frozenset(callees), computed_callee, reads_error_macros)
 
@@ -351,6 +371,7 @@ def _build_purity(
     root: Au3Script,
     scope_model: Au3ScopeModel,
     summaries: dict[str, frozenset[str] | None],
+    unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
 ) -> frozenset[str]:
     """
     The pure functions of the script: every function whose may-write summary is empty, whose body
@@ -364,7 +385,7 @@ def _build_purity(
     read the error state holds no pure function at all: every call into one writes what the
     script observes.
     """
-    if callee_census(root, scope_model.functions).observes_error_state():
+    if callee_census(root, scope_model.functions, unparsed).observes_error_state():
         return frozenset()
     functions = scope_model.functions
     pure = {
@@ -524,6 +545,7 @@ def _collect_spellings(
             pieces.append(node.text)
     for facts in unparsed.values():
         pieces.extend(facts.strings)
+        pieces.extend(facts.directives)
     return '\n'.join(pieces).lower()
 
 
@@ -557,7 +579,7 @@ def build_usage_model(
     return Au3UsageModel(
         functions=scope_model.functions,
         call_counts=_collect_call_counts(root, scope_model, unparsed),
-        pure_functions=_build_purity(root, scope_model, summaries),
+        pure_functions=_build_purity(root, scope_model, summaries, unparsed),
         channels=_collect_channels(root, scope_model, unparsed),
         spellings=_collect_spellings(root, unparsed),
         local_bindings=local_bindings,

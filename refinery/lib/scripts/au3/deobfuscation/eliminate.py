@@ -12,16 +12,16 @@ this sweep removed keeps its call sites until the next sweep re-census — so th
 deeply nested obfuscator needs happens inside one execution of the cleanup group.
 
 Three gates close parts of the sweep. The entry gate: a script with no executable top-level
-statement, and any script holding an include, is a fragment whose functions and globals can be
-reached from outside the tree, so only its dead locals and effect-free statements leave. The
-channel gate: a computed-name channel outside the functions this sweep removes blocks function
-and global removal for the whole visit, because the name it computes may reach anything, and a
-channel inside a function blocks that function's local removal, because a dynamic payload runs
-in the scope it stands in and can name a local of it. Error text counts as a reference to every
-name it spells, and as a channel when it names one, which the usage model reads; a function
-whose subtree holds error text with an AutoIt block keyword is not removed, because deleting
-the function could move where the real parser's block boundaries fall, and with them which code
-is live at all.
+statement, and any script holding an include, parsed or unread, is a fragment whose functions and
+globals can be reached from outside the tree, so only its dead locals and effect-free statements
+leave. The channel gate: a computed-name channel outside the functions this sweep removes blocks
+function and global removal for the whole visit, because the name it computes may reach anything,
+and a channel inside a function blocks that function's local removal, because a dynamic payload
+runs in the scope it stands in and can name a local of it. Error text counts as a reference to
+every name it spells, and as a channel when it names one, which the usage model reads; a name
+whose function holds error text with an AutoIt block keyword is not removed — a removal takes
+every declaration of the name — because deleting the function could move where the real parser's
+block boundaries fall, and with them which code is live at all.
 
 What a removal may not hide: an initializer or dimension that could terminate the script — a
 division, an exponentiation, an array subscript, a call of the wrong arity — keeps its
@@ -39,7 +39,6 @@ from refinery.lib.scripts.au3.model import (
     Au3Directive,
     Au3EnumDeclaration,
     Au3EnumDeclarator,
-    Au3ErrorNode,
     Au3ExpressionStatement,
     Au3FunctionDeclaration,
     Au3Script,
@@ -90,10 +89,13 @@ class Au3DeadCodeElimination(Transformer):
         """
         Whether the script runs from its own top-level statements: it holds a statement that is
         neither a declaration, a function definition nor a directive, and no include — read from
-        the scope model, in both spellings the parser answers with — because an included file's
-        contents are called from outside the tree.
+        the scope model in both spellings the parser answers with, and from the unread text the
+        usage model holds — because an included file's contents are called from outside the
+        tree.
         """
         if self._scopes is not None and self._scopes.holds_an_include:
+            return False
+        if self._usage.holds_unread_include():
             return False
         for statement in script.body:
             if not isinstance(statement, (
@@ -121,21 +123,21 @@ class Au3DeadCodeElimination(Transformer):
 
     def _without_block_keyword_text(self, removable: set[str]) -> set[str]:
         """
-        *removable* minus every function whose subtree holds error text with an AutoIt block
-        keyword, read from the usage model: deleting the function could move where the real
-        parser's block boundaries fall, and with them which code is live at all.
+        *removable* minus every name one of whose declarations holds error text with an AutoIt
+        block keyword, read from the usage model: a removal takes every declaration of the name,
+        and deleting one could move where the real parser's block boundaries fall, and with them
+        which code is live at all.
         """
         usage = self._usage
         assert usage is not None
-        return {
-            name
-            for name in removable
-            if not any(
-                usage.unparsed[node].block_keyword
-                for node in usage.functions[name].walk()
-                if isinstance(node, Au3ErrorNode)
-            )
-        }
+        blocked: set[str] = set()
+        for node, facts in usage.unparsed.items():
+            if not facts.block_keyword:
+                continue
+            scope = ast.enclosing_function(node)
+            if scope is not None and scope.name is not None:
+                blocked.add(scope.name.name)
+        return removable - blocked
 
     def _without_nested_survivors(self, removable: set[str]) -> set[str]:
         """

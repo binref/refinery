@@ -263,9 +263,42 @@ class TestAu3DeadCodeElimination(TestAu3):
             $x = = dead()
             ''')
 
+    def test_a_script_whose_error_text_holds_an_include_is_unchanged(self):
+        """
+        The include line carries trailing text, so the parser recovers it whole as error text and
+        the scope model sees no directive — but the included file is spliced in all the same, so
+        its calls reach the tree's functions.
+        """
+        self._assertKept(
+            '''
+            Func dead()
+            EndFunc
+
+            MsgBox(0, 0, 0)
+
+            $x = 1 #include <String.au3>
+            ''')
+
     def test_a_function_whose_error_text_holds_a_block_keyword_is_kept(self):
         self._assertKept(
             '''
+            Func dead()
+                $x = = "EndIf"
+            EndFunc
+
+            MsgBox(0, 0, 0)
+            ''')
+
+    def test_a_duplicate_name_whose_other_declaration_holds_block_keyword_text_is_kept(self):
+        """
+        A removal takes every declaration of the name while the scope model indexes one of
+        them, so error text with a block keyword in either declaration keeps them both.
+        """
+        self._assertKept(
+            '''
+            Func dead()
+            EndFunc
+
             Func dead()
                 $x = = "EndIf"
             EndFunc
@@ -283,6 +316,20 @@ class TestAu3DeadCodeElimination(TestAu3):
             $g = = 1
             ''')
 
+    def test_a_declarator_a_directive_in_error_text_names_is_kept(self):
+        """
+        The directive swallows the rest of its line as one token, so the variable it names is no
+        fact the reader spells — the directive line itself is.
+        """
+        self._assertKept(
+            '''
+            Global $g
+
+            MsgBox(0, 0, 0)
+
+            $x = 1 #forceref $g
+            ''')
+
     def test_error_text_naming_execute_blocks_global_removal(self):
         self._assertKept(
             '''
@@ -293,10 +340,10 @@ class TestAu3DeadCodeElimination(TestAu3):
             $x = = Execute("y")
             ''')
 
-    def test_a_record_without_an_error_node_still_sweeps(self):
+    def test_a_construct_the_parser_closed_itself_still_sweeps(self):
         """
-        A construct the parser closed itself leaves no error node in the tree, and the record it
-        left spells no name, so the sweep removes what a clean tree would.
+        A construct the parser closed itself holds no error node — its missing closer is a record
+        only, and the sweep reads the tree — so it removes what a clean tree would.
         """
         self.assertEqual(
             self._apply(

@@ -26,10 +26,12 @@ Missing tokens are synthesized with `_expect`, which records the error without a
 statement — except on a single line: a statement there that needed such a repair, or that is
 followed by more text on its line, is abandoned and its whole line recovered verbatim, because
 the interpreter rejects the line when it reaches it, so a repaired reading would be code that
-never runs as written. Only multi-line blocks keep their repairs. A line holding a block closer
-or divider keeps the repaired reading, since recovering it whole would swallow the boundary and
-move every statement after it into the wrong block. Stray block terminators become one-token
-error statements rather than consuming the rest of their line.
+never runs as written. Only multi-line blocks keep their repairs, and a construct that opens one
+is multi-line whether or not the file ended before its closer. A line holding a block closer or
+divider keeps the repaired reading, since recovering it whole would swallow the boundary and
+move every statement after it into the wrong block — a closer or divider a member access names
+after its dot is no boundary. Stray block terminators become one-token error statements rather
+than consuming the rest of their line.
 
 The single-line form of `If` parses to the same tree as the block form (`body` holds one
 statement), so the synthesizer can always print block form. A leading-dot member access builds
@@ -162,12 +164,14 @@ _SCOPE_KINDS: dict[K, Au3ScopeKind] = {
 
 _DECLARATION_STARTERS = frozenset({K.DIM, K.LOCAL, K.GLOBAL, K.CONST, K.STATIC, K.ENUM})
 
-_BLOCK_OPENERS = frozenset({K.IF, K.WHILE, K.DO, K.FOR, K.SELECT, K.SWITCH, K.WITH, K.FUNC})
+#: The keyword kinds that open a multi-line block. Public: the unread-text reader derives its
+#: block-keyword universe from this set and the terminator set below.
+BLOCK_OPENERS = frozenset({K.IF, K.WHILE, K.DO, K.FOR, K.SELECT, K.SWITCH, K.WITH, K.FUNC})
 
 #: The keywords that close or divide the construct a statement list belongs to. A stray one is a
 #: one-token error statement; a legitimate one never reaches statement dispatch because the list
 #: it closes stops at it first.
-_STRAY_TERMINATORS = frozenset({
+STRAY_TERMINATORS = frozenset({
     K.ELSE,
     K.ELSEIF,
     K.ENDIF,
@@ -181,9 +185,23 @@ _STRAY_TERMINATORS = frozenset({
     K.ENDFUNC,
 })
 
+#: The statements a block opener parses to: constructs whose closer stands on a line of its own,
+#: read or synthesized, so no repair they hold is a single-line reading — the `If` is absent,
+#: because its single-line form is the one construct whose closer is optional.
+_BLOCK_CONSTRUCTS = (
+    Au3DoUntilStatement,
+    Au3ForInStatement,
+    Au3ForStatement,
+    Au3FunctionDeclaration,
+    Au3SelectStatement,
+    Au3SwitchStatement,
+    Au3WhileStatement,
+    Au3WithStatement,
+)
+
 #: The tokens that can end a statement whose optional operand is being decided: the line, the
 #: file, or the boundary of the construct the statement sits in.
-_BOUNDARY_KINDS = _STRAY_TERMINATORS | {K.NEWLINE, K.EOF}
+_BOUNDARY_KINDS = STRAY_TERMINATORS | {K.NEWLINE, K.EOF}
 
 _INCLUDE_ONCE = re.compile(r'\s*#\s*include-once\s*$', re.IGNORECASE)
 _INCLUDE = re.compile(r'\s*#\s*include\s*([<"])([^<>"\r\n]*)[>"]\s*$', re.IGNORECASE)
@@ -342,15 +360,12 @@ class Au3Parser:
             recorded = len(self._errors)
             try:
                 stmt = self._parse_statement()
+                abandoned = self._statement_is_abandoned(stmt, mark, recorded)
             except RecursionError:
                 raise
             except Exception:
-                error = self._recover_statement(start, mark)
-                if comments:
-                    error.leading_comments[:0] = comments
-                body.append(error)
-                continue
-            if self._statement_is_abandoned(stmt, mark, recorded):
+                abandoned = True
+            if abandoned:
                 del self._errors[recorded:]
                 error = self._recover_statement(start, mark)
                 if comments:
@@ -373,23 +388,33 @@ class Au3Parser:
         line — no line break between its first token and the parser's position after it — and
         either a token it needed was synthesized while it was read or more text follows it on its
         line, so the interpreter rejects the line when it reaches it and a repaired reading would
-        be code that never runs as written. A stray closer or divider is itself such a statement,
-        and a line that holds one keeps the repaired reading instead: recovering it whole would
-        swallow the boundary and move every statement after it into the wrong block.
+        be code that never runs as written. A construct that opens a multi-line block is never
+        abandoned — its closer stands on a line of its own, read or synthesized — and an `If` with
+        no body is that construct's header, which the file ended before it closed. A stray closer
+        or divider is itself such a statement, and a line that holds one keeps the repaired
+        reading instead: recovering it whole would swallow the boundary and move every statement
+        after it into the wrong block. A closer or divider a member access names after its dot is
+        not a boundary.
         """
         if isinstance(stmt, Au3ErrorNode):
             return False
-        if any(tok.kind is K.NEWLINE for tok in self._tokens[mark:self._index]):
+        if isinstance(stmt, _BLOCK_CONSTRUCTS):
+            return False
+        if isinstance(stmt, Au3IfStatement) and not stmt.body:
             return False
         if len(self._errors) == recorded and self._at(K.NEWLINE, K.EOF):
             return False
+        if any(tok.kind is K.NEWLINE for tok in self._tokens[mark:self._index]):
+            return False
         index = mark
+        previous: K | None = None
         while True:
             kind = self._tokens[index].kind
             if kind in (K.NEWLINE, K.EOF):
                 return True
-            if kind in _STRAY_TERMINATORS:
+            if kind in STRAY_TERMINATORS and previous is not K.DOT:
                 return False
+            previous = kind
             index += 1
 
     def _terminate_statement(self, stmt: Statement):
@@ -429,7 +454,7 @@ class Au3Parser:
         kind = self._current.kind
         if kind is K.DIRECTIVE:
             return self._parse_directive()
-        if kind in _STRAY_TERMINATORS:
+        if kind in STRAY_TERMINATORS:
             tok = self._advance()
             return self._error(tok, F'unexpected {tok.value}')
         if kind is K.IF:
@@ -514,7 +539,7 @@ class Au3Parser:
         return node
 
     def _parse_inline_statement(self) -> Statement:
-        if self._at(*_BLOCK_OPENERS):
+        if self._at(*BLOCK_OPENERS):
             raise Au3ParseError('a single-line If consequent cannot open a block')
         return self._parse_statement()
 

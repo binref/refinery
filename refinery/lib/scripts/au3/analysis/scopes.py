@@ -68,7 +68,7 @@ class Binding(enum.Enum):
 #: An include spelled as a directive: the parser reads an include line only as the include node
 #: when the line ends after the path, so one with trailing text — the comment form the official
 #: documentation's own examples write — stays a directive that names the same unseen file.
-_INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
+INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -363,7 +363,7 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
                 functions[node.name.name] = node
         elif isinstance(node, (Au3Include, Au3IncludeOnce)):
             holds_an_include = True
-        elif isinstance(node, Au3Directive) and _INCLUDE_SPELLING.match(node.text):
+        elif isinstance(node, Au3Directive) and INCLUDE_SPELLING.match(node.text):
             holds_an_include = True
     local_facts = {function: _local_facts(function) for function in functions.values()}
     return Au3ScopeModel(

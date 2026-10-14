@@ -253,6 +253,44 @@ class TestAu3ParserRecovery(TestBase):
         self.assertIsInstance(func, Au3FunctionDeclaration)
         self.assertEqual(func.body[0].expression.target.name, 'a')
 
+    def test_a_block_opener_at_eof_without_a_newline_keeps_its_repairs(self):
+        """
+        A construct that opens a block is multi-line whether or not the file ended before its
+        closer, so the byte after the last token decides nothing: a missing final newline must
+        not cost the tree the declaration its repairs had read.
+        """
+        for source in (
+            'Func f()',
+            'While 1',
+            'If $x Then',
+            'Switch $x',
+            'Select',
+            'With $o',
+            'For $i = 1 To 2',
+        ):
+            with self.subTest(source=source):
+                script = self._parse(source)
+                self.assertNotIsInstance(script.body[0], Au3ErrorNode)
+                self.assertNotEqual(script.errors, [])
+
+    def test_a_final_function_without_a_newline_keeps_the_earlier_calls_resolvable(self):
+        script = self._parse('Func a()\n    f()\nEndFunc\na()\n\nFunc f()')
+        self.assertEqual(len(script.body), 3)
+        self.assertIsInstance(script.body[2], Au3FunctionDeclaration)
+        self.assertEqual(script.body[2].name.name, 'f')
+
+    def test_a_single_line_if_with_trailing_text_at_eof_recovers_whole_line(self):
+        script = self._parse('If 1 Then $a = 1, $b = 2')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, 'If 1 Then $a = 1, $b = 2')
+
+    def test_a_block_keyword_after_a_dot_is_no_boundary(self):
+        script = self._parse('$o.EndIf(1) junk\n')
+        self.assertEqual(len(script.body), 1)
+        self.assertIsInstance(script.body[0], Au3ErrorNode)
+        self.assertEqual(script.body[0].text, '$o.EndIf(1) junk')
+
     @unittest.expectedFailure
     def test_text_after_block_header_is_not_a_statement(self):
         script = self._parse('While 1 junk\nWend\n')

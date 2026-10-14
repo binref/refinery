@@ -9,27 +9,25 @@ The census walks every channel that can create a global: the command-line consta
 defines before the first statement runs, a write at script level, a `Global` declaration
 anywhere in the tree, an `Assign` with a literal name, an `Execute` payload or a computed `Call`
 name resolved to the string it spells — a literal shape, or a call with literal arguments to a
-script function probed through
-`refinery.lib.scripts.au3.analysis.interpreter.Au3Interpreter.probe` — the variable names every
-call hands to a `ByRef` parameter, and the registrations whose registered function receives
-arguments, which must name a script function literally. Source text the parser could not read
-— an error node in the tree, or a payload this parser reads as nothing — is read through
-`refinery.lib.scripts.au3.analysis.unparsed.read_unparsed`, and every
-variable it spells may be a global. The parser's record list is not an input: its texts also
-live in the tree — an error node is its own record, and a repair record names a token of a line
-the parser went on to read — while the list itself outlives the edits that remove those lines,
-so a census over it would stay poisoned over a tree its own transforms had cleaned. A channel
-the census cannot read — an include it cannot
-see, a computed `Assign` name, an unresolvable payload or `Call` name, an indirect callee, a
-forwarding `Call` of `Call`, a registration whose name is not a literal script function, a
-registration or an option set through a `Call` whose sole argument may be a `CallArgArray`
-expansion, an option setting that may expand variables, macros, or environment strings inside
-string literals, unread text that may call a channel or declare a function, or a probe budget
-the tree exhausts — answers that any name may be a global, and that the tree may set
-`MustDeclareVars`, which the unread channel may do as well. Every other callee is covered by one
-closure claim: a name none of the channels above owns is an AutoIt builtin that creates no
-script variable or a call AutoIt refuses to run, which is the one documentation-sourced boundary
-of the census.
+script function probed through `refinery.lib.scripts.au3.analysis.interpreter.Au3Interpreter.probe`
+— the variable names every call hands to a `ByRef` parameter, and the registrations whose
+registered function receives arguments, which must name a script function literally. Source text
+the parser could not read — an error node in the tree, or a payload this parser reads as nothing —
+is read through `refinery.lib.scripts.au3.analysis.unparsed.read_unparsed`, and every variable it
+spells may be a global. The parser's record list is not an input: its texts also live in the
+tree — an error node is its own record, and a repair record names a token of a line the parser
+went on to read — while the list itself outlives the edits that remove those lines, so a census
+over it would stay poisoned over a tree its own transforms had cleaned. A channel the census
+cannot read — an include it cannot see, a computed `Assign` name, an unresolvable payload or
+`Call` name, an indirect callee, a forwarding `Call` of `Call`, a registration whose name is not
+a literal script function, a registration or an option set through a `Call` whose sole argument
+may be a `CallArgArray` expansion, an option setting that may expand variables, macros, or
+environment strings inside string literals, unread text that may call a channel or declare a
+function, or a probe budget the tree exhausts — answers that any name may be a global, and that
+the tree may set `MustDeclareVars`, which the unread channel may do as well. Every other callee
+is covered by one closure claim: a name none of the channels above owns is an AutoIt builtin
+that creates no script variable or a call AutoIt refuses to run, which is the one
+documentation-sourced boundary of the census.
 
 An `Opt` that may set `MustDeclareVars` — tree-level or inside a payload the census examines —
 makes every implicit write fatal, so the model reports it and the summary refinement refuses to

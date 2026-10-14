@@ -430,8 +430,8 @@ class TestAu3DynamicNameFlattening(TestAu3):
 
     def test_a_construct_the_parser_closed_itself_flattens(self):
         """
-        A construct the parser closed itself leaves no error node in the tree, and the record it
-        left spells no name any rule asks about, so the tree flattens as a clean one does.
+        A construct the parser closed itself holds no error node — its missing closer is a record
+        only, and the rules read the tree — so it flattens as a clean tree does.
         """
         self.assertEqual(
             self._apply(
