@@ -33,9 +33,8 @@ payload is not parsed and reads. A `Call` invocation over a string literal resol
 called it directly; every refusal reads, because unread text cannot resolve what a name shadows.
 A script function's reads stand in the tree, and a member callee dispatches through an object
 and reads no script name. The read count of a name is collected beside its bindings: an
-occurrence reads when it is not a write occurrence — a compound assignment's target and a
-`ReDim` target among the readers, both read what they rewrite — and a variable of unread text
-counts as a read.
+occurrence reads when it is not a write occurrence or reads what it writes, and a variable of
+unread text counts as a read.
 
 An expression is effect-free when evaluating it writes nothing observable and cannot terminate
 the script. Termination is what the arithmetic refuses: a division by zero ends the script
@@ -69,7 +68,6 @@ from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding, INC
 from refinery.lib.scripts.au3.analysis.unparsed import Au3UnparsedText, read_unparsed
 from refinery.lib.scripts.au3.model import (
     Au3ArrayLiteral,
-    Au3Assignment,
     Au3BinaryExpression,
     Au3BooleanLiteral,
     Au3Call,
@@ -85,7 +83,6 @@ from refinery.lib.scripts.au3.model import (
     Au3Macro,
     Au3MemberAccess,
     Au3NullLiteral,
-    Au3ReDimTarget,
     Au3Script,
     Au3StringLiteral,
     Au3Ternary,
@@ -95,7 +92,6 @@ from refinery.lib.scripts.au3.model import (
     Au3VariableDeclarator,
     Expression,
 )
-from refinery.lib.scripts.au3.parser import Au3Parser
 
 _EFFECT_FREE_READS = (
     Au3BooleanLiteral,
@@ -329,7 +325,7 @@ def _execute_is_effect_free(
     literal = ast.unwrap_parens(call.arguments[0])
     if not isinstance(literal, Au3StringLiteral):
         return False
-    expression = Au3Parser(literal.value).parse_expression()
+    expression = parse_payload(literal.value)
     if expression is None:
         return False
     return _effect_free(expression, functions, pure)
@@ -458,10 +454,8 @@ def _collect_bindings(
     variable. A write that proves nothing binds no storage: its value reaches a global only
     through a read somewhere, and that read is the occurrence that protects the name. A variable
     of unread text counts as an occurrence that may bind either a local of its node's scope or
-    the global. An occurrence
-    reads when it is not a write occurrence — a compound assignment's target and a `ReDim`
-    target among the readers, both read what they rewrite — and a variable of unread text counts
-    as a read of the name it spells.
+    the global. An occurrence reads when it is not a write occurrence or reads what it writes,
+    and a variable of unread text counts as a read of the name it spells.
     """
     local: dict[Au3FunctionDeclaration, set[str]] = {}
     global_names: dict[str, set[Au3FunctionDeclaration | None]] = {}
@@ -488,8 +482,7 @@ def _collect_bindings(
                 continue
             if (
                 not ast.is_write_occurrence(node)
-                or (isinstance(node.parent, Au3Assignment) and node.parent.operator != '=')
-                or isinstance(node.parent, Au3ReDimTarget)
+                or ast.reads_what_it_writes(node)
             ):
                 reads[node.name] += 1
             if ast.is_write_occurrence(node):
@@ -522,6 +515,19 @@ def _collect_bindings(
 #: parse, and past the bound the payload is not parsed and counts as reading. Literal payloads
 #: are short and rare once the constant fold has run.
 _PAYLOAD_READ_DEPTH = 8
+
+
+def _name_parameter_is_computed(name: str, arguments: Sequence[Expression]) -> bool:
+    """
+    Whether a call to *name* holds a non-literal in a name-parameter position the builtin table
+    knows: a value the tree does not show reaches a name through it.
+    """
+    for index in NAME_PARAMETERS.get(name, frozenset()):
+        if index >= len(arguments):
+            continue
+        if not isinstance(ast.unwrap_parens(arguments[index]), Au3StringLiteral):
+            return True
+    return False
 
 
 def _collect_channels(
@@ -561,12 +567,8 @@ def _collect_channels(
             if execute_kills(node) is None:
                 channels.add(node)
             continue
-        for index in NAME_PARAMETERS.get(callee.name, frozenset()):
-            if index >= len(node.arguments):
-                continue
-            if not isinstance(ast.unwrap_parens(node.arguments[index]), Au3StringLiteral):
-                channels.add(node)
-                break
+        if _name_parameter_is_computed(callee.name, node.arguments):
+            channels.add(node)
     for node, facts in unparsed.items():
         if (
             facts.computed_callee
@@ -603,12 +605,7 @@ def _named_callee_reads(
             return True
         target = call_target(literal.value, arguments[1:], scope_model.function_names)
         return target is None or _named_callee_reads(target, arguments[1:], scope_model, depth)
-    for index in NAME_PARAMETERS.get(name, frozenset()):
-        if index >= len(arguments):
-            continue
-        if not isinstance(ast.unwrap_parens(arguments[index]), Au3StringLiteral):
-            return True
-    return False
+    return _name_parameter_is_computed(name, arguments)
 
 
 def _execute_reads(

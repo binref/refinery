@@ -185,6 +185,43 @@ class TestAu3Synthesizer(TestBase):
         set_child(comparison, 'left', comparison.left.expression)
         self.assertEqual(Au3Synthesizer().convert(tree), '($x = side())\n')
 
+    def test_a_statement_ternary_over_a_writable_condition_is_bracketed(self):
+        """
+        A ternary's condition prints without brackets of its own, so a statement whose ternary
+        compares a writable shape in its condition would re-read as an assignment of the whole
+        ternary — the tree a pass leaves behind when it splices a stored value into the statement
+        it stood in.
+        """
+        tree = Au3Parser('$x = $y = 0 ? 1 / $y : 2\n').parse()
+        statement = next(
+            node for node in tree.walk() if isinstance(node, Au3ExpressionStatement))
+        set_child(statement, 'expression', statement.expression.value)
+        self.assertEqual(Au3Synthesizer().convert(tree), '($y = 0 ? 1 / $y : 2)\n')
+
+    def test_a_statement_and_over_a_writable_left_operand_is_bracketed(self):
+        """
+        The left operand of an `And` prints without brackets of its own, so a statement whose
+        `And` compares a writable shape on its left would re-read as an assignment of the whole
+        expression — and the call on its right would fall under the short circuit.
+        """
+        tree = Au3Parser('$x = $y = 0 And DllCall("a", "b", "c")\n').parse()
+        statement = next(
+            node for node in tree.walk() if isinstance(node, Au3ExpressionStatement))
+        set_child(statement, 'expression', statement.expression.value)
+        self.assertEqual(Au3Synthesizer().convert(tree), '($y = 0 and DllCall("a", "b", "c"))\n')
+
+    def test_a_statement_comparison_chain_over_a_writable_left_operand_is_bracketed(self):
+        """
+        A chain of equal-precedence comparisons prints its left links without brackets of their
+        own, so a statement opening with one over a writable shape would re-read as an assignment
+        of the rest of the chain.
+        """
+        tree = Au3Parser('$x = $y = 0 == 1\n').parse()
+        statement = next(
+            node for node in tree.walk() if isinstance(node, Au3ExpressionStatement))
+        set_child(statement, 'expression', statement.expression.value)
+        self.assertEqual(Au3Synthesizer().convert(tree), '($y = 0 == 1)\n')
+
     def test_logical_and_ternary(self):
         self._round_trip('$x = $c ? $a : $b And $d\n')
 
@@ -334,6 +371,10 @@ class TestAu3Synthesizer(TestBase):
         self.assertEqual(out1, '$x = = 1 ; note\n$y = 2\n')
         ast2 = Au3Parser(out1).parse()
         self.assertEqual(synth.convert(ast2), out1)
+
+    def test_comment_alone_in_a_body_no_statement_follows(self):
+        out = self._round_trip('Func F($p) ; setup\n; only a comment\nEndFunc\n')
+        self.assertEqual(out, 'Func F($p)\nEndFunc ; setup ; only a comment\n')
 
     def test_output_ends_with_newline(self):
         self.assertTrue(self._round_trip('$x = 1\n').endswith('\n'))

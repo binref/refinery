@@ -44,6 +44,8 @@ a census asks the interpreter only for the probes no earlier census made.
 """
 from __future__ import annotations
 
+import functools
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -51,7 +53,7 @@ from typing import cast
 from refinery.lib.scripts import UnspellableNode
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter, Au3Probe
-from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
+from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.unparsed import read_unparsed, spelled_name
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
@@ -80,7 +82,7 @@ from refinery.lib.scripts.au3.synth import Au3Synthesizer
 #: The globals every script holds before its first statement runs: the command-line constants
 #: exist whether or not parameters are passed, so a bare write of either inside a function
 #: reaches the constant — a fatal error — instead of creating a local.
-PREDEFINED_GLOBALS = frozenset({'cmdline', 'cmdlineraw'})
+_PREDEFINED_GLOBALS = frozenset({'cmdline', 'cmdlineraw'})
 
 #: The registration builtins whose registered function receives arguments the registration
 #: passes through, each mapped to the argument positions that hold the registered name: a name
@@ -120,11 +122,12 @@ _CHANNEL_BUILTINS = frozenset({
 _MAX_CENSUS_PROBE_STEPS = 1_000_000
 
 
+@functools.lru_cache(maxsize=None)
 def parse_payload(text: str) -> Expression | None:
     """
     The expression an `Execute` payload spells, or `None` where the payload parses to nothing:
     AutoIt answers `""` there (probe3), and `""` writes nothing — only a call inside the parsed
-    expression can.
+    expression can. Every reader walks the parse, so one payload text parses once.
     """
     return Au3Parser(text).parse_expression()
 
@@ -200,7 +203,8 @@ class Au3ExistenceModel:
     """
     What the census learned about one tree version: the names a global may take — `None` when
     any name may — and whether the tree may set `MustDeclareVars`, which makes every implicit
-    write fatal. Built once per tree version by `build_existence_model`.
+    write fatal; with both, which writes inside a function may target a global. Built once per
+    tree version by `build_existence_model`.
     """
     possible_globals: frozenset[str] | None
     implicit_writes_are_fatal: bool
@@ -210,6 +214,29 @@ class Au3ExistenceModel:
         Whether a global of *name* may exist when the tree runs.
         """
         return self.possible_globals is None or name in self.possible_globals
+
+    def write_may_target_global(self, binding: Binding, name: str, creates_storage: bool) -> bool:
+        """
+        Whether a write of *name* inside a function, whose storage *binding* answers, may target
+        a global. A provable local never does and a provable global always does. A write that
+        proves nothing creates a local where no global of the name exists, so it may target one
+        only where the census answers that one may exist, or where the tree may make every
+        implicit write fatal. A write that creates no storage — a `ReDim`, which resizes an array
+        that exists or ends the script — is outside that refinement and may target a global
+        wherever no local provably holds the name.
+        """
+        if binding is Binding.LOCAL:
+            return False
+        if binding is Binding.GLOBAL or not creates_storage:
+            return True
+        return self.implicit_writes_are_fatal or self.global_may_exist(name)
+
+    def write_is_fatal(self, name: str) -> bool:
+        """
+        Whether a store of *name* is a fatal error the tree runs into: one of the command-line
+        constants every script starts with is read-only, so its store can never leave.
+        """
+        return name in _PREDEFINED_GLOBALS
 
 
 _ProbeKey = tuple[str, frozenset[str], str]
@@ -295,7 +322,7 @@ class _Census:
         self.interpreter = Au3Interpreter(scope_model, {})
         self.memo = memo
         self.probe_steps = 0
-        self.names: set[str] = set(PREDEFINED_GLOBALS)
+        self.names: set[str] = set(_PREDEFINED_GLOBALS)
         self.implicit_writes_are_fatal = False
 
     def collect(self, root: Au3Script) -> Au3ExistenceModel:

@@ -302,28 +302,6 @@ def _written_names(
     return names
 
 
-def _counts_as_global_write(
-    binding: Binding,
-    name: str,
-    creates_storage: bool,
-    existence: Au3ExistenceModel,
-) -> bool:
-    """
-    Whether a write of *name* inside a function, whose storage *binding* answers, counts as a
-    write of a global. A provable local never counts and a provable global always does. A write
-    that proves nothing creates a local where no global of the name exists, so it counts only
-    where the census answers that one may exist, or where the tree may make every implicit write
-    fatal. A write that creates no storage — a `ReDim`, which resizes an array that exists or
-    ends the script — is outside that refinement and counts wherever no local provably holds
-    the name.
-    """
-    if binding is Binding.LOCAL:
-        return False
-    if binding is Binding.GLOBAL or not creates_storage:
-        return True
-    return existence.implicit_writes_are_fatal or existence.global_may_exist(name)
-
-
 def _function_scan(
     function: Au3FunctionDeclaration,
     scope_model: Au3ScopeModel,
@@ -336,7 +314,8 @@ def _function_scan(
     it counts as a write of this function — a bare write the call performs where it stands, not
     one of the declaration or the loop header that may hold the call. A write to a `ByRef`
     parameter of this function is a write of its local: the variable behind it belongs to the
-    caller, which counts it there. Whether any other write counts is `_counts_as_global_write`.
+    caller, which counts it there. Whether any other write counts is the existence model's
+    `write_may_target_global`.
     """
     names: set[str] = set()
     everything = False
@@ -350,7 +329,7 @@ def _function_scan(
                 continue
             binding = scope_model.binding(function, statement, node.name)
             creates_storage = not isinstance(statement, Au3ReDimStatement)
-            if _counts_as_global_write(binding, node.name, creates_storage, existence):
+            if existence.write_may_target_global(binding, node.name, creates_storage):
                 names.add(node.name)
             continue
         if not isinstance(node, Au3Call):
@@ -364,7 +343,7 @@ def _function_scan(
             target = scope_model.functions[callee.name]
             for variable in ast.byref_arguments(target, node.arguments):
                 binding = scope_model.binding(function, node, variable.name)
-                if _counts_as_global_write(binding, variable.name, True, existence):
+                if existence.write_may_target_global(binding, variable.name, True):
                     names.add(variable.name)
             continue
         if callee.name not in BUILTIN_NAMES:

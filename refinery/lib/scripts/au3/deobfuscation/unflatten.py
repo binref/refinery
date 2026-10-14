@@ -64,13 +64,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from refinery.lib.scripts import Node, Statement, Transformer, set_child_list
+from refinery.lib.scripts import Node, Statement, Transformer
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.constants import Policy, constant_value
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel
 from refinery.lib.scripts.au3.analysis.values import Au3Value, compare, to_number, truthy
+from refinery.lib.scripts.au3.deobfuscation.helpers import rebuild_nested, rebuild_statements
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
     Au3CaseRange,
@@ -118,7 +119,7 @@ class Au3ControlFlowDeflattening(Transformer):
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script) and self._holds_a_dispatcher(node):
             self._read_snapshot(node)
-            if self._rebuild(node, 'body'):
+            if rebuild_statements(node, 'body', None, self._take):
                 self.mark_changed()
         return None
 
@@ -151,34 +152,11 @@ class Au3ControlFlowDeflattening(Transformer):
             ast.enclosing_function(channel) for channel in self._usage.channels
         )))
 
-    def _rebuild(self, parent: Node, attr: str) -> bool:
-        """
-        One statement list: every statement either stands as it is, with its nested lists and any
-        function body it holds rebuilt, or is replaced by the statements its region splices to.
-        """
-        changed = False
-        surviving: list[Statement] = []
-        for statement in getattr(parent, attr):
-            replacement = self._take(statement)
-            if replacement is None:
-                surviving.append(statement)
-                changed = self._descend(statement) or changed
-            else:
-                surviving.extend(replacement)
-                changed = True
-        if changed:
-            set_child_list(parent, attr, surviving)
-        return changed
-
-    def _descend(self, statement: Statement) -> bool:
-        changed = False
-        for owner, nested in ast.statement_lists(statement):
-            changed = self._rebuild(owner, nested) or changed
-        if isinstance(statement, Au3FunctionDeclaration):
-            changed = self._rebuild(statement, 'body') or changed
-        return changed
-
-    def _take(self, statement: Statement) -> list[Statement] | None:
+    def _take(
+        self,
+        statement: Statement,
+        scope: Au3FunctionDeclaration | None,
+    ) -> list[Statement] | None:
         """
         The statements that replace *statement* — the flattened splice of the region it is, with
         each replacement statement taken the same way, so a region nested in a live case body
@@ -189,9 +167,9 @@ class Au3ControlFlowDeflattening(Transformer):
             return None
         flattened: list[Statement] = []
         for item in replacement:
-            nested = self._take(item)
+            nested = self._take(item, scope)
             if nested is None:
-                self._descend(item)
+                rebuild_nested(item, scope, self._take)
                 flattened.append(item)
             else:
                 flattened.extend(nested)

@@ -5,7 +5,7 @@ only after that script's tree changes — whether a transform announces the chan
 `refinery.lib.scripts.Transformer.changed` or an in-pass mutation advances the script's
 `refinery.lib.scripts.tree_version` counter. The version tracking, invalidation, and
 transformer-reuse mechanism live in `refinery.lib.scripts.modelcache.ModelCacheBase`; this module
-only declares the model slots and their build wiring.
+declares the model slots, their build wiring, and the one fact composed over several of them.
 """
 from __future__ import annotations
 

@@ -74,12 +74,13 @@ INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
 @dataclass(frozen=True)
 class Au3LocalFacts:
     """
-    What one function body proves about a name: whether it is a parameter, whether any `Global`
-    declaration in the function claims it, the body position where it first takes a declaration
-    that forces the local storage, and the body positions of every statement holding such a
-    declaration or claim at any depth.
+    What one function body proves about a name: whether it is a parameter, and a `ByRef` one,
+    whether any `Global` declaration in the function claims it, the body position where it first
+    takes a declaration that forces the local storage, and the body positions of every statement
+    holding such a declaration or claim at any depth.
     """
     parameters: frozenset[str]
+    reference_parameters: frozenset[str]
     global_names: frozenset[str]
     first_local: dict[str, int]
     local_positions: dict[str, frozenset[int]]
@@ -128,16 +129,21 @@ def _local_claim_names(node: Node) -> set[str] | None:
 
 def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
     """
-    The local facts of *function*'s body: parameter names, the names any `Global` declaration in
-    it claims — at any depth, but not inside a nested function, which is a scope of its own —
-    the first body position at which each name takes a local-forcing declaration or becomes the
-    variable of a `For`/`For…In` loop, and the body positions of every statement holding such a
-    declaration or claim at any depth.
+    The local facts of *function*'s body: parameter names and the `ByRef` ones among them, the
+    names any `Global` declaration in it claims — at any depth, but not inside a nested function,
+    which is a scope of its own — the first body position at which each name takes a
+    local-forcing declaration or becomes the variable of a `For`/`For…In` loop, and the body
+    positions of every statement holding such a declaration or claim at any depth.
     """
     parameters = {
         parameter.variable.name
         for parameter in function.params
         if parameter.variable is not None
+    }
+    reference_parameters = {
+        parameter.variable.name
+        for parameter in function.params
+        if parameter.variable is not None and parameter.by_ref
     }
     global_names = set()
     for node in ast.scope_nodes(function.body):
@@ -163,6 +169,7 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
             local_positions.setdefault(name, set()).add(index)
     return Au3LocalFacts(
         frozenset(parameters),
+        frozenset(reference_parameters),
         frozenset(global_names),
         first_local,
         {name: frozenset(indices) for name, indices in local_positions.items()},
@@ -187,8 +194,9 @@ def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
 class Au3ScopeModel:
     """
     The script's declared functions, the answers to which storage a write or a read targets and
-    which storage an occurrence may reach, the names the tree declares constants, and whether the
-    tree holds an include. Built once per tree version by `build_scope_model`.
+    which storage an occurrence may reach, whether a write reaches a caller's storage, the names
+    the tree declares constants, and whether the tree holds an include. Built once per tree
+    version by `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
@@ -239,6 +247,19 @@ class Au3ScopeModel:
         if first <= _top_level_index(scope, write):
             return Binding.LOCAL
         return Binding.NONE
+
+    def writes_caller_storage(self, scope: Au3FunctionDeclaration | None, name: str) -> bool:
+        """
+        Whether a write of *name* in *scope* may reach storage the caller holds: the name is a
+        `ByRef` parameter of the function. `binding` answers such a write `Binding.LOCAL` — the
+        parameter is the function's own name for the variable — so a caller that removes a write
+        because no read in the function observes it asks this as well. A function the model holds
+        no facts for may write any caller's storage.
+        """
+        if scope is None:
+            return False
+        facts = self.local_facts.get(scope)
+        return facts is None or name in facts.reference_parameters
 
     def read_binding(
         self,

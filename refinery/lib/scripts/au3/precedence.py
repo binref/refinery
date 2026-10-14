@@ -151,11 +151,35 @@ def statement_needs_parens(expr: Node) -> bool:
     meaning. AutoIt reads `=` both as assignment and as comparison, and at statement position the
     parser makes an assignment of it whenever the left operand is a writable shape — so a
     comparison whose left operand is one, `$x = side()` comparing rather than storing, must keep
-    the parentheses that hold it a comparison. `=` is the only operator the two readings share.
+    the parentheses that hold it a comparison. `=` is the only operator the two readings share,
+    so the question is whether the statement opens with such a comparison, and every slot that
+    prints without parentheses of its own — a ternary's condition, the left operand of an operator
+    no tighter than a comparison, and the comparisons chained onto one — can open the statement
+    with it.
     """
-    return (
-        isinstance(expr, Au3BinaryExpression)
-        and expr.operator == '='
-        and expr.left is not None
-        and _is_assignment_target(expr.left)
-    )
+    cursor = expr
+    while True:
+        if isinstance(cursor, Au3BinaryExpression):
+            left = cursor.left
+            if (
+                cursor.operator == '='
+                and left is not None
+                and _is_assignment_target(left)
+            ):
+                return True
+            if (
+                left is None
+                or _expression_precedence(left) < _BINARY_PRECEDENCE.get(cursor.operator, 0)
+            ):
+                return False
+            cursor = left
+        elif isinstance(cursor, Au3Ternary):
+            condition = cursor.condition
+            if (
+                condition is None
+                or _expression_precedence(condition) <= _BINARY_PRECEDENCE['?']
+            ):
+                return False
+            cursor = condition
+        else:
+            return False

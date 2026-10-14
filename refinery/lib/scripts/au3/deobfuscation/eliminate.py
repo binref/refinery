@@ -35,6 +35,7 @@ from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel
+from refinery.lib.scripts.au3.deobfuscation.helpers import rebuild_statements
 from refinery.lib.scripts.au3.model import (
     Au3EnumDeclaration,
     Au3EnumDeclarator,
@@ -81,7 +82,7 @@ class Au3DeadCodeElimination(Transformer):
             removable = set()
         self._removable = frozenset(removable)
         self._globals_may_leave = entry_open and not blocked
-        if self._prune(script, 'body', None):
+        if rebuild_statements(script, 'body', None, self._replacement):
             self.mark_changed()
 
     def _uncalled(self) -> set[str]:
@@ -151,39 +152,29 @@ class Au3DeadCodeElimination(Transformer):
                 return True
         return False
 
-    def _prune(self, parent: Node, attr: str, scope: Au3FunctionDeclaration | None) -> bool:
+    def _replacement(
+        self,
+        statement: Statement,
+        scope: Au3FunctionDeclaration | None,
+    ) -> list[Statement] | None:
         """
-        One statement list of one scope: every dead statement dropped, every declaration pruned
-        per declarator, and the same done to every nested list and every kept function body.
+        What stands in place of *statement*: nothing when it is dead, the declaration itself
+        when some of its declarators are, and `None` when it stands as it is.
         """
-        assert self._usage is not None
-        surviving: list[Statement] = []
-        changed = False
-        for statement in getattr(parent, attr):
-            if self._statement_is_dead(statement, scope):
-                changed = True
-                continue
-            if isinstance(statement, Au3VariableDeclaration):
-                alive = [
-                    declarator
-                    for declarator in statement.declarations
-                    if not self._declarator_is_dead(statement, declarator, scope)
-                ]
-                if len(alive) != len(statement.declarations):
-                    changed = True
-                    if not alive:
-                        continue
-                    set_child_list(statement, 'declarations', alive)
-            surviving.append(statement)
-            for owner, nested in ast.statement_lists(statement):
-                if self._prune(owner, nested, scope):
-                    changed = True
-            if isinstance(statement, Au3FunctionDeclaration):
-                if self._prune(statement, 'body', statement):
-                    changed = True
-        if changed:
-            set_child_list(parent, attr, surviving)
-        return changed
+        if self._statement_is_dead(statement, scope):
+            return []
+        if isinstance(statement, Au3VariableDeclaration):
+            alive = [
+                declarator
+                for declarator in statement.declarations
+                if not self._declarator_is_dead(statement, declarator, scope)
+            ]
+            if len(alive) != len(statement.declarations):
+                if not alive:
+                    return []
+                set_child_list(statement, 'declarations', alive)
+                return [statement]
+        return None
 
     def _statement_is_dead(
         self,
@@ -193,7 +184,7 @@ class Au3DeadCodeElimination(Transformer):
         """
         Whether *statement* leaves as a whole: a function this sweep removes, an enum whose every
         entry is dead, or an expression statement that is effect-free. A variable declaration
-        leaves per declarator instead, so `_prune` answers it.
+        leaves per declarator instead, so `_replacement` answers it.
         """
         assert self._usage is not None
         if isinstance(statement, Au3FunctionDeclaration):

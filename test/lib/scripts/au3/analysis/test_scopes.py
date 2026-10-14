@@ -478,3 +478,49 @@ class TestAu3MayBindLocal(TestBase):
             ''',
             'x',
         ))
+
+
+class TestAu3WritesCallerStorage(TestBase):
+    """
+    Which writes may reach storage a caller holds: the AutoIt3 documentation passes a `ByRef`
+    parameter as the caller's variable, while a plain parameter is a copy the function owns.
+    """
+
+    def _writes_caller_storage(self, source: str, name: str) -> bool:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        model = build_scope_model(root)
+        return model.writes_caller_storage(model.functions['f'], name)
+
+    def test_a_byref_parameter_writes_the_caller_storage(self):
+        self.assertTrue(self._writes_caller_storage(
+            '''
+            Func f(ByRef $p)
+                $p = 1
+            EndFunc
+            ''',
+            'p',
+        ))
+
+    def test_a_plain_parameter_writes_no_caller_storage(self):
+        self.assertFalse(self._writes_caller_storage(
+            '''
+            Func f($p, ByRef $q)
+                $p = 1
+            EndFunc
+            ''',
+            'p',
+        ))
+
+    def test_a_local_writes_no_caller_storage(self):
+        self.assertFalse(self._writes_caller_storage(
+            '''
+            Func f(ByRef $q)
+                Local $p = 1
+            EndFunc
+            ''',
+            'p',
+        ))
+
+    def test_a_script_level_write_reaches_no_caller(self):
+        model = build_scope_model(Au3Parser('$p = 1\n').parse())
+        self.assertFalse(model.writes_caller_storage(None, 'p'))

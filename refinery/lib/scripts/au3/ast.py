@@ -143,6 +143,21 @@ def is_write_occurrence(node: Au3Variable) -> bool:
     return False
 
 
+def reads_what_it_writes(node: Au3Variable) -> bool:
+    """
+    Whether this write occurrence also reads the name it writes: a compound assignment's target
+    reads what it rewrites, a `ReDim` target reads the array it resizes, and a `For...To` loop
+    compares and steps on its variable at every iteration, while a `For...In` loop only assigns
+    its own. A census that counts reads must count these beside every non-writing occurrence.
+    """
+    parent = node.parent
+    if isinstance(parent, Au3Assignment):
+        return parent.operator != '=' and store_target_variable(parent.target) is node
+    if isinstance(parent, Au3ReDimTarget):
+        return parent.variable is node
+    return isinstance(parent, Au3ForStatement) and parent.variable is node
+
+
 def store_target_variable(target: Node | None) -> Au3Variable | None:
     """
     The variable a store writes through: a plain variable target is itself, an indexed or member
