@@ -1232,7 +1232,7 @@ class IFPSFile(Struct):
         self.types: list[IFPSType] = []
         self.functions: list[Function] = []
         self.globals: list[VariableBase] = []
-        self.strings: list[str] = []
+        self._strings: dict[str, None] = {}
         self.reader = reader
         if reader.remaining_bytes < 28:
             raise ValueError('Less than 28 bytes in file, not enough data to parse.')
@@ -1270,6 +1270,8 @@ class IFPSFile(Struct):
         self._load_variables()
 
         del self._known_type_names
+        self.strings: list[str] = list(self._strings)
+        del self._strings
 
     def _name_types(self, missing_types: set[str] | None = None):
         tbn: dict[str, IFPSType] = CaseInsensitiveDict()
@@ -1445,8 +1447,8 @@ class IFPSFile(Struct):
             data = bytes(reader.read(size))
         else:
             raise ValueError(F'Unable to read attribute of type {type!s}.')
-        if isinstance(data, str) and data not in self.strings:
-            self.strings.append(data)
+        if isinstance(data, str):
+            self._strings[data] = None
         return Value(type, data)
 
     def _read_attributes(self) -> Generator[FunctionAttribute]:
