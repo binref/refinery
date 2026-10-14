@@ -68,7 +68,6 @@ from refinery.lib.inno.ifps import (
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
 from refinery.lib.tools import copy_exception
-from refinery.lib.types import AST, INF
 
 if TYPE_CHECKING:
     from typing import ParamSpec
@@ -117,10 +116,7 @@ class Variable(VariableBase, Generic[_T]):
     __slots__ = (
         'data',
         'path',
-        '_int_size',
-        '_int_mask',
-        '_int_bits',
-        '_int_good',
+        '_range',
     )
 
     @property
@@ -184,30 +180,7 @@ class Variable(VariableBase, Generic[_T]):
     ):
         super().__init__(type, spec)
         self.path = path
-
-        self._int_size = _size = {
-            TC.U08: +1,
-            TC.U16: +1,
-            TC.U32: +1,
-            TC.U64: +1,
-            TC.S08: -1,
-            TC.S16: -1,
-            TC.S32: -1,
-            TC.S64: -1,
-        }.get((code := type.code), 0) * code.width
-        if _size:
-            bits = abs(_size) * 8
-            umax = (1 << bits)
-            self._int_bits = bits
-            self._int_mask = umax - 1
-            if _size < 0:
-                self._int_good = range(-(umax >> 1), (umax >> 1))
-            else:
-                self._int_good = range(umax)
-        else:
-            self._int_mask = -1
-            self._int_bits = INF()
-            self._int_good = AST()
+        self._range = type.code.integer_range
 
         if data is None:
             self.setdefault()
@@ -252,11 +225,8 @@ class Variable(VariableBase, Generic[_T]):
                 if issubclass(t, float):
                     return float(value)
             raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
-        if s := self._int_size and value not in self._int_good:
-            mask = self._int_mask
-            value &= mask
-            if s < 0 and (value >> (self._int_bits - 1)):
-                value = -(-value & mask)
+        if (valid := self._range) is not None and isinstance(value, int) and value not in valid:
+            return value & (len(valid) - 1)
         return value
 
     def resize(self, n: int):

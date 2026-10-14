@@ -189,58 +189,91 @@ class TC(enum.IntEnum):
         """
         Indicates whether the code represents a primitive type.
         """
-        return self not in {
-            TC.Class,
-            TC.ProcPtr,
-            TC.Interface,
-            TC.Set,
-            TC.StaticArray,
-            TC.Array,
-            TC.Record,
-        }
+        return self not in _TC_NON_PRIMITIVE
 
     @property
     def container(self) -> bool:
         """
         Indicates whether the code represents a container type.
         """
-        return self in {
-            TC.StaticArray,
-            TC.Array,
-            TC.Record,
-        }
+        return self in _TC_CONTAINER
 
     @property
     def width(self):
         """
         For primitive types, this gives the size of an immediate of this type in bytes.
         """
-        return {
-            TC.Variant       : 0x10,
-            TC.Char          : 0x01,
-            TC.S08           : 0x01,
-            TC.U08           : 0x01,
-            TC.WideChar      : 0x02,
-            TC.S16           : 0x02,
-            TC.U16           : 0x02,
-            TC.WideString    : 0x04,
-            TC.UnicodeString : 0x04,
-            TC.Interface     : 0x04,
-            TC.Class         : 0x04,
-            TC.PChar         : 0x04,
-            TC.AnsiString    : 0x04,
-            TC.Single        : 0x04,
-            TC.S32           : 0x04,
-            TC.U32           : 0x04,
-            TC.ProcPtr       : 0x0C,
-            TC.Currency      : 0x08,
-            TC.Pointer       : 0x0C,
-            TC.Double        : 0x08,
-            TC.S64           : 0x08,
-            TC.U64           : 0x08,
-            TC.Extended      : 0x0A,
-            TC.ReturnAddress : 0x1C,
-        }.get(self, 0)
+        return _TC_WIDTH.get(self, 0)
+
+    @property
+    def integer_range(self) -> range | None:
+        """
+        For integer types, this gives the range of values that an immediate of this type can hold.
+        """
+        return _TC_INTEGER_RANGE.get(self)
+
+
+_TC_NON_PRIMITIVE = frozenset((
+    TC.Class,
+    TC.ProcPtr,
+    TC.Interface,
+    TC.Set,
+    TC.StaticArray,
+    TC.Array,
+    TC.Record,
+))
+
+_TC_CONTAINER = frozenset((
+    TC.StaticArray,
+    TC.Array,
+    TC.Record,
+))
+
+_TC_WIDTH = {
+    TC.Variant       : 0x10,
+    TC.Char          : 0x01,
+    TC.S08           : 0x01,
+    TC.U08           : 0x01,
+    TC.WideChar      : 0x02,
+    TC.S16           : 0x02,
+    TC.U16           : 0x02,
+    TC.WideString    : 0x04,
+    TC.UnicodeString : 0x04,
+    TC.Interface     : 0x04,
+    TC.Class         : 0x04,
+    TC.PChar         : 0x04,
+    TC.AnsiString    : 0x04,
+    TC.Single        : 0x04,
+    TC.S32           : 0x04,
+    TC.U32           : 0x04,
+    TC.ProcPtr       : 0x0C,
+    TC.Currency      : 0x08,
+    TC.Pointer       : 0x0C,
+    TC.Double        : 0x08,
+    TC.S64           : 0x08,
+    TC.U64           : 0x08,
+    TC.Extended      : 0x0A,
+    TC.ReturnAddress : 0x1C,
+}
+
+
+def _integer_range(code: TC, signed: bool) -> range:
+    size = 1 << (code.width * 8)
+    if signed:
+        return range(-(size >> 1), size >> 1)
+    return range(size)
+
+
+_TC_INTEGER_RANGE = {
+    TC.U08 : _integer_range(TC.U08, False),
+    TC.U16 : _integer_range(TC.U16, False),
+    TC.U32 : _integer_range(TC.U32, False),
+    TC.U64 : _integer_range(TC.U64, False),
+    TC.S08 : _integer_range(TC.S08, True),
+    TC.S16 : _integer_range(TC.S16, True),
+    TC.S32 : _integer_range(TC.S32, True),
+    TC.S64 : _integer_range(TC.S64, True),
+}
 
 
 @dataclass
@@ -306,39 +339,13 @@ class TPrimitive(IFPSTypeBase):
     A primitive IFPS type.
     """
     def py_type(self, *_) -> type | None:
-        return {
-            TC.ReturnAddress       : int,
-            TC.U08                 : int,
-            TC.S08                 : int,
-            TC.U16                 : int,
-            TC.S16                 : int,
-            TC.U32                 : int,
-            TC.S32                 : int,
-            TC.Single              : float,
-            TC.Double              : float,
-            TC.Extended            : float,
-            TC.AnsiString          : str,
-            TC.Pointer             : VariableBase,
-            TC.PChar               : str,
-            TC.ResourcePointer     : VariableBase,
-            TC.Variant             : object,
-            TC.S64                 : int,
-            TC.U64                 : int,
-            TC.Char                : str,
-            TC.WideString          : str,
-            TC.WideChar            : str,
-            TC.Currency            : float,
-            TC.UnicodeString       : str,
-            TC.Enum                : int,
-            TC.Type                : IFPSType,
-        }.get(self.code)
+        return _PRIMITIVE_PY_TYPE.get(self.code)
 
     def default(self, *_):
-        if self.code in (TC.Char, TC.WideChar, TC.PChar):
-            return '\0'
-        tc = self.py_type()
-        if issubclass(tc, (int, float, str)):
-            return tc()
+        try:
+            return _PRIMITIVE_DEFAULT[self.code]
+        except KeyError:
+            raise TypeError(F'The type {self} has no default value.') from None
 
 
 @dataclass
@@ -943,6 +950,39 @@ class VariableBase:
 
     def __str__(self):
         return F'{self.spec}: {self.type!s}'
+
+
+_PRIMITIVE_PY_TYPE = {
+    TC.ReturnAddress       : int,
+    TC.U08                 : int,
+    TC.S08                 : int,
+    TC.U16                 : int,
+    TC.S16                 : int,
+    TC.U32                 : int,
+    TC.S32                 : int,
+    TC.Single              : float,
+    TC.Double              : float,
+    TC.Extended            : float,
+    TC.AnsiString          : str,
+    TC.Pointer             : VariableBase,
+    TC.PChar               : str,
+    TC.ResourcePointer     : VariableBase,
+    TC.Variant             : object,
+    TC.S64                 : int,
+    TC.U64                 : int,
+    TC.Char                : str,
+    TC.WideString          : str,
+    TC.WideChar            : str,
+    TC.Currency            : float,
+    TC.UnicodeString       : str,
+    TC.Enum                : int,
+    TC.Type                : IFPSType,
+}
+
+_PRIMITIVE_DEFAULT: dict[TC, int | float | str | None] = {
+    code: '\0' if code in (TC.Char, TC.WideChar, TC.PChar) else t() if t in (int, float, str) else None
+    for code, t in _PRIMITIVE_PY_TYPE.items() if isinstance(t, type)
+}
 
 
 @represent
