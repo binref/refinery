@@ -52,9 +52,12 @@ from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
 from test.lib.scripts.js.deobfuscation.test_b91strings import (
     HEAD,
     OTHER_TABLE,
+    SLICED,
     TABLE,
     accessor,
     decoder,
+    decoder_body,
+    slicing,
 )
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
@@ -4832,10 +4835,11 @@ class TestAFunctionNothingCallsIsRemovedWhateverShadowsItsName(TestBase):
 
 #: Programs whose concealed strings the base91 pass decodes although the program changes what a
 #: decoded string is, each through a shape the obfuscator never writes, mapped to what Node prints:
-#: the function turning bytes into a string assigned after an early call, or turning them into
-#: something other than their UTF-8 text; a second accessor filling a slot of the shared cache
-#: from a table of its own; and an index the program puts on the object prototype, which the cache
-#: inherits.
+#: the function turning bytes into a string assigned after an early call, turning them into
+#: something other than their UTF-8 text, or supplied by a `with` object around the decoder; a
+#: second accessor filling a slot of the shared cache from a table of its own; an index the program
+#: puts on the object prototype, which the cache inherits; and a `slice` it puts on the string
+#: prototype, which an accessor slicing one long string calls.
 A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
     (
         F'var cache = {{}};\nvar table = {TABLE};\n'
@@ -4871,6 +4875,22 @@ A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
         + 'console.log(acc(10), acc(11));\n'
     ):
         'polluted Fizz\n',
+    (
+        SLICED
+        + 'var o = { bufferToString: function (b) { return "bytes:" + b.length; } };\n'
+        + 'with (o) { var S_decode = function (str) { ' + decoder_body() + ' }; }\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(2, 5), S(16, 4));\n'
+    ):
+        'bytes:4 bytes:3\n',
+    (
+        'String.prototype.slice = function (a, b) { return "#ZlH"; };\n'
+        + SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(2, 5));\n'
+    ):
+        'log\n',
 }
 
 

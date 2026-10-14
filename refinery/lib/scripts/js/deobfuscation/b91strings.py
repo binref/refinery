@@ -1,7 +1,7 @@
 """
 Decode the strings an obfuscator conceals behind base91 decoders. Every string literal becomes a
-call of an accessor, which decodes an element of a shared table of encoded strings once and keeps
-the result in a cache:
+call of an accessor. One kind of accessor decodes an element of a shared table of encoded strings
+once and keeps the result in a cache:
 
     var table = ["fOg=r", ...];
     var cache = {};
@@ -11,6 +11,11 @@ the result in a cache:
         return cache[index];
     }
 
+The other kind slices the encoded string out of one long string and keeps no cache:
+
+    var text = "...fOg=r...";
+    function accessor(start, length) { return decode(text.slice(start, start + length)); }
+
 Every scope gets a decoder with an alphabet of its own. A decoder and an accessor are recognized by
 their templates (`refinery.lib.scripts.js.deobfuscation.templates`), whatever their names are and
 wherever they stand, through the names that hold them. A call of an accessor whose decoder, table
@@ -19,7 +24,7 @@ nothing names it any longer.
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -125,7 +130,7 @@ The decoder as the obfuscator writes it, with its alphabet inlined and in a vari
 turns the decoded bytes into a string.
 """
 
-_ACCESSOR_TEMPLATES = (
+_CACHING_ACCESSOR = (
     Template(
         'function ACCESSOR(index) { if (typeof CACHE[index] === "undefined") {'
         ' return CACHE[index] = DECODE(TABLE[index]); } return CACHE[index]; }',
@@ -138,8 +143,21 @@ _ACCESSOR_TEMPLATES = (
     ),
 )
 """
-The accessor as the obfuscator writes it, its last `return` after the `if` or in an `else`.
-`CACHE`, `DECODE` and `TABLE` stand for the names holding the cache, the decoder and the table.
+The accessor keeping a cache as the obfuscator writes it, its last `return` after the `if` or in an
+`else`. `CACHE`, `DECODE` and `TABLE` stand for the names holding the cache, the decoder and the
+table.
+"""
+
+_SLICING_ACCESSOR = (
+    Template(
+        'function ACCESSOR(start, length) { return DECODE(TABLE.slice(start, start + length)); }',
+        frozenset({'DECODE', 'TABLE'}),
+    ),
+)
+"""
+The accessor slicing its string out of one long string as the obfuscator writes it. `DECODE` stands
+for the name holding the decoder and `TABLE` for the name holding the long string or for the string
+literal the accessor spells it out with.
 """
 
 
@@ -160,23 +178,75 @@ class _Decoder(NamedTuple):
 
 class _Parts(NamedTuple):
     """
-    The names standing where the accessor template has its decoder, its table and its cache.
+    What stands where an accessor template has its decoder, its table and its cache: the names
+    holding the decoder and the cache, if the accessor keeps one, and the name holding the table or
+    the string literal the accessor spells it out with.
     """
     decoder: Binding
-    table: Binding
-    cache: Binding
+    table: Binding | JsStringLiteral
+    cache: Binding | None
+
+
+class _StringArray(NamedTuple):
+    """
+    A table that is an array of encoded strings, held by *binding*. A call passes the index of the
+    one it decodes.
+    """
+    binding: Binding
+    strings: list[str]
+
+    def encoded(self, numbers: list[int]) -> str | None:
+        if len(numbers) != 1 or not 0 <= (index := numbers[0]) < len(self.strings):
+            return None
+        return self.strings[index]
+
+
+class _LongString(NamedTuple):
+    """
+    A table that is one long string the encoded strings stand in, held by *binding*, or spelled out
+    by the accessor where *binding* is `None`. A call passes where the one it decodes starts and how
+    long it is, both counted in UTF-16 code units, which is what the string holds.
+    """
+    binding: Binding | None
+    text: str
+
+    def encoded(self, numbers: list[int]) -> str | None:
+        if len(numbers) != 2:
+            return None
+        start, length = numbers
+        if start < 0 or length < 0 or start + length > len(self.text):
+            return None
+        return self.text[start:start + length]
+
+
+_Table = _StringArray | _LongString
+
+
+class _Kind(NamedTuple):
+    """
+    A kind of accessor: its templates, the reader of what stands where they have their decoder,
+    table and cache, and the reader of what its table holds.
+    """
+    templates: tuple[Template, ...]
+    parts: Callable[[SemanticModel, JsFunctionNode], _Parts | None]
+    table: Callable[[EffectModel, Binding | JsStringLiteral], _Table | None]
 
 
 class _Accessor(NamedTuple):
     """
-    An accessor, the decoder it calls, the table it reads, the strings that table holds, and the
-    cache it keeps the decoded strings in.
+    An accessor, the decoder it calls, the table it reads, and the cache it keeps the decoded
+    strings in, if it keeps any.
     """
     held: _Held
     decoder: _Decoder
-    table: Binding
-    strings: list[str]
-    cache: Binding
+    table: _Table
+    cache: Binding | None
+
+    def stores(self) -> list[Binding]:
+        """
+        The names holding the table and the cache.
+        """
+        return [store for store in (self.table.binding, self.cache) if store is not None]
 
 
 def _definition(function: JsFunctionNode) -> Node | None:
@@ -221,10 +291,15 @@ def _declared_outside(model: SemanticModel, function: Node, callee: Node | None)
     if not isinstance(callee, JsIdentifier):
         return False
     binding = model.resolve(callee)
-    if binding is None:
-        return True
+    return binding is None or not _declared_in(binding, function)
+
+
+def _declared_in(binding: Binding, function: Node) -> bool:
+    """
+    Whether *binding* is a name *function* or a function inside it declares.
+    """
     scope = binding.scope.node
-    return scope is not function and not scope.is_descendant_of(function)
+    return scope is function or scope.is_descendant_of(function)
 
 
 def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
@@ -258,13 +333,27 @@ def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     return _Decoder(held, values.pop())
 
 
-def _parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
+def _outer(model: SemanticModel, function: Node, node: Node | None) -> Binding | None:
+    """
+    The binding *node* names when it is a name *function* does not declare.
+    """
+    node = strip_parens(node)
+    if not isinstance(node, JsIdentifier) or (binding := model.resolve(node)) is None:
+        return None
+    if _declared_in(binding, function):
+        return None
+    return binding
+
+
+def _caching_parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
     """
     The names *function* reads an element of at its one parameter, the one of them it hands to a
     call taking one argument, and that call's callee: the cache, the table and the decoder, if
-    *function* is an accessor.
+    *function* is a caching accessor and the cache holds an empty object.
     """
     if len(function.params) != 1 or not isinstance(index := function.params[0], JsIdentifier):
+        return None
+    if not 0 < len(statement_list_of(function) or ()) <= 2:
         return None
     parameter = model.binding_of(index)
     owners: dict[int, Binding] = {}
@@ -291,22 +380,41 @@ def _parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
     cache = next(binding for binding in owners.values() if binding is not table)
     if decoder is cache or decoder is table:
         return None
+    empty = strip_parens(model.singular_value(cache))
+    if not isinstance(empty, JsObjectExpression) or empty.properties:
+        return None
     return _Parts(decoder, table, cache)
 
 
-def _is_accessor(model: SemanticModel, function: JsFunctionNode, parts: _Parts) -> bool:
-    placeholders = {
-        id(parts.cache): 'CACHE',
-        id(parts.decoder): 'DECODE',
-        id(parts.table): 'TABLE',
-    }
-    return matches(model, function, _ACCESSOR_TEMPLATES, placeholders)
-
-
-def _table_strings(effects: EffectModel, table: Binding) -> list[str] | None:
+def _slicing_parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
     """
-    The strings *table* holds wherever it is in place: the one array of at least ten strings the
-    text gives it, in a container nothing changes or hands out
+    The callee of the call *function* returns and what it slices the argument of that call out of:
+    the decoder and the table, if *function* is a slicing accessor.
+    """
+    if len(function.params) != 2 or len(statements := statement_list_of(function) or ()) != 1:
+        return None
+    if not isinstance(body := statements[0], JsReturnStatement):
+        return None
+    call = strip_parens(body.argument)
+    if not isinstance(call, JsCallExpression) or len(call.arguments) != 1:
+        return None
+    sliced = strip_parens(call.arguments[0])
+    if not isinstance(sliced, JsCallExpression):
+        return None
+    if not isinstance(member := strip_parens(sliced.callee), JsMemberExpression):
+        return None
+    decoder = _outer(model, function, call.callee)
+    text = strip_parens(member.object)
+    table = text if isinstance(text, JsStringLiteral) else _outer(model, function, text)
+    if decoder is None or table is None or decoder is table:
+        return None
+    return _Parts(decoder, table, None)
+
+
+def _string_array(effects: EffectModel, table: Binding | JsStringLiteral) -> _StringArray | None:
+    """
+    The strings the name *table* holds wherever it is in place: the one array of at least ten
+    strings the text gives it, in a container nothing changes or hands out
     (`refinery.lib.scripts.js.analysis.effects.EffectModel.binding_is_immutable_container`).
 
     The table is machinery under a name the obfuscator makes up, like the decoder, the accessor and
@@ -318,6 +426,8 @@ def _table_strings(effects: EffectModel, table: Binding) -> list[str] | None:
     scoped to the file. A script the obfuscator writes stores on the global object under keys this
     very table holds, and the wider question would refuse the table of every script.
     """
+    if not isinstance(table, Binding):
+        return None
     model = effects.model
     known, value = denoted_value(model.singular_value(table), model)
     if not known or not isinstance(value, list) or len(value) < 10:
@@ -327,45 +437,79 @@ def _table_strings(effects: EffectModel, table: Binding) -> list[str] | None:
         return None
     if model.reflection_can_reach(table, module_scope=True):
         return None
-    return strings
+    return _StringArray(table, strings)
+
+
+def _long_string(effects: EffectModel, table: Binding | JsStringLiteral) -> _LongString | None:
+    """
+    The string *table* spells out, or the string the name *table* holds wherever it is in place,
+    asked about reflection as `_string_array` asks.
+    """
+    if isinstance(table, JsStringLiteral):
+        return None if table.value is None else _LongString(None, table.value)
+    model = effects.model
+    known, value = denoted_value(model.singular_value(table), model)
+    if not known or not isinstance(value, str):
+        return None
+    if model.reflection_can_reach(table, module_scope=True):
+        return None
+    return _LongString(table, value)
+
+
+_KINDS = (
+    _Kind(_CACHING_ACCESSOR, _caching_parts, _string_array),
+    _Kind(_SLICING_ACCESSOR, _slicing_parts, _long_string),
+)
+
+
+def _parts(model: SemanticModel, function: JsFunctionNode) -> tuple[_Kind, _Parts] | None:
+    """
+    The kind of accessor *function* is and its parts, if it is one.
+    """
+    for kind in _KINDS:
+        if (parts := kind.parts(model, function)) is None:
+            continue
+        placeholders = {id(parts.decoder): 'DECODE'}
+        nodes: dict[int, str] = {}
+        if isinstance(parts.table, Binding):
+            placeholders[id(parts.table)] = 'TABLE'
+        else:
+            nodes[id(parts.table)] = 'TABLE'
+        if parts.cache is not None:
+            placeholders[id(parts.cache)] = 'CACHE'
+        if matches(model, function, kind.templates, placeholders, nodes):
+            return kind, parts
+    return None
 
 
 def _accessor(
     effects: EffectModel,
     held: _Held,
     decoders: dict[int, _Decoder],
-    tables: dict[int, list[str] | None],
+    tables: dict[tuple[int, int], _Table | None],
 ) -> _Accessor | None:
     """
-    The accessor *held* is, when it is the accessor template over a decoder of *decoders*, a table
-    holding at least ten strings, and a cache holding an empty object. The strings of each table
-    are kept in *tables* by the identity of its binding, since every accessor reads the one table.
+    The accessor *held* is, when it is an accessor template over a decoder of *decoders* and a table
+    holding strings. What a table holds is kept in *tables* by the identity of the kind reading it
+    and of what stands for it, since every accessor of a kind reads the one table.
     """
-    model = effects.model
-    function = held.function
-    statements = statement_list_of(function)
-    if not statements or len(statements) > 2:
+    if (found := _parts(effects.model, held.function)) is None:
         return None
-    parts = _parts(model, function)
-    if parts is None or (decoder := decoders.get(id(parts.decoder))) is None:
+    kind, parts = found
+    if (decoder := decoders.get(id(parts.decoder))) is None:
         return None
-    if not _is_accessor(model, function, parts):
+    if (key := (id(kind), id(parts.table))) not in tables:
+        tables[key] = kind.table(effects, parts.table)
+    if (table := tables[key]) is None:
         return None
-    if (key := id(parts.table)) not in tables:
-        tables[key] = _table_strings(effects, parts.table)
-    if (strings := tables[key]) is None:
-        return None
-    cache = strip_parens(model.singular_value(parts.cache))
-    if not isinstance(cache, JsObjectExpression) or cache.properties:
-        return None
-    return _Accessor(held, decoder, parts.table, strings, parts.cache)
+    return _Accessor(held, decoder, table, parts.cache)
 
 
 def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
     """
-    Whether nothing but the accessor template reads or writes *cache*: every reference, a `with`
+    Whether nothing but an accessor keeping *cache* reads or writes it: every reference, a `with`
     body's included, lies in its declarator, in a write establishing its value, or in a function
-    that is the accessor template over it. Such a function need not be held by a name: the
+    that is an accessor template over it. Such a function need not be held by a name: the
     moved-declaration setting hands an accessor to a function through a parameter.
     """
     declarator = cache.declarations[0].parent if len(cache.declarations) == 1 else None
@@ -382,9 +526,8 @@ def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
         if function is None:
             return False
         if (known := accessors.get(id(function))) is None:
-            parts = _parts(model, function)
-            known = parts is not None and parts.cache is cache and _is_accessor(model, function, parts)
-            accessors[id(function)] = known
+            found = _parts(model, function)
+            known = accessors[id(function)] = found is not None and found[1].cache is cache
         if not known:
             return False
     return True
@@ -392,34 +535,40 @@ def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
 
 def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[tuple[JsCallExpression, str]]:
     """
-    Every call of *accessor* that passes a number literal indexing its table, after the accessor,
-    the decoder, the table and the cache are in place, with the string the call returns. A string
-    that does not decode or starts with a byte order mark is left a call: the function turning the
-    bytes into a string strips a byte order mark where the host has a `TextDecoder` and keeps it
-    elsewhere.
+    Every call of *accessor* passing integer literals that say which encoded string of its table to
+    decode, after the accessor, the decoder, the table and the cache are in place, with the string
+    the call returns. A string that does not decode or starts with a byte order mark is left a call:
+    the function turning the bytes into a string strips a byte order mark where the host has a
+    `TextDecoder` and keeps it elsewhere.
     """
-    bindings = (accessor.held.binding, accessor.decoder.held.binding, accessor.table, accessor.cache)
+    bindings = [accessor.held.binding, accessor.decoder.held.binding, *accessor.stores()]
     for read in accessor.held.binding.reads:
         if not isinstance(read, JsIdentifier):
             continue
         call = enclosing_operator(read)
-        if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not read or len(call.arguments) != 1:
+        if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not read:
             continue
-        argument = call.arguments[0]
-        if not isinstance(argument, JsNumericLiteral):
-            continue
-        index = exact_integer(argument.value)
-        if index is None or not 0 <= index < len(accessor.strings):
+        numbers = [number for argument in call.arguments if (number := _integer(argument)) is not None]
+        if len(numbers) != len(call.arguments) or (encoded := accessor.table.encoded(numbers)) is None:
             continue
         if not all(dominance.binding_established_before(binding, call) for binding in bindings):
             continue
         try:
-            decoded = _decode_base91(accessor.strings[index], accessor.decoder.alphabet)
+            decoded = _decode_base91(encoded, accessor.decoder.alphabet)
         except (UnicodeDecodeError, ValueError):
             continue
         if decoded.startswith('\N{BYTE ORDER MARK}'):
             continue
         yield call, decoded
+
+
+def _integer(argument: Node) -> int | None:
+    """
+    The integer *argument* spells, if it is a number literal of one.
+    """
+    if not isinstance(argument, JsNumericLiteral):
+        return None
+    return exact_integer(argument.value)
 
 
 def _stands_in_a_list(definition: Node) -> bool:
@@ -475,7 +624,7 @@ def _remove_machinery(
     decoders = {id(accessor.decoder.held.binding): accessor.decoder.held for accessor in accessors}
     for held in decoders.values():
         remove(held.definition, held.binding)
-    stores = {id(store): store for accessor in accessors for store in (accessor.table, accessor.cache)}
+    stores = {id(store): store for accessor in accessors for store in accessor.stores()}
     for store in stores.values():
         declarator = store.declarations[0].parent if len(store.declarations) == 1 else None
         if isinstance(declarator, JsVariableDeclarator):
@@ -506,7 +655,7 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         if not decoders:
             return
         accessors: list[_Accessor] = []
-        tables: dict[int, list[str] | None] = {}
+        tables: dict[tuple[int, int], _Table | None] = {}
         confined: dict[int, bool] = {}
         replacements: list[tuple[JsCallExpression, str]] = []
         for item in held:
@@ -515,10 +664,12 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
             if (accessor := _accessor(cache.effects, item, decoders, tables)) is None:
                 continue
             accessors.append(accessor)
-            if (known := confined.get(id(accessor.cache))) is None:
-                known = confined[id(accessor.cache)] = _cache_confined(model, accessor.cache)
-            if known:
-                replacements.extend(_decoded_calls(cache.dominance, accessor))
+            if accessor.cache is not None:
+                if (known := confined.get(id(accessor.cache))) is None:
+                    known = confined[id(accessor.cache)] = _cache_confined(model, accessor.cache)
+                if not known:
+                    continue
+            replacements.extend(_decoded_calls(cache.dominance, accessor))
         if not replacements:
             return
         for call, decoded in replacements:

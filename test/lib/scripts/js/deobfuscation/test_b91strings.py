@@ -86,6 +86,184 @@ def accessor(name: str, cache: str, decode: str, table: str = 'table') -> str:
     return F'function {name}(index) {{ {accessor_body(cache, decode, table)} }}'
 
 
+#: One long string holding strings encoded with `ALPHABET` between other characters: 'push' starts
+#: at 2 and is 5 long, 'Fizz' starts at 9 and is 5 long, 'log' starts at 16 and is 4 long.
+TEXT = 'XXfOg=rYYlrCD^ZZ#ZlHWW'
+
+#: The function turning the decoded bytes into a string as the obfuscator writes it, through names
+#: it reads off the global object. The evaluator does not run it, so a program holding it leaves its
+#: concealed strings to the pass.
+GLOBAL_BUFFER = (
+    'var __globalObject = globalThis; var __TextDecoder = __globalObject["TextDecoder"];'
+    ' var __Uint8Array = __globalObject["Uint8Array"]; function bufferToString(buffer) {'
+    ' if (typeof __TextDecoder !== "undefined" && __TextDecoder) {'
+    ' return new __TextDecoder()["decode"](new __Uint8Array(buffer)); }'
+    ' return String.fromCharCode.apply(null, buffer); }'
+)
+
+#: The long string every slicing accessor below reads, and the function turning bytes into a string.
+SLICED = F'var strs = "{TEXT}";\n{GLOBAL_BUFFER}\n'
+
+
+def slicing(name: str, decode: str, table: str = 'strs') -> str:
+    """
+    An accessor declared as *name* that hands *decode* the slice of *table* a call says where it
+    starts and how long it is.
+    """
+    return F'function {name}(start, length) {{ return {decode}({table}.slice(start, start + length)); }}'
+
+
+#: A slicing accessor read through a computed key.
+A_SLICE_READ_THROUGH_A_COMPUTED_KEY = (
+    SLICED
+    + decoder('S_decode') + '\n'
+    + 'function S(start, length) { return S_decode(strs["slice"](start, start + length)); }\n'
+    + 'console.log(S(2, 5), S(9, 5), S(16, 4));\n'
+)
+
+#: A slicing accessor as the renaming setting leaves it: its first parameter named like itself, and
+#: the locals of the decoder named like the long string.
+A_SLICING_ACCESSOR_RENAMED = (
+    F'var k = "{TEXT}";\n{GLOBAL_BUFFER}\n'
+    + decoder('w')
+    .replace('function w(str)', 'function w(w)')
+    .replace('(str ||', '(w ||')
+    .replace('var raw =', 'var k =')
+    .replace('raw.length', 'k.length')
+    .replace('raw[i]', 'k[i]')
+    + '\n'
+    + 'function d(d, y) { return w(k["slice"](d, d + y)); }\n'
+    + 'console.log(d(2, 5), d(9, 5), d(16, 4));\n'
+)
+
+A_SLICE_PAST_THE_END_OR_OF_A_NEGATIVE_NUMBER = (
+    SLICED
+    + decoder('S_decode') + '\n'
+    + slicing('S', 'S_decode') + '\n'
+    + 'console.log(JSON.stringify([S(20, 9), S(9, -1), S(-6, 4), S(9, 5)]));\n'
+)
+
+A_SLICE_BEFORE_THE_LONG_STRING_IS_ASSIGNED = (
+    F'{GLOBAL_BUFFER}\n'
+    + decoder('S_decode') + '\n'
+    + slicing('S', 'S_decode') + '\n'
+    + 'var r;\n'
+    + 'try { r = S(2, 5); } catch (e) { r = e.constructor.name; }\n'
+    + F'var strs = "{TEXT}";\n'
+    + 'console.log(r, S(9, 5));\n'
+)
+
+A_SLICE_IN_A_WITH_BODY = (
+    SLICED
+    + decoder('S_decode') + '\n'
+    + slicing('S', 'S_decode') + '\n'
+    + 'var o = { S: function (a, b) { return "with" + a; } };\n'
+    + 'with (o) { console.log(S(2, 5)); }\n'
+    + 'console.log(S(9, 5));\n'
+)
+
+#: A slicing accessor and its decoder as the moved-declaration setting hands them to a function:
+#: through parameters, which a caller may fill.
+A_SLICING_ACCESSOR_HELD_BY_A_PARAMETER = (
+    SLICED
+    + 'function run(a, S, S_decode) {\n'
+    + F'  if (!S_decode) {{ S_decode = function (str) {{ {decoder_body()} }}; }}\n'
+    + '  if (!S) { S = function (start, length) { return S_decode(strs.slice(start, start + length)); }; }\n'
+    + '  return a + S(2, 5);\n'
+    + '}\n'
+    + 'console.log(run("x"), run("y", function (s, l) { return "own" + s; }));\n'
+)
+
+#: A function shaped like the caching accessor over the long string, before and after a slicing
+#: accessor over it.
+A_CACHING_SHAPE_OVER_THE_LONG_STRING = tuple(
+    'var cache = {};\n'
+    + SLICED
+    + decoder('dec') + '\n'
+    + first + '\n'
+    + second + '\n'
+    + 'console.log(typeof acc, S(2, 5), S(9, 5), S(16, 4));\n'
+    for first, second in [
+        (accessor('acc', 'cache', 'dec', 'strs'), slicing('S', 'dec')),
+        (slicing('S', 'dec'), accessor('acc', 'cache', 'dec', 'strs')),
+    ]
+)
+
+#: Programs holding accessors that slice their strings out of one long string, in shapes that
+#: decide what a call returns, mapped to what Node prints for each.
+A_PROGRAM_SLICING_CONCEALED_STRINGS = {
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(2, 5), S(9, 5), S(16, 4), S(2, 5));\n'
+    ): 'push Fizz log push\n',
+    (
+        F'var strs = "\\ud83d\\ude00{TEXT}";\n{GLOBAL_BUFFER}\n'
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(4, 5), S(11, 5), S(18, 4));\n'
+    ): 'push Fizz log\n',
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(2, 5));\n'
+        + 'strs = "AAlrCD^";\n'
+        + 'console.log(S(2, 5));\n'
+    ): 'push\nFizz\n',
+    A_SLICE_BEFORE_THE_LONG_STRING_IS_ASSIGNED: 'TypeError Fizz\n',
+    A_SLICE_PAST_THE_END_OR_OF_A_NEGATIVE_NUMBER: '["l","","log","Fizz"]\n',
+    (
+        SLICED
+        + 'function S_decode(str) { return "<" + str + ">"; }\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'console.log(S(2, 5));\n'
+    ): '<fOg=r>\n',
+    A_SLICE_IN_A_WITH_BODY: 'with2\nFizz\n',
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'function inner() {\n'
+        + '  function T_decode(str) { return "two:" + str; }\n'
+        + '  ' + slicing('T', 'T_decode') + '\n'
+        + '  return T(9, 5);\n'
+        + '}\n'
+        + 'console.log(S(2, 5), inner(), S(16, 4));\n'
+    ): 'push two:lrCD^ log\n',
+    A_SLICING_ACCESSOR_HELD_BY_A_PARAMETER: 'xpush yown2\n',
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'function inner() { return later(); }\n'
+        + 'function later() { return S(9, 5); }\n'
+        + 'console.log([strs].length, S(2, 5), inner());\n'
+    ): '1 push Fizz\n',
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'function inner() { return S(9, 5); }\n'
+        + 'eval("strs = \\"XXlrCD^\\"");\n'
+        + 'console.log(S(2, 5), inner());\n'
+    ): 'Fizz \n',
+    (
+        SLICED
+        + decoder('S_decode') + '\n'
+        + slicing('S', 'S_decode') + '\n'
+        + 'function inner() { return S(9, 5); }\n'
+        + 'with ({}) { strs = "XXlrCD^"; }\n'
+        + 'console.log(S(2, 5), inner());\n'
+    ): 'Fizz \n',
+    A_SLICE_READ_THROUGH_A_COMPUTED_KEY: 'push Fizz log\n',
+    A_SLICING_ACCESSOR_RENAMED: 'push Fizz log\n',
+    A_CACHING_SHAPE_OVER_THE_LONG_STRING[0]: 'function push Fizz log\n',
+    A_CACHING_SHAPE_OVER_THE_LONG_STRING[1]: 'function push Fizz log\n',
+}
+
+
 AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP = (
     HEAD
     + 'function find() {\n'
@@ -690,11 +868,123 @@ class TestStringConcealing(TestJsDeobfuscator):
         )
 
 
+class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
+
+    def test_every_call_slicing_an_encoded_string_is_decoded(self):
+        source = (
+            SLICED
+            + decoder('S_decode') + '\n'
+            + slicing('S', 'S_decode') + '\n'
+            + 'console.log(S(2, 5), S(9, 5), S(16, 4), S(2, 5));\n'
+        )
+        self.assertEqual(
+            'console.log(\'push\', \'Fizz\', \'log\', \'push\');',
+            deobfuscate_source(source, module=True),
+        )
+
+    def test_a_long_string_the_accessor_spells_out_is_decoded(self):
+        source = (
+            GLOBAL_BUFFER + '\n'
+            + decoder('S_decode') + '\n'
+            + slicing('S', 'S_decode', F'"{TEXT}"') + '\n'
+            + 'console.log(S(2, 5), S(9, 5), S(16, 4));\n'
+        )
+        self.assertEqual(
+            'console.log(\'push\', \'Fizz\', \'log\');',
+            deobfuscate_source(source, module=True),
+        )
+
+    def test_a_slice_read_through_a_computed_key_is_decoded(self):
+        self.assertEqual(
+            'console.log(\'push\', \'Fizz\', \'log\');',
+            deobfuscate_source(A_SLICE_READ_THROUGH_A_COMPUTED_KEY, module=True),
+        )
+
+    def test_a_renamed_slicing_accessor_is_decoded(self):
+        self.assertEqual(
+            'console.log(\'push\', \'Fizz\', \'log\');',
+            deobfuscate_source(A_SLICING_ACCESSOR_RENAMED, module=True),
+        )
+
+    def test_a_caching_shape_over_the_long_string_leaves_the_slicing_accessor_decoded(self):
+        for source in A_CACHING_SHAPE_OVER_THE_LONG_STRING:
+            with self.subTest(source=source):
+                self.assertIn(
+                    'console.log(typeof acc, \'push\', \'Fizz\', \'log\');',
+                    deobfuscate_source(source, module=True),
+                )
+
+    def test_a_slice_past_the_end_or_of_a_negative_number_stays_a_call(self):
+        self.assertIn(
+            'console.log(JSON.stringify([S(20, 9), S(9, -1), S(-6, 4), \'Fizz\']));',
+            deobfuscate_source(A_SLICE_PAST_THE_END_OR_OF_A_NEGATIVE_NUMBER, module=True),
+        )
+
+    def test_a_call_before_the_long_string_is_assigned_stays_a_call(self):
+        result = deobfuscate_source(A_SLICE_BEFORE_THE_LONG_STRING_IS_ASSIGNED, module=True)
+        self.assertIn('r = S(2, 5);', result)
+        self.assertIn('console.log(r, \'Fizz\');', result)
+
+    def test_a_call_in_a_with_body_stays_a_call(self):
+        result = deobfuscate_source(A_SLICE_IN_A_WITH_BODY, module=True)
+        self.assertIn('console.log(S(2, 5));', result)
+        self.assertIn('console.log(\'Fizz\');', result)
+
+    def test_an_accessor_held_by_a_parameter_stays_a_call(self):
+        result = deobfuscate_source(A_SLICING_ACCESSOR_HELD_BY_A_PARAMETER, module=True)
+        self.assertIn('return a + S(2, 5);', result)
+
+    def test_full_fizzbuzz_sample(self):
+        """
+        The whole program is recovered from the obfuscator's output for an eleven-line fizzbuzz
+        with string concealing alone: its decoders stand in `if` bodies, and the names of the
+        properties the program reads are concealed as well.
+        """
+        source = lzma.decompress(base64.b85decode(
+            "{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;1s?GOI-jn9ZCPGVfzyXn;9}d7)}>6$vV{qUNBS9r5fag)srEN6PixxyXI;T{00IL20y?Ln_"
+            "Rxpf7I?fmz$9^G{$%rQ0o;)F<|;#KAW%e@n$0B^Z`<YT<^n3frAnVqY3r>p$<c1UIgI5c;dzrgPeONir_9Ii)wREe{-HZ;Fe9K0T##"
+            "u5V9#L7&ZarY&cfMuXx5qP&C}F08#!(`OIeX-Nhg`z*X-2_ux&tH8-{=yH|19AvZ+d>=$%wCJ>voZs3Jb_aDDpx&)1Jhv(x8oFxHzv"
+            "y#evjb;Wh*O#Sl633wCajE9HKkBR*RGLBHnyU&ocVA_^SwjC>HC6b{c*xm-^+C@C9y0c(mwg~ze=+`_R3-4|qav=dTg%9bp`#Go{j9"
+            "~w;jNsr+Tv5Kl^R=?GoqX6pmE<|lI!3%FJ)qh9rZ|_tnIELIPk)hSN{AwGNEsr7QqIfO|Do~p@W;Xd*?8x05iNc^*wcv*hYR^Vfa(n"
+            "LpRYZlGH<xWMg%$q;88m<-T|%Qv-i#im9|Q1*lM=WSzJR5GNtbgP=N_7g|XZ8zH}GPk~;ShM{A&p)H?HGxR}Qex5U?$r~}v^2c=i_6"
+            "wX)U}0A*x#hgTXSpP=WVAVfSj-n`?@n<!!&<}MjnQRJ5ut(_dMW8Abk)5Sq1?Bd+~Lp3{o#vxJBD`ID=#|s#07NgzL%tGu1?ILcjr0"
+            "3;jPxfA=_)v%rk=dvx{J<VeUw9m^sPJl29L~EXkUpS&skPC3MP=y`lyD!oBjO2odMJrJ&g6PM^Q)j1v}7+_Ou8TY-MtF%j`GB_R+@+"
+            "sXGLPsDmhKgxE}UGP@TGHO|KRnT3X{Uhw=hnq@@yd^DDgT$VcgoE77{}t9cHOn}!n}FmRaU&taeK)|Q_)wYczS39~l36CV;eeU^ELn"
+            "A1iuC(oZCJUf8ANP<U50zDbxE*Ql_81wVx6vRvdFEx5zL(WuXwHx;=#dKiKfRXnCnls5dp6C*BuJndn05bgJ3H&e`oGoQokv+Myqhe"
+            "rRHJN_?*`p;%q!TJBB#{T|NC??*nbzouK<@W2+hC?h+j#BkOC3P{n|2Z9^n(s06M%r@PA-BOG87IU7zocFFGKU~|||Ktm@Zh0>+D3e"
+            "5QWebGRz-zJ9OoLVgGAD#mmEXcV@vTz;SzDQO&hB!As7lmUW7-+H32@&uA8A+OPvltg7hDiTm5JNe|`SoXlunL#sJ<Un9)|`C=$NXb"
+            "KZvbO4B|z+H#Z20PTv@>iOMePzSZx;J{qwTCmw5Krk`f@GT8+{AV{SN*rKipZ4((@!?gJ%CDYYFkSWOxSXNIGhKq7~hIGlf%GUsyS%"
+            "FuFZE1E2vP)Pm&mM%OUPS3J%r;kw+==a~ZUKbhEVSYS5#yXJLto-cK8(I@HPc1OQb=3||44TgHqrg#r?ob5Hv)UA-t<_=ohqNiQ+q;"
+            "1j1#O)MbHLO1(4Q-w2E4`ij=3Ihg`&ED6A0D~gvFQ9OiT#&l=DAUs#fspBAtIyd<Dy$Qdk67i95>}!vggZw3eXIYLaD7lws&kSbdb)"
+            "|LLy0NNj7HoSBmnE9y~qBx&2VLA2*&VE-;-*h^~zRm!L91lOIUCpDN7O7fioCV=5^@i+QfBlb04-x541rY4levD<_cdEBfMgv%Y=RB"
+            "3~q@Rk&|{z>~MyJL{d?bZfaj?=SguoIWXPwUqoWguGJVisCUym4#g%p#Ij1KRMEeMF-eamG3k%lCx4boi%s251tg*P$tN9?yKyX1FE"
+            "2ljO|#(}L)hKF1G&2VeYQoii5o3rz;ApE-nMI7@10sz@qFNL>yN8sLs!W}i-Ihf4;X9zgC2%!v}?vJ7_+a4ffHA={)nEGjdbuqinDa"
+            "<BAgxrqC|^NG=f5Pz-9LL;eSXts>vgeSOG<fw1ZS~!?t$jcQRjlu9akuuho5w6te=2jmPl71fLm!<#N*Q8*AvNdek)!VMO0E5cQq&)"
+            "m3Lryk-VHQPb%gBYXpJkY}0(I#KDIs6Xhqhr2b_TajIkxp>B&|n~jhd^mHkXq&5!Wk)7Bts2B;v@{!tC7=8p5wBV_hiD2OC<?B&JQ>"
+            "_;vA!X3=QjgI8Y2Ut3Rj2T;%0N9e$e2UWILJ;DTC?yq+Flu534%U6rMGpkKv?Lrq!0yJe8O?!Ic;emz3U6;NLa^G0tPqdCd8lATV!@"
+            "4uhz{!KQL~SeTLSm~0(BU#j*t4W^gD%s5i)kKuJTGoOlSJON3YXX(MH`27*M@=JxlKAJ1%aRTj&Z1?<+o%bo@sYrBi>sLHWhp#P(L9"
+            "6N5*5VU#4&|&%Rjh^Ybe<+ryPFW(3346vYM?n+1s;X#w4r@IU`!SOXExv-pwG&4HK!$hxw3s?=yPjP-Y3_vrav$rvbd1_2&oEPgFZt"
+            "|g4Y0r}&&Yelor6qjsLP+du-{@4HjnqaKaY$wHk00HL?zbOC!C1R-svBYQl0ssI200dcD"
+        )).decode('utf8')
+        self.assertEqual(
+            'console.log(\'FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14,'
+            ' FizzBuzz\');',
+            self._deobfuscate(source),
+        )
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutConcealedStrings(TestJsDeobfuscator):
 
     def test_each_program_prints_what_it_printed(self):
         rows = A_PROGRAM_HOLDING_CONCEALED_STRINGS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_each_program_slicing_its_strings_prints_what_it_printed(self):
+        rows = A_PROGRAM_SLICING_CONCEALED_STRINGS
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
