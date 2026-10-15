@@ -1614,22 +1614,19 @@ def _strip_negation(node: Node) -> tuple[Node, bool]:
 
 def _established_allocation_of(binding: Binding, node: Node, cache: ModelCache) -> Node | None:
     """
-    The allocation *binding* provably holds at the read *node*, when every establishment site of its
-    single value runs before that read; `None` when the binding holds no single value, the read may
-    precede the value, or the value is no allocation. The value and its establishment sites come
-    from the same complete-singleton answer, which no dynamic rebind the text does not spell
-    satisfies under the suspecting model; the ordering is the interprocedural runs-before, which
-    recurses through the reference points of the function the read sits in, so a guard carried by a
-    callback is ordered through the callback's creation.
+    The allocation *binding* provably holds at the read *node*, when its single value is in place
+    before that read
+    (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.binding_established_before`); `None`
+    when the binding holds no single value, the read may precede the value, or the value is no
+    allocation. The value and its establishment sites come from the same complete-singleton answer,
+    which no dynamic rebind the text does not spell satisfies under the suspecting model; the
+    ordering is the interprocedural one, which recurses through the reference points of the function
+    the read sits in, so a guard carried by a callback is ordered through the callback's creation.
     """
-    model = cache.model
-    value = model.singular_value(binding)
-    sites = model.binding_establishment_sites(binding)
-    if value is None or sites is None:
+    value = cache.model.singular_value(binding)
+    if value is None or allocated_object_type(value) is None:
         return None
-    if allocated_object_type(value) is None:
-        return None
-    if not all(cache.dominance.runs_before(site, node) for site in sites):
+    if not cache.dominance.binding_established_before(binding, node):
         return None
     return value
 

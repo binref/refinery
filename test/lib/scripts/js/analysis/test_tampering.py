@@ -15,7 +15,7 @@ import time
 
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache
-from refinery.lib.scripts.js.analysis.model import enclosing_function
+from refinery.lib.scripts.js.analysis.model import Role, enclosing_function, reference_role
 from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic
 from refinery.lib.scripts.js.deobfuscation.interpreter import InterpreterError, JsInterpreter
 from refinery.lib.scripts.js.model import (
@@ -289,6 +289,35 @@ class TestBuiltinsIntactAt(TestBase):
             with self.subTest(label):
                 self.assertTrue(self._verdict(source))
 
+    def test_an_anchor_its_statement_runs_on_some_runs_clears_under_a_write_after_it(self):
+        for label, expression in (
+            ('in an arm', 'c ? String.fromCharCode(65) : 0'),
+            ('below and', 'c && String.fromCharCode(65)'),
+        ):
+            source = (
+                'var k, v;\n'
+                'function f(c) {\n'
+                F'  var r = {expression};\n'
+                '  globalThis[k] = v;\n'
+                '  return r;\n'
+                '}\n'
+                'f();'
+            )
+            with self.subTest(label):
+                self.assertTrue(self._verdict(source))
+
+    def test_an_anchor_its_statement_runs_on_some_runs_refuses_under_a_write_before_it(self):
+        source = (
+            'var k, v;\n'
+            'function f(c) {\n'
+            '  globalThis[k] = v;\n'
+            '  var r = c && String.fromCharCode(65);\n'
+            '  return r;\n'
+            '}\n'
+            'f();'
+        )
+        self.assertFalse(self._verdict(source))
+
     def test_an_entrypoint_matched_activation_refuses_under_the_option(self):
         """
         The host may invoke a named top-level function an unbounded number of times with no caller
@@ -343,6 +372,42 @@ class TestSingularValueAt(TestBase):
         )
         self.assertIsInstance(value, JsNumericLiteral)
         self.assertEqual(value.value, 1)
+
+    @staticmethod
+    def _value_at_the_last_read(source: str):
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        reads = [
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier)
+            and node.name == 'x'
+            and cache.model.is_reference(node)
+            and reference_role(node) is Role.READ
+        ]
+        return cache.tampering.singular_value_at(cache.model.resolve(reads[-1]), reads[-1])
+
+    def test_an_eval_after_a_read_below_and_repairs_the_volatility(self):
+        value = self._value_at_the_last_read(
+            'var out, c;\n'
+            'var q = (function () {\n'
+            '  var x = 1;\n'
+            '  out = c && x;\n'
+            '  eval(payload);\n'
+            '})();'
+        )
+        self.assertIsInstance(value, JsNumericLiteral)
+        self.assertEqual(value.value, 1)
+
+    def test_a_store_below_and_establishes_no_value(self):
+        self.assertIsNone(self._value_at_the_last_read(
+            'var out, c;\n'
+            'var q = (function () {\n'
+            '  var x;\n'
+            '  c && (x = 1);\n'
+            '  out = x;\n'
+            '  eval(payload);\n'
+            '})();'
+        ))
 
     def test_an_eval_before_the_read_refuses(self):
         self.assertIsNone(self._value_at(
@@ -757,6 +822,17 @@ class TestAnAnchoredInterpreterTrustsWhatTheOracleCleared(TestBase):
         self.assertTrue(self._unanchored_refuses(source, expression))
         with self.assertRaises(InterpreterError):
             self._execute(source, expression, expression)
+
+    def test_a_decoder_its_statement_runs_on_some_runs_folds_with_a_later_eval_sibling(self):
+        for label, opening, closing in (
+            ('in an arm', '  var _a = c ? function (e, r) {\n', "  }('0', 1) : 0;\n"),
+            ('below and', '  var _a = c && function (e, r) {\n', "  }('0', 1);\n"),
+        ):
+            source = self._DECODER_IIFE.replace(
+                '  var _a = function (e, r) {\n', opening).replace("  }('0', 1);\n", closing)
+            expression = lambda ast: _decoder_iife_call(ast, _DECODER_STEP)
+            with self.subTest(label):
+                self.assertEqual(self._execute(source, expression, expression), '0')
 
     def test_a_decoder_without_the_eval_sibling_folds(self):
         source = self._DECODER_IIFE.replace(

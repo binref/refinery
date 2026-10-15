@@ -779,3 +779,88 @@ class TestDominance(TestBase):
         _, store, body, after = self._idents(ast, 'x')
         self.assertTrue(dom.runs_before(store, body))
         self.assertTrue(dom.runs_before(store, after))
+
+
+class TestAStoreItsStatementMaySkip(TestBase):
+    """
+    A store in a part of a statement that runs on some runs of the statement only has not run when
+    the statement has completed: every ordering query refuses it, against a read after the
+    statement and against a function called after it. Only `cannot_precede`, which asks whether
+    anything can run before a node on a run on which the node runs, holds.
+    """
+
+    SKIPPED = (
+        'x && (c = 5);',
+        'x ? (c = 5) : 0;',
+        'x ? 0 : (c = 5);',
+        'x ||= (c = 5);',
+        'x &&= (c = 5);',
+        'x ??= (c = 5);',
+        'o?.f(c = 5);',
+        'o?.p[c = 5];',
+        'o?.p.f(c = 5);',
+        'switch (x) { case 0: break; case (c = 5): break; }',
+        '({ a: b = (c = 5) } = o);',
+        '[b = (c = 5)] = o;',
+    )
+
+    PERFORMED = (
+        '(c = 5) && x;',
+        '(c = 5) ? x : 0;',
+        'x += (c = 5);',
+        'o.f(c = 5);',
+        'switch (c = 5) { case 0: break; }',
+    )
+
+    @staticmethod
+    def _store_and_reads(statement: str):
+        source = F'var c, b, x, o; {statement} c; function f() {{ return c; }} f();'
+        ast = JsParser(source).parse()
+        dom = build_dominance(build_semantic_model(ast))
+        store, read, inner = [
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name == 'c'
+        ][1:]
+        function = next(node for node in ast.walk() if isinstance(node, JsFunctionDeclaration))
+        return dom, store, read, inner, function
+
+    def test_a_skipped_store_runs_before_nothing(self):
+        for statement in self.SKIPPED:
+            with self.subTest(statement):
+                dom, store, read, inner, function = self._store_and_reads(statement)
+                self.assertFalse(dom.completes_before(store, read))
+                self.assertFalse(dom.runs_before(store, read))
+                self.assertFalse(dom.runs_before_all(store, [read]))
+                self.assertFalse(dom.runs_before(store, inner))
+                self.assertFalse(dom.runs_before_function(store, function))
+                self.assertFalse(dom.runs_before_every_invocation(store, function))
+
+    def test_a_performed_store_runs_before_what_follows_its_statement(self):
+        for statement in self.PERFORMED:
+            with self.subTest(statement):
+                dom, store, read, inner, function = self._store_and_reads(statement)
+                self.assertTrue(dom.completes_before(store, read))
+                self.assertTrue(dom.runs_before(store, read))
+                self.assertTrue(dom.runs_before(store, inner))
+                self.assertTrue(dom.runs_before_function(store, function))
+
+    def test_nothing_after_the_statement_precedes_a_store_it_may_skip(self):
+        for statement in self.SKIPPED + self.PERFORMED:
+            with self.subTest(statement):
+                dom, store, read, inner, _ = self._store_and_reads(statement)
+                self.assertTrue(dom.cannot_precede(read, store))
+                self.assertTrue(dom.cannot_precede(inner, store))
+
+    def test_a_read_before_the_statement_may_precede_the_store(self):
+        source = 'var c, x; c; x && (c = 5);'
+        ast = JsParser(source).parse()
+        dom = build_dominance(build_semantic_model(ast))
+        _, read, store = [
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name == 'c'
+        ]
+        self.assertFalse(dom.cannot_precede(read, store))
+
+    def test_a_binding_stored_on_some_runs_is_not_established(self):
+        dom, store, read, _, _ = self._store_and_reads('x && (c = 5);')
+        self.assertFalse(dom.binding_established_before(dom.model.resolve(store), read))

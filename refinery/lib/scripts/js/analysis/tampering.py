@@ -416,7 +416,7 @@ class TamperingModel:
             return True
         if not self.at_most_once(anchor):
             return False
-        return all(self.dominance.runs_before(anchor, site) for site in sites)
+        return all(self.dominance.cannot_precede(site, anchor) for site in sites)
 
     def singular_value_at(self, binding: Binding | None, at: Node) -> Node | None:
         """
@@ -465,7 +465,7 @@ class TamperingModel:
             return None
         if not all(self.dominance.runs_before(site, at) for site in establishment):
             return None
-        if not all(self.dominance.runs_before(at, hazard) for hazard in hazards):
+        if not all(self.dominance.cannot_precede(hazard, at) for hazard in hazards):
             return None
         return values[0]
 

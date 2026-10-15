@@ -18,16 +18,23 @@ The public surface — `DominanceModel.dominates`, `DominanceModel.strictly_domi
 `DominanceModel.cfg_node_of`, `DominanceModel.runs_before_function`, `build_dominance` — is keyed to AST
 nodes: an arbitrary node is located to the control-flow node of the statement (or loop head) that
 evaluates it, the granularity at which the graph reasons. `strictly_dominates` is the non-reflexive
-`dominates`, refusing a same-statement pair a caller must order. `completes_before` is the
-ordering the queries below are built from: dominance orders *entering* a statement, and a run
-reaching a handler because the statement threw has entered it without completing it, so a point
-such a run reaches is ordered after the statement only when the statement cannot throw at all.
+`dominates`, refusing a same-statement pair a caller must order. The ordering the queries below
+are built from is that of statements: dominance orders *entering* a statement, and a run reaching
+a handler because the statement threw has entered it without completing it, so a point such a run
+reaches is ordered after the statement only when the statement cannot throw at all.
 `runs_before_function` lifts that ordering across calls: it answers whether a definition runs
 before every invocation of a function, which a single graph cannot, by ordering the definition
 against the points the function is referenced and recursing up the call graph. `runs_before` and
 `runs_before_all` expose that same ordering against a single reference, or every reference in a
 set — the query a transform needs to confirm a value is established before every use that could
 observe it.
+
+A statement may complete without evaluating every part of it: a store below `&&` is skipped on the
+runs that complete `x && (c = 5)` without it. So every query here answers whether the node it is
+asked about has run, `completes_before` included, and holds only where the statement evaluates the
+node on every run on which it completes. The one exception is `cannot_precede`, which asks whether
+anything can run before a node on a run on which the node runs, and for which the statement is
+enough.
 """
 from __future__ import annotations
 
@@ -154,6 +161,17 @@ class DominanceModel(DominatorModel):
 
     def completes_before(self, definition: Node, point: Node) -> bool:
         """
+        Whether *definition* has run on every run that reaches *point*, both in one graph: the
+        statement evaluating it evaluates it whenever it completes (`_runs_with_its_node`), and has
+        completed (`_statement_completes_before`).
+        """
+        return (
+            self._runs_with_its_node(definition)
+            and self._statement_completes_before(definition, point)
+        )
+
+    def _statement_completes_before(self, definition: Node, point: Node) -> bool:
+        """
         Whether the statement evaluating *definition* has completed on every run that reaches the
         statement evaluating *point*, both in one graph. Dominance alone orders entering the first
         statement: in `try { r = window; } catch (e) {} use(r);` the statement `r = window`
@@ -192,7 +210,7 @@ class DominanceModel(DominatorModel):
 
     def completes_before_node(self, graph: ControlFlowGraph, a: CfgNode, b: CfgNode) -> bool:
         """
-        The node-level counterpart of `completes_before`, for a caller that has already located the
+        The counterpart of `_statement_completes_before` for a caller that has already located the
         two statements in *graph*.
         """
         if a is b or not self.dominates_node(graph, a, b, Projection.MAY):
@@ -223,10 +241,11 @@ class DominanceModel(DominatorModel):
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named
         binding is reassigned or redeclared (its references no longer pin one function), code
         outside the file can call the function, or a reference lies in a function that itself runs
-        too late or escapes. A function neither referenced nor within reflection's reach is
-        vacuously safe.
+        too late or escapes, and when the statement evaluating *definition* may complete without
+        evaluating it (`_runs_with_its_node`). A function neither referenced nor within reflection's
+        reach is vacuously safe.
         """
-        return self._ordered(definition, function)
+        return self._runs_with_its_node(definition) and self._ordered(definition, function)
 
     def runs_before_every_invocation(self, definition: Node, function: Node) -> bool:
         """
@@ -240,24 +259,28 @@ class DominanceModel(DominatorModel):
         entered by its own creation, the one point no invocation can precede.
         """
         return (
-            self._ordered(definition, function)
+            self.runs_before_function(definition, function)
             and self._entered(self._activation_of(definition), function)
         )
 
     def runs_before(self, definition: Node, reference: Node) -> bool:
         """
         Whether *definition* is guaranteed to have executed before *reference* is evaluated — the
-        single-reference form of the ordering `runs_before_function` applies per reference point. When
-        *reference* shares *definition*'s activation this is `completes_before` (a reference sharing
-        *definition*'s statement is not accepted, since statement-granularity dominance is reflexive
-        and cannot order within one statement); when *reference* lies inside a
-        function that cannot be invoked until after *definition*, it is the interprocedural
+        single-reference form of the ordering `runs_before_function` applies per reference point.
+        When *reference* shares *definition*'s activation this is `completes_before` (a reference
+        sharing *definition*'s statement is not accepted, since statement-granularity dominance is
+        reflexive and cannot order within one statement); when *reference* lies inside a function
+        that cannot be invoked until after *definition*, it is the interprocedural
         runs-before-function query, recursing up the call graph. Conservatively `False` whenever the
-        ordering cannot be established — a reference in an activation that may run before *definition*,
-        or a reference point that cannot be enumerated — so a caller may treat `True` as a guarantee.
+        ordering cannot be established — a reference in an activation that may run before
+        *definition*, a reference point that cannot be enumerated, or a statement that may complete
+        without evaluating *definition* (`_runs_with_its_node`) — so a caller may treat `True` as
+        a guarantee.
         """
-        definition_owner = self._activation_of(definition)
-        return self._runs_after(definition, definition_owner, reference)
+        return (
+            self._runs_with_its_node(definition)
+            and self._runs_after(definition, self._activation_of(definition), reference)
+        )
 
     def runs_before_all(self, definition: Node, references: Iterable[Node]) -> bool:
         """
@@ -265,11 +288,23 @@ class DominanceModel(DominatorModel):
         for each, vacuously `True` for an empty iterable. The definition's activation is resolved once
         and shared across the references.
         """
+        if not self._runs_with_its_node(definition):
+            return False
         definition_owner = self._activation_of(definition)
         return all(
             self._runs_after(definition, definition_owner, reference)
             for reference in references
         )
+
+    def cannot_precede(self, reference: Node, anchor: Node) -> bool:
+        """
+        Whether *reference* cannot run before *anchor* on any run on which *anchor* runs: the
+        statement evaluating *anchor* has completed before *reference* runs, as `runs_before` asks
+        without asking whether that statement evaluates *anchor* at all. A run that skips *anchor*
+        has nothing for *reference* to precede, so a fold made at *anchor* holds wherever it is
+        evaluated as long as no such *reference* comes first.
+        """
+        return self._runs_after(anchor, self._activation_of(anchor), reference)
 
     def established_before(self, function: Node, reference: Node) -> bool:
         """
@@ -291,22 +326,19 @@ class DominanceModel(DominatorModel):
         value, so its presence cannot be ordered — the query a consumer needs before trusting a value that
         would otherwise be read out of its temporal dead zone or before its establishing write.
         A site the statement or loop head holding it evaluates on some runs only orders nothing
-        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`): `x && (T = [])`
-        completes without writing `T`.
+        (`runs_before`): `x && (T = [])` completes without writing `T`.
         """
         sites = self.model.binding_establishment_sites(binding)
         if sites is None:
             return False
-        return all(
-            self._runs_with_its_node(site) and self.runs_before(site, reference)
-            for site in sites
-        )
+        return all(self.runs_before(site, reference) for site in sites)
 
     def _runs_with_its_node(self, site: Node) -> bool:
         """
         Whether *site* has run whenever the control-flow node evaluating it has completed. A graph
         has a node for a statement or a loop head and none for the parts of an expression, so an
-        ordering against that node answers for *site* only where the node evaluates it on every run.
+        ordering against that node answers for *site* only where the node evaluates it on every run
+        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`).
         """
         located = self.locate(site)
         if located is None:
@@ -355,9 +387,9 @@ class DominanceModel(DominatorModel):
         `_HandOver` is a node of the graph in its own right, shared by every function installed on
         one object. The members of one component reach each other's invocations and get one
         answer: they are ordered when every point outside the component is, one in the
-        definition's activation by `completes_before`, one in another function or hand-over by that
-        node's answer. A function expression the definition's activation creates only after the
-        definition has completed is ordered without its points (`_created_after`).
+        definition's activation by `_statement_completes_before`, one in another function or
+        hand-over by that node's answer. A function expression the definition's activation creates
+        only after the definition has completed is ordered without its points (`_created_after`).
 
         This is sound because the earliest invocation of any function in a component follows a
         reference to it that nothing in the component can have evaluated yet, so that reference is
@@ -394,7 +426,7 @@ class DominanceModel(DominatorModel):
                 else:
                     activation = self._activation_of(point)
                     if activation is owner:
-                        if not self.completes_before(definition, point):
+                        if not self._statement_completes_before(definition, point):
                             ordered[current] = False
                         continue
                     if not isinstance(activation, FUNCTION_NODES):
@@ -436,7 +468,7 @@ class DominanceModel(DominatorModel):
         return (
             isinstance(activation, (JsFunctionExpression, JsArrowFunctionExpression))
             and self._activation_of(activation) is owner
-            and self.completes_before(definition, activation)
+            and self._statement_completes_before(definition, activation)
         )
 
     def _entered(self, owner: Node, function: Node) -> bool:
@@ -504,8 +536,8 @@ class DominanceModel(DominatorModel):
         installing it flows on (`_installed_value_escapes`). A function code outside the file can
         call while the file runs (`_callable_before_the_end`) has no enumeration at all. One an
         importer outside every import cycle can call has the end of the script as one more point,
-        the script root standing for it (`completes_before`), since such an importer calls in only
-        once the module has finished.
+        the script root standing for it (`_statement_completes_before`), since such an importer
+        calls in only once the module has finished.
 
         Memoized by identity: the enumeration is a pure function of *activation* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree
@@ -736,7 +768,7 @@ class DominanceModel(DominatorModel):
     def _runs_after(self, definition: Node, definition_owner: Node, point: Node) -> bool:
         owner = self._activation_of(point)
         if owner is definition_owner:
-            return self.completes_before(definition, point)
+            return self._statement_completes_before(definition, point)
         if isinstance(owner, FUNCTION_NODES):
             return self._ordered(definition, owner)
         return False
