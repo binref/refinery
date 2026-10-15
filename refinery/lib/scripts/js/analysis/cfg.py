@@ -194,7 +194,8 @@ class _Builder(CfgBuilder):
             return self.loop_counted(
                 statement.init, statement.test, statement.update, statement.body, frontier)
         if isinstance(statement, (JsForInStatement, JsForOfStatement)):
-            return self.loop_head_tested(statement, getattr(statement, 'body', None), frontier)
+            return self.loop_over(
+                statement, statement.right, statement.left, statement.body, frontier)
         if isinstance(statement, JsSwitchStatement):
             return self._switch(statement, frontier)
         if isinstance(statement, JsTryStatement):

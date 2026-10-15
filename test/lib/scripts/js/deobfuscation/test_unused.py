@@ -3004,6 +3004,54 @@ class TestAStoreAForLoopTestsByNameIsKept(TestJsDeobfuscator):
         self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
 
 
+#: Programs storing in the subject of a `for-in` or `for-of` loop and again in its body, reading the
+#: variable at the start of the body, mapped to what Node prints for each: the subject runs once,
+#: so the second iteration reads the store the body made.
+A_STORE_IN_THE_SUBJECT_OF_A_LOOP = {
+    inspect.cleandoc("""
+        function f(arr) { var x = 0; for (var k of (x = 1, arr)) { console.log(x); x = 2; } }
+        f([0, 0]);
+    """): '1\n2\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 0; for (var k in (x = 1, o)) { console.log(x); x = 2; } }
+        f({ a: 1, b: 2 });
+    """): '1\n2\n',
+    inspect.cleandoc("""
+        var x;
+        function f(arr) { for (var k of (x = 1, arr)) { console.log(x); x = 2; } }
+        f([0, 0]);
+    """): '1\n2\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAStoreInTheSubjectOfALoop(TestJsDeobfuscator):
+
+    def test_the_store_in_the_body_is_kept_for_the_next_iteration(self):
+        """
+        Taking the subject to run on every iteration makes its store kill the one in the body, which
+        is then dropped, and the second iteration prints the value of the subject's store.
+        """
+        rows = A_STORE_IN_THE_SUBJECT_OF_A_LOOP
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+class TestALoopReadingOnlyItsOwnConstantIsUnused(TestJsDeobfuscator):
+
+    def test_a_call_of_a_function_whose_loop_only_reads_its_constant_is_removed(self):
+        source = inspect.cleandoc(
+            """
+            function g(o) { for (const k in o) { k; } }
+            g({ a: 1 });
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._run_transformer(source, JsUnusedCodeRemoval))
+
+
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
     """
     The dead declarations standing in one body are taken out of it together, so the tree is edited

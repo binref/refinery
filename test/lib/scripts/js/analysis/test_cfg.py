@@ -9,6 +9,8 @@ from refinery.lib.scripts.js.model import (
     JsContinueStatement,
     JsDoWhileStatement,
     JsExpressionStatement,
+    JsForInStatement,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsIfStatement,
     JsReturnStatement,
@@ -148,6 +150,34 @@ class TestControlFlowGraph(TestBase):
         self.assertIn(body, head.successors)
         self.assertIn(head, body.successors)
         self.assertIn(cfg.exit, head.successors)
+
+    def test_a_for_of_subject_is_evaluated_once_before_the_head(self):
+        ast, cfg = self._cfg('for (var v of items) { a; } b;')
+        loop = self._first(ast, JsForOfStatement)
+        subject, head, target = cfg.node_of(loop.right), cfg.node_of(loop), cfg.node_of(loop.left)
+        assert subject is not None and head is not None and target is not None
+        self.assertEqual(subject.successors, [head])
+        self.assertNotIn(id(subject), self._forward_from(head))
+
+    def test_a_for_in_target_lies_between_the_head_and_the_body(self):
+        ast, cfg = self._cfg('for (k in obj) { a; } b;')
+        loop = self._first(ast, JsForInStatement)
+        a, b = (n for n in ast.walk_in_order() if isinstance(n, JsExpressionStatement))
+        head, target = cfg.node_of(loop), cfg.node_of(loop.left)
+        body, after = cfg.node_of(a), cfg.node_of(b)
+        assert head is not None and target is not None and body is not None and after is not None
+        self.assertEqual(target.predecessors, [head])
+        self.assertEqual(target.successors, [body])
+        self.assertIn(after, head.successors)
+        self.assertNotIn(after, target.successors)
+        self.assertIn(head, body.successors)
+
+    def test_a_continue_in_a_for_of_body_returns_to_the_head(self):
+        ast, cfg = self._cfg('for (var v of items) { continue; }')
+        head = cfg.node_of(self._first(ast, JsForOfStatement))
+        cont = cfg.node_of(self._first(ast, JsContinueStatement))
+        assert head is not None and cont is not None
+        self.assertEqual(cont.successors, [head])
 
     def test_break_leaves_the_loop(self):
         ast, cfg = self._cfg('while (x) { break; } a;')

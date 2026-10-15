@@ -2565,8 +2565,10 @@ class SemanticModel:
         setter may throw, so a declaration with either does not qualify. Reaching a function
         declaration does nothing, since its function is in place before the statements of its scope
         run, except where Annex B copies it out of its block: that copy stores the function into the
-        name of the enclosing scope, which is ruled as every other store into a declared name is.
-        *store_cannot_throw* is handed on to `evaluation_cannot_throw`.
+        name of the enclosing scope, which is ruled as every other store into a declared name is. A
+        declaration standing as the target of a `for-in` or `for-of` head is asked as the store of the
+        value the head hands it on every iteration. *store_cannot_throw* is handed on to
+        `evaluation_cannot_throw`.
         """
         if isinstance(statement, JsVariableDeclaration):
             for declarator in statement.declarations:
@@ -2579,8 +2581,11 @@ class SemanticModel:
                 if binding is None or crosses_dynamic_scope(self._node_scope.get(target)):
                     return False
                 init = declarator.init
+                each_iteration = _loop_head_assigns(declarator)
+                if init is not None and each_iteration:
+                    return False
                 if (
-                    init is not None
+                    (init is not None or each_iteration)
                     and not binding.is_lexical
                     and not self._stores_into_without_throwing(binding, declarator)
                 ):

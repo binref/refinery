@@ -16,11 +16,11 @@ has its own graph.
 
 **What a language supplies is the dispatch, not the shapes.** `CfgBuilder` holds the frontier
 threading, the jump-target stack, the handler stack and one method per control-flow *shape* —
-`branch_on`, `loop_head_tested`, `loop_tail_tested`, `loop_counted`, `dispatch`, `guarded`,
-`labelled`, `jump_out`, `jump_back`, `terminate`. A subclass implements `statement`, recognises its
-own node types, pulls the parts out of them, and calls the shape that matches. No method here reads a
-field a language declares, which is what lets two languages whose `for` loops share nothing but their
-meaning share this code.
+`branch_on`, `loop_head_tested`, `loop_over`, `loop_tail_tested`, `loop_counted`, `dispatch`,
+`guarded`, `labelled`, `jump_out`, `jump_back`, `terminate`. A subclass implements `statement`,
+recognises its own node types, pulls the parts out of them, and calls the shape that matches. No
+method here reads a field a language declares, which is what lets two languages whose `for` loops
+share nothing but their meaning share this code.
 
 The shapes are parameterised where languages genuinely differ rather than being duplicated: what an
 arm of a `dispatch` reaches when control runs off its end is an `ArmFlow`, and each of its members
@@ -1022,6 +1022,38 @@ class CfgBuilder:
         self._targets.pop()
         self.link(body_exits, head)
         return [head] + target.breaks
+
+    def loop_over(
+        self,
+        element: Node,
+        subject: Node | None,
+        target: Node | None,
+        body: Node | None,
+        frontier: list[CfgNode],
+    ) -> list[CfgNode]:
+        """
+        A loop over the values a subject yields. The subject is evaluated once, at a node of its own
+        before the loop. The head, which asks for the next value, is the entry of every iteration and
+        an exit. The target receives the value at a node of its own on the way from the head into the
+        body, so a run leaving the loop has not passed it. A language whose loop variable and subject
+        are both read at the head builds the loop `loop_head_tested` instead.
+        """
+        if subject is not None:
+            start = self.node(subject)
+            self.link(frontier, start)
+            frontier = [start]
+        head = self.node(element)
+        self.link(frontier, head)
+        loop = _Target(self.take_label(), [], head, is_continuable=True, is_breakable=True)
+        self._targets.append(loop)
+        entry = head
+        if target is not None:
+            entry = self.node(target)
+            self.link([head], entry)
+        body_exits = self._branch(body, entry)
+        self._targets.pop()
+        self.link(body_exits, head)
+        return [head] + loop.breaks
 
     def loop_tail_tested(
         self, element: Node, body: Node | None, frontier: list[CfgNode],

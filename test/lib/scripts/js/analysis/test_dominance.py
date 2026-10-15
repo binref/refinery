@@ -762,3 +762,20 @@ class TestDominance(TestBase):
         binding = dom.model.binding_of(declaration)
         self.assertTrue(dom.binding_established_before(binding, call))
         self.assertFalse(dom.binding_established_before(binding, after))
+
+    def test_a_for_in_const_is_past_its_dead_zone_in_the_body(self):
+        ast, dom = self._dominance('function g(o) { for (const k in o) { k; } }')
+        declaration, read = self._idents(ast, 'k')
+        self.assertTrue(dom.past_dead_zone(dom.model.binding_of(declaration), read))
+
+    def test_a_var_loop_target_runs_before_a_read_in_the_body_and_not_after_the_loop(self):
+        ast, dom = self._dominance('function g(xs) { var x = 0; for (x of xs) { x; } x; }')
+        _, target, body, after = self._idents(ast, 'x')
+        self.assertTrue(dom.runs_before(target, body))
+        self.assertFalse(dom.runs_before(target, after))
+
+    def test_a_for_of_subject_runs_before_the_body_once(self):
+        ast, dom = self._dominance('function g(xs) { var x; for (var k of (x = xs)) { x; } x; }')
+        _, store, body, after = self._idents(ast, 'x')
+        self.assertTrue(dom.runs_before(store, body))
+        self.assertTrue(dom.runs_before(store, after))

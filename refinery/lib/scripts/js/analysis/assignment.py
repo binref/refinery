@@ -105,8 +105,8 @@ _LOGICAL_ASSIGNMENT = frozenset({
 })
 
 #: The statements whose control-flow node evaluates a head of its own rather than its children: a
-#: declaration evaluates its initializers and a `for-in`/`for-of` head its subject, while the target
-#: each writes is written once per iteration and by no evaluation of the head.
+#: declaration evaluates its initializers, and a `for-in`/`for-of` head none of them, its subject and
+#: its target each having a node of their own.
 _OWN_HEAD_NODES = (
     JsVariableDeclaration,
     JsForInStatement,
@@ -425,9 +425,9 @@ class DefiniteAssignmentModel:
     def _evaluated_parts(self, graph: ControlFlowGraph, element: Node) -> list[Node]:
         """
         The expressions the control-flow node for *element* evaluates itself: the element where it is
-        an expression handed its own node (a loop header's init, test, or update), a declaration's
-        initializers, a `for-in`/`for-of` head's subject, and otherwise every child that is neither a
-        function body nor a statement owned by another node.
+        an expression handed its own node (a loop header's init, test, or update, a `for-in`/`for-of`
+        subject or target), a declaration's initializers, nothing for a `for-in`/`for-of` head, and
+        otherwise every child that is neither a function body nor a statement owned by another node.
         """
         if (
             not isinstance(element, _OWN_HEAD_NODES)
@@ -442,8 +442,7 @@ class DefiniteAssignmentModel:
                     inits.append(init)
             return inits
         if isinstance(element, (JsForInStatement, JsForOfStatement)):
-            subject = getattr(element, 'right', None)
-            return [subject] if subject is not None else []
+            return []
         parts: list[Node] = []
         for child in element.children():
             if isinstance(child, FUNCTION_NODES):
