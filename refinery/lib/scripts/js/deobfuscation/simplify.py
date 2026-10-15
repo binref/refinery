@@ -17,14 +17,18 @@ from refinery.lib.scripts.js.analysis.model import (
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     BindingKind,
+    Role,
     SemanticModel,
+    enclosing_operator,
     is_constructed_or_invoked,
     is_invocation_target,
     is_member_write_target,
+    reference_role,
 )
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
+    LOGICAL_ASSIGNMENT_OPS,
     OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     UNARY_OPS,
@@ -115,6 +119,19 @@ def concat_string(node: Expression | None) -> str | None:
     if not ok or isinstance(value, list):
         return None
     return to_string(value)
+
+
+def _is_the_object_of_an_in(node: Node) -> bool:
+    """
+    Whether *node* is the right operand of an `in`, which reads the keys of the object it names and
+    stores none.
+    """
+    holder = enclosing_operator(node)
+    return (
+        isinstance(holder, JsBinaryExpression)
+        and holder.operator == 'in'
+        and strip_parens(holder.right) is node
+    )
 
 
 class JsSimplifications(Transformer):
@@ -364,27 +381,38 @@ class JsSimplifications(Transformer):
 
     def _own_property_stores(self, binding: Binding, read: Node) -> tuple[set[str], bool] | None:
         """
-        The own-property state of *binding*'s value at *read*: a pair `(present, any_store)`. *present* is
-        the property names a store (`name.k = ...`, `name['k'] = ...`) provably installs before *read*
-        runs and that no `delete name.k` can remove; a store that runs after *read* cannot make the key
-        present at it, and a key that may be deleted — or that shares the binding with a `delete` of an
-        unbounded computed key — is withheld. *any_store* records whether the value receives any
-        own-property store at all, so the caller only concludes absence for a value that receives none.
-        References are resolved through the model so the set is shadowing-correct. A store through a
-        member access the model records in place of the name — `w.o.k = ...` for an `o` read through
-        a `w` that may be the global object — may install its key and counts toward *any_store*, but
-        it proves no key present, because `w` may hold another object. `None` when a store or delete
-        targets a computed key that is not a string literal, since the own-property set is then
-        unbounded and no `in` membership can be decided.
+        The own-property state of *binding*'s value at *read*: a pair `(present, any_store)`.
+        *present* is the property names a store (`name.k = ...`, `name['k'] = ...`) provably
+        installs before *read* runs and that no `delete name.k` can remove; a store whose value is
+        not computed before *read* runs cannot make the key present at it, and a key that may be
+        deleted, or that shares the binding with a `delete` of an unbounded computed key, is
+        withheld. *any_store* records whether the value receives any own-property store at all, so
+        the caller only concludes absence for a value that receives none. A logical assignment to a
+        key stores on some runs only and counts toward *any_store* alone. References are resolved
+        through the model so the set is shadowing-correct. A store through a member access the model
+        records in place of the name, `w.o.k = ...` for an `o` read through a `w` that may be the
+        global object, may install its key and counts toward *any_store*, but it proves no key
+        present, because `w` may hold another object.
+
+        Every reference is one of the few this can read: a write of the name, the object of another
+        `in`, a store or a `delete` of a key, or a plain read of one. `None` for any other, since
+        the object may then gain a key no spelling here shows: handed to a call, aliased, called
+        through, updated or destructured into. `None` as well when a store or delete targets a
+        computed key that is not a string literal, since the own-property set is then unbounded and
+        no `in` membership can be decided.
         """
-        stores: list[tuple[str, JsMemberExpression]] = []
+        stores: list[tuple[str, Node]] = []
         deleted: set[str] = set()
         unbounded_delete = False
         any_store = False
         for ref in self.model.references(binding):
             member = ref.parent
             if not isinstance(member, JsMemberExpression) or member.object is not ref:
-                continue
+                if isinstance(ref, JsIdentifier) and reference_role(ref) is Role.WRITE:
+                    continue
+                if _is_the_object_of_an_in(ref):
+                    continue
+                return None
             prop = member.property
             if member.computed:
                 name = prop.value if isinstance(prop, JsStringLiteral) else None
@@ -397,8 +425,12 @@ class JsSimplifications(Transformer):
                 if name is None:
                     return None
                 any_store = True
-                if isinstance(ref, JsIdentifier):
-                    stores.append((name, member))
+                if (
+                    isinstance(ref, JsIdentifier)
+                    and parent.operator not in LOGICAL_ASSIGNMENT_OPS
+                    and parent.right is not None
+                ):
+                    stores.append((name, parent.right))
             elif (
                 isinstance(parent, JsUnaryExpression)
                 and parent.operator == 'delete'
@@ -408,11 +440,13 @@ class JsSimplifications(Transformer):
                     unbounded_delete = True
                 else:
                     deleted.add(name)
+            elif is_member_write_target(member) or is_invocation_target(member):
+                return None
         present: set[str] = set()
-        for name, member in stores:
+        for name, value in stores:
             if name in deleted or unbounded_delete:
                 continue
-            if self.dominance.runs_before(member, read):
+            if self.dominance.runs_before(value, read):
                 present.add(name)
         return present, any_store
 

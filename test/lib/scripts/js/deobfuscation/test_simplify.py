@@ -6,6 +6,7 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+from test.lib.scripts.js.ledger import a_program, before_and_after, each_program_still_prints
 
 from refinery.lib.scripts import tree_version
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
@@ -1435,6 +1436,115 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
             self._simplify(source),
         )
 
+
+#: Programs giving an empty object literal a key in a way other than a plain store of it, or
+#: storing one only on some runs, and asking for the key with `in`, mapped to what Node prints.
+A_KEY_AN_OBJECT_GAINS_OTHERWISE = {
+    a_program("""
+        var o = {};
+        function init(t) { t.k = 1; }
+        init(o);
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        Object.assign(o, { k: 1 });
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        var p = o;
+        p.k = 1;
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        o.set = function () { this.k = 1; };
+        o.set();
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        function o() {}
+        function init(t) { t.k = 1; }
+        init(o);
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        function f() { var o = {}; Object.defineProperty(o, "k", { value: 1 }); return "k" in o; }
+        console.log(f());
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        for (o.k in { a: 1 }) ;
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        o.k++;
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        [o.k] = [1];
+        console.log("k" in o);
+        """): 'true\n',
+    a_program("""
+        var o = {};
+        o.k &&= 1;
+        console.log("k" in o);
+        """): 'false\n',
+    a_program("""
+        function g() { var o = {}; o.k &&= 1; return "k" in o; }
+        console.log(g());
+        """): 'false\n',
+}
+
+
+class TestMembershipOverAnObjectGainingAKeyOtherwiseIsLeftStanding(TestJsDeobfuscator):
+    """
+    `in` over an empty object literal is decided from the keys the file stores into it, which
+    holds only where every use of the object is one the pass reads: a store, a `delete`, a read
+    of a key, or another `in`. An object handed to a call, aliased, called through, updated,
+    destructured into, or stored into behind a logical assignment may hold a key the pass
+    cannot see, so the question is left to the program.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_about_each_key_gained_otherwise(self):
+        rows = A_KEY_AN_OBJECT_GAINS_OTHERWISE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_an_absent_key_folds_over_reads_and_other_tests(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            var a = 'x' in obj;
+            var b = 'y' in obj;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var obj = {};
+                var a = false;
+                var b = false;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_an_absent_key_is_not_folded_for_an_object_handed_to_a_call(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            init(obj);
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
 
 class TestCalleeSequencePreserved(TestJsDeobfuscator):
 
