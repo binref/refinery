@@ -6,6 +6,7 @@ from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
+    JsArrayPattern,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAssignmentPattern,
@@ -367,6 +368,27 @@ class TestJsParserExpressions(TestBase):
         self.assertTrue(prop.shorthand)
         self.assertIsInstance(prop.value, JsAssignmentPattern)
         self.assertEqual(prop.value.right.name, 'd')
+
+    def test_a_default_in_the_value_of_a_target_property_is_a_pattern(self):
+        expr = self._parse_expr('({a: b = 5} = o)')
+        pattern = expr.expression.left
+        self.assertIsInstance(pattern, JsObjectPattern)
+        value = pattern.properties[0].value
+        self.assertIsInstance(value, JsAssignmentPattern)
+        self.assertEqual(value.left.name, 'b')
+        self.assertIs(value.parent, pattern.properties[0])
+
+    def test_an_array_in_the_value_of_a_target_property_is_a_pattern(self):
+        expr = self._parse_expr('({a: [b = 5]} = o)')
+        value = expr.expression.left.properties[0].value
+        self.assertIsInstance(value, JsArrayPattern)
+        self.assertIsInstance(value.elements[0], JsAssignmentPattern)
+
+    def test_an_assignment_in_the_value_of_an_object_literal_stays_an_assignment(self):
+        expr = self._parse_expr('({a: b = 5})')
+        obj = expr.expression
+        self.assertIsInstance(obj, JsObjectExpression)
+        self.assertIsInstance(obj.properties[0].value, JsAssignmentExpression)
 
     def test_spread(self):
         expr = self._parse_expr('[...a]')

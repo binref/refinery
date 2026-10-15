@@ -1272,6 +1272,8 @@ class JsParser:
 
         with self._with_no_in(True):
             init_expr = self._parse_expression()
+        if self._at(JsTokenKind.IN, JsTokenKind.OF):
+            init_expr = self._to_param(init_expr)
         result = self._parse_for_in_or_of(init_expr, is_await, offset)
         if result is not None:
             return result
@@ -2787,8 +2789,16 @@ class JsParser:
                 if isinstance(p, JsSpreadElement):
                     props.append(JsRestElement(
                         argument=self._to_param(p.argument), offset=p.offset))
-                else:
-                    props.append(p)
+                    continue
+                if (
+                    isinstance(p, JsProperty)
+                    and p.kind is JsPropertyKind.INIT
+                    and not p.method
+                    and p.value is not None
+                ):
+                    p.value = self._to_param(p.value)
+                    p._adopt(p.value)
+                props.append(p)
             return JsObjectPattern(properties=props, offset=expr.offset)
         return expr
 

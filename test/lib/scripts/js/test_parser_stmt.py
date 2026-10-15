@@ -4,7 +4,10 @@ from test import TestBase
 
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.model import (
+    JsArrayPattern,
     JsArrowFunctionExpression,
+    JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBlockStatement,
     JsBreakStatement,
     JsCallExpression,
@@ -35,6 +38,7 @@ from refinery.lib.scripts.js.model import (
     JsMetaProperty,
     JsMethodDefinition,
     JsMethodKind,
+    JsObjectPattern,
     JsPrivateIdentifier,
     JsPropertyDefinition,
     JsReturnStatement,
@@ -155,6 +159,25 @@ class TestJsParserStatements(TestBase):
         stmt = self._parse_stmt('for await (const x of gen()) { }')
         self.assertIsInstance(stmt, JsForOfStatement)
         self.assertTrue(stmt.is_await)
+
+    def test_a_for_of_target_written_as_an_array_is_a_pattern(self):
+        stmt = self._parse_stmt('for ([a = 1] of xs) { }')
+        assert isinstance(stmt, JsForOfStatement)
+        self.assertIsInstance(stmt.left, JsArrayPattern)
+        self.assertIsInstance(stmt.left.elements[0], JsAssignmentPattern)
+        self.assertIs(stmt.left.parent, stmt)
+
+    def test_a_for_in_target_written_as_an_object_is_a_pattern(self):
+        stmt = self._parse_stmt('for ({length: n = 0} in o) { }')
+        assert isinstance(stmt, JsForInStatement)
+        self.assertIsInstance(stmt.left, JsObjectPattern)
+        self.assertIsInstance(stmt.left.properties[0].value, JsAssignmentPattern)
+
+    def test_an_assignment_initializing_a_for_loop_stays_an_assignment(self):
+        stmt = self._parse_stmt('for ([a] = xs; a; ) { }')
+        assert isinstance(stmt, JsForStatement)
+        self.assertIsInstance(stmt.init, JsAssignmentExpression)
+        self.assertIsInstance(stmt.init.left, JsArrayPattern)
 
     def test_every_node_in_a_parsed_tree_names_its_holder(self):
         """
