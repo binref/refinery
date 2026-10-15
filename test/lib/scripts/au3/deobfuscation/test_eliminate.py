@@ -187,13 +187,23 @@ class TestAu3DeadCodeElimination(TestAu3):
             'Execute($x)\n')
 
     def test_a_computed_name_inside_an_execute_payload_is_kept(self):
-        self._assertKept(
-            '''
-            Func checkip()
-            EndFunc
+        """
+        The pass alone, because the full pipeline splices the payload and folds the name to a
+        literal, which leaves no computed name to test.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func checkip()
+                EndFunc
 
-            Execute("Call(""che"" & ""ckip"")")
-            ''')
+                Execute("Call(""che"" & ""ckip"")")
+                ''',
+                Au3DeadCodeElimination,
+            ),
+            'Func checkip()\n'
+            'EndFunc\n'
+            'Execute("Call(""che"" & ""ckip"")")\n')
 
     def test_a_nonliteral_hotkeyset_name_is_kept(self):
         self.assertEqual(

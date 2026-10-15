@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES, evaluate_builtin
+from refinery.lib.scripts.au3.analysis.builtins import EMULATED_NAMES, evaluate_builtin
 from refinery.lib.scripts.au3.analysis.values import (
     Au3Value,
     Kind,
@@ -217,7 +217,7 @@ def _call_value(node: Au3Call, policy: Policy) -> Au3Value | None:
         return None
     if (
         policy.call is None
-        and (callee.name in policy.functions or callee.name not in BUILTIN_NAMES)
+        and (callee.name in policy.functions or callee.name not in EMULATED_NAMES)
     ):
         return None
     arguments = []

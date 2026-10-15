@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_child
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
+from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.model import (
     Au3BinaryExpression,
@@ -101,7 +101,7 @@ class Au3ExecuteFlattening(Transformer):
             callee = ast.direct_callee(node)
             if callee is None:
                 return False
-            if callee.name not in self._functions and callee.name not in BUILTIN_NAMES:
+            if callee.name not in self._functions and callee.name not in AUTOIT_FUNCTION_NAMES:
                 return False
         return True
 

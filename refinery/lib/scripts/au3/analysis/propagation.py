@@ -44,7 +44,7 @@ from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import BUILTIN_NAMES
+from refinery.lib.scripts.au3.analysis.builtins import call_is_bounded
 from refinery.lib.scripts.au3.analysis.constants import (
     Policy,
     combine,
@@ -253,8 +253,10 @@ def _call_kills(
 ) -> tuple[set[str] | None, set[str]]:
     """
     The names a call may write — `None` for every non-constant — and the argument names it may
-    hold by reference. A script function kills its may-write summary; a call to any name the
-    script and the table do not know may run anything.
+    hold by reference. A script function kills its may-write summary; `Execute` and `Assign`
+    answer through their own payload reader (`execute_kills`/`assign_kills`); a call to any other
+    bounded builtin writes and captures nothing (`call_is_bounded`); a call to `Call` or to a
+    name neither the script nor the builtin table knows may run anything.
     """
     callee = ast.direct_callee(call)
     if callee is None:
@@ -266,13 +268,13 @@ def _call_kills(
         if summary is None:
             return None, byref
         return set(summary), byref
-    if callee.name not in BUILTIN_NAMES:
-        return None, _argument_variables(call)
     if callee.name == 'execute':
         return execute_kills(call), set()
     if callee.name == 'assign':
         return assign_kills(call), set()
-    return set(), set()
+    if call_is_bounded(callee.name):
+        return set(), set()
+    return None, _argument_variables(call)
 
 
 def _written_names(
@@ -346,14 +348,14 @@ def _function_scan(
                 if existence.write_may_target_global(binding, variable.name, True):
                     names.add(variable.name)
             continue
-        if callee.name not in BUILTIN_NAMES:
-            everything = True
-            continue
         if callee.name == 'execute':
             kills = execute_kills(node)
         elif callee.name == 'assign':
             kills = assign_kills(node)
+        elif call_is_bounded(callee.name):
+            continue
         else:
+            everything = True
             continue
         if kills is None:
             everything = True
@@ -734,10 +736,12 @@ class _Walker:
         A `ByRef` argument of a declared script function is a target position — the callee
         receives the variable itself, not its value — so its read is never recorded and a
         substitution may never replace it, and the same holds for a bare variable in the callee
-        position: the call runs what the variable names, not what it holds. An argument of a call
-        to a name the script does not declare is still recorded and replaced — an unseen callee
-        may hold it by reference, which would divert what the callee receives; telling the two
-        apart needs the builtin name universe, which no module owns yet.
+        position: the call runs what the variable names, not what it holds. A call with no
+        declared function behind it — `Call`, or a name neither the script nor the builtin table
+        knows — carries the same risk for every bare-variable argument, since the unseen callee
+        may bind any of them by reference; `_call_kills`'s `byref` is exactly that set. An
+        argument of a call to a bounded builtin is still recorded and replaced:
+        `call_is_bounded` is the fact that rules the reference out.
         """
         kills, byref = _call_kills(call, self.scope_model, self.summaries)
         if not isinstance(ast.unwrap_parens(call.callee), Au3Variable):
@@ -746,13 +750,12 @@ class _Walker:
         function = self.scope_model.functions.get(callee.name) if callee is not None else None
         for index, argument in enumerate(call.arguments):
             node = ast.unwrap_parens(argument)
-            if (
-                isinstance(node, Au3Variable)
-                and function is not None
-                and index < len(function.params)
-                and function.params[index].by_ref
-            ):
-                continue
+            if isinstance(node, Au3Variable):
+                if function is not None:
+                    if index < len(function.params) and function.params[index].by_ref:
+                        continue
+                elif node.name in byref:
+                    continue
             self.visit_expression(scope, argument, state)
         if (
             scope is None

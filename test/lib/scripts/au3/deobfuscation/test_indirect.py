@@ -33,6 +33,22 @@ class TestAu3IndirectCallRewrite(TestAu3):
             ),
             'Local $b = Execute("BinaryToString")\n$x = BinaryToString("0x41")\n')
 
+    def test_a_real_but_unemulated_builtin_alias_resolves(self):
+        """
+        `MsgBox` is a real builtin this project never emulates the return value of; the alias
+        still names it, because the alias map validates against every core builtin, not only the
+        emulated subset.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $f = Execute("MsgBox")
+                $x = $f(0, "", "t")
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Local $f = Execute("MsgBox")\n$x = MsgBox(0, "", "t")\n')
+
     def test_a_local_alias_inside_a_function_is_rewritten(self):
         self.assertEqual(
             self._apply(

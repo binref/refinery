@@ -6,8 +6,6 @@ or is past the growth budget its name owns.
 """
 from __future__ import annotations
 
-import unittest
-
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation import deobfuscate
@@ -503,12 +501,10 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Local $f = "MsgBox"\n$f(0, "", "t")\n')
 
-    @unittest.expectedFailure
     def test_an_unknown_callee_argument_is_not_replaced(self):
         """
         An unseen callee may hold a bare-variable argument by reference, so replacing the read
-        would divert what the callee receives. Telling an unseen function from an unemulated
-        builtin needs the builtin name universe, which no module owns yet.
+        would divert what the callee receives.
         """
         self.assertEqual(
             self._apply(
@@ -519,6 +515,37 @@ class TestAu3ConstantPropagation(TestAu3):
                 Au3ConstantPropagation,
             ),
             'Local $x = 5\nUnknown($x)\n')
+
+    def test_a_dynamic_call_argument_is_not_replaced(self):
+        """
+        `Call` may dispatch to any function by name, so a bare-variable argument of it is a
+        potential `ByRef` target just like an unseen callee's, and the read must stand.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+                Call("f", $x)
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\nCall("f", $x)\n')
+
+    def test_a_real_but_unemulated_callee_argument_is_replaced(self):
+        """
+        `MsgBox` is a real builtin with no `ByRef` parameter, so it cannot hold a bare-variable
+        argument by reference even though this project does not emulate its return value, and the
+        read is safe to replace.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $x = 5
+                MsgBox(0, "", $x)
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $x = 5\nMsgBox(0, "", 5)\n')
 
     def test_an_array_value_splices_only_into_a_declaration_initializer(self):
         """

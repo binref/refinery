@@ -97,6 +97,16 @@ class TestAu3ExecuteFlattening(TestAu3):
             self._apply('$x = Execute("Undefined()")', Au3ExecuteFlattening),
             '$x = Execute("Undefined()")\n')
 
+    def test_a_call_to_a_real_but_unemulated_builtin_is_spliced(self):
+        """
+        `MsgBox` is a real builtin this project never emulates the return value of; the splice
+        resolves it on the strength of the builtin name table alone, with no value emulation
+        needed.
+        """
+        self.assertEqual(
+            self._apply('Execute("MsgBox(0, 0, 1)")', Au3ExecuteFlattening),
+            'MsgBox(0, 0, 1)\n')
+
     def test_a_call_through_a_variable_is_not_spliced(self):
         self.assertEqual(
             self._apply('$x = Execute("$f()")', Au3ExecuteFlattening),

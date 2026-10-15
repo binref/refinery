@@ -35,12 +35,14 @@ EndFunc
 FIXTURE_OBFUSCATED = FIXTURE_HELPERS + '\n\n' + inspect.cleandoc(AUTOIT_OBFUSCATED.decode('ASCII'))
 
 #: The pipeline output over `FIXTURE_OBFUSCATED`. Every decoded literal equals the cleaned
-#: fixture's (`test_resub.AUTOIT_CLEANED`): the decoders fold away entirely, the payload function
-#: keeps the cleaned fixture's statements. Two shapes stay one step behind the cleaned fixture:
-#: the statements whose spliced code calls outside the evaluated builtins (`DllCall`,
-#: `DllStructCreate`, `DllStructSetData`, `BinaryMid` over `DllStructGetData`) remain an `Execute`
-#: around that code, and the decoder-alias initializer names `Execute` directly once the alias
-#: rewrite has resolved the chain through it.
+#: fixture's (`test_resub.AUTOIT_CLEANED`): the decoders fold away entirely, and the payload
+#: function's calls into `DllCall`, `DllStructCreate`, `DllStructSetData`, and `BinaryMid` over
+#: `DllStructGetData` resolve through the wide builtin name table and splice out of their
+#: `Execute` wrapper, matching the cleaned fixture's calls directly. Two shapes still differ from
+#: the cleaned fixture, both ahead of it: the decoder-alias initializer names `Execute` directly
+#: once the alias rewrite has resolved the chain through it, where the cleaned fixture's regex
+#: pass leaves the alias standing; and every `Execute("1")` argument the splice exposes folds to
+#: the literal `1`, which the cleaned fixture's non-semantic rewrite cannot do.
 FIXTURE_DEOBFUSCATED = (
     'Func sjwakhwbtxwwb($s)\n'
     '    Local $r = ""\n'
@@ -68,43 +70,35 @@ FIXTURE_DEOBFUSCATED = (
     '    Local $e = Execute\n'
     '    Local $b = Execute("BinaryToString")\n'
     '    $vdata = BinaryToString($vData)\n'
-    '    Local $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptAcquireContext"", '
-    '""handle*"", ""0"", ""ptr"", ""0"", ""ptr"", ""0"", ""dword"", ""24"", ""dword"", '
-    '""0xF0000000"")")\n'
+    '    Local $aret = DllCall("Advapi32.dll", "bool", "CryptAcquireContext", "handle*", "0", '
+    '"ptr", "0", "ptr", "0", "dword", "24", "dword", "0xF0000000")\n'
     '    $__g_acryptinternaldata["2"] = $aret["1"]\n'
-    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptCreateHash"", '
-    '""handle"", $__g_aCryptInternalData[""2""], ""uint"", ""0x00008003"", ""ptr"", ""0"", '
-    '""dword"", ""0"", ""handle*"", ""0"")")\n'
+    '    $aret = DllCall("Advapi32.dll", "bool", "CryptCreateHash", "handle", '
+    '$__g_aCryptInternalData["2"], "uint", "0x00008003", "ptr", "0", "dword", "0", "handle*", '
+    '"0")\n'
     '    $hcrypthash = $aret["5"]\n'
-    '    $tbuff = Execute("DllStructCreate(""byte["" & BinaryLen($vCryptKey) & ""]"")")\n'
-    '    Execute("DllStructSetData($tBuff, Execute(""1""), $vCryptKey)")\n'
-    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptHashData"", '
-    '""handle"", $hCryptHash, ""struct*"", $tBuff, ""dword"", DllStructGetSize($tBuff), '
-    '""dword"", ""1"")")\n'
-    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDeriveKey"", '
-    '""handle"",$__g_aCryptInternalData[""2""], ""uint"", ""0x00006610"", ""handle"", '
-    '$hCryptHash, ""dword"", ""0x00000001"", ""handle*"", ""0"")")\n'
+    '    $tbuff = DllStructCreate("byte[" & BinaryLen($vCryptKey) & "]")\n'
+    '    DllStructSetData($tBuff, 1, $vCryptKey)\n'
+    '    $aret = DllCall("Advapi32.dll", "bool", "CryptHashData", "handle", $hCryptHash, '
+    '"struct*", $tBuff, "dword", DllStructGetSize($tBuff), "dword", "1")\n'
+    '    $aret = DllCall("Advapi32.dll", "bool", "CryptDeriveKey", "handle", '
+    '$__g_aCryptInternalData["2"], "uint", "0x00006610", "handle", $hCryptHash, "dword", '
+    '"0x00000001", "handle*", "0")\n'
     '    $vreturn = $aret["5"]\n'
-    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyHash"", '
-    '""handle"", $hCryptHash)")\n'
+    '    DllCall("Advapi32.dll", "bool", "CryptDestroyHash", "handle", $hCryptHash)\n'
     '    $vcryptkey = $vreturn\n'
-    '    $tbuff = Execute("DllStructCreate(""byte["" & BinaryLen($vData) + ""1000"" & '
-    '""]"")")\n'
-    '    Execute("DllStructSetData($tBuff, Execute(""1""), $vData)")\n'
-    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDecrypt"", '
-    '""handle"", $vCryptKey, ""handle"", ""0"", ""bool"", Execute(""1""), ""dword"", ""0"", '
-    '""struct*"", $tBuff, ""dword*"", BinaryLen($vData))")\n'
+    '    $tbuff = DllStructCreate("byte[" & BinaryLen($vData) + "1000" & "]")\n'
+    '    DllStructSetData($tBuff, 1, $vData)\n'
+    '    $aret = DllCall("Advapi32.dll", "bool", "CryptDecrypt", "handle", $vCryptKey, '
+    '"handle", "0", "bool", 1, "dword", "0", "struct*", $tBuff, "dword*", BinaryLen($vData))\n'
     '    $iplaintextsize = $aret["6"]\n'
-    '    $ttempstruct = Execute("DllStructCreate(""byte["" & $iPlainTextSize + ""1"" & '
-    '""]"", DllStructGetPtr($tBuff))")\n'
-    '    $vreturn = Execute("BinaryMid(DllStructGetData($tTempStruct, Execute(""1"")), '
-    '""1"", $iPlainTextSize)")\n'
-    '    $aret = Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyKey"", '
-    '""handle"", $vCryptKey)")\n'
-    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptDestroyKey"", '
-    '""handle"", $vCryptKey)")\n'
-    '    Execute("DllCall(""Advapi32.dll"", ""bool"", ""CryptReleaseContext"", '
-    '""handle"", $__g_aCryptInternalData[""2""], ""dword"", ""0"")")\n'
+    '    $ttempstruct = DllStructCreate("byte[" & $iPlainTextSize + "1" & "]", '
+    'DllStructGetPtr($tBuff))\n'
+    '    $vreturn = BinaryMid(DllStructGetData($tTempStruct, 1), "1", $iPlainTextSize)\n'
+    '    $aret = DllCall("Advapi32.dll", "bool", "CryptDestroyKey", "handle", $vCryptKey)\n'
+    '    DllCall("Advapi32.dll", "bool", "CryptDestroyKey", "handle", $vCryptKey)\n'
+    '    DllCall("Advapi32.dll", "bool", "CryptReleaseContext", "handle", '
+    '$__g_aCryptInternalData["2"], "dword", "0")\n'
     '    Return Binary($vReturn)\n'
     'EndFunc\n'
 )
