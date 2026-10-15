@@ -10,7 +10,6 @@ import fnmatch
 import re
 
 from collections import Counter
-from zlib import adler32
 
 from refinery.lib import json as libjson
 from refinery.lib.argformats import pathvar
@@ -132,7 +131,9 @@ class PathExtractorUnit(Unit, abstract=True):
         emit data | ... | <this> [| dump extracted/{path} ]
 
     The value `{path}` is a placeholder which is substituted by the virtual path of the extracted
-    item. When using <this> to unpack a file on disk, the following pattern can be useful:
+    item. When several items have the same path, each of them gets a number appended to its path in
+    the order of the container, and a pattern that matches the path before the number selects all
+    of them. When using <this> to unpack a file on disk, the following pattern can be useful:
 
         ef pack.bin [| <this> -j | d2p ]
 
@@ -225,15 +226,25 @@ class PathExtractorUnit(Unit, abstract=True):
             patterns.append(PathPattern(check_pattern(query), self.args.regex, exclude=True))
         return patterns
 
-    def _select(self, pattern: PathPattern, results: list[UnpackResult]) -> list[UnpackResult]:
+    def _select(
+        self,
+        pattern: PathPattern,
+        results: list[UnpackResult],
+        bases: dict[UnpackResult, str],
+    ) -> list[UnpackResult]:
         """
-        Returns the results whose path is matched by the given pattern. If the pattern matches
-        nothing and neither exact nor fuzzy matching is configured, its fuzziness is increased
-        until at least one result matches.
+        Returns the results that the given pattern matches by their path or, for a numbered
+        result, by its path before the number as given in `bases`. If the pattern matches nothing
+        and neither exact nor fuzzy matching is configured, its fuzziness is increased until at
+        least one result matches.
         """
+        def check(result: UnpackResult, fuzzy: int) -> bool:
+            if pattern.check(result.path, fuzzy):
+                return True
+            return (base := bases.get(result)) is not None and pattern.check(base, fuzzy)
         matches = []
         for fuzzy in range(min(self.args.fuzzy, 2), 3):
-            matches = [r for r in results if pattern.check(r.path, fuzzy)]
+            matches = [r for r in results if check(r, fuzzy)]
             if matches or self.args.exact or self.args.fuzzy:
                 break
         return matches
@@ -262,6 +273,32 @@ class PathExtractorUnit(Unit, abstract=True):
         except Exception:
             return None
 
+    def _number_repeated_paths(self, results: list[UnpackResult]) -> dict[UnpackResult, str]:
+        """
+        Appends a number to the path of every result whose path repeats, counting in the order of
+        the results and skipping every number that would repeat the path of another result.
+        Returns the path that each numbered result had before.
+        """
+        occurrences = Counter(result.path for result in results)
+        taken = set(occurrences)
+        counters: Counter[str] = Counter()
+        slash = self._get_path_separator()
+        bases: dict[UnpackResult, str] = {}
+        for result in results:
+            base = result.path
+            if occurrences[base] < 2:
+                continue
+            while True:
+                counters[base] += 1
+                path = F'{base}{slash}{counters[base]}'
+                if path not in taken:
+                    break
+            taken.add(path)
+            bases[result] = base
+            result.path = path
+            self.log_info(F'read chunk with duplicate path; deduplicating to {path}')
+        return bases
+
     def _selection(self, data: Chunk, metavar: str) -> collections.deque[UnpackResult]:
         """
         Unpacks the input and returns the results that the path patterns select, in the order in
@@ -272,9 +309,6 @@ class PathExtractorUnit(Unit, abstract=True):
 
         patterns = self._patterns
 
-        occurrences = collections.defaultdict(int)
-        checksums = collections.defaultdict(set)
-        versions = collections.defaultdict(int)
         root = ''
         uuid = 0
 
@@ -323,24 +357,13 @@ class PathExtractorUnit(Unit, abstract=True):
                     path = F'{path}.{ext}'
                 self.log_warn(F'read chunk with empty path; using generated name {path}')
             result.path = path
-            occurrences[path] += 1
 
-        for result in results:
-            path = result.path
-            if occurrences[path] > 1:
-                if (content := self._data_unless_unreadable(result)) is not None:
-                    if (checksum := adler32(content)) in checksums[path]:
-                        continue
-                    checksums[path].add(checksum)
-                versions[path] += 1
-                counter = versions[path]
-                slash = self._get_path_separator()
-                if any(F'{result.path}{slash}{c}' in occurrences for c in range(occurrences[path])):
-                    counter = _uuid()
-                result.path = F'{result.path}{slash}{counter}'
-                self.log_info(F'read chunk with duplicate path; deduplicating to {result.path}')
+        bases = self._number_repeated_paths(results)
 
-        if len({r.path.lower() for r in results}) == len(results):
+        names = {r.path for r in results}
+        names.update(bases.values())
+
+        if len({name.lower() for name in names}) == len(names):
             for p in patterns:
                 p.compile(flags=re.IGNORECASE)
 
@@ -350,10 +373,11 @@ class PathExtractorUnit(Unit, abstract=True):
         if excludes:
             discard = set()
             for x in excludes:
-                discard.update(self._select(x, results))
+                discard.update(self._select(x, results, bases))
             results = [r for r in results if r not in discard]
 
-        return collections.deque(result for p in includes for result in self._select(p, results))
+        selection = (result for p in includes for result in self._select(p, results, bases))
+        return collections.deque(selection)
 
     def _extract(self, result: UnpackResult, release: bool) -> Chunk | None:
         path = result.path

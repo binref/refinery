@@ -58,6 +58,52 @@ class TestMSI(TestUnitBase):
         self.assertEqual(msi[F'{cab}/2'], B'Z')
 
 
+@pytest.mark.cythonized
+class TestMSIRepeatedNames(TestUnitBase):
+    """
+    The installers of these tests were built with the Windows Installer database engine and the
+    Windows cabinet compressor through msilib of Python 3.12. Each of them installs two files named
+    readme.txt into two different folders.
+    """
+
+    READMES = [B'readme of folder one\r\n', B'readme of folder two\r\n']
+
+    def _readmes(self, data: bytes | bytearray) -> list[bytes]:
+        return [bytes(chunk) for chunk in data | self.load('files/readme.txt')]
+
+    def test_files_with_the_same_name_in_different_folders_are_all_extracted(self):
+        data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
+        self.assertCountEqual(self._readmes(data), self.READMES)
+
+    def test_a_stream_named_like_the_summary_stream_is_extracted_next_to_it(self):
+        data = self.download_sample('e8ee8f4c88d7cf8fe652b20d66407ccb9fc0bc20ce4ccd13d8e13609116ec871')
+        streams = [bytes(chunk) for chunk in data | self.load('Meta/SummaryInformation')]
+        self.assertEqual(len(streams), 2)
+        self.assertIn(B'stream named [5]SummaryInformation', streams)
+        # a property set stream starts with the byte order mark FE FF
+        self.assertTrue(any(stream.startswith(B'\xFE\xFF') for stream in streams))
+        self.assertCountEqual(self._readmes(data), self.READMES)
+
+    def test_streams_named_like_outputs_of_the_unit_are_extracted_next_to_them(self):
+        data = self.download_sample('50f656e4311b8e28e15d0bad836a9a4ca9ec5b78dbe8b2b49e58465028e55859')
+        cabinets = [bytes(chunk) for chunk in data | self.load('files.cab')]
+        self.assertEqual(len(cabinets), 2)
+        self.assertIn(B'stream named files.cab, not a cabinet', cabinets)
+        self.assertTrue(any(cabinet.startswith(B'MSCF') for cabinet in cabinets))
+        tables = [bytes(chunk) for chunk in data | self.load('MsiTables.json')]
+        self.assertEqual(len(tables), 2)
+        self.assertIn(B'stream named MsiTables.json', tables)
+        tables.remove(B'stream named MsiTables.json')
+        self.assertEqual(len(json.loads(tables[0])['File']), 2)
+        self.assertCountEqual(self._readmes(data), self.READMES)
+
+    def test_a_custom_table_named_like_the_folder_of_the_tables_leaves_the_table_file_its_name(self):
+        data = self.download_sample('0a3d5e903e416b0c3624098e682a136234c77784cae99e17e217219b617404dd')
+        msi = data | self.load() | {'path': ...}
+        self.assertEqual(json.loads(msi['MsiTables.json'])['MsiTables'], [{'Key': 'row'}])
+        self.assertIn('MsiTables/MsiTables.csv', msi)
+
+
 class TestMSIFormattedStrings(TestUnitBase):
 
     def test_files_and_components_are_looked_up_in_their_own_tables(self):

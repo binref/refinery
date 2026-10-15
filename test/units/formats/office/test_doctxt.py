@@ -1,4 +1,5 @@
 from ... import TestUnitBase
+from . import list_part_twice
 
 PARAGRAPHS = [
     (
@@ -44,3 +45,18 @@ class TestDocumentTextExtractor(TestUnitBase):
             output = str(data | unit)
             for k, p in enumerate(PARAGRAPHS):
                 self.assertIn(p, output, F'Extraction for {filetype} sample did not contain paragraph {k}')
+
+    def test_document_that_lists_its_text_part_twice_gives_the_text_of_the_first_and_warns(self):
+        for filetype, sample, part in [
+            ('docx', '36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3', 'word/document.xml'),
+            ('odt', '2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce', 'content.xml'),
+        ]:
+            with self.subTest(filetype):
+                data = self.download_sample(sample)
+                data = list_part_twice(data, part, lambda text: text.replace(B'Kibi', B'Xibi'))
+                with self.load_logged() as (unit, log):
+                    output = str(data | unit)
+                for k, p in enumerate(PARAGRAPHS):
+                    self.assertIn(p, output, F'Extraction for {filetype} sample did not contain paragraph {k}')
+                self.assertEqual(len(log), 1)
+                self.assertIn(part, log[0])

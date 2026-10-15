@@ -16,6 +16,7 @@ from refinery.lib.ole.file import OleFile
 from refinery.lib.structures import StructReader
 from refinery.units.formats import Unit
 from refinery.units.formats.archive.xtzip import xtzip
+from refinery.units.formats.office import read_part
 
 
 class doctxt(Unit):
@@ -38,7 +39,8 @@ class doctxt(Unit):
         if data.startswith(B'PK'):
             self.log_debug('document contains zip file signature, likely a odt or docx file')
             extractors.move_to_end('doc')
-            if 'opendocument' in str(data | xtzip('mimetype')):
+            mimetype = read_part(self, data, xtzip, 'mimetype')
+            if mimetype is not None and B'opendocument' in mimetype:
                 self.log_debug('odt signature detected')
                 extractors.move_to_end('odt', last=False)
         for filetype, extractor in extractors.items():
@@ -57,7 +59,7 @@ class doctxt(Unit):
         NAMESPACE = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         PARAGRAPH = F'{NAMESPACE}p'
         TEXT = F'{NAMESPACE}t'
-        chunk = data | xtzip('word/document.xml') | bytearray
+        chunk = read_part(self, data, xtzip, 'word/document.xml')
         if not chunk:
             raise ValueError('No document.xml file found.')
         root: Element = XML(chunk)
@@ -96,16 +98,12 @@ class doctxt(Unit):
         NAMESPACE = '{urn:oasis:names:tc:opendocument:xmlns:office:1.0}'
         BODY = F'{NAMESPACE}body'
         TEXT = F'{NAMESPACE}text'
-        for part in xtzip().unpack(data):
-            if part.path != 'content.xml':
-                continue
-            xml_content: bytes = part.get_data()
-            root: Element = XML(xml_content)
-            body: Element = root.find(BODY)
-            text: Element = body.find(TEXT)
-            return self._extract_odt_text(text)
-        else:
+        if (content := read_part(self, data, xtzip, 'content.xml', exact=True)) is None:
             raise ValueError('found no text')
+        root: Element = XML(content)
+        body: Element = root.find(BODY)
+        text: Element = body.find(TEXT)
+        return self._extract_odt_text(text)
 
     def _extract_ole(self, data: bytearray) -> str:
         with OleFile(data) as ole:

@@ -12,6 +12,7 @@ from refinery.lib.access import (
 from refinery.lib.ole.rtf import RtfInfoParser
 
 from ... import TestUnitBase
+from . import list_part_twice
 
 
 _VBAPATH = 'VBAProfilePaths'
@@ -58,6 +59,16 @@ class TestDocMetaOOXML(TestUnitBase):
         self.assertEqual(test['core']['creator'], 'Adobe')
         self.assertEqual(test['app']['Application'], 'Microsoft Office Word')
 
+    def test_document_that_lists_a_property_part_twice_gives_the_first_and_warns(self):
+        data = self.download_sample('36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3')
+        data = list_part_twice(data, 'docProps/core.xml', lambda core: core.replace(B'Adobe', B'Other'))
+        with self.load_logged() as (unit, log):
+            test = json.loads(data | unit | str)
+        self.assertEqual(test['core']['creator'], 'Adobe')
+        self.assertEqual(test['app']['Application'], 'Microsoft Office Word')
+        self.assertEqual(len(log), 1)
+        self.assertIn('docProps/core.xml', log[0])
+
 
 class TestDocMetaOle(TestUnitBase):
 
@@ -84,6 +95,16 @@ class TestDocMetaOpenDocument(TestUnitBase):
         self.assertEqual(test['meta']['creation-date'], '2021-11-15 13:34:00')
         self.assertEqual(test['meta']['page-count'], 3)
         self.assertEqual(test['meta']['word-count'], 560)
+
+    def test_document_that_lists_its_meta_part_twice_gives_the_first_and_warns(self):
+        data = self.download_sample('2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce')
+        data = list_part_twice(data, 'meta.xml', lambda meta: meta.replace(B'Adobe', B'Other'))
+        with self.load_logged() as (unit, log):
+            test = json.loads(data | unit | str)
+        self.assertEqual(test['meta']['creator'], 'Adobe')
+        self.assertEqual(test['meta']['word-count'], 560)
+        self.assertEqual(len(log), 1)
+        self.assertIn('meta.xml', log[0])
 
 
 class TestDocMetaPdf(TestUnitBase):

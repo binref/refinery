@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import gc
 import lzma
+import time
 import tracemalloc
 import unittest
 
 from .. import TestUnitBase
 
-from refinery.units.formats import PathPattern
+from refinery.lib.types import Callable, buf
+from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult
 
 _MALWARE_VHD = '2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'
 
@@ -19,6 +23,21 @@ _STDLIB_ARCHIVES = {
 
 #: The same sources in one solid 7z, made with the defaults of 7-Zip.
 _STDLIB_SOLID_7Z = 'bac77b8b93f397e64a428e035b7453d0a9c115eca53ded2560b17bf237b8d573'
+
+
+def _container(*entries: tuple[str, buf | Callable[[], buf]]) -> type[PathExtractorUnit]:
+    """
+    An extractor for a container that lists the given entries in the given order.
+    """
+    class xtlisted(PathExtractorUnit):
+        def unpack(self, data):
+            for path, content in entries:
+                yield UnpackResult(path, content)
+    return xtlisted
+
+
+def _extract(unit: PathExtractorUnit) -> list[tuple[str, bytes]]:
+    return [(str(chunk['path']), bytes(chunk)) for chunk in B'' | unit | [...]]
 
 
 class TestFormats(TestUnitBase):
@@ -162,3 +181,123 @@ class TestFormats(TestUnitBase):
             gc.enable()
         self.assertGreater(largest, 0)
         self.assertLess(held_after_largest, largest // 8)
+
+
+class TestRepeatedPaths(TestUnitBase):
+
+    def test_every_copy_of_a_repeated_path_is_numbered_in_the_order_of_the_container(self):
+        xt = _container(
+            ('a.txt', B'abc'),
+            ('b.txt', B'other'),
+            ('a.txt', B'abc'),
+            ('a.txt', B'xyz'),
+        )
+        self.assertEqual(_extract(xt()), [
+            ('a.txt/1', B'abc'),
+            ('b.txt', B'other'),
+            ('a.txt/2', B'abc'),
+            ('a.txt/3', B'xyz'),
+        ])
+
+    def test_listing_reads_no_file_whose_path_repeats(self):
+        reads = []
+
+        def content(data: bytes):
+            def read():
+                reads.append(data)
+                return data
+            return read
+
+        xt = _container(('a.txt', content(B'one')), ('a.txt', content(B'two')))
+        self.assertEqual([str(path) for path in B'' | xt(list=True)], ['a.txt/1', 'a.txt/2'])
+        self.assertEqual(reads, [])
+
+    def test_a_numbered_copy_does_not_take_the_path_of_another_file(self):
+        xt = _container(
+            ('a.txt', B'first'),
+            ('a.txt', B'second'),
+            ('a.txt/2', B'real'),
+        )
+        self.assertEqual(_extract(xt()), [
+            ('a.txt/1', B'first'),
+            ('a.txt/3', B'second'),
+            ('a.txt/2', B'real'),
+        ])
+
+    def test_no_two_outputs_share_a_path_when_numbered_paths_repeat_as_well(self):
+        xt = _container(
+            ('a', B'a'),
+            ('a', B'a'),
+            ('a/1', B'a/1'),
+            ('a/1', B'a/1'),
+            ('a/2', B'real a/2'),
+            ('a/1/1', B'real a/1/1'),
+        )
+        output = _extract(xt())
+        paths = [path for path, _ in output]
+        self.assertEqual(len(set(paths)), 6)
+        self.assertIn(('a/2', B'real a/2'), output)
+        self.assertIn(('a/1/1', B'real a/1/1'), output)
+
+    def test_the_name_of_a_repeated_path_selects_every_copy_and_nothing_else(self):
+        xt = _container(
+            ('a.txt', B'first'),
+            ('sub/a.txt', B'nested'),
+            ('xa.txt', B'other'),
+            ('a.txt', B'second'),
+        )
+        for exact in (False, True):
+            with self.subTest(exact=exact):
+                self.assertEqual(_extract(xt('a.txt', exact=exact)), [
+                    ('a.txt/1', B'first'),
+                    ('a.txt/2', B'second'),
+                ])
+
+    def test_a_wildcard_selects_every_copy_of_a_repeated_path(self):
+        xt = _container(
+            ('readme.exe', B'decoy'),
+            ('payload.exe', B'MZ'),
+            ('payload.exe', B'MZ'),
+        )
+        self.assertEqual(_extract(xt('*.exe')), [
+            ('readme.exe', B'decoy'),
+            ('payload.exe/1', B'MZ'),
+            ('payload.exe/2', B'MZ'),
+        ])
+
+    def test_an_exclusion_excludes_every_copy_of_a_repeated_path(self):
+        xt = _container(
+            ('readme.txt', B'text'),
+            ('payload.exe', B'MZ'),
+            ('payload.exe', B'MZ'),
+        )
+        for query in ('*.exe', 'payload.exe'):
+            with self.subTest(query=query):
+                self.assertEqual(_extract(xt(exclude=[query])), [('readme.txt', B'text')])
+
+    def test_a_numbered_path_selects_only_that_copy(self):
+        xt = _container(('a.txt', B'first'), ('a.txt', B'second'))
+        self.assertEqual(_extract(xt('a.txt/2')), [('a.txt/2', B'second')])
+
+    def test_the_name_of_a_repeated_path_selects_its_copies_in_any_case(self):
+        xt = _container(('a.txt', B'first'), ('a.txt', B'second'))
+        self.assertEqual(_extract(xt('A.TXT')), [('a.txt/1', B'first'), ('a.txt/2', B'second')])
+
+    def test_a_path_that_differs_only_in_case_from_a_repeated_path_selects_only_itself(self):
+        xt = _container(
+            ('A.txt', B'upper'),
+            ('a.txt', B'first'),
+            ('a.txt', B'second'),
+        )
+        self.assertEqual(_extract(xt('A.txt')), [('A.txt', B'upper')])
+        self.assertEqual(_extract(xt('a.txt')), [('a.txt/1', B'first'), ('a.txt/2', B'second')])
+
+    def test_many_copies_of_a_path_whose_numbers_are_taken_are_named_quickly(self):
+        count = 10_000
+        copies = [('a.txt', B'') for _ in range(count)]
+        numbered = [(F'a.txt/{k}', B'') for k in range(1, count + 1)]
+        xt = _container(*copies, *numbered)
+        start = time.perf_counter()
+        listing = [str(path) for path in B'' | xt(list=True)]
+        self.assertLess(time.perf_counter() - start, 5)
+        self.assertEqual(len(set(listing)), 2 * count)

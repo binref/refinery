@@ -251,6 +251,14 @@ class TestVHDExtractor(TestUnitBase):
         self.assertEqual(repr(recovered['$RECYCLE.BIN/_RK8OTOU.pdf']['sha256']),
             '796d1ae687ed252aaf129c7ad2361c4c6cfc1150ed05536921f3f7cd8196883c')
 
+    def test_pattern_selects_every_recovered_copy_of_a_repeated_path(self):
+        data = self._sample('malware.vhd')
+        copies = {'_/_NVITA~1.PDF/1', '_/_NVITA~1.PDF/2'}
+        selected = {str(path) for path in data | self.load('*.PDF', recover=True, list=True)}
+        self.assertLessEqual(copies, selected)
+        selected = {str(path) for path in data | self.load('_NVITA~1.PDF', recover=True, list=True)}
+        self.assertEqual(selected, copies)
+
     def test_disk_without_partition_table_or_file_system_is_extracted_as_raw_image(self):
         data = lzma.decompress(self.download_sample(
             '2c0d61aee8b3db82fb023fa5592c6dec996259129a0e9d4490da34517851b8cb'))

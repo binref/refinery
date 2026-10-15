@@ -251,13 +251,17 @@ class xtmsi(xtdoc, docs=(
         super().__init__(*paths, nocab=nocab, **keywords)
 
     def unpack(self, data: buf):
-        streams = {
-            result.path: result
-            for result in super().unpack(self._get_msi_from_overlay(data))
-        }
+        streams = list(super().unpack(self._get_msi_from_overlay(data)))
+        first_by_name: dict[str, UnpackResult] = {}
+        read: set[UnpackResult] = set()
+
+        for result in reversed(streams):
+            first_by_name[result.path] = result
 
         def stream(name: str):
-            return streams.pop(name).get_data()
+            result = first_by_name.pop(name)
+            read.add(result)
+            return result.get_data()
 
         def column_formats(table: dict[str, MSITableColumnInfo]) -> str:
             return ''.join(v.struct_format for v in table.values())
@@ -291,7 +295,7 @@ class xtmsi(xtdoc, docs=(
 
         for table_name, table in tables.items():
             stream_name = F'!{table_name}'
-            if stream_name not in streams:
+            if stream_name not in first_by_name:
                 continue
             processed = []
             info = list(table.values())
@@ -338,6 +342,8 @@ class xtmsi(xtdoc, docs=(
             if processed:
                 processed_table_data[table_name] = processed
 
+        streams = [result for result in streams if result not in read]
+
         if ca := processed_table_data.get('CustomAction'):
             properties, files, components = _formatting_tables(processed_table_data)
             for item in postprocessing:
@@ -350,7 +356,7 @@ class xtmsi(xtdoc, docs=(
                 root = F'Action/{action}'
                 if item.extension:
                     action = F'{root}.{item.extension}'
-                    streams[action] = UnpackResult(action, target.encode(self.codec))
+                    streams.append(UnpackResult(action, target.encode(self.codec)))
                     continue
                 target = _format(target, properties, files, components)
                 parts = [part.partition('\x02') for part in target.split('\x01')]
@@ -362,7 +368,7 @@ class xtmsi(xtdoc, docs=(
                     if not script:
                         continue
                     action = F'{root}.{name}'
-                    streams[action] = UnpackResult(action, script.encode(self.codec))
+                    streams.append(UnpackResult(action, script.encode(self.codec)))
 
         for ignored_stream in [
             'SummaryInformation',
@@ -370,9 +376,12 @@ class xtmsi(xtdoc, docs=(
             'DigitalSignature',
             'MsiDigitalSignatureEx'
         ]:
-            if r := streams.pop(F'[5]{ignored_stream}', None):
-                r.path = F'Meta/{ignored_stream}'
-                yield r
+            path = F'[5]{ignored_stream}'
+            summary = [result for result in streams if result.path == path]
+            streams = [result for result in streams if result.path != path]
+            for result in summary:
+                result.path = F'Meta/{ignored_stream}'
+                yield result
 
         inconsistencies = 0
         w1 = len(str(len(strings)))
@@ -392,15 +401,14 @@ class xtmsi(xtdoc, docs=(
             return path
 
         if self.args.nocab:
-            cabs = {}
+            cabs: list[UnpackResult] = []
         else:
             def _iscab(path):
                 return media_info and any(item.get('Cabinet', '') == F'#{path}' for item in media_info)
             media_info = processed_table_data.get('Media', [])
-            cabs: dict[str, UnpackResult] = {
-                path: item for path, item in streams.items() if _iscab(path)}
+            cabs = [item for item in streams if _iscab(item.path)]
             for cab in cabs:
-                self.log_info(F'found cab file: {cab}')
+                self.log_info(F'found cab file: {cab.path}')
         if cabs:
             file_names: dict[str, str] = {}
 
@@ -414,7 +422,8 @@ class xtmsi(xtdoc, docs=(
                 dst_name = long or dst_name
                 file_names[src_name] = dst_name
 
-            for path, cab in cabs.items():
+            for cab in cabs:
+                path = cab.path
                 try:
                     _cabinet = Cabinet(memoryview(cab.get_data()))
                     unpacked = _cabinet.process().get_files()
@@ -425,17 +434,16 @@ class xtmsi(xtdoc, docs=(
                 if dot == '.' and ext.lower() == 'cab':
                     path = base
                 else:
-                    del streams[path]
                     cab.path = F'{path}.cab'
-                    streams[cab.path] = cab
                 for result in unpacked:
                     sub_path = file_names.get(result.name, result.name)
                     sub_path = self._get_path_separator().join((path, sub_path))
-                    streams[sub_path] = UnpackResult(sub_path, result.extractor())
+                    streams.append(UnpackResult(sub_path, result.extractor()))
 
-        streams = {fix_msi_path(path): item for path, item in streams.items()}
+        for item in streams:
+            item.path = fix_msi_path(item.path)
         ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME, json.dumps(processed_table_data))
-        streams[ds.path] = ds
+        streams.append(ds)
 
         from refinery.units.formats.csv import json_to_csv
 
@@ -447,11 +455,10 @@ class xtmsi(xtdoc, docs=(
                 tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', json_to_csv(jd))
             except Exception:
                 continue
-            streams[tbl.path] = tbl
+            streams.append(tbl)
 
-        for path in sorted(streams):
-            streams[path].path = path
-            yield streams[path]
+        streams.sort(key=lambda item: item.path)
+        yield from streams
 
     @classmethod
     def _get_msi_from_overlay(cls, data: buf) -> buf:
