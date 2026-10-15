@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 import io
+import tracemalloc
+import zlib
 
 from refinery.lib.frame import Chunk
+from refinery.lib.mime import FileMagicInfo
+from refinery.lib.types import Callable
 from refinery.units.formats.pdf import xtpdf
 
 from .. import TestUnitBase
@@ -74,3 +80,69 @@ class TestPDF(TestUnitBase):
         self.assertEqual(set(names), {F'raw/Root/Junk/{k}/x{k}.swf' for k in range(20)})
         self.assertTrue(all(embedded == swf for embedded in names.values()))
         self.assertEqual(len({id(embedded) for embedded in names.values()}), 1)
+
+    def _with_a_stream_of_64_megabytes_of_zeros(self) -> bytes:
+        import pikepdf
+
+        def junk(pdf):
+            stream = pdf.make_stream(zlib.compress(bytes(64 << 20)))
+            stream.Filter = pikepdf.Name('/FlateDecode')
+            return stream
+
+        return self._with_junk(junk)
+
+    def _peak_of_python_allocations(self, operation: Callable[[], object]) -> int:
+        operation()
+        tracemalloc.start()
+        try:
+            operation()
+            return tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+    def test_listing_a_pdf_decodes_none_of_its_streams(self):
+        data = self._with_a_stream_of_64_megabytes_of_zeros()
+        paths: list[str] = []
+        peak = self._peak_of_python_allocations(lambda: paths.extend(data | self.load(list=True) | [str]))
+        self.assertIn('raw/Root/Junk', paths)
+        self.assertLess(peak, 16 << 20)
+
+    def test_extracting_some_outputs_of_a_pdf_decodes_no_other_stream(self):
+        data = self._with_a_stream_of_64_megabytes_of_zeros()
+        chunks: list[Chunk] = []
+        peak = self._peak_of_python_allocations(lambda: chunks.extend(data | self.load('raw/Info/*Date') | []))
+        self.assertEqual({str(chunk['path']) for chunk in chunks}, {'raw/Info/CreationDate', 'raw/Info/ModDate'})
+        self.assertLess(peak, 16 << 20)
+
+    def test_a_stream_is_decoded_when_it_is_extracted(self):
+        data = self._with_a_stream_of_64_megabytes_of_zeros()
+        self.assertEqual(data | self.load('raw/Root/Junk') | bytes, bytes(64 << 20))
+
+    def _pdf_written_by_pillow(self, mode: str) -> bytes:
+        from PIL import Image
+        output = io.BytesIO()
+        Image.new(mode, (64, 48)).save(output, 'PDF')
+        return output.getvalue()
+
+    def _with_flate_in_front_of_the_image_filter(self, data: bytes) -> bytes:
+        import pikepdf
+        pdf = pikepdf.open(io.BytesIO(data))
+        for obj in list(pdf.objects):
+            if isinstance(obj, pikepdf.Stream) and obj.get('/Subtype') == '/Image':
+                filters = pikepdf.Array([pikepdf.Name('/FlateDecode'), obj['/Filter']])
+                obj.write(zlib.compress(obj.read_raw_bytes()), filter=filters)
+        output = io.BytesIO()
+        pdf.save(output)
+        return output.getvalue()
+
+    def test_an_image_is_named_after_the_type_of_its_extracted_data(self):
+        jpeg = self._pdf_written_by_pillow('RGB')
+        for name, data, extension in (
+            ('jpeg', jpeg, 'jpg'),
+            ('jpeg behind flate', self._with_flate_in_front_of_the_image_filter(jpeg), 'jpg'),
+            ('jpeg 2000', self._pdf_written_by_pillow('RGBA'), 'jp2'),
+            ('fax', self._pdf_written_by_pillow('1'), 'png'),
+        ):
+            images = data | self.load('parsed/page0/img*') | {'path': bytes}
+            self.assertEqual(list(images), [F'parsed/page0/img1.{extension}'], name)
+            self.assertEqual(FileMagicInfo(images[F'parsed/page0/img1.{extension}']).extension, extension, name)
