@@ -145,7 +145,6 @@ class TestMSIRepeatedNames(TestUnitBase):
                 self.assertCountEqual(self._readmes(msi), self.READMES)
                 self.assertEqual(msi | self.load('!Media') | bytes, B'stream named MsiTables.json')
 
-    @pytest.mark.xfail(strict=True, reason='the compound file reader opens a stream by its name')
     def test_two_streams_with_the_same_name_each_hand_out_their_own_content(self):
         data = self.download_sample('e8ee8f4c88d7cf8fe652b20d66407ccb9fc0bc20ce4ccd13d8e13609116ec871')
         data = _rename_stream(data, '[5]SummaryInformation', '\x05SummaryInformation')

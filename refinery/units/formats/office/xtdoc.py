@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.id import is_likely_doc
-from refinery.lib.ole.file import OleFile
+from refinery.lib.ole.file import DirectoryEntry, OleFile
 from refinery.lib.types import Iterable, buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
@@ -52,22 +52,21 @@ class xtdoc(PathExtractorUnit):
     Extract embedded files from an OLE document such as a Microsoft Word DOCX file.
     """
 
-    def _streams(self, document: OleFile) -> Iterable[tuple[str, UnpackResult]]:
+    def _streams(self, document: OleFile) -> Iterable[tuple[DirectoryEntry, UnpackResult]]:
         """
-        Generates every stream of the given compound file as its name in the file together with the
+        Generates every stream of the given compound file as its directory entry together with the
         result that hands it out under its decoded path.
         """
-        for item in document.listdir():
+        for item, entry in document.walk():
             if not item or not item[-1]:
                 continue
-            name = '/'.join(item)
-            stream = document.openstream(name)
+            stream = document.openentry(entry)
             c0 = ord(item[-1][:1])
             if c0 < 20:
                 item[-1] = F'[{c0:d}]{item[-1][1:]}'
             path = convert_msi_name('/'.join(item))
             self.log_debug('exploring:', path)
-            yield name, UnpackResult(path, stream.read())
+            yield entry, UnpackResult(path, stream.read())
 
     def unpack(self, data: buf):
         try:

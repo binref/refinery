@@ -13,7 +13,14 @@ from .. import LogRecorder, TestUnitBase
 from refinery.lib.frame import Chunk
 from refinery.lib.types import Callable, buf
 from refinery.units import Unit
-from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult, read_part, read_parts
+from refinery.units.formats import (
+    PathExtractorUnit,
+    PathPattern,
+    UnpackResult,
+    number_repeated_names,
+    read_part,
+    read_parts,
+)
 
 _MALWARE_VHD = '2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'
 
@@ -364,6 +371,28 @@ class TestRepeatedPaths(TestUnitBase):
         xt = _container(('./one.txt', B'one'))
         data = Chunk(B'', meta={'path': 'pack.tar'})
         self.assertEqual([str(chunk['path']) for chunk in data | xt(join_path=True) | [...]], ['pack.tar/one.txt'])
+
+
+class TestNumberRepeatedNames(unittest.TestCase):
+
+    def test_names_that_do_not_repeat_are_kept(self):
+        self.assertEqual(number_repeated_names(['a', 'b', 'c']), ['a', 'b', 'c'])
+
+    def test_repeated_names_are_numbered_in_order_skipping_numbers_that_another_name_has(self):
+        self.assertEqual(
+            number_repeated_names(['a', 'b', 'a', 'a/2', 'a']),
+            ['a/1', 'b', 'a/3', 'a/2', 'a/4'],
+        )
+
+    def test_the_number_follows_the_given_separator(self):
+        self.assertEqual(number_repeated_names(['x', 'x'], '\\'), ['x\\1', 'x\\2'])
+
+    def test_no_two_names_are_equal_when_numbered_names_repeat_as_well(self):
+        names = ['a', 'a', 'a/1', 'a/1', 'a/2', 'a/1/1']
+        numbered = number_repeated_names(names)
+        self.assertEqual(len(set(numbered)), len(names))
+        self.assertIn('a/2', numbered)
+        self.assertIn('a/1/1', numbered)
 
 
 class TestReadPart(TestUnitBase):

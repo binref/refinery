@@ -1,4 +1,5 @@
 from ... import TestUnitBase
+from .. import rename_ole_entry
 from . import invert_checksum, list_part_twice
 
 PARAGRAPHS = [
@@ -78,3 +79,9 @@ class TestDocumentTextExtractor(TestUnitBase):
         with self.load_logged('-v') as (unit, log):
             self.assertEqual(str(data | unit), '')
         self.assertTrue(any('content.xml' in message and 'checksum' in message for message in log), log)
+
+    def test_a_stream_named_like_the_document_stream_in_another_case_does_not_replace_it(self):
+        data = self.download_sample('4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08')
+        text = str(data | self.load())
+        data = rename_ole_entry(data, '\x01CompObj', 'WORDDOCUMENT')
+        self.assertEqual(str(data | self.load()), text)

@@ -142,10 +142,10 @@ def _find_vba_projects(
     project_path, dir_path) tuples.
     """
     results: list[tuple[str, str, str]] = []
-    for storage in ole.listdir(streams=False, storages=True):
-        if storage.pop().upper() != 'VBA':
+    for storage, entry in ole.walk(streams=False, storages=True):
+        if storage[-1].upper() != 'VBA' or ole.find('/'.join(storage)) is not entry:
             continue
-        vba_root = '/'.join(storage)
+        vba_root = '/'.join(storage[:-1])
         if vba_root:
             vba_root += '/'
         if ole.get_type(project_path := F'{vba_root}PROJECT') != STGTY.STREAM:
@@ -713,13 +713,13 @@ class VBAParser:
                 return False
             fp.seek(0)
             with zipfile.ZipFile(fp) as zf:
-                for name in zf.namelist():
-                    with zf.open(name) as fh:
+                for info in zf.infolist():
+                    with zf.open(info) as fh:
                         magic = fh.read(8)
                     if magic[:8] == OLE_MAGIC:
-                        with zf.open(name) as fh:
+                        with zf.open(info) as fh:
                             ole_data = fh.read()
-                        self._ole_subfiles.append((name, ole_data))
+                        self._ole_subfiles.append((info.filename, ole_data))
             if self._ole_subfiles:
                 self._type = DocumentFormat.OPENXML
                 return True
@@ -839,8 +839,10 @@ class VBAParser:
         Find form storages containing 'f' and 'o' streams.
         """
         results: list[str] = []
-        for storage in ole.listdir(streams=False, storages=True):
+        for storage, entry in ole.walk(streams=False, storages=True):
             prefix = '/'.join(storage)
+            if ole.find(prefix) is not entry:
+                continue
             o_stream = F'{prefix}/o'
             f_stream = F'{prefix}/f'
             if (ole.exists(o_stream)

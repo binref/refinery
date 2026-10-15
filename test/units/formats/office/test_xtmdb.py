@@ -82,6 +82,26 @@ class TestAccessExtractor(TestUnitBase):
         self.assertEqual(bytes(all_chunks['TableC/0/Label']), b'only row')
         self.assertNotIn('EmptyTable', tables)
 
+    def test_two_tables_with_the_same_name_are_numbered_and_keep_their_own_rows(self):
+        data = bytearray(self.download_sample(
+            '3dd8253db12a8f799efd3daba79533df3df259db43d0daaed369335012d609a4'))
+        name = 'TableB'.encode('utf-16le')
+        self.assertEqual(data.count(name), 1)
+        offset = data.find(name)
+        data[offset:offset + len(name)] = 'TableA'.encode('utf-16le')
+        chunks = {str(c['path']): bytes(c) for c in data | self.load() | [...]}
+        rows = {}
+        for path in chunks:
+            table, _, column = path.rpartition('/')
+            rows.setdefault(table, set()).add(column)
+        self.assertEqual(rows['TableA/1/0'], {'Name', 'Value'})
+        self.assertEqual(rows['TableA/2/0'], {'X', 'Y'})
+        self.assertEqual(chunks['TableA/1/0/Name'], b'alpha')
+        self.assertEqual(chunks['TableA/1/2/Name'], b'charlie')
+        self.assertAlmostEqual(float(chunks['TableA/2/1/Y']), 4.0, places=1)
+        self.assertNotIn('TableA/0', rows)
+        self.assertNotIn('TableB/0', rows)
+
     def test_long_memo(self):
         unit = self.load()
         data = self.download_sample(
@@ -160,7 +180,7 @@ class TestAccessExtractor(TestUnitBase):
             '1b39977019ade7e4de616596dd827ec6233c056a368f30035bde5175ce8036e0')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        self.assertIn('tblMitgliederkartei', db.catalog)
+        self.assertIn('tblMitgliederkartei', [name for name, _ in db.tables])
         result = db.parse_table('tblMitgliederkartei')
         self.assertGreaterEqual(len(result), 76)
 
@@ -169,7 +189,7 @@ class TestAccessExtractor(TestUnitBase):
             '219e5aed6ceed235d7b5267fded044d4b4f0e64269b825ee2fbe893a52a85928')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        self.assertIn('biblioteca', db.catalog)
+        self.assertIn('biblioteca', [name for name, _ in db.tables])
         result = db.parse_table('biblioteca')
         self.assertIn('TIPO', result)
         self.assertGreater(len(result['TIPO']), 0)
@@ -179,7 +199,7 @@ class TestAccessExtractor(TestUnitBase):
             '40b4fe5250ad72931a28022fcc21f10abfcab1824b1f73b0588642d3b34c6808')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        self.assertIn('TRAB', db.catalog)
+        self.assertIn('TRAB', [name for name, _ in db.tables])
         result = db.parse_table('TRAB')
         self.assertGreaterEqual(len(result), 100)
 
@@ -188,7 +208,7 @@ class TestAccessExtractor(TestUnitBase):
             '89bd6f49a0b66e56919ce6dbe8fc989f00814034c9b424a9d834d8b3565f0196')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        tables = [n for n in db.catalog if not n.startswith('MSys')]
+        tables = [n for n, _ in db.tables if not n.startswith('MSys')]
         self.assertEqual(len(tables), 1)
         result = db.parse_table(tables[0])
         self.assertGreater(len(result), 0)
@@ -198,9 +218,9 @@ class TestAccessExtractor(TestUnitBase):
             '555367be91e53fffa5680946ef1c379e6102202c8fefe836d7c1760ad6654ff9')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        for name in db.catalog:
+        for name, _ in db.tables:
             db.parse_table(name)
-        tables = {n for n in db.catalog if not n.startswith('MSys')}
+        tables = {n for n, _ in db.tables if not n.startswith('MSys')}
         self.assertIn('Camera', tables)
         self.assertIn('Mesh', tables)
 
@@ -209,7 +229,7 @@ class TestAccessExtractor(TestUnitBase):
             '2b7f9dbea0f850943d317cdfce5601b856caee39e932a13a098d503a648107ac')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        for name in db.catalog:
+        for name, _ in db.tables:
             db.parse_table(name)
         result = db.parse_table('Schuetzendaten')
         self.assertIn('M_Name', result)
@@ -220,7 +240,7 @@ class TestAccessExtractor(TestUnitBase):
             '597a7b6b151575cd629434af706ccd8662262d2da59e0ca0e6d554c900afa74d')
         db = AccessDatabase(data)
         self.assertTrue(db._is_v3)
-        for name in db.catalog:
+        for name, _ in db.tables:
             db.parse_table(name)
         result = db.parse_table('cada')
         self.assertIn('cliente', result)
@@ -472,7 +492,7 @@ class TestAccessLib(unittest.TestCase):
         header[4] = 0
         header[5:9] = struct.pack('<I', 0x01)
         db = AccessDatabase(bytes(header))
-        self.assertIsInstance(db.catalog, dict)
+        self.assertEqual(db.tables, [])
 
     def test_access_database_parse_table_no_data_pages(self):
         ps = 0x1000

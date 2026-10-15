@@ -4,7 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from refinery.lib.access import AccessDatabase
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats import PathExtractorUnit, UnpackResult, number_repeated_names
 
 
 class xtmdb(PathExtractorUnit):
@@ -14,9 +14,10 @@ class xtmdb(PathExtractorUnit):
     """
     def unpack(self, data):
         db = AccessDatabase(data)
-        for name in db.catalog:
+        names = number_repeated_names([name for name, _ in db.tables], self._get_path_separator())
+        for name, (_, table_id) in zip(names, db.tables):
             try:
-                table = db.parse_table(name)
+                table = db.parse_table_id(table_id)
             except Exception:
                 continue
             if not table:

@@ -22,30 +22,34 @@ class xtsql(PathExtractorUnit):
         database = sqlite3.connect(':memory:')
         database.text_factory = bytes
         database.deserialize(data)
+        database.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, len(data))
         cursor = database.cursor()
         result: dict[str, list[dict[str, int | float | str | bytes]]] = {}
 
-        listing: list[tuple[bytes, bytes]] = cursor.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table';").fetchall()
+        listing: list[tuple[bytes, int]] = cursor.execute(
+            "SELECT name, rootpage FROM sqlite_master WHERE type='table';").fetchall()
+        kinds: dict[bytes, bytes] = {
+            name: kind for schema, name, kind, *_ in cursor.execute('PRAGMA table_list')
+            if schema == B'main'
+        }
 
-        for tbl, spec in listing:
-            table = tbl.decode('utf8')
-            result[table] = t = []
-            ct, _tbl, names = spec.partition(tbl)
-            ct = ct.rstrip(B'"')
-            names = names.lstrip(B'"')
-            names = names.strip()
-            names, _, _ = names.rpartition(B')')
-            if (
-                tbl != _tbl
-                or ct.strip().upper().split() != [B'CREATE', B'TABLE']
-                or not names.startswith(B'(')
-            ):
-                raise ValueError(F'Unexpeted SQL statement for {table} in master table: {spec}')
-            names = [next(iter(name.strip().split()))
-                for name in names[1:-1].decode().split(',')]
-            for row in cursor.execute(F'SELECT * FROM {table}').fetchall():
-                t.append(dict(zip(names, row)))
+        for name, rootpage in listing:
+            table = name.decode('utf8')
+            if kinds:
+                stores_rows = kinds.get(name) in (B'table', B'shadow')
+            else:
+                stores_rows = rootpage != 0
+            if not stores_rows:
+                self.log_info(F'skipping {table}, which does not store its own rows')
+                continue
+            quoted = table.replace('"', '""')
+            try:
+                rows = cursor.execute(F'SELECT * FROM "{quoted}"').fetchall()
+            except sqlite3.Error as error:
+                self.log_warn(F'failed to read table {table}: {error!s}')
+                continue
+            names = [column[0] for column in cursor.description]
+            result[table] = [dict(zip(names, row)) for row in rows]
 
         yield UnpackResult('db', functools.partial(_json, result))
 

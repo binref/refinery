@@ -9,7 +9,7 @@ class TestWindowsRegistryExtractor(TestUnitBase):
     def test_duplicate_sections_winreg(self):
         data = self.download_sample('ff548cb8ff1e35ded07207b1488150571c81d5aed93758db11c60d362981a45b')
         test = data | self.load(list=True) | [str]
-        self.assertEqual(len(test), 49)
+        self.assertEqual(len(test), 36)
         self.assertIn(R'HKEY_CURRENT_USER/Control Panel/Desktop/HungAppTimeout', test)
 
     def test_binary_values_in_uppercase_hex_keep_every_byte(self):
@@ -119,3 +119,108 @@ class TestWindowsRegistryExtractor(TestUnitBase):
         self.assertIn(excluded, full)
         self.assertTrue(excl, 'exclusion pruned the entire hive')
         self.assertEqual(set(excl), {path for path in full if token not in path})
+
+    def _export(self, export: str) -> dict[str, bytes]:
+        unit = self.load()
+        data = inspect.cleandoc(export).encode(unit.codec)
+        return {str(chunk['path']): bytes(chunk) for chunk in data | unit | [...]}
+
+    def test_a_value_assigned_twice_in_one_key_keeps_the_last_assignment(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "decoy"="calc.exe"
+            "a"="first"
+            "a"="second"
+            """)
+        self.assertEqual(values, {
+            'HKEY_CURRENT_USER/Software/Run/decoy': B'calc.exe',
+            'HKEY_CURRENT_USER/Software/Run/a': B'second',
+        })
+
+    def test_a_key_written_in_two_sections_keeps_the_last_assignment_of_each_value(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "a"="first"
+            "b"="kept"
+
+            [HKEY_CURRENT_USER\Software\Other]
+            "c"="other"
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "a"="second"
+            """)
+        self.assertEqual(values, {
+            'HKEY_CURRENT_USER/Software/Run/a': B'second',
+            'HKEY_CURRENT_USER/Software/Run/b': B'kept',
+            'HKEY_CURRENT_USER/Software/Other/c': B'other',
+        })
+
+    def test_keys_and_value_names_that_differ_only_in_case_name_one_value(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "Updater"="C:\\Program Files\\Vendor\\update.exe"
+
+            [HKEY_CURRENT_USER\SOFTWARE\RUN]
+            "updater"="C:\\Users\\Public\\evil.exe"
+            """)
+        self.assertEqual(values, {
+            'HKEY_CURRENT_USER/Software/Run/Updater': B'C:\\Users\\Public\\evil.exe',
+        })
+
+    def test_a_value_assigned_a_minus_sign_is_deleted(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "a"="evil"
+            "b"="kept"
+            "a"=-
+            """)
+        self.assertEqual(values, {'HKEY_CURRENT_USER/Software/Run/b': B'kept'})
+
+    def test_a_key_with_a_leading_minus_sign_is_deleted_with_its_subkeys(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Evil]
+            "a"="evil"
+
+            [HKEY_CURRENT_USER\Software\Evil\Sub]
+            "b"="evil"
+
+            [HKEY_CURRENT_USER\Software\EvilTwin]
+            "c"="kept"
+
+            [-HKEY_CURRENT_USER\Software\Evil]
+            """)
+        self.assertEqual(values, {'HKEY_CURRENT_USER/Software/EvilTwin/c': B'kept'})
+
+    def test_a_value_with_a_percent_sign_comes_out_unchanged(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Run]
+            "p"="%AppData%\\evil.exe"
+            """)
+        self.assertEqual(values, {'HKEY_CURRENT_USER/Software/Run/p': B'%AppData%\\evil.exe'})
+
+    def test_value_names_with_a_colon_or_an_equals_sign_are_read(self):
+        values = self._export(R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers]
+            "C:\\Users\\x\\a.exe"="~ RUNASADMIN"
+
+            [HKEY_CURRENT_USER\Software\X]
+            "a=b"="c"
+            """)
+        self.assertEqual(values, {
+            'HKEY_CURRENT_USER/Software/Microsoft/Windows NT/CurrentVersion/AppCompatFlags/Layers/C:/Users/x/a.exe': B'~ RUNASADMIN',
+            'HKEY_CURRENT_USER/Software/X/a=b': B'c',
+        })

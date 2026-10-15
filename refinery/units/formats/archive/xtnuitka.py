@@ -20,7 +20,7 @@ class _NuitkaData(Struct):
         if self.compressed:
             zd = pyzstd.ZstdDecompressor()
             reader = StructReader(zd.decompress(reader.read()))
-        self.files = {}
+        self.files: list[tuple[str, buf]] = []
         self.truncated = False
         while not reader.eof:
             path = reader.read_w_string('utf-16')
@@ -29,7 +29,7 @@ class _NuitkaData(Struct):
             size = reader.u64()
             data = reader.read(size)
             if len(data) == size:
-                self.files[path] = data
+                self.files.append((path, data))
             else:
                 self.truncated = True
 
@@ -56,7 +56,7 @@ class xtnuitka(PathExtractorUnit):
                 self.log_warn('the archive is truncated')
             if archive.magic != self._MAGIC:
                 self.log_warn('the archive data does not start with the correct magic sequence')
-            for path, data in archive.files.items():
+            for path, data in archive.files:
                 yield UnpackResult(path, data)
 
     @classmethod

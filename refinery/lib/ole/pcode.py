@@ -1995,9 +1995,9 @@ class PCodeDisassembler:
             results: list[bytes | bytearray | memoryview] = []
             try:
                 with zipfile.ZipFile(MemoryFile(self._data, bytes)) as zf:
-                    for name in zf.namelist():
-                        if name.lower().endswith('vbaproject.bin'):
-                            results.append(zf.read(name))
+                    for info in zf.infolist():
+                        if info.filename.lower().endswith('vbaproject.bin'):
+                            results.append(zf.read(info))
             except zipfile.BadZipFile:
                 pass
             return results

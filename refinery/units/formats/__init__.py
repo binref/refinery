@@ -35,6 +35,32 @@ def pathspec(expression):
     return '/'.join(re.split(R'[\\\/]', expression))
 
 
+def number_repeated_names(names: list[str], separator: str = '/') -> list[str]:
+    """
+    Returns the given names in their order, with a number appended to every name that occurs more
+    than once: the copies of a name are counted in order, and a number is skipped when the numbered
+    name would be equal to another given name or to an earlier numbered one. No two returned names
+    are equal. Path extractors use this for repeated paths and for repeated names of groups, such as
+    two tables or archives with one name.
+    """
+    occurrences = Counter(names)
+    taken = set(occurrences)
+    counters: Counter[str] = Counter()
+    numbered: list[str] = []
+    for name in names:
+        if occurrences[name] < 2:
+            numbered.append(name)
+            continue
+        while True:
+            counters[name] += 1
+            candidate = F'{name}{separator}{counters[name]}'
+            if candidate not in taken:
+                break
+        taken.add(candidate)
+        numbered.append(candidate)
+    return numbered
+
+
 class UnpackResult:
 
     def get_data(self) -> buf:
@@ -288,26 +314,15 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def _number_repeated_paths(self, results: list[UnpackResult]) -> dict[UnpackResult, str]:
         """
-        Appends a number to the path of every result whose path repeats, counting in the order of
-        the results and skipping every number that would repeat the path of another result. Returns
-        the path that each numbered result had before.
+        Appends a number to the path of every result whose path repeats, as `number_repeated_names`
+        does. Returns the path that each numbered result had before.
         """
-        occurrences = Counter(result.path for result in results)
-        taken = set(occurrences)
-        counters: Counter[str] = Counter()
-        slash = self._get_path_separator()
+        paths = number_repeated_names([result.path for result in results], self._get_path_separator())
         bases: dict[UnpackResult, str] = {}
-        for result in results:
-            base = result.path
-            if occurrences[base] < 2:
+        for result, path in zip(results, paths):
+            if path == result.path:
                 continue
-            while True:
-                counters[base] += 1
-                path = F'{base}{slash}{counters[base]}'
-                if path not in taken:
-                    break
-            taken.add(path)
-            bases[result] = base
+            bases[result] = result.path
             result.path = path
             self.log_info(F'read chunk with duplicate path; deduplicating to {path}')
         return bases

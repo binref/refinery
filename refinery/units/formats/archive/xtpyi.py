@@ -20,6 +20,7 @@ from refinery.lib.meta import MV
 from refinery.lib.py import decompile_buffer, version2tuple
 from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.lib.types import Param, buf
+from refinery.units.formats import number_repeated_names
 from refinery.units.formats.archive import ArchiveUnit, Arg
 from refinery.units.formats.pe import get_pe_size
 from refinery.units.formats.pym import Marshal
@@ -255,7 +256,7 @@ class PyInstallerArchiveEpilogue(Struct):
         self.py_libname = self._read_libname(reader)
         self.offset = reader.tell() - self.size
 
-        self.toc: dict[str, PiTOCEntry] = {}
+        self.toc: list[PiTOCEntry] = []
         toc_end = self.offset + toc_offset + toc_length
         reader.seekset(self.offset + toc_offset)
         while reader.tell() < toc_end:
@@ -267,32 +268,31 @@ class PyInstallerArchiveEpilogue(Struct):
             except Exception as error:
                 xtpyi.logger.warning(F'unexpected error while reading TOC: {error!s}')
                 break
-            if entry.name in self.toc:
-                raise KeyError(F'duplicate name {entry.name}')
-            self.toc[entry.name] = entry
+            self.toc.append(entry)
 
-        self.files: dict[str, PiMeta] = {}
+        for entry in self.toc:
+            name, _ = os.path.splitext(entry.name)
+            if entry.type is PiType.PYZ and name == entry.name:
+                entry.name = F'{name}.pyz'
+
+        items = [(entry, self.extract(entry)) for entry in self.toc]
+        self.files: list[PiMeta] = []
         no_pyz_found = True
-        pyz_entries: dict[str, PYZ] = {}
+        pyz_entries: list[tuple[str, PYZ]] = []
 
-        for entry in list(self.toc.values()):
+        for entry, item in items:
             if entry.type is not PiType.PYZ:
                 continue
             no_pyz_found = False
-            name, xt = os.path.splitext(entry.name)
-            name_pyz = F'{name}.pyz'
-            if name == entry.name:
-                del self.toc[name]
-                self.toc[name_pyz] = entry
-                entry.name = name_pyz
+            name, _ = os.path.splitext(entry.name)
             reader.seekset(self.offset + entry.offset)
             if entry.is_compressed:
-                data = self.extract(entry.name).unpack()
+                data = item.unpack()
             else:
                 data = reader
-            pyz_entries[name] = PYZ.Parse(data, self.py_version)
+            pyz_entries.append((name, PYZ.Parse(data, self.py_version)))
 
-        magics = {pyz.magic for pyz in pyz_entries.values()}
+        magics = {pyz.magic for _, pyz in pyz_entries}
 
         if not magics:
             if not no_pyz_found:
@@ -305,18 +305,15 @@ class PyInstallerArchiveEpilogue(Struct):
             xtpyi.logger.warning('more than one magic signature was recovered; this is unusual.')
 
         magics = list(magics)
-        keys: set[bytes] = set()
+        key: bytes | None = None
 
-        for entry in self.toc.values():
-            extracted = self.extract(entry.name)
+        for entry, extracted in items:
+            self.files.append(extracted)
             if entry.type not in (PiType.SOURCE, PiType.MODULE):
-                self.files[entry.name] = extracted
                 continue
             data = extracted.unpack()
             name, _ = os.path.splitext(extracted.name)
-            del self.files[extracted.name]
             extracted.name = F'{name}.pyc'
-            self.files[extracted.name] = extracted
             is_crypto_key = name.endswith('crypto_key')
 
             if len(magics) == 1 and data[:4] != magics[0][:4]:
@@ -327,37 +324,27 @@ class PyInstallerArchiveEpilogue(Struct):
 
                 if entry.type is PiType.SOURCE:
                     decompiled.type = PiType.USERCODE
-                self.files[decompiled.name] = decompiled
+                self.files.append(decompiled)
 
                 if is_crypto_key:
-                    for key in decompiled.unpack() | carve('string', decode=True):
-                        if len(key) != 0x10:
-                            continue
-                        xtpyi.logger.info(F'found key: {key.decode(xtpyi.codec)}')
-                        keys.add(key)
+                    with decompiled.unpack() | carve('string', decode=True) as candidates:
+                        for candidate in candidates:
+                            if len(candidate) == 0x10:
+                                xtpyi.logger.info(F'found key: {candidate.decode(xtpyi.codec)}')
+                                key = bytes(candidate)
+                                break
 
         if unmarshal is Unmarshal.No:
             return
 
-        if not keys:
-            key = None
-        else:
-            key = next(iter(keys))
-
-        for name, pyz in pyz_entries.items():
+        names = number_repeated_names([name for name, _ in pyz_entries])
+        for name, (_, pyz) in zip(names, pyz_entries):
             pyz.unpack(unmarshal is Unmarshal.YesAndDecompile, key)
             for unpacked in pyz.entries:
-                unpacked.name = path = F'{name}/{unpacked.name}'
-                if path in self.files:
-                    raise ValueError(F'duplicate file name: {path}')
-                self.files[path] = unpacked
+                unpacked.name = F'{name}/{unpacked.name}'
+                self.files.append(unpacked)
 
-    def extract(self, name: str) -> PiMeta:
-        try:
-            return self.files[name]
-        except KeyError:
-            pass
-        entry = self.toc[name]
+    def extract(self, entry: PiTOCEntry) -> PiMeta:
         with StreamDetour(self.reader, self.offset + entry.offset):
             data = self.reader.read(entry.size_of_compressed_data)
         if entry.is_compressed:
@@ -365,9 +352,7 @@ class PyInstallerArchiveEpilogue(Struct):
                 return zlib.decompress(d)
         else:
             extracted = data
-        result = PiMeta(entry.type, name, extracted)
-        self.files[name] = result
-        return result
+        return PiMeta(entry.type, entry.name, extracted)
 
 
 class xtpyi(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
@@ -454,13 +439,13 @@ class xtpyi(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         uc_target = PiType.USERCODE if decompile else PiType.SOURCE
         archive = PyInstallerArchiveEpilogue.Parse(view, positions[-1], mode, decompile)
         self.log_info('Signature:', archive.signature)
-        for name, file in archive.files.items():
+        for file in archive.files:
             if self.args.user_code:
                 if file.type != uc_target:
                     continue
-                if name.startswith('pyiboot'):
+                if file.name.startswith('pyiboot'):
                     continue
-            yield self._pack(name, None, file.data, **{MV.TYPE: file.type.name})
+            yield self._pack(file.name, None, file.data, **{MV.TYPE: file.type.name})
 
     @classmethod
     def handles(cls, data: buf) -> bool | None:

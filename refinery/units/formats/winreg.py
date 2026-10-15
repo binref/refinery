@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import inspect
-import io
 import re
-import shlex
 
-from configparser import ConfigParser
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from refinery.lib.id import get_reg_export_type
 from refinery.lib.structures import MemoryFile
+from refinery.lib.types import Iterable
 from refinery.units.encoding.esc import esc
 from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult
 
@@ -23,9 +21,104 @@ class ParseException(Exception):
     pass
 
 
-class WinRegFileParser(ConfigParser):
-    def optionxform(self, optionstr: str) -> str:
-        return optionstr
+@dataclasses.dataclass
+class _ExportedValue:
+    name: str
+    data: str
+
+
+@dataclasses.dataclass
+class _ExportedKey:
+    name: str
+    values: dict[str, _ExportedValue] = dataclasses.field(default_factory=dict)
+
+
+def _statements(lines: Iterable[str]) -> Iterable[str]:
+    """
+    Joins every line of a registry export that ends in a backslash with the line after it and
+    generates the joined lines without surrounding white space; comment lines are left out.
+    """
+    pending = ''
+    for line in lines:
+        line = line.strip()
+        if not pending and line.startswith(';'):
+            continue
+        if line.endswith('\\'):
+            pending = F'{pending}{line[:-1]}'
+            continue
+        yield F'{pending}{line}'
+        pending = ''
+    if pending:
+        yield pending
+
+
+def _quoted_name(line: str) -> tuple[str, str] | None:
+    """
+    Reads the quoted value name at the start of the given line of a registry export, where a
+    backslash escapes a backslash or a quote. Returns the name and the rest of the line after
+    its closing quote, or `None` if the quote is not closed.
+    """
+    name = []
+    k = 1
+    while k < len(line):
+        character = line[k]
+        if character == '\\' and line[k + 1:k + 2] in ('\\', '"'):
+            name.append(line[k + 1])
+            k += 2
+            continue
+        if character == '"':
+            return ''.join(name), line[k + 1:]
+        name.append(character)
+        k += 1
+    return None
+
+
+def _read_registry_export(lines: Iterable[str]) -> list[_ExportedKey]:
+    """
+    Reads the lines of a registry export that follow its header and returns the keys and values
+    that importing it leaves behind: Keys and value names are matched ignoring case, the last
+    assignment to a value wins, a value assigned a minus sign is deleted, and a key whose name
+    starts with a minus sign is deleted together with all of its subkeys. Keys and values keep
+    the spelling and the order of their first appearance; the default value has an empty name.
+    """
+    keys: dict[str, _ExportedKey] = {}
+    key: _ExportedKey | None = None
+    for line in _statements(lines):
+        if line.startswith('['):
+            name, bracket, _ = line[1:].rpartition(']')
+            if not bracket:
+                key = None
+                continue
+            if name.startswith('-'):
+                deleted = name[1:].upper()
+                prefix = F'{deleted}\\'
+                for upper in [k for k in keys if k == deleted or k.startswith(prefix)]:
+                    del keys[upper]
+                key = None
+                continue
+            if (key := keys.get(upper := name.upper())) is None:
+                key = keys[upper] = _ExportedKey(name)
+            continue
+        if key is None:
+            continue
+        if line.startswith('@'):
+            name, rest = '', line[1:]
+        elif line.startswith('"') and (quoted := _quoted_name(line)):
+            name, rest = quoted
+        else:
+            continue
+        assignment, equals, data = rest.lstrip().partition('=')
+        if assignment or not equals:
+            continue
+        data = data.strip()
+        upper = name.upper()
+        if data == '-':
+            key.values.pop(upper, None)
+        elif (value := key.values.get(upper)) is None:
+            key.values[upper] = _ExportedValue(name, data)
+        else:
+            value.data = data
+    return list(keys.values())
 
 
 class _Missing:
@@ -140,43 +233,25 @@ class winreg(PathExtractorUnit):
     def _unpack_file(self, data: bytearray):
         for codec in ('utf16', 'utf-16le', 'utf8'):
             try:
-                reg = data.decode(codec).splitlines(keepends=True)
+                lines = data.decode(codec).splitlines()
             except UnicodeError:
                 continue
-            lines = iter(reg)
-            if next(lines).startswith('Windows Registry Editor'):
+            if lines and lines[0].startswith('Windows Registry Editor'):
                 break
         else:
             raise ParseException
 
-        def _parse():
-            parser = WinRegFileParser()
-            section.seek(0)
-            parser.read_file(section)
-            for key in parser.sections():
-                self.log_debug(key)
-                for value in parser[key]:
-                    name = next(iter(shlex.split(value)))
-                    path = Path(key)
-                    if name != '@':
-                        path = path / Path(name)
-                    decoded = list(self._decode_registry_export(parser[key][value]))
-                    if len(decoded) == 1:
-                        yield UnpackResult(str(path), decoded[0])
-                        continue
-                    for k, d in enumerate(decoded):
-                        yield UnpackResult(F'{path!s}.{k}', d)
-
-        section = io.StringIO()
-
-        for line in lines:
-            if line.lstrip().startswith('['):
-                yield from _parse()
-                section.seek(0)
-                section.truncate(0)
-            section.write(line)
-
-        yield from _parse()
+        for key in _read_registry_export(lines[1:]):
+            self.log_debug(key.name)
+            root = key.name.replace('\\', '/')
+            for value in key.values.values():
+                path = F'{root}/{value.name}' if value.name else root
+                decoded = list(self._decode_registry_export(value.data))
+                if len(decoded) == 1:
+                    yield UnpackResult(path, decoded[0])
+                    continue
+                for k, d in enumerate(decoded):
+                    yield UnpackResult(F'{path}.{k}', d)
 
     def unpack(self, data):
         with contextlib.suppress(ParseException):

@@ -1,7 +1,16 @@
 from ... import TestUnitBase
+from .. import link_ole_child, rename_ole_entry
 
 import base64
+import inspect
+import io
 import lzma
+import pathlib
+import subprocess
+import sys
+import zipfile
+
+import refinery
 
 
 class TestDocExtractor(TestUnitBase):
@@ -23,3 +32,32 @@ class TestDocExtractor(TestUnitBase):
         ))
         test = data | self.load('ole') | bytes
         self.assertIn(B'%TMP%\\abctfhghghghgh\x8c.SCT', test)
+
+    def test_streams_whose_names_differ_only_in_case_each_hand_out_their_own_content(self):
+        data = self.download_sample('4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08')
+        streams = data | self.load() | {'path': bytes}
+        data = rename_ole_entry(data, '1Table', 'WORDDOCUMENT')
+        renamed = data | self.load() | {'path': bytes}
+        self.assertEqual(renamed['WordDocument'], streams['WordDocument'])
+        self.assertEqual(renamed['WORDDOCUMENT'], streams['1Table'])
+
+    def test_a_storage_whose_child_is_the_root_entry_is_listed_without_hanging(self):
+        document = self.download_sample('ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394')
+        with zipfile.ZipFile(io.BytesIO(document)) as archive:
+            project = archive.read('word/vbaProject.bin')
+        project = link_ole_child(project, 'VBA', 0)
+        script = inspect.cleandoc("""
+            import sys
+            from refinery.units.formats.office.xtdoc import xtdoc
+            for path in sys.stdin.buffer.read() | xtdoc(list=True):
+                print(path.decode())
+        """)
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            input=bytes(project),
+            capture_output=True,
+            cwd=pathlib.Path(refinery.__file__).parents[1],
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertIn('PROJECT', result.stdout.decode().split())

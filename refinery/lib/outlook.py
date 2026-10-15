@@ -10,9 +10,12 @@ import struct
 from datetime import datetime
 from email.parser import HeaderParser
 from functools import cached_property
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from refinery.lib.dt import filetime
+
+if TYPE_CHECKING:
+    from refinery.lib.ole.file import DirectoryEntry, OleFile
 
 _PSETID_APPOINTMENT = bytes.fromhex('0220060000000000c000000000000046')
 _LID_LOCATION = 0x8208
@@ -68,22 +71,29 @@ def _read_string_property(
     return None
 
 
+def _read_stream(ole: OleFile, storage: DirectoryEntry, path: str) -> bytes | memoryview | None:
+    """
+    The contents of the stream at the given path below the given storage, or `None` if there is
+    no entry at that path.
+    """
+    if (entry := ole.find(path, storage)) is None:
+        return None
+    return ole.openentry(entry).read()
+
+
 class MsgAttachment:
     """
-    An attachment of a `refinery.lib.outlook.MsgFile`: it reads its streams from the message's
-    storage at the given prefix and decodes 8-bit strings with the message's codec.
+    An attachment of a `refinery.lib.outlook.MsgFile`: it reads its streams from its own storage
+    and decodes 8-bit strings with the message's codec.
     """
-    def __init__(self, ole, prefix: str, ansi_codec: str, props: dict):
+    def __init__(self, ole: OleFile, storage: DirectoryEntry, ansi_codec: str, props: dict):
         self._ole = ole
-        self._prefix = prefix
+        self._storage = storage
         self._ansi_codec = ansi_codec
         self._props = props
 
     def _stream(self, path: str) -> bytes | memoryview | None:
-        full = F'{self._prefix}/{path}'
-        if self._ole.exists(full):
-            return self._ole.openstream(full).read()
-        return None
+        return _read_stream(self._ole, self._storage, path)
 
     def _read_string(self, prop_id: str) -> str | None:
         return _read_string_property(self._stream, F'__substg1.0_{prop_id}', self._ansi_codec)
@@ -112,9 +122,8 @@ class MsgAttachment:
     def data(self) -> bytes | memoryview | MsgFile:
         method = self.attach_method
         if method == 5:
-            prefix = F'{self._prefix}/__substg1.0_3701000D'
-            if self._ole.exists(prefix):
-                return MsgFile._from_ole(self._ole, prefix)
+            if (embedded := self._ole.find('__substg1.0_3701000D', self._storage)) is not None:
+                return MsgFile._from_ole(self._ole, embedded)
         if method == 6:
             binary = self._stream('__substg1.0_37010102')
             if binary is not None:
@@ -140,47 +149,33 @@ class MsgFile:
     def __init__(self, data: bytes | bytearray | memoryview):
         from refinery.lib.ole.file import OleFile
         from refinery.lib.structures import MemoryFile
-        self._ole = OleFile(MemoryFile(data))
-        self._prefix = ''
+        self._ole = ole = OleFile(MemoryFile(data))
+        self._storage = ole.root
         self._init()
 
     @classmethod
-    def _from_ole(cls, ole, prefix: str) -> MsgFile:
+    def _from_ole(cls, ole: OleFile, storage: DirectoryEntry) -> MsgFile:
         obj = object.__new__(cls)
         obj._ole = ole
-        obj._prefix = prefix
+        obj._storage = storage
         obj._init()
         return obj
 
     def _init(self):
-        self._unicode = False
-        p = self._prefix
-        for entry in self._ole.listdir():
-            path = '/'.join(entry)
-            if path.startswith(p) and path.endswith('001F'):
-                self._unicode = True
-                break
-        props_path = F'{p}/__properties_version1.0' if p else '__properties_version1.0'
-        header_size = 32 if not p else 24
-        self._props = self._parse_properties(props_path, header_size)
+        header_size = 32 if self._storage is self._ole.root else 24
+        self._props = self._parse_properties(self._storage, header_size)
         cp = self._props.get('3FFD0003') or self._props.get('3FDE0003')
         self._ansi_codec = _codepage_to_codec(cp) if cp else 'cp1252'
         self._named_props = self._parse_named_properties()
 
     def _read_stream(self, path: str) -> bytes | memoryview | None:
-        if self._ole.exists(path):
-            return self._ole.openstream(path).read()
-        return None
+        return _read_stream(self._ole, self._storage, path)
 
     def _read_string(self, prop_id: str) -> str | None:
-        p = self._prefix
-        base = F'{p}/__substg1.0_{prop_id}' if p else F'__substg1.0_{prop_id}'
-        return _read_string_property(self._read_stream, base, self._ansi_codec)
+        return _read_string_property(self._read_stream, F'__substg1.0_{prop_id}', self._ansi_codec)
 
     def _read_binary(self, prop_id: str) -> bytes | memoryview | None:
-        p = self._prefix
-        path = F'{p}/__substg1.0_{prop_id}0102' if p else F'__substg1.0_{prop_id}0102'
-        return self._read_stream(path)
+        return self._read_stream(F'__substg1.0_{prop_id}0102')
 
     def _parse_named_properties(self) -> dict[tuple[bytes, int], int]:
         """
@@ -188,8 +183,9 @@ class MsgFile:
         property ID in the 0x8000+ range.
         """
         result: dict[tuple[bytes, int], int] = {}
-        guid_stream = self._read_stream('__nameid_version1.0/__substg1.0_00020102')
-        data_stream = self._read_stream('__nameid_version1.0/__substg1.0_00030102')
+        root = self._ole.root
+        guid_stream = _read_stream(self._ole, root, '__nameid_version1.0/__substg1.0_00020102')
+        data_stream = _read_stream(self._ole, root, '__nameid_version1.0/__substg1.0_00030102')
         if not guid_stream or not data_stream:
             return result
         guids: list[bytes] = []
@@ -213,8 +209,8 @@ class MsgFile:
             return F'{prop_id:04X}'
         return None
 
-    def _parse_properties(self, stream_path: str, header_size: int = 32) -> dict:
-        data = self._read_stream(stream_path)
+    def _parse_properties(self, storage: DirectoryEntry, header_size: int = 32) -> dict:
+        data = _read_stream(self._ole, storage, '__properties_version1.0')
         if not data or len(data) < header_size + 16:
             return {}
         props = {}
@@ -289,26 +285,15 @@ class MsgFile:
 
     @cached_property
     def attachments(self) -> list[MsgAttachment]:
+        from refinery.lib.ole.file import STGTY
         result = []
-        p = self._prefix
-        prefix_parts = p.split('/') if p else []
-        depth = len(prefix_parts)
-        seen = set()
-        for entry in self._ole.listdir():
-            if entry[:depth] != prefix_parts:
+        for storage in self._storage.kids:
+            if storage.entry_type != STGTY.STORAGE:
                 continue
-            if len(entry) <= depth:
+            if not re.match(r'__attach_version1\.0_#[0-9A-F]{8}\Z', storage.name, re.IGNORECASE):
                 continue
-            dirname = entry[depth]
-            if not re.match(
-                r'__attach_version1\.0_#[0-9A-F]{8}\Z', dirname, re.IGNORECASE
-            ):
-                continue
-            full = '/'.join(prefix_parts + [dirname]) if p else dirname
-            if full not in seen:
-                seen.add(full)
-                props = self._parse_properties(F'{full}/__properties_version1.0', header_size=8)
-                result.append(MsgAttachment(self._ole, full, self._ansi_codec, props))
+            props = self._parse_properties(storage, header_size=8)
+            result.append(MsgAttachment(self._ole, storage, self._ansi_codec, props))
         return result
 
     # Contact properties (IPM.Contact)

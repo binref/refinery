@@ -135,7 +135,6 @@ class DirectoryEntry:
         'size',
         'is_minifat',
         'kids',
-        'kids_dict',
         'used',
     )
 
@@ -148,7 +147,6 @@ class DirectoryEntry:
     ):
         self.sid = sid
         self.kids: list[DirectoryEntry] = []
-        self.kids_dict: dict[str, DirectoryEntry] = {}
         self.used = False
 
         entry = memoryview(data)
@@ -192,6 +190,7 @@ class DirectoryEntry:
         return _clsid(self.clsid)
 
     def build_storage_tree(self, entries: list[DirectoryEntry | None]):
+        self.used = True
         pending: list[DirectoryEntry] = [self]
         while pending:
             storage = pending.pop()
@@ -212,10 +211,18 @@ class DirectoryEntry:
                 continue
             current.used = True
             self.kids.append(current)
-            self.kids_dict[current.name.lower()] = current
             for sid in (current.sid_left, current.sid_right):
                 if sid != NOSTREAM and sid < len(entries):
                     stack.append(entries[sid])
+
+
+def _ordinal(name: str) -> tuple[int, str]:
+    """
+    The key by which the compound file format orders the names of siblings: a shorter name comes
+    first, and names of equal length are compared in upper case.
+    """
+    upper = ''.join(u if len(u := c.upper()) == 1 else c for c in name)
+    return len(name.encode('utf-16le')), upper
 
 
 def _read_chain(
@@ -601,18 +608,59 @@ class OleFile:
             )
         return MemoryFile(memoryview(data))
 
-    def _find(self, filename: str) -> DirectoryEntry | None:
-        node = self._root
+    @property
+    def root(self) -> DirectoryEntry:
+        """
+        The directory entry of the root storage.
+        """
+        return self._root
+
+    def find(self, filename: str, storage: DirectoryEntry | None = None) -> DirectoryEntry | None:
+        """
+        The directory entry at the given path below the given storage, or below the root storage if
+        none is given. Each name is looked up as the compound file format defines it: by a descent
+        through the tree of the storage's children, which finds one entry also when several
+        siblings have the same name or names that differ only by case.
+        """
+        node = self._root if storage is None else storage
         for part in re.split(r'[\\/]+', filename):
-            key = part.lower()
-            child = node.kids_dict.get(key)
+            child = self._child(node, part)
             if child is None:
                 return None
             node = child
         return node
 
+    def _child(self, storage: DirectoryEntry, name: str) -> DirectoryEntry | None:
+        key = _ordinal(name)
+        entries = self._entries
+        visited: set[int] = set()
+        sid = storage.sid_child
+        while sid < len(entries) and sid not in visited:
+            visited.add(sid)
+            if (node := entries[sid]) is None:
+                return None
+            if key < (other := _ordinal(node.name)):
+                sid = node.sid_left
+            elif key > other:
+                sid = node.sid_right
+            else:
+                return node
+        return None
+
     def listdir(self, streams: bool = True, storages: bool = False) -> list[list[str]]:
-        result: list[list[str]] = []
+        return [path for path, _ in self.walk(streams, storages)]
+
+    def walk(
+        self,
+        streams: bool = True,
+        storages: bool = False,
+    ) -> list[tuple[list[str], DirectoryEntry]]:
+        """
+        Lists the path and the directory entry of every stream and, if requested, every storage, in
+        the order of `listdir`. Unlike a path, an entry tells apart siblings whose names are equal
+        or differ only by case.
+        """
+        result: list[tuple[list[str], DirectoryEntry]] = []
         self._list_recursive(self._root, [], result, streams, storages)
         return result
 
@@ -620,38 +668,46 @@ class OleFile:
         self,
         node: DirectoryEntry,
         path: list[str],
-        result: list[list[str]],
+        result: list[tuple[list[str], DirectoryEntry]],
         streams: bool,
         storages: bool,
     ):
         for kid in node.kids:
             current_path = path + [kid.name]
             if kid.entry_type == STGTY.STREAM and streams:
-                result.append(current_path)
+                result.append((current_path, kid))
             elif kid.entry_type in (STGTY.STORAGE, STGTY.ROOT):
                 if storages:
-                    result.append(current_path)
+                    result.append((current_path, kid))
                 self._list_recursive(kid, current_path, result, streams, storages)
 
     def openstream(self, filename: str) -> MemoryFile[memoryview]:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             raise OleFileError(F'Stream not found: {filename!r}')
         if entry.entry_type != STGTY.STREAM:
             raise OleFileError(F'Not a stream: {filename!r}')
         return self._open_stream(entry)
 
+    def openentry(self, entry: OleEntry) -> MemoryFile[memoryview]:
+        """
+        Opens the stream of the given directory entry, as listed by `walk`.
+        """
+        if not isinstance(entry, DirectoryEntry) or entry.entry_type != STGTY.STREAM:
+            raise OleFileError(F'Not a stream: {entry.name!r}')
+        return self._open_stream(entry)
+
     def exists(self, filename: str) -> bool:
-        return self._find(filename) is not None
+        return self.find(filename) is not None
 
     def get_type(self, path: str) -> int:
-        entry = self._find(path)
+        entry = self.find(path)
         if entry is None:
             return STGTY.EMPTY
         return entry.entry_type
 
     def get_size(self, filename: str) -> int:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             raise OleFileError(F'Entry not found: {filename!r}')
         return entry.size
@@ -660,19 +716,19 @@ class OleFile:
         return self._root.name
 
     def getclsid(self, filename: str) -> str:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             raise OleFileError(F'Entry not found: {filename!r}')
         return entry.clsid_str
 
     def getmtime(self, filename: str) -> datetime.datetime | None:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             return None
         return filetime(entry.modify_time)
 
     def getctime(self, filename: str) -> datetime.datetime | None:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             return None
         return filetime(entry.create_time)
@@ -705,7 +761,7 @@ class OleFile:
         existing stream. The underlying buffer must be mutable (i.e. the OleFile was constructed
         from a bytearray).
         """
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             raise OleFileError(F'Stream not found: {filename!r}')
         if entry.entry_type != STGTY.STREAM:
@@ -845,16 +901,39 @@ class VirtualOleFile:
             existing.entry_type = entry_type
             existing.data = data
 
-    def _find(self, path: str) -> _VirtualEntry | None:
-        node = self._root
+    @property
+    def root(self) -> _VirtualEntry:
+        """
+        The entry of the root storage.
+        """
+        return self._root
+
+    def find(self, path: str, storage: _VirtualEntry | None = None) -> _VirtualEntry | None:
+        """
+        The entry at the given path below the given storage, or below the root storage if none is
+        given. Names are compared without regard to case.
+        """
+        node = self._root if storage is None else storage
         for part in self._split(path):
-            node = node.kids.get(part.lower())
-            if node is None:
+            child = node.kids.get(part.lower())
+            if child is None:
                 return None
+            node = child
         return node
 
     def listdir(self, streams: bool = True, storages: bool = False) -> list[list[str]]:
-        result: list[list[str]] = []
+        return [path for path, _ in self.walk(streams, storages)]
+
+    def walk(
+        self,
+        streams: bool = True,
+        storages: bool = False,
+    ) -> list[tuple[list[str], _VirtualEntry]]:
+        """
+        Lists the path and the entry of every stream and, if requested, every storage, in the order
+        of `listdir`.
+        """
+        result: list[tuple[list[str], _VirtualEntry]] = []
         self._list_recursive(self._root, [], result, streams, storages)
         return result
 
@@ -862,7 +941,7 @@ class VirtualOleFile:
         self,
         node: _VirtualEntry,
         path: list[str],
-        result: list[list[str]],
+        result: list[tuple[list[str], _VirtualEntry]],
         streams: bool,
         storages: bool,
     ):
@@ -870,25 +949,33 @@ class VirtualOleFile:
             current_path = path + [kid.name]
             if kid.entry_type == STGTY.STREAM:
                 if streams:
-                    result.append(current_path)
+                    result.append((current_path, kid))
             elif kid.entry_type in (STGTY.STORAGE, STGTY.ROOT):
                 if storages:
-                    result.append(current_path)
+                    result.append((current_path, kid))
                 self._list_recursive(kid, current_path, result, streams, storages)
 
     def openstream(self, filename: str) -> MemoryFile[memoryview]:
-        entry = self._find(filename)
+        entry = self.find(filename)
         if entry is None:
             raise OleFileError(F'Stream not found: {filename!r}')
         if entry.entry_type != STGTY.STREAM:
             raise OleFileError(F'Not a stream: {filename!r}')
         return MemoryFile(memoryview(entry.data or b''))
 
+    def openentry(self, entry: OleEntry) -> MemoryFile[memoryview]:
+        """
+        Opens the stream of the given entry, as listed by `walk`.
+        """
+        if not isinstance(entry, _VirtualEntry) or entry.entry_type != STGTY.STREAM:
+            raise OleFileError(F'Not a stream: {entry.name!r}')
+        return MemoryFile(memoryview(entry.data or b''))
+
     def exists(self, filename: str) -> bool:
-        return self._find(filename) is not None
+        return self.find(filename) is not None
 
     def get_type(self, path: str) -> int:
-        entry = self._find(path)
+        entry = self.find(path)
         if entry is None:
             return STGTY.EMPTY
         return entry.entry_type
@@ -899,6 +986,11 @@ OleFileLike = OleFile | VirtualOleFile
 The duck-typed interface shared by `refinery.lib.ole.file.OleFile` and
 `refinery.lib.ole.file.VirtualOleFile`: any consumer that only reads streams and walks the
 directory tree accepts either.
+"""
+
+OleEntry = DirectoryEntry | _VirtualEntry
+"""
+An entry as listed by the `walk` method of either reader in `OleFileLike`.
 """
 
 

@@ -881,9 +881,8 @@ def _handle_mcafee_bup(view: memoryview) -> QuarantineResult | None:
     from refinery.lib.ole.file import OleFile
     try:
         with OleFile(view) as ole:
-            for path in ole.listdir():
-                joined = '/'.join(path)
-                stream = ole.openstream(joined)
+            for _, entry in ole.walk():
+                stream = ole.openentry(entry)
                 content = _xor_byte(stream.read(), 0x6A)
                 if _is_valid_output(content):
                     return QuarantineResult(content, 'McAfee')

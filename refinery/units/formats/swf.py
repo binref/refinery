@@ -300,7 +300,6 @@ class swf(PathExtractorUnit):
         parsed = SWF.Parse(data)
         jpeg_tables: bytes | bytearray | memoryview | None = None
         symbol_names: dict[int, str] = {}
-        counters: dict[str, int] = {}
 
         for tag in parsed.tags:
             if tag.type == SWFTagType.JPEGTables:
@@ -318,13 +317,6 @@ class swf(PathExtractorUnit):
                         name = codecs.decode(name, 'latin-1')
                     if name:
                         symbol_names[char_id] = name
-
-        def _unique(base_path: str) -> str:
-            count = counters.get(base_path, 0)
-            counters[base_path] = count + 1
-            if count == 0:
-                return base_path
-            return F'{base_path}.{count}'
 
         def _name(char_id: int, fallback: str) -> str:
             name = symbol_names.get(char_id)
@@ -344,7 +336,7 @@ class swf(PathExtractorUnit):
                 char_id = reader.u16()
                 image_data = reader.read()
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'images/{name}.jpg')
+                path = F'images/{name}.jpg'
                 yield UnpackResult(path, reconstruct_jpeg(image_data, jpeg_tables))
 
             elif tt == SWFTagType.DefineBitsJPEG2:
@@ -361,7 +353,7 @@ class swf(PathExtractorUnit):
                 else:
                     ext = 'jpg'
                     payload = reconstruct_jpeg(image_data)
-                path = _unique(F'images/{name}.{ext}')
+                path = F'images/{name}.{ext}'
                 yield UnpackResult(path, payload)
 
             elif tt == SWFTagType.DefineBitsJPEG3:
@@ -370,7 +362,7 @@ class swf(PathExtractorUnit):
                 alpha_offset = reader.u32()
                 image_data = reader.read_exactly(alpha_offset)
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'images/{name}.jpg')
+                path = F'images/{name}.jpg'
                 yield UnpackResult(path, reconstruct_jpeg(image_data))
 
             elif tt == SWFTagType.DefineBitsJPEG4:
@@ -380,7 +372,7 @@ class swf(PathExtractorUnit):
                 reader.u16()
                 image_data = reader.read_exactly(alpha_offset)
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'images/{name}.jpg')
+                path = F'images/{name}.jpg'
                 yield UnpackResult(path, reconstruct_jpeg(image_data))
 
             elif tt == SWFTagType.DefineBitsLossless:
@@ -395,7 +387,7 @@ class swf(PathExtractorUnit):
                     color_table_size = 0
                 zdata = reader.read()
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'images/{name}.png')
+                path = F'images/{name}.png'
                 yield UnpackResult(path, reconstruct_png(
                     w, h, False, fmt, color_table_size, zdata))
 
@@ -411,7 +403,7 @@ class swf(PathExtractorUnit):
                     color_table_size = 0
                 zdata = reader.read()
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'images/{name}.png')
+                path = F'images/{name}.png'
                 yield UnpackResult(path, reconstruct_png(
                     w, h, True, fmt, color_table_size, zdata))
 
@@ -424,7 +416,7 @@ class swf(PathExtractorUnit):
                 sound_data = bytes(reader.read())
                 ext = sound_extension(codec_id)
                 name = _name(char_id, F'{char_id}')
-                path = _unique(F'sounds/{name}.{ext}')
+                path = F'sounds/{name}.{ext}'
                 yield UnpackResult(path, sound_data)
 
             elif tt == SWFTagType.VideoFrame:
@@ -432,22 +424,22 @@ class swf(PathExtractorUnit):
                 stream_id = reader.u16()
                 frame_num = reader.u16()
                 video_data = bytes(reader.read())
-                path = _unique(F'video/{stream_id}/{frame_num}.bin')
+                path = F'video/{stream_id}/{frame_num}.bin'
                 yield UnpackResult(path, video_data)
 
             elif tt == SWFTagType.DoAction:
-                path = _unique('scripts/doaction.as')
+                path = 'scripts/doaction.as'
                 yield UnpackResult(path, bytes(td))
 
             elif tt == SWFTagType.DoInitAction:
                 reader = StructReader(td)
                 sprite_id = reader.u16()
                 bytecode = bytes(reader.read())
-                path = _unique(F'scripts/initaction_{sprite_id}.as')
+                path = F'scripts/initaction_{sprite_id}.as'
                 yield UnpackResult(path, bytecode)
 
             elif tt == SWFTagType.DoABC:
-                path = _unique('scripts/abc.abc')
+                path = 'scripts/abc.abc'
                 yield UnpackResult(path, bytes(td))
 
             elif tt == SWFTagType.DoABC2:
@@ -461,7 +453,7 @@ class swf(PathExtractorUnit):
                 if not abc_name:
                     abc_name = 'abc'
                 abc_data = bytes(reader.read())
-                path = _unique(F'scripts/{abc_name}.abc')
+                path = F'scripts/{abc_name}.abc'
                 yield UnpackResult(path, abc_data)
 
             elif tt == SWFTagType.DefineBinaryData:
@@ -470,7 +462,7 @@ class swf(PathExtractorUnit):
                 reader.u32()
                 binary_data = bytes(reader.read())
                 name = _name(tag_id, F'{tag_id}')
-                path = _unique(F'binary/{name}.bin')
+                path = F'binary/{name}.bin'
                 yield UnpackResult(path, binary_data)
 
             elif tt in (
@@ -481,5 +473,5 @@ class swf(PathExtractorUnit):
             ):
                 reader = StructReader(td)
                 char_id = reader.u16()
-                path = _unique(F'fonts/{char_id}.font')
+                path = F'fonts/{char_id}.font'
                 yield UnpackResult(path, bytes(td))

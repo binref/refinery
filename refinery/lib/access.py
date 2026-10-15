@@ -18,6 +18,7 @@ import struct
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import cached_property
 from typing import Literal, NamedTuple, overload
 from uuid import UUID
 
@@ -531,9 +532,9 @@ class _TableObj:
 
 class AccessDatabase:
     """
-    Parser for Microsoft Access database files. Accepts raw bytes as input and
-    provides a `catalog` mapping table names to IDs and a `parse_table` method
-    that returns `dict[str, list]` (column name to list of row values).
+    Parser for Microsoft Access database files. Accepts raw bytes as input and provides `tables`,
+    the name and ID of every user table in the order of the catalog, and the methods `parse_table`
+    and `parse_table_id` that return `dict[str, list]` (column name to list of row values).
     """
 
     def __init__(self, data: bytes | bytearray | memoryview):
@@ -542,7 +543,7 @@ class AccessDatabase:
         self._parse_header()
         self._table_defs, self._data_pages = self._categorize_pages()
         self._tables_with_data = self._link_tables_to_data()
-        self.catalog: dict[str, int] = self._parse_catalog()
+        self.tables = self._parse_catalog()
 
     def _parse_header(self):
         reader = StructReader[memoryview](self._data)
@@ -593,40 +594,67 @@ class AccessDatabase:
             tables[page_offset].linked_pages.append(page)
         return tables
 
-    def _parse_catalog(self) -> dict[str, int]:
-        catalog_offset = 2 * self._page_size
-        if catalog_offset not in self._tables_with_data:
+    @cached_property
+    def _objects(self) -> dict[str, list]:
+        """
+        The system table MSysObjects, the catalog of every object in the database. It is read from
+        its fixed place on the third page, not looked up by its name.
+        """
+        if (catalog := self._tables_with_data.get(2 * self._page_size)) is None:
             return {}
-        catalog_table = self._tables_with_data[catalog_offset]
-        parsed = self._do_parse_table(catalog_table)
-        if not parsed:
-            return {}
+        return self._do_parse_table(catalog)
+
+    def _parse_catalog(self) -> list[tuple[str, int]]:
+        if not (parsed := self._objects):
+            return []
         names = parsed.get('Name', [])
         ids = parsed.get('Id', [])
         types = parsed.get('Type', [])
         flags = parsed.get('Flags', [])
-        mapping: dict[str, int] = {}
+        tables: list[tuple[str, int]] = []
         for i, name in enumerate(names):
             if not isinstance(name, str):
                 continue
             if name == 'MSysObjects':
                 if i < len(ids):
-                    mapping[name] = ids[i]
+                    tables.append((name, ids[i]))
                 continue
             if i < len(types) and types[i] == 1:
                 if i < len(flags) and flags[i] not in _SYSTEM_FLAGS:
                     if i < len(ids):
-                        mapping[name] = ids[i]
-        return mapping
+                        tables.append((name, ids[i]))
+        return tables
+
+    def table_id(self, name: str) -> int | None:
+        """
+        The ID of the first table in `tables` with the given name. System tables such as
+        MSysAccessStorage are not part of `tables`; for them, the first object in MSysObjects with
+        the given name is used. Returns `None` if no object has the given name.
+        """
+        for candidate, table_id in self.tables:
+            if candidate == name:
+                return table_id
+        objects = self._objects
+        ids = objects.get('Id', [])
+        for i, candidate in enumerate(objects.get('Name', [])):
+            if candidate == name and i < len(ids):
+                return ids[i]
+        return None
 
     def parse_table(self, name: str) -> dict[str, list]:
         """
-        Parse a table by name. Returns a dictionary mapping column names to
-        lists of row values.
+        Parse the table that `table_id` finds for the given name. Returns a dictionary mapping column
+        names to lists of row values.
         """
-        table_id = self.catalog.get(name)
-        if table_id is None:
+        if (table_id := self.table_id(name)) is None:
             return {}
+        return self.parse_table_id(table_id)
+
+    def parse_table_id(self, table_id: int) -> dict[str, list]:
+        """
+        Parse the table with the given ID. Returns a dictionary mapping column names to lists of
+        row values.
+        """
         table_offset = table_id * self._page_size
         table_obj = self._tables_with_data.get(table_offset)
         if table_obj is None:
@@ -636,28 +664,6 @@ class AccessDatabase:
             else:
                 return {}
         return self._do_parse_table(table_obj)
-
-    def _parse_system_table(self, name: str) -> dict[str, list]:
-        """
-        Parse a system table by name. Access keeps system tables such as MSysAccessStorage out of
-        the user-facing `catalog`, so this resolves the table id from MSysObjects when necessary.
-        """
-        if name in self.catalog:
-            return self.parse_table(name)
-        objects = self.parse_table('MSysObjects')
-        names = objects.get('Name', [])
-        ids = objects.get('Id', [])
-        for i, candidate in enumerate(names):
-            if candidate == name and i < len(ids):
-                table_offset = ids[i] * self._page_size
-                table_obj = self._tables_with_data.get(table_offset)
-                if table_obj is None:
-                    table_def = self._table_defs.get(table_offset)
-                    if table_def is None:
-                        return {}
-                    table_obj = _TableObj(table_offset, table_def)
-                return self._do_parse_table(table_obj)
-        return {}
 
     def open_vba(self):
         """
@@ -677,7 +683,7 @@ class AccessDatabase:
         """
         from refinery.lib.ole.file import STGTY, VirtualOleFile
 
-        table = self._parse_system_table('MSysAccessStorage')
+        table = self.parse_table('MSysAccessStorage')
         ids = table.get('Id')
         if not ids:
             return None
@@ -738,7 +744,7 @@ class AccessDatabase:
         """
         from refinery.lib.ole.file import NotOleFileError, OleFile, OleFileError
 
-        table = self._parse_system_table('MSysAccessObjects')
+        table = self.parse_table('MSysAccessObjects')
         ids = table.get('ID')
         data = table.get('Data')
         if not ids or not data:
@@ -775,11 +781,11 @@ class AccessDatabase:
         if vba is None:
             return []
         references: list[VbaReference] = []
-        for entry in vba.listdir(streams=True):
-            if entry[-1] != '_VBA_PROJECT':
+        for parts, entry in vba.walk():
+            if parts[-1] != '_VBA_PROJECT':
                 continue
             try:
-                stream = bytes(vba.openstream('/'.join(entry)).read())
+                stream = bytes(vba.openentry(entry).read())
             except Exception:
                 continue
             references.extend(_parse_vba_references(stream))
@@ -800,11 +806,11 @@ class AccessDatabase:
         if vba is None:
             return []
         paths: dict[str, None] = {}
-        for entry in vba.listdir(streams=True):
-            if entry[-1] != _IMEXSPEC_STREAM:
+        for parts, entry in vba.walk():
+            if parts[-1] != _IMEXSPEC_STREAM:
                 continue
             try:
-                blob = bytes(vba.openstream('/'.join(entry)).read())
+                blob = bytes(vba.openentry(entry).read())
             except Exception:
                 continue
             path = _parse_import_export_spec(blob)
@@ -825,7 +831,7 @@ class AccessDatabase:
             'Engine': _ENGINE_NAMES.get(self._version, str(self._version))
         }
         try:
-            objects = self._parse_system_table('MSysObjects')
+            objects = self._objects
         except Exception:
             pass
         else:

@@ -25,6 +25,10 @@ class SectionHeader(Struct):
         self.length = reader.u64()
 
 
+def _caseless(name: str) -> bytes:
+    return name.encode('utf8').lower()
+
+
 class LanguageMixin:
     language: int
 
@@ -160,7 +164,14 @@ class IndexChunk(Chunk):
     Magic = B'PMGI'
 
     def __init__(self, reader: StructReader, density: int):
+        end = reader.tell() + reader.remaining_bytes
         super().__init__(reader, density)
+        end -= self.extra_size
+        self.entries: list[tuple[str, int]] = []
+        while reader.tell() < end:
+            ns = reader.read_7bit_encoded_int(64, bigendian=True)
+            name = reader.read_bytes(ns).decode('utf8')
+            self.entries.append((name, reader.read_7bit_encoded_int(64, bigendian=True)))
         self._quick_refs(reader, density)
 
 
@@ -323,14 +334,56 @@ class CHM(Struct):
         return self.extractor(entry)()
 
     def seekto(self, reader: StructReader, path: str):
-        if content := self.filesystem.get(path):
+        if content := self.find(path):
             reader.seekset(self.sections[content.section_index].offset + content.offset)
             return True
         else:
             return False
 
+    @property
+    def listing(self) -> list[ListingChunk]:
+        """
+        The listing chunks of the directory in the order of the file.
+        """
+        return [chunk for chunk in self.chunks if isinstance(chunk, ListingChunk)]
+
+    def entries(self) -> Iterator[DirectoryListingEntry]:
+        """
+        Generates every entry of the directory in the order of the file, also when two entries
+        have the same name.
+        """
+        for chunk in self.listing:
+            yield from chunk.entries
+
+    def find(self, name: str) -> DirectoryListingEntry | None:
+        """
+        Find the directory entry with the given name through the directory index: starting at the
+        root of the index, every index chunk leads to the chunk of its last entry whose name is not
+        greater than the given one, and the first entry with the given name in the listing chunk
+        reached this way is returned. Names are compared ignoring the case of ASCII letters. Without
+        an index, only the first listing chunk is searched.
+        """
+        key = _caseless(name)
+        number = self.directory.root_chunk
+        if number >= len(self.chunks):
+            number = self.directory.listing1st
+        visited: set[int] = set()
+        while 0 <= number < len(self.chunks) and number not in visited:
+            visited.add(number)
+            chunk = self.chunks[number]
+            if isinstance(chunk, ListingChunk):
+                for entry in chunk.entries:
+                    if _caseless(entry.name) == key:
+                        return entry
+                return None
+            number = -1
+            for lower_bound, target in chunk.entries:
+                if _caseless(lower_bound) > key:
+                    break
+                number = target
+        return None
+
     def __init__(self, reader: StructReader[memoryview], *args, **kwargs):
-        self.filesystem: dict[str, DirectoryListingEntry] = {}
         self.sections: list[ContentSection] = []
         self._streams: weakref.WeakValueDictionary[int, SolidStream] = weakref.WeakValueDictionary()
 
@@ -342,28 +395,20 @@ class CHM(Struct):
 
         with reader.detour_absolute(header.section_directory.offset):
             self.directory = dh = DirectoryHeader(reader)
-            self.index = []
+            self.chunks: list[IndexChunk | ListingChunk] = []
 
             d = dh.density
             m = dh.chunk_size
 
-            self.listing: list[ListingChunk] = []
-
             for k in range(dh.total_chunks):
                 body = reader.read_exactly(m)
                 if body[:4] == IndexChunk.Magic:
-                    self.index.append(IndexChunk.Parse(body, d))
+                    self.chunks.append(IndexChunk.Parse(body, d))
                     continue
                 if body[:4] == ListingChunk.Magic:
                     if not (dh.listing1st <= k <= dh.listingLst):
                         raise ValueError(F'Chunk {k} has magic {ListingChunk.Magic.decode()} but is out of listing range.')
-                    chunk = ListingChunk.Parse(body, d)
-                    for entry in chunk.entries:
-                        name = entry.name
-                        if name.startswith('/#') or name.startswith('/$'):
-                            name = F'/$CHM{name}'
-                        self.filesystem[name] = entry
-                    self.listing.append(chunk)
+                    self.chunks.append(ListingChunk.Parse(body, d))
                     continue
                 raise ValueError(F'Unknown chunk magic: {body[:4].hex(":")}')
 
@@ -372,17 +417,17 @@ class CHM(Struct):
 
         reader.seekset(co)
         total_size = reader.remaining_bytes
-        reader.seekset(co + self.filesystem['::DataSpace/NameList'].offset)
+        if (names := self.find('::DataSpace/NameList')) is None:
+            raise LookupError('could not find the list of content sections')
+        reader.seekset(co + names.offset)
         self.content_sections = ContentSections(reader)
 
         for section in self.content_sections.sections:
             if section.name.lower() == 'uncompressed':
                 self.sections.append(ContentSection(co, total_size))
                 continue
-            try:
-                content = self.filesystem[section.path_content]
-            except KeyError as KE:
-                raise LookupError(F'could not find content file for section {section.name}') from KE
+            if (content := self.find(section.path_content)) is None:
+                raise LookupError(F'could not find content file for section {section.name}')
 
             cs = ContentSection(content.offset, content.length)
             cs.base_section = s = content.section_index

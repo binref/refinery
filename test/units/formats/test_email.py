@@ -1,4 +1,5 @@
 from .. import TestUnitBase
+from . import rename_ole_entry
 
 import base64
 import lzma
@@ -48,6 +49,13 @@ class TestEmailUnpacker(TestUnitBase):
         data[offset:offset + 2] = B'\x00\xD8'
         out = data | self.load() | {'path': ...}
         self.assertIn('attachments/request.zip', out)
+
+    def test_a_storage_named_like_the_attachment_in_another_case_does_not_repeat_it(self):
+        data = self.download_sample('f4d5353552501b7aa0f9bb400e0d0349487dc45cbe5ce82fe5e7de526d37f301')
+        data = rename_ole_entry(data, '__recip_version1.0_#00000000', '__ATTACH_version1.0_#00000000')
+        out = data | self.load() | {'path': ...}
+        self.assertEqual([str(path) for path in out if 'request.zip' in str(path)], ['attachments/request.zip'])
+        self.assertIn(b'figures,12.18.2020.doc', out['attachments/request.zip'])
 
     def test_embedded_attachment_extraction(self):
         data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')

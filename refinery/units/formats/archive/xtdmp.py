@@ -73,7 +73,7 @@ class xtdmp(ArchiveUnit):
             return result
 
         modules: list[MinidumpModule] = mdmp.modules.modules
-        unpacked_modules: dict[str, UnpackResult] = {}
+        unpacked_modules: list[UnpackResult] = []
         for module in modules:
             def _module(d=mdmp, m=module):
                 module_data = read(d, m.baseaddress, m.size)
@@ -92,9 +92,9 @@ class xtdmp(ArchiveUnit):
             drive, rest = ntpath.splitdrive(str(module.name))
             rest = rest.replace(ntpath.sep, '/').lstrip('/')
             path = F'module/{drive[:1]}/{rest}'
-            unpacked_modules[path] = self._pack(path, date, _module)
-        for path in sorted(unpacked_modules):
-            yield unpacked_modules[path]
+            unpacked_modules.append(self._pack(path, date, _module))
+        unpacked_modules.sort(key=lambda module: module.path)
+        yield from unpacked_modules
 
         for arch in (
             mdmp.memory_segments_64,

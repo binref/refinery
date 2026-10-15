@@ -135,17 +135,36 @@ class xtpdf(ArchiveUnit):
                 key = F'/{key}'
             yield from self._walk_pypdf2(value, memo, *path, key)
 
-    def _walk_pike(self, blob: Object, memo: list[Object] | None = None, *keys):
+    def _walk_pike(
+        self,
+        blob: Object,
+        memo: dict[tuple[int, int], bytearray | None] | None = None,
+        *keys,
+    ):
+        """
+        Walks the given PDF object and hands out what it contains below the given path. The memo
+        maps every indirect object that was walked to its decoded stream, or to `None` if it has
+        none: An object reached a second time is not walked again, but a stream that a file
+        specification embeds comes out under every name that embeds it, decoded only once.
+        """
+        pike = self._pikepdf
+
         if memo is None:
-            memo = [blob]
-        elif blob in memo:
-            return
-        else:
-            memo.append(blob)
+            memo = {}
+
+        def indirect(node) -> tuple[int, int] | None:
+            if isinstance(node, pike.Object) and node.is_indirect:
+                return node.objgen
+            return None
+
+        if (objgen := indirect(blob)) is not None:
+            if objgen in memo:
+                return
+            memo[objgen] = None
 
         try:
             name = blob['/F']
-            blob = blob['/EF']['/F']
+            embedded = blob['/EF']['/F']
         except Exception:
             pass
         else:
@@ -153,8 +172,14 @@ class xtpdf(ArchiveUnit):
                 return bytes.fromhex(match[1]).decode('latin1')
             name = re.sub('#([0-9a-fA-F]{2})', unhex, str(name))
             keys = *keys, F'/{name}'
+            if (objgen := indirect(embedded)) is not None:
+                if objgen in memo:
+                    if (decoded := memo[objgen]) is not None:
+                        yield UnpackResult(''.join(keys), decoded)
+                    return
+                memo[objgen] = None
+            blob = embedded
 
-        pike = self._pikepdf
         meta = {}
         path = ''.join(keys)
         done = set()
@@ -190,7 +215,10 @@ class xtpdf(ArchiveUnit):
             except Exception:
                 buffer = None
         if buffer is not None:
-            yield UnpackResult(path, bytearray(buffer))
+            decoded = bytearray(buffer)
+            if (objgen := indirect(blob)) is not None:
+                memo[objgen] = decoded
+            yield UnpackResult(path, decoded)
         elif isinstance(blob, pike.String):
             yield UnpackResult(path, bytes(blob))
         elif isinstance(blob, pike.Object):

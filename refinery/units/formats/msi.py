@@ -12,7 +12,7 @@ from typing import NamedTuple
 from refinery.lib import chunks, json
 from refinery.lib.cab import Cabinet
 from refinery.lib.id import buffer_offset, is_likely_msi, is_likely_pe
-from refinery.lib.ole.file import OleFile
+from refinery.lib.ole.file import DirectoryEntry, OleFile
 from refinery.lib.structures import StructReader
 from refinery.lib.types import Param, buf
 from refinery.units import Arg
@@ -252,16 +252,25 @@ class xtmsi(xtdoc, docs=(
         super().__init__(*paths, nocab=nocab, **keywords)
 
     def unpack(self, data: buf):
+        document = OleFile(self._get_msi_from_overlay(data))
         streams: list[UnpackResult] = []
-        streams_by_name: dict[str, UnpackResult] = {}
+        streams_by_entry: dict[DirectoryEntry, UnpackResult] = {}
         read: set[UnpackResult] = set()
 
-        for name, result in self._streams(OleFile(self._get_msi_from_overlay(data))):
+        for entry, result in self._streams(document):
             streams.append(result)
-            streams_by_name.setdefault(name, result)
+            streams_by_entry[entry] = result
+
+        def table_stream(table: str) -> UnpackResult | None:
+            if (entry := document.find(msi_table_stream_name(table))) is None:
+                return None
+            if (result := streams_by_entry.get(entry)) is None or result in read:
+                return None
+            return result
 
         def stream(table: str):
-            result = streams_by_name.pop(msi_table_stream_name(table))
+            if (result := table_stream(table)) is None:
+                raise KeyError(F'table stream not found: {table}')
             read.add(result)
             content = result.get_data()
             result.release()
@@ -298,7 +307,7 @@ class xtmsi(xtdoc, docs=(
         postprocessing: list[_ScriptItem] = []
 
         for table_name, table in tables.items():
-            if msi_table_stream_name(table_name) not in streams_by_name:
+            if table_stream(table_name) is None:
                 continue
             processed = []
             info = list(table.values())
