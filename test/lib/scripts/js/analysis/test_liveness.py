@@ -124,6 +124,22 @@ class TestLiveness(TestBase):
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'i')))
         self.assertFalse(lv.is_dead_store(self._decl(ast, 's')))
 
+    def test_a_store_a_for_loop_tests_by_name_is_live(self):
+        source = 'function f(m) { var n = 0; for (var go = true; go; ) { if (++n > m) go = false; } return n; }'
+        ast, lv = self._build(source)
+        self.assertFalse(lv.is_dead_store(self._decl(ast, 'go')))
+
+    def test_a_store_before_a_for_loop_testing_it_by_name_is_live(self):
+        source = 'function f(k) { var n = 0, i; for (i = k; i; ) { n++; i = 0; } return n; }'
+        ast, lv = self._build(source)
+        self.assertFalse(lv.is_dead_store(self._store(ast, 'i', 0)))
+        self.assertFalse(lv.is_dead_store(self._store(ast, 'i', 1)))
+
+    def test_a_store_a_for_loop_updates_by_name_is_live(self):
+        source = 'function f(k) { var n = 0, i = k; for (; n < 3; i) { n++; } return n; }'
+        ast, lv = self._build(source)
+        self.assertFalse(lv.is_dead_store(self._decl(ast, 'i')))
+
     def test_parameter_store_is_not_reported(self):
         ast, lv = self._build('function f(p) { p = 1; return 2; }')
         self.assertFalse(lv.is_dead_store(self._store(ast, 'p')))

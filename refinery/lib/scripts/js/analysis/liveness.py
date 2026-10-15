@@ -276,18 +276,19 @@ class LivenessModel:
 
     def _shallow_idents(self, graph: ControlFlowGraph, element: Node) -> Iterator[JsIdentifier]:
         """
-        Yield the identifiers belonging to *element*'s own control-flow node: those in its subtree that
-        are not inside a nested function or a descendant that is itself a separate control-flow node
-        (whose identifiers are accounted there). This keeps a loop or branch head from double-counting
-        the body that follows it.
+        Yield the identifiers belonging to *element*'s own control-flow node: *element* itself and
+        those in its subtree that are not inside a nested function or a descendant that is itself a
+        separate control-flow node (whose identifiers are accounted there). This keeps a loop or branch
+        head from double-counting the body that follows it.
         """
-        stack: list[Node] = list(element.children())
+        stack: list[Node] = [element]
         while stack:
             current = stack.pop()
-            if isinstance(current, FUNCTION_NODES):
-                continue
-            if graph.node_of(current) is not None:
-                continue
+            if current is not element:
+                if isinstance(current, FUNCTION_NODES):
+                    continue
+                if graph.node_of(current) is not None:
+                    continue
             if isinstance(current, JsIdentifier):
                 yield current
             stack.extend(current.children())

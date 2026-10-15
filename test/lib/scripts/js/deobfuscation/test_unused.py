@@ -2948,6 +2948,62 @@ class TestNodePrintsTheSameAboutAFunctionAnotherFunctionReads(TestJsDeobfuscator
         )
 
 
+#: Programs whose `for` loop tests a name it stores before the loop and in the body, mapped to what
+#: Node prints for each.
+A_FOR_LOOP_TESTING_A_NAME = {
+    inspect.cleandoc("""
+        function f(m) { var n = 0; for (var go = true; go; ) { n++; if (n > m) go = false; } return n; }
+        console.log(f(Math.random() < 2 ? 2 : 3));
+    """): '3\n',
+    inspect.cleandoc("""
+        function f(m) { var n = 0, go; for (go = 1; go; n++) { if (n > m) go = 0; } return n; }
+        console.log(f(Math.random() < 2 ? 2 : 3));
+    """): '4\n',
+    inspect.cleandoc("""
+        function f(m) { var n = 0, go = m; for (; go; ) { n++; go = 0; } return n; }
+        console.log(f(Math.random() < 2 ? 1 : 0));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(k) { var n = 0, i; for (i = k; i; ) { n++; i = 0; } return n; }
+        console.log(f(Math.random() < 2 ? 1 : 0));
+    """): '1\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAForLoopTestingAName(TestJsDeobfuscator):
+
+    def test_the_stores_the_test_reads_are_kept(self):
+        """
+        A `for` loop's test has a control-flow node of its own, and a test that is a bare name is
+        that node's whole expression. Dropping the stores it reads as ones nothing reads makes a loop
+        skip its body or never end.
+        """
+        rows = A_FOR_LOOP_TESTING_A_NAME
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
+class TestAStoreAForLoopTestsByNameIsKept(TestJsDeobfuscator):
+
+    def test_the_loop_still_tests_the_name_its_body_clears(self):
+        source = inspect.cleandoc(
+            """
+            function f(k) {
+              var n = 0, i;
+              for (i = k; i; ) {
+                n++;
+                i = 0;
+              }
+              return n;
+            }
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
+
+
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
     """
     The dead declarations standing in one body are taken out of it together, so the tree is edited
