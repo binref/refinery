@@ -58,7 +58,7 @@ class innopwd(Unit):
                 self.log_info(F'calling {event.name!s}{event.args!r}')
                 continue
             if isinstance(event, NewScriptError):
-                self.log_info(F'script error in {event.name!s}{event.args!r}: {event.message}')
+                self.log_warn(str(event))
                 continue
             if isinstance(event, NewMutex):
                 self.log_info(F'mutex registered: {event!s}')

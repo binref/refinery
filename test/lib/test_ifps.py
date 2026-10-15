@@ -5,7 +5,7 @@ import time
 from typing import Callable
 from unittest import mock
 
-from refinery.lib.inno.emulator import EmulatorException
+from refinery.lib.inno.emulator import EmulatorException, IFPSException
 
 from .. import TestBase
 
@@ -17,9 +17,30 @@ _SCRIPT_THAT_WRITES_NUMBERS_IN_HEX = _SCRIPT_WITH_TRY_FINALLY
 _SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD = _SCRIPT_WITH_TRY_FINALLY
 _SCRIPT_THAT_PRINTS_JSON = _SCRIPT_WITH_TRY_FINALLY
 _SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE = _SCRIPT_WITH_NESTED_TRY
+_SCRIPT_THAT_READS_A_SETTING_FROM_THE_REGISTRY = _SCRIPT_WITH_NESTED_TRY
+_SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK = '6aebe4aac528782d132f96e970cbba2d182b7b3b78abddce7846a6fecd32b2d1'
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
+_SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR = (
+    '0c9ffd51196d71bba19a708bb64224be87c8fceb0b22b71262080c1055b5a642',
+    '441094a1a29f4ff248f289e19ae6c8c15abe1ff8bd440aefe85a0e5817482e92',
+    '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc',
+    '51ac80ab4daea0877910d13eb9dae07e8c26507e5115ee815eb7dc9410be3c22',
+    '5589c0d2de0efdc59eb7325497f18a9a01c095b5cc4859774f75cc91bbdb2757',
+    '6aebe4aac528782d132f96e970cbba2d182b7b3b78abddce7846a6fecd32b2d1',
+    '922aaca70e288f7fd9ee31ac4db98d0fc90fb7bb92b056d18f69b328cbacc043',
+    '9271acdc528deb7d971f742c94d772b1f408b5db00ae949f79221a3545f41314',
+    'a30a12d725e20c7ec403676710b3a2df41bb395fcc80539a28c0da09f5906ee6',
+    'a3c40be74f061bd25a3e4b264602f4ace5652eed0ca020362a6d56d336bc650f',
+    'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42',
+    'c47352571fb7ac45bd994f4b057ffec15898df4724f2a4cd0d9213e3eedfca29',
+    'c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73',
+    'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c',
+    'd290117343b7e76b971c7b9eb618e60322af6cd74bd70296dbc00a06ca30d565',
+    'eeafd3fe2280e065aac87ca8b210be5873be5fe1f51ca4156d12bcf4f0d1eb1e',
+    'fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc',
+)
 
 
 @contextlib.contextmanager
@@ -500,11 +521,24 @@ class TestIPFSEmulator(TestBase):
 
     def test_a_script_error_in_should_skip_page_ends_only_that_event(self):
         """
-        For the page that selects the target directory, `ShouldSkipPage` ends with the call
-        `DirExistsNoRedir(ExtractFileDir(..))`. When `ExtractFileDir` fails, Inno Setup shows the
+        For the page that selects the target directory, `ShouldSkipPage` ends by passing the result
+        of `ExtractFileDir` to `DirExistsNoRedir`. When `ExtractFileDir` fails, Inno Setup shows the
         error and does not skip the page, which is also the answer of the script without the error.
         """
-        from refinery.lib.inno.emulator import NewFunctionCall, NewScriptError, PageID
+        from refinery.lib.inno.emulator import (
+            IFPSEmulatorConfig,
+            InnoSetupEmulator,
+            NewFunctionCall,
+            NewScriptError,
+            PageID,
+            SetupEvent,
+        )
+        from refinery.lib.inno.ifps import IFPSFile
+
+        script = IFPSFile.Parse(self.download_sample(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE))
+
+        def emulator():
+            return InnoSetupEmulator(script, IFPSEmulatorConfig(log_calls=True))
 
         def calls_and_errors(events):
             return [
@@ -512,20 +546,116 @@ class TestIPFSEmulator(TestBase):
                 for event in events if isinstance(event, (NewFunctionCall, NewScriptError))
             ]
 
-        def installation():
-            emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE, log_calls=True)
-            return calls_and_errors(emulator.emulate_installation())
-
-        clean = installation()
+        clean = calls_and_errors(emulator().emulate_installation())
         with _failing_external('ExtractFileDir'):
-            failed = installation()
-        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE, log_calls=True)
-        unreached = calls_and_errors(emulator.emulate_function(emulator.symbols['DIREXISTSNOREDIR'], ''))
+            failed = calls_and_errors(emulator().emulate_installation())
+        checker = emulator()
+        unreached = calls_and_errors(checker.emulate_function(checker.symbols['DIREXISTSNOREDIR'], ''))
         errors = [event for event in failed if isinstance(event, NewScriptError)]
-        self.assertEqual([(error.name, error.args) for error in errors], [('ShouldSkipPage', (PageID.wpSelectDir,))])
+        self.assertEqual([(error.name, error.args) for error in errors], [(SetupEvent.ShouldSkipPage, (PageID.wpSelectDir,))])
         k = failed.index(errors[0])
         # names only: two clean runs differ in time stamps and random numbers, never in the calls
         self.assertEqual(failed[:k] + unreached + failed[k + 1:], clean)
+
+    def test_a_reported_script_error_keeps_no_exception_alive_while_it_is_handled(self):
+        import gc
+        from refinery.lib.inno.emulator import IFPSException, NewScriptError
+
+        def exceptions_alive():
+            gc.collect()
+            return sum(isinstance(item, IFPSException) for item in gc.get_objects())
+
+        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE)
+        with _failing_external('ExtractFileDir'):
+            installation = emulator.emulate_installation()
+            before = exceptions_alive()
+            for event in installation:
+                if isinstance(event, NewScriptError):
+                    break
+            during = exceptions_alive()
+            installation.close()
+        self.assertEqual(during, before)
+
+    def test_each_setup_event_is_named_as_inno_setup_declares_it(self):
+        from refinery.lib.inno.emulator import SetupEvent
+        from refinery.lib.inno.symbols import IFPSEvents
+        self.assertEqual([IFPSEvents[event].name for event in SetupEvent], [event.value for event in SetupEvent])
+
+    def test_the_emulated_installation_of_each_sample_reports_no_script_error(self):
+        """
+        The emulated installation goes on after a script error. An emulated function that fails on
+        one of these samples therefore no longer ends the installation and only shows up here.
+        """
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.inno.emulator import InnoSetupEmulator, NewScriptError
+        from refinery.lib.inno.ifps import IFPSFile
+        for sample in _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR:
+            with self.subTest(sample=sample):
+                data = self.download_sample(sample)
+                script = IFPSFile.Parse(data) if data.startswith(IFPSFile.Magic) else InnoArchive(data)
+                events = InnoSetupEmulator(script).emulate_installation()
+                self.assertEqual([str(event) for event in events if isinstance(event, NewScriptError)], [])
+
+    def test_a_function_that_is_not_emulated_sets_its_last_output_argument_to_one(self):
+        """
+        During an uninstallation, the script reads a setting into the last argument of
+        `RegQueryDWordValue`, which is not emulated, and answers whether that setting is 1.
+        """
+        emulator = self._script_emulator(_SCRIPT_THAT_READS_A_SETTING_FROM_THE_REGISTRY)
+        with _replaced_external('IsUninstaller', lambda _: True):
+            setting = emulator.emulate_function(emulator.symbols['GETINSTALLSETTINGBOOL'], 'Some', False).value
+        self.assertTrue(setting)
+
+    def test_a_message_argument_is_one_digit_counted_from_one(self):
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.FmtMessage('%1 and %2', ['a', 'b']), 'a and b')
+        self.assertEqual(emulator.FmtMessage('%2 of %3', ['a', 'b']), 'b of %3')
+        self.assertEqual(emulator.FmtMessage('100%% %10', ['a']), '100% a0')
+
+    def test_a_jump_to_where_no_instruction_starts_ends_the_emulation(self):
+        emulator = self._script_emulator(_SCRIPT_THAT_READS_A_SETTING_FROM_THE_REGISTRY)
+        function = emulator.symbols['GETINSTALLSETTINGBOOL']
+        jump = function.code[0x3E]
+        self.assertEqual(jump.operands[0], 0xFA)
+        jump.operands[0] = 0xFB
+        with self.assertRaises(EmulatorException):
+            emulator.emulate_function(function, 'Some', False).value
+
+    def test_a_declaration_with_parameters_keeps_its_kind(self):
+        from refinery.lib.inno.symbols import IFPSClasses, IFPSEvents
+        self.assertEqual(IFPSEvents['NextButtonClick'].kind, 'function')
+        self.assertTrue(IFPSClasses.Classes['TStrings'].members['Strings'].is_property())
+
+    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='a constant is expanded as a Python format string')
+    def test_a_closing_brace_outside_of_a_constant_is_kept(self):
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.ExpandConstant('a}b'), 'a}b')
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=EmulatorException,
+        reason='an index outside of an array ends the emulation instead of raising the script error Out Of Range',
+    )
+    def test_an_index_outside_of_an_array_raises_an_error_that_the_script_handles(self):
+        """
+        The script sizes an array with `SetArrayLength` and stores into its first element, inside a
+        try block whose except block returns False.
+        """
+        emulator = self._script_emulator(_SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK)
+        with _replaced_external('SetArrayLength', lambda *_: None):
+            self.assertFalse(emulator.emulate_function(emulator.symbols['IPR'], 'explorer.exe').value)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=IndexError,
+        reason='a code constant expanded while a script function runs clears the stack of that function',
+    )
+    def test_a_code_constant_can_be_expanded_while_a_script_function_runs(self):
+        from refinery.lib.inno.emulator import NewScriptError
+        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE)
+        with _replaced_external('ExtractFileDir', lambda running, _: running.ExpandConstant('{code:RTF_BOLD|x}')):
+            errors = [event for event in emulator.emulate_installation() if isinstance(event, NewScriptError)]
+        self.assertEqual(errors, [])
 
     def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
         from refinery.lib.inno.emulator import NewFunctionCall

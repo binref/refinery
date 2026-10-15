@@ -1,7 +1,6 @@
 # flake8: noqa
-from unittest import mock
-
 from ... import TestUnitBase
+from . import failing_inno_function
 
 
 class TestInnoExtractor(TestUnitBase):
@@ -85,13 +84,8 @@ class TestInnoExtractor(TestUnitBase):
         self.assertContains(pwds, r'fb1282c9-cffb-4dfb-bd71-a3a333110eeb')
 
     def test_a_script_error_in_initialize_wizard_does_not_keep_the_password_page_from_running(self):
-        from refinery.lib.inno.emulator import IFPSEmulatedFunction, IFPSEmulator
-
-        def fail(*_):
-            raise RuntimeError('CreateInputDirPage failed')
-
         data = self.download_sample('aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42')
-        failing = {'CreateInputDirPage': IFPSEmulatedFunction(fail, [False] * 6)}
-        with mock.patch.dict(IFPSEmulator.external_symbols[''], failing):
-            pwds = data | self.load() | {str}
+        with failing_inno_function('CreateInputDirPage'), self.load_logged() as (unit, log):
+            pwds = data | unit | {str}
+        self.assertIn('script error in InitializeWizard(): Error calling CreateInputDirPage: CreateInputDirPage failed', log)
         self.assertEqual(pwds, {'Zet0'})

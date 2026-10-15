@@ -4,6 +4,7 @@ import hashlib
 from unittest import mock
 
 from ... import TestUnitBase
+from . import failing_inno_function
 
 from refinery.lib.inno.archive import InnoArchive, InvalidPassword
 
@@ -199,15 +200,10 @@ class TestInnoExtractor(TestUnitBase):
     PASSWORD_FOUND_BY_EMULATION = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 
     def test_a_script_error_in_initialize_wizard_does_not_keep_the_password_from_being_guessed(self):
-        from refinery.lib.inno.emulator import IFPSEmulatedFunction, IFPSEmulator
-
-        def fail(*_):
-            raise RuntimeError('CreateInputDirPage failed')
-
         data = self.download_sample(self.PASSWORD_FOUND_BY_EMULATION)
-        failing = {'CreateInputDirPage': IFPSEmulatedFunction(fail, [False] * 6)}
-        with mock.patch.dict(IFPSEmulator.external_symbols[''], failing):
-            test = data | self.load('HalfTime.dll') | self.ldu('sha256', text=True) | str
+        with failing_inno_function('CreateInputDirPage'), self.load_logged('-v', 'HalfTime.dll') as (unit, log):
+            test = data | unit | self.ldu('sha256', text=True) | str
+        self.assertIn('script error in InitializeWizard(): Error calling CreateInputDirPage: CreateInputDirPage failed', log)
         self.assertEqual(test, 'e91b33814738947981595f529e6de370dae57623a67f3531ce238363d657e18e')
 
     def test_a_read_before_the_password_is_known_does_not_fail_the_reads_after_it_was_guessed(self):

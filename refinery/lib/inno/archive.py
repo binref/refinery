@@ -2776,7 +2776,7 @@ class InnoArchive:
                     return False
                 for p in emulator.reset().emulate_installation():
                     if isinstance(p, NewScriptError):
-                        self._log_comment(F'script error in {p.name!s}{p.args!r}: {p.message}')
+                        self._log_comment(str(p))
                         continue
                     if not isinstance(p, NewPassword):
                         continue

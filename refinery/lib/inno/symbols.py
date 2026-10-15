@@ -90,11 +90,11 @@ def parse_decl(decl: str, kind: str, void: bool | None = None, **kwargs):
     if a := parts['args']:
         for group in a.split(';'):
             group, _, at = group.strip().partition(': ')
-            kind, _, tmp = group.strip().partition(' ')
-            if kind in {'var', 'const'}:
+            passing, _, tmp = group.strip().partition(' ')
+            if passing in {'var', 'const'}:
                 group = tmp
             for part in group.split(','):
-                args.append(IFPSParam(part.strip(), try_type(at), kind != 'var'))
+                args.append(IFPSParam(part.strip(), try_type(at), passing != 'var'))
 
     return IFPSSignature(name, kind, tuple(args), type, void, **kwargs)
 
