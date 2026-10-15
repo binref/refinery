@@ -233,7 +233,7 @@ class winreg(PathExtractorUnit):
     def _unpack_file(self, data: bytearray):
         for codec in ('utf16', 'utf-16le', 'utf8'):
             try:
-                lines = data.decode(codec).splitlines()
+                lines = data.decode(codec).split('\n')
             except UnicodeError:
                 continue
             if lines and lines[0].startswith('Windows Registry Editor'):

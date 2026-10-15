@@ -643,8 +643,8 @@ class AccessDatabase:
 
     def parse_table(self, name: str) -> dict[str, list]:
         """
-        Parse the table that `table_id` finds for the given name. Returns a dictionary mapping column
-        names to lists of row values.
+        Parse the table that `table_id` finds for the given name. Returns a dictionary mapping
+        column names to lists of row values.
         """
         if (table_id := self.table_id(name)) is None:
             return {}

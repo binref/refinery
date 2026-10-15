@@ -1,5 +1,7 @@
 from .. import TestUnitBase
-from . import rename_ole_entry
+from . import link_ole_child, rename_ole_entry
+
+from refinery.lib.ole.file import OleFile
 
 import base64
 import lzma
@@ -62,6 +64,17 @@ class TestEmailUnpacker(TestUnitBase):
         unit = self.load('*.htm')
         html = str(data | unit)
         self.assertIn('<label for="username" class="sr-only">Email address</label>', html)
+
+    def test_an_attachment_linked_into_the_storage_of_its_enclosing_attachment_ends(self):
+        data = self.download_sample('8f567c5fe40e15394ccf158356e445ea6b9afcbab8a225ad1c6c697f95ce36b9')
+        outer = '__attach_version1.0_#00000000'
+        inner = F'{outer}/__substg1.0_3701000D/{outer}'
+        attachment = OleFile(bytes(data)).find(outer)
+        assert attachment is not None
+        linked = link_ole_child(data, inner, attachment.sid_child)
+        expected = [path for path in data | self.load(list=True) | [str] if not path.startswith('attachments/')]
+        test = [path for path in linked | self.load(list=True) | [str] if not path.startswith('attachments/')]
+        self.assertEqual(test, expected)
 
     def test_ipm_contact(self):
         data = lzma.decompress(base64.b85decode(

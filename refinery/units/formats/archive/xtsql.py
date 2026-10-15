@@ -26,25 +26,18 @@ class xtsql(PathExtractorUnit):
         cursor = database.cursor()
         result: dict[str, list[dict[str, int | float | str | bytes]]] = {}
 
-        listing: list[tuple[bytes, int]] = cursor.execute(
-            "SELECT name, rootpage FROM sqlite_master WHERE type='table';").fetchall()
-        kinds: dict[bytes, bytes] = {
-            name: kind for schema, name, kind, *_ in cursor.execute('PRAGMA table_list')
-            if schema == B'main'
-        }
+        listing: list[tuple[bytes]] = cursor.execute(
+            'SELECT name FROM sqlite_master WHERE type = ?', ('table',)).fetchall()
 
-        for name, rootpage in listing:
+        for (name,) in listing:
             table = name.decode('utf8')
-            if kinds:
-                stores_rows = kinds.get(name) in (B'table', B'shadow')
-            else:
-                stores_rows = rootpage != 0
-            if not stores_rows:
-                self.log_info(F'skipping {table}, which does not store its own rows')
-                continue
             quoted = table.replace('"', '""')
+            select = F'SELECT * FROM "{quoted}"'
             try:
-                rows = cursor.execute(F'SELECT * FROM "{quoted}"').fetchall()
+                if any(step[1] == B'VOpen' for step in cursor.execute(F'EXPLAIN {select}')):
+                    self.log_info(F'skipping {table}, which does not store its own rows')
+                    continue
+                rows = cursor.execute(select).fetchall()
             except sqlite3.Error as error:
                 self.log_warn(F'failed to read table {table}: {error!s}')
                 continue

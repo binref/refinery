@@ -1,5 +1,6 @@
 import sys
 import sqlite3
+import time
 import unittest
 from ... import TestUnitBase
 
@@ -108,3 +109,35 @@ class TestExtractSQLite(TestUnitBase):
         self.assertEqual(test['db/users/0/name'], B'Alice')
         self.assertFalse([path for path in test if str(path).startswith('db/big')])
         self.assertTrue(any('big' in message for message in log), log)
+
+    def test_views_that_take_long_to_prepare_do_not_slow_down_reading_the_tables(self):
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE users (name TEXT)')
+        db.execute("INSERT INTO users VALUES ('Alice')")
+        for chain in range(5):
+            db.execute(F'CREATE VIEW c{chain}v0 AS SELECT name FROM users')
+            for k in range(1, 18):
+                db.execute(F'CREATE VIEW c{chain}v{k} AS SELECT name FROM c{chain}v{k - 1} UNION ALL SELECT name FROM c{chain}v{k - 1}')
+        db.commit()
+        data = db.serialize()
+        db.close()
+        start = time.perf_counter()
+        test = data | self.load() | {'path': bytes}
+        self.assertLess(time.perf_counter() - start, 5)
+        self.assertEqual(test['db/users/0/name'], B'Alice')
+
+    def test_a_virtual_table_whose_root_page_was_changed_is_still_skipped(self):
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE users (name TEXT)')
+        db.execute("INSERT INTO users VALUES ('Alice')")
+        db.execute('CREATE VIRTUAL TABLE docs USING fts5(body)')
+        db.execute("INSERT INTO docs (body) VALUES ('hello world')")
+        db.execute('PRAGMA writable_schema = ON')
+        db.execute("UPDATE sqlite_master SET rootpage = 2 WHERE name = 'docs'")
+        db.commit()
+        data = db.serialize()
+        db.close()
+        test = data | self.load() | {'path': bytes}
+        self.assertEqual(test['db/users/0/name'], B'Alice')
+        self.assertEqual(test['db/docs_content/0/c0'], B'hello world')
+        self.assertFalse([path for path in test if str(path).startswith('db/docs/')])

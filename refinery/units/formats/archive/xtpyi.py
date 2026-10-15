@@ -277,13 +277,11 @@ class PyInstallerArchiveEpilogue(Struct):
 
         items = [(entry, self.extract(entry)) for entry in self.toc]
         self.files: list[PiMeta] = []
-        no_pyz_found = True
         pyz_entries: list[tuple[str, PYZ]] = []
 
         for entry, item in items:
             if entry.type is not PiType.PYZ:
                 continue
-            no_pyz_found = False
             name, _ = os.path.splitext(entry.name)
             reader.seekset(self.offset + entry.offset)
             if entry.is_compressed:
@@ -292,19 +290,16 @@ class PyInstallerArchiveEpilogue(Struct):
                 data = reader
             pyz_entries.append((name, PYZ.Parse(data, self.py_version)))
 
-        magics = {pyz.magic for _, pyz in pyz_entries}
+        magics = list({pyz.magic for _, pyz in pyz_entries})
 
         if not magics:
-            if not no_pyz_found:
-                xtpyi.logger.warning(
-                    'no magic signature could be recovered from embedded pyzip archives; this is '
-                    'unsual and means that there is no way to guess the missing magic for source '
-                    'file entries and it will likely not be possible to decompile them.')
-            return
+            xtpyi.logger.warning(
+                'the archive contains no embedded pyzip archive from which to recover the magic '
+                'signature that source file entries lack; it will not be possible to decompile '
+                'them.')
         elif len(magics) > 1:
             xtpyi.logger.warning('more than one magic signature was recovered; this is unusual.')
 
-        magics = list(magics)
         key: bytes | None = None
 
         for entry, extracted in items:
@@ -314,6 +309,8 @@ class PyInstallerArchiveEpilogue(Struct):
             data = extracted.unpack()
             name, _ = os.path.splitext(extracted.name)
             extracted.name = F'{name}.pyc'
+            if not magics:
+                continue
             is_crypto_key = name.endswith('crypto_key')
 
             if len(magics) == 1 and data[:4] != magics[0][:4]:
@@ -328,11 +325,9 @@ class PyInstallerArchiveEpilogue(Struct):
 
                 if is_crypto_key:
                     with decompiled.unpack() | carve('string', decode=True) as candidates:
-                        for candidate in candidates:
-                            if len(candidate) == 0x10:
-                                xtpyi.logger.info(F'found key: {candidate.decode(xtpyi.codec)}')
-                                key = bytes(candidate)
-                                break
+                        key = next((bytes(c) for c in candidates if len(c) == 0x10), None)
+                    if key is not None:
+                        xtpyi.logger.info(F'found key: {key.decode(xtpyi.codec)}')
 
         if unmarshal is Unmarshal.No:
             return

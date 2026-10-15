@@ -136,6 +136,7 @@ class DirectoryEntry:
         'is_minifat',
         'kids',
         'used',
+        'parent',
     )
 
     def __init__(
@@ -148,6 +149,7 @@ class DirectoryEntry:
         self.sid = sid
         self.kids: list[DirectoryEntry] = []
         self.used = False
+        self.parent: DirectoryEntry | None = None
 
         entry = memoryview(data)
         name_raw = bytes(entry[0:64])
@@ -210,6 +212,7 @@ class DirectoryEntry:
             if current is None or current.used:
                 continue
             current.used = True
+            current.parent = self
             self.kids.append(current)
             for sid in (current.sid_left, current.sid_right):
                 if sid != NOSTREAM and sid < len(entries):
@@ -620,7 +623,8 @@ class OleFile:
         The directory entry at the given path below the given storage, or below the root storage if
         none is given. Each name is looked up as the compound file format defines it: by a descent
         through the tree of the storage's children, which finds one entry also when several
-        siblings have the same name or names that differ only by case.
+        siblings have the same name or names that differ only by case. The descent ends at an entry
+        that `walk` does not list as a child of the storage, so that a lookup never leaves it.
         """
         node = self._root if storage is None else storage
         for part in re.split(r'[\\/]+', filename):
@@ -637,7 +641,7 @@ class OleFile:
         sid = storage.sid_child
         while sid < len(entries) and sid not in visited:
             visited.add(sid)
-            if (node := entries[sid]) is None:
+            if (node := entries[sid]) is None or node.parent is not storage:
                 return None
             if key < (other := _ordinal(node.name)):
                 sid = node.sid_left

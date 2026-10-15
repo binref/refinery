@@ -55,6 +55,16 @@ class TestPyInstallerExtractor(TestUnitBase):
         data[entry + 18:entry + size] = new_name.encode('utf8').ljust(size - 18, B'\0')
         return data
 
+    def test_every_entry_of_an_archive_without_an_embedded_pyz_archive_is_extracted(self):
+        data = bytearray(self.download_sample(self._PLAIN))
+        original = data | self.load() | {'path': bytes}
+        # the type of an entry is the byte after its compression flag; x stands for data
+        data[self._toc_entry(data, 'out00-PYZ.pyz') + 17] = ord('x')
+        files = data | self.load() | {'path': bytes}
+        self.assertEqual(set(files), set(original))
+        self.assertEqual(files['out00-PYZ.pyz'], original['out00-PYZ.pyz'])
+        self.assertEqual(files['_ctypes.pyd'], original['_ctypes.pyd'])
+
     def test_an_entry_named_like_another_entry_is_extracted_next_to_it(self):
         data = bytearray(self.download_sample(self._PLAIN))
         original = data | self.load() | {'path': bytes}
@@ -112,3 +122,9 @@ class TestPyInstallerExtractor(TestUnitBase):
         self._rename(data, 'pyimod03_importers', 'pyimod00_crypto_key')
         result = str(data | self.load('*/unittest/case.py', unmarshal=2))
         self.assertIn(R'difflib.ndiff(pprint.pformat(seq1).splitlines(), pprint.pformat(seq2).splitlines())', result)
+
+    def test_an_archive_whose_last_key_module_holds_no_key_stays_encrypted(self):
+        data = bytearray(self.download_sample(self._ENCRYPTED))
+        self.assertTrue(data | self.load('*/unittest/case.py', unmarshal=2) | [])
+        self._rename(data, 'pyimod01_os_path', 'pyimod00_crypto_key')
+        self.assertEqual(data | self.load('*/unittest/case.py', unmarshal=2) | [], [])

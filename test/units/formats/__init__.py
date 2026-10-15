@@ -1,23 +1,28 @@
 from __future__ import annotations
 
+import struct
+
 from refinery.lib.ole.file import OleFile
 
 
 def ole_entry_offset(document: bytes | bytearray, path: str) -> int:
     """
     The offset of the directory entry at the given path in the given compound file. The entry is
-    found by its name, its start sector and its size, at a position where a directory entry can be.
+    found by its name, its links, its start sector and its size, at a position where a directory
+    entry can be.
     """
     entry = OleFile(bytes(document)).find(path)
     if entry is None:
         raise LookupError(path)
     name = F'{entry.name}\0'.encode('utf-16le')
+    links = struct.pack('<III', entry.sid_left, entry.sid_right, entry.sid_child)
     offsets = []
     position = document.find(name)
     while position >= 0:
         if (
             position % 128 == 0
             and int.from_bytes(document[position + 0x40:position + 0x42], 'little') == len(name)
+            and document[position + 0x44:position + 0x50] == links
             and int.from_bytes(document[position + 0x74:position + 0x78], 'little') == entry.start
             and int.from_bytes(document[position + 0x78:position + 0x7C], 'little') == entry.size
         ):

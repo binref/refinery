@@ -224,3 +224,19 @@ class TestWindowsRegistryExtractor(TestUnitBase):
             'HKEY_CURRENT_USER/Software/Microsoft/Windows NT/CurrentVersion/AppCompatFlags/Layers/C:/Users/x/a.exe': B'~ RUNASADMIN',
             'HKEY_CURRENT_USER/Software/X/a=b': B'c',
         })
+
+    def test_a_string_value_holding_a_character_that_python_reads_as_a_line_break_is_kept_whole(self):
+        for separator in ('\r', '\x0c', '\x1c', '\x85', '\N{LINE SEPARATOR}'):
+            export = '\r\n'.join((
+                'Windows Registry Editor Version 5.00',
+                '',
+                R'[HKEY_CURRENT_USER\Software\X]',
+                F'"a"="one{separator}two"',
+                '"b"="kept"',
+                '',
+            ))
+            values = {str(chunk['path']): bytes(chunk) for chunk in export.encode('utf-16') | self.load() | [...]}
+            self.assertEqual(values, {
+                'HKEY_CURRENT_USER/Software/X/a': F'one{separator}two'.encode(self.load().codec),
+                'HKEY_CURRENT_USER/Software/X/b': B'kept',
+            }, repr(separator))
