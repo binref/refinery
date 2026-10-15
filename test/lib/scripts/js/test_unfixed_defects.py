@@ -2809,6 +2809,22 @@ A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = {
             """),
         prints('2'),
     ),
+    'a var an eval below and declares, read by the body': Program(
+        a_program("""
+            var x = 1;
+            function f(c) { c && eval("var x = 2"); return x; }
+            console.log(f(false), f(true));
+            """),
+        prints('1 2'),
+    ),
+    'a var an eval in an arm of a conditional declares, read by the body': Program(
+        a_program("""
+            var x = 1;
+            function f(c) { c ? eval("var x = 2") : 0; return x; }
+            console.log(f(false), f(true));
+            """),
+        prints('1 2'),
+    ),
 }
 
 
@@ -5156,3 +5172,71 @@ class TestAFunctionDeclaredInABlockIsReadOutsideItOnlyOnceItsDeclarationRuns(Tes
     variable declared twice. No program reads a block function outside its block before the block
     declares it, or declares a block function named like a variable of its own.
     """
+
+
+#: Programs calling a decoder or an alias of a built-in in the initializer of an instance field and
+#: replacing what it calls between the class statement and the construction, mapped to what Node
+#: prints.
+A_FIELD_CALLING_WHAT_IS_REPLACED_BEFORE_CONSTRUCTION = {
+    inspect.cleandoc('''
+        function f(s) {
+          var F;
+          F = Function;
+          class A { x = F("return 7")(); }
+          eval(s);
+          return new A().x;
+        }
+        console.log(f("F = function () { return function () { return 8; }; };"));
+    '''):
+        '8\n',
+    inspect.cleandoc('''
+        var k = process.argv.length > 99 ? "x" : "String";
+        var v = { fromCharCode: function () { return "T"; } };
+        function d(n) { return String.fromCharCode(n); }
+        function f() {
+          class A { x = d(65); }
+          globalThis[k] = v;
+          return new A().x;
+        }
+        console.log(f());
+    '''):
+        'T\n',
+    inspect.cleandoc('''
+        var s = ["String.fromCharCode = function () { return '!'; }"][0];
+        var q = (function () {
+          class A { v = function (e, r) {
+            var y = [];
+            for (var l = 0; l < e.length; l++) { y[l] = e.charAt(l); }
+            var u = String.fromCharCode(65);
+            return y.join('') + u;
+          }('0', 1); }
+          (async function () { await eval(s); })();
+          return new A().v;
+        })();
+        console.log(q);
+    '''):
+        '0!\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFieldCallsWhatAnInstanceFindsWhenItIsConstructed(TestBase):
+    """
+    The root of
+    `test.lib.scripts.js.test_release_blockers.TestAFieldReadsAVariableWhenAnInstanceIsConstructed`
+    reaching the folds that ask whether a built-in is intact: a call in an instance field is taken
+    to run at the class statement, so it is folded with what it calls there, though an `eval` or a
+    write under a key known only at runtime replaces that before the construction.
+    """
+
+    @wontfix(
+        'no obfuscated file replaces a built-in or an alias of Function between a class statement '
+        'and the construction of an instance, through an eval or a global key known only at '
+        'runtime; these are made up for the defect'
+    )
+    def test_the_deobfuscation_prints_what_the_program_prints(self):
+        rows = A_FIELD_CALLING_WHAT_IS_REPLACED_BEFORE_CONSTRUCTION
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )

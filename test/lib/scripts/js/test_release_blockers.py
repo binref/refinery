@@ -167,3 +167,36 @@ class TestAValueStoredOnSomeRunsDoesNotDecideATestAfterItsStatement(TestBase):
     other entry, an object declared with a value is reached as well. Minifiers spell
     `if (x) o.k = 1;` as `x && (o.k = 1)`, which puts the shape in real input.
     """
+
+
+#: Programs reading a variable in the initializer of an instance field and changing the variable
+#: between the class statement and the construction, mapped to the behavior an engine gives them.
+A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED = {
+    'a var reassigned after the class': Program(
+        a_program("""
+            function f() { var x = 1; class A { v = x; } x = 2; return new A().v; }
+            console.log(f());
+            """),
+        prints('2'),
+    ),
+    'a let assigned after the class': Program(
+        a_program("""
+            function f() { let x; class A { v = x; } x = 2; return new A().v; }
+            console.log(f());
+            """),
+        prints('2'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_VARIABLE_READ_BY_A_FIELD_WHEN_AN_INSTANCE_IS_CONSTRUCTED)
+class TestAFieldReadsAVariableWhenAnInstanceIsConstructed(TestBase):
+    """
+    The initializer of an instance field runs each time an instance is constructed, as the body of a
+    function the class calls then would. The control-flow graph of the function holding the class
+    places it at the class statement instead, so the read in the field is taken to happen before
+    `x = 2`: the dead-store removal drops that store as one nothing reads, and constant inlining
+    writes the earlier value into the field. A class whose fields read state the program sets after
+    declaring the class is a shape real input plausibly holds.
+    """
