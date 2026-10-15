@@ -3052,6 +3052,91 @@ class TestALoopReadingOnlyItsOwnConstantIsUnused(TestJsDeobfuscator):
         self.assertEqual('console.log(1);', self._run_transformer(source, JsUnusedCodeRemoval))
 
 
+#: Programs storing into a local and storing again where the statement may complete without the
+#: second store, then reading the local, mapped to what Node prints for each.
+A_STORE_A_STATEMENT_MAY_SKIP = {
+    inspect.cleandoc("""
+        function f(y) { var x = 1; y ||= (x = 2); return x; }
+        console.log(f(Math.random() < 2 ? 1 : 0));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(y) { var x = 1; y &&= (x = 2); return x; }
+        console.log(f(Math.random() < 2 ? 0 : 1));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(y) { var x = 1; y ??= (x = 2); return x; }
+        console.log(f(Math.random() < 2 ? 1 : null));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(y) { var x = 1; y && (x = 2); return x; }
+        console.log(f(Math.random() < 2 ? 0 : 1));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 1; o?.g(x = 2); return x; }
+        console.log(f(Math.random() < 2 ? null : {}));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 1; o?.[x = 2]; return x; }
+        console.log(f(Math.random() < 2 ? null : {}));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 1; o?.a.b(x = 2); return x; }
+        console.log(f(Math.random() < 2 ? null : {}));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 1; o?.()(x = 2); return x; }
+        console.log(f(Math.random() < 2 ? null : function () { return function () {}; }));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(v) { var x = 1; switch (v) { case 0: break; case (x = 2): break; } return x; }
+        console.log(f(Math.random() < 2 ? 0 : 1));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f(o) { var x = 1, a; ({ a = (x = 2) } = o); return x; }
+        console.log(f(Math.random() < 2 ? { a: 3 } : {}));
+    """): '1\n',
+    inspect.cleandoc("""
+        function f() { var x = 1; class A { y = (x = 2); } return x; }
+        console.log(f());
+    """): '1\n',
+    inspect.cleandoc("""
+        function f() { var x = 1; class A { static y = (x = 2); } return x; }
+        console.log(f());
+    """): '2\n',
+    inspect.cleandoc("""
+        var x;
+        function f(y) { y ||= (x = 2); return x; }
+        console.log(f(0), f(1));
+    """): '2 2\n',
+    inspect.cleandoc("""
+        var x;
+        function f(o) { o?.g(x = 2); return x; }
+        console.log(f({ g() {} }), f(null));
+    """): '2 2\n',
+    inspect.cleandoc("""
+        var x;
+        function f(v) { switch (v) { case 0: break; case (x = 2): break; } return x; }
+        console.log(f(1), f(0));
+    """): '2 2\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodePrintsTheSameAboutAStoreAStatementMaySkip(TestJsDeobfuscator):
+
+    def test_the_earlier_store_is_kept(self):
+        """
+        A store behind a logical assignment, in an optional call or past an optional link, in a later
+        `case` test, in a destructuring default or in an instance field runs on some runs of its
+        statement only, so the store before it is still read on the others.
+        """
+        rows = A_STORE_A_STATEMENT_MAY_SKIP
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+
 class TestDeadDeclarationsInOneBodyLeaveItInOneEdit(TestJsDeobfuscator):
     """
     The dead declarations standing in one body are taken out of it together, so the tree is edited

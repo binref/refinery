@@ -100,6 +100,31 @@ class TestLiveness(TestBase):
         ast, lv = self._build('function f(c) { var x = 1; c ? (x = 2) : 0; return x; }')
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
 
+    def test_a_write_a_statement_may_skip_does_not_kill_prior_store(self):
+        for write in (
+            'y ||= (x = 2);',
+            'y &&= (x = 2);',
+            'y ??= (x = 2);',
+            'o?.g(x = 2);',
+            'o?.[x = 2];',
+            'o?.a.b(x = 2);',
+            'switch (y) { case 0: break; case (x = 2): break; }',
+            'class A { v = (x = 2); }',
+        ):
+            with self.subTest(write=write):
+                ast, lv = self._build(F'function f(y, o) {{ var x = 1; {write} return x; }}')
+                self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
+
+    def test_a_write_every_run_of_its_statement_makes_kills_prior_store(self):
+        for write in (
+            'y += (x = 2);',
+            'o.g(x = 2);',
+            '(x = 2) && y;',
+        ):
+            with self.subTest(write=write):
+                ast, lv = self._build(F'function f(y, o) {{ var x = 1; {write} return x; }}')
+                self.assertTrue(lv.is_dead_store(self._decl(ast, 'x')))
+
     def test_catch_reading_binding_keeps_store_before_throwing_write(self):
         source = 'function f() { var x = 1; try { x = risky(); } catch (e) { return x; } return x; }'
         ast, lv = self._build(source)

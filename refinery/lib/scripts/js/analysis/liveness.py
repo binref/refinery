@@ -43,6 +43,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_control_flow_model,
 )
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_whenever_completed
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
@@ -58,10 +59,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
-    JsAssignmentPattern,
-    JsConditionalExpression,
     JsIdentifier,
-    JsLogicalExpression,
     JsVariableDeclarator,
 )
 
@@ -325,7 +323,7 @@ class LivenessModel:
         governor = self._governor(ident)
         if not isinstance(governor, JsAssignmentExpression) or governor.operator != '=':
             return False
-        return self._is_unconditional(ident, element)
+        return evaluated_whenever_completed(ident, element)
 
     def _is_read(self, ident: JsIdentifier) -> bool:
         if not self.model.is_reference(ident):
@@ -358,28 +356,6 @@ class LivenessModel:
         """
         governor, _ = _governing_target(ident)
         return governor
-
-    @staticmethod
-    def _is_unconditional(ident: JsIdentifier, element: Node) -> bool:
-        """
-        Whether *ident* is written every time its control-flow node *element* runs, i.e. its position is
-        not guarded by a short-circuit operand, a conditional branch, or a destructuring default.
-        """
-        cursor: Node = ident
-        while cursor is not element:
-            parent = cursor.parent
-            if parent is None:
-                return True
-            if isinstance(parent, JsLogicalExpression) and parent.right is cursor:
-                return False
-            if isinstance(parent, JsConditionalExpression) and cursor in (
-                parent.consequent, parent.alternate,
-            ):
-                return False
-            if isinstance(parent, JsAssignmentPattern) and parent.right is cursor:
-                return False
-            cursor = parent
-        return True
 
     def _trackable(self, binding: Binding, owner_scope: Scope | None) -> bool:
         """
