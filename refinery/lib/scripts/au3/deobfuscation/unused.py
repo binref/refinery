@@ -1,7 +1,7 @@
 """
 The write-only store sweep: a plain assignment whose target nothing reads leaves the tree. The
 read census of `refinery.lib.scripts.au3.analysis.usage` answers the headline question — how often
-every name is read, the variables of unread text among its readers — and every other fact the
+each storage is read, the variables of unread text among its readers — and every other fact the
 rules ask is owned by the module that pinned it: which storage a write targets, whether it may
 reach a caller's storage, and which names are declared constants by
 `refinery.lib.scripts.au3.analysis.scopes`, whether a write may target a global and whether an
@@ -17,26 +17,34 @@ takes the drop: building a discarded array writes nothing observable either.
 
 Dropping a store removes the reads of its right-hand side — within an expression every variable
 occurrence is a read; assignments exist only in statement position — so the sweep runs as one
-cascade: a counter seeded from the census, every name whose count reaches zero admitted with its
-own stores, and all decisions made before the first edit runs. The read census is name-level —
-a name read in any scope keeps every store to it — which keeps more than a binding-aware census
-would: the binding rules answer per store which storage a write targets, and the cross-scope
-recall is the price of a census that never removes a store whose target a read anywhere may
-bind.
+cascade: counters seeded from the census, every name one of whose counters reaches zero admitted
+with its own stores, and all decisions made before the first edit runs. The census counts reads
+per storage — one function's local, or the global — through the one classifier that resolves
+which storages a read may reach, so a read of one function's `Local $x` keeps no store to another
+function's own. The recall limits that survive: position within a storage is ignored — a read
+before the store keeps it — a read whose claim shares its statement protects both storages, and
+a `Local` claim that follows an implicit write still counts as protecting it.
 
-The guards beside the read count: a name declared constant — its write is a fatal the removal
+The guards beside the read counts: a name declared constant — its write is a fatal the removal
 would hide — one of the command-line constants every script starts with, whose write is fatal
 the same way — a `ByRef` parameter of the enclosing scope, whose write reaches the caller's
 storage — and a name some string or directive spells: a computed name is built from string data,
-so a spelled name is one no removal may take away. The binding rules gate on the storage the
-write targets: a local keeps its store unless its own scope holds a reading channel, because a
-dynamic payload runs in the scope it stands in and can name a local of it; a global store needs
-an open entry, no reading channel anywhere, and implicit writes that are not fatal; and an
-implicit write inside a function adds the question whether a global of the name may exist — when
-one may, the write could target it and the anywhere gate applies, and when none may, the write
-creates a local only and the in-scope gate answers.
+so a spelled name is one no removal may take away. The counts protect per the storage the write
+targets: a provable local waits on the reads that may reach its own function's local, a store at
+script level on the reads that may reach the global from any scope, an implicit write that may
+target a global on both, and an implicit write that creates a local only on every read standing
+in its function — the implicit local is invisible outside it, and a name missing in another
+scope is missing whether or not the store leaves. The binding rules gate on the same storage:
+a local keeps its store unless its own scope holds a reading channel, because a dynamic payload
+runs in the scope it stands in and can name a local of it; a global store needs an open entry,
+no reading channel anywhere, and implicit writes that are not fatal; and an implicit write
+inside a function adds the question whether a global of the name may exist — when one may, the
+write could target it and the anywhere gate applies, and when none may, the write creates a
+local only and the in-scope gate answers.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement, Transformer, set_child
 from refinery.lib.scripts.au3 import ast
@@ -55,6 +63,19 @@ from refinery.lib.scripts.au3.model import (
 )
 
 _Store = tuple[Au3ExpressionStatement, Au3Assignment, Au3FunctionDeclaration | None]
+
+
+@dataclass
+class _ReadCensus:
+    """
+    The sweep's mutable copy of the per-storage read counts: the reads that may reach one
+    function's local, the reads standing in one scope that may reach the global, and the
+    per-name sum of the global arm. A dropped store releases its right-hand side's reads through
+    the same classifier that seeded them, and a counter reaching zero re-admits its name.
+    """
+    local_reads: dict[tuple[Au3FunctionDeclaration, str], int]
+    global_reads: dict[tuple[Au3FunctionDeclaration | None, str], int]
+    global_totals: dict[str, int]
 
 
 class Au3UnusedVariableRemoval(Transformer):
@@ -90,30 +111,49 @@ class Au3UnusedVariableRemoval(Transformer):
         stores: dict[str, list[_Store]] = {}
         self._collect(script, stores)
         assert self._scopes is not None
-        counts = dict(self._usage.read_counts)
+        assert self._existence is not None
+        census = _ReadCensus(
+            local_reads={
+                (scope, name): count
+                for scope, counts in self._usage.local_read_counts.items()
+                for name, count in counts.items()
+            },
+            global_reads={
+                (scope, name): count
+                for scope, counts in self._usage.global_read_counts.items()
+                for name, count in counts.items()
+            },
+            global_totals={},
+        )
+        for (_, name), count in census.global_reads.items():
+            census.global_totals[name] = census.global_totals.get(name, 0) + count
         dropped: set[Statement] = set()
         spliced: dict[Statement, Au3Assignment] = {}
-        worklist = [name for name in stores if counts.get(name, 0) == 0]
-        decided: set[str] = set()
+        worklist = list(stores)
         while worklist:
             name = worklist.pop()
-            if name in decided:
+            editable = [
+                (statement, assignment, scope)
+                for statement, assignment, scope in stores[name]
+                if statement not in dropped
+                and statement not in spliced
+                and self._store_is_unread(statement, scope, name, census)
+                and self._store_is_removable(statement, scope, name)
+            ]
+            if not editable:
                 continue
-            decided.add(name)
             if (
                 name in self._scopes.constant_names
                 or self._existence.write_is_fatal(name)
                 or self._usage.spells(name)
             ):
                 continue
-            for statement, assignment, scope in stores[name]:
-                if not self._store_is_removable(statement, scope, name):
-                    continue
+            for statement, assignment, scope in editable:
                 value = assignment.value
                 assert value is not None
                 if self._usage.effect_free(value):
                     dropped.add(statement)
-                    self._release_reads(value, counts, stores, worklist)
+                    self._release_reads(scope, value, census, stores, worklist)
                 elif not ast.contains_an_array_literal(value):
                     spliced[statement] = assignment
         if not dropped and not spliced:
@@ -138,6 +178,39 @@ class Au3UnusedVariableRemoval(Transformer):
                     target = ast.unwrap_parens(assignment.target)
                     if isinstance(target, Au3Variable) and assignment.value is not None:
                         stores.setdefault(target.name, []).append((statement, assignment, scope))
+
+    def _store_is_unread(
+        self,
+        statement: Au3ExpressionStatement,
+        scope: Au3FunctionDeclaration | None,
+        name: str,
+        census: _ReadCensus,
+    ) -> bool:
+        """
+        Whether no read may still observe the store on *name* in *scope*: every counter
+        protecting the storage the write targets has reached zero. A provable local is protected
+        by the reads that may reach its own function's local, a store at script level by the
+        reads that may reach the global from any scope, an implicit write that may target a
+        global by both, and an implicit write that creates a local only by every read standing
+        in its function.
+        """
+        assert self._scopes is not None
+        assert self._existence is not None
+        binding = self._scopes.binding(scope, statement, name)
+        if binding is Binding.GLOBAL:
+            return census.global_totals.get(name, 0) == 0
+        assert scope is not None
+        if binding is Binding.LOCAL:
+            return census.local_reads.get((scope, name), 0) == 0
+        if self._existence.write_may_target_global(binding, name, True):
+            return (
+                census.global_totals.get(name, 0) == 0
+                and census.local_reads.get((scope, name), 0) == 0
+            )
+        return (
+            census.local_reads.get((scope, name), 0) == 0
+            and census.global_reads.get((scope, name), 0) == 0
+        )
 
     def _store_is_removable(
         self,
@@ -166,22 +239,33 @@ class Au3UnusedVariableRemoval(Transformer):
 
     def _release_reads(
         self,
+        scope: Au3FunctionDeclaration | None,
         value: Expression,
-        counts: dict[str, int],
+        census: _ReadCensus,
         stores: dict[str, list[_Store]],
         worklist: list[str],
     ) -> None:
         """
         The reads of a dropped right-hand side leave with it: every variable occurrence in an
-        expression is a read, so each one decrements its name's count, and a name whose count
-        reaches zero and has candidate stores is admitted with them.
+        expression is a read, so each one decrements the counters of the storages it may reach —
+        resolved by the same classifier that seeded them — and a counter reaching zero re-admits
+        its name with its stores.
         """
+        assert self._scopes is not None
         for node in value.walk():
             if not isinstance(node, Au3Variable):
                 continue
-            counts[node.name] = counts.get(node.name, 0) - 1
-            if counts[node.name] == 0 and node.name in stores:
-                worklist.append(node.name)
+            for storage in self._scopes.read_storages(scope, node, node.name):
+                if storage is Binding.GLOBAL:
+                    census.global_reads[(scope, node.name)] -= 1
+                    census.global_totals[node.name] -= 1
+                    empty = census.global_reads[(scope, node.name)] == 0
+                else:
+                    assert scope is not None
+                    census.local_reads[(scope, node.name)] -= 1
+                    empty = census.local_reads[(scope, node.name)] == 0
+                if empty and node.name in stores:
+                    worklist.append(node.name)
 
     def _replacement(
         self,

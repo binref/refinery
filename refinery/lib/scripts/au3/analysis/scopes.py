@@ -51,6 +51,7 @@ from refinery.lib.scripts.au3.model import (
     Au3Parameter,
     Au3ScopeKind,
     Au3Script,
+    Au3Variable,
     Au3VariableDeclaration,
 )
 
@@ -321,6 +322,37 @@ class Au3ScopeModel:
         if first is None:
             return False
         return first < _top_level_index(scope, read)
+
+    def read_storages(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        occurrence: Au3Variable,
+        name: str,
+    ) -> frozenset[Binding]:
+        """
+        The storages the occurrence *occurrence* of *name* standing in *scope* may read: the
+        whole script when `None`, one function's body otherwise. A write occurrence resolves
+        through `binding` and a pure read through `read_binding`, each occurrence by exactly one
+        call — the two do not coincide everywhere, a `For` loop's variable being local to its own
+        write and global to a read inside a function declaring the name `Global`, so the
+        classifier never compares them. A resolved global reads the global alone. A resolved
+        local reads the local alone only where its claim strictly precedes the occurrence; where
+        the claim shares the occurrence's top-level statement, the local does not exist while
+        that statement's own initializer or loop header runs, so the read may reach the global as
+        well and both storages stay protected. A write occurrence that proves nothing reads the
+        global or the implicit local its own write creates.
+        """
+        if ast.is_write_occurrence(occurrence):
+            statement = ast.owning_statement(occurrence)
+            assert statement is not None
+            resolved = self.binding(scope, statement, name)
+        else:
+            resolved = self.read_binding(scope, occurrence, name)
+        if resolved is Binding.GLOBAL:
+            return frozenset({Binding.GLOBAL})
+        if resolved is Binding.LOCAL and self.local_precedes_read(scope, occurrence, name):
+            return frozenset({Binding.LOCAL})
+        return frozenset({Binding.LOCAL, Binding.GLOBAL})
 
     def may_bind_local(
         self,

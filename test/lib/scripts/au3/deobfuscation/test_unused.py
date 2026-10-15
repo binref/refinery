@@ -4,8 +4,6 @@ which guard — read count, spelling, binding, or channel — keeps what would o
 """
 from __future__ import annotations
 
-import unittest
-
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.propagate import Au3ConstantPropagation
@@ -245,11 +243,10 @@ class TestAu3UnusedVariableRemoval(TestAu3):
             self._apply(source, Au3UnusedVariableRemoval),
             self._laid_out(source))
 
-    @unittest.expectedFailure
     def test_a_read_of_another_function_local_does_not_keep_a_store(self):
         """
         Each function's `Local $x` is storage of its own, so the read in `g` reaches nothing `f`
-        writes; the read census counts reads per name, not per storage, and keeps the store.
+        writes.
         """
         self.assertEqual(
             self._apply(
@@ -257,6 +254,114 @@ class TestAu3UnusedVariableRemoval(TestAu3):
                 Func f()
                     Local $x
                     $x = 1
+                EndFunc
+
+                Func g()
+                    Local $x = 2
+                    MsgBox(0, 0, $x)
+                EndFunc
+
+                f()
+                g()
+                ''',
+                Au3UnusedVariableRemoval,
+            ),
+            'Func f()\n'
+            '    Local $x\n'
+            'EndFunc\n'
+            'Func g()\n'
+            '    Local $x = 2\n'
+            '    MsgBox(0, 0, $x)\n'
+            'EndFunc\n'
+            'f()\n'
+            'g()\n')
+
+    def test_a_read_before_the_claim_binds_the_global(self):
+        """
+        The read stands before the `Local` claim, so it observes the global and keeps nothing of
+        the local storage.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    MsgBox(0, 0, $x)
+                    Local $x
+                    $x = 1
+                EndFunc
+
+                f()
+                ''',
+                Au3UnusedVariableRemoval,
+            ),
+            'Func f()\n'
+            '    MsgBox(0, 0, $x)\n'
+            '    Local $x\n'
+            'EndFunc\n'
+            'f()\n')
+
+    def test_a_read_in_another_scope_does_not_keep_an_implicit_store(self):
+        """
+        The implicit write creates a local of `f` only, invisible in `g`, where the name is
+        missing whether or not the store leaves.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    $v = 1
+                EndFunc
+
+                Func g()
+                    MsgBox(0, 0, $v)
+                EndFunc
+
+                f()
+                g()
+                ''',
+                Au3UnusedVariableRemoval,
+            ),
+            'Func f()\n'
+            'EndFunc\n'
+            'Func g()\n'
+            '    MsgBox(0, 0, $v)\n'
+            'EndFunc\n'
+            'f()\n'
+            'g()\n')
+
+    def test_a_read_of_another_function_local_does_not_keep_a_script_level_store(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = 1
+
+                Func g()
+                    Local $x = 2
+                    MsgBox(0, 0, $x)
+                EndFunc
+
+                g()
+                ''',
+                Au3UnusedVariableRemoval,
+            ),
+            'Func g()\n'
+            '    Local $x = 2\n'
+            '    MsgBox(0, 0, $x)\n'
+            'EndFunc\n'
+            'g()\n')
+
+    def test_the_cascade_releases_only_the_reads_of_the_store_s_scope(self):
+        """
+        `$y`'s drop releases the read that kept `f`'s local store of `$x`; the read of `g`'s own
+        `$x` counts into no counter of `f`.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    $x = 1
+                    $y = $x
                 EndFunc
 
                 Func g()
@@ -361,6 +466,44 @@ class TestAu3UnusedVariableRemoval(TestAu3):
             $x = DllCall("a", "b", "c")
             Global $y = $x
             MsgBox(0, 0, $y)
+            '''
+        self.assertEqual(
+            self._apply(source, Au3UnusedVariableRemoval),
+            self._laid_out(source))
+
+    def test_a_claim_sharing_initializer_read_keeps_the_global_store(self):
+        """
+        The local does not exist while its own initializer runs, so the initializer read may
+        observe the global.
+        """
+        source = '''
+            $x = 5
+
+            Func f()
+                Local $x = $x
+            EndFunc
+
+            f()
+            '''
+        self.assertEqual(
+            self._apply(source, Au3UnusedVariableRemoval),
+            self._laid_out(source))
+
+    def test_a_claim_sharing_loop_header_read_keeps_the_global_store(self):
+        """
+        The loop's own claim does not exist for the reads its header makes, so they may observe
+        the global.
+        """
+        source = '''
+            $i = 5
+
+            Func f()
+                For $i = $i To 9
+                    MsgBox(0, 0, $i)
+                Next
+            EndFunc
+
+            f()
             '''
         self.assertEqual(
             self._apply(source, Au3UnusedVariableRemoval),

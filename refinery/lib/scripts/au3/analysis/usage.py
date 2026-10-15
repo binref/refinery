@@ -32,9 +32,12 @@ payload is not parsed and reads. A `Call` invocation over a string literal resol
 `refinery.lib.scripts.au3.analysis.existence.call_target`, and the target is judged as if the tree
 called it directly; every refusal reads, because unread text cannot resolve what a name shadows.
 A script function's reads stand in the tree, and a member callee dispatches through an object
-and reads no script name. The read count of a name is collected beside its bindings: an
-occurrence reads when it is not a write occurrence or reads what it writes, and a variable of
-unread text counts as a read.
+and reads no script name. The reads of a name are counted per storage through
+`refinery.lib.scripts.au3.analysis.scopes.Au3ScopeModel.read_storages`: an occurrence reads when
+it is not a write occurrence or reads what it writes, and every storage it may reach — one
+function's local, or the global — counts it, a variable of unread text counting into both facts
+of its node's scope. Both counts are may-answers: a read whose claim shares its statement counts
+into the local and the global alike.
 
 An expression is effect-free when evaluating it writes nothing observable and cannot terminate
 the script. Termination is what the arithmetic refuses: a division by zero ends the script
@@ -111,19 +114,20 @@ class Au3UsageModel:
     """
     What one tree version does with its names, built once per tree version by
     `build_usage_model`: the script's functions, the direct-identifier call count of each, how
-    often every name is read — the variables of unread text among its readers — the functions
-    that are pure, the calls and error nodes that may consume a computed name, the calls and
-    error nodes that may read one that no census sees, the lowercased text of every string
-    literal and directive, parsed or unread, the local storage an occurrence in a scope may
-    bind, per scope, and the storage every occurrence provably binds globally, per name, the
-    script level among the readers as `None`. The facts of every error node are held keyed by
-    their node, and the variables of every error node answer the transforms that ask which
-    names unread text may reference.
+    often each storage is read — one function's local, or the global per scope, the variables of
+    unread text among its readers — the functions that are pure, the calls and error nodes that
+    may consume a computed name, the calls and error nodes that may read one that no census
+    sees, the lowercased text of every string literal and directive, parsed or unread, the
+    local storage an occurrence in a scope may bind, per scope, and the storage every occurrence
+    provably binds globally, per name, the script level among the readers as `None`. The facts
+    of every error node are held keyed by their node, and the variables of every error node
+    answer the transforms that ask which names unread text may reference.
     """
 
     functions: dict[str, Au3FunctionDeclaration]
     call_counts: dict[str, int]
-    read_counts: dict[str, int]
+    local_read_counts: dict[Au3FunctionDeclaration, dict[str, int]]
+    global_read_counts: dict[Au3FunctionDeclaration | None, dict[str, int]]
     pure_functions: frozenset[str]
     channels: frozenset[Au3Call | Au3ErrorNode]
     reading_channels: frozenset[Au3Call | Au3ErrorNode]
@@ -434,32 +438,44 @@ def _build_purity(
         pure = survivors
 
 
+@dataclass(frozen=True)
+class Au3StorageCensus:
+    """
+    The storage every variable occurrence binds or may bind, and how often each storage is read:
+    the names a function's occurrences may bind locally, the scopes every name provably binds
+    globally in, the reads that may reach one function's local, and the reads standing in each
+    scope that may reach the global — script level keyed under `None`. Both read counts are
+    may-answers: a read that may reach either storage counts into both.
+    """
+    local_bindings: dict[Au3FunctionDeclaration, frozenset[str]]
+    global_bindings: dict[str, frozenset[Au3FunctionDeclaration | None]]
+    local_read_counts: dict[Au3FunctionDeclaration, dict[str, int]]
+    global_read_counts: dict[Au3FunctionDeclaration | None, dict[str, int]]
+
+
 def _collect_bindings(
     root: Au3Script,
     scope_model: Au3ScopeModel,
     unparsed: Mapping[Au3ErrorNode, Au3UnparsedText],
-) -> tuple[
-    dict[Au3FunctionDeclaration, frozenset[str]],
-    dict[str, frozenset[Au3FunctionDeclaration | None]],
-    dict[str, int],
-]:
+) -> Au3StorageCensus:
     """
     The storage every variable occurrence binds or may bind, over every scope of *root*, and how
-    often every name is read: a write through the scope model's write binding and a read through
-    its read binding, an occurrence that may reach a local of its scope through `may_bind_local`,
-    and the variables of a function's parameter defaults among the occurrences — a default
-    evaluates in the function when a call leaves its argument out. The declared variable of a
-    declarator is excluded — the declaration is what the answers are asked about — while a
-    bare-variable initializer reads like any other occurrence: it is not the declarator's own
-    variable. A write that proves nothing binds no storage: its value reaches a global only
-    through a read somewhere, and that read is the occurrence that protects the name. A variable
-    of unread text counts as an occurrence that may bind either a local of its node's scope or
-    the global. An occurrence reads when it is not a write occurrence or reads what it writes,
-    and a variable of unread text counts as a read of the name it spells.
+    often each storage is read: a write through the scope model's write binding and a read
+    through its read binding, an occurrence that may reach a local of its scope through
+    `may_bind_local`, and the variables of a function's parameter defaults among the occurrences
+    — a default evaluates in the function when a call leaves its argument out. The declared
+    variable of a declarator is excluded — the declaration is what the answers are asked about
+    — while a bare-variable initializer reads like any other occurrence: it is not the
+    declarator's own variable. A write that proves nothing binds no storage: its value reaches a
+    global only through a read somewhere, and that read is the occurrence that protects the
+    name. A read counts once per storage it may reach, through `read_storages`; a variable of
+    unread text counts into both facts of its node's scope — unread text may bind either side,
+    and a script-level error node has no local.
     """
     local: dict[Au3FunctionDeclaration, set[str]] = {}
     global_names: dict[str, set[Au3FunctionDeclaration | None]] = {}
-    reads: Counter[str] = Counter()
+    local_reads: dict[Au3FunctionDeclaration, dict[str, int]] = {}
+    global_reads: dict[Au3FunctionDeclaration | None, dict[str, int]] = {}
     for scope, body in ast.scope_bodies(root):
         occurrences: Iterator[Node] = ast.scope_nodes(body)
         if scope is not None:
@@ -480,11 +496,14 @@ def _collect_bindings(
             statement = ast.owning_statement(node)
             if statement is None:
                 continue
-            if (
-                not ast.is_write_occurrence(node)
-                or ast.reads_what_it_writes(node)
-            ):
-                reads[node.name] += 1
+            if not ast.is_write_occurrence(node) or ast.reads_what_it_writes(node):
+                for storage in scope_model.read_storages(scope, node, node.name):
+                    if storage is Binding.GLOBAL:
+                        counts = global_reads.setdefault(scope, {})
+                    else:
+                        assert scope is not None
+                        counts = local_reads.setdefault(scope, {})
+                    counts[node.name] = counts.get(node.name, 0) + 1
             if ast.is_write_occurrence(node):
                 binding = scope_model.binding(scope, statement, node.name)
             else:
@@ -500,14 +519,18 @@ def _collect_bindings(
     for node, facts in unparsed.items():
         scope = ast.enclosing_function(node)
         for name in facts.variables:
-            reads[name] += 1
-            global_names.setdefault(name, set()).add(scope)
+            counts = global_reads.setdefault(scope, {})
+            counts[name] = counts.get(name, 0) + 1
             if scope is not None:
+                counts = local_reads.setdefault(scope, {})
+                counts[name] = counts.get(name, 0) + 1
                 local.setdefault(scope, set()).add(name)
-    return (
+            global_names.setdefault(name, set()).add(scope)
+    return Au3StorageCensus(
         {scope: frozenset(names) for scope, names in local.items()},
         {name: frozenset(scopes) for name, scopes in global_names.items()},
-        dict(reads),
+        local_reads,
+        global_reads,
     )
 
 
@@ -703,18 +726,19 @@ def build_usage_model(
         for facts in unparsed.values()
         for name in facts.variables
     }
-    local_bindings, global_bindings, read_counts = _collect_bindings(root, scope_model, unparsed)
+    census = _collect_bindings(root, scope_model, unparsed)
     channels, reading_channels = _collect_channels(root, scope_model, unparsed)
     return Au3UsageModel(
         functions=scope_model.functions,
         call_counts=_collect_call_counts(root, scope_model, unparsed),
-        read_counts=read_counts,
+        local_read_counts=census.local_read_counts,
+        global_read_counts=census.global_read_counts,
         pure_functions=_build_purity(root, scope_model, summaries, unparsed),
         channels=channels,
         reading_channels=reading_channels,
         spellings=_collect_spellings(root, unparsed),
-        local_bindings=local_bindings,
-        global_bindings=global_bindings,
+        local_bindings=census.local_bindings,
+        global_bindings=census.global_bindings,
         unparsed=unparsed,
         unparsed_variables=frozenset(unparsed_variables),
     )
