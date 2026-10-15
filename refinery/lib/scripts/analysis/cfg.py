@@ -1032,11 +1032,11 @@ class CfgBuilder:
         frontier: list[CfgNode],
     ) -> list[CfgNode]:
         """
-        A loop over the values a subject yields. The subject is evaluated once, at a node of its own
-        before the loop. The head, which asks for the next value, is the entry of every iteration and
-        an exit. The target receives the value at a node of its own on the way from the head into the
-        body, so a run leaving the loop has not passed it. A language whose loop variable and subject
-        are both read at the head builds the loop `loop_head_tested` instead.
+        A loop over the values a subject yields. The subject is evaluated once, at a node of its
+        own before the loop. The head, which asks for the next value, is the entry of every
+        iteration and an exit. The target receives the value at a node of its own on the way from
+        the head into the body, so a run leaving the loop has not passed it. A language whose loop
+        variable and subject are both read at the head builds the loop `loop_head_tested` instead.
         """
         if subject is not None:
             start = self.node(subject)

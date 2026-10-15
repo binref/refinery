@@ -19,6 +19,7 @@ from typing import Callable
 
 from refinery.lib.scripts import Node, child_fields
 from refinery.lib.scripts.js.model import (
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrayPattern,
     JsArrowFunctionExpression,
@@ -89,6 +90,7 @@ __all__ = [
     'Evaluation',
     'PART_EVALUATION',
     'evaluated_whenever_completed',
+    'evaluated_with',
     'evaluation_of',
 ]
 
@@ -104,13 +106,6 @@ class Evaluation(enum.Enum):
     ALWAYS = 'always'
     SOMETIMES = 'sometimes'
     LATER = 'later'
-
-
-_LOGICAL_ASSIGNMENT = frozenset({
-    '&&=',
-    '||=',
-    '??=',
-})
 
 
 def _optional_link_below(node: Node | None) -> bool:
@@ -140,7 +135,10 @@ def _assigned_value(holder: Node) -> Evaluation:
     The evaluation of the value of an assignment: on some runs only where the operator is a logical
     one, which assigns only when the target's value asks for it.
     """
-    if isinstance(holder, JsAssignmentExpression) and holder.operator in _LOGICAL_ASSIGNMENT:
+    if (
+        isinstance(holder, JsAssignmentExpression)
+        and holder.operator in LOGICAL_ASSIGNMENT_OPERATORS
+    ):
         return Evaluation.SOMETIMES
     return Evaluation.ALWAYS
 
@@ -299,6 +297,11 @@ def _uniform_evaluation(node_type: type[Node]) -> Evaluation | None:
 
 
 def _field_holding(holder: Node, part: Node) -> str | None:
+    """
+    The child field of *holder* that holds *part*. A part in no field of its own lies in a list,
+    and where the holder has one list only, that list is the answer without a search through it: a
+    call with a thousand arguments would be searched once for every one of them.
+    """
     lists: list[str] = []
     for name in child_fields(type(holder)):
         value = getattr(holder, name)
@@ -306,6 +309,8 @@ def _field_holding(holder: Node, part: Node) -> str | None:
             return name
         if isinstance(value, list):
             lists.append(name)
+    if len(lists) == 1:
+        return lists[0]
     for name in lists:
         if any(item is part for item in getattr(holder, name)):
             return name
@@ -337,6 +342,22 @@ def evaluated_whenever_completed(node: Node, element: Node) -> bool:
     while cursor is not element:
         holder = cursor.parent
         if holder is None or evaluation_of(holder, cursor) is not Evaluation.ALWAYS:
+            return False
+        cursor = holder
+    return True
+
+
+def evaluated_with(node: Node, element: Node) -> bool:
+    """
+    Whether *node*, on the runs that evaluate it at all, is evaluated while the statement or loop
+    head *element* holding it is: no part on the way down from *element* to *node* is evaluated at
+    a time of its own (`Evaluation.LATER`), as the initializer of a field is when an instance is
+    constructed.
+    """
+    cursor = node
+    while cursor is not element:
+        holder = cursor.parent
+        if holder is None or evaluation_of(holder, cursor) is Evaluation.LATER:
             return False
         cursor = holder
     return True

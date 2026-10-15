@@ -28,7 +28,6 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_MEMBERS,
-    LOGICAL_ASSIGNMENT_OPS,
     OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     UNARY_OPS,
@@ -61,6 +60,7 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     to_string,
 )
 from refinery.lib.scripts.js.model import (
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -340,7 +340,9 @@ class JsSimplifications(Transformer):
         property set and not the inherited half `property_provably_absent` enumerates, an own
         `length` and `prototype` included, so the membership question stays this one's and only the
         chain question is shared. A class constructor is a function value, and its chain is a
-        function's.
+        function's. The chain asked about is the one the value starts with, so a name the tables
+        list is answered only where every use of the value is one `_own_property_stores` reads:
+        `Object.setPrototypeOf(o, null)` or `o.__proto__ = null` leaves no `toString` to find.
         """
         right = node.right
         if not isinstance(right, JsIdentifier):
@@ -365,11 +367,11 @@ class JsSimplifications(Transformer):
             members, receiver_type = _EMPTY_OBJECT_PROPERTIES, dict
         else:
             return None
-        if key in members:
-            return True if self.effects.read_chain_intact(receiver_type) else None
         state = self._own_property_stores(binding, right)
         if state is None:
             return None
+        if key in members:
+            return True if self.effects.read_chain_intact(receiver_type) else None
         present, any_store = state
         if key in present:
             return True
@@ -399,7 +401,10 @@ class JsSimplifications(Transformer):
         the object may then gain a key no spelling here shows: handed to a call, aliased, called
         through, updated or destructured into. `None` as well when a store or delete targets a
         computed key that is not a string literal, since the own-property set is then unbounded and
-        no `in` membership can be decided.
+        no `in` membership can be decided. The key `__proto__` names the prototype rather than an
+        own property: a store to it replaces the chain and a read of it hands the chain out to be
+        written, `o.__proto__.k = 1` giving every object a `k`, so a use of it is `None`, and so is
+        a read under a computed key that is not a string literal, which may spell it.
         """
         stores: list[tuple[str, Node]] = []
         deleted: set[str] = set()
@@ -420,6 +425,8 @@ class JsSimplifications(Transformer):
                 name = prop.name
             else:
                 name = None
+            if name == '__proto__':
+                return None
             parent = member.parent
             if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.left) is member:
                 if name is None:
@@ -427,7 +434,7 @@ class JsSimplifications(Transformer):
                 any_store = True
                 if (
                     isinstance(ref, JsIdentifier)
-                    and parent.operator not in LOGICAL_ASSIGNMENT_OPS
+                    and parent.operator not in LOGICAL_ASSIGNMENT_OPERATORS
                     and parent.right is not None
                 ):
                     stores.append((name, parent.right))
@@ -440,7 +447,7 @@ class JsSimplifications(Transformer):
                     unbounded_delete = True
                 else:
                     deleted.add(name)
-            elif is_member_write_target(member) or is_invocation_target(member):
+            elif is_member_write_target(member) or is_invocation_target(member) or name is None:
                 return None
         present: set[str] = set()
         for name, value in stores:

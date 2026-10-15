@@ -276,8 +276,8 @@ class LivenessModel:
         """
         Yield the identifiers belonging to *element*'s own control-flow node: *element* itself and
         those in its subtree that are not inside a nested function or a descendant that is itself a
-        separate control-flow node (whose identifiers are accounted there). This keeps a loop or branch
-        head from double-counting the body that follows it.
+        separate control-flow node (whose identifiers are accounted there). This keeps a loop or
+        branch head from double-counting the body that follows it.
         """
         stack: list[Node] = [element]
         while stack:

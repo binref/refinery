@@ -30,11 +30,12 @@ set — the query a transform needs to confirm a value is established before eve
 observe it.
 
 A statement may complete without evaluating every part of it: a store below `&&` is skipped on the
-runs that complete `x && (c = 5)` without it. So every query here answers whether the node it is
-asked about has run, `completes_before` included, and holds only where the statement evaluates the
-node on every run on which it completes. The one exception is `cannot_precede`, which asks whether
-anything can run before a node on a run on which the node runs, and for which the statement is
-enough.
+runs that complete `x && (c = 5)` without it. So every ordering query here answers whether the
+node it is asked about has run, `completes_before` included, and holds only where the statement
+evaluates the node on every run on which it completes. The exceptions are `cannot_precede`, which
+asks whether anything can run before a node on a run on which the node runs, and for which the
+statement is enough, and the dominance queries `dominates`, `strictly_dominates` and
+`completes_before_node`, which order the statements alone.
 """
 from __future__ import annotations
 
@@ -51,7 +52,10 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_control_flow_model,
 )
-from refinery.lib.scripts.js.analysis.evaluation import evaluated_whenever_completed
+from refinery.lib.scripts.js.analysis.evaluation import (
+    evaluated_whenever_completed,
+    evaluated_with,
+)
 from refinery.lib.scripts.js.analysis.intrinsics import (
     SPECIES_KEYS,
     IntrinsicWrites,
@@ -158,6 +162,7 @@ class DominanceModel(DominatorModel):
         self._invocation_orders: dict[Node, dict[Node | _HandOver, bool]] = {}
         self._entered_from: dict[Node, dict[Node, bool]] = {}
         self._hand_overs: dict[Binding, _HandOver | None] = {}
+        self._runs_with_its_node_cache: dict[Node, bool] = {}
 
     def completes_before(self, definition: Node, point: Node) -> bool:
         """
@@ -302,8 +307,15 @@ class DominanceModel(DominatorModel):
         statement evaluating *anchor* has completed before *reference* runs, as `runs_before` asks
         without asking whether that statement evaluates *anchor* at all. A run that skips *anchor*
         has nothing for *reference* to precede, so a fold made at *anchor* holds wherever it is
-        evaluated as long as no such *reference* comes first.
+        evaluated as long as no such *reference* comes first. That holds only for an *anchor* the
+        statement evaluates while it runs: the initializer of a field runs when an instance is
+        constructed, after the statements following the class, so an *anchor* there orders nothing
+        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_with`).
         """
+        located = self.locate(anchor)
+        element = None if located is None else located[1].element
+        if element is None or not evaluated_with(anchor, element):
+            return False
         return self._runs_after(anchor, self._activation_of(anchor), reference)
 
     def established_before(self, function: Node, reference: Node) -> bool:
@@ -338,13 +350,16 @@ class DominanceModel(DominatorModel):
         Whether *site* has run whenever the control-flow node evaluating it has completed. A graph
         has a node for a statement or a loop head and none for the parts of an expression, so an
         ordering against that node answers for *site* only where the node evaluates it on every run
-        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`).
+        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`). Memoized by
+        identity, since every ordering query of one definition asks it again for each reference.
         """
-        located = self.locate(site)
-        if located is None:
-            return False
-        element = located[1].element
-        return element is not None and evaluated_whenever_completed(site, element)
+        cached = self._runs_with_its_node_cache.get(site)
+        if cached is None:
+            located = self.locate(site)
+            element = None if located is None else located[1].element
+            cached = element is not None and evaluated_whenever_completed(site, element)
+            self._runs_with_its_node_cache[site] = cached
+        return cached
 
     def past_dead_zone(self, binding: Binding, reference: Node) -> bool:
         """

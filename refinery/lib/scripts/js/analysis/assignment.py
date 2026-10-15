@@ -60,6 +60,7 @@ from refinery.lib.scripts.js.analysis.model import (
     member_property_name,
 )
 from refinery.lib.scripts.js.model import (
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrayPattern,
     JsAssignmentExpression,
@@ -98,15 +99,9 @@ from refinery.lib.scripts.js.strict import strict_mode_at
 
 _OTHER_REALM_ALIASES = GLOBAL_OBJECT_ALIASES - SAME_REALM_GLOBAL_OBJECT_ALIASES
 
-_LOGICAL_ASSIGNMENT = frozenset({
-    '&&=',
-    '||=',
-    '??=',
-})
-
 #: The statements whose control-flow node evaluates a head of its own rather than its children: a
-#: declaration evaluates its initializers, and a `for-in`/`for-of` head none of them, its subject and
-#: its target each having a node of their own.
+#: declaration evaluates its initializers, and a `for-in`/`for-of` head none of them, its subject
+#: and its target each having a node of their own.
 _OWN_HEAD_NODES = (
     JsVariableDeclaration,
     JsForInStatement,
@@ -424,10 +419,11 @@ class DefiniteAssignmentModel:
 
     def _evaluated_parts(self, graph: ControlFlowGraph, element: Node) -> list[Node]:
         """
-        The expressions the control-flow node for *element* evaluates itself: the element where it is
-        an expression handed its own node (a loop header's init, test, or update, a `for-in`/`for-of`
-        subject or target), a declaration's initializers, nothing for a `for-in`/`for-of` head, and
-        otherwise every child that is neither a function body nor a statement owned by another node.
+        The expressions the control-flow node for *element* evaluates itself: the element where it
+        is an expression handed its own node (a loop header's init, test, or update, a
+        `for-in`/`for-of` subject or target), a declaration's initializers, nothing for a
+        `for-in`/`for-of` head, and otherwise every child that is neither a function body nor a
+        statement owned by another node.
         """
         if (
             not isinstance(element, _OWN_HEAD_NODES)
@@ -476,7 +472,7 @@ class DefiniteAssignmentModel:
         if isinstance(node, JsParenthesizedExpression):
             return self._gens(node.expression)
         if isinstance(node, JsAssignmentExpression):
-            if node.operator in _LOGICAL_ASSIGNMENT:
+            if node.operator in LOGICAL_ASSIGNMENT_OPERATORS:
                 return self._target_gen(node)
             return self._gens(node.right) | self._target_gen(node)
         if isinstance(node, JsUpdateExpression):
@@ -570,7 +566,7 @@ class DefiniteAssignmentModel:
                 return frozenset({binding})
             return self._bare_target_gen(target, binding)
         if isinstance(target, JsMemberExpression):
-            if assignment.operator in _LOGICAL_ASSIGNMENT:
+            if assignment.operator in LOGICAL_ASSIGNMENT_OPERATORS:
                 return frozenset()
             return self._member_target_gen(target)
         if isinstance(target, (JsArrayPattern, JsObjectPattern)):
@@ -589,9 +585,7 @@ class DefiniteAssignmentModel:
         does so before the statement completes, and a default only replaces the value assigned, so a
         normal completion has assigned them all. A default's own expression runs conditionally and
         contributes nothing here; it is not a target. A nested pattern is read in both the pattern
-        and the expression spelling, because the parser converts only the positions the grammar
-        forces and leaves a pattern in an object property's value written as the expression it
-        lexed.
+        and the expression spelling.
         """
         target = strip_parens(pattern) if pattern is not None else None
         if isinstance(target, JsIdentifier):

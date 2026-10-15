@@ -2566,8 +2566,8 @@ class SemanticModel:
         declaration does nothing, since its function is in place before the statements of its scope
         run, except where Annex B copies it out of its block: that copy stores the function into the
         name of the enclosing scope, which is ruled as every other store into a declared name is. A
-        declaration standing as the target of a `for-in` or `for-of` head is asked as the store of the
-        value the head hands it on every iteration. *store_cannot_throw* is handed on to
+        declaration standing as the target of a `for-in` or `for-of` head is asked as the store of
+        the value the head hands it on every iteration. *store_cannot_throw* is handed on to
         `evaluation_cannot_throw`.
         """
         if isinstance(statement, JsVariableDeclaration):

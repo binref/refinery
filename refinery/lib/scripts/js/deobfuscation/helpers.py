@@ -76,6 +76,7 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.lexer import is_identifier_name
 from refinery.lib.scripts.js.model import (
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -920,7 +921,6 @@ RELATIONAL_OPS: dict[str, Callable] = {
     '>=': operator.ge,
 }
 
-LOGICAL_ASSIGNMENT_OPS = frozenset({'&&=', '||=', '??='})
 """
 The assignment operators that short-circuit. Unlike every other compound assignment, these evaluate their
 right operand only when the target's existing value does not already decide the result, and perform no store
@@ -2007,7 +2007,7 @@ def _collect_unconditional_evaluation(expr: Node) -> list[str | None]:
         children: list[Node | None]
         if isinstance(node, JsAssignmentExpression):
             children = [c for c in (node.left, node.right) if c is not None]
-            if node.operator in ('&&=', '||=', '??='):
+            if node.operator in LOGICAL_ASSIGNMENT_OPERATORS:
                 children = children[:1]
             children.append(None)
         elif isinstance(node, JsBinaryExpression):

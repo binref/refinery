@@ -864,3 +864,13 @@ class TestAStoreItsStatementMaySkip(TestBase):
     def test_a_binding_stored_on_some_runs_is_not_established(self):
         dom, store, read, _, _ = self._store_and_reads('x && (c = 5);')
         self.assertFalse(dom.binding_established_before(dom.model.resolve(store), read))
+
+    def test_nothing_is_ordered_against_an_anchor_in_a_field_initializer(self):
+        source = 'function f() { class A { v = c(); } g(); return new A().v; }'
+        ast = JsParser(source).parse()
+        dom = build_dominance(build_semantic_model(ast))
+        anchor, after = [
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name in ('c', 'g')
+        ]
+        self.assertFalse(dom.cannot_precede(after, anchor))

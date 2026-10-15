@@ -9,6 +9,7 @@ from refinery.lib.scripts.js import model
 from refinery.lib.scripts.js.analysis.evaluation import (
     PART_EVALUATION,
     evaluated_whenever_completed,
+    evaluated_with,
 )
 from refinery.lib.scripts.js.model import JsIdentifier, JsScript
 from refinery.lib.scripts.js.parser import JsParser
@@ -105,3 +106,28 @@ class TestWhenAPartOfAStatementRuns(TestBase):
 
     def test_an_initializer_of_a_declaration_runs(self):
         self.assertTrue(self._evaluated('var a = [o.f(c = 1)], b = 2;'))
+
+
+class TestWhetherAPartRunsWithItsStatement(TestBase):
+
+    @staticmethod
+    def _with(source: str) -> bool:
+        script = JsParser(source).parse()
+        assert isinstance(script, JsScript)
+        statement = script.body[-1]
+        node = next(
+            node for node in statement.walk()
+            if isinstance(node, JsIdentifier) and node.name == 'c'
+        )
+        return evaluated_with(node, statement)
+
+    def test_a_part_run_on_some_runs_runs_with_its_statement(self):
+        self.assertTrue(self._with('x && c();'))
+        self.assertTrue(self._with('x ? c() : 0;'))
+
+    def test_a_computed_key_of_a_class_runs_with_its_statement(self):
+        self.assertTrue(self._with('class A { [c()]() {} }'))
+
+    def test_a_field_initializer_runs_at_a_time_of_its_own(self):
+        self.assertFalse(self._with('class A { v = c(); }'))
+        self.assertFalse(self._with('class A { v = x && c(); }'))

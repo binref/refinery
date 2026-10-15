@@ -707,6 +707,9 @@ JsFunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionE
 #: The statements that run their body again: the three `for` forms, `while` and `do`-`while`.
 LOOP_NODES = (JsWhileStatement, JsDoWhileStatement, JsForStatement, JsForInStatement, JsForOfStatement)
 
+#: The assignment operators that store only where the value of their target asks for it.
+LOGICAL_ASSIGNMENT_OPERATORS = frozenset({'&&=', '||=', '??='})
+
 
 class AwaitReading(enum.Enum):
     """

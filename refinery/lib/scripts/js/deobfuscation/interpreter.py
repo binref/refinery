@@ -32,7 +32,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_VALUE_NAMES,
     JS_HOLE,
     JS_NULL,
-    LOGICAL_ASSIGNMENT_OPS,
     PROTO_KEY,
     RELATIONAL_OPS,
     SEQUENCE_DATA_PROPERTIES,
@@ -68,6 +67,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    LOGICAL_ASSIGNMENT_OPERATORS,
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -2171,7 +2171,7 @@ class JsInterpreter:
             self._env[name] = value
             return value
         current = self._eval(node.left)
-        if op in LOGICAL_ASSIGNMENT_OPS:
+        if op in LOGICAL_ASSIGNMENT_OPERATORS:
             if self._short_circuits(op, current):
                 return current
             self._env[name] = self._eval(node.right)
@@ -2198,7 +2198,7 @@ class JsInterpreter:
         key = self._member_key(member)
         if node.operator == '=':
             value = self._eval(node.right)
-        elif node.operator in LOGICAL_ASSIGNMENT_OPS:
+        elif node.operator in LOGICAL_ASSIGNMENT_OPERATORS:
             old = self._get_property(obj, key)
             if self._short_circuits(node.operator, old):
                 return old

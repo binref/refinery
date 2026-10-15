@@ -5174,10 +5174,9 @@ class TestAFunctionDeclaredInABlockIsReadOutsideItOnlyOnceItsDeclarationRuns(Tes
     """
 
 
-#: Programs calling a decoder or an alias of a built-in in the initializer of an instance field and
-#: replacing what it calls between the class statement and the construction, mapped to what Node
-#: prints.
-A_FIELD_CALLING_WHAT_IS_REPLACED_BEFORE_CONSTRUCTION = {
+#: Programs reading an alias of a built-in in the initializer of an instance field and replacing
+#: the alias between the class statement and the construction, mapped to what Node prints.
+AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION = {
     inspect.cleandoc('''
         function f(s) {
           var F;
@@ -5189,54 +5188,74 @@ A_FIELD_CALLING_WHAT_IS_REPLACED_BEFORE_CONSTRUCTION = {
         console.log(f("F = function () { return function () { return 8; }; };"));
     '''):
         '8\n',
-    inspect.cleandoc('''
-        var k = process.argv.length > 99 ? "x" : "String";
-        var v = { fromCharCode: function () { return "T"; } };
-        function d(n) { return String.fromCharCode(n); }
-        function f() {
-          class A { x = d(65); }
-          globalThis[k] = v;
-          return new A().x;
-        }
-        console.log(f());
-    '''):
-        'T\n',
-    inspect.cleandoc('''
-        var s = ["String.fromCharCode = function () { return '!'; }"][0];
-        var q = (function () {
-          class A { v = function (e, r) {
-            var y = [];
-            for (var l = 0; l < e.length; l++) { y[l] = e.charAt(l); }
-            var u = String.fromCharCode(65);
-            return y.join('') + u;
-          }('0', 1); }
-          (async function () { await eval(s); })();
-          return new A().v;
-        })();
-        console.log(q);
-    '''):
-        '0!\n',
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFieldCallsWhatAnInstanceFindsWhenItIsConstructed(TestBase):
+class TestAnAliasAFieldReadsIsTheOneInPlaceWhenAnInstanceIsConstructed(TestBase):
     """
     The root of
     `test.lib.scripts.js.test_release_blockers.TestAFieldReadsAVariableWhenAnInstanceIsConstructed`
-    reaching the folds that ask whether a built-in is intact: a call in an instance field is taken
-    to run at the class statement, so it is folded with what it calls there, though an `eval` or a
-    write under a key known only at runtime replaces that before the construction.
+    with an alias of `Function` for the variable: constant inlining takes the read in the field to
+    happen at the class statement and writes `Function` into it, though an `eval` replaces the
+    alias before the construction.
     """
 
     @wontfix(
-        'no obfuscated file replaces a built-in or an alias of Function between a class statement '
-        'and the construction of an instance, through an eval or a global key known only at '
-        'runtime; these are made up for the defect'
+        'no obfuscated file replaces an alias of Function through an eval between a class '
+        'statement and the construction of an instance; this is made up for the defect'
     )
     def test_the_deobfuscation_prints_what_the_program_prints(self):
-        rows = A_FIELD_CALLING_WHAT_IS_REPLACED_BEFORE_CONSTRUCTION
+        rows = AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             each_program_still_prints(rows),
         )
+
+
+#: Programs writing a key into the prototype every object literal inherits from, through another
+#: object, and asking an empty object literal for the key with `in`, mapped to the behavior an
+#: engine gives them.
+A_KEY_WRITTEN_INTO_THE_OBJECT_PROTOTYPE_THROUGH_ANOTHER_OBJECT = {
+    'through the __proto__ of an object literal': Program(
+        a_program("""
+            var q = {};
+            q.__proto__.k = 1;
+            var o = {};
+            console.log("k" in o);
+            """),
+        prints('true'),
+    ),
+    'through the prototype of the prototype of an array': Program(
+        a_program("""
+            var q = [];
+            q.__proto__.__proto__.k = 1;
+            var o = {};
+            console.log("k" in o);
+            """),
+        prints('true'),
+    ),
+    'through Object.getPrototypeOf': Program(
+        a_program("""
+            var q = {};
+            Object.getPrototypeOf(q).k = 1;
+            var o = {};
+            console.log("k" in o);
+            """),
+        prints('true'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_KEY_WRITTEN_INTO_THE_OBJECT_PROTOTYPE_THROUGH_ANOTHER_OBJECT)
+class TestAKeyWrittenIntoTheObjectPrototypeThroughAnotherObjectIsInherited(TestBase):
+    """
+    Every object literal inherits from `Object.prototype`, so a key written there is found by `in`
+    on any of them. The question whether the program writes that prototype
+    (`refinery.lib.scripts.js.analysis.effects.EffectModel.read_chain_intact`) recognizes a write
+    spelled through `Object.prototype` or a constructor's `prototype`, but not one through the
+    `__proto__` of another object or through `Object.getPrototypeOf`, so the fold of `in` over an
+    empty object literal answers `false`. Programs write a prototype this way rarely, and then
+    mostly to pollute it on purpose.
+    """

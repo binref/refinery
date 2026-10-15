@@ -1546,6 +1546,68 @@ class TestMembershipOverAnObjectGainingAKeyOtherwiseIsLeftStanding(TestJsDeobfus
         )
         self.assertEqual(source, self._simplify(source))
 
+
+#: Programs replacing the prototype of an empty object literal, or writing a key into it through
+#: `__proto__`, and asking for a key with `in`, mapped to what Node prints.
+A_PROTOTYPE_AN_OBJECT_REPLACES_OR_HANDS_OUT = {
+    a_program("""
+        var o = {};
+        o.__proto__ = null;
+        console.log("toString" in o);
+        """): 'false\n',
+    a_program("""
+        var o = {};
+        Object.setPrototypeOf(o, null);
+        console.log("toString" in o);
+        """): 'false\n',
+    a_program("""
+        function f() { var o = {}; o.__proto__.k = 1; return "k" in o; }
+        console.log(f());
+        """): 'true\n',
+    a_program("""
+        function f(k) { var o = {}; o[k].z = 1; return "z" in o; }
+        console.log(f("__proto__"));
+        """): 'true\n',
+}
+
+
+class TestMembershipOverAReplacedOrHandedOutPrototypeIsLeftStanding(TestJsDeobfuscator):
+    """
+    The keys an empty object literal inherits are the ones its prototype holds only while the
+    object keeps the prototype it was created with and the file writes no key into that prototype
+    through the object. `__proto__` names the prototype, so a store to it replaces the chain and a
+    read of it, or of a key a computed name may spell as `__proto__`, hands the chain out.
+    """
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_about_each_prototype_replaced_or_handed_out(self):
+        rows = A_PROTOTYPE_AN_OBJECT_REPLACES_OR_HANDS_OUT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_an_inherited_key_is_not_folded_for_an_object_given_a_null_prototype(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            obj.__proto__ = null;
+            var a = 'toString' in obj;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_an_absent_key_is_not_folded_for_an_object_whose_prototype_is_written(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            obj.__proto__.x = 1;
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+
 class TestCalleeSequencePreserved(TestJsDeobfuscator):
 
     def test_sequence_folded_in_statement_position(self):
