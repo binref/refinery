@@ -15,6 +15,8 @@ _SCRIPT_THAT_NAMES_HRESULTS = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_SLEEPS = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_WRITES_NUMBERS_IN_HEX = _SCRIPT_WITH_TRY_FINALLY
 _SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD = _SCRIPT_WITH_TRY_FINALLY
+_SCRIPT_THAT_PRINTS_JSON = _SCRIPT_WITH_TRY_FINALLY
+_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
@@ -473,6 +475,42 @@ class TestIPFSEmulator(TestBase):
             [TC.UnicodeString, TC.UnicodeString],
             [TC.UnicodeString, TC.UnicodeString, TC.U32, TC.U32, TC.UnicodeString],
         ])
+
+    def test_format_receives_a_number_reached_through_pointers_with_its_type(self):
+        """
+        `PRINTJSONOBJECT` reaches the value of an object entry, an element of the array of numbers
+        in the parser output, through a chain of pointers, and formats it with `%g`.
+        """
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC
+        received = []
+
+        def record(_, fmt: str, args: Variable) -> str:
+            received.append([args.at(k).deref().type.code for k in range(len(args.deref()))])
+            return fmt
+
+        json_number = 1
+        entry = ['key', [json_number, 0]]
+        parser_output = [[1.5], [], [], [], [[entry]], []]
+        emulator = self._script_emulator(_SCRIPT_THAT_PRINTS_JSON)
+        printer = emulator.symbols['PRINTJSONOBJECT']
+        with _replaced_external('Format', record):
+            list(emulator.emulate_function(printer, parser_output, 0, 0, None, ''))
+        self.assertEqual(received, [[TC.UnicodeString, TC.Double]])
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=IFPSException,
+        reason='a script error in an event ends the emulated installation; Inno Setup reports it and continues',
+    )
+    def test_a_script_error_in_should_skip_page_does_not_end_the_installation(self):
+        """
+        The script calls `ExtractFileDir` in `ShouldSkipPage` for the page that selects the target
+        directory. Inno Setup shows the error of that call and does not skip the page.
+        """
+        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE)
+        with _failing_external('ExtractFileDir'):
+            list(emulator.emulate_installation())
 
     def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
         from refinery.lib.inno.emulator import NewFunctionCall

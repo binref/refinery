@@ -46,7 +46,7 @@ def extended(_data: bytes):
             return sign * 0
         exponent = -16382
     elif exponent == 0b111111111111111:
-        if data == 0:
+        if data == 1 << 63:
             return sign * float('Inf')
         else:
             return sign * float('NaN')
@@ -227,7 +227,7 @@ class TC(enum.IntEnum):
         """
         Indicates whether the code represents a signed integer type.
         """
-        return (valid := self.integer_range) is not None and valid.start < 0
+        return self in _TC_SIGNED
 
     @property
     def character(self) -> bool:
@@ -304,6 +304,8 @@ _TC_INTEGER_RANGE = {
     TC.S64 : _integer_range(TC.S64, True),
 }
 
+_TC_SIGNED = frozenset(code for code, valid in _TC_INTEGER_RANGE.items() if valid.start < 0)
+
 
 @dataclass
 class IFPSTypeBase(abc.ABC):
@@ -355,6 +357,14 @@ class IFPSTypeBase(abc.ABC):
         Indicates whether the type is a container.
         """
         return self.code.container
+
+    @property
+    def boolean(self) -> bool:
+        """
+        Indicates whether the type is the Boolean type of Pascal Script: a byte that the runtime
+        recognizes by its exported name and converts into a truth value for a Variant.
+        """
+        return self.code is TC.U08 and (self.symbol or '').upper() == 'BOOLEAN'
 
     def __str__(self):
         if self.symbol is not None:

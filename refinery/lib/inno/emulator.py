@@ -249,12 +249,15 @@ class Variable(VariableBase, Generic[_T]):
         """
         This method is used to point a pointer variable to a target. This is different from calling
         the `refinery.lib.inno.emulator.Variable.set` method as the latter would try to dereference
-        the pointer and assign to its target; this method sets the value of the pointer itself.
+        the pointer and assign to its target; this method sets the value of the pointer itself. As
+        in Pascal Script, a pointer never points to a pointer: Set to a pointer, it receives the
+        target of that pointer, or a copy of that target with its type.
         """
         if not self.pointer:
             raise TypeError
         if not isinstance(var, Variable):
             raise TypeError
+        var = var.deref()
         if copy:
             var = Variable(var.type, data=var)
         self.data = var
@@ -265,38 +268,49 @@ class Variable(VariableBase, Generic[_T]):
         For container types, it can also be a sequence of those. A container variable is copied
         element by element, and a pointer element as Pascal Script copies it: A pointer to a
         variable of the script points to the same variable, and a pointer that owns its target
-        points to a copy of that target.
+        points to a copy of that target. A Variant that receives a Boolean holds a truth value, as
+        Pascal Script converts a Boolean into a Variant.
         """
         if self.pointer:
             return self.deref().set(value)
+        origin = None
+        assigned = value
         if isinstance(value, Variable):
             source = value.deref()
             if self.container and source.container:
                 return self._copy_elements(source)
-            value = source.get()
-        elif isinstance(value, (Enum, Value)):
-            value = value.value
+            origin = source.type
+            assigned = source.get()
+        elif isinstance(value, Value):
+            origin = value.type
+            assigned = value.value
+        elif isinstance(value, Enum):
+            assigned = value.value
         if self.container:
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(assigned, (list, tuple)):
                 raise TypeError
-            self.resize(len(value))
-            for k, v in enumerate(value):
+            self.resize(len(assigned))
+            for k, v in enumerate(assigned):
                 self.data[k].set(v)
         else:
-            self.data = self._wrap(value)
+            if origin is not None and self.type.code is TC.Variant and origin.boolean:
+                assigned = bool(assigned)
+            self.data = self._wrap(assigned)
 
     def _copy_elements(self, source: Variable):
-        if not isinstance(elements := source.data, list):
+        if (
+            not isinstance(elements := source.data, list)
+            or not isinstance(destination := self.data, list)
+        ):
             raise TypeError
         self.resize(len(elements))
-        for k, copied in enumerate(elements):
-            element = self.at(k)
+        for element, copied in zip(destination, elements):
             if not element.pointer:
                 element.set(copied)
             elif isinstance(target := copied.data, Variable):
                 element.setptr(target, copy=target.spec is None)
             else:
-                raise TypeError
+                raise _type_mismatch()
 
     def get(self) -> _T:
         """
@@ -463,6 +477,15 @@ _SET_ARITHMETIC = {
     AOp.Mul: operator.and_,
 }
 
+_BIT_EXACT_ARITHMETIC = frozenset((
+    AOp.Add,
+    AOp.Sub,
+    AOp.Mul,
+    AOp.And,
+    AOp.BOr,
+    AOp.Xor,
+))
+
 
 def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b) -> int:
     """
@@ -473,18 +496,8 @@ def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b) -> int:
     destination with an Int64 source, 32 bits otherwise, unsigned for an unsigned destination.
     """
     b = _ordinal(source, b)
-    if aop is AOp.Add:
-        return a + b
-    if aop is AOp.Sub:
-        return a - b
-    if aop is AOp.Mul:
-        return a * b
-    if aop is AOp.And:
-        return a & b
-    if aop is AOp.BOr:
-        return a | b
-    if aop is AOp.Xor:
-        return a ^ b
+    if aop in _BIT_EXACT_ARITHMETIC:
+        return _PYTHON_ARITHMETIC[aop](a, b)
     wide = target.width > 4
     if aop is AOp.Shl:
         return a << (b & (63 if wide else 31))
@@ -492,20 +505,15 @@ def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b) -> int:
         if wide:
             return (a & 0xFFFFFFFFFFFFFFFF) >> (b & 63)
         return (a & 0xFFFFFFFF) >> (b & 31)
-    if wide or (target.width == 4 and source.width > 4):
-        pass
-    elif target.signed:
-        b = _signed32(b)
-        if a == -0x80000000 and b == -1:
-            raise OverflowError('Integer overflow')
-    else:
-        b &= 0xFFFFFFFF
+    if not wide and (target.width < 4 or source.width <= 4):
+        if target.signed:
+            b = _signed32(b)
+            if a == -0x80000000 and b == -1:
+                raise OverflowError('Integer overflow')
+        else:
+            b &= 0xFFFFFFFF
     quotient, remainder = _truncated_division(a, b)
-    if aop is AOp.Div:
-        return quotient
-    if aop is AOp.Mod:
-        return remainder
-    raise TypeError(F'Unknown arithmetic operator {aop!r}.')
+    return quotient if aop is AOp.Div else remainder
 
 
 def _calculate(aop: AOp, target: TC, a, source: TC, b):
@@ -698,7 +706,7 @@ def _open_array_element(element: Variable) -> VarRec:
         return VarRec(VType.Integer, 0)
     value = target.get()
     if kind is VType.Integer:
-        value = ((int(value) + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+        value = _signed32(value)
     return VarRec(kind, value)
 
 
@@ -1312,9 +1320,15 @@ class IFPSEmulator:
                         if et is None:
                             exceptions.pop()
                     elif opc == Op.Inc:
-                        setval(a := insn.op(0), getval(a) + 1)
+                        counter = getvar(insn.op(0)).deref()
+                        if not counter.type.code.integer:
+                            raise _type_mismatch()
+                        counter.set(counter.get() + 1)
                     elif opc == Op.Dec:
-                        setval(a := insn.op(0), getval(a) - 1)
+                        counter = getvar(insn.op(0)).deref()
+                        if not counter.type.code.integer:
+                            raise _type_mismatch()
+                        counter.set(counter.get() - 1)
                     elif opc == Op.JumpPop1:
                         stack.pop()
                         ip = insn.operands[0]

@@ -67,7 +67,18 @@ _INTEGER_MASK = {
     VType.Int64   : 0xFFFFFFFFFFFFFFFF,
 }
 
-_FORMAT_SPECIFIER = re.compile(r'(?:(\d+|\*):)?(-)?(\d+|\*)?(?:\.(\*|\d*))?(.)?', re.DOTALL)
+_ASTERISK_KINDS = frozenset((
+    VType.Integer,
+    VType.Int64,
+))
+
+_INTEGER_RANGE = range(-0x80000000, 0x80000000)
+
+_DIGITS = frozenset('0123456789')
+_TYPE_LETTER = re.compile('[A-Za-z]')
+
+_INVALID_FORMAT = 'Format \'%s\' invalid or incompatible with argument'
+_MISSING_ARGUMENT = 'No argument for format \'%s\''
 
 
 def _variant_text(value) -> str:
@@ -76,43 +87,68 @@ def _variant_text(value) -> str:
     return str(value)
 
 
+def _number(fmt: str, cursor: int) -> tuple[str, int]:
+    """
+    Reads the digits at the cursor. Returns them and the cursor after them.
+    """
+    end = cursor
+    while end < len(fmt) and fmt[end] in _DIGITS:
+        end += 1
+    return fmt[cursor:end], end
+
+
+def _integer(number: str) -> int:
+    """
+    The value of digits that spell an Integer, and -1 for no digits or a value beyond the range of
+    an Integer.
+    """
+    if number and (value := int(number)) in _INTEGER_RANGE:
+        return value
+    return -1
+
+
 def format(fmt: str, args: Sequence[VarRec]) -> str:
     """
-    Delphi's `Format` function: Each format specifier has the form
+    Delphi's `Format` function as Delphi 12 implements it: Each format specifier has the form
 
         "%" [index ":"] ["-"] [width] ["." precision] type
 
-    where index, width, and precision are decimal numbers or an asterisk, which takes the number
-    from the next argument. The type is one of `d u x s p e f g n m`, in any case, and `%%` writes a
-    percent sign. A specifier without an index takes the argument after the one that the previous
-    specifier took. Hex digits are upper case, a precision is the minimum number of digits for an
-    integer and the maximum length of a string, and the width pads with spaces. The floating-point
-    types are converted by the Python format operator with the same type and precision.
+    where index is a decimal number and a colon without a number is the index 0. Width and
+    precision are decimal numbers or an asterisk, which takes the number from the next argument:
+    an Integer, or an Int64 in the range of an Integer. A negative width from an argument pads on
+    the other side. An index or width whose digits do not spell a non-negative Integer is an
+    error, and such a precision is ignored. A specifier without an index takes the argument after
+    the one that the previous specifier took. The type is one of `d u x s p e f g`, in any case,
+    and `%%` writes a percent sign. A specifier that does not end in a letter ends the output.
+    Hex digits are upper case, a precision is the minimum number of digits for an integer and the
+    maximum length of a string, and the width pads with spaces. The floating-point types are
+    converted by the Python format operator with the same type and precision; Delphi's types `n`
+    and `m` are rejected.
     """
     output: list[str] = []
-    index = 0
     cursor = 0
+    index = -1
 
     def error(message: str):
         return EConvertError(message % fmt[:31])
 
-    def take() -> VarRec:
-        nonlocal index
+    def argument() -> VarRec:
         if index >= len(args):
-            raise error('No argument for format \'%s\'')
-        arg = args[index]
-        index += 1
-        return arg
+            raise error(_MISSING_ARGUMENT)
+        return args[index]
 
-    def number(spelled: str | None, default: int) -> int:
-        if spelled is None:
-            return default
-        if spelled != '*':
-            return int(spelled or '0')
-        kind, value = take()
-        if kind is not VType.Integer or not isinstance(value, int):
-            raise error('Format \'%s\' invalid or incompatible with argument')
+    def spelled(number: str) -> int:
+        if (value := _integer(number)) < 0:
+            raise error(_INVALID_FORMAT)
         return value
+
+    def asterisk() -> int:
+        nonlocal index
+        kind, value = argument()
+        index += 1
+        if kind in _ASTERISK_KINDS and isinstance(value, int) and value in _INTEGER_RANGE:
+            return value
+        raise error(_INVALID_FORMAT)
 
     while (percent := fmt.find('%', cursor)) >= 0:
         output.append(fmt[cursor:percent])
@@ -121,19 +157,48 @@ def format(fmt: str, args: Sequence[VarRec]) -> str:
             output.append('%')
             cursor += 1
             continue
-        if (specifier := _FORMAT_SPECIFIER.match(fmt, cursor)) is None:
-            raise error('Format \'%s\' invalid or incompatible with argument')
-        cursor = specifier.end()
-        spelled_index, left, spelled_width, spelled_precision, letter = specifier.groups()
-        if letter is None:
-            raise error('Format \'%s\' invalid or incompatible with argument')
-        index = number(spelled_index, index)
-        width = number(spelled_width, 0)
-        precision = number(spelled_precision, -1)
-        kind, value = take()
-        text = _convert(letter, kind, value, precision)
-        if text is None:
-            raise error('Format \'%s\' invalid or incompatible with argument')
+        index += 1
+        width = precision = -1
+        number, cursor = _number(fmt, cursor)
+        if not number:
+            if fmt.startswith(':', cursor):
+                cursor += 1
+                index = 0
+        elif fmt.startswith(':', cursor):
+            cursor += 1
+            index = spelled(number)
+        else:
+            width = spelled(number)
+        if left := fmt.startswith('-', cursor):
+            cursor += 1
+        if star_width := fmt.startswith('*', cursor):
+            cursor += 1
+        else:
+            number, cursor = _number(fmt, cursor)
+            if number:
+                width = spelled(number)
+        star_precision = False
+        if fmt.startswith('.', cursor):
+            cursor += 1
+            if star_precision := fmt.startswith('*', cursor):
+                cursor += 1
+            else:
+                number, cursor = _number(fmt, cursor)
+                precision = _integer(number)
+        if not _TYPE_LETTER.match(fmt, cursor):
+            return ''.join(output)
+        letter = fmt[cursor]
+        cursor += 1
+        if star_width:
+            width = asterisk()
+            if width < 0:
+                left = not left
+                width = -width & 0x7FFFFFFF
+        if star_precision:
+            precision = asterisk()
+        kind, value = argument()
+        if (text := _convert(letter, kind, value, precision)) is None:
+            raise error(_INVALID_FORMAT)
         output.append(text.ljust(width) if left else text.rjust(width))
     output.append(fmt[cursor:])
     return ''.join(output)
@@ -162,12 +227,9 @@ def _convert(letter: str, kind: VType, value, precision: int) -> str | None:
         if kind is not VType.Pointer:
             return None
         return F'{value or 0:08X}'
-    if conversion in 'EFGNM':
+    if conversion in 'EFG':
         if kind is not VType.Extended or not isinstance(value, float):
             return None
         spec = letter if precision < 0 else F'.{precision}{letter}'
-        try:
-            return F'%{spec}' % value
-        except ValueError:
-            return None
+        return F'%{spec}' % value
     return None
