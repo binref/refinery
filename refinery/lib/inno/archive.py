@@ -2768,13 +2768,16 @@ class InnoArchive:
             return self._password is not None
         self._password_guessed = True
         if file := self.get_encrypted_sample():
-            from refinery.lib.inno.emulator import NewPassword
+            from refinery.lib.inno.emulator import NewPassword, NewScriptError
             self._log_verbose('attempting to automatically determine password from the embedded script')
             try:
                 if (emulator := self.emulator) is None:
                     self._log_comment('the archive has no script to determine the password from')
                     return False
                 for p in emulator.reset().emulate_installation():
+                    if isinstance(p, NewScriptError):
+                        self._log_comment(F'script error in {p.name!s}{p.args!r}: {p.message}')
+                        continue
                     if not isinstance(p, NewPassword):
                         continue
                     if self.check_password(file, p):

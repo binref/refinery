@@ -5,7 +5,7 @@ import time
 from typing import Callable
 from unittest import mock
 
-from refinery.lib.inno.emulator import EmulatorException, IFPSException
+from refinery.lib.inno.emulator import EmulatorException
 
 from .. import TestBase
 
@@ -498,19 +498,34 @@ class TestIPFSEmulator(TestBase):
             list(emulator.emulate_function(printer, parser_output, 0, 0, None, ''))
         self.assertEqual(received, [[TC.UnicodeString, TC.Double]])
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=IFPSException,
-        reason='a script error in an event ends the emulated installation; Inno Setup reports it and continues',
-    )
-    def test_a_script_error_in_should_skip_page_does_not_end_the_installation(self):
+    def test_a_script_error_in_should_skip_page_ends_only_that_event(self):
         """
-        The script calls `ExtractFileDir` in `ShouldSkipPage` for the page that selects the target
-        directory. Inno Setup shows the error of that call and does not skip the page.
+        For the page that selects the target directory, `ShouldSkipPage` ends with the call
+        `DirExistsNoRedir(ExtractFileDir(..))`. When `ExtractFileDir` fails, Inno Setup shows the
+        error and does not skip the page, which is also the answer of the script without the error.
         """
-        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE)
+        from refinery.lib.inno.emulator import NewFunctionCall, NewScriptError, PageID
+
+        def calls_and_errors(events):
+            return [
+                event.name if isinstance(event, NewFunctionCall) else event
+                for event in events if isinstance(event, (NewFunctionCall, NewScriptError))
+            ]
+
+        def installation():
+            emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE, log_calls=True)
+            return calls_and_errors(emulator.emulate_installation())
+
+        clean = installation()
         with _failing_external('ExtractFileDir'):
-            list(emulator.emulate_installation())
+            failed = installation()
+        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE, log_calls=True)
+        unreached = calls_and_errors(emulator.emulate_function(emulator.symbols['DIREXISTSNOREDIR'], ''))
+        errors = [event for event in failed if isinstance(event, NewScriptError)]
+        self.assertEqual([(error.name, error.args) for error in errors], [('ShouldSkipPage', (PageID.wpSelectDir,))])
+        k = failed.index(errors[0])
+        # names only: two clean runs differ in time stamps and random numbers, never in the calls
+        self.assertEqual(failed[:k] + unreached + failed[k + 1:], clean)
 
     def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
         from refinery.lib.inno.emulator import NewFunctionCall
@@ -533,7 +548,7 @@ class TestIPFSEmulator(TestBase):
 
     @pytest.mark.xfail(
         strict=True,
-        raises=IFPSException,
+        raises=AssertionError,
         reason='a call is read with the declaration of the current Inno Setup, where StringChange returns a value',
     )
     def test_a_script_for_an_older_inno_setup_calls_string_change_without_a_result(self):

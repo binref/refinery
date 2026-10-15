@@ -8,6 +8,7 @@ from refinery.lib.inno.emulator import (
     NewInstruction,
     NewMutex,
     NewPassword,
+    NewScriptError,
 )
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.units import Unit
@@ -55,6 +56,9 @@ class innopwd(Unit):
                 continue
             if isinstance(event, NewFunctionCall):
                 self.log_info(F'calling {event.name!s}{event.args!r}')
+                continue
+            if isinstance(event, NewScriptError):
+                self.log_info(F'script error in {event.name!s}{event.args!r}: {event.message}')
                 continue
             if isinstance(event, NewMutex):
                 self.log_info(F'mutex registered: {event!s}')
