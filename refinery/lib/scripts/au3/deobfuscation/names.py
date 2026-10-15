@@ -9,7 +9,9 @@ where the pinned semantics prove the replacement indistinguishable. `Call("f", a
 with `@error` while the direct call terminates the script (probe9 A13b). A statement-position
 `Assign("x", v)` becomes `$x = v` — flag 0 is the plain write in every storage configuration
 probed (probe9 A1-A5, A18-A20, A23, A24) — never over a constant, which the plain write refuses
-fatally (probe9d A10), and never where `@error` is observable: a successful `Assign` clears a
+fatally (probe9d A10), never under a `MustDeclareVars` the tree may set without a declaration
+backing the plain write — the option refusing the write to an undeclared name while its hold
+over `Assign` is unpinned — and never where `@error` is observable: a successful `Assign` clears a
 previous `@error`/`@extended` while the plain write leaves both (probe9f A21). `Eval("x")`
 becomes `$x` only behind a local that provably exists — every other read targets a global the
 tree cannot prove exists, and the plain read of a missing name is a fatal refusal where `Eval`
@@ -40,7 +42,7 @@ from dataclasses import dataclass
 from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_child, set_child_list
 from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.analysis.cache import model_cache
-from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
+from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
 from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel, callee_census
 from refinery.lib.scripts.au3.lexer import is_au3_identifier
 from refinery.lib.scripts.au3.model import (
@@ -240,7 +242,7 @@ class Au3DynamicNameFlattening(Transformer):
             return
         if self._facts.calls_autoit_set_option:
             scope = ast.enclosing_function(call)
-            if self._scopes.binding(scope, statement, name) is not Binding.LOCAL:
+            if not self._scopes.declaration_backs_write(scope, statement, name):
                 return
         assignment = Au3Assignment()
         set_child(assignment, 'target', Au3Variable(name=name, raw=F'${spelling}'))

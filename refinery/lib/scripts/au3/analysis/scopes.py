@@ -22,6 +22,13 @@ The rules, per the AutoIt3 documentation:
   in its body or after it finds the local. A `Global` declaration of the name anywhere in the
   function still proves the global and keeps the write `NONE`.
 
+The model also owns the declared-name question: whether a declaration backs a plain write, the
+refusal `MustDeclareVars` answers a plain write with when none does. A parameter, a claim the
+function's body precedes the write with, or a `Global` declaration standing directly in the body
+the write stands in before it backs the write; a claim a branch holds runs only when the branch
+does, a declaration in another body runs when that body runs, and a `Dim` claim names a storage
+the option does not recognize, so none of the three backs anything.
+
 The model also holds the tree's constant names — a `Const` or `Enum` declaration or a `Const`
 parameter claims one — because no scope placement softens that fact: writing a constant is an
 interpreter refusal, so a caller that flattens a dynamic write over a name asks the model first.
@@ -76,14 +83,16 @@ INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
 class Au3LocalFacts:
     """
     What one function body proves about a name: whether it is a parameter, and a `ByRef` one,
-    whether any `Global` declaration in the function claims it, the names any local `Static`
-    declaration in it claims — a static's local survives the call that creates it — the body
-    position where it first takes a declaration that forces the local storage, and the body
-    positions of every statement holding such a declaration or claim at any depth.
+    whether any `Global` declaration in the function claims it and the body position where it
+    first takes one standing directly in the body, the names any local `Static` declaration in
+    it claims — a static's local survives the call that creates it — the body position where it
+    first takes a declaration that forces the local storage, and the body positions of every
+    statement holding such a declaration or claim at any depth.
     """
     parameters: frozenset[str]
     reference_parameters: frozenset[str]
     global_names: frozenset[str]
+    first_global: dict[str, int]
     static_names: frozenset[str]
     first_local: dict[str, int]
     local_positions: dict[str, frozenset[int]]
@@ -130,13 +139,31 @@ def _local_claim_names(node: Node) -> set[str] | None:
     return None
 
 
+def _first_global_claims(body: list[Statement]) -> dict[str, int]:
+    """
+    The body position where each name first takes a `Global` claim standing directly in *body*: a
+    top-level claim runs on every path that reaches a later statement, because AutoIt has no
+    jumps, while one a branch holds runs only when the branch does.
+    """
+    first: dict[str, int] = {}
+    for index, statement in enumerate(body):
+        if (
+            isinstance(statement, (Au3VariableDeclaration, Au3EnumDeclaration))
+            and statement.scope is Au3ScopeKind.GLOBAL
+        ):
+            for name in _declared_names(statement):
+                first.setdefault(name, index)
+    return first
+
+
 def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
     """
     The local facts of *function*'s body: parameter names and the `ByRef` ones among them, the
-    names any `Global` declaration in it claims and any local `Static` one — at any depth, but
-    not inside a nested function, which is a scope of its own — the first body position at which
-    each name takes a local-forcing declaration or becomes the variable of a `For`/`For…In` loop,
-    and the body positions of every statement holding such a declaration or claim at any depth.
+    names any `Global` or local `Static` declaration in it claims — at any depth, but not inside
+    a nested function, which is a scope of its own — the first body position where each name
+    takes a `Global` claim standing directly in the body, the first body position at which each
+    name takes a local-forcing declaration or becomes the variable of a `For`/`For…In` loop, and
+    the body positions of every statement holding such a declaration or claim at any depth.
     """
     parameters = {
         parameter.variable.name
@@ -158,6 +185,7 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
             global_names |= _declared_names(node)
         elif isinstance(node, Au3VariableDeclaration) and node.is_static:
             static_names |= _declared_names(node)
+    first_global = _first_global_claims(function.body)
     first_local: dict[str, int] = {}
     for index, statement in enumerate(function.body):
         names = _local_claim_names(statement)
@@ -177,6 +205,7 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
         frozenset(parameters),
         frozenset(reference_parameters),
         frozenset(global_names),
+        first_global,
         frozenset(static_names),
         first_local,
         {name: frozenset(indices) for name, indices in local_positions.items()},
@@ -197,16 +226,30 @@ def _top_level_index(scope: Au3FunctionDeclaration, write: Node) -> int:
     return scope.body.index(cast(Statement, cursor))
 
 
+def _script_level_index(write: Node) -> int:
+    """
+    The position in the script body of the top-level statement that holds *write*, or `-1` when
+    the chain leaves the body — a write inside a function, which stands in a body of its own.
+    """
+    cursor = write
+    while cursor.parent is not None and cursor.parent.parent is not None:
+        cursor = cursor.parent
+    if not isinstance(cursor, Statement) or not isinstance(cursor.parent, Au3Script):
+        return -1
+    return cursor.parent.body.index(cursor)
+
+
 @dataclass(frozen=True)
 class Au3ScopeModel:
     """
     The script's declared functions, the answers to which storage a write or a read targets and
-    which storage an occurrence may reach, whether a write reaches a caller's storage, the names
-    the tree declares constants, and whether the tree holds an include. Built once per tree
-    version by `build_scope_model`.
+    which storage an occurrence may reach, whether a write reaches a caller's storage, whether a
+    declaration backs a plain write, the names the tree declares constants, and whether the tree
+    holds an include. Built once per tree version by `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
+    script_first_global: dict[str, int] = field(default_factory=dict)
     constant_names: frozenset[str] = frozenset()
     holds_an_include: bool = False
 
@@ -267,6 +310,35 @@ class Au3ScopeModel:
             return False
         facts = self.local_facts.get(scope)
         return facts is None or name in facts.reference_parameters
+
+    def declaration_backs_write(
+        self,
+        scope: Au3FunctionDeclaration | None,
+        write: Node,
+        name: str,
+    ) -> bool:
+        """
+        Whether a declaration of *name* backs the plain write *write* standing in *scope*: a
+        parameter, or a claim the function's body precedes the write with — `binding` answers
+        both — or a `Global` declaration standing directly in the body the write stands in, the
+        function's own or the script's, before the statement that holds it. A claim a branch
+        holds runs only when the branch does, and a declaration in another body runs when that
+        body runs, which the caller cannot order, so neither backs a write. A `Dim` claim backs
+        nothing — the option names `Local` and `Global` alone — and a `Local` standing at script
+        level backs nothing either, the storage it creates there being unpinned.
+        """
+        if scope is not None:
+            if self.binding(scope, write, name) is Binding.LOCAL:
+                return True
+            facts = self.local_facts.get(scope)
+            first = facts.first_global.get(name) if facts is not None else None
+            if first is None:
+                return False
+            return first <= _top_level_index(scope, write)
+        first = self.script_first_global.get(name)
+        if first is None:
+            return False
+        return first <= _script_level_index(write)
 
     def read_binding(
         self,
@@ -414,11 +486,11 @@ def _constant_names(root: Au3Script) -> frozenset[str]:
 
 def build_scope_model(root: Au3Script) -> Au3ScopeModel:
     """
-    Collect the function declarations of *root*, the local facts of each body, the names the tree
-    declares constants, and whether the tree holds an include — the node the parser reads an
-    include line without trailing text into, or the directive one with trailing text becomes.
-    Two functions of one name never coexist in a script AutoIt runs, so the mapping keeps the
-    last of them without comment.
+    Collect the function declarations of *root*, the local facts of each body, the script body's
+    first `Global` claims, the names the tree declares constants, and whether the tree holds an
+    include — the node the parser reads an include line without trailing text into, or the
+    directive one with trailing text becomes. Two functions of one name never coexist in a script
+    AutoIt runs, so the mapping keeps the last of them without comment.
     """
     functions: dict[str, Au3FunctionDeclaration] = {}
     holds_an_include = False
@@ -434,6 +506,7 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
     return Au3ScopeModel(
         functions,
         local_facts,
+        _first_global_claims(root.body),
         _constant_names(root),
         holds_an_include,
     )

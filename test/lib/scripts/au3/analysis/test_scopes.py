@@ -524,3 +524,164 @@ class TestAu3WritesCallerStorage(TestBase):
     def test_a_script_level_write_reaches_no_caller(self):
         model = build_scope_model(Au3Parser('$p = 1\n').parse())
         self.assertFalse(model.writes_caller_storage(None, 'p'))
+
+
+class TestAu3DeclarationBacksWrite(TestBase):
+    """
+    Whether a declaration backs a plain write — the question `MustDeclareVars` refuses the write
+    without: a parameter, a claim the body precedes the write with, or a top-level `Global`
+    declaration before it in the same body. A claim a branch holds, a declaration in another
+    body, and a `Dim` claim back nothing, the first running only with its branch, the second
+    only with its body, and the third naming a storage the option does not recognize.
+    """
+
+    def _backs(self, source: str, name: str) -> bool:
+        root = Au3Parser(inspect.cleandoc(source)).parse()
+        model = build_scope_model(root)
+        for node in root.walk():
+            if not isinstance(node, Au3Assignment):
+                continue
+            variable = ast.store_target_variable(node.target)
+            statement = ast.owning_statement(node)
+            if variable is not None and variable.name == name and statement is not None:
+                return model.declaration_backs_write(
+                    ast.enclosing_function(node), statement, name)
+        self.fail('the source holds no assignment of that name')
+
+    def test_a_parameter_backs_the_write(self):
+        self.assertTrue(self._backs(
+            '''
+            Func f($p)
+                $p = 5
+            EndFunc
+            ''',
+            'p',
+        ))
+
+    def test_a_local_claim_before_the_write_backs_it(self):
+        self.assertTrue(self._backs(
+            '''
+            Func f()
+                Local $x
+                $x = 5
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_global_claim_before_the_write_backs_it(self):
+        self.assertTrue(self._backs(
+            '''
+            Func f()
+                Global $g
+                $g = 5
+            EndFunc
+            ''',
+            'g',
+        ))
+
+    def test_a_for_claim_before_the_write_backs_it(self):
+        """
+        The loop creates its variable local before its first test, so the write after it finds
+        a declaration.
+        """
+        self.assertTrue(self._backs(
+            '''
+            Func f()
+                For $i = 1 To 9
+                Next
+                $i = 5
+            EndFunc
+            ''',
+            'i',
+        ))
+
+    def test_a_write_before_the_local_claim_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            Func f()
+                $x = 5
+                Local $x
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_a_write_before_the_global_claim_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            Func f()
+                $g = 5
+                Global $g
+            EndFunc
+            ''',
+            'g',
+        ))
+
+    def test_a_branch_held_global_claim_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            Func f($c)
+                If $c Then
+                    Global $g
+                EndIf
+                $g = 5
+            EndFunc
+            ''',
+            'g',
+        ))
+
+    def test_a_dim_claim_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            Func f()
+                Dim $x
+                $x = 5
+            EndFunc
+            ''',
+            'x',
+        ))
+
+    def test_an_unbacked_function_write_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            Func f()
+                $q = 5
+            EndFunc
+            ''',
+            'q',
+        ))
+
+    def test_a_script_level_global_claim_before_the_write_backs_it(self):
+        self.assertTrue(self._backs(
+            '''
+            Global $g
+            $g = 5
+            ''',
+            'g',
+        ))
+
+    def test_a_script_level_global_claim_after_the_write_backs_nothing(self):
+        self.assertFalse(self._backs(
+            '''
+            $g = 5
+            Global $g
+            ''',
+            'g',
+        ))
+
+    def test_a_script_level_global_claim_backs_no_function_write(self):
+        """
+        The function may run before the declaration the script body holds, so the write inside
+        it stands on no provable declaration.
+        """
+        self.assertFalse(self._backs(
+            '''
+            Global $g
+
+            Func f()
+                $g = 5
+            EndFunc
+            ''',
+            'g',
+        ))

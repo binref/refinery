@@ -7,8 +7,6 @@ elimination the cleanup group applies to the tree it left behind.
 """
 from __future__ import annotations
 
-import unittest
-
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.names import Au3DynamicNameFlattening
@@ -725,13 +723,10 @@ class TestAu3DynamicNameFlattening(TestAu3):
             ),
             'AutoItSetOption("MustDeclareVars", 1)\nFunc f($p)\n    $p = 1\nEndFunc\n')
 
-    @unittest.expectedFailure
     def test_a_declared_global_write_under_mustdeclarevars_flattens(self):
         """
         A declared global is legal for the plain write under `MustDeclareVars`, and `Assign`
-        over it answers the same storage (probe9 A3/A23), so the flatten is sound. The gate asks
-        the binding model for the local storage instead of whether a declaration backs the name,
-        so the write stands until the scope model answers the declared-name question.
+        over it answers the same storage (probe9 A3/A23), so the flatten is sound.
         """
         self.assertEqual(
             self._apply(
@@ -745,6 +740,98 @@ class TestAu3DynamicNameFlattening(TestAu3):
                 Au3DynamicNameFlattening,
             ),
             'AutoItSetOption("MustDeclareVars", 1)\nGlobal $g\n$g = 1\n')
+
+    def test_a_global_claim_after_the_write_keeps_it(self):
+        """
+        The declaration trails the write, so the plain write would run before the name is
+        declared and the option refuses it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                Assign("g", 1)
+
+                Global $g
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nAssign("g", 1)\nGlobal $g\n')
+
+    def test_a_branch_held_global_claim_keeps_the_write(self):
+        """
+        The declaration runs only when its branch does, so it proves nothing about the state the
+        plain write would meet.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                If $c Then
+                    Global $g
+                EndIf
+
+                Assign("g", 1)
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nIf $c Then\n    Global $g\nEndIf\n'
+            'Assign("g", 1)\n')
+
+    def test_an_in_function_global_claim_before_the_write_flattens(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                Func f()
+                    Global $g
+                    Assign("g", 1)
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nFunc f()\n    Global $g\n    $g = 1\n'
+            'EndFunc\n')
+
+    def test_an_in_function_global_claim_after_the_write_keeps_it(self):
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                Func f()
+                    Assign("g", 1)
+                    Global $g
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nFunc f()\n    Assign("g", 1)\n    Global $g\n'
+            'EndFunc\n')
+
+    def test_a_script_level_global_keeps_a_function_write(self):
+        """
+        The function may run before the script body reaches its declaration, so the plain write
+        inside it would meet an undeclared name.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                AutoItSetOption("MustDeclareVars", 1)
+
+                Global $g
+
+                Func f()
+                    Assign("g", 1)
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'AutoItSetOption("MustDeclareVars", 1)\nGlobal $g\nFunc f()\n    Assign("g", 1)\n'
+            'EndFunc\n')
 
     def test_an_opt_spelling_of_the_option_setter_keeps_the_write(self):
         """
