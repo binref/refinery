@@ -14,9 +14,8 @@ if TYPE_CHECKING:
 from refinery.lib.frame import Chunk
 from refinery.lib.ole.file import OleFile
 from refinery.lib.structures import StructReader
-from refinery.units.formats import Unit
+from refinery.units.formats import Unit, read_part
 from refinery.units.formats.archive.xtzip import xtzip
-from refinery.units.formats.office import read_part
 
 
 class doctxt(Unit):
@@ -98,7 +97,7 @@ class doctxt(Unit):
         NAMESPACE = '{urn:oasis:names:tc:opendocument:xmlns:office:1.0}'
         BODY = F'{NAMESPACE}body'
         TEXT = F'{NAMESPACE}text'
-        if (content := read_part(self, data, xtzip, 'content.xml', exact=True)) is None:
+        if (content := read_part(self, data, xtzip, 'content.xml')) is None:
             raise ValueError('found no text')
         root: Element = XML(content)
         body: Element = root.find(BODY)

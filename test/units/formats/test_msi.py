@@ -3,7 +3,32 @@ import hashlib
 
 import pytest
 
+from refinery.lib.ole.file import OleFile
+from refinery.units.formats.office.xtdoc import convert_msi_name
+
 from .. import TestUnitBase
+
+_MSI_NAME_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._'
+
+
+def _rename_stream(data: bytes | bytearray, name: str, new_name: str) -> bytearray:
+    """
+    Writes a new name into the directory entry of the stream whose name decodes to the given one.
+    """
+    [old_name] = [item[-1] for item in OleFile(data).listdir() if convert_msi_name(item[-1]) == name]
+    entry = F'{old_name}\0'.encode('utf-16le')
+    renamed = bytearray(data)
+    offsets = []
+    offset = renamed.find(entry)
+    while offset >= 0:
+        if int.from_bytes(renamed[offset + 0x40:offset + 0x42], 'little') == len(entry):
+            offsets.append(offset)
+        offset = renamed.find(entry, offset + 1)
+    [offset] = offsets
+    entry = F'{new_name}\0'.encode('utf-16le')
+    renamed[offset:offset + 0x40] = entry.ljust(0x40, B'\0')
+    renamed[offset + 0x40:offset + 0x42] = len(entry).to_bytes(2, 'little')
+    return renamed
 
 
 @pytest.mark.cythonized
@@ -75,6 +100,12 @@ class TestMSIRepeatedNames(TestUnitBase):
         data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
         self.assertCountEqual(self._readmes(data), self.READMES)
 
+    def test_the_streams_of_the_tables_are_not_extracted_next_to_the_tables(self):
+        data = self.download_sample('b963435f5bc9ddc70142637688a17ee16227f7c8171608b074c64fd92320e7da')
+        paths = [str(path) for path in data | self.load(list=True)]
+        self.assertIn('MsiTables/File.csv', paths)
+        self.assertEqual([path for path in paths if path.startswith('!')], [])
+
     def test_a_stream_named_like_the_summary_stream_is_extracted_next_to_it(self):
         data = self.download_sample('e8ee8f4c88d7cf8fe652b20d66407ccb9fc0bc20ce4ccd13d8e13609116ec871')
         streams = [bytes(chunk) for chunk in data | self.load('Meta/SummaryInformation')]
@@ -102,6 +133,27 @@ class TestMSIRepeatedNames(TestUnitBase):
         msi = data | self.load() | {'path': ...}
         self.assertEqual(json.loads(msi['MsiTables.json'])['MsiTables'], [{'Key': 'row'}])
         self.assertIn('MsiTables/MsiTables.csv', msi)
+
+    def test_a_stream_whose_name_decodes_like_a_table_does_not_replace_the_table(self):
+        data = self.download_sample('50f656e4311b8e28e15d0bad836a9a4ca9ec5b78dbe8b2b49e58465028e55859')
+        in_plain_text = '!Media'
+        in_single_characters = chr(0x4840) + ''.join(chr(0x4800 + _MSI_NAME_ALPHABET.index(c)) for c in 'Media')
+        for planted in (in_plain_text, in_single_characters):
+            with self.subTest(planted=ascii(planted)):
+                self.assertEqual(convert_msi_name(planted), '!Media')
+                msi = _rename_stream(data, 'MsiTables.json', planted)
+                self.assertCountEqual(self._readmes(msi), self.READMES)
+                self.assertEqual(msi | self.load('!Media') | bytes, B'stream named MsiTables.json')
+
+    @pytest.mark.xfail(strict=True, reason='the compound file reader opens a stream by its name')
+    def test_two_streams_with_the_same_name_each_hand_out_their_own_content(self):
+        data = self.download_sample('e8ee8f4c88d7cf8fe652b20d66407ccb9fc0bc20ce4ccd13d8e13609116ec871')
+        data = _rename_stream(data, '[5]SummaryInformation', '\x05SummaryInformation')
+        streams = [bytes(chunk) for chunk in data | self.load('Meta/SummaryInformation')]
+        self.assertEqual(len(streams), 2)
+        self.assertIn(B'stream named [5]SummaryInformation', streams)
+        # a property set stream starts with the byte order mark FE FF
+        self.assertTrue(any(stream.startswith(B'\xFE\xFF') for stream in streams))
 
 
 class TestMSIFormattedStrings(TestUnitBase):

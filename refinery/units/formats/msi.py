@@ -12,10 +12,11 @@ from typing import NamedTuple
 from refinery.lib import chunks, json
 from refinery.lib.cab import Cabinet
 from refinery.lib.id import buffer_offset, is_likely_msi, is_likely_pe
+from refinery.lib.ole.file import OleFile
 from refinery.lib.structures import StructReader
 from refinery.lib.types import Param, buf
 from refinery.units import Arg
-from refinery.units.formats.office.xtdoc import UnpackResult, xtdoc
+from refinery.units.formats.office.xtdoc import UnpackResult, msi_table_stream_name, xtdoc
 
 
 class MsiType(enum.IntEnum):
@@ -251,17 +252,20 @@ class xtmsi(xtdoc, docs=(
         super().__init__(*paths, nocab=nocab, **keywords)
 
     def unpack(self, data: buf):
-        streams = list(super().unpack(self._get_msi_from_overlay(data)))
-        first_by_name: dict[str, UnpackResult] = {}
+        streams: list[UnpackResult] = []
+        streams_by_name: dict[str, UnpackResult] = {}
         read: set[UnpackResult] = set()
 
-        for result in reversed(streams):
-            first_by_name[result.path] = result
+        for name, result in self._streams(OleFile(self._get_msi_from_overlay(data))):
+            streams.append(result)
+            streams_by_name.setdefault(name, result)
 
-        def stream(name: str):
-            result = first_by_name.pop(name)
+        def stream(table: str):
+            result = streams_by_name.pop(msi_table_stream_name(table))
             read.add(result)
-            return result.get_data()
+            content = result.get_data()
+            result.release()
+            return content
 
         def column_formats(table: dict[str, MSITableColumnInfo]) -> str:
             return ''.join(v.struct_format for v in table.values())
@@ -275,14 +279,14 @@ class xtmsi(xtdoc, docs=(
                 yield [int(c[i]) for c in columns]
 
         tables: dict[str, dict[str, MSITableColumnInfo]] = collections.defaultdict(collections.OrderedDict)
-        strings = MSIStringData(stream('!_StringData'), stream('!_StringPool'))
+        strings = MSIStringData(stream('_StringData'), stream('_StringPool'))
 
-        for tbl_name_id, col_number, col_name_id, col_attributes in stream_to_rows(stream('!_Columns'), 'HHHH'):
+        for tbl_name_id, col_number, col_name_id, col_attributes in stream_to_rows(stream('_Columns'), 'HHHH'):
             tbl_name = strings.ref(tbl_name_id)
             col_name = strings.ref(col_name_id)
             tables[tbl_name][col_name] = MSITableColumnInfo(col_number, col_attributes)
 
-        table_names_given = {strings.ref(k) for k in chunks.unpack(stream('!_Tables'), 2, False)}
+        table_names_given = {strings.ref(k) for k in chunks.unpack(stream('_Tables'), 2, False)}
         table_names_known = set(tables)
 
         for name in table_names_known - table_names_given:
@@ -294,8 +298,7 @@ class xtmsi(xtdoc, docs=(
         postprocessing: list[_ScriptItem] = []
 
         for table_name, table in tables.items():
-            stream_name = F'!{table_name}'
-            if stream_name not in first_by_name:
+            if msi_table_stream_name(table_name) not in streams_by_name:
                 continue
             processed = []
             info = list(table.values())
@@ -303,7 +306,7 @@ class xtmsi(xtdoc, docs=(
             temp = [k.strip('_') for k in keys]
             if len(set(keys)) == len(set(temp)):
                 keys = temp
-            for r, row in enumerate(stream_to_rows(stream(stream_name), column_formats(table))):
+            for r, row in enumerate(stream_to_rows(stream(table_name), column_formats(table))):
                 values = []
                 for index, value in enumerate(row):
                     vt = info[index].type

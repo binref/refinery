@@ -1,5 +1,5 @@
 from ... import TestUnitBase
-from . import list_part_twice
+from . import invert_checksum, list_part_twice
 
 PARAGRAPHS = [
     (
@@ -60,3 +60,21 @@ class TestDocumentTextExtractor(TestUnitBase):
                     self.assertIn(p, output, F'Extraction for {filetype} sample did not contain paragraph {k}')
                 self.assertEqual(len(log), 1)
                 self.assertIn(part, log[0])
+
+    def test_a_part_whose_name_only_resolves_to_the_text_part_is_not_read(self):
+        data = self.download_sample('2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce')
+        for decoy in ('./content.xml', '/content.xml'):
+            with self.subTest(decoy):
+                document = list_part_twice(data, 'content.xml', lambda text: text.replace(B'Kibi', B'Xibi'), decoy)
+                with self.load_logged() as (unit, log):
+                    output = str(document | unit)
+                for k, p in enumerate(PARAGRAPHS):
+                    self.assertIn(p, output, F'Extraction did not contain paragraph {k}')
+                self.assertEqual(log, [])
+
+    def test_the_reason_why_the_text_part_cannot_be_read_is_reported(self):
+        data = self.download_sample('2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce')
+        data = invert_checksum(data, 'content.xml')
+        with self.load_logged('-v') as (unit, log):
+            self.assertEqual(str(data | unit), '')
+        self.assertTrue(any('content.xml' in message and 'checksum' in message for message in log), log)

@@ -69,6 +69,15 @@ class TestDocMetaOOXML(TestUnitBase):
         self.assertEqual(len(log), 1)
         self.assertIn('docProps/core.xml', log[0])
 
+    def test_a_part_whose_name_only_resolves_to_a_property_part_is_not_read(self):
+        data = self.download_sample('36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3')
+        decoy = './docProps/core.xml'
+        data = list_part_twice(data, 'docProps/core.xml', lambda core: core.replace(B'Adobe', B'Other'), decoy)
+        with self.load_logged() as (unit, log):
+            test = json.loads(data | unit | str)
+        self.assertEqual(test['core']['creator'], 'Adobe')
+        self.assertEqual(log, [])
+
 
 class TestDocMetaOle(TestUnitBase):
 

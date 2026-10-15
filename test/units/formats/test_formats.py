@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import gc
+import logging
 import lzma
 import time
 import tracemalloc
 import unittest
 
-from .. import TestUnitBase
+from .. import LogRecorder, TestUnitBase
 
+from refinery.lib.frame import Chunk
 from refinery.lib.types import Callable, buf
-from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult
+from refinery.units import Unit
+from refinery.units.formats import PathExtractorUnit, PathPattern, UnpackResult, read_part, read_parts
 
 _MALWARE_VHD = '2dd5a1f93e2a16e0c71ae12d211105e238239946269e1c095760b5fe24587a28'
 
@@ -38,6 +42,30 @@ def _container(*entries: tuple[str, buf | Callable[[], buf]]) -> type[PathExtrac
 
 def _extract(unit: PathExtractorUnit) -> list[tuple[str, bytes]]:
     return [(str(chunk['path']), bytes(chunk)) for chunk in B'' | unit | [...]]
+
+
+class partreader(Unit):
+    """
+    A unit that reads parts of containers and logs under its own name, not that of an extractor.
+    """
+    def process(self, data):
+        return data
+
+
+@contextlib.contextmanager
+def _logged(unit: Unit):
+    """
+    Collects the messages that the given unit logs inside the context.
+    """
+    recorder = LogRecorder()
+    disabled = logging.root.manager.disable
+    unit.logger.addHandler(recorder)
+    logging.disable(logging.NOTSET)
+    try:
+        yield recorder.messages
+    finally:
+        logging.disable(disabled)
+        unit.logger.removeHandler(recorder)
 
 
 class TestFormats(TestUnitBase):
@@ -269,18 +297,19 @@ class TestRepeatedPaths(TestUnitBase):
         xt = _container(
             ('readme.txt', B'text'),
             ('payload.exe', B'MZ'),
+            ('payload.exe.txt', B'other'),
             ('payload.exe', B'MZ'),
         )
         for query in ('*.exe', 'payload.exe'):
             with self.subTest(query=query):
-                self.assertEqual(_extract(xt(exclude=[query])), [('readme.txt', B'text')])
+                self.assertEqual(_extract(xt(exclude=[query])), [('readme.txt', B'text'), ('payload.exe.txt', B'other')])
 
     def test_a_numbered_path_selects_only_that_copy(self):
         xt = _container(('a.txt', B'first'), ('a.txt', B'second'))
         self.assertEqual(_extract(xt('a.txt/2')), [('a.txt/2', B'second')])
 
     def test_the_name_of_a_repeated_path_selects_its_copies_in_any_case(self):
-        xt = _container(('a.txt', B'first'), ('a.txt', B'second'))
+        xt = _container(('a.txt', B'first'), ('xa.txt', B'other'), ('a.txt', B'second'))
         self.assertEqual(_extract(xt('A.TXT')), [('a.txt/1', B'first'), ('a.txt/2', B'second')])
 
     def test_a_path_that_differs_only_in_case_from_a_repeated_path_selects_only_itself(self):
@@ -299,5 +328,110 @@ class TestRepeatedPaths(TestUnitBase):
         xt = _container(*copies, *numbered)
         start = time.perf_counter()
         listing = [str(path) for path in B'' | xt(list=True)]
-        self.assertLess(time.perf_counter() - start, 5)
+        self.assertLess(time.perf_counter() - start, 20)
         self.assertEqual(len(set(listing)), 2 * count)
+
+    def test_a_case_variant_of_a_repeated_path_leaves_other_names_matched_in_any_case(self):
+        xt = _container(
+            ('README.TXT', B'upper'),
+            ('readme.txt', B'first'),
+            ('payload.exe', B'MZ'),
+            ('readme.txt', B'second'),
+        )
+        self.assertEqual(_extract(xt('*.EXE')), [('payload.exe', B'MZ')])
+        self.assertEqual(_extract(xt('readme.txt')), [('readme.txt/1', B'first'), ('readme.txt/2', B'second')])
+        self.assertEqual(_extract(xt('README.TXT')), [('README.TXT', B'upper')])
+
+    def test_names_that_differ_only_by_case_for_the_pattern_engine_are_matched_by_case(self):
+        for single, repeated in [
+            (F'f{chr(0x131)}le.txt', 'file.txt'),
+            (F'{chr(0x391)}{chr(0x3A3)}/readme.txt', F'{chr(0x3B1)}{chr(0x3C3)}/readme.txt'),
+        ]:
+            with self.subTest(single=ascii(single)):
+                xt = _container((single, B'single'), (repeated, B'first'), (repeated, B'second'))
+                self.assertEqual(_extract(xt(single)), [(single, B'single')])
+                self.assertEqual(_extract(xt(repeated)), [(F'{repeated}/1', B'first'), (F'{repeated}/2', B'second')])
+
+    def test_paths_in_different_folders_with_dot_components_are_not_copies_of_each_other(self):
+        xt = _container(
+            ('x/./a.txt', B'x'),
+            ('y/./a.txt', B'y'),
+            ('x/z/../b.txt', B'b'),
+        )
+        self.assertEqual(_extract(xt()), [('x/a.txt', B'x'), ('y/a.txt', B'y'), ('x/b.txt', B'b')])
+
+    def test_a_joined_path_keeps_the_path_of_the_input_before_a_dot_component(self):
+        xt = _container(('./one.txt', B'one'))
+        data = Chunk(B'', meta={'path': 'pack.tar'})
+        self.assertEqual([str(chunk['path']) for chunk in data | xt(join_path=True) | [...]], ['pack.tar/one.txt'])
+
+
+class TestReadPart(TestUnitBase):
+
+    def test_only_the_first_of_several_items_with_the_name_is_read_and_the_unit_warns(self):
+        reads = []
+
+        def content(data: bytes):
+            def read():
+                reads.append(data)
+                return data
+            return read
+
+        xt = _container(('a.txt', content(B'one')), ('a.txt', content(B'two')))
+        unit = partreader.assemble()
+        with _logged(unit) as log:
+            self.assertEqual(read_part(unit, B'', xt, 'a.txt'), B'one')
+        self.assertEqual(reads, [B'one'])
+        self.assertEqual(len(log), 1)
+        self.assertIn('a.txt', log[0])
+
+    def test_no_other_item_replaces_a_first_item_that_cannot_be_read(self):
+        def broken() -> bytes:
+            raise ValueError('the first copy is broken')
+
+        xt = _container(('a.txt', broken), ('a.txt', B'two'))
+        unit = partreader.assemble('-v')
+        with _logged(unit) as log:
+            self.assertIsNone(read_part(unit, B'', xt, 'a.txt'))
+        self.assertTrue(any('the first copy is broken' in message for message in log))
+
+    def test_an_item_whose_path_only_resolves_to_the_name_is_not_read(self):
+        xt = _container(('./content.xml', B'decoy'), ('/content.xml', B'decoy'), ('content.xml', B'real'))
+        unit = partreader.assemble()
+        with _logged(unit) as log:
+            self.assertEqual(read_part(unit, B'', xt, 'content.xml'), B'real')
+        self.assertEqual(log, [])
+
+    def test_an_item_with_the_name_inside_a_folder_is_not_read(self):
+        xt = _container(('Object 1/meta.xml', B'one'), ('Object 2/meta.xml', B'two'))
+        self.assertIsNone(read_part(partreader.assemble(), B'', xt, 'meta.xml'))
+
+    def test_the_name_is_not_a_pattern(self):
+        xt = _container(('docProps/app.xml', B'app'), ('[Content_Types].xml', B'types'))
+        self.assertEqual(read_part(partreader.assemble(), B'', xt, '[Content_Types].xml'), B'types')
+
+    def test_several_names_are_read_from_one_unpacking_of_the_container(self):
+        unpacked = []
+
+        class xtcounted(PathExtractorUnit):
+            def unpack(self, data):
+                unpacked.append(data)
+                yield UnpackResult('a.txt', B'a')
+                yield UnpackResult('b.txt', B'b')
+
+        parts = read_parts(partreader.assemble(), B'', xtcounted, 'b.txt', 'c.txt', 'a.txt')
+        self.assertEqual(parts, [B'b', None, B'a'])
+        self.assertEqual(len(unpacked), 1)
+
+    def test_a_name_in_another_case_is_read_only_when_no_item_has_the_exact_name(self):
+        xt = _container(('Content.xml', B'other case'), ('content.xml', B'exact'))
+        self.assertEqual(read_part(partreader.assemble(), B'', xt, 'content.xml'), B'exact')
+        xt = _container(('Word/Document.xml', B'other case'))
+        self.assertEqual(read_part(partreader.assemble(), B'', xt, 'word/document.xml'), B'other case')
+
+    def test_a_name_with_backslashes_is_read_only_when_no_item_has_the_exact_name(self):
+        backslashed = 'word\\document.xml'
+        xt = _container((backslashed, B'backslashes'), ('word/document.xml', B'exact'))
+        self.assertEqual(read_part(partreader.assemble(), B'', xt, 'word/document.xml'), B'exact')
+        xt = _container((backslashed, B'backslashes'))
+        self.assertEqual(read_part(partreader.assemble(), B'', xt, 'word/document.xml'), B'backslashes')

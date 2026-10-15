@@ -6,8 +6,7 @@ from enum import Enum
 
 from refinery.lib import xml
 from refinery.lib.dt import isodate
-from refinery.units.formats import JSONTableUnit, Unit
-from refinery.units.formats.office import read_part
+from refinery.units.formats import JSONTableUnit, Unit, read_part, read_parts
 from refinery.units.formats.office.xtdoc import xtdoc
 
 
@@ -152,10 +151,10 @@ class docmeta(JSONTableUnit):
 
     def _json_ooxml(self, data: bytearray):
         result = {}
+        paths = [F'docProps/{prop.value}' for prop in _Prop]
 
-        for prop in _Prop:
-            path = F'docProps/{prop.value}'
-            if (page := read_part(self, data, xtdoc, path, exact=True)) is None:
+        for prop, path, page in zip(_Prop, paths, read_parts(self, data, xtdoc, *paths)):
+            if page is None:
                 continue
             if (dom := xml.parse(page)) is None:
                 self.log_info(F'failed to parse as XML: {path}')
