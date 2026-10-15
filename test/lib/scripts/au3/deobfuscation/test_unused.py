@@ -300,6 +300,25 @@ class TestAu3UnusedVariableRemoval(TestAu3):
             'EndFunc\n'
             'f()\n')
 
+    def test_a_read_before_the_claim_keeps_a_static_store(self):
+        """
+        A static's local survives the call that wrote it, so the read before the claim observes
+        it on a later call and keeps the store.
+        """
+        source = '''
+            Func f()
+                MsgBox(0, 0, $x)
+                Static $x = 0
+                $x = 1
+            EndFunc
+
+            f()
+            f()
+            '''
+        self.assertEqual(
+            self._apply(source, Au3UnusedVariableRemoval),
+            self._laid_out(source))
+
     def test_a_read_in_another_scope_does_not_keep_an_implicit_store(self):
         """
         The implicit write creates a local of `f` only, invisible in `g`, where the name is

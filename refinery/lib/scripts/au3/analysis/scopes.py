@@ -76,13 +76,15 @@ INCLUDE_SPELLING = re.compile(r'\s*#\s*include', re.IGNORECASE)
 class Au3LocalFacts:
     """
     What one function body proves about a name: whether it is a parameter, and a `ByRef` one,
-    whether any `Global` declaration in the function claims it, the body position where it first
-    takes a declaration that forces the local storage, and the body positions of every statement
-    holding such a declaration or claim at any depth.
+    whether any `Global` declaration in the function claims it, the names any local `Static`
+    declaration in it claims — a static's local survives the call that creates it — the body
+    position where it first takes a declaration that forces the local storage, and the body
+    positions of every statement holding such a declaration or claim at any depth.
     """
     parameters: frozenset[str]
     reference_parameters: frozenset[str]
     global_names: frozenset[str]
+    static_names: frozenset[str]
     first_local: dict[str, int]
     local_positions: dict[str, frozenset[int]]
 
@@ -131,10 +133,10 @@ def _local_claim_names(node: Node) -> set[str] | None:
 def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
     """
     The local facts of *function*'s body: parameter names and the `ByRef` ones among them, the
-    names any `Global` declaration in it claims — at any depth, but not inside a nested function,
-    which is a scope of its own — the first body position at which each name takes a
-    local-forcing declaration or becomes the variable of a `For`/`For…In` loop, and the body
-    positions of every statement holding such a declaration or claim at any depth.
+    names any `Global` declaration in it claims and any local `Static` one — at any depth, but
+    not inside a nested function, which is a scope of its own — the first body position at which
+    each name takes a local-forcing declaration or becomes the variable of a `For`/`For…In` loop,
+    and the body positions of every statement holding such a declaration or claim at any depth.
     """
     parameters = {
         parameter.variable.name
@@ -147,12 +149,15 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
         if parameter.variable is not None and parameter.by_ref
     }
     global_names = set()
+    static_names = set()
     for node in ast.scope_nodes(function.body):
         if (
             isinstance(node, (Au3VariableDeclaration, Au3EnumDeclaration))
             and node.scope is Au3ScopeKind.GLOBAL
         ):
             global_names |= _declared_names(node)
+        elif isinstance(node, Au3VariableDeclaration) and node.is_static:
+            static_names |= _declared_names(node)
     first_local: dict[str, int] = {}
     for index, statement in enumerate(function.body):
         names = _local_claim_names(statement)
@@ -172,6 +177,7 @@ def _local_facts(function: Au3FunctionDeclaration) -> Au3LocalFacts:
         frozenset(parameters),
         frozenset(reference_parameters),
         frozenset(global_names),
+        frozenset(static_names),
         first_local,
         {name: frozenset(indices) for name, indices in local_positions.items()},
     )
@@ -335,12 +341,15 @@ class Au3ScopeModel:
         through `binding` and a pure read through `read_binding`, each occurrence by exactly one
         call — the two do not coincide everywhere, a `For` loop's variable being local to its own
         write and global to a read inside a function declaring the name `Global`, so the
-        classifier never compares them. A resolved global reads the global alone. A resolved
-        local reads the local alone only where its claim strictly precedes the occurrence; where
-        the claim shares the occurrence's top-level statement, the local does not exist while
-        that statement's own initializer or loop header runs, so the read may reach the global as
-        well and both storages stay protected. A write occurrence that proves nothing reads the
-        global or the implicit local its own write creates.
+        classifier never compares them. A resolved global reads the global alone, except where
+        the scope claims the name `Static`: a static's local survives the call that created it,
+        so a read the claim does not cover — one standing before it — may still reach the local
+        on a later call, and both storages stay protected. A resolved local reads the local alone
+        only where its claim strictly precedes the occurrence; where the claim shares the
+        occurrence's top-level statement, the local does not exist while that statement's own
+        initializer or loop header runs, so the read may reach the global as well and both
+        storages stay protected. A write occurrence that proves nothing reads the global or the
+        implicit local its own write creates.
         """
         if ast.is_write_occurrence(occurrence):
             statement = ast.owning_statement(occurrence)
@@ -349,6 +358,9 @@ class Au3ScopeModel:
         else:
             resolved = self.read_binding(scope, occurrence, name)
         if resolved is Binding.GLOBAL:
+            facts = self.local_facts.get(scope) if scope is not None else None
+            if facts is not None and name in facts.static_names:
+                return frozenset({Binding.LOCAL, Binding.GLOBAL})
             return frozenset({Binding.GLOBAL})
         if resolved is Binding.LOCAL and self.local_precedes_read(scope, occurrence, name):
             return frozenset({Binding.LOCAL})
