@@ -43,8 +43,8 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowGraph,
     ControlFlowModel,
     build_control_flow_model,
-    evaluated_whenever_completed,
 )
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_whenever_completed
 from refinery.lib.scripts.js.analysis.intrinsics import (
     SPECIES_KEYS,
     IntrinsicWrites,
@@ -291,7 +291,7 @@ class DominanceModel(DominatorModel):
         value, so its presence cannot be ordered — the query a consumer needs before trusting a value that
         would otherwise be read out of its temporal dead zone or before its establishing write.
         A site the statement or loop head holding it evaluates on some runs only orders nothing
-        (`refinery.lib.scripts.js.analysis.cfg.evaluated_whenever_completed`): `x && (T = [])`
+        (`refinery.lib.scripts.js.analysis.evaluation.evaluated_whenever_completed`): `x && (T = [])`
         completes without writing `T`.
         """
         sites = self.model.binding_establishment_sites(binding)

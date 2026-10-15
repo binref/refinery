@@ -28,14 +28,9 @@ from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
 from refinery.lib.scripts.js.model import (
     LOOP_NODES,
     JsArrayPattern,
-    JsAssignmentExpression,
-    JsAssignmentPattern,
     JsBlockStatement,
     JsBreakStatement,
-    JsCallExpression,
     JsCatchClause,
-    JsClassBody,
-    JsConditionalExpression,
     JsContinueStatement,
     JsDoWhileStatement,
     JsForInStatement,
@@ -43,8 +38,6 @@ from refinery.lib.scripts.js.model import (
     JsForStatement,
     JsIfStatement,
     JsLabeledStatement,
-    JsLogicalExpression,
-    JsMemberExpression,
     JsObjectPattern,
     JsReturnStatement,
     JsScript,
@@ -64,77 +57,7 @@ __all__ = [
     'build_cfg',
     'build_control_flow',
     'build_control_flow_model',
-    'evaluated_whenever_completed',
 ]
-
-_LOGICAL_ASSIGNMENT = frozenset({
-    '&&=',
-    '||=',
-    '??=',
-})
-
-
-def _optional_link_below(node: Node | None) -> bool:
-    """
-    Whether the member and call spine at *node* holds an optional link, past which evaluation stops
-    when the value before the link is nullish.
-    """
-    while isinstance(node, (JsMemberExpression, JsCallExpression)):
-        if node.optional:
-            return True
-        node = node.object if isinstance(node, JsMemberExpression) else node.callee
-    return False
-
-
-def evaluated_whenever_completed(node: Node, element: Node) -> bool:
-    """
-    Whether *node* is evaluated on every run on which the statement or loop head *element* holding
-    it completes. A node below the right operand of a short-circuit operator or of a logical
-    assignment, an arm of a conditional expression, the default of a destructuring pattern, a link
-    of an optional chain past where it can stop, a `case` test, the target of a `for-in` or
-    `for-of` head, the test or update of a `for` loop, or a function or class body is evaluated on
-    some runs of *element* only, or on none.
-    """
-    cursor = node
-    while cursor is not element:
-        parent = cursor.parent
-        if parent is None or isinstance(parent, (*FUNCTION_NODES, JsClassBody)):
-            return False
-        if isinstance(parent, JsLogicalExpression) and parent.right is cursor:
-            return False
-        if isinstance(parent, JsConditionalExpression) and parent.test is not cursor:
-            return False
-        if (
-            isinstance(parent, JsAssignmentExpression)
-            and parent.operator in _LOGICAL_ASSIGNMENT
-            and parent.right is cursor
-        ):
-            return False
-        if isinstance(parent, JsAssignmentPattern) and parent.right is cursor:
-            return False
-        if (
-            isinstance(parent, JsMemberExpression)
-            and parent.object is not cursor
-            and (parent.optional or _optional_link_below(parent.object))
-        ):
-            return False
-        if (
-            isinstance(parent, JsCallExpression)
-            and parent.callee is not cursor
-            and (parent.optional or _optional_link_below(parent.callee))
-        ):
-            return False
-        if isinstance(parent, JsSwitchCase) and parent.test is cursor:
-            return False
-        if isinstance(parent, (JsForInStatement, JsForOfStatement)) and parent.left is cursor:
-            return False
-        if (
-            isinstance(parent, JsForStatement)
-            and (parent.test is cursor or parent.update is cursor)
-        ):
-            return False
-        cursor = parent
-    return True
 
 
 def _catch_may_rethrow(handler: JsCatchClause | None) -> bool:

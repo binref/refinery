@@ -125,6 +125,14 @@ def _compute_children(node: Node) -> tuple[Node, ...]:
     return tuple(result)
 
 
+def child_fields(node_type: type[Node]) -> tuple[str, ...]:
+    """
+    The names of the fields of *node_type* that hold child nodes, alone or in a list, in the order
+    `Node.children` reads them.
+    """
+    return tuple(name for name, _ in _classify_fields(node_type))
+
+
 def child_list_fields(node: Node) -> list[tuple[str, list]]:
     """
     The child-list fields of `node`, as name and list pairs. A caller that wants to know where a

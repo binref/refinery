@@ -32,13 +32,10 @@ from typing import Iterator, NamedTuple
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
-from refinery.lib.scripts.js.analysis.cfg import (
-    CfgNode,
-    ControlFlowGraph,
-    evaluated_whenever_completed,
-)
+from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.evaluation import evaluated_whenever_completed
 from refinery.lib.scripts.js.analysis.model import Binding, annex_b_copies_into
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
