@@ -26,16 +26,20 @@ decoder's payload still sits behind an alias call.
 Two initializer shapes qualify: the bare builtin identifier `Execute`, and a call to the builtin
 `Execute` whose single argument is a string literal naming a script function or a table builtin.
 What `Execute` evaluates to as a value is never assumed — the rewrite is structural. A script
-function named `Execute` shadows the builtin, so a script declaring one has no aliases at all.
+function named `Execute` shadows the builtin, so a script declaring one has no aliases at all,
+and a script function owning the aliased name keeps the spelling the argument held — printing
+the builtin's official spelling there would tell the reader the call is one.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES, call_is_bounded
+from refinery.lib.scripts.au3.analysis.builtins import call_is_bounded
 from refinery.lib.scripts.au3.analysis.existence import assign_kills, execute_kills
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
+from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
+from refinery.lib.scripts.au3.lexer import ascii_lower
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
     Au3Call,
@@ -131,9 +135,11 @@ def _aliased_function(initializer: Expression | None, functions: frozenset[str])
     argument = ast.unwrap_parens(expression.arguments[0])
     if not isinstance(argument, Au3StringLiteral):
         return None
-    name = argument.value.lower()
-    if name in functions or name in AUTOIT_FUNCTION_NAMES:
-        return Au3Alias(name, AUTOIT_FUNCTION_NAMES.get(name, argument.value))
+    name = ascii_lower(argument.value)
+    if name in functions:
+        return Au3Alias(name, argument.value)
+    if name in AUTOIT_FUNCTION_NAMES:
+        return Au3Alias(name, AUTOIT_FUNCTION_NAMES[name])
     return None
 
 

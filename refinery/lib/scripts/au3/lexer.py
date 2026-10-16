@@ -44,6 +44,11 @@ _ONE_CHAR_OPS: dict[str, Au3TokenKind] = {
 #: literal can spell.
 LINE_BREAKS = frozenset('\r\n\u2028\u2029')
 
+_ASCII_LOWER = str.maketrans(
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    'abcdefghijklmnopqrstuvwxyz',
+)
+
 _BLOCK_COMMENT_START = ('#cs', '#comments-start')
 _BLOCK_COMMENT_END = ('#ce', '#comments-end')
 
@@ -65,6 +70,16 @@ def is_au3_identifier(text: str) -> bool:
     return bool(text) and _is_ident_start(text[0]) and all(
         _is_ident_part(c) for c in text[1:]
     )
+
+
+def ascii_lower(text: str) -> str:
+    """
+    The lowercase spelling of *text* with ASCII letters only. Python's `str.lower` also folds
+    characters outside ASCII into ASCII letters — U+212A KELVIN SIGN becomes `k` — and whether
+    AutoIt folds them too is unpinned, so a caller that may only rewrite a name it knows the
+    engine matches compares through this instead.
+    """
+    return text.translate(_ASCII_LOWER)
 
 
 def decode_au3_string(text: str) -> str:

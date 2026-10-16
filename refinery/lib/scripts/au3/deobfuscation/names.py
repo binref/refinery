@@ -41,16 +41,15 @@ from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_child, set_child_list
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.cache import model_cache
+from refinery.lib.scripts.au3.analysis.cache import Au3ModelCache, model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
-from refinery.lib.scripts.au3.analysis.usage import Au3UsageModel, callee_census
+from refinery.lib.scripts.au3.analysis.usage import callee_census
 from refinery.lib.scripts.au3.lexer import is_au3_identifier
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
     Au3BooleanLiteral,
     Au3Call,
     Au3DefaultLiteral,
-    Au3ErrorNode,
     Au3ExpressionStatement,
     Au3FloatLiteral,
     Au3FunctionDeclaration,
@@ -104,20 +103,20 @@ class _TreeFacts:
     calls_autoit_set_option: bool
 
 
-def _tree_facts(root: Au3Script, usage: Au3UsageModel) -> _TreeFacts:
+def _tree_facts(cache: Au3ModelCache) -> _TreeFacts:
     """
     The facts the whole tree decides. The callee spellings are the census's to read — see
     `callee_census` — over the usage model's functions and error-node facts, and they answer the
     error-state and the option-setter questions; a parse error is any error node the parser
     recovered, live source text or a repaired construct no walk reads, so its tree is refused
-    outright rather than reasoned about. The spelling of the option the tree sets is unpinned
-    either way — only that the tree may set `MustDeclareVars` is a fact here.
+    outright rather than reasoned about — the scope model holds that fact once. The spelling of
+    the option the tree sets is unpinned either way — only that the tree may set
+    `MustDeclareVars` is a fact here.
     """
-    census = callee_census(root, usage.functions, usage.unparsed)
-    parse_error = any(isinstance(node, Au3ErrorNode) for node in root.walk())
+    census = callee_census(cache.root, cache.usage.functions, cache.usage.unparsed)
     return _TreeFacts(
         census.observes_error_state(),
-        parse_error,
+        cache.scopes.holds_a_parse_error,
         census.computed_callee or not _OPTION_SETTERS.isdisjoint(census.callees),
     )
 
@@ -150,7 +149,7 @@ class Au3DynamicNameFlattening(Transformer):
         if isinstance(node, Au3Script):
             cache = model_cache(self, node)
             self._scopes = cache.scopes
-            self._facts = _tree_facts(node, cache.usage)
+            self._facts = _tree_facts(cache)
         self.generic_visit(node)
         if not isinstance(node, Au3Call):
             return None

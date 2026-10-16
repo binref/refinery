@@ -6,6 +6,8 @@ payload — is printed officially too.
 """
 from __future__ import annotations
 
+import inspect
+
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.casing import Au3BuiltinCaseNormalization
@@ -57,18 +59,21 @@ class TestAu3BuiltinCaseNormalization(TestAu3):
             'Func msgbox($a)\n    Return $a\nEndFunc\nmSgBoX(0)\n')
 
     def test_a_name_a_declared_function_owns_keeps_the_spelling_a_call_holds(self):
+        """
+        `msgbox` is a builtin's name, so only the declared function keeps the string standing.
+        """
         self.assertEqual(
             self._apply(
                 '''
-                Func checkip()
-                    Return 1
+                Func msgbox($a)
+                    Return $a
                 EndFunc
 
-                Call("cHeCkIp")
+                Call("mSgBoX", 0)
                 ''',
                 Au3BuiltinCaseNormalization,
             ),
-            'Func checkip()\n    Return 1\nEndFunc\nCall("cHeCkIp")\n')
+            'Func msgbox($a)\n    Return $a\nEndFunc\nCall("mSgBoX", 0)\n')
 
     def test_the_name_a_call_holds_prints_the_official_spelling(self):
         """
@@ -97,22 +102,22 @@ class TestAu3BuiltinCaseNormalization(TestAu3):
         """
         self.assertEqual(
             self._apply(
-                'AdlibRegister("cHeCkIp", 1000)',
+                'AdlibRegister("mSgBoX", 1000)',
                 Au3BuiltinCaseNormalization,
             ),
-            'AdlibRegister("cHeCkIp", 1000)\n')
+            'AdlibRegister("mSgBoX", 1000)\n')
 
     def test_an_execute_payload_keeps_its_spelling(self):
         """
-        The payload of an `Execute` the pipeline cannot splice stays a string; nothing inside it
-        is a name this pass reads.
+        The pass reads only a `Call`'s first argument, never a string an `Execute` holds, so the
+        payload's spelling is left to the pass that resolves it.
         """
         self.assertEqual(
             self._apply(
-                '$x = Execute("Assign(""e"", 1)")',
+                '$x = Execute("aSsIgN(""e"", 1)")',
                 Au3BuiltinCaseNormalization,
             ),
-            '$x = Execute("Assign(""e"", 1)")\n')
+            '$x = Execute("aSsIgN(""e"", 1)")\n')
 
     def test_a_shadowing_call_function_keeps_the_argument_spelling(self):
         self.assertEqual(
@@ -166,10 +171,24 @@ class TestAu3BuiltinCaseNormalization(TestAu3):
             self._apply('$x = Call($f)', Au3BuiltinCaseNormalization),
             '$x = Call($f)\n')
 
-    def test_a_name_no_lexer_reads_back_keeps_its_spelling(self):
+    def test_a_name_the_function_table_holds_no_entry_for_keeps_its_spelling(self):
         self.assertEqual(
-            self._apply('$x = Call("no such function")', Au3BuiltinCaseNormalization),
-            '$x = Call("no such function")\n')
+            self._apply('$x = Call("nosuchfunction")', Au3BuiltinCaseNormalization),
+            '$x = Call("nosuchfunction")\n')
+
+    def test_a_name_python_folds_into_a_builtin_keeps_its_spelling(self):
+        """
+        U+212A KELVIN SIGN lowercases to ASCII `k` for Python; whether AutoIt folds it too is
+        unpinned, and the source spelling is right under either answer.
+        """
+        self.assertEqual(
+            self._apply('Call("Win\u212aill", "t")', Au3BuiltinCaseNormalization),
+            'Call("Win\u212aill", "t")\n')
+
+    def test_a_callee_python_folds_into_a_builtin_keeps_its_spelling(self):
+        self.assertEqual(
+            self._apply('Win\u212aill("t")', Au3BuiltinCaseNormalization),
+            'Win\u212aill("t")\n')
 
     def test_a_call_without_arguments_keeps_standing(self):
         self.assertEqual(
@@ -205,11 +224,11 @@ class TestAu3BuiltinCaseNormalization(TestAu3):
             ''')
 
     def test_a_full_run_is_idempotent_in_spelling(self):
-        once = self._deobfuscate(
-            'Func checkip()\n'
-            '    mSgBoX(0, "", "t")\n'
-            'EndFunc\n'
-            'Call("cHeCkIp")\n'
-            'cAlL("mSgBoX", 0, "", "t")\n'
-        )
+        once = self._deobfuscate(inspect.cleandoc('''
+            Func checkip()
+                mSgBoX(0, "", "t")
+            EndFunc
+            Call("cHeCkIp")
+            cAlL("mSgBoX", 0, "", "t")
+        '''))
         self.assertEqual(once, self._deobfuscate(once))

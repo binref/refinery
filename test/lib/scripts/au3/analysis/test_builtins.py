@@ -9,11 +9,11 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.au3.analysis.builtins import (
-    AUTOIT_FUNCTION_NAMES,
     EMULATED_NAMES,
     NAME_PARAMETERS,
     call_is_bounded,
 )
+from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
 
 
 class TestAu3Builtins(TestBase):

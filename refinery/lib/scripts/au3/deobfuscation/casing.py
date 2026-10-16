@@ -9,6 +9,11 @@ fingerprint in the output. Two shapes are rewritten: the direct callee of a call
 table holds, and the string-literal first argument of a `Call` that names a builtin — the docs
 say `Call` invokes builtins too, and no earlier pass resolves that name.
 
+A spelling is rewritten only where it differs from the official one in ASCII case. Python's
+`str.lower` also folds characters outside ASCII into ASCII letters — U+212A KELVIN SIGN becomes
+`k` — and whether the engine folds them too is unpinned; the source spelling is right under
+either answer, so the rewrite refuses such a name.
+
 The callee rewrite changes only the printed spelling, never what the call resolves to, so it
 carries no gate over what the tree holds, only the shadowing rule: a declared script function
 owning the name keeps the call site's spelling, because printing a builtin's name there would
@@ -21,18 +26,19 @@ no rule here reads it: only a `Call` holds a name this pass rewrites.
 
 The pass runs in the final pipeline group, after every splice, fold, flatten, and alias rewrite
 has produced its final call shapes, so nothing it prints is later re-shaped. Its edits change no
-lowercased name and no declaration, so the scope snapshot the pass holds stays true mid-pass.
+lowercased name and no declaration, so the scope snapshot the pass holds stays true mid-pass,
+and every spelling it writes is one a later round refuses, so the group runs it once.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer, set_value
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
 from refinery.lib.scripts.au3.analysis.cache import model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
+from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
+from refinery.lib.scripts.au3.lexer import ascii_lower, encode_au3_string
 from refinery.lib.scripts.au3.model import (
     Au3Call,
-    Au3ErrorNode,
     Au3Identifier,
     Au3Script,
     Au3StringLiteral,
@@ -45,18 +51,15 @@ class Au3BuiltinCaseNormalization(Transformer):
     in the official documentation spelling.
     """
 
+    self_converging = True
+
     def __init__(self):
         super().__init__()
         self._scopes = Au3ScopeModel({})
-        self._holds_a_parse_error = False
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
             self._scopes = model_cache(self, node).scopes
-            self._holds_a_parse_error = any(
-                isinstance(child, Au3ErrorNode)
-                for child in node.walk()
-            )
         self.generic_visit(node)
         if not isinstance(node, Au3Call):
             return None
@@ -65,11 +68,13 @@ class Au3BuiltinCaseNormalization(Transformer):
             return None
         if callee.name not in self._scopes.functions:
             self._normalize_callee(callee)
-        if callee.name == 'call' and 'call' not in self._scopes.functions:
-            self._normalize_call_name(node)
+            if callee.name == 'call':
+                self._normalize_call_name(node)
         return None
 
     def _normalize_callee(self, callee: Au3Identifier) -> None:
+        if ascii_lower(callee.raw) != callee.name:
+            return
         official = AUTOIT_FUNCTION_NAMES.get(callee.name)
         if official is None or callee.raw == official:
             return
@@ -77,19 +82,19 @@ class Au3BuiltinCaseNormalization(Transformer):
         self.mark_changed()
 
     def _normalize_call_name(self, call: Au3Call) -> None:
-        if self._scopes.holds_an_include or self._holds_a_parse_error:
+        if self._scopes.holds_an_include or self._scopes.holds_a_parse_error:
             return
         if not call.arguments:
             return
         literal = ast.unwrap_parens(call.arguments[0])
         if not isinstance(literal, Au3StringLiteral):
             return
-        name = literal.value.lower()
+        name = ascii_lower(literal.value)
         if name in self._scopes.functions:
             return
         official = AUTOIT_FUNCTION_NAMES.get(name)
         if official is None or literal.value == official:
             return
         set_value(literal, 'value', official)
-        set_value(literal, 'raw', '')
+        set_value(literal, 'raw', encode_au3_string(official))
         self.mark_changed()

@@ -92,21 +92,58 @@ class TestA3X(TestUnitBase):
         page describes: the table transcribes the docs, so it leaves the name to the conservative
         path.
         """
-        from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
+        from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
         self.assertEqual(
             {name.lower() for name in A3X_APICALLS},
             set(AUTOIT_FUNCTION_NAMES) | {'dummyspeedtest'},
         )
 
-    def test_the_pretty_table_prints_the_official_function_spellings(self):
+    def test_the_pretty_table_prints_the_documented_function_spellings(self):
         """
-        The decompiler's pretty table takes its function spellings from the analysis table, so a
-        name in the bytecode that the two spell differently comes out documented. The names only
-        the interpreter knows — `DummySpeedTest` — keep its spelling, and the keyword spellings
-        are unchanged.
+        Nine builtins are spelled differently in the interpreter's call table and in the
+        documentation; the decompiler prints the documented spelling. `DummySpeedTest` has no
+        documentation page and keeps the interpreter's spelling, and a keyword keeps its own.
         """
-        from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
         self.assertEqual(
-            {name: _PRETTY[name] for name in AUTOIT_FUNCTION_NAMES},
-            AUTOIT_FUNCTION_NAMES,
+            {
+                name: _PRETTY[name.lower()] for name in [
+                    'Acos',
+                    'BitAnd',
+                    'BitNot',
+                    'DriveGetFilesystem',
+                    'Funcname',
+                    'Hwnd',
+                    'IsHwnd',
+                    'Progresson',
+                    'StatusBarGetText',
+                    'DummySpeedTest',
+                    'EndFunc',
+                ]
+            },
+            {
+                'Acos'               : 'ACos',
+                'BitAnd'             : 'BitAND',
+                'BitNot'             : 'BitNOT',
+                'DriveGetFilesystem' : 'DriveGetFileSystem',
+                'Funcname'           : 'FuncName',
+                'Hwnd'               : 'HWnd',
+                'IsHwnd'             : 'IsHWnd',
+                'Progresson'         : 'ProgressOn',
+                'StatusBarGetText'   : 'StatusbarGetText',
+                'DummySpeedTest'     : 'DummySpeedTest',
+                'EndFunc'            : 'EndFunc',
+            },
+        )
+
+    def test_an_interpreted_builtin_call_prints_the_documented_spelling(self):
+        code = _bytecode(self.download_sample(
+            '3b775e678568cd3d55187443a3f7aae2116b7e9762b3c3879f5e1c6225434b25'))
+        call = B'\x7F\x34' + _name('_SECURITY__SETPRIVILEGE')
+        start = code.find(call) + 2
+        end = start + len(_name('_SECURITY__SETPRIVILEGE'))
+        code[start - 1:end] = B'\x01' + A3X_APICALLS.index('Hwnd').to_bytes(4, 'little')
+        lines = [line for _, line in a3x_decompile(code)]
+        self.assertEqual(
+            [line for line in lines if line.lower().startswith('hwnd(')],
+            ['HWnd($HTOKEN, "SeDebugPrivilege", True)'],
         )

@@ -35,7 +35,8 @@ interpreter refusal, so a caller that flattens a dynamic write over a name asks 
 It answers whether the tree holds an include the same way — the node, or the directive an
 include line with trailing text becomes — because an unseen included file may declare storage
 and constants no tree declaration covers, so every caller that rewrites around the tree's own
-declarations asks the model first.
+declarations asks the model first. It answers whether the parser recovered an error node
+anywhere for the same reason: text no walk reads may hide a declaration the same way.
 """
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ from refinery.lib.scripts.au3 import ast
 from refinery.lib.scripts.au3.model import (
     Au3Directive,
     Au3EnumDeclaration,
+    Au3ErrorNode,
     Au3ForInStatement,
     Au3ForStatement,
     Au3FunctionDeclaration,
@@ -245,13 +247,15 @@ class Au3ScopeModel:
     The script's declared functions, the answers to which storage a write or a read targets and
     which storage an occurrence may reach, whether a write reaches a caller's storage, whether a
     declaration backs a plain write, the names the tree declares constants, and whether the tree
-    holds an include. Built once per tree version by `build_scope_model`.
+    holds an include or a recovered parse error. Built once per tree version by
+    `build_scope_model`.
     """
     functions: dict[str, Au3FunctionDeclaration]
     local_facts: dict[Au3FunctionDeclaration, Au3LocalFacts] = field(default_factory=dict)
     script_first_global: dict[str, int] = field(default_factory=dict)
     constant_names: frozenset[str] = frozenset()
     holds_an_include: bool = False
+    holds_a_parse_error: bool = False
 
     @property
     def function_names(self) -> frozenset[str]:
@@ -488,12 +492,14 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
     """
     Collect the function declarations of *root*, the local facts of each body, the script body's
     first `Global` claims, the names the tree declares constants, and whether the tree holds an
-    include — the node the parser reads an include line without trailing text into, or the
-    directive one with trailing text becomes. Two functions of one name never coexist in a script
-    AutoIt runs, so the mapping keeps the last of them without comment.
+    include or the parser recovered an error node anywhere — the node the parser reads an
+    include line without trailing text into, or the directive one with trailing text becomes.
+    Two functions of one name never coexist in a script AutoIt runs, so the mapping keeps the
+    last of them without comment.
     """
     functions: dict[str, Au3FunctionDeclaration] = {}
     holds_an_include = False
+    holds_a_parse_error = False
     for node in root.walk():
         if isinstance(node, Au3FunctionDeclaration):
             if node.name is not None:
@@ -502,6 +508,8 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
             holds_an_include = True
         elif isinstance(node, Au3Directive) and INCLUDE_SPELLING.match(node.text):
             holds_an_include = True
+        elif isinstance(node, Au3ErrorNode):
+            holds_a_parse_error = True
     local_facts = {function: _local_facts(function) for function in functions.values()}
     return Au3ScopeModel(
         functions,
@@ -509,4 +517,5 @@ def build_scope_model(root: Au3Script) -> Au3ScopeModel:
         _first_global_claims(root.body),
         _constant_names(root),
         holds_an_include,
+        holds_a_parse_error,
     )

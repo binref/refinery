@@ -65,6 +65,41 @@ class TestAu3IndirectCallRewrite(TestAu3):
             ),
             'Local $f = Execute("msGbox")\n$x = MsgBox(0, "", "t")\n')
 
+    def test_an_alias_a_declared_function_owns_keeps_the_call_site_spelling(self):
+        """
+        The alias map reads the declared functions before the builtin table, so a call through
+        the variable keeps the spelling the `Execute` argument held — printing the builtin's
+        official spelling there would tell the reader the call is one.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func msgbox($a)
+                    Return $a
+                EndFunc
+
+                Local $b = Execute("mSgBoX")
+                $b(1)
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Func msgbox($a)\n    Return $a\nEndFunc\nLocal $b = Execute("mSgBoX")\nmSgBoX(1)\n')
+
+    def test_a_name_python_folds_into_a_builtin_is_no_alias(self):
+        """
+        U+212A KELVIN SIGN lowercases to ASCII `k` for Python; whether AutoIt folds it too is
+        unpinned, so the `Execute` argument names nothing the rewrite may print.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $b = Execute("Win\u212aill")
+                $b("t")
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Local $b = Execute("Win\u212aill")\n$b("t")\n')
+
     def test_a_local_alias_inside_a_function_is_rewritten(self):
         self.assertEqual(
             self._apply(

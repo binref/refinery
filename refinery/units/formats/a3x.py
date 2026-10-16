@@ -11,7 +11,7 @@ from typing import Generator, Iterable, NamedTuple
 from refinery.lib.dt import filetime
 from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
-from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
+from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.tools import exception_to_string
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -560,7 +560,8 @@ class _Operands(dict):
         elif key == 'k':
             return A3X_KEYWORDS[reader.u32()]
         elif key == 'a':
-            return A3X_APICALLS[reader.u32()]
+            name = A3X_APICALLS[reader.u32()]
+            return _PRETTY.get(name.lower(), name)
         elif key == 'i':
             number = reader.i32()
         elif key == 'q':

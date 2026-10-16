@@ -34,8 +34,8 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_child
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
 from refinery.lib.scripts.au3.analysis.cache import model_cache
+from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
 from refinery.lib.scripts.au3.model import (
     Au3BinaryExpression,
     Au3Call,
