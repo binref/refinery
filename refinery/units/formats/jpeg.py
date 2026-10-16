@@ -5,7 +5,7 @@ import re
 
 from refinery.lib import json
 from refinery.lib.id import Fmt, get_image_format
-from refinery.lib.structures import Struct, StructReader, struct_to_json
+from refinery.lib.structures import EOF, Struct, StructReader, struct_to_json
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
@@ -135,11 +135,16 @@ class JpegSOF(Struct):
         self.components = [JpegSOFComponent(reader) for _ in range(reader.u8())]
 
 
+_MARKER = re.compile(br'(?<!\xFF)\xFF+(?=[^\x00\xFF])')
+_END_OF_SCAN = re.compile(br'(?<!\xFF)\xFF+(?=[^\x00\xD0-\xD7\xFF])')
+
+
 class JpegStream(Struct):
     """
     A marker with the fill bytes in front of it and the segment that follows it. The segment of a
     scan is followed by its entropy-coded data, which runs across restart markers up to the next
-    marker of any other kind.
+    marker of any other kind or to the end of the data. A segment that the end of the data cuts
+    holds the bytes that are there.
     """
     def __init__(self, reader: StructReader):
         self.offset = reader.tell()
@@ -156,23 +161,31 @@ class JpegStream(Struct):
             self.size = reader.u16() - 2
             if self.size < 0:
                 raise ValueError(F'Invalid size {self.size}.')
-            self.data = reader.read_exactly(self.size)
+            self.data = reader.read(self.size)
             if t == JpegMarker.StartOfScan:
-                eos = re.search(br'\xFF+(?![\x00\xD0-\xD7\xFF])', reader.peek())
-                if eos is None:
-                    raise ValueError('Could not find end of stream data.')
-                self.scan = reader.read(eos.start())
+                end = _END_OF_SCAN.search(reader.peek())
+                self.scan = reader.read(None if end is None else end.start())
             else:
                 self.scan = b''
+
+    @property
+    def truncated(self) -> bool:
+        """
+        Whether the end of the data cuts the segment.
+        """
+        return len(self.data) < self.size
 
 
 class Jpeg(Struct):
     """
-    A JPEG image, which ends with its end-of-image marker; the data that follows it is not part of
-    the structure.
+    A JPEG image, which begins with its start-of-image marker and ends with its end-of-image marker
+    or with the end of the data; the data that follows the end-of-image marker is not part of the
+    structure. The junk of the image is the data in front of a marker that is not fill bytes, and
+    the rest of the data when it ends inside a marker or inside the length of a segment.
     """
     def __init__(self, reader: StructReader):
         self.streams: list[JpegStream] = []
+        self.junk: list[memoryview] = []
         self.sof = None
         self.scandata: list[memoryview] = []
         self.scans: list[JpegStream] = []
@@ -181,13 +194,27 @@ class Jpeg(Struct):
 
         reader.bigendian = True
 
+        if reader.peek(2) != B'\xFF\xD8':
+            raise ValueError('The data does not begin with a start-of-image marker.')
+
         while not reader.eof:
-            stream = JpegStream(reader)
+            start = reader.tell()
+            marker = _MARKER.search(reader.peek())
+            if marker is None or marker.start() > 0:
+                self.junk.append(reader.read(None if marker is None else marker.start()))
+                continue
+            try:
+                stream = JpegStream(reader)
+            except EOF:
+                reader.seekset(start)
+                self.junk.append(reader.read())
+                break
             self.streams.append(stream)
             if (t := stream.type).is_frame:
                 if self.sof is not None:
                     raise ValueError('Duplicate SOF Stream in File.')
-                self.sof = JpegSOF.Parse(stream.data)
+                if not stream.truncated:
+                    self.sof = JpegSOF.Parse(stream.data)
             elif t == JpegMarker.StartOfScan:
                 self.scans.append(stream)
             elif t == JpegMarker.Comment:
@@ -197,16 +224,29 @@ class Jpeg(Struct):
             elif t == JpegMarker.EndOfImage:
                 break
 
+    @property
+    def truncated(self) -> bool:
+        """
+        Whether the data ends before the end-of-image marker.
+        """
+        return not self.streams or self.streams[-1].type != JpegMarker.EndOfImage
+
 
 class jpeg(PathExtractorUnit):
     """
     Extract the raw segments from a JPG image. Parses JFIF/EXIF markers to recover embedded
     thumbnails, metadata, and comment segments. Data appended after the end of the image, such as
-    a hidden payload, is extracted as the overlay.
+    a hidden payload, is extracted as the overlay. Data between the segments that belongs to none
+    of them is extracted as junk. A truncated image, such as one carved from a larger file, gives
+    everything up to the cut, and a segment that the cut divides gives the part in front of it.
     """
     def unpack(self, data):
         view = memoryview(data)
         jpg = Jpeg.Parse(view)
+        if jpg.junk:
+            self.log_warn('the image contains data that belongs to none of its segments')
+        if jpg.truncated:
+            self.log_warn('the data ends before the end of the image')
         for k, stream in enumerate(jpg.streams):
             yield UnpackResult(F'streams/{k}.{stream.type.name}', stream.__buffer__(0))
         for k, comment in enumerate(jpg.comments):
@@ -222,6 +262,8 @@ class jpeg(PathExtractorUnit):
             yield UnpackResult(F'meta/{k}.{t.name.lower()}{extension}', meta.data)
         if sof := jpg.sof:
             yield UnpackResult('meta/dimensions.json', json.dumps(struct_to_json(sof)))
+        for k, junk in enumerate(jpg.junk):
+            yield UnpackResult(F'junk/{k}', junk)
         if overlay := view[len(jpg):]:
             yield UnpackResult('overlay', overlay)
 
