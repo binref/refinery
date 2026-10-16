@@ -1,6 +1,7 @@
 import inspect
 import io
 import itertools
+import logging
 import os
 import random
 import sys
@@ -270,6 +271,22 @@ class TestNoLogging(TestBase):
         self.assertTrue(m.STD_ERR & m.ALL)
         self.assertTrue(m.WARNING & m.ALL)
         self.assertTrue(m.LOGGING & m.ALL)
+
+    def test_logging_stays_silenced_when_a_nested_context_exits(self):
+        with tools.NoLogging():
+            with tools.NoLogging():
+                pass
+            self.assertEqual(logging.root.manager.disable, logging.CRITICAL)
+
+    def test_logging_disabled_before_the_context_stays_disabled_after_it(self):
+        previous = logging.root.manager.disable
+        logging.disable(logging.INFO)
+        try:
+            with tools.NoLogging():
+                pass
+            self.assertEqual(logging.root.manager.disable, logging.INFO)
+        finally:
+            logging.disable(previous)
 
 
 class TestTools(TestBase):

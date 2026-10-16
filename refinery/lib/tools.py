@@ -399,6 +399,7 @@ class NoLogging:
 
     def __enter__(self):
         if self.mode & NoLogging.Mode.LOGGING:
+            self._logging_disabled = logging.root.manager.disable
             logging.disable(logging.CRITICAL)
         if self.mode & NoLogging.Mode.WARNING:
             self._warning_filters = list(warnings.filters)
@@ -413,7 +414,7 @@ class NoLogging:
 
     def __exit__(self, *_):
         if self.mode & NoLogging.Mode.LOGGING:
-            logging.disable(logging.NOTSET)
+            logging.disable(self._logging_disabled)
         if self.mode & NoLogging.Mode.WARNING:
             warnings.resetwarnings()
             assert isinstance(warnings.filters, list)

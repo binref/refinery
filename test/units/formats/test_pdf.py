@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import gc
 import io
 import tracemalloc
 import zlib
+
+from typing import TYPE_CHECKING
 
 from refinery.lib.frame import Chunk
 from refinery.lib.mime import FileMagicInfo
@@ -10,6 +13,9 @@ from refinery.lib.types import Callable
 from refinery.units.formats.pdf import xtpdf
 
 from .. import TestUnitBase
+
+if TYPE_CHECKING:
+    from pikepdf import Pdf, Stream
 
 
 class TestPDF(TestUnitBase):
@@ -93,12 +99,16 @@ class TestPDF(TestUnitBase):
 
     def _peak_of_python_allocations(self, operation: Callable[[], object]) -> int:
         operation()
-        tracemalloc.start()
+        if not (tracing := tracemalloc.is_tracing()):
+            tracemalloc.start()
         try:
+            tracemalloc.reset_peak()
+            before = tracemalloc.get_traced_memory()[0]
             operation()
-            return tracemalloc.get_traced_memory()[1]
+            return tracemalloc.get_traced_memory()[1] - before
         finally:
-            tracemalloc.stop()
+            if not tracing:
+                tracemalloc.stop()
 
     def test_listing_a_pdf_decodes_none_of_its_streams(self):
         data = self._with_a_stream_of_64_megabytes_of_zeros()
@@ -124,25 +134,87 @@ class TestPDF(TestUnitBase):
         Image.new(mode, (64, 48)).save(output, 'PDF')
         return output.getvalue()
 
-    def _with_flate_in_front_of_the_image_filter(self, data: bytes) -> bytes:
+    def _with_each_image_rewritten(self, data: bytes, rewrite: Callable[[Pdf, Stream], None]) -> bytes:
         import pikepdf
         pdf = pikepdf.open(io.BytesIO(data))
         for obj in list(pdf.objects):
             if isinstance(obj, pikepdf.Stream) and obj.get('/Subtype') == '/Image':
-                filters = pikepdf.Array([pikepdf.Name('/FlateDecode'), obj['/Filter']])
-                obj.write(zlib.compress(obj.read_raw_bytes()), filter=filters)
+                rewrite(pdf, obj)
         output = io.BytesIO()
-        pdf.save(output)
+        pdf.save(output, compress_streams=False)
         return output.getvalue()
+
+    def _with_flate_in_front_of_the_image_filter(self, data: bytes) -> bytes:
+        import pikepdf
+
+        def rewrite(pdf: Pdf, image: Stream):
+            filters = pikepdf.Array([pikepdf.Name('/FlateDecode'), image['/Filter']])
+            image.write(zlib.compress(image.read_raw_bytes()), filter=filters)
+
+        return self._with_each_image_rewritten(data, rewrite)
+
+    def _with_flate_behind_the_image_filter(self, data: bytes) -> bytes:
+        import pikepdf
+
+        def rewrite(pdf: Pdf, image: Stream):
+            filters = pikepdf.Array([image['/Filter'], pikepdf.Name('/FlateDecode')])
+            image.write(zlib.compress(image.read_raw_bytes()), filter=filters)
+
+        return self._with_each_image_rewritten(data, rewrite)
+
+    def _with_flate_in_front_of_a_reference_to_the_image_filter(self, data: bytes) -> bytes:
+        import pikepdf
+
+        def rewrite(pdf: Pdf, image: Stream):
+            filters = pikepdf.Array([pikepdf.Name('/FlateDecode'), pdf.make_indirect(image['/Filter'])])
+            image.write(zlib.compress(image.read_raw_bytes()), filter=filters)
+
+        return self._with_each_image_rewritten(data, rewrite)
+
+    def _with_the_image_filter_under_its_abbreviation(self, data: bytes) -> bytes:
+        def rewrite(pdf: Pdf, image: Stream):
+            image['/F'] = image['/Filter']
+            del image['/Filter']
+
+        return self._with_each_image_rewritten(data, rewrite)
 
     def test_an_image_is_named_after_the_type_of_its_extracted_data(self):
         jpeg = self._pdf_written_by_pillow('RGB')
+        jpx = self._pdf_written_by_pillow('RGBA')
         for name, data, extension in (
             ('jpeg', jpeg, 'jpg'),
             ('jpeg behind flate', self._with_flate_in_front_of_the_image_filter(jpeg), 'jpg'),
-            ('jpeg 2000', self._pdf_written_by_pillow('RGBA'), 'jp2'),
-            ('fax', self._pdf_written_by_pillow('1'), 'png'),
+            ('jpeg behind flate, referenced', self._with_flate_in_front_of_a_reference_to_the_image_filter(jpeg), 'jpg'),
+            ('jpeg under the abbreviated key', self._with_the_image_filter_under_its_abbreviation(jpeg), 'jpg'),
+            ('jpeg 2000', jpx, 'jp2'),
+            ('jpeg 2000 in front of flate', self._with_flate_behind_the_image_filter(jpx), 'jp2'),
+            ('palette, hex-encoded', self._pdf_written_by_pillow('P'), 'png'),
         ):
             images = data | self.load('parsed/page0/img*') | {'path': bytes}
             self.assertEqual(list(images), [F'parsed/page0/img1.{extension}'], name)
             self.assertEqual(FileMagicInfo(images[F'parsed/page0/img1.{extension}']).extension, extension, name)
+
+    def test_a_page_whose_image_filter_refers_to_a_missing_object_keeps_its_text_and_its_image(self):
+        jpeg = self._pdf_written_by_pillow('RGB')
+        data = jpeg.replace(B'/Filter /DCTDecode', B'/Filter 999 0 R   ')
+        self.assertNotEqual(data, jpeg)
+        outputs = data | self.load('parsed/page0.*', 'parsed/page0/*') | {'path': bytes}
+        self.assertEqual(list(outputs), [
+            'parsed/page0.html',
+            'parsed/page0.json',
+            'parsed/page0.txt',
+            'parsed/page0/img1.png',
+        ])
+        self.assertEqual(FileMagicInfo(outputs['parsed/page0/img1.png']).extension, 'png')
+
+    def test_extracting_the_text_formats_one_after_the_other_keeps_one_page_layout_at_a_time(self):
+        from PIL import Image
+        from pymupdf import TextPage
+        output = io.BytesIO()
+        pages = [Image.new('P', (64, 48)) for _ in range(4)]
+        pages[0].save(output, 'PDF', save_all=True, append_images=pages[1:])
+        layouts: list[int] = []
+        for _ in output.getvalue() | self.load('parsed/*.txt', 'parsed/*.html'):
+            layouts.append(sum(type(obj) is TextPage for obj in gc.get_objects()))
+        self.assertEqual(len(layouts), 8)
+        self.assertEqual(max(layouts), 1)

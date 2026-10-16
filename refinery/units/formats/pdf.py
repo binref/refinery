@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+import functools
 import re
 
 from itertools import islice
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 from refinery.lib import json
 from refinery.lib.meta import MV
 from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import NoLogging
+from refinery.lib.tools import NoLogging, exception_to_string
 from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 
 _T = TypeVar('_T')
@@ -63,21 +64,50 @@ def _text_page(document: Document, page: int) -> TextPage:
         return document[page].get_textpage()
 
 
+_PDF_NAME_OR_REFERENCE = re.compile(r'/([^\s/\[\]<>(){}%]+)|(\d+)\s+\d+\s+R')
+
+
+def _image_filters(document: Document, xref: int) -> list[str]:
+    """
+    The names of the compression filters of the image with the given cross-reference number, in
+    the order in which they apply, read as mupdf reads them: the abbreviation `F` takes precedence
+    over the key `Filter`, references are resolved, and a reference to an object that does not exist
+    is null. An item of the filter array that is not a name gives an empty name.
+    """
+    def resolved(number: str) -> str:
+        if not 0 < (n := int(number)) < document.xref_length():
+            return 'null'
+        return document.xref_object(n, compressed=True)
+
+    def resolved_name(number: str) -> str:
+        if (item := resolved(number)).startswith('/'):
+            return item[1:]
+        return ''
+
+    for key in ('F', 'Filter'):
+        kind, value = document.xref_get_key(xref, key)
+        if kind != 'null':
+            break
+    if kind == 'xref':
+        value = resolved(value.split()[0])
+    elif kind not in ('name', 'array'):
+        return []
+    if not value.startswith(('/', '[')):
+        return []
+    return [name or resolved_name(number) for name, number in _PDF_NAME_OR_REFERENCE.findall(value)]
+
+
 def _image_extension(document: Document, xref: int) -> str:
     """
     The file extension of the image with the given cross-reference number as pymupdf extracts it:
-    an image whose last compression filter is JPEG or JPEG 2000 is handed out as stored, and every
-    other image is converted to PNG.
+    an image with a JPEG 2000 filter anywhere among its filters comes out as JPEG 2000, one whose
+    last filter is JPEG comes out as JPEG, and every other image is converted to PNG.
     """
-    kind, value = document.xref_get_key(xref, 'Filter')
-    if kind == 'xref':
-        value = document.xref_object(int(value.split()[0]))
-    filters = re.findall(r'/([^\s/\[\]<>(){}%]+)', value)
-    last = filters[-1] if filters else None
-    if last in ('DCTDecode', 'DCT'):
-        return 'jpg'
-    if last == 'JPXDecode':
+    filters = _image_filters(document, xref)
+    if 'JPXDecode' in filters:
         return 'jp2'
+    if filters and filters[-1] in ('DCTDecode', 'DCT'):
+        return 'jpg'
     return 'png'
 
 
@@ -327,20 +357,23 @@ class xtpdf(ArchiveUnit):
             ('json', lambda t: t.extractJSON()),
             ('txt', lambda t: t.extractText()),
         ]
+        layout = functools.lru_cache(maxsize=1)(functools.partial(_text_page, mu))
 
         for k in range(len(mu)):
-            with NoLogging(NoLogging.Mode.ALL):
-                try:
-                    images = [(xref, _image_extension(mu, xref)) for xref, *_ in mu.get_page_images(k)]
-                except Exception:
-                    continue
-            textpage = _Deferred(mu, lambda k=k: _text_page(mu, k))
             for extension, extract in extractors:
-                text = _Deferred(mu, lambda e=extract, t=textpage: e(t()).encode(codec))
-                yield UnpackResult(F'parsed/page{k}.{extension}', text)
+                yield UnpackResult(
+                    F'parsed/page{k}.{extension}', lambda e=extract, k=k: e(layout(k)).encode(codec)
+                )
+            try:
+                with NoLogging(NoLogging.Mode.ALL):
+                    images = [(xref, _image_extension(mu, xref)) for xref, *_ in mu.get_page_images(k)]
+            except Exception as error:
+                self.log_warn(F'failed to list the images of page {k}: {exception_to_string(error)}')
+                continue
             for j, (xref, extension) in enumerate(images, 1):
-                image = _Deferred(mu, lambda x=xref: mu.extract_image(x)['image'])
-                yield UnpackResult(F'parsed/page{k}/img{j}.{extension}', image)
+                yield UnpackResult(
+                    F'parsed/page{k}/img{j}.{extension}', lambda x=xref: mu.extract_image(x)['image']
+                )
 
     @classmethod
     def handles(cls, data) -> bool | None:
