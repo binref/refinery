@@ -11,6 +11,7 @@ from typing import Generator, Iterable, NamedTuple
 from refinery.lib.dt import filetime
 from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
+from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.tools import exception_to_string
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -515,6 +516,7 @@ A3X_OPCODES = {
 
 _PRETTY: dict[str, str] = {}
 _PRETTY.update((name.lower(), name) for name in A3X_APICALLS)
+_PRETTY.update(AUTOIT_FUNCTION_NAMES)
 _PRETTY.update((name.lower(), name) for name in A3X_KEYWORDS)
 
 

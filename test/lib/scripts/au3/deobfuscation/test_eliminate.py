@@ -473,9 +473,13 @@ class TestAu3DeadCodeElimination(TestAu3):
             ''')
 
     def test_a_global_initialized_through_a_builtin_is_kept(self):
+        """
+        The source spells the builtin officially, because the canonicalize group prints every
+        surviving reference that way.
+        """
         self._assertKept(
             '''
-            Global $p = ptr()
+            Global $p = Ptr()
 
             MsgBox(0, 0, 0)
             ''')

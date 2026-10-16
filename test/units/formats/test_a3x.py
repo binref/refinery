@@ -6,6 +6,7 @@ from refinery.units.formats.a3x import (
     A3X_APICALLS,
     A3xScript,
     A3xType,
+    _PRETTY,
     a3x_decompile,
     a3x_decompress,
     a3x_decrypt,
@@ -95,4 +96,17 @@ class TestA3X(TestUnitBase):
         self.assertEqual(
             {name.lower() for name in A3X_APICALLS},
             set(AUTOIT_FUNCTION_NAMES) | {'dummyspeedtest'},
+        )
+
+    def test_the_pretty_table_prints_the_official_function_spellings(self):
+        """
+        The decompiler's pretty table takes its function spellings from the analysis table, so a
+        name in the bytecode that the two spell differently comes out documented. The names only
+        the interpreter knows — `DummySpeedTest` — keep its spelling, and the keyword spellings
+        are unchanged.
+        """
+        from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
+        self.assertEqual(
+            {name: _PRETTY[name] for name in AUTOIT_FUNCTION_NAMES},
+            AUTOIT_FUNCTION_NAMES,
         )
