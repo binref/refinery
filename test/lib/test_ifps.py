@@ -626,6 +626,49 @@ class TestIPFSEmulator(TestBase):
         ])
         self.assertEqual(failures, [NewEmulationError('RaiseException', 'RaiseException failed')])
 
+    def test_a_failing_emulated_function_without_a_message_is_reported_by_its_error_type(self):
+        from refinery.lib.inno.emulator import NewEmulationError
+
+        def fail_without_a_message(*_):
+            raise RuntimeError
+
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        with _replaced_external('RaiseException', fail_without_a_message):
+            events = list(emulator.emulate_function(emulator.symbols['ORACLECALLERHANDLER']))
+        self.assertIn(NewEmulationError('RaiseException', 'RuntimeError'), events)
+
+    def test_the_message_that_the_script_reads_of_an_abort_is_a_string(self):
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        with self.assertRaises(IFPSException) as raised:
+            emulator.Abort()
+        self.assertIs(type(raised.exception.message), str)
+
+    def test_an_emulated_function_that_writes_beyond_a_record_is_reported_as_a_failure(self):
+        """
+        The emulated `GetWindowsVersionEx` fills the eight fields of the record it receives; this
+        replacement also writes a ninth.
+        """
+        from refinery.lib.inno.emulator import NewEmulationError
+
+        def write_beyond_the_record(_, version):
+            version[8] = 0
+
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        with _replaced_external('GetWindowsVersionEx', write_beyond_the_record):
+            failures = {event.name for event in emulator.emulate_installation() if isinstance(event, NewEmulationError)}
+        self.assertIn('GetWindowsVersionEx', failures)
+
+    def test_an_emulated_function_that_exhausts_the_recursion_of_python_ends_the_emulation(self):
+        from refinery.lib.inno.emulator import EmulatorMaxCalls
+
+        def recurse(*arguments):
+            return recurse(*arguments)
+
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        with _replaced_external('IntToStr', recurse), self.assertRaises(EmulatorMaxCalls) as raised:
+            list(emulator.emulate_function(emulator.symbols['ORACLELOOPS']))
+        self.assertEqual(str(raised.exception), 'Calling IntToStr exceeded the recursion limit of Python.')
+
     def test_a_function_that_is_not_emulated_sets_its_last_output_argument_to_one(self):
         """
         During an uninstallation, the script reads a setting into the last argument of
@@ -669,6 +712,7 @@ class TestIPFSEmulator(TestBase):
         assert body is not None
         code = b''.join(instruction.encoded for instruction in body)
         start = data.find(code)
+        self.assertGreaterEqual(start, 0)
         self.assertEqual(data.find(code, start + 1), -1)
         instruction = next(instruction for instruction in body if instruction.opcode == opcode)
         offset = start + instruction.offset

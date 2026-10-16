@@ -69,7 +69,7 @@ from refinery.lib.inno.ifps import (
 )
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
-from refinery.lib.tools import copy_exception
+from refinery.lib.tools import copy_exception, exception_to_string
 
 if TYPE_CHECKING:
     from typing import ParamSpec
@@ -158,13 +158,9 @@ class Variable(VariableBase, Generic[_T]):
     def at(self, k: int):
         """
         Provides index access for the variable. If the variable is a pointer, it is dereferenced
-        before accessing the data. An index outside of the data is an error of the script, also a
-        negative one, since Pascal Script reads the index as an unsigned number.
+        before accessing the data.
         """
-        var = self.deref()
-        if not 0 <= k < len(var):
-            raise IFPSException(kind=PSError.OutOfRange)
-        return var.data[k]
+        return self.deref().data[k]
 
     def deref(var):
         """
@@ -430,8 +426,7 @@ class IFPSException(RuntimeError):
         kind: PSError = PSError.Exception,
         called: str | None = None,
     ):
-        if message is None:
-            message = kind.text
+        message = kind.text if message is None else str(message)
         report = message if called is None else F'Error calling {called}: {message}'
         super().__init__(report)
         self.kind = kind
@@ -656,7 +651,9 @@ class _CallState(NamedTuple):
 class ExceptionHandler:
     """
     An exception handler of the IFPS runtime: one try statement whose try block runs or whose
-    blocks have not all ended. A block that is entered can no longer be entered by an error.
+    blocks have not all ended. A block that an error enters can no longer be entered by an error.
+    The second finally block that the end of the try block enters can still be entered once by an
+    error, as in Pascal Script.
     """
     finally_one: int | None
     """
@@ -1261,7 +1258,6 @@ class IFPSEmulator:
         self.seconds_slept = 0.0
         self.clock = 0
         self.fpucw = FPUControl.MaxPrecision | FPUControl.RoundTowardZero
-        self.jumpflag = False
         self.mutexes.clear()
         self._globals = None
         self._win32api_last_error = 0
@@ -1341,6 +1337,8 @@ class IFPSEmulator:
                 k = resolve(k).get()
             if k is None:
                 return var
+            if not 0 <= k < len(var := var.deref()):
+                raise IFPSException(kind=PSError.OutOfRange)
             return var.at(k)
 
         def getval(op: Operand):
@@ -1374,6 +1372,7 @@ class IFPSEmulator:
         sp: int = len(stack) - 1
         raised: IFPSException | None = None
         unwind = False
+        jump = False
 
         while True:
             if raised is not None:
@@ -1449,13 +1448,13 @@ class IFPSEmulator:
                     except EmulatorException:
                         raise
                     except RecursionError as RE:
-                        raise EmulatorMaxCalls(F'Calling {name} nests runs of the script too deeply.') from RE
+                        raise EmulatorMaxCalls(F'Calling {name} exceeded the recursion limit of Python.') from RE
                     except IFPSException as error:
                         raised = IFPSException(error.message, error.kind, name)
                     except DelphiException as error:
                         raised = IFPSException(str(error), called=name)
                     except Exception as error:
-                        failure = str(error)
+                        failure = exception_to_string(error)
                         raised = IFPSException(failure, called=name)
                     else:
                         if not handler.void:
@@ -1596,9 +1595,9 @@ class IFPSEmulator:
                         setval(a := insn.op(0), -getval(a))
                     elif opc == Op.SetFlag:
                         condition, negated = insn.operands
-                        self.jumpflag = bool(getval(condition)) ^ negated
+                        jump = bool(getval(condition)) ^ negated
                     elif opc == Op.JumpFlag:
-                        if self.jumpflag:
+                        if jump:
                             ip = insn.operands[0]
                     elif opc == Op.PushEH:
                         run.install(insn.operands, function, sp)
@@ -2740,7 +2739,9 @@ class InnoSetupEmulator(IFPSEmulator):
         event. Setup would instead end or stay on the current page after an error in some events,
         but the emulator goes on, just as it ignores a `False` returned by `InitializeSetup` or by
         `NextButtonClick`: such an error is often a gap of the emulator rather than an error that
-        the script would raise when it runs on Windows. Any other exception ends the emulation.
+        the script would raise when it runs on Windows. Any other exception ends the emulation. A
+        call of an emulated function that fails is reported as a `NewEmulationError`, also when the
+        script handles its error.
         """
 
         yield from self._event(SetupEvent.InitializeSetup)

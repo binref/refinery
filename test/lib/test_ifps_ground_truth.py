@@ -333,20 +333,21 @@ def _string_constants(functions: Iterable[Function]) -> set[str]:
 class _OracleTest(TestBase):
     """
     Inno Setup 6.5.0 built an installer from a script whose procedures log values that Pascal Script
-    computes, one procedure per area. The installer ran on Windows with a log file: `log` holds every
-    value of that log and `script` is the compiled script taken from that installer.
+    computes, one procedure per area. The installer ran on Windows with a log file: `log` holds
+    every value of that log and `script` is the compiled script taken from that installer.
     """
     script: str
     log: dict[str, str]
 
-    def emulator(self):
-        return InnoSetupEmulator(IFPSFile.Parse(self.download_sample(self.script)), IFPSEmulatorConfig(log_calls=True))
+    def emulator(self, **config):
+        script = IFPSFile.Parse(self.download_sample(self.script))
+        return InnoSetupEmulator(script, IFPSEmulatorConfig(log_calls=True, **config))
 
     def assertEmulatedAsLogged(self, procedure: str, *names: str):
         """
-        Emulates one procedure and compares what it logs with the log: the values of the given names,
-        or else every value that it logs with the logged values whose names are string constants of
-        the procedure and of the script functions it calls.
+        Emulates one procedure and compares what it logs with the log: the values of the given
+        names, or else every value that it logs with the logged values whose names are string
+        constants of the procedure and of the script functions it calls.
         """
         emulator = self.emulator()
         function = emulator.symbols[procedure]
@@ -367,6 +368,19 @@ class _OracleTest(TestBase):
             self.assertTrue(self.log.keys() & names)
         real = {name: value for name, value in self.log.items() if name in names}
         self.assertEqual(emulated, real)
+
+    def assertRunsAdvancedAlternatelyLogWhatEachLogsAlone(self, *procedures: str, **config):
+        """
+        Emulates the procedures on one emulator, first one after the other and then all at once,
+        taking one event from each run in turn. With the configuration option `log_opcodes`, each
+        instruction is an event.
+        """
+        emulator = self.emulator(**config)
+        alone = [_logged_values(emulator.emulate_function(emulator.symbols[p]), {}) for p in procedures]
+        runs = [emulator.emulate_function(emulator.symbols[p]) for p in procedures]
+        alternately = list(zip_longest(*runs))
+        self.assertTrue(all(alone))
+        self.assertEqual([_logged_values(events, {}) for events in zip(*alternately)], alone)
 
 
 class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
@@ -447,6 +461,9 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
 
     def test_an_infinite_float_constant(self):
         self.assertEmulatedAsLogged('ORACLEINFINITY')
+
+    def test_two_runs_advanced_alternately_by_instruction_log_what_each_logs_alone(self):
+        self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLECOMPARISONS', 'ORACLESETS', log_opcodes=True)
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
@@ -553,9 +570,4 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
         self.assertEqual(raised.exception.message, 'left in flight')
 
     def test_two_runs_advanced_alternately_log_what_each_logs_alone(self):
-        emulator = self.emulator()
-        procedures = ('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
-        alone = [_logged_values(emulator.emulate_function(emulator.symbols[p]), {}) for p in procedures]
-        runs = [emulator.emulate_function(emulator.symbols[p]) for p in procedures]
-        alternately = list(zip_longest(*runs))
-        self.assertEqual([_logged_values(events, {}) for events in zip(*alternately)], alone)
+        self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
