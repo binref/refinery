@@ -327,7 +327,7 @@ class DominanceModel(DominatorModel):
         place from a point of its own, which is why the name is the one the call reads and not the
         one the function declares. `False` for a callee that is no name.
         """
-        callee = call.callee
+        callee = strip_parens(call.callee)
         if not isinstance(callee, JsIdentifier):
             return False
         return self.binding_established_before(self.model.resolve(callee), call)

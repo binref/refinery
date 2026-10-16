@@ -55,10 +55,10 @@ from refinery.lib.scripts.js.parser import JsParser
 class Shuffle(NamedTuple):
     """
     The statements of a template's body the obfuscator writes in an order of its choosing: those
-    from *start* on. It always writes the first *kept* of them and leaves out any of the others.
-    None of them declares a name: an own name is numbered where it first appears, and one first
-    appearing in a statement written in an order of the obfuscator's choosing would be numbered by
-    that order (`template_form` refuses such a template).
+    from *start* on in its normal form. It always writes the first *kept* of them and leaves out any
+    of the others. No own name first appears in them: an own name is numbered where it first
+    appears, and one first appearing in a statement written in an order of the obfuscator's choosing
+    would be numbered by that order (`template_form` refuses such a template).
     """
     start: int
     kept: int
@@ -93,7 +93,8 @@ class Shape(NamedTuple):
         Which statement of *template* each statement of the body is, by its position in the
         template, or `None` where this is not the form of *template*. It is equal to the form of
         *template* but for the statements the obfuscator writes in an order of its choosing: those
-        hold the ones it always writes and no statement the template does not, each at most once.
+        hold the ones it always writes and no statement the template does not, each at most as often
+        as the template holds it.
         """
         form = template_form(template)
         if (
@@ -112,12 +113,14 @@ class Shape(NamedTuple):
         start = shuffled.start
         if written[:start] != allowed[:start]:
             return None
-        positions = {statement: start + index for index, statement in enumerate(allowed[start:])}
+        positions: dict[object, list[int]] = {}
+        for position, statement in enumerate(allowed[start:], start):
+            positions.setdefault(statement, []).append(position)
         fit = [*range(start)]
         for statement in written[start:]:
-            if (position := positions.pop(statement, None)) is None:
+            if not (free := positions.get(statement)):
                 return None
-            fit.append(position)
+            fit.append(free.pop(0))
         if any(start + index not in fit for index in range(shuffled.kept)):
             return None
         return tuple(fit)
@@ -159,6 +162,18 @@ class NormalForm:
         self.left_out = left_out
 
     def of(self, function: JsFunctionNode) -> Shape | None:
+        """
+        The normal form of *function*, or `None` where a statement *left_out* holds cannot be left
+        out.
+        """
+        clone = self.normalized(function)
+        return None if clone is None else _shape_of(clone)
+
+    def normalized(self, function: JsFunctionNode) -> Node | None:
+        """
+        A copy of *function* written in its normal form, its own names spelled `#v0`, `#v1` and so
+        on in the order they first appear, or `None` as for `of`.
+        """
         renames: dict[int, str] = {}
         own: dict[int, str] = {}
         undefined: set[int] = set()
@@ -212,20 +227,7 @@ class NormalForm:
         for node in clone.walk_in_order():
             if isinstance(node, JsIdentifier) and node.name.startswith('#own:'):
                 set_value(node, 'name', numbers.setdefault(node.name, F'#v{len(numbers)}'))
-        body = clone.body
-        statements = None
-        expression = None
-        if isinstance(body, JsBlockStatement):
-            statements = tuple(canonical(statement) for statement in body.body)
-        elif body is not None:
-            expression = canonical(body)
-        return Shape(
-            bool(getattr(clone, 'generator', False)),
-            bool(getattr(clone, 'is_async', False)),
-            tuple(canonical(parameter) for parameter in clone.params),
-            statements,
-            expression,
-        )
+        return clone
 
     def _normalize(self, root: Node) -> None:
         for node in list(root.walk()):
@@ -310,6 +312,41 @@ class NormalForm:
         return result
 
 
+def _shape_of(clone: Node) -> Shape:
+    """
+    The form of *clone*, a function written in its normal form (`NormalForm.normalized`).
+    """
+    body = getattr(clone, 'body', None)
+    statements = None
+    expression = None
+    if isinstance(body, JsBlockStatement):
+        statements = tuple(canonical(statement) for statement in body.body)
+    elif body is not None:
+        expression = canonical(body)
+    return Shape(
+        bool(getattr(clone, 'generator', False)),
+        bool(getattr(clone, 'is_async', False)),
+        tuple(canonical(parameter) for parameter in getattr(clone, 'params', ())),
+        statements,
+        expression,
+    )
+
+
+def _first_appears_in_the_shuffle(clone: Node, shuffled: Shuffle) -> bool:
+    """
+    Whether an own name of the normalized function *clone* first appears in one of the statements
+    *shuffled* names.
+    """
+    statements = statement_list_of(clone) or []
+    before = [*getattr(clone, 'params', ()), *statements[:shuffled.start]]
+    seen = {node.name for part in before for node in part.walk() if isinstance(node, JsIdentifier)}
+    return any(
+        isinstance(node, JsIdentifier) and node.name.startswith('#v') and node.name not in seen
+        for statement in statements[shuffled.start:]
+        for node in statement.walk()
+    )
+
+
 def _rename_free(form: object, names: frozenset[str]) -> object:
     if isinstance(form, tuple):
         return tuple(_rename_free(item, names) for item in form)
@@ -325,30 +362,29 @@ def template_form(template: Template) -> Shape:
     or a node a caller maps to it takes in the form of a function: a call of a global the program
     never declares keeps its spelling as a free name, so a function calling an undeclared `IMUL`
     does not match a template calling the placeholder `IMUL`; a placeholder the template writes is
-    a name the model binds, and it is renamed to itself as well. A template one of whose statements
-    the obfuscator writes in an order of its choosing declares a name is refused (`Shuffle`).
+    a name the model binds, and it is renamed to itself as well. A template one of whose own names
+    first appears in a statement the obfuscator writes in an order of its choosing is refused
+    (`Shuffle`).
     """
     script = JsParser(template.text).parse()
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
     model = build_semantic_model(script)
-    if (shuffled := template.shuffled) is not None:
-        for statement in (statement_list_of(function) or [])[shuffled.start:]:
-            if any(
-                isinstance(node, JsIdentifier) and model.binding_of(node) is not None
-                for node in statement.walk()
-            ):
-                raise ValueError(
-                    F'a shuffled statement of the template declares a name: {template.text}'
-                )
     written = {
         id(binding): binding.name for node in function.walk()
         if isinstance(node, JsIdentifier)
         and node.name in template.placeholders
         and (binding := model.resolve(node)) is not None
     }
-    form = NormalForm(model, written, set()).of(function)
-    assert form is not None
+    normal = NormalForm(model, written, set())
+    clone = normal.normalized(function)
+    assert clone is not None
+    shuffled = template.shuffled
+    if shuffled is not None and _first_appears_in_the_shuffle(clone, shuffled):
+        raise ValueError(
+            F'an own name first appears in a shuffled statement of the template: {template.text}'
+        )
+    form = _shape_of(clone)
     statements = form.statements
     if statements is not None:
         statements = tuple(

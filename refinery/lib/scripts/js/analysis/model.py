@@ -3223,7 +3223,11 @@ class SemanticModel:
         rather than in *outer* itself or an enclosing scope. This replaces the various hand-rolled
         shadowing checks: a name shadowed below *outer* does not refer to *outer*'s binding.
         """
-        binding = self._copy_written_at(at) or self.lookup(name, self._node_scope.get(at))
+        binding = None
+        if isinstance(at, JsIdentifier) and at.name == name:
+            binding = self._copy_written_at(at)
+        if binding is None:
+            binding = self.lookup(name, self._node_scope.get(at))
         if binding is None:
             return False
         return outer.contains(binding.scope, strict=True)
@@ -5019,9 +5023,12 @@ class _ScopeBuilder:
         """
         Build the scopes of a function declaration written as the whole clause of an `if`, which
         binds its name as though it were the one statement of a block in that position (§B.3.4).
-        The scope of that block is introduced by the declaration, since nothing else stands there.
+        The scope of that block is introduced by the declaration, since nothing else stands there,
+        and the declaration stands in it, as a function declared in a block statement stands in the
+        block.
         """
         bscope = self._new_scope(ScopeKind.BLOCK, node, enclosing)
+        self.model._node_scope[node] = bscope
         self._collect_lexical([node], bscope)
         self._visit_function(node, bscope)
 

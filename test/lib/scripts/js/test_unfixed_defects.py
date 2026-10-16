@@ -5027,6 +5027,24 @@ A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
         + decoder('dec') + '\n'
     ):
         'planted Fizz\n',
+    **{
+        (
+            DEFAULTED_HEAD
+            + defaulted('acc', 'dec', order='w0') + '\n'
+            + 'var original = Function.prototype.call;\n'
+            + F'{call} = function (receiver, index) {{ return "called" + index; }};\n'
+            + 'var r = acc.call(undefined, 10);\n'
+            + F'{call} = original;\n'
+            + 'console.log(r, acc(11));\n'
+            + decoder('dec') + '\n'
+        ):
+            'called10 Fizz\n'
+        for call in (
+            '(function () {}).constructor.prototype.call',
+            'Object.getPrototypeOf(function () {}).call',
+            '(function () {}).__proto__.call',
+        )
+    },
 }
 
 

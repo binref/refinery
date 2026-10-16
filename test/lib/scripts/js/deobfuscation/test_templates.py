@@ -96,11 +96,18 @@ SHUFFLED_STATEMENTS = {
 }
 
 
-def _fit(body: str) -> tuple[int, ...] | None:
+REPEATED = Template(
+    'function F(s, u) { s = s | 0; if (s === 1) { return "a"; } if (s === 1) { return "a"; }'
+    ' if (u === 2) { return "b"; } }',
+    shuffled=Shuffle(1, 1),
+)
+
+
+def _fit(body: str, template: Template = SHUFFLED) -> tuple[int, ...] | None:
     script = JsParser(F'function g(t, w) {{ {body} }}').parse()
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    found = match(build_semantic_model(script), function, [SHUFFLED], {})
+    found = match(build_semantic_model(script), function, [template], {})
     return None if found is None else found[1]
 
 
@@ -126,6 +133,21 @@ class TestTemplatesWithShuffledStatements(TestBase):
 
     def test_the_statements_before_the_shuffled_ones_keep_their_place(self):
         self.assertIsNone(_fit(F'{SHUFFLED_STATEMENTS[1]} t = t | 0;'))
+
+    def test_a_statement_the_template_holds_twice_matches_as_often_as_it_holds_it(self):
+        once = SHUFFLED_STATEMENTS[1]
+        other = SHUFFLED_STATEMENTS[2]
+        self.assertEqual(_fit(F't = t | 0; {once}', REPEATED), (0, 1))
+        self.assertEqual(_fit(F't = t | 0; {other} {once} {once}', REPEATED), (0, 3, 1, 2))
+        self.assertIsNone(_fit(F't = t | 0; {once} {once} {once}', REPEATED))
+
+    def test_a_template_whose_shuffled_statement_first_names_a_local_is_refused(self):
+        template = Template(
+            'function F(s) { var r; s = s | 0; if (s) { r = 1; } if (!s) { r = 2; } }',
+            shuffled=Shuffle(1, 1),
+        )
+        with self.assertRaises(ValueError):
+            template_form(template)
 
     def test_a_template_whose_shuffled_statement_declares_a_name_is_refused(self):
         template = Template(

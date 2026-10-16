@@ -984,13 +984,16 @@ class JsBase91AccessorDecoys(ScriptLevelTransformer):
     """
 
     def _process_script(self, node: JsScript):
+        candidates = [
+            function for function in node.walk()
+            if isinstance(function, (JsArrowFunctionExpression, JsFunctionExpression))
+            and len(function.params) == 5
+        ]
+        if not candidates:
+            return
         effects = model_cache(self, node).effects
         found: list[_Decoys] = []
-        for function in node.walk():
-            if not isinstance(function, (JsArrowFunctionExpression, JsFunctionExpression)):
-                continue
-            if len(function.params) != 5:
-                continue
+        for function in candidates:
             if (decoys := _decoys(effects, function)) is not None:
                 found.append(decoys)
         if not found:

@@ -31,6 +31,16 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
+    def test_a_finder_called_through_parentheses_becomes_globalthis(self):
+        self.assertEqual(self._find('function g() { return globalThis; } (g)();'), inspect.cleandoc(
+            '''
+            function g() {
+              return globalThis;
+            }
+            globalThis;
+            '''
+        ))
+
     def test_short_circuit_chain_result_assignment_becomes_globalthis(self):
         source = 'function g() { return globalThis || global || window; } var x = g();'
         self.assertEqual(self._find(source), inspect.cleandoc(

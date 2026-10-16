@@ -2198,6 +2198,19 @@ class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
         self.assertIs(block.scope.node, declaration)
         self.assertIs(model.resolve(self._names(ast)[-1]), copy.var)
 
+    def test_a_function_written_as_the_clause_of_an_if_stands_in_its_block(self):
+        ast, model = self._model('function g(c) { if (c) function f() {} return f; }')
+        declaration = self._declaration(ast)
+        block = self._block_binding(ast, model)
+        self.assertIs(model.scope_of(declaration), block.scope)
+        self.assertIs(model.lookup('f', model.scope_of(declaration)), block)
+
+    def test_a_name_is_shadowed_at_the_name_of_a_block_function_only_if_it_is_that_name(self):
+        ast, model = self._model('function g() { { function f() {} } }')
+        declared = self._names(ast)[0]
+        self.assertTrue(model.is_shadowed('f', declared, model.root_scope))
+        self.assertFalse(model.is_shadowed('x', declared, model.root_scope))
+
     def test_a_labelled_function_whose_copy_a_let_stops_is_bound_in_its_block(self):
         ast, model = self._model('let f = 1; { lab: function f() {} f; }')
         _, declared, inside = self._names(ast)
