@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Binding,
     BindingKind,
+    ReferenceNode,
     Role,
     _property_key_name,
     arguments_name_their_function,
@@ -710,22 +711,27 @@ class ConversionInstalls:
                 return False
             return cls.super_class is None or self._effects.trusted_intrinsic(cls.super_class) in NON_FUNCTION_BUILDERS
         if isinstance(owner, JsFunctionDeclaration):
-            if not isinstance(owner.id, JsIdentifier):
-                return False
-            return self._only_constructed(self._model.binding_of(owner.id))
+            names = self._model.function_names(owner)
+            return names is not None and all(
+                self._only_constructed(name, names.reads_of(name)) for name in names.bindings
+            )
         if isinstance(owner.id, JsIdentifier):
             own = self._model.binding_of(owner.id)
             if own is not None and not self._only_constructed(own):
                 return False
         return self._only_constructed(self._model.name_holding(owner))
 
-    def _only_constructed(self, binding: Binding | None) -> bool:
+    def _only_constructed(
+        self, binding: Binding | None, reads: list[ReferenceNode] | None = None,
+    ) -> bool:
         """
         Whether every read of the name *binding*, which holds a function, constructs with it, reads
         its `prototype`, is the right of `instanceof`, or is a test; and the function cannot be
         reached another way: the name is neither exported, nor written at entry, nor reached through
         a handed object or by reflection, and no `constructor` property escapes in the program
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.constructors_may_escape`).
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.constructors_may_escape`). *reads*
+        are the reads through which the name reaches the function, all of its reads by default
+        (`refinery.lib.scripts.js.analysis.model.FunctionNames.reads_of`).
         """
         if (
             binding is None
@@ -736,7 +742,7 @@ class ConversionInstalls:
             return False
         if self._model.constructors_may_escape() or self._model.reflection_can_reach(binding):
             return False
-        for read in binding.reads:
+        for read in binding.reads if reads is None else reads:
             parent = enclosing_operator(read)
             if isinstance(parent, JsNewExpression) and strip_parens(parent.callee) is read:
                 continue

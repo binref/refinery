@@ -1296,7 +1296,7 @@ class JsInterpreter:
         model: SemanticModel | None = None,
         anchor: Node | None = None,
         tampering: TamperingModel | None = None,
-        established: Callable[[JsFunctionNode, Node], bool] | None = None,
+        established: Callable[[Binding, Node], bool] | None = None,
         constant: Callable[[Binding], tuple[bool, Value]] | None = None,
         entered: set[JsFunctionNode] | None = None,
         constants: dict[Binding, tuple[bool, Value]] | None = None,
@@ -1819,7 +1819,7 @@ class JsInterpreter:
         if self._established is not None:
             anchor = self._anchor
             point = node if entered or anchor is None else anchor
-            return func if self._established(func, point) else None
+            return func if self._established(binding, point) else None
         if entered and effects.model.binding_establishment_sites(binding) != []:
             return None
         return func

@@ -233,8 +233,10 @@ class ContainerRole(enum.Enum):
 #: What a binding's reference lists hold. A reference is ordinarily the identifier naming the
 #: binding; where an object aliases it there is no such identifier, and the node the program reached
 #: the object through stands in — a member access for `globalThis.g` and for `arguments[0]`, and the
-#: `this` of a script's top level where the object itself is handed to a call.
-ReferenceNode = JsIdentifier | JsMemberExpression | JsThisExpression
+#: `this` of a script's top level where the object itself is handed to a call. The copy Annex B
+#: makes of a function declared in a block reads the block's binding where the declaration runs and
+#: hands the value to another name, and the declaration stands in for that read (`AnnexBCopy`).
+ReferenceNode = JsIdentifier | JsMemberExpression | JsThisExpression | JsFunctionDeclaration
 
 
 @dataclass(eq=False)
@@ -280,6 +282,12 @@ class Binding:
     #: `export function`/`class`, and the local half of a sourceless `export { a }` all set it; a
     #: `from`-clause list and a re-export name a binding of another module and set nothing here.
     exported: bool = False
+    #: The copies Annex B makes of this block binding of a function declared in a block, one for
+    #: each declaration of it B.3.3.1 does not stop, each into the same `var` outside the block.
+    copies_made: list[AnnexBCopy] = field(default_factory=list)
+    #: The copies Annex B makes into this `var` from the block bindings of functions declared in
+    #: blocks of its function, script or static block.
+    copies_received: list[AnnexBCopy] = field(default_factory=list)
 
     def note_reference_from(self, scope: Scope | None) -> None:
         """
@@ -392,6 +400,85 @@ class Binding:
         these: it reaches a parameter, which no other function can name.
         """
         return any(_is_global_alias_access(ref) for ref in (*self.reads, *self.writes))
+
+
+@dataclass(eq=False)
+class AnnexBCopy:
+    """
+    The copy Annex B makes of a function declared in a block outside strict code (§B.3.3): where
+    *declaration* runs, the `var` of the enclosing function, script or static block (*var*)
+    receives what the block's own binding (*block*) holds at that point. The block binding holds the
+    function from the moment the block is entered, the `var` only from the point the copy runs.
+
+    The copy reads the block binding, and the declaration stands among the reads of *block* for that
+    read wherever something observes *var* (`observed`), so that a consumer asking whether, where or
+    how the value of the block binding is used sees a use it cannot follow. *var* keeps the
+    declaration among its own declarations, since that declaration is what gives it the name.
+    """
+    declaration: JsFunctionDeclaration
+    block: Binding
+    var: Binding
+
+    @property
+    def observed(self) -> bool:
+        """
+        Whether anything may read what the copy stores: *var* is read, named inside a `with` body,
+        exported, or carried by an object the program hands a call. A direct `eval` or another
+        reflective surface that could name *var* could name *block* too, the two sharing a variable
+        scope, and `SemanticModel.reflection_can_reach` answers that question for both.
+        """
+        var = self.var
+        return bool(
+            var.reads
+            or var.dynamic_refs
+            or var.exported
+            or var.reachable_through_a_handed_object
+        )
+
+
+@dataclass(frozen=True)
+class FunctionNames:
+    """
+    The names a function is called and observed through. *own* is the name its declaration gives
+    it, or the one name a declarator or a lone assignment stores it into. A function declared in a
+    block has a second name where the copy Annex B makes of it is observed (*copy*): the `var` the
+    copy writes, which holds the function from the point the declaration runs.
+    """
+    own: Binding
+    copy: AnnexBCopy | None = None
+
+    @property
+    def bindings(self) -> tuple[Binding, ...]:
+        """
+        Every name of the function, its own first.
+        """
+        if self.copy is None:
+            return (self.own,)
+        return (self.own, self.copy.var)
+
+    def reads_of(self, binding: Binding) -> list[ReferenceNode]:
+        """
+        The reads through which *binding*, one of these names, reaches the function. The read the
+        copy makes of the block binding is not one of them: what the copy reads is what the reads of
+        the `var` see.
+        """
+        if self.copy is not None and binding is self.copy.block:
+            return [read for read in binding.reads if read is not self.copy.declaration]
+        return binding.reads
+
+    def references_of(self, binding: Binding) -> list[ReferenceNode]:
+        """
+        The references through which *binding*, one of these names, reaches the function: its reads
+        as `reads_of` gives them, and its writes.
+        """
+        return self.reads_of(binding) + binding.writes
+
+    @property
+    def reads(self) -> list[ReferenceNode]:
+        """
+        The reads through which any of the names reaches the function.
+        """
+        return [read for binding in self.bindings for read in self.reads_of(binding)]
 
 
 @dataclass(eq=False)
@@ -1185,37 +1272,18 @@ def annex_b_suppressor_names(
     return frozenset(suppressed)
 
 
-def annex_b_copies_into(binding: Binding) -> bool:
+def _copy_made_by(binding: Binding, declaration: Node | None) -> AnnexBCopy | None:
     """
-    Whether *binding* holds a function Annex B copies into its scope rather than declares there.
-
-    The difference the copy makes is one of time. A function declared in the scope it names holds
-    its value before any statement of that scope runs, so nothing has to be ordered against it; one
-    Annex B copies holds it only from the point the declaration is reached, so a read before that
-    point - or in a run in which the block is never entered - finds whatever was there instead.
-    `binding_establishment_sites` is where that is answered, by naming the declaration as the node
-    the value waits on rather than by answering with the empty list a hoisted value gets.
-
-    Spelled over the scope the binding is in rather than over its variable scope, because a block
-    function that is *not* copied is declared in the block it stands in, and that one is a plain
-    lexical binding: it is initialized before any statement of the block runs and the declaration is
-    exactly what it holds.
+    The copy Annex B makes of the block binding *binding* where *declaration* runs, if any.
     """
-    if binding.kind is not BindingKind.FUNCTION or len(binding.declarations) != 1:
-        return False
-    declaration = binding.declarations[0].parent
-    if not isinstance(declaration, JsFunctionDeclaration):
-        return False
-    return _copied_out_of_its_block(declaration, binding)
+    return next((copy for copy in binding.copies_made if copy.declaration is declaration), None)
 
 
-def _copied_out_of_its_block(declaration: JsFunctionDeclaration, binding: Binding) -> bool:
+def _copy_received_by(binding: Binding, declaration: Node | None) -> AnnexBCopy | None:
     """
-    Whether the function *declaration* declaring *binding* stands outside the statement list whose
-    declarations the scope of *binding* binds, which is the function Annex B copies out of its block
-    into the name of an enclosing scope.
+    The copy Annex B makes into the `var` *binding* where *declaration* runs, if any.
     """
-    return statement_list_holding(declaration) is not _statement_list_holder_of(binding.scope)
+    return next((copy for copy in binding.copies_received if copy.declaration is declaration), None)
 
 
 def _loop_head_assigns(declarator: JsVariableDeclarator) -> bool:
@@ -1228,18 +1296,6 @@ def _loop_head_assigns(declarator: JsVariableDeclarator) -> bool:
         return False
     head = declaration.parent
     return isinstance(head, (JsForInStatement, JsForOfStatement)) and head.left is declaration
-
-
-def _statement_list_holder_of(scope: Scope) -> Node | None:
-    """
-    The node whose statement list *scope* binds the declarations of, which is the scope's own node
-    but for a function, whose statements are its body's.
-    """
-    node = scope.node
-    if isinstance(node, FUNCTION_NODES):
-        body = node.body
-        return body if isinstance(body, JsBlockStatement) else None
-    return node
 
 
 def enclosing_function(node: Node) -> Node | None:
@@ -2269,6 +2325,7 @@ class SemanticModel:
         self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
         self._shown_calls: dict[Node, tuple[list[JsCallExpression | JsNewExpression], bool]] = {}
         self._module_may_be_reentered = False
+        self._annex_b_copies: list[AnnexBCopy] = []
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
         self._deleted_host_globals: frozenset[str] = self._scan_deleted_host_globals()
@@ -2320,7 +2377,9 @@ class SemanticModel:
         """
         The binding introduced by a binding-site identifier (a declarator id, parameter, function or
         class name, catch parameter, or import local), or `None` if the identifier is not a binding
-        site.
+        site. The name of a function declared in a block introduces the block's binding, which this
+        answers; where Annex B copies it, the `var` the copy writes lists the name among its own
+        declarations as well (`AnnexBCopy`).
         """
         return self._binding_of.get(decl_id)
 
@@ -2597,9 +2656,10 @@ class SemanticModel:
             binding = None if statement.id is None else self.binding_of(statement.id)
             if binding is None:
                 return False
-            if not _copied_out_of_its_block(statement, binding):
+            copy = _copy_made_by(binding, statement)
+            if copy is None:
                 return True
-            return self._stores_into_without_throwing(binding, statement)
+            return self._stores_into_without_throwing(copy.var, statement)
         if isinstance(statement, JsExpressionStatement):
             return self.evaluation_cannot_throw(statement.expression, store_cannot_throw)
         return False
@@ -2666,7 +2726,7 @@ class SemanticModel:
             return False
         return binding.scope is not self.root_scope or not strict_mode_at(store)
 
-    def naming_binding(self, function: Node) -> Binding | None:
+    def _naming_binding(self, function: Node) -> Binding | None:
         """
         The binding that gives *function* a name through which it can be invoked: the declared name of a
         named function declaration, or the single `var`/`let`/`const` declarator a function or arrow
@@ -2684,19 +2744,35 @@ class SemanticModel:
             return self.binding_of(parent.id)
         return None
 
-    def invocation_binding(self, function: Node) -> Binding | None:
+    def function_names(self, function: Node) -> FunctionNames | None:
         """
-        The binding whose value-reads are the sites through which *function* is invoked — its
-        `naming_binding`, extended to a lone assignment installing it in an already-declared name
-        (`f = function(){}`) as well as a named declaration or a declarator initializer. `None` for a
-        function with no such name — an anonymous IIFE or callback, or one stored through a member or
-        other non-identifier target — whose invocation cannot be pinned to a name. Unlike `naming_binding`
-        this also recognizes the bare-assignment form, so a function held in a hoisted `var` assigned once
-        is ordered by its calls rather than by its creation; a caller confirms the binding is singly
-        declared, `binding_pinned_to` *function*, and free of dynamic references before trusting its reads
-        to enumerate every invocation.
+        The names *function* is called and observed through, or `None` for a function no name
+        holds: an IIFE, a callback, a function stored through anything but a name, which a consumer
+        reads as running where it stands or wherever what holds it hands it on. The own name is the
+        declared name of a function declaration, the one declarator a function or arrow expression
+        initializes, or the name a lone assignment installs it in (`f = function(){}`), so that a
+        function held in a hoisted `var` assigned once is ordered by its calls rather than by its
+        creation. A function declared in a block has the `var` Annex B copies it into as a second
+        name wherever something observes that copy (`AnnexBCopy.observed`).
+
+        A caller confirms that each name is singly declared, `binding_pinned_to` *function*, and
+        free of dynamic references before trusting its reads to enumerate every invocation.
         """
-        binding = self.naming_binding(function)
+        own = self._invocation_binding(function)
+        if own is None:
+            return None
+        copy = None
+        if isinstance(function, JsFunctionDeclaration):
+            copy = _copy_made_by(own, function)
+        if copy is not None and not copy.observed:
+            copy = None
+        return FunctionNames(own, copy)
+
+    def _invocation_binding(self, function: Node) -> Binding | None:
+        """
+        The own name of `function_names`.
+        """
+        binding = self._naming_binding(function)
         if binding is not None:
             return binding
         parent = function.parent
@@ -2744,7 +2820,8 @@ class SemanticModel:
         single-declaration and dynamic-reference checks a caller also needs are left to the caller; this
         answers only the reassignment question — the whole of it, so a write that leaves no `writes`
         entry because nothing says what it stored (`has_indefinite_write`) unpins the name as much
-        as one that does.
+        as one that does. A copy Annex B makes into the name is a write too, and it unpins the name
+        unless it stores the function its declaration declares (`copy_stores_the_function`).
         """
         parent = function.parent
         establishing = None
@@ -2756,7 +2833,32 @@ class SemanticModel:
             establishing = strip_parens(parent.left)
         if binding.has_indefinite_write:
             return False
+        if not all(self.copy_stores_the_function(copy) for copy in binding.copies_received):
+            return False
         return all(write is establishing for write in binding.writes)
+
+    def copy_stores_the_function(self, copy: AnnexBCopy) -> bool:
+        """
+        Whether *copy* stores the function its declaration declares, and nothing else can come of
+        the function through the block binding: the block binding has that one declaration, no write
+        of any kind and nothing that could rebind it at run time, so it holds the function wherever
+        the copy runs; and every other read of it calls or constructs it, so the one function object
+        the two names share is not handed on, stored or given properties through the name the `var`
+        cannot see.
+        """
+        block = copy.block
+        if (
+            len(block.declarations) != 1
+            or block.writes
+            or block.has_indefinite_write
+            or block.dynamic_refs
+            or self.binding_maybe_reassigned_dynamically(block)
+        ):
+            return False
+        return all(
+            isinstance(read, JsFunctionDeclaration) or is_constructed_or_invoked(read)
+            for read in block.reads
+        )
 
     def binding_values(
         self, binding: Binding | None, *, ignore_dynamic_rebinds: bool = False,
@@ -2892,20 +2994,30 @@ class SemanticModel:
                 passed.append(argument)
         return passed, complete
 
-    def _names_calling(self, held: Node) -> list[Binding | None]:
+    def _names_calling(self, held: Node) -> list[tuple[Binding, list[ReferenceNode]] | None]:
         """
-        The names the function or class *held* is called or constructed through: its declared
-        name, or the one name a declarator or an assignment statement stores it into
-        (`name_holding`), and the own name of a function or class expression. `None` stands for a
-        holder that is no name. One written as the callee of a call or a `new` is held by none.
+        The names the function or class *held* is called or constructed through, each with the
+        reads through which it reaches *held*: its declared names (`function_names`), or the one
+        name a declarator or an assignment statement stores it into (`name_holding`), and the own
+        name of a function or class expression. `None` stands for a holder that is no name. One
+        written as the callee of a call or a `new` is held by none.
         """
-        names: list[Binding | None] = []
-        if isinstance(held, (JsFunctionDeclaration, JsClassDeclaration)):
-            names.append(self.binding_of(held.id) if isinstance(held.id, JsIdentifier) else None)
+        names: list[tuple[Binding, list[ReferenceNode]] | None] = []
+        if isinstance(held, JsFunctionDeclaration):
+            declared = self.function_names(held)
+            if declared is None:
+                names.append(None)
+            else:
+                names.extend((name, declared.reads_of(name)) for name in declared.bindings)
+        elif isinstance(held, JsClassDeclaration):
+            own = self.binding_of(held.id) if isinstance(held.id, JsIdentifier) else None
+            names.append(None if own is None else (own, own.reads))
         elif _call_of(held) is None:
-            names.append(self.name_holding(held))
+            holder = self.name_holding(held)
+            names.append(None if holder is None else (holder, holder.reads))
         if isinstance(held, (JsFunctionExpression, JsClassExpression)) and isinstance(held.id, JsIdentifier):
-            names.append(self.binding_of(held.id))
+            own = self.binding_of(held.id)
+            names.append(None if own is None else (own, own.reads))
         return names
 
     def _calls_shown(self, function: JsFunctionNode) -> tuple[list[JsCallExpression | JsNewExpression], bool]:
@@ -2946,10 +3058,11 @@ class SemanticModel:
             direct = _call_of(held)
             if direct is not None and forwards:
                 calls.append(direct)
-            for name in self._names_calling(held):
-                if name is None:
+            for named in self._names_calling(held):
+                if named is None:
                     complete = False
                     continue
+                name, reads = named
                 if (
                     name.exported
                     or name.written_at_entry
@@ -2959,7 +3072,7 @@ class SemanticModel:
                     complete = False
                 if own not in name.declarations and strip_parens(self.singular_value(name)) is not held:
                     complete = False
-                for read in name.reads:
+                for read in reads:
                     call = _call_of(read)
                     subclass = _extended_by(read)
                     if call is not None:
@@ -3015,7 +3128,11 @@ class SemanticModel:
                 isinstance(parent, (JsFunctionDeclaration, JsClassDeclaration))
                 and parent.id is declaration
             ):
-                channels.append((parent, parent))
+                copy = _copy_received_by(binding, parent)
+                if copy is None or self.copy_stores_the_function(copy):
+                    channels.append((parent, parent))
+                else:
+                    complete = False
             elif isinstance(parent, JsVariableDeclarator) and parent.id is declaration:
                 if _loop_head_assigns(parent):
                     complete = False
@@ -3069,33 +3186,25 @@ class SemanticModel:
             return None
         return channels[0][1]
 
-    def establishment_sites(self, function: Node) -> list[Node] | None:
-        """
-        The nodes that must all have executed before *function*'s callable value is installed under the
-        name it is invoked through, for a consumer that gates a use on execution order. The
-        function-invocation view of `binding_establishment_sites`: `None` when *function* is not invoked
-        through a single orderable name, so its presence cannot be ordered and the caller declines.
-        """
-        return self.binding_establishment_sites(self.invocation_binding(function))
-
     def binding_establishment_sites(
         self, binding: Binding | None, *, ignore_dynamic_rebinds: bool = False,
     ) -> list[Node] | None:
         """
         The nodes that must all have executed before *binding*'s `singular_value` is installed, for a
-        consumer that gates a use on execution order. An empty list when the value is hoisted into place
-        before any statement runs — a function declaration — so no ordering is required; the declarator
-        when the value is a `var`/`let`/`const` initializer, which is absent until that declarator runs;
-        the class declaration when the value is a class, which is in its temporal dead zone until it runs;
-        the recorded write when a lone assignment installs it (`f = function(){}`, the form namespace
-        flattening leaves). `None` when the binding holds no single such value, so its presence cannot
-        be ordered and the caller declines — decided by the same complete-singleton `binding_values`
-        answer `singular_value` requires, so the two queries can never disagree about which bindings
-        have an orderable value: one returns the value and the other the node that establishes it.
-        With *ignore_dynamic_rebinds* that answer is read on the view `binding_values` documents, the
-        one a positioned consumer orders rebind hazards against itself. Ordering the returned nodes
-        against the use is the caller's job, since that needs the
-        dominance model this layer must not depend on.
+        consumer that gates a use on execution order. An empty list when the value is hoisted into
+        place before any statement runs — a function declaration — so no ordering is required; the
+        declaration when the value is a function a copy Annex B makes stores there (`AnnexBCopy`);
+        the declarator when the value is a `var`/`let`/`const` initializer, which is absent until that
+        declarator runs; the class declaration when the value is a class, which is in its temporal
+        dead zone until it runs; the recorded write when a lone assignment installs it
+        (`f = function(){}`, the form namespace flattening leaves). `None` when the binding holds no
+        single such value, so its presence cannot be ordered and the caller declines — decided by the
+        same complete-singleton `binding_values` answer `singular_value` requires, so the two queries
+        can never disagree about which bindings have an orderable value: one returns the value and
+        the other the node that establishes it. With *ignore_dynamic_rebinds* that answer is read on
+        the view `binding_values` documents, the one a positioned consumer orders rebind hazards
+        against itself. Ordering the returned nodes against the use is the caller's job, since that
+        needs the dominance model this layer must not depend on.
         """
         if binding is None:
             return None
@@ -3105,7 +3214,7 @@ class SemanticModel:
             return None
         site, _ = channels[0]
         if isinstance(site, JsFunctionDeclaration):
-            return [site] if annex_b_copies_into(binding) else []
+            return [site] if _copy_received_by(binding, site) is not None else []
         return [site]
 
     def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
@@ -3114,10 +3223,20 @@ class SemanticModel:
         rather than in *outer* itself or an enclosing scope. This replaces the various hand-rolled
         shadowing checks: a name shadowed below *outer* does not refer to *outer*'s binding.
         """
-        binding = self.lookup(name, self._node_scope.get(at))
+        binding = self._copy_written_at(at) or self.lookup(name, self._node_scope.get(at))
         if binding is None:
             return False
         return outer.contains(binding.scope, strict=True)
+
+    def _copy_written_at(self, node: Node) -> Binding | None:
+        """
+        The `var` Annex B copies the function into where *node* is the name of a function declared
+        in a block: the declaration writes that name as well as declaring its own.
+        """
+        if not isinstance(node, JsIdentifier) or (own := self._binding_of.get(node)) is None:
+            return None
+        copy = _copy_made_by(own, node.parent)
+        return None if copy is None else copy.var
 
     def would_capture(
         self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
@@ -3151,7 +3270,10 @@ class SemanticModel:
         self, names: set[str], scope: Scope, exclude: Collection[Binding],
     ) -> Iterator[JsIdentifier]:
         for node in name_uses_in_scope(names, scope):
-            binding = self.lookup(node.name, self._node_scope.get(node))
+            binding = (
+                self._copy_written_at(node)
+                or self.lookup(node.name, self._node_scope.get(node))
+            )
             if binding in exclude:
                 continue
             if binding is None or not scope.contains(binding.scope, strict=True):
@@ -3819,6 +3941,18 @@ class SemanticModel:
         self._recording_def_use = False
         self._record_arguments_alias_references()
         self._record_global_object_alias_references()
+        self._record_copy_reads()
+
+    def _record_copy_reads(self):
+        """
+        Record, against the block binding of each function declared in a block, the read the copy
+        Annex B makes of it where the declaration runs, wherever something observes the copy. The
+        declaration stands in for the read (`ReferenceNode`). It is recorded last because whether
+        the copy is observed is read off every other reference the `var` has.
+        """
+        for copy in self._annex_b_copies:
+            if copy.observed:
+                self._record_alias_reference(copy.block, copy.declaration, Role.READ)
 
     def _mark_export_declaration(self, declaration: JsExportNamedDeclaration | JsExportDefaultDeclaration):
         """
@@ -4645,7 +4779,8 @@ class SemanticModel:
     ) -> None:
         """
         Record against a binding one reference made through an object that aliases it — a mapped
-        `arguments` reaching a parameter, or the global object reaching a global. The read half is a
+        `arguments` reaching a parameter, or the global object reaching a global — or through the
+        copy Annex B makes of a block binding, which hands its value to a `var`. The read half is a
         definite read — the access observes whatever the binding holds — while the write half never
         is: what an object handed to a call writes through is decided by code the walk does not
         read, so it lands in `indefinite_writes` as a kill that names no value rather than in
@@ -4704,8 +4839,9 @@ class _ScopeBuilder:
         function declaration, which is what runs before any of them does.
 
         A function declared inside a block and given a `var` outside it by Annex B is declared here
-        too. What is different about it is not where the name is but when it holds the function, and
-        that is `binding_establishment_sites`' answer rather than this one's.
+        too, and in its block as well (`_collect_lexical`). The `var` holds the function only from
+        the point the copy runs, which is `binding_establishment_sites`' answer rather than this
+        one's.
         """
         for node in _walk_skipping_functions(stmts):
             if isinstance(node, JsVariableDeclaration) and node.kind is JsVarKind.VAR:
@@ -4730,20 +4866,21 @@ class _ScopeBuilder:
     def _collect_lexical(self, stmts: list, scope: Scope):
         """
         Declare in *scope* what the statements of *stmts* bind lexically: a `let`, a `const`, a
-        class, and a function no `var` outside the block is created for.
+        class, and a function declared in a block.
 
-        That last one is the whole of what a mode decides about a block-declared function. Strict
-        code binds it in the block and nowhere else, and so does sloppy code wherever §B.3.3.1 stops
-        the copy; where the copy runs, the name outside the block is what every reference reads and
-        `_hoist` has already declared it, so nothing is declared here and the block holds no binding
-        of its own - which is what makes a read inside the block and one after it read one name, as
-        they do.
+        A function declared in a block is bound in the block in every mode, holding the function
+        from the moment the block is entered. Outside strict code Annex B also gives the enclosing
+        function, script or static block a `var` of the name, which `_hoist` has declared, and
+        copies the block's binding into it where the declaration runs (`AnnexBCopy`), unless
+        §B.3.3.1 stops the copy. A label is looked through, as `lexically_declared_names` reads it.
 
         A declaration written under an `export` is read through it: the export names what the
         declaration binds and binds nothing of its own.
         """
         for stmt in stmts:
             stmt = declaration_under_export(stmt)
+            while isinstance(stmt, JsLabeledStatement):
+                stmt = declaration_under_export(stmt.body)
             if isinstance(stmt, JsVariableDeclaration) and stmt.kind in (
                 JsVarKind.LET, JsVarKind.CONST,
             ):
@@ -4755,12 +4892,35 @@ class _ScopeBuilder:
             elif isinstance(stmt, JsClassDeclaration) and stmt.id is not None:
                 self._declare(scope, stmt.id.name, BindingKind.CLASS, stmt.id)
             elif isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
-                if annex_b_var_home(stmt, self._lexical_names) is None:
-                    self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)
+                home = annex_b_var_home(stmt, self._lexical_names)
+                if home is not None and scope.is_var_scope:
+                    continue
+                binding = self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)
+                if home is None or (var := self._copy_target(scope, home, stmt.id.name)) is None:
+                    continue
+                copy = AnnexBCopy(stmt, binding, var)
+                binding.copies_made.append(copy)
+                var.copies_received.append(copy)
+                self.model._annex_b_copies.append(copy)
+
+    @staticmethod
+    def _copy_target(scope: Scope, home: Node, name: str) -> Binding | None:
+        """
+        The binding *name* has in the scope *home* introduces, found from *scope* inside it: the
+        `var` Annex B copies a function declared in a block of *scope* into.
+        """
+        cursor: Scope | None = scope
+        while cursor is not None:
+            if cursor.node is home and cursor.is_var_scope and cursor.kind is not ScopeKind.PARAMS:
+                return cursor.bindings.get(name)
+            cursor = cursor.parent
+        return None
 
     def _visit(self, node: Node, scope: Scope):
         self.model._node_scope[node] = scope
-        if isinstance(node, (
+        if isinstance(node, JsFunctionDeclaration) and isinstance(node.parent, JsIfStatement):
+            self._visit_clause_function(node, scope)
+        elif isinstance(node, (
             JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
         )):
             self._visit_function(node, scope)
@@ -4854,6 +5014,16 @@ class _ScopeBuilder:
         for name, binding in fscope.bindings.items():
             if binding.kind is BindingKind.VAR and name in params.bindings:
                 binding.written_at_entry = True
+
+    def _visit_clause_function(self, node: JsFunctionDeclaration, enclosing: Scope):
+        """
+        Build the scopes of a function declaration written as the whole clause of an `if`, which
+        binds its name as though it were the one statement of a block in that position (§B.3.4).
+        The scope of that block is introduced by the declaration, since nothing else stands there.
+        """
+        bscope = self._new_scope(ScopeKind.BLOCK, node, enclosing)
+        self._collect_lexical([node], bscope)
+        self._visit_function(node, bscope)
 
     def _visit_block(self, node: JsBlockStatement, enclosing: Scope):
         bscope = self._new_scope(ScopeKind.BLOCK, node, enclosing)

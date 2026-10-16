@@ -535,15 +535,17 @@ class TamperingModel:
         its own scope. A function whose enumeration is complete is one whose listed invocations are
         every way its body runs.
         """
-        binding = self.model.invocation_binding(function)
-        if binding is None:
-            return True
-        if self._entrypoint is not None and self._entrypoint(binding.name):
-            return False
-        owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
-            return not self.model.has_reflection_surface()
-        return not self.model.reflection_can_reach(binding)
+        names = self.model.function_names(function)
+        for binding in () if names is None else names.bindings:
+            if self._entrypoint is not None and self._entrypoint(binding.name):
+                return False
+            owner = binding.scope.var_scope
+            if owner is None or owner.kind is ScopeKind.SCRIPT:
+                if self.model.has_reflection_surface():
+                    return False
+            elif self.model.reflection_can_reach(binding):
+                return False
+        return True
 
     def every_invocation_discards_the_value(
         self, function: Node, value_discarded: Callable[[Node], bool],
@@ -577,8 +579,8 @@ class TamperingModel:
         """
         cached = self._invocation_cache.get(id(function))
         if cached is None:
-            binding = self.model.naming_binding(function)
-            frontier = list(binding.reads) if binding is not None else [function]
+            names = self.model.function_names(function)
+            frontier = list(names.reads) if names is not None else [function]
             cached = self._flow(frontier, through_constructions=False)
             self._invocation_cache[id(function)] = cached
         return cached

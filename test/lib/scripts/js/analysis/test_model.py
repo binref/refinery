@@ -2083,3 +2083,152 @@ class TestTheValuesAParameterReceivesThroughTheCallsShown(TestBase):
                 values, complete = self._received(source)
                 self.assertFalse(complete)
                 self.assertIn('1', values)
+
+
+class TestAFunctionDeclaredInABlockHasTwoNames(TestBase):
+    """
+    Outside strict code a function declared in a block is bound in the block, holding the function
+    from the moment the block is entered, and Annex B copies what that binding holds into a `var` of
+    the enclosing function or script where the declaration runs. The model keeps both bindings and
+    one record of the copy, which both list.
+    """
+
+    @staticmethod
+    def _model(source: str):
+        ast = JsParser(source).parse()
+        return ast, build_semantic_model(ast)
+
+    @staticmethod
+    def _names(ast, name: str = 'f') -> list[JsIdentifier]:
+        return [
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsIdentifier) and node.name == name
+        ]
+
+    @staticmethod
+    def _declaration(ast) -> JsFunctionDeclaration:
+        return next(
+            node for node in ast.walk_in_order()
+            if isinstance(node, JsFunctionDeclaration)
+            and isinstance(node.id, JsIdentifier)
+            and node.id.name == 'f'
+        )
+
+    def _block_binding(self, ast, model) -> Binding:
+        declaration = self._declaration(ast)
+        assert isinstance(declaration.id, JsIdentifier)
+        binding = model.binding_of(declaration.id)
+        assert binding is not None
+        return binding
+
+    def test_a_read_inside_the_block_reads_the_block_binding_and_one_after_it_the_variable(self):
+        ast, model = self._model('function g() { { f; function f() {} } f; }')
+        inside, declared, after = self._names(ast)
+        block = model.binding_of(declared)
+        var = model.resolve(after)
+        self.assertIs(model.resolve(inside), block)
+        self.assertIs(block.scope.kind, ScopeKind.BLOCK)
+        self.assertIsNot(var, block)
+        self.assertTrue(var.scope.is_var_scope)
+
+    def test_the_copy_is_one_record_both_bindings_list(self):
+        ast, model = self._model('{ function f() {} } f;')
+        declaration = self._declaration(ast)
+        block = self._block_binding(ast, model)
+        var = model.resolve(self._names(ast)[-1])
+        copy, = block.copies_made
+        self.assertEqual(var.copies_received, [copy])
+        self.assertIs(copy.declaration, declaration)
+        self.assertIs(copy.block, block)
+        self.assertIs(copy.var, var)
+
+    def test_no_copy_is_made_where_the_language_makes_none(self):
+        for label, source in {
+            'strict code': '"use strict"; { function f() {} } typeof f;',
+            'a let of the name around the block': 'let f = 1; { function f() {} } f;',
+            'a generator': '{ function* f() {} } typeof f;',
+        }.items():
+            with self.subTest(label):
+                ast, model = self._model(source)
+                self.assertEqual(self._block_binding(ast, model).copies_made, [])
+
+    def test_the_copy_reads_the_block_binding_where_something_observes_the_variable(self):
+        for source, observed in {
+            '{ function f() {} } f;': True,
+            '{ function f() {} } globalThis.f;': True,
+            '{ function f() {} } with (o) { f; }': True,
+            '{ function f() {} }': False,
+            '{ function f() {} f(); }': False,
+        }.items():
+            with self.subTest(source):
+                ast, model = self._model(source)
+                declaration = self._declaration(ast)
+                block = self._block_binding(ast, model)
+                self.assertEqual(any(read is declaration for read in block.reads), observed)
+
+    def test_every_declaration_names_its_binding_or_a_copy_into_it(self):
+        for source in [
+            'var f = 1; { function f() {} } f;',
+            'function g(c) { if (c) function f() {} return f; }',
+            '{ function f() {} { function f() {} } } f;',
+            '{ function f() {} function f() {} } f;',
+            'let f = 1; { lab: function f() {} f; }',
+            'function g() { var f; { function f() {} } { function f() {} } return f; }',
+        ]:
+            with self.subTest(source):
+                _, model = self._model(source)
+                scopes = [model.root_scope]
+                while scopes:
+                    scope = scopes.pop()
+                    scopes.extend(scope.children)
+                    for binding in scope.bindings.values():
+                        copied = {id(copy.declaration.id) for copy in binding.copies_received}
+                        for declaration in binding.declarations:
+                            self.assertTrue(
+                                model.binding_of(declaration) is binding
+                                or id(declaration) in copied
+                            )
+
+    def test_a_function_written_as_the_clause_of_an_if_is_bound_in_a_block_of_its_own(self):
+        ast, model = self._model('function g(c) { if (c) function f() {} return f; }')
+        declaration = self._declaration(ast)
+        block = self._block_binding(ast, model)
+        copy, = block.copies_made
+        self.assertIs(block.scope.kind, ScopeKind.BLOCK)
+        self.assertIs(block.scope.node, declaration)
+        self.assertIs(model.resolve(self._names(ast)[-1]), copy.var)
+
+    def test_a_labelled_function_whose_copy_a_let_stops_is_bound_in_its_block(self):
+        ast, model = self._model('let f = 1; { lab: function f() {} f; }')
+        _, declared, inside = self._names(ast)
+        block = model.binding_of(declared)
+        self.assertIsNotNone(block)
+        self.assertIs(model.resolve(inside), block)
+
+    def test_the_variable_is_a_name_of_the_function_only_where_the_copy_is_observed(self):
+        ast, model = self._model('{ function f() {} f(); } f();')
+        declaration = self._declaration(ast)
+        block = self._block_binding(ast, model)
+        _, inside, after = self._names(ast)
+        names = model.function_names(declaration)
+        assert names is not None
+        self.assertEqual(names.bindings, (block, model.resolve(after)))
+        self.assertEqual(names.reads_of(block), [inside])
+        ast, model = self._model('{ function f() {} f(); }')
+        names = model.function_names(self._declaration(ast))
+        assert names is not None
+        self.assertEqual(names.bindings, (self._block_binding(ast, model),))
+
+    def test_the_copy_stores_the_function_only_where_the_block_name_is_only_called(self):
+        for source, stores in {
+            '{ function f() {} f(); } f;': True,
+            '{ function f() {} new f(); } f;': True,
+            '{ f = 1; function f() {} } f;': False,
+            '{ function f() {} g(f); } f;': False,
+            '{ function f() {} f.p = 1; } f;': False,
+            '{ function f() {} function f() {} } f;': False,
+        }.items():
+            with self.subTest(source):
+                ast, model = self._model(source)
+                copy = self._block_binding(ast, model).copies_made[0]
+                self.assertEqual(model.copy_stores_the_function(copy), stores)

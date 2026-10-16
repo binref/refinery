@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    FunctionNames,
     SemanticModel,
     enclosing_operator,
     statement_list_of,
@@ -163,10 +164,10 @@ literal the accessor spells it out with.
 
 class _Held(NamedTuple):
     """
-    A function a name holds as its one value, and the node installing it there, which goes when the
-    function goes: the declaration, the declarator, or the statement assigning it.
+    A function each of its names holds as its one value, and the node installing it there, which
+    goes when the function goes: the declaration, the declarator, or the statement assigning it.
     """
-    binding: Binding
+    names: FunctionNames
     function: JsFunctionNode
     definition: Node | None
 
@@ -234,11 +235,12 @@ class _Kind(NamedTuple):
 
 class _Accessor(NamedTuple):
     """
-    An accessor, the decoder it calls, the table it reads, and the cache it keeps the decoded
-    strings in, if it keeps any.
+    An accessor, the decoder it calls and the name it calls it through, the table it reads, and the
+    cache it keeps the decoded strings in, if it keeps any.
     """
     held: _Held
     decoder: _Decoder
+    decoder_name: Binding
     table: _Table
     cache: Binding | None
 
@@ -262,17 +264,18 @@ def _definition(function: JsFunctionNode) -> Node | None:
 
 def _held_functions(model: SemanticModel, root: Node) -> Iterator[_Held]:
     """
-    Every function that the one name invoking it holds as its only value.
+    Every function that each name invoking it holds as its only value.
     """
     for node in root.walk():
         if not isinstance(node, FUNCTION_NODES):
             continue
-        binding = model.invocation_binding(node)
-        if binding is None or len(binding.declarations) != 1:
+        names = model.function_names(node)
+        if names is None or not all(
+            len(binding.declarations) == 1 and strip_parens(model.singular_value(binding)) is node
+            for binding in names.bindings
+        ):
             continue
-        if strip_parens(model.singular_value(binding)) is not node:
-            continue
-        yield _Held(binding, node, _definition(node))
+        yield _Held(names, node, _definition(node))
 
 
 def _declared_outside(model: SemanticModel, function: Node, callee: Node | None) -> bool:
@@ -306,7 +309,7 @@ def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     function = held.function
     if len(function.params) != 1:
         return None
-    if model.reflection_can_reach(held.binding, module_scope=True):
+    if any(model.reflection_can_reach(name, module_scope=True) for name in held.names.bindings):
         return None
     alphabets = [
         node for node in walk_scope(function, include_root_body=True)
@@ -516,7 +519,7 @@ def _accessor(
         tables[key] = kind.table(effects, parts.table)
     if (table := tables[key]) is None:
         return None
-    return _Accessor(held, decoder, table, parts.cache)
+    return _Accessor(held, decoder, parts.decoder, table, parts.cache)
 
 
 def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
@@ -559,8 +562,9 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
     the function turning the bytes into a string strips a byte order mark where the host has a
     `TextDecoder` and keeps it elsewhere.
     """
-    bindings = [accessor.held.binding, accessor.decoder.held.binding, *accessor.stores()]
-    for read in accessor.held.binding.reads:
+    model = dominance.model
+    needed = [accessor.decoder_name, *accessor.stores()]
+    for read in accessor.held.names.reads:
         if not isinstance(read, JsIdentifier):
             continue
         call = enclosing_operator(read)
@@ -569,6 +573,7 @@ def _decoded_calls(dominance: DominanceModel, accessor: _Accessor) -> Iterator[t
         numbers = [number for argument in call.arguments if (number := integer_literal(argument)) is not None]
         if len(numbers) != len(call.arguments) or (encoded := accessor.table.encoded(numbers)) is None:
             continue
+        bindings = [model.resolve(read), *needed]
         if not all(dominance.binding_established_before(binding, call) for binding in bindings):
             continue
         try:
@@ -610,10 +615,10 @@ def _remove_machinery(
     inside: set[int] = {id(node) for call in replaced for node in call.walk()}
     removed: dict[int, Node] = {}
 
-    def remove(definition: Node | None, binding: Binding) -> None:
+    def remove(definition: Node | None, *bindings: Binding) -> None:
         if definition is None or id(definition) in removed:
             return
-        if binding.exported or not _stands_in_a_list(definition):
+        if any(binding.exported for binding in bindings) or not _stands_in_a_list(definition):
             return
         if (
             keeps_the_end_value
@@ -622,17 +627,18 @@ def _remove_machinery(
         ):
             return
         own = {id(node) for node in definition.walk()}
-        for reference in [*model.references(binding), *model.dynamic_references(binding)]:
-            if id(reference) not in inside and id(reference) not in own:
-                return
+        for binding in bindings:
+            for reference in [*model.references(binding), *model.dynamic_references(binding)]:
+                if id(reference) not in inside and id(reference) not in own:
+                    return
         removed[id(definition)] = definition
         inside.update(own)
 
     for accessor in accessors:
-        remove(accessor.held.definition, accessor.held.binding)
-    decoders = {id(accessor.decoder.held.binding): accessor.decoder.held for accessor in accessors}
+        remove(accessor.held.definition, *accessor.held.names.bindings)
+    decoders = {id(accessor.decoder.held.function): accessor.decoder.held for accessor in accessors}
     for held in decoders.values():
-        remove(held.definition, held.binding)
+        remove(held.definition, *held.names.bindings)
     stores = {id(store): store for accessor in accessors for store in accessor.stores()}
     for store in stores.values():
         declarator = store.declarations[0].parent if len(store.declarations) == 1 else None
@@ -660,7 +666,7 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         decoders: dict[int, _Decoder] = {}
         for item in held:
             if (decoder := _decoder(model, item)) is not None:
-                decoders[id(item.binding)] = decoder
+                decoders.update((id(name), decoder) for name in item.names.bindings)
         if not decoders:
             return
         accessors: list[_Accessor] = []
@@ -668,7 +674,7 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         confined: dict[int, bool] = {}
         replacements: list[tuple[JsCallExpression, str]] = []
         for item in held:
-            if id(item.binding) in decoders:
+            if id(item.names.own) in decoders:
                 continue
             if (accessor := _accessor(cache.effects, item, decoders, tables)) is None:
                 continue

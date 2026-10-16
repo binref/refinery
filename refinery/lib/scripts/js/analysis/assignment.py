@@ -381,22 +381,23 @@ class DefiniteAssignmentModel:
             return frozenset()
         if is_generator_function(owner):
             return frozenset()
-        binding = self.model.invocation_binding(owner)
-        if binding is None:
+        names = self.model.function_names(owner)
+        if names is None:
             immediate = self._immediate_call_of(owner)
             if immediate is None:
                 return frozenset()
             return self._fact_at(immediate, facts)
-        if binding.dynamic_refs or not self.model.binding_pinned_to(binding, owner):
-            return frozenset()
-        if self._host_entrypoint is not None and self._host_entrypoint(binding.name):
-            return frozenset()
         met: frozenset[Binding] | None = None
-        for read in binding.reads:
-            if not is_invocation_target(read):
+        for binding in names.bindings:
+            if binding.dynamic_refs or not self.model.binding_pinned_to(binding, owner):
                 return frozenset()
-            met_here = self._fact_at(read, facts)
-            met = met_here if met is None else met & met_here
+            if self._host_entrypoint is not None and self._host_entrypoint(binding.name):
+                return frozenset()
+            for read in names.reads_of(binding):
+                if not is_invocation_target(read):
+                    return frozenset()
+                met_here = self._fact_at(read, facts)
+                met = met_here if met is None else met & met_here
         return met or frozenset()
 
     def _fact_at(self, site: Node, facts: dict[int, frozenset[Binding]]) -> frozenset[Binding]:

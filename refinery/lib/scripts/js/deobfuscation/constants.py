@@ -736,6 +736,7 @@ class JsConstantInlining(BatchedScopeTransformer[_ScopePlan]):
         for name in [
             candidate for candidate, binding in cross_bindings.items()
             if model.binding_maybe_reassigned_dynamically(binding)
+            or binding.copies_received
             or (a_callee_is_unstated and effects.some_function_can_mutate(binding))
             or any(effects.function_can_mutate(func, binding) for func in called_funcs)
         ]:

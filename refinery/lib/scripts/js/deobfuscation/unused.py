@@ -717,11 +717,14 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             body = getattr(function, 'body', None)
             if not isinstance(body, JsBlockStatement) or not body.body or body.body[-1] is not node:
                 continue
-            binding = self.model.invocation_binding(function)
-            if binding is not None:
-                owner = binding.scope.var_scope
-                if binding.exported or owner is None or owner.kind is ScopeKind.SCRIPT:
-                    continue
+            names = self.model.function_names(function)
+            if names is not None and any(
+                name.exported
+                or (owner := name.scope.var_scope) is None
+                or owner.kind is ScopeKind.SCRIPT
+                for name in names.bindings
+            ):
+                continue
             if not self._cache.tampering.every_invocation_discards_the_value(
                 function, value_is_discarded,
             ):
@@ -859,7 +862,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         return self.effects.call_clearable(
             call,
-            lambda func: self.reaching.dominance.established_before(func, call),
+            lambda name: self.reaching.dominance.binding_established_before(name, call),
             lambda binding: self.reaching.dominance.past_dead_zone(binding, call),
         )
 
@@ -1010,6 +1013,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             binding = self.model.binding_of(func.id)
             if binding is None:
+                continue
+            declared = self.model.function_names(func)
+            if declared is not None and declared.copy is not None:
+                names.add(name)
                 continue
             for reference in self.model.references(binding):
                 cursor: Node | None = reference

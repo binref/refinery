@@ -4074,6 +4074,8 @@ def _declares_only_its_own_names(
             binding = model.binding_of(node) or model.resolve(node)
             if binding is None or not home.contains(binding.scope, strict=True):
                 return False
+            if any(not home.contains(copy.var.scope, strict=True) for copy in binding.copies_made):
+                return False
     return True
 
 

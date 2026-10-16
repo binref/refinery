@@ -5114,66 +5114,6 @@ class TestAScriptKeptForItsValueEndsOnTheValueOfItsLastStore(TestBase):
                 )
 
 
-#: Programs declaring a function in a block and reading its name outside that block, mapped to the
-#: behavior an engine gives them: a read before the block declares the function, and a variable the
-#: declaration replaces once it runs, read by a function and in its own scope.
-A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT = {
-    'a call reading the name before the block declares the function': Program(
-        a_program("""
-            function g() { return f.length; }
-            {
-              var r;
-              try { r = g(); } catch (e) { r = e.constructor.name; }
-              console.log(r);
-              function f(a) { return 1; }
-            }
-            console.log(g());
-            """),
-        prints('TypeError', '1'),
-    ),
-    'a variable the block function replaces once its declaration runs': Program(
-        a_program("""
-            var t = "abc";
-            function g(n) { return n <= 0 ? t : g(n - 1); }
-            console.log(g(1));
-            { function t() {} }
-            console.log(typeof g(1));
-            """),
-        prints('abc', 'function'),
-    ),
-    'a variable the block function replaces once its declaration runs, read in its own scope': Program(
-        a_program("""
-            var t = "abc";
-            console.log(t);
-            { function t() {} }
-            console.log(typeof t);
-            """),
-        prints('abc', 'function'),
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_FUNCTION_DECLARED_IN_A_BLOCK_READ_OUTSIDE_IT)
-class TestAFunctionDeclaredInABlockIsReadOutsideItOnlyOnceItsDeclarationRuns(TestBase):
-    """
-    Outside strict code, a function declared in a block has two bindings: one of the block, holding
-    the function from the moment the block is entered, and a variable of the enclosing function,
-    which receives the function when the declaration runs. The semantic model keeps one binding for
-    both, so the evaluator writes the body of `g` into the block, where `f` names the binding of the
-    block and holds the function before the declaration, and the first program no longer throws.
-
-    The model does list the declaration as a second value of `t`. Constant inlining does not ask it:
-    it collects the values of a name from the declarations of variables and the writes it finds,
-    passes over a function declaration, and writes `"abc"` into `g`, which two bindings would not
-    change. The read in the scope of `t` is reached through the one binding: the reaching query
-    counts the declaration as a write only where it copies a function into a binding of its own
-    (`refinery.lib.scripts.js.analysis.model.annex_b_copies_into`), and the binding of `t` is a
-    variable declared twice. No program reads a block function outside its block before the block
-    declares it, or declares a block function named like a variable of its own.
-    """
-
-
 #: Programs reading an alias of a built-in in the initializer of an instance field and replacing
 #: the alias between the class statement and the construction, mapped to what Node prints.
 AN_ALIAS_A_FIELD_READS_REPLACED_BEFORE_CONSTRUCTION = {

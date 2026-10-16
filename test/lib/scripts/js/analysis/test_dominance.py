@@ -7,6 +7,7 @@ from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.model import build_semantic_model, member_property_name
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
+    JsCallExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -743,25 +744,34 @@ class TestDominance(TestBase):
         ast, dom = self._dominance(
             'function g() { for (var i = 0; i < 2; i++) { try { if (i === 0) { throw 1; } '
             'function f() {} f(); } catch (e) { f; } } }')
-        declaration, call, handler = self._idents(ast, 'f')
-        binding = dom.model.binding_of(declaration)
-        self.assertTrue(dom.binding_established_before(binding, call))
-        self.assertFalse(dom.binding_established_before(binding, handler))
+        _, call, handler = self._idents(ast, 'f')
+        self.assertTrue(dom.binding_established_before(dom.model.resolve(call), call))
+        self.assertFalse(dom.binding_established_before(dom.model.resolve(handler), handler))
 
     def test_a_block_function_is_not_in_place_after_its_block_where_a_throw_skips_the_block(self):
         ast, dom = self._dominance(
             'function g() { for (var i = 0; i < 3; i++) { try { if (i === 0) { throw 1; } '
             '{ function f() { return i; } } } catch (e) {} f; } }')
-        declaration, read = self._idents(ast, 'f')
-        self.assertFalse(dom.binding_established_before(dom.model.binding_of(declaration), read))
+        _, read = self._idents(ast, 'f')
+        self.assertFalse(dom.binding_established_before(dom.model.resolve(read), read))
 
     def test_a_function_declared_in_a_try_block_in_a_loop_is_not_in_place_after_the_loop(self):
         ast, dom = self._dominance(
             'function g() { for (var i = 0; i < 2; i++) { try { function f() { return i; } f(); } catch (e) {} } f(); }')
-        declaration, call, after = self._idents(ast, 'f')
-        binding = dom.model.binding_of(declaration)
-        self.assertTrue(dom.binding_established_before(binding, call))
-        self.assertFalse(dom.binding_established_before(binding, after))
+        _, call, after = self._idents(ast, 'f')
+        self.assertTrue(dom.binding_established_before(dom.model.resolve(call), call))
+        self.assertFalse(dom.binding_established_before(dom.model.resolve(after), after))
+
+    def test_a_call_through_the_block_name_is_in_place_before_the_declaration_runs(self):
+        ast, dom = self._dominance('function g() { { f(); function f() {} } }')
+        call = next(node for node in ast.walk() if isinstance(node, JsCallExpression))
+        self.assertTrue(dom.callee_established_before(call))
+
+    def test_a_call_through_the_copy_is_in_place_only_once_the_declaration_has_run(self):
+        ast, dom = self._dominance('function g() { f(); { function f() {} } f(); }')
+        before, after = (node for node in ast.walk_in_order() if isinstance(node, JsCallExpression))
+        self.assertFalse(dom.callee_established_before(before))
+        self.assertTrue(dom.callee_established_before(after))
 
     def test_a_for_in_const_is_past_its_dead_zone_in_the_body(self):
         ast, dom = self._dominance('function g(o) { for (const k in o) { k; } }')

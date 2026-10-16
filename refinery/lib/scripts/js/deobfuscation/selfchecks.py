@@ -196,6 +196,11 @@ def _is_inserted(model: SemanticModel, function: JsFunctionNode, statement: Node
         checked.add(id(binding))
         if not binding.declared_within(function):
             continue
+        for copy in binding.copies_made:
+            var = copy.var
+            for use in chain(var.declarations, var.reads, var.writes):
+                if use is not statement and not use.is_descendant_of(statement):
+                    return False
         if binding.scope.node.is_descendant_of(statement):
             continue
         for use in chain(binding.declarations, binding.reads, binding.writes):

@@ -229,7 +229,7 @@ class ModelCache(ModelCacheBase):
         """
         return self.effects.call_clearable(
             call,
-            lambda func: self.dominance.established_before(func, call),
+            lambda name: self.dominance.binding_established_before(name, call),
             lambda binding: self.dominance.past_dead_zone(binding, call),
         )
 

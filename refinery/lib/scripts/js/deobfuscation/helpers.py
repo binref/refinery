@@ -2659,7 +2659,9 @@ def binding_has_references(
     variable in another scope never keeps it alive — this subsumes the name-based shadow check that
     `has_remaining_references` performs textually. A `None` binding (a name the model cannot resolve
     to a declaration) is conservatively reported as still referenced. References within the subtree
-    of *exclude*, or whose node identity is in *exclude_ids*, are not counted.
+    of *exclude*, or whose node identity is in *exclude_ids*, are not counted. The block binding of
+    a function declared in a block counts the references of each `var` Annex B copies it into as
+    its own, since the value the copy stores is the value the block binding holds.
     """
     if binding is None:
         return True
@@ -2667,6 +2669,14 @@ def binding_has_references(
         if exclude_ids and id(ref) in exclude_ids:
             continue
         return True
+    for copy in binding.copies_made:
+        var = copy.var
+        if var.dynamic_refs or var.exported or var.reachable_through_a_handed_object:
+            return True
+        for ref in model.references(var, exclude=exclude):
+            if exclude_ids and id(ref) in exclude_ids:
+                continue
+            return True
     return False
 
 
@@ -2687,6 +2697,8 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     """
     if not is_host_entrypoint(options, binding.name):
         return False
+    if any(a_host_reaches_the_binding(model, copy.var, options) for copy in binding.copies_made):
+        return True
     return model.reaches_global_object(binding, module_scope=runs_as_module(options, model.root))
 
 

@@ -35,7 +35,7 @@ from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, annex_b_copies_into
+from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsCallExpression,
@@ -283,7 +283,7 @@ class ReachingModel:
         """
         yield from binding.writes
         lexical = binding.is_lexical
-        copied = annex_b_copies_into(binding)
+        copied = {id(copy.declaration) for copy in binding.copies_received}
         for declaration in binding.declarations:
             if lexical:
                 yield declaration
@@ -291,7 +291,7 @@ class ReachingModel:
             parent = declaration.parent
             if isinstance(parent, JsVariableDeclarator) and parent.init is not None:
                 yield declaration
-            elif isinstance(parent, JsFunctionDeclaration) and copied:
+            elif isinstance(parent, JsFunctionDeclaration) and id(parent) in copied:
                 yield declaration
 
     @staticmethod

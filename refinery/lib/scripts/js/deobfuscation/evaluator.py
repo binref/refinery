@@ -325,7 +325,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         for node in script.walk():
             if not isinstance(node, _FuncNode):
                 continue
-            if effects.unambiguous_function(model.invocation_binding(node)) is node:
+            names = model.function_names(node)
+            if names is not None and effects.unambiguous_function(names.own) is node:
                 functions.append(node)
         return functions
 
@@ -478,17 +479,17 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         The interpreter every fold of *call* runs in. It is anchored at *call* and handed the
         tampering oracle, so the trust questions its arms ask are answered for the moment this call
         runs rather than the whole program — the decoder a file carries before the call it blocks
-        still refuses it, the one guaranteed to run after does not. It asks this evaluator whether a
-        function it resolves is in place (`_established_before`) at the point it names, and knows a
-        name declared outside the function it runs only as the constant `_constant_at` finds that
-        name holding when *call* runs.
+        still refuses it, the one guaranteed to run after does not. It asks this evaluator whether
+        the name it resolves a function through holds it (`_binding_established_before`) at the
+        point it names, and knows a name declared outside the function it runs only as the constant
+        `_constant_at` finds that name holding when *call* runs.
         """
         cache = self._cache_for(call)
         return JsInterpreter(
             effects=self._effects,
             anchor=call,
             tampering=cache.tampering if cache is not None else None,
-            established=self._established_before,
+            established=self._binding_established_before,
             constant=lambda binding: self._constant_at(binding, call),
         )
 
@@ -503,22 +504,30 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return None
         return model_cache(self, script)
 
-    def _established_before(self, func: Node, reference: Node) -> bool:
+    def _callee_established_before(self, call: JsCallExpression) -> bool:
         """
-        Whether *func*'s value is installed before *reference* runs, where *reference* is a call or
-        a read of the function's name. A function declaration is hoisted, so it is always
-        established; a declarator initializer (`const`/`let`/`var f = function(){}`) is in place
-        only once its declarator has run, and a lone assignment (`f = function(){}`, the form
-        namespace flattening leaves) only once that assignment has run. A premature call to either
-        reads a value that is absent — a temporal dead zone `ReferenceError`, or the hoisted
-        `undefined` a `var` call throws a `TypeError` on — which the interpreted body must not
-        silently replace with a result. The model names the establishing nodes; dominance decides
-        whether they all precede *reference*.
+        Whether the name *call* reads its callee through holds the function before *call* runs. A
+        function declaration is hoisted, so it is in place from the start of its scope, but the copy
+        Annex B makes of one declared in a block only once the declaration has run; a declarator
+        initializer (`const`/`let`/`var f = function(){}`) is in place only once its declarator has
+        run, and a lone assignment (`f = function(){}`, the form namespace flattening leaves) only
+        once that assignment has run. A premature call reads a value that is absent — a temporal
+        dead zone `ReferenceError`, or the hoisted `undefined` a `var` call throws a `TypeError` on
+        — which the interpreted body must not silently replace with a result.
         """
         script = self._script
         if script is None:
             return False
-        return model_cache(self, script).dominance.established_before(func, reference)
+        return model_cache(self, script).dominance.callee_established_before(call)
+
+    def _binding_established_before(self, binding: Binding, reference: Node) -> bool:
+        """
+        Whether the one value *binding* holds is in place before *reference* runs.
+        """
+        script = self._script
+        if script is None:
+            return False
+        return model_cache(self, script).dominance.binding_established_before(binding, reference)
 
     def _try_named_call(self, node: JsCallExpression) -> None:
         if self._effects is None:
@@ -528,7 +537,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return
         if node.is_descendant_of(func):
             return
-        if not self._established_before(func, node):
+        if not self._callee_established_before(node):
             return
         func_id = id(func)
         self._call_counts[func_id] = self._call_counts.get(func_id, 0) + 1
@@ -614,18 +623,20 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         reference here can prove it dead, and deleting the declarator would leave an `export` naming
         a binding the module no longer declares.
         """
-        binding = model.naming_binding(func)
-        if binding is None:
-            return False
-        if self._is_host_entrypoint(model, binding):
-            return False
-        if binding.exported:
+        names = model.function_names(func)
+        if names is None:
             return False
         exclude = self._function_exclude_node(func)
-        return (
-            not binding_has_references(model, binding, exclude=exclude)
-            and not model.reflection_can_reach(binding)
-        )
+        for binding in names.bindings:
+            if self._is_host_entrypoint(model, binding):
+                return False
+            if binding.exported:
+                return False
+            if binding_has_references(model, binding, exclude=exclude):
+                return False
+            if model.reflection_can_reach(binding):
+                return False
+        return True
 
     def _is_host_entrypoint(self, model: SemanticModel, binding: Binding) -> bool:
         """

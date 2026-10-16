@@ -161,7 +161,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             info = by_node.get(id(target))
             if info is None:
                 continue
-            if not dominance.established_before(target, ast_node):
+            if not dominance.callee_established_before(ast_node):
                 continue
             if not arguments_substitutable(ast_node.arguments, info.param_names):
                 continue

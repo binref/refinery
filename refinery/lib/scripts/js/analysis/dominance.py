@@ -73,10 +73,12 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsCallExpression,
     JsExportDefaultDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
+    JsNewExpression,
     JsObjectExpression,
     JsParenthesizedExpression,
     object_member_access_runs_accessor,
@@ -318,15 +320,17 @@ class DominanceModel(DominatorModel):
             return False
         return self._runs_after(anchor, self._activation_of(anchor), reference)
 
-    def established_before(self, function: Node, reference: Node) -> bool:
+    def callee_established_before(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
-        Whether *function*'s callable value is in place before *reference* runs. The
-        function-invocation view of `binding_established_before`: `False` when *function* is not invoked
-        through a single orderable name, so its presence cannot be ordered — the query a consumer needs
-        before folding or dropping a call whose callee would otherwise read a temporal dead zone or a
-        hoisted `undefined`.
+        Whether the name *call* reads its callee through holds its `singular_value` before *call*
+        runs (`binding_established_before`). A function declared in a block has two names, each in
+        place from a point of its own, which is why the name is the one the call reads and not the
+        one the function declares. `False` for a callee that is no name.
         """
-        return self.binding_established_before(self.model.invocation_binding(function), reference)
+        callee = call.callee
+        if not isinstance(callee, JsIdentifier):
+            return False
+        return self.binding_established_before(self.model.resolve(callee), call)
 
     def binding_established_before(self, binding: Binding | None, reference: Node) -> bool:
         """
@@ -525,9 +529,9 @@ class DominanceModel(DominatorModel):
     def _reference_points(self, activation: Node | _HandOver) -> Sequence[Node | _HandOver] | None:
         """
         The points no invocation of *activation* can precede, or `None` when they cannot be
-        enumerated. A `_HandOver` holds its own points. For a function pinned to a name
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.invocation_binding`) these are the
-        value-reads of that name — a read must be evaluated before the value it denotes can be
+        enumerated. A `_HandOver` holds its own points. For a function pinned to its names
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.function_names`) these are the
+        value-reads of those names — a read must be evaluated before the value it denotes can be
         called — together with the opaque reflective surface sites that could invoke it by name
         (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_surface_sites`): a direct
         `eval`, `Function`, a string timer, or a dynamic global access cannot invoke the function
@@ -567,32 +571,35 @@ class DominanceModel(DominatorModel):
         return cache[activation]
 
     def _compute_reference_points(self, function: Node) -> list[Node | _HandOver] | None:
-        binding = self.model.invocation_binding(function)
-        if self._callable_before_the_end(function, binding):
+        names = self.model.function_names(function)
+        bindings: tuple[Binding | None, ...] = (None,) if names is None else names.bindings
+        if any(self._callable_before_the_end(function, name) for name in bindings):
             return None
         if self._installed_value_escapes(function):
             return [function]
-        if binding is None and isinstance(function.parent, JsExportDefaultDeclaration):
+        if names is None and isinstance(function.parent, JsExportDefaultDeclaration):
             return [self.model.root]
         member_points = self._member_reference_points(function)
         if member_points is not None:
             return member_points
-        if binding is None:
+        if names is None:
             return [function]
-        if (
-            binding.dynamic_refs
-            or len(binding.declarations) != 1
-            or not self.model.binding_pinned_to(binding, function)
-        ):
-            return None
-        points: list[Node | _HandOver] = [*binding.reads]
-        points.extend(
-            site
-            for site in self.model.reflection_surface_sites(binding)
-            if not site.is_descendant_of(function)
-        )
-        if binding.exported:
-            points.append(self.model.root)
+        points: list[Node | _HandOver] = []
+        for name in names.bindings:
+            if (
+                name.dynamic_refs
+                or len(name.declarations) != 1
+                or not self.model.binding_pinned_to(name, function)
+            ):
+                return None
+            points.extend(names.reads_of(name))
+            points.extend(
+                site
+                for site in self.model.reflection_surface_sites(name)
+                if not site.is_descendant_of(function)
+            )
+            if name.exported:
+                points.append(self.model.root)
         return points
 
     def _callable_before_the_end(self, function: Node, binding: Binding | None) -> bool:

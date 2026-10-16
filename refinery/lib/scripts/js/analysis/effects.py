@@ -989,16 +989,19 @@ class EffectModel:
         such a function can land at a point no call site pins down; a function only ever called directly
         by name has all its invocations enumerated by those call sites.
         """
-        binding = self.model.naming_binding(func)
-        if binding is None:
+        names = self.model.function_names(func)
+        if names is None:
             return True
-        if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
-            return True
-        for ref in self.model.references(binding):
-            parent = ref.parent
-            if isinstance(parent, JsCallExpression) and parent.callee is ref:
-                continue
-            return True
+        for binding in names.bindings:
+            if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
+                return True
+            if not self.model.binding_pinned_to(binding, func):
+                return True
+            for ref in names.references_of(binding):
+                parent = ref.parent
+                if isinstance(parent, JsCallExpression) and parent.callee is ref:
+                    continue
+                return True
         return False
 
     def mutators_escape(self, binding: Binding) -> bool:
@@ -1063,14 +1066,15 @@ class EffectModel:
     def call_clearable(
         self,
         call: JsCallExpression | JsNewExpression,
-        callee_established: Callable[[Node], bool],
+        callee_established: Callable[[Binding], bool],
         binding_established: Callable[[Binding], bool],
     ) -> bool:
         """
         Whether *call* may be cleared with respect to ordering — its callee in place before the
         call runs, and every outer lexical binding its body may read past that binding's
         temporal dead zone. Two ordering judgments the caller supplies, since only its layer can
-        make them: *callee_established* tests a resolved named local callee, and
+        make them: *callee_established* tests the name a named local callee is read through, which
+        holds the function from a point of its own, and
         *binding_established* tests a `dead_zone_reads` binding (whether the call sits after the
         binding's declaration). A trusted pure intrinsic qualifies unconditionally. Otherwise
         the callee resolves to a function, and the call is refused unless every binding the
@@ -1095,26 +1099,30 @@ class EffectModel:
             deferred = self.summary_of(resolved).dead_zone_reads
             if deferred and not all(binding_established(binding) for binding in deferred):
                 return False
-            if isinstance(strip_parens(call.callee), (JsFunctionExpression, JsArrowFunctionExpression)):
+            callee = call.callee
+            if isinstance(strip_parens(callee), (JsFunctionExpression, JsArrowFunctionExpression)):
                 return True
-            return callee_established(resolved)
+            name = self.model.resolve(callee) if isinstance(callee, JsIdentifier) else None
+            return name is not None and callee_established(name)
         return False
 
     def _established_call_default(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
         The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic, an
-        inline function-expression callee (established at its call site), or a call to a hoisted
-        function declaration (empty `establishment_sites`), whose value is in place before any
-        statement runs. A non-hoisted named local callee — a `const`/`let`/`var` initializer or a
-        bare assignment — is refused, since this model cannot order the definition against the
-        call; a caller that can supplies its own `call_established`. Being ordering-free, it passes
-        `lambda binding: False` for the dead-zone gate, so a callee reading any outer lexical
-        binding is refused here — the fail-closed floor a caller with a dominance model lifts by
-        supplying its own `binding_established`.
+        inline function-expression callee (established at its call site), or a call through a name a
+        function declaration hoists (empty
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.binding_establishment_sites`), whose
+        value is in place before any statement runs. A non-hoisted named local callee — a
+        `const`/`let`/`var` initializer, a bare assignment, or the copy Annex B makes — is
+        refused, since this model cannot order the definition against the call; a caller that can
+        supplies its own `call_established`. Being ordering-free, it passes `lambda binding: False`
+        for the dead-zone gate, so a callee reading any outer lexical binding is refused here — the
+        fail-closed floor a caller with a dominance model lifts by supplying its own
+        `binding_established`.
         """
         return self.call_clearable(
             call,
-            lambda func: self.model.establishment_sites(func) == [],
+            lambda binding: self.model.binding_establishment_sites(binding) == [],
             lambda binding: False,
         )
 
@@ -2332,10 +2340,12 @@ class EffectModel:
             else:
                 use = max(use, self._name_use(own, spared, 0))
         if isinstance(function, JsFunctionDeclaration):
-            binding = self.model.binding_of(function.id) if isinstance(function.id, JsIdentifier) else None
-            if binding is None:
+            names = self.model.function_names(function)
+            if names is None:
                 return max(use, FunctionUse.TOUCHED)
-            return max(use, self._name_use(binding, spared, 0))
+            for binding in names.bindings:
+                use = max(use, self._name_use(binding, spared | {function}, 0))
+            return use
         method = self._method_use(function)
         if method is not None:
             return max(use, method)

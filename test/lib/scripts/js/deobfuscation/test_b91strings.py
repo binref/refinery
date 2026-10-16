@@ -342,10 +342,50 @@ AN_ACCESSOR_CALLED_IN_A_WITH_BODY = (
     + 'with (o) { console.log(acc(11), k); }\n'
 )
 
+AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT = (
+    HEAD
+    + decoder('decode') + '\n'
+    + '{ ' + accessor('acc', 'cache', 'decode') + ' console.log(acc(10)); }\n'
+    + 'console.log(acc(11));\n'
+)
+
+AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT = (
+    HEAD
+    + decoder('decode') + '\n'
+    + '{ ' + accessor('acc', 'cache', 'decode') + ' }\n'
+    + 'console.log(acc(11));\n'
+)
+
+A_DECODER_IN_A_BLOCK_READ_AFTER_IT = (
+    HEAD
+    + '{ ' + decoder('decode') + ' }\n'
+    + accessor('acc', 'cache', 'decode') + '\n'
+    + 'console.log(acc(10), acc(11));\n'
+)
+
+AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT = (
+    HEAD
+    + decoder('decode') + '\n'
+    + 'function main() { { ' + accessor('acc', 'cache', 'decode') + ' console.log(acc(10)); }\n'
+    + 'console.log(acc(11)); }\nmain();\n'
+)
+
+AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT = (
+    HEAD
+    + decoder('decode') + '\n'
+    + 'try { console.log(acc(11)); } catch (e) { console.log(e.constructor.name); }\n'
+    + '{ ' + accessor('acc', 'cache', 'decode') + ' console.log(acc(10)); }\n'
+)
+
 #: Programs holding the machinery of concealed strings in a shape that decides what a call of an
 #: accessor returns or whether the machinery is still named, mapped to what Node prints for each.
 A_PROGRAM_HOLDING_CONCEALED_STRINGS = {
     AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP: 'log4\n',
+    AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT: 'push\nFizz\n',
+    AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT: 'Fizz\n',
+    A_DECODER_IN_A_BLOCK_READ_AFTER_IT: 'push Fizz\n',
+    AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT: 'push\nFizz\n',
+    AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT: 'TypeError\npush\n',
     A_PROGRAM_FUNCTION_HOLDING_A_DECODER: 'xFizz push\n',
     AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED: 'TypeError Fizz\n',
     AN_ACCESSOR_CALLED_IN_A_WITH_BODY: 'push\nFizz 1\n',
@@ -877,6 +917,50 @@ class TestStringConcealing(TestJsDeobfuscator):
             ),
             deobfuscate_source(source),
         )
+
+    def test_an_accessor_in_a_block_is_decoded_inside_it_and_after_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                {
+                  console.log('push');
+                }
+                console.log('Fizz');
+                """
+            ),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT, module=True),
+        )
+
+    def test_an_accessor_in_a_block_called_only_after_it_is_decoded(self):
+        self.assertEqual(
+            'console.log(\'Fizz\');',
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, module=True),
+        )
+
+    def test_a_decoder_in_a_block_read_after_it_decodes(self):
+        self.assertEqual(
+            'console.log(\'push\', \'Fizz\');',
+            deobfuscate_source(A_DECODER_IN_A_BLOCK_READ_AFTER_IT, module=True),
+        )
+
+    def test_an_accessor_in_a_block_of_a_function_is_decoded_after_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                {
+                  console.log('push');
+                }
+                console.log('Fizz');
+                """
+            ),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT, module=True),
+        )
+
+    def test_a_call_before_the_block_declaring_the_accessor_stays_a_call(self):
+        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT, module=True)
+        self.assertIn('console.log(acc(11));', result)
+        self.assertIn('console.log(\'push\');', result)
+        self.assertIn('function acc(index)', result)
 
     def test_an_exported_cache_stays_declared(self):
         source = (

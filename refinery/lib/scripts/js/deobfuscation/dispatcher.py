@@ -397,6 +397,8 @@ class _TemplateReader:
             _require(not binding.declared_within(self.function))
         own = _present(model.binding_of(_as(self.function.id, JsIdentifier)))
         _require(len(own.declarations) == 1)
+        names = _present(model.function_names(self.function))
+        _require(names.bindings == (own,))
         _require(len({own, *bindings.values()}) == len(bindings) + 1)
         return _Dispatcher(
             declaration=self.function,
@@ -953,6 +955,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                 declaration.parent for declaration in dispatcher.helper.declarations
                 if isinstance(declaration.parent, JsFunctionDeclaration)
                 and declaration.parent.id is declaration
+                and model.binding_of(declaration) is dispatcher.helper
             ]
         for dispatch in sorted(dispatches, key=lambda dispatch: _depth(dispatch.node)):
             _replace_in_parent(dispatch.node, dispatch.replacement(names[dispatch.key]))
