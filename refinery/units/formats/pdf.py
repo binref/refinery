@@ -267,34 +267,13 @@ class xtpdf(ArchiveUnit):
                 memo[objgen] = None
             blob = embedded
 
-        meta = {}
         path = ''.join(keys)
-        done = set()
-        meta_path = F'{path}.json'
 
-        if isinstance(blob, pike.Dictionary):
-            nested = {}
-            for key, value in blob.items():
-                if isinstance(value, pike.Name):
-                    value = str(value)
-                if isinstance(value, (int, float, str, bool)):
-                    key = key.lstrip('/')
-                    meta[key] = value
-                    continue
-                nested[key] = value
-                done.add(key)
-            for key, value in nested.items():
-                yield from self._walk_pike(document, value, memo, *keys, key)
-            if meta:
-                yield UnpackResult(meta_path, blob.to_json(dereference=True))
-                return
-        elif isinstance(blob, pike.Array):
+        if isinstance(blob, pike.Array):
             for key, value in enumerate(iter(blob)):
                 if isinstance(value, pike.Object):
                     yield from self._walk_pike(document, value, memo, *keys, F'/{key}')
-            return
-
-        if isinstance(blob, pike.Stream):
+        elif isinstance(blob, pike.Stream):
             contents = _Deferred(document, lambda b=blob: _stream_contents(b))
             if (objgen := indirect(blob)) is not None:
                 memo[objgen] = contents
@@ -302,7 +281,11 @@ class xtpdf(ArchiveUnit):
         elif isinstance(blob, pike.String):
             yield UnpackResult(path, bytes(blob))
         elif isinstance(blob, pike.Object):
-            yield UnpackResult(meta_path, blob.to_json())
+            if isinstance(blob, pike.Dictionary):
+                for key, value in blob.items():
+                    if isinstance(value, pike.Object) and not isinstance(value, pike.Name):
+                        yield from self._walk_pike(document, value, memo, *keys, key)
+            yield UnpackResult(F'{path}.json', blob.to_json(dereference=True))
 
     def unpack(self, data):
         if not (password := self.args.pwd):

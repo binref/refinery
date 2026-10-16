@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import io
+import json
 import tracemalloc
 import zlib
 
@@ -39,6 +40,11 @@ class TestPDF(TestUnitBase):
         unit = self.load('fqMBgzoMVutzNwk') | self.ldu('sha256', text=True)
         self.assertEqual(data | unit | str,
             'c2b666a3ef4c191b77b78c037656e50477b8ba3d35fd61ae843a3a1f4d41c5c1')
+
+    def test_a_dictionary_stored_as_an_object_of_its_own_comes_out_with_its_contents(self):
+        data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
+        info = json.loads(data | self.load('raw/Info.json') | str)
+        self.assertLessEqual({'/CreationDate', '/ModDate'}, set(info))
 
     def test_values_equal_to_values_found_earlier_are_extracted(self):
         data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
