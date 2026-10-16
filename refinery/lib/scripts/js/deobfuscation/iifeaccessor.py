@@ -25,6 +25,11 @@ parameters. `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator
 variables are read-only inside the returned function; under that condition the hoisting is
 semantically equivalent because the closure values are re-initialised to identical literals on every
 call. After the rewrite, the function evaluator folds each call site to its computed string literal.
+
+The declaration has to stand at the top level of a function, a module or a script, exported or
+not, where a function declaration names the scope the declarator named. In a block it would name
+the block, which strict code keeps it in and sloppy code copies it out of (Annex B.3.3), and neither
+is where a `var`, a `let` or a `const` there puts its name.
 """
 from __future__ import annotations
 
@@ -35,7 +40,7 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
 )
-from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
+from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, hoists_its_functions
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     extract_identifier_params,
@@ -50,6 +55,7 @@ from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsBlockStatement,
     JsCallExpression,
+    JsExportNamedDeclaration,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -99,6 +105,11 @@ def _detect(declarator: JsVariableDeclarator) -> _Pattern | None:
     if not isinstance(declaration, JsVariableDeclaration):
         return None
     if len(declaration.declarations) != 1:
+        return None
+    statement: Node = declaration
+    if isinstance(statement.parent, JsExportNamedDeclaration):
+        statement = statement.parent
+    if (holder := statement.parent) is None or not hoists_its_functions(holder):
         return None
     init = strip_parens(declarator.init)
     if not isinstance(init, JsCallExpression):

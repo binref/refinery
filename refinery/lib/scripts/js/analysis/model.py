@@ -1131,13 +1131,13 @@ class LexicalNameCache:
         if names is None:
             statements = statement_list_of(holder)
             names = frozenset() if statements is None else lexically_declared_names(statements)
-            if statements is not None and not _hoists_its_functions(holder):
+            if statements is not None and not hoists_its_functions(holder):
                 names |= _lexical_function_names(statements)
             self._names[id(holder)] = names
         return name in names
 
 
-def _hoists_its_functions(holder: Node) -> bool:
+def hoists_its_functions(holder: Node) -> bool:
     """
     Whether the statement list *holder* holds is the top level of a script, a static block or the
     body of a function, where every function declaration it holds is var-scoped, rather than a

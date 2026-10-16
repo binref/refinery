@@ -462,3 +462,59 @@ class TestWhatTheKindOfTheIIFEAndAnArrowsArgumentsCostThePromotion(TestJsDeobfus
                 for source, (_, printed) in rows.items()
             },
         )
+
+
+#: An accessor an IIFE builds in a block, mapped to what Node prints for the program. A function
+#: declared in a block names the block: strict code keeps it there, so a call after the block finds
+#: no name, and sloppy code copies it out when the declaration runs, over a variable of its name
+#: outside the block. A declarator in the block puts its name where its kind puts it instead.
+_AN_ACCESSOR_AN_IIFE_BUILDS_IN_A_BLOCK: dict[str, str] = {
+    "'use strict';"
+    " { var X = function () { var t = 'abc'; return function (i) { return t[i]; }; }(); }"
+    ' console.log(X(1));': 'b\n',
+    "var X = 1; { const X = function () { var t = 'abc'; return function (i) { return t[i]; }; }();"
+    ' console.log(X(1)); } console.log(X);': 'b\n1\n',
+    'var r = []; try { r.push(X(1)); } catch (e) { r.push(e.constructor.name); }'
+    " { var X = function () { var t = 'abc'; return function (i) { return t[i]; }; }(); }"
+    ' r.push(X(2)); console.log(r.join());': 'TypeError,c\n',
+}
+
+
+class TestAnAccessorAnIIFEBuildsInABlockIsNotPromoted(TestJsDeobfuscator):
+
+    def _promote(self, source: str) -> str:
+        return self._run_transformer(source, JsIIFEAccessorPromoter)
+
+    def _canonical(self, source: str) -> str:
+        return JsSynthesizer().convert(JsParser(source).parse())
+
+    def test_the_promotion_leaves_each_accessor_in_a_block_as_it_found_it(self):
+        rows = _AN_ACCESSOR_AN_IIFE_BUILDS_IN_A_BLOCK
+        written = {source: self._canonical(source) for source in rows}
+        self.assertEqual({source: self._promote(text) for source, text in written.items()}, written)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_before_and_after_the_promotion(self):
+        rows = _AN_ACCESSOR_AN_IIFE_BUILDS_IN_A_BLOCK
+        self.assertEqual(
+            {source: (behavior(source), behavior(self._promote(source))) for source in rows},
+            {source: ((printed, None), (printed, None)) for source, printed in rows.items()},
+        )
+
+    def test_an_exported_accessor_at_the_top_level_of_a_module_is_promoted(self):
+        source = (
+            "export var X = function () { var t = 'abc'; return function (i) { return t[i]; }; }();"
+            ' console.log(X(1));'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                export function X(i) {
+                  var t = 'abc';
+                  return t[i];
+                }
+                console.log(X(1));
+                """
+            ),
+            self._promote(source),
+        )
