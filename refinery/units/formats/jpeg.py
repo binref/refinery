@@ -106,13 +106,6 @@ class JpegMarker(int, enum.Enum):
         return self == JpegMarker.TEM or self in range(0xD0, 0xDA)
 
     @property
-    def is_restart(self) -> bool:
-        """
-        Whether the marker is one of the restart markers within the data of a scan.
-        """
-        return self in range(0xD0, 0xD8)
-
-    @property
     def is_frame(self) -> bool:
         """
         Whether the marker starts a frame header, which gives the dimensions of the image.

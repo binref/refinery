@@ -2,6 +2,8 @@ import io
 import json
 import zipfile
 
+import pytest
+
 from .. import TestUnitBase
 
 
@@ -67,6 +69,13 @@ class TestJPG(TestUnitBase):
         data = self._written_by_pillow(qtables=[[256] * 64, [256] * 64])
         self.assertTrue(any(path.endswith('.DCTExtendedSequential') for path in self._paths(data)))
         self.assertEqual(self._dimensions(data), (96, 64))
+
+    @pytest.mark.xfail(strict=True, reason='an image cut inside its scan raises instead of giving the segments before the cut')
+    def test_an_image_cut_inside_its_scan_gives_the_segments_before_the_cut(self):
+        image = self._written_by_pillow(comment=b'kept')
+        sos = image.index(B'\xFF\xDA')
+        data = image[:(sos + len(image)) // 2]
+        self.assertEqual(data | self.load('comments/0') | bytes, B'kept')
 
     def test_fill_bytes_in_front_of_a_marker_belong_to_that_marker(self):
         image = self._written_by_pillow()
