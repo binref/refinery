@@ -229,7 +229,7 @@ class Jpeg(Struct):
         """
         Whether the data ends before the end-of-image marker.
         """
-        return not self.streams or self.streams[-1].type != JpegMarker.EndOfImage
+        return self.streams[-1].type != JpegMarker.EndOfImage
 
 
 class jpeg(PathExtractorUnit):

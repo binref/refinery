@@ -140,12 +140,13 @@ class TestJPG(TestUnitBase):
         run = B'\xFF' * (1 << 17) + B'\x00'
         sos = image.index(B'\xFF\xDA')
         scan = self._scan_offset(image)
-        for name, data in (
-            ('between segments', image[:sos] + run + image[sos:]),
-            ('inside the scan', image[:scan] + run + image[scan:]),
+        for name, data, junk, scans in (
+            ('between segments', image[:sos] + run + image[sos:], [run], [image[scan:-2]]),
+            ('inside the scan', image[:scan] + run + image[scan:], [], [run + image[scan:-2]]),
         ):
             start = time.perf_counter()
-            self._paths(data)
+            self.assertEqual(data | self.load('junk/*') | [bytes], junk, name)
+            self.assertEqual(data | self.load('scans/*') | [bytes], scans, name)
             self.assertLess(time.perf_counter() - start, 5, name)
 
     def test_a_complete_image_gives_no_warning(self):
