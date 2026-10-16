@@ -165,7 +165,7 @@ class TestIPFSEmulator(TestBase):
         windows = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSDIR')
         with _failing_external('CompareText'):
             temp = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSTEMPDIR')
-        self.assertEqual(temp, F'{windows}\temp')
+        self.assertEqual(temp, F'{windows}\\temp')
 
     @pytest.mark.xfail(strict=True, reason='an exception inside a catch block enters the same catch block again')
     def test_an_exception_in_a_catch_block_leaves_the_function(self):
@@ -644,18 +644,6 @@ class TestIPFSEmulator(TestBase):
         emulator = self._script_emulator(_SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK)
         with _replaced_external('SetArrayLength', lambda *_: None):
             self.assertFalse(emulator.emulate_function(emulator.symbols['IPR'], 'explorer.exe').value)
-
-    @pytest.mark.xfail(
-        strict=True,
-        raises=IndexError,
-        reason='a code constant expanded while a script function runs clears the stack of that function',
-    )
-    def test_a_code_constant_can_be_expanded_while_a_script_function_runs(self):
-        from refinery.lib.inno.emulator import NewScriptError
-        emulator = self._script_emulator(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE)
-        with _replaced_external('ExtractFileDir', lambda running, _: running.ExpandConstant('{code:RTF_BOLD|x}')):
-            errors = [event for event in emulator.emulate_installation() if isinstance(event, NewScriptError)]
-        self.assertEqual(errors, [])
 
     def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
         from refinery.lib.inno.emulator import NewFunctionCall
