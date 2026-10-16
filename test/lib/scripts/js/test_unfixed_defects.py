@@ -50,13 +50,16 @@ from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
     A_COUNT_THE_FOLD_DOES_NOT_REACH,
 )
 from test.lib.scripts.js.deobfuscation.test_b91strings import (
+    DEFAULTED_HEAD,
     HEAD,
     OTHER_TABLE,
     SLICED,
+    SWAPPED,
     TABLE,
     accessor,
     decoder,
     decoder_body,
+    defaulted,
     slicing,
 )
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
@@ -5004,6 +5007,26 @@ A_CONCEALED_STRING_THE_PROGRAM_CHANGES = {
         + 'console.log(S(2, 5));\n'
     ):
         'log\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'function inner() {\n'
+        + '  ' + defaulted('acc2', 'dec2', order='w') + '\n'
+        + '  return acc2(10);\n'
+        + '  ' + decoder('dec2', SWAPPED) + '\n'
+        + '}\n'
+        + 'console.log(acc(10), inner());\n'
+        + decoder('dec') + '\n'
+    ):
+        'push push\n',
+    (
+        'Array.prototype[10] = "planted";\n'
+        + DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'console.log(acc(10), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'planted Fizz\n',
 }
 
 

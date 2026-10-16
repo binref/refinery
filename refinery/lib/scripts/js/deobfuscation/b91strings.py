@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterator, NamedTuple
 
-from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, Statement, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
@@ -47,23 +47,35 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     remove_declarator,
     walk_scope,
 )
-from refinery.lib.scripts.js.deobfuscation.templates import Template, matches
+from refinery.lib.scripts.js.deobfuscation.templates import (
+    Shuffle,
+    Template,
+    match,
+    matches,
+)
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    JsArrayExpression,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsBlockStatement,
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
+    JsFunctionExpression,
     JsFunctionNode,
     JsIdentifier,
+    JsIfStatement,
     JsMemberExpression,
     JsNumericLiteral,
     JsObjectExpression,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
+    JsSpreadElement,
     JsStringLiteral,
     JsVariableDeclarator,
+    static_property_key,
     strip_parens,
 )
 from refinery.lib.scripts.js.options import preserves_script_return
@@ -162,6 +174,41 @@ literal the accessor spells it out with.
 """
 
 
+_DEFAULTS = (
+    'if (typeof a === "undefined") { a = DECODE; }'
+    ' if (typeof b === "undefined") { b = CACHE; }'
+    ' if (x !== y) { return b[x] || (b[x] = a(TABLE[x])); }'
+)
+
+_DEFAULTED_ACCESSOR = (
+    Template(
+        F'function ACCESSOR(x, y, z, a, b) {{ {_DEFAULTS} }}',
+        frozenset({'CACHE', 'DECODE', 'TABLE'}),
+    ),
+)
+"""
+The accessor keeping its decoder and its cache in two parameters it defaults. `CACHE`, `DECODE` and
+`TABLE` stand for the names holding the cache, the decoder and the table.
+"""
+
+_DECOYED_ACCESSOR = Template(
+    F'function TEMPLATE(x, y, z, a, b) {{ {_DEFAULTS}'
+    ' if (z == x) { return y[CACHE[z]] = ACCESSOR(x, y); }'
+    ' if (y) { [b, y] = [a(b), x || z]; return ACCESSOR(x, b, z); }'
+    ' if (z && a !== DECODE) { ACCESSOR = DECODE; return ACCESSOR(x, -1, z, a, b); }'
+    ' if (a === ACCESSOR) { DECODE = y; return DECODE(z); }'
+    ' if (a === undefined) { ACCESSOR = b; }'
+    ' if (z == a) { return y ? x[b[y]] : CACHE[x] || (z = b[x] || a, CACHE[x] = z(TABLE[x])); } }',
+    frozenset({'ACCESSOR', 'CACHE', 'DECODE', 'TABLE'}),
+    Shuffle(2, 1),
+)
+"""
+The accessor of `_DEFAULTED_ACCESSOR` as the obfuscator writes it: after the two defaults, its
+working branch and some of six decoys, in an order of its choosing. `ACCESSOR` stands for the name
+holding the accessor.
+"""
+
+
 class _Held(NamedTuple):
     """
     A function each of its names holds as its one value, and the node installing it there, which
@@ -226,11 +273,13 @@ _Table = _StringArray | _LongString
 class _Kind(NamedTuple):
     """
     A kind of accessor: its templates, the reader of what stands where they have their decoder,
-    table and cache, and the reader of what its table holds.
+    table and cache, the reader of what its table holds, and the question whether the program calls
+    an accessor of the kind only as its templates assume, asked of the names holding it.
     """
     templates: tuple[Template, ...]
     parts: Callable[[SemanticModel, JsFunctionNode], _Parts | None]
     table: Callable[[EffectModel, Binding | JsStringLiteral], _Table | None]
+    called: Callable[[SemanticModel, FunctionNames | None], bool]
 
 
 class _Accessor(NamedTuple):
@@ -411,6 +460,93 @@ def _slicing_parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | N
     return _Parts(decoder, table, None)
 
 
+def _default(model: SemanticModel, function: Node, statement: Node | None) -> Binding | None:
+    """
+    The name *statement* stores into a parameter of *function* when it is
+    `if (...) { parameter = name; }` and *function* does not declare the name.
+    """
+    if not isinstance(statement, JsIfStatement) or statement.alternate is not None:
+        return None
+    consequent = statement.consequent
+    if isinstance(consequent, JsBlockStatement):
+        if len(consequent.body) != 1:
+            return None
+        consequent = consequent.body[0]
+    if not isinstance(consequent, JsExpressionStatement):
+        return None
+    assignment = strip_parens(consequent.expression)
+    if not isinstance(assignment, JsAssignmentExpression):
+        return None
+    return _outer(model, function, assignment.right)
+
+
+def _defaulted_parts(model: SemanticModel, function: JsFunctionNode) -> _Parts | None:
+    """
+    The names the first two statements of *function* store into its fourth and fifth parameter, the
+    decoder and the cache, and the other name it reads an element of at its first parameter, the
+    table, if *function* is a defaulted accessor and the cache holds an empty array.
+    """
+    params = function.params
+    if len(params) != 5 or not all(isinstance(parameter, JsIdentifier) for parameter in params):
+        return None
+    statements = statement_list_of(function) or []
+    if len(statements) < 3:
+        return None
+    decoder = _default(model, function, statements[0])
+    cache = _default(model, function, statements[1])
+    if decoder is None or cache is None or decoder is cache:
+        return None
+    first = params[0]
+    assert isinstance(first, JsIdentifier)
+    index = model.binding_of(first)
+    tables: dict[int, Binding] = {}
+    for node in walk_scope(function, include_root_body=True):
+        if not isinstance(node, JsMemberExpression) or not node.computed:
+            continue
+        key = strip_parens(node.property)
+        if not isinstance(key, JsIdentifier) or model.resolve(key) is not index:
+            continue
+        if (owner := _outer(model, function, node.object)) is not None and owner is not cache:
+            tables[id(owner)] = owner
+    if len(tables) != 1 or (table := next(iter(tables.values()))) is decoder:
+        return None
+    empty = strip_parens(model.singular_value(cache))
+    if not isinstance(empty, JsArrayExpression) or empty.elements:
+        return None
+    return _Parts(decoder, table, cache)
+
+
+def _called_with_one_argument(model: SemanticModel, names: FunctionNames | None) -> bool:
+    """
+    Whether every reference of the names of an accessor but their declarations is the callee of a
+    call passing one argument, so the accessor is never handed a decoder or a cache of a caller's
+    choosing. An accessor no name holds may be called any way.
+    """
+    if names is None:
+        return False
+    for binding in names.bindings:
+        if binding.dynamic_refs or binding.has_indefinite_write:
+            return False
+        declarations = {id(node) for node in binding.declarations}
+        for reference in names.references_of(binding):
+            if id(reference) in declarations:
+                continue
+            call = enclosing_operator(reference)
+            if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not reference:
+                return False
+            if len(call.arguments) != 1 or isinstance(call.arguments[0], JsSpreadElement):
+                return False
+    return True
+
+
+def _called_any_way(model: SemanticModel, names: FunctionNames | None) -> bool:
+    """
+    Whether the program calls an accessor only as the templates of a kind assume, for a kind whose
+    templates assume nothing about the calls.
+    """
+    return True
+
+
 def _table_value(effects: EffectModel, table: Binding | JsStringLiteral) -> tuple[bool, object]:
     """
     What *table* denotes as `refinery.lib.scripts.js.deobfuscation.helpers.denoted_value` reads it:
@@ -462,8 +598,9 @@ def _long_string(effects: EffectModel, table: Binding | JsStringLiteral) -> _Lon
 
 
 _KINDS = (
-    _Kind(_CACHING_ACCESSOR, _caching_parts, _string_array),
-    _Kind(_SLICING_ACCESSOR, _slicing_parts, _long_string),
+    _Kind(_CACHING_ACCESSOR, _caching_parts, _string_array, _called_any_way),
+    _Kind(_SLICING_ACCESSOR, _slicing_parts, _long_string, _called_any_way),
+    _Kind(_DEFAULTED_ACCESSOR, _defaulted_parts, _string_array, _called_with_one_argument),
 )
 
 
@@ -515,6 +652,8 @@ def _accessor(
         return None
     if not _is_accessor(model, held.function, kind, parts):
         return None
+    if not kind.called(model, held.names):
+        return None
     if (key := (id(kind), id(parts.table))) not in tables:
         tables[key] = kind.table(effects, parts.table)
     if (table := tables[key]) is None:
@@ -548,6 +687,7 @@ def _cache_confined(model: SemanticModel, cache: Binding) -> bool:
                 found is not None
                 and found[1].cache is cache
                 and _is_accessor(model, function, *found)
+                and found[0].called(model, model.function_names(function))
             )
         if not known:
             return False
@@ -691,4 +831,177 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
             _replace_in_parent(call, make_string_literal(decoded))
         replaced: list[Node] = [call for call, _ in replacements]
         _remove_machinery(model, accessors, replaced, node, preserves_script_return(self.options))
+        self.mark_changed()
+
+
+def _index_call(
+    effects: EffectModel,
+    reference: Node,
+) -> tuple[JsCallExpression, JsNumericLiteral] | None:
+    """
+    The call *reference* is the callee of, passing one number literal as its only argument, and that
+    literal: `f(7)`, `f.call(undefined, 7)` or `f.apply(undefined, [7])`, the receiver `undefined`
+    spelled as the name or as `void` of a number. The last two only where the program writes no
+    member of `Function.prototype`, and neither through an optional chain, which calls nothing where
+    `f` holds no function yet. Code the model cannot read is not asked about, for the reason the
+    table is not (`_table_value`): every script the obfuscator writes reads the global object
+    through a reflective surface of its own.
+    """
+    model = effects.model
+    parent = enclosing_operator(reference)
+    if isinstance(parent, JsCallExpression) and strip_parens(parent.callee) is reference:
+        arguments = parent.arguments
+        if len(arguments) == 1 and isinstance(number := arguments[0], JsNumericLiteral):
+            return parent, number
+        return None
+    if not isinstance(parent, JsMemberExpression) or strip_parens(parent.object) is not reference:
+        return None
+    method = static_property_key(parent)
+    call = enclosing_operator(parent)
+    if method not in ('call', 'apply') or not isinstance(call, JsCallExpression):
+        return None
+    if strip_parens(call.callee) is not parent or len(call.arguments) != 2:
+        return None
+    if parent.optional or call.optional:
+        return None
+    if not effects.prototype_name_unwritten(JsFunctionExpression):
+        return None
+    receiver, argument = call.arguments
+    known, value = denoted_value(receiver, model)
+    if not known or value is not None:
+        return None
+    argument = strip_parens(argument)
+    if method == 'apply':
+        if not isinstance(argument, JsArrayExpression) or len(argument.elements) != 1:
+            return None
+        argument = argument.elements[0]
+    if not isinstance(argument, JsNumericLiteral):
+        return None
+    return call, argument
+
+
+def _written_only_inside(
+    model: SemanticModel,
+    binding: Binding,
+    function: Node,
+    *,
+    besides: Node | None = None,
+) -> bool:
+    """
+    Whether every write of *binding* lies in *function* or in *besides*, and nothing writes it in a
+    way no reference records.
+    """
+    if binding.dynamic_refs or binding.has_indefinite_write or binding.exported:
+        return False
+    if binding.reachable_through_a_handed_object:
+        return False
+    if model.reflection_can_reach(binding, module_scope=True):
+        return False
+    for write in binding.writes:
+        if besides is not None and (write is besides or write.is_descendant_of(besides)):
+            continue
+        if not write.is_descendant_of(function):
+            return False
+    return True
+
+
+class _Decoys(NamedTuple):
+    """
+    The decoy branches of a decoyed accessor, and each call of it written through `call` or `apply`
+    with the name it calls and the number it passes.
+    """
+    decoys: list[Statement]
+    calls: list[tuple[JsCallExpression, JsIdentifier, JsNumericLiteral]]
+
+
+def _decoys(effects: EffectModel, function: JsFunctionNode) -> _Decoys | None:
+    """
+    The decoys of *function* and its calls written through `call` or `apply`, when it is the decoyed
+    accessor and no decoy can run: the name holding it holds nothing but what a decoy stores, the
+    name of its decoder holds a function declared in the scope it names and nothing but what a decoy
+    stores, and every reference of the accessor outside it passes one number as its only argument.
+    """
+    model = effects.model
+    if not isinstance(function, (JsArrowFunctionExpression, JsFunctionExpression)):
+        return None
+    declarator = enclosing_operator(function)
+    if not isinstance(declarator, JsVariableDeclarator):
+        return None
+    if strip_parens(declarator.init) is not function:
+        return None
+    names = model.function_names(function)
+    if names is None or len(names.own.declarations) != 1:
+        return None
+    holder = names.own
+    if (parts := _defaulted_parts(model, function)) is None or parts.cache is None:
+        return None
+    decoder = parts.decoder
+    assert isinstance(parts.table, Binding)
+    placeholders = {
+        id(holder): 'ACCESSOR',
+        id(decoder): 'DECODE',
+        id(parts.cache): 'CACHE',
+        id(parts.table): 'TABLE',
+    }
+    if (found := match(model, function, (_DECOYED_ACCESSOR,), placeholders)) is None:
+        return None
+    _, fit = found
+    if len(decoder.declarations) != 1:
+        return None
+    if not isinstance(decoder.declarations[0].parent, JsFunctionDeclaration):
+        return None
+    if model.binding_of(decoder.declarations[0]) is not decoder:
+        return None
+    if not _written_only_inside(model, decoder, function):
+        return None
+    if not _written_only_inside(model, holder, function, besides=declarator):
+        return None
+    calls: list[tuple[JsCallExpression, JsIdentifier, JsNumericLiteral]] = []
+    for reference in holder.reads:
+        if reference.is_descendant_of(function):
+            continue
+        if not isinstance(reference, JsIdentifier):
+            return None
+        if (indexed := _index_call(effects, reference)) is None:
+            return None
+        call, number = indexed
+        if strip_parens(call.callee) is not reference:
+            calls.append((call, reference, number))
+    statements = statement_list_of(function) or []
+    if len(statements) != len(fit) or (shuffled := _DECOYED_ACCESSOR.shuffled) is None:
+        return None
+    always = shuffled.start + shuffled.kept
+    decoys = [statement for statement, position in zip(statements, fit) if position >= always]
+    if not decoys and not calls:
+        return None
+    return _Decoys(decoys, calls)
+
+
+class JsBase91AccessorDecoys(ScriptLevelTransformer):
+    """
+    Remove the decoy branches of a defaulted base91 accessor that no call runs, and write each call
+    of it through `call` or `apply` as a plain call.
+    """
+
+    def _process_script(self, node: JsScript):
+        effects = model_cache(self, node).effects
+        found: list[_Decoys] = []
+        for function in node.walk():
+            if not isinstance(function, (JsArrowFunctionExpression, JsFunctionExpression)):
+                continue
+            if len(function.params) != 5:
+                continue
+            if (decoys := _decoys(effects, function)) is not None:
+                found.append(decoys)
+        if not found:
+            return
+        for item in found:
+            for statement in item.decoys:
+                _remove_from_parent(statement)
+            for call, callee, argument in item.calls:
+                plain = JsCallExpression(
+                    callee=JsIdentifier(name=callee.name),
+                    arguments=[argument],
+                )
+                _replace_in_parent(call, plain)
         self.mark_changed()

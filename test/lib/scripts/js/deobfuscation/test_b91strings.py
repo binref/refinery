@@ -13,7 +13,11 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints
+from test.lib.scripts.js.ledger import (
+    before_and_after,
+    before_and_after_in_a_host,
+    each_program_still_prints,
+)
 
 from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder, _decode_base91
 from refinery.lib.scripts.js.options import DeobfuscationOptions
@@ -50,11 +54,11 @@ CHAR_CODES = 'function bufferToString(b) { return String.fromCharCode.apply(null
 HEAD = F'var cache = {{}};\nvar table = {TABLE};\n{BUFFER}\n'
 
 
-def decoder_body() -> str:
+def decoder_body(alphabet: str = ALPHABET) -> str:
     """
-    The body of a decoder over `ALPHABET`, as the obfuscator writes it.
+    The body of a decoder over *alphabet*, as the obfuscator writes it.
     """
-    alphabet = ALPHABET.replace('"', '\\"')
+    alphabet = alphabet.replace('"', '\\"')
     return (
         F'var alpha = "{alphabet}"; var raw = "" + (str || ""); var len = raw.length; var ret = []; '
         'var b = 0, n = 0, v = -1; for (var i = 0; i < len; i++) { var p = alpha.indexOf(raw[i]); '
@@ -64,11 +68,11 @@ def decoder_body() -> str:
     )
 
 
-def decoder(name: str) -> str:
+def decoder(name: str, alphabet: str = ALPHABET) -> str:
     """
-    A decoder over `ALPHABET` declared as *name*.
+    A decoder over *alphabet* declared as *name*.
     """
-    return F'function {name}(str) {{ {decoder_body()} }}'
+    return F'function {name}(str) {{ {decoder_body(alphabet)} }}'
 
 
 def accessor_body(cache: str, decode: str, table: str = 'table') -> str:
@@ -106,6 +110,43 @@ GLOBAL_BUFFER = (
 
 #: The long string every slicing accessor below reads, and the function turning bytes into a string.
 SLICED = F'var strs = "{TEXT}";\n{GLOBAL_BUFFER}\n'
+
+#: `ALPHABET` with `f` and `r` swapped, under which 'fOg=r' is 'nusp'.
+SWAPPED = ALPHABET.translate(str.maketrans({'f': 'r', 'r': 'f'}))
+
+#: The cache every defaulted accessor below keeps, the table it reads, and the function turning
+#: bytes into a string.
+DEFAULTED_HEAD = F'var cache = [], table = {TABLE};\n{GLOBAL_BUFFER}\n'
+
+
+def defaulted(
+    name: str,
+    decode: str,
+    cache: str = 'cache',
+    table: str = 'table',
+    order: str = 'w012345',
+) -> str:
+    """
+    An accessor declared as *name* that keeps the decoder *decode* and the cache *cache* in two
+    parameters it defaults, as the obfuscator writes it: after the two defaults, the statements
+    *order* names, `w` for the branch that decodes and a digit for one of the six decoys.
+    """
+    decoys = [
+        F'if (z == x) {{ return y[{cache}[z]] = {name}(x, y); }}',
+        F'if (y) {{ [b, y] = [a(b), x || z]; return {name}(x, b, z); }}',
+        F'if (z && a !== {decode}) {{ {name} = {decode}; return {name}(x, -1, z, a, b); }}',
+        F'if (a === {name}) {{ {decode} = y; return {decode}(z); }}',
+        F'if (a === undefined) {{ {name} = b; }}',
+        F'if (z == a) {{ return y ? x[b[y]] : {cache}[x]'
+        F' || (z = b[x] || a, {cache}[x] = z({table}[x])); }}',
+    ]
+    decodes = F'if (x !== y) {{ return b[x] || (b[x] = a({table}[x])); }}'
+    body = [
+        F'if (typeof a === "undefined") {{ a = {decode}; }}',
+        F'if (typeof b === "undefined") {{ b = {cache}; }}',
+    ]
+    body.extend(decodes if key == 'w' else decoys[int(key)] for key in order)
+    return F'var {name} = (x, y, z, a, b) => {{ {" ".join(body)} }};'
 
 
 def slicing(name: str, decode: str, table: str = 'strs') -> str:
@@ -376,6 +417,423 @@ AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT = (
     + 'try { console.log(acc(11)); } catch (e) { console.log(e.constructor.name); }\n'
     + '{ ' + accessor('acc', 'cache', 'decode') + ' console.log(acc(10)); }\n'
 )
+
+#: Programs holding an accessor that defaults its decoder and its cache, with some of six decoy
+#: branches before or after the one that decodes, called plainly, through `call` and `apply`, and in
+#: the shapes that run a decoy or rewrite the names the decoys read, mapped to what Node prints for
+#: each.
+A_PROGRAM_HOLDING_A_DECOYED_ACCESSOR = {
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec') + '\n'
+        + 'console.log(acc(10), acc.call(undefined, 11), acc.apply(void 0, [12]), acc(10));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz log push\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='3405w12') + '\n'
+        + 'console.log(acc(10), acc(11), acc.call(void 0, 12));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz log\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='1w') + '\n'
+        + 'var r;\n'
+        + 'try { r = acc(10, 10); } catch (e) { r = e.constructor.name; }\n'
+        + 'console.log(typeof r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'string Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='4w') + '\n'
+        + 'console.log(acc.call({}, 10), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w0') + '\n'
+        + 'var k = 10;\n'
+        + 'console.log(acc(k), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='1w') + '\n'
+        + 'var r;\n'
+        + 'try { r = [10, 11].map(acc).join(); } catch (e) { r = e.constructor.name; }\n'
+        + 'console.log(r, acc(12));\n'
+        + decoder('dec') + '\n'
+    ):
+        'RangeError log\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='3w') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'dec = function (s) { return "X" + s; };\n'
+        + 'console.log(acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push\nXlrCD^\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='2w') + '\n'
+        + 'console.log(acc(10));\n'
+        + 'acc = function (i) { return "X" + i; };\n'
+        + 'console.log(acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push\nX11\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='4w') + '\n'
+        + 'var r;\n'
+        + 'try { r = acc(10); } catch (e) { r = e.constructor.name; }\n'
+        + 'console.log(r, typeof acc);\n'
+        + '{ ' + decoder('dec') + ' }\n'
+    ):
+        'TypeError object\n',
+    (
+        GLOBAL_BUFFER + '\n'
+        + 'function run() {\n'
+        + F'  var cache = [], table = {TABLE};\n'
+        + '  var undefined = dec;\n'
+        + '  ' + defaulted('acc', 'dec', order='4w') + '\n'
+        + '  var r;\n'
+        + '  try { r = acc(10); } catch (e) { r = e.constructor.name; }\n'
+        + '  return r + " " + typeof acc;\n'
+        + '  ' + decoder('dec') + '\n'
+        + '}\n'
+        + 'console.log(run());\n'
+    ):
+        'push object\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w5') + '\n'
+        + 'var o = { acc: function (i) { return "with" + i; } };\n'
+        + 'with (o) { console.log(acc(10)); }\n'
+        + 'console.log(acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'with10\nFizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w0') + '\n'
+        + 'var r;\n'
+        + 'try { r = new acc(10); } catch (e) { r = e.constructor.name; }\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'TypeError Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='0w3') + '\n'
+        + 'function inner() {\n'
+        + '  ' + defaulted('acc2', 'dec2', order='w45') + '\n'
+        + '  return acc2(12);\n'
+        + '  ' + decoder('dec2') + '\n'
+        + '}\n'
+        + 'console.log(acc(10), acc(11), inner(), acc(10));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz log push\n',
+    (
+        DEFAULTED_HEAD
+        + 'function run(flag) {\n'
+        + '  if (flag) {\n'
+        + '    ' + defaulted('acc', 'dec', order='5w1') + '\n'
+        + '    var out = acc(10) + acc.apply(undefined, [11]);\n'
+        + '    console.log(out);\n'
+        + '    ' + decoder('dec') + '\n'
+        + '  }\n'
+        + '}\n'
+        + 'run(true);\n'
+    ):
+        'pushFizz\n',
+    (
+        DEFAULTED_HEAD
+        + 'function run() {\n'
+        + '  for (const k of [10, 11]) {\n'
+        + '    ' + defaulted('acc', 'dec', order='w2') + '\n'
+        + '    console.log(acc(10), acc(12));\n'
+        + '    ' + decoder('dec') + '\n'
+        + '  }\n'
+        + '}\n'
+        + 'run();\n'
+    ):
+        'push log\npush log\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='01w') + '\n'
+        + 'console.log(typeof acc);\n'
+        + decoder('dec') + '\n'
+    ):
+        'function\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w0') + '\n'
+        + 'var original = Function.prototype.call;\n'
+        + 'Function.prototype.call = function (receiver, index) { return "called" + index; };\n'
+        + 'var r = acc.call(undefined, 10);\n'
+        + 'Function.prototype.call = original;\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'called10 Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + 'var r;\n'
+        + 'try { r = acc(10); } catch (e) { r = e.constructor.name; }\n'
+        + defaulted('acc', 'dec', order='4w') + '\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'TypeError Fizz\n',
+    (
+        'var cache = [], table;\n'
+        + GLOBAL_BUFFER + '\n'
+        + defaulted('acc', 'dec', order='w4') + '\n'
+        + 'var r;\n'
+        + 'try { r = acc(10); } catch (e) { r = e.constructor.name; }\n'
+        + F'table = {TABLE};\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'TypeError Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'console.log(acc(10), acc(11), acc(12), acc(10));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz log push\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'console.log(acc(10, undefined, undefined, function (s) { return "own"; }),'
+        + ' acc(10), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'own own Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'cache[10] = "planted";\n'
+        + 'console.log(acc(10), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'planted Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'console.log(acc(...[10]), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w') + '\n'
+        + 'function fill(c) { c[11] = "filled"; }\n'
+        + 'fill(cache);\n'
+        + 'console.log(acc(10), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push filled\n',
+    (
+        F'{GLOBAL_BUFFER}\n'
+        F'var cache = [], table = {TABLE}, get = (x, y, z, a, b) => {{'
+        ' if (typeof a === "undefined") { a = dec; } if (typeof b === "undefined") { b = cache; }'
+        ' if (x !== y) { return b[x] || (b[x] = a(table[x])); }'
+        ' if (a === void 0) { get = b; }'
+        ' if (z == x) { return y[cache[z]] = get(x, y); } };\n'
+        F'{decoder("dec")}\n'
+        'console.log(get(11), get.call(void 0, 12), get.apply(void 0, [10]));'
+    ):
+        'Fizz log push\n',
+    (
+        F'{DEFAULTED_HEAD}{decoder("dec")}\n'
+        F'{defaulted("get", "dec", order="3w1")}\n'
+        'console.log(get(0xb), get.call(undefined, 0xc));'
+    ):
+        'Fizz log\n',
+    (
+        F'{DEFAULTED_HEAD}'
+        'function f(k) {\n'
+        '  switch (k) {\n'
+        '    case 1:\n'
+        F'      {defaulted("get", "dec", order="0w2")}\n'
+        '      console.log(get(11));\n'
+        F'      {decoder("dec")}\n'
+        '      break;\n'
+        '  }\n'
+        '}\n'
+        'f(1);'
+    ):
+        'Fizz\n',
+    (
+        F'{DEFAULTED_HEAD}'
+        'function f() {\n'
+        '  var keep;\n'
+        '  {\n'
+        F'    {defaulted("get", "dec", order="w5")}\n'
+        '    keep = function () { return get(11); };\n'
+        F'    {decoder("dec")}\n'
+        '  }\n'
+        '  return keep();\n'
+        '}\n'
+        'console.log(f());'
+    ):
+        'Fizz\n',
+    (
+        '"use strict";\n'
+        F'{DEFAULTED_HEAD}'
+        'function f() {\n'
+        '  {\n'
+        F'    {defaulted("get", "dec", order="1w")}\n'
+        '    console.log(get(12));\n'
+        F'    {decoder("dec")}\n'
+        '  }\n'
+        '}\n'
+        'f();'
+    ):
+        'log\n',
+    (
+        F'{DEFAULTED_HEAD}'
+        'function f() {\n'
+        '  {\n'
+        F'    {defaulted("get", "dec", order="w")}\n'
+        '    console.log(get(11));\n'
+        F'    {decoder("dec")}\n'
+        '  }\n'
+        F'  {defaulted("other", "dec", order="w0")}\n'
+        '  console.log(other(12));\n'
+        '}\n'
+        'f();'
+    ):
+        'Fizz\nlog\n',
+    (
+        F'{DEFAULTED_HEAD}'
+        'function f() {\n'
+        F'  {defaulted("other", "dec", order="w0")}\n'
+        '  try { console.log(other(12)); } catch (e) { console.log(e.constructor.name); }\n'
+        '  {\n'
+        F'    {defaulted("get", "dec", order="w")}\n'
+        '    console.log(get(11));\n'
+        F'    {decoder("dec")}\n'
+        '  }\n'
+        '}\n'
+        'f();'
+    ):
+        'TypeError\nFizz\n',
+    (
+        F'{DEFAULTED_HEAD}'
+        'function f() {\n'
+        '  {\n'
+        F'    {defaulted("get", "dec", order="w")}\n'
+        '    console.log(get(11));\n'
+        F'    {decoder("dec")}\n'
+        '  }\n'
+        '  {\n'
+        F'    {defaulted("got", "dec", order="w4")}\n'
+        '    console.log(got(12));\n'
+        F'    {decoder("dec", SWAPPED)}\n'
+        '  }\n'
+        '}\n'
+        'f();'
+    ):
+        'Fizz\nlog\n',
+    (
+        DEFAULTED_HEAD
+        + 'var r = acc?.call(undefined, 10);\n'
+        + defaulted('acc', 'dec', order='3w1') + '\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'undefined Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + 'var r; try { r = acc.call?.(undefined, 10); } catch (e) { r = e.constructor.name; }\n'
+        + defaulted('acc', 'dec', order='3w1') + '\n'
+        + 'console.log(r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'TypeError Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w1') + '\n'
+        + 'console.log(acc.apply(undefined, [10]), acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'push Fizz\n',
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='w1') + '\n'
+        + 'var n = 0;\n'
+        + 'console.log(acc.call(void n++, 10), n);\n'
+        + decoder('dec') + '\n'
+    ):
+        'push 1\n',
+    (
+        DEFAULTED_HEAD
+        + 'function f() {\n'
+        + '  var r; try { r = get(11); } catch (e) { r = e.constructor.name; }\n'
+        + '  {\n'
+        + '    ' + defaulted('get', 'dec', order='1w4') + '\n'
+        + '    r += "," + get(12);\n'
+        + '    ' + decoder('dec') + '\n'
+        + '  }\n'
+        + '  return r;\n'
+        + '}\n'
+        + 'console.log(f());\n'
+    ):
+        'TypeError,log\n',
+    (
+        DEFAULTED_HEAD
+        + 'function f() {\n'
+        + '  var set;\n'
+        + '  {\n'
+        + '    set = function () { dec = function (s) { return "X"; }; };\n'
+        + '    ' + defaulted('get', 'dec', order='w') + '\n'
+        + '    set();\n'
+        + '    var r = get(11);\n'
+        + '    ' + decoder('dec') + '\n'
+        + '  }\n'
+        + '  return r;\n'
+        + '}\n'
+        + 'console.log(f());\n'
+    ):
+        'X\n',
+    (
+        DEFAULTED_HEAD
+        + 'function f() {\n'
+        + '  {\n'
+        + '    ' + defaulted('get', 'dec', order='w2') + '\n'
+        + '    ' + decoder('dec') + '\n'
+        + '  }\n'
+        + '  dec = undefined;\n'
+        + '  return get(11);\n'
+        + '}\n'
+        + 'console.log(f());\n'
+    ):
+        'Fizz\n',
+}
+
+#: A classic script calling its decoyed accessor through the global object with two arguments, which
+#: runs a decoy, mapped to what a host prints for it.
+A_SCRIPT_CALLING_A_DECOYED_ACCESSOR_THROUGH_THE_GLOBAL_OBJECT = {
+    (
+        DEFAULTED_HEAD
+        + defaulted('acc', 'dec', order='1w') + '\n'
+        + 'var r; try { r = globalThis.acc(10, 10); } catch (e) { r = e.constructor.name; }\n'
+        + 'console.log(typeof r, acc(11));\n'
+        + decoder('dec') + '\n'
+    ):
+        'string Fizz\n',
+}
 
 #: Programs holding the machinery of concealed strings in a shape that decides what a call of an
 #: accessor returns or whether the machinery is still named, mapped to what Node prints for each.
@@ -1128,8 +1586,188 @@ class TestAFunctionCallingNoDecoderIsNotComparedToTheAccessorTemplate(TestJsDeob
         self.assertLess(min(repeated), first / 5)
 
 
+class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
+
+    def test_the_decoys_go_and_each_call_through_call_or_apply_is_decoded(self):
+        source = next(iter(A_PROGRAM_HOLDING_A_DECOYED_ACCESSOR))
+        self.assertEqual(
+            "console.log('push', 'Fizz', 'log', 'push');",
+            deobfuscate_source(source, module=True),
+        )
+
+    def test_decoys_before_the_branch_that_decodes_go(self):
+        source = (
+            DEFAULTED_HEAD
+            + defaulted('acc', 'dec', order='3405w12') + '\n'
+            + 'console.log(acc(10), acc(11), acc.call(void 0, 12));\n'
+            + decoder('dec') + '\n'
+        )
+        self.assertEqual(
+            "console.log('push', 'Fizz', 'log');",
+            deobfuscate_source(source, module=True),
+        )
+
+    def test_an_accessor_whose_decoder_is_read_through_its_copy_keeps_its_decoys(self):
+        source = (
+            DEFAULTED_HEAD
+            + 'function f() {\n'
+            + '  {\n'
+            + '    ' + defaulted('get', 'dec', order='w') + '\n'
+            + '    console.log(get(11));\n'
+            + '    ' + decoder('dec') + '\n'
+            + '  }\n'
+            + '  ' + defaulted('other', 'dec', order='w0') + '\n'
+            + '  console.log(other(12));\n'
+            + '}\n'
+            + 'f();\n'
+        )
+        result = deobfuscate_source(source, module=True)
+        self.assertIn('return y[cache[z]] = other(x, y);', result)
+        self.assertIn('console.log(other(12));', result)
+
+    def test_a_call_through_an_optional_chain_stays(self):
+        source = (
+            DEFAULTED_HEAD
+            + 'var r = acc?.call(undefined, 10);\n'
+            + defaulted('acc', 'dec', order='3w1') + '\n'
+            + 'console.log(r, acc(11));\n'
+            + decoder('dec') + '\n'
+        )
+        self.assertIn('acc?.call(undefined, 10)', deobfuscate_source(source, module=True))
+
+    def test_a_call_through_call_stays_where_the_program_replaces_call(self):
+        source = (
+            DEFAULTED_HEAD
+            + defaulted('acc', 'dec', order='w0') + '\n'
+            + 'var original = Function.prototype.call;\n'
+            + 'Function.prototype.call = function (receiver, index) { return "called" + index; };\n'
+            + 'var r = acc.call(undefined, 10);\n'
+            + 'Function.prototype.call = original;\n'
+            + 'console.log(r, acc(11));\n'
+            + decoder('dec') + '\n'
+        )
+        self.assertIn('acc.call(undefined, 10)', deobfuscate_source(source, module=True))
+
+    def test_full_fizzbuzz_sample(self):
+        """
+        The program is recovered from the obfuscator's output for an eleven-line fizzbuzz with
+        string concealing alone, where the accessors default their decoders and caches, stand
+        among decoys, and are called through `call` and `apply`; each decoder is declared at the end
+        of the block whose strings it decodes, after the calls.
+        """
+        source = lzma.decompress(base64.b85decode(
+            '{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;4>)}SzQ1#9ZCPGVfzyXn;9}d7zoAjs^AQd`G2M&Xql@}Uz+v0Gc*<I-`?g6Pb^zB+*eI~'
+            '_TXz#3WDhN_E@Y1tfNoVZ-@$H7;XxKsu)XtD9ZevwZ|7ePE(0krt-$^V0aRvNiN;^E45KnMap?9{=M{|GD;zg&RT$St{3JW906|~'
+            'CsJJpQVCEdr1Dh(wcW*V4Di-`?zCVQwcdu*fICRPiCp6RdFpb{<h_Z^|4~IH^?$z*LIi+@6m`XFyYp{bs=Szrb)*KuWG$RVnF8^S'
+            'RoAvBR;bCKrGNIW7uftdRy4`@7v0S%Wyu~Vr-dKaaBD-^<wxq@7hpw;|B!=iJ7P(~Mjiz5#$g?mhndhO+>*F)4NYln^L1>!i?9Hx'
+            'e)6Y6X|CKC_6tU`WlYq)s&_V~He`ONyR<sPPTb6T?K6dQ3N{YkB^K3o3kKpv137s!o+8CJWo{kW;G)HN-#sw6v=N-dVClZ;+zM=4'
+            'U5LN>DG~A^qSK+>4>M!F=o4No&Zt=)t44h`{tiXd-xc=z{KZJ<@{{JK!vCt%CQnz-;e8ZmyKQKmZBr>B(Oa6D{9rAq{=uY?4gg?N'
+            'cGq8fxM=dI#+8ts6o;mYh9}f-E?q-;V+$VNTxl?>ng@<2v-}BljpyiBQ!N}vBV&$mTqa6Mxb3#-qdTAY%+-Rw@B3MIaAyBk=P`o5'
+            'aIn-D%1G?)kC~=MShlO3eDzY`D5P-p*IGsY3)_L{EYR7l53zSCcd~CC!34sh7ba|OM;VQPu5;B*!-SQo|4Mpf9t@JW(>YnmwDwR)'
+            'X?e-gPZ3+cb>(?eB(6@QPcFkSS|IM6Oa8%$hxZR<GMH6CMI8v{X6GMOvSP`|vXV=1zdiLv7M40%E;h%GJm+>2`q|YzrxocjRp&-|'
+            'jGoi+X7Hszb>l&7bCZ*J3gWjQ{DMSPW0^{VGG`VWQDFe@T&QsjlnY07wzPfz#8We`lGi5Y%~NqjYMh8bNPxgjHfzX5lKN{&|Alzi'
+            'ber)r*Ys*;fK9Zz=Uz&zA2K}2GtM1<u=MlSvs1mKlJSS5%x6TF+?htmFkfSV%($$Rc6maagZ7?&NdfP=y&?ij;N$Ib<~-!I44we}'
+            'xqKhGkga3?;pwvNO{UU`f>F{*??hRO$KX}``NQh`9K2g%ffMe*b*PI(aUQnJHj%m@zD2hd6>0<T2$pn_k$7sf(~A~{O<y!X5go|k'
+            'sv?rCyp2A<!B7dyAy)@W>BKmP>m2us8JVq{)-xOb-3YCdX-@_^kyScDv$zy$%HCy;-_^#WHQ1w^sx{#K^Ko4Gf?3u?2N(&<5--;v'
+            'W%`6Z+3CrT;NSav8Y%q4m&D4x<<4i84~{0C)cx$|wy+O2-oRKn&z)B3i3?Ry36ky~LJ^ZV)f*}edE->V_uFTlVs43a!3mT&f+N_s'
+            'bG^j|aDHcdd@;Q|A%r)9Z%hv6!D;eMhE;BK0O2V2wuMDxl&N!?f&gt<6>ZN+Lhv5Sl;vHCxDZ9x`<)33!u;>?Z7k}bBCXRcGD)0_'
+            'xuQR)oVcIj)Ih2~_4kP&<em0xe)f0)j6(0K`r6=EaaRRiIz)Q5h&tb(%qeP=C-9%EYjw@R9F2TMPeA=W?NP|E^i2;i<CC!^|M?Ts'
+            '0D{WLmvys-=IQL$>%Ia5BrT>hYTJ=QQpSPdHk29beFV}X+uZymb`R$(<(Ft;K+r2K091e3%$7A8>&RZC_bYSQ(tw0rFG72sZR&aq'
+            'n#Kp^4}faa$vEwI^yR<>+!FMS5S1Va$L$p-VQ9BP1&gUnX_6P8gkWDHh^berRCq)3Rin7O@)p0lo^f+WPj;53_S<U~taTTe+E<0i'
+            '({i1{<m!KdzX|ACWzds_NNk#tXOmpyyQ$RxuhBzFWs+}K?1;sRIP;9PR55W8{!%h8Dm$>A8*y`~GyBmBD8X<E4+1vEwIOo{|9m?k'
+            'oWq{SpsF-L68;DdrL3xz27TYO%RBqS`tHS!>i-yV1IT7@NQT9k(K2(5)gC3?tgS~hZflKXx60u4$9tQgkrS&hT<NWcEHA*ULTW(`'
+            'xO~?q+mb4CSpnHz*`y-qd}^O#ZWn3M_~2^kz-~$AAD{;q;5lstsI~S|9|1Bvo1ulW-Z2;H?}6VSkp*K6rtWb`McBX4(%|^+3a#Pp'
+            'J>ykn>GC?h_4_4`f}-nMeL+ej=yY&Cb%V&D7@F%mzW1uS^R?j}Ce#y+s_rDX>Aq@k1RL0YXlm7JH2A~aqMNumYnp)>4widj`a$ds'
+            'Y=Bu@6KjM$$EZLDafZZ(_(8(U?14{cdXSS=x$7L{9(0cf1tFX_@WstgKZ2!iy@oa5|FpPFhpXAgvCEz_9J&1grZlEHz|<qF!PX4x'
+            '0$L<f8A_tcl)rWe|E-C;0lM1dOW~I|Y`67t#|cnIQh_m%@LVGV&J-iY<sY>%_^P<q3`NP``0i>HV{BogTvV_cF0os;C`7*48Bs{Q'
+            '`(xS$wns3t_IQ|WSP+|340a1F6TAd^u#t)~w6IpGG33u%T)w$52AhDGc@_m)J@hZWt9Oh`cV&o(?Fz?#NZzZ&iU=#9;8FZePvWon'
+            'N%lZeuWXx;fESwNhAZ!Q%X{v<;>dp3v6?DmZWbTphR}Ht(fZuv-i)Cuy$2L5<yl!==tXte2c>2u$U04$E4>`1aF2xs+Ks{?gQ1^J'
+            ';w35|oJ7uK97sg0O%<OwvZZm}ylgu-R#Js@djFB9T92!oPA#But~vB84FC^6bXnD%!|PT9=iD#JS^TgmLF;^(Di@~;Wt+poq~LZK'
+            '*b^olS)xgZZH(Kz)YaT4o8O4-b>H#;HC{p#w~NV)lx&17|LY_#AQ{yiTmOf-Q2uuqO?q~b8RURz-)f8(tztSojk0b-RS4DSs5Nt2'
+            '?5;RNXH50wy4mqIorHBjME9B-0R5IQa`#hs;3TN6iKe_)JD4hFz<w&(448|+6MhhX#TKyge<m8RRHH5?gQ8x+94xB4{dASz5X4kE'
+            '<QMS1o*k22k1XnOf&M1G-7VY>v|B$uZ~>jvJO9;mbRoz9agU8h*+QwQLQZ5XG=GoC<L!<%?~bMd(2OUMNZ>|+8o(;Sx5-w{N?5fj'
+            'sRlUK!>j$Fm}Xx6v=Je=4bF((Pe2mgp<_nWe@HK2C5Y^#v;AFkK#jm(>AwU1Z_l;OM-rWWzsJsV&&n}k*2lJbJ*CD;|2R*9PrGV^'
+            'K~!Y~n1GAvgY``j-;xLlgQ5hrzXht4s?(RLUeF+xy8#XXv7clp0Alr&9aekKhx$K^qHtx%VuU5#4=j#LE7lpRgxblGoW98a=<}%R'
+            'B*Z@-J<dcMF}ms7&UXmVMs^6Mx!2gsx#Nc&^ZsyR*8p3-l?AzyHj4_GNtZf2J+f~IH4m@5-c?w-Tx3Ot>2};-cjQ9mXN0QKW<0?='
+            ';U{u$$X9FoJ*B>o8aDtKgHZn*RkklFC@Kd?Q|4B_a*)ugBJrZ`t2(uZRxhg#NTkhn$4VumuUbOQl2}1U=ANxp-3IW+uyd!3`tAja'
+            'Y%$hxeQV$)OYXJX59a^!DcO$azxXk$Yk#bK1k1rRgO-8c6_qT;L2r0*so<nbyc$P<el3SY(U91f0W*hs-lMfux5LY_t<n)jEcD8m'
+            'C_Z)6CtYSGARX#^mVGrmp3f&09Pj{ngSNl1*4fTVzl&&P<30f+f-2d-pT1q-vhJZh>B*>otn;w=g+B8GcP4SQk<LKSe8aOQ{kgo%'
+            'nlNfqZPKe7WKRMz83x^q2hC4>s)_yG4fHKH)kDmYsj=E<hZ*F1^XC&nO||`vZ1Zu{1r*9<e&z$38is-=5{}oNl*}v15uY1w|M~jb'
+            '3XU+TV_=%3+Z?yDP6*<=X{ALF1d_7>8h<?L_t18sS=)X25R`p1O>q-^(M^m3b?>C^c-HnZku58{=EE2VRCg^vjcs**0WX0phH;Q8'
+            'C=%1u6hgi&WuAFs4oZ|gR@W~9PM|EK5ZQC~{b*Q9WN+eYibeG;U32Ms4}3{)ipU^P<}t59bmGTw-787%d@&BNr%r;C6h#K5Vl1qq'
+            'a;Or+38B)?_LpuG!z<_R0)2l3k$xX*5^Tj2-#6*URKeTT#Zk~*UWUZW)_0nzv~Q8@ypT$&`HkSS85jJ`79*v2WT`)E)+hw89o=P8'
+            '0s^`HI(#NKy$K0^*QC~z)!a%*C9QU$kZ99%dNQmu_0x|k!EMw0d8|?sv7aaks&_5^-4!xhmircm@Ry|CkDHA?3DJDq#pffnZAU{}'
+            '55%aFeKJ`S+R7b+E~A7g#%S?_ZZQe>jVnU&k`vpYh>@iKhuWooP;#=0>qe7|5vX1q+g)A2d+-Q@9Z&xN@y?tqgoB%$7jkF5PKR=}'
+            'V>C=Er3b)g6i~xrBNm7#QMavAlc8B}RG*NqQI-!ykj(42O0ypq(2Au!sNUGiNvobINyqulyq#Ejo?uHcZU)IsZmVppOFQFLLwLxg'
+            'ffF>O07FVo^W%&lmS&4y-jgA1flok+{av^m;ApGMd`J%8mE4`e_5&4tb?VlrCXSO*33;$}kYN`X1@6-(JNc`}E{WUySe9iVhiNMV'
+            'I&bMbZHRVyKcZ+pN)u~P=bqr2pyIR8n?U3cRXV?1*ccEU!5s<J7l7b}ZWA^8+6ze<&HtXDKk)Y^9wq<J0@N0^lStRuH_Vul1>j5A'
+            'dZVjNPCx<2h2(1XP^AQX27qho4HSCcLTq4(ey)2hQ@Tr2GI$c={@Dg;kIN4Hucym-W*Wf95dvv=(mj&E;Fw#F((d2g0q+9Va?c7n'
+            'Lv@cCjE2#)etvLzP;Ra5;=;(l`efP`NP`m+E%`wXKUI-fkJ(pLH7XoP0tPNE8jZpmlNC4*gjG?MOlb}6988BJK(78osI_aw(MfCy'
+            'e%+&LiK9lP;kUsdNV(+)%gdma1pXbk$<o@cUU$$r%h^iqmDHK!cNLaZT__KN>zP-}0rqsG(hxjFjRGHEuc|wK&SB4eu3PkJ0kDZC'
+            '${%OogV)Le!=*t-6o#`rz)2s{&BkX(Yb-cOs$dBY+p)4w$$=vRi8SmM_($?;Hn$8Es?Pg0;`xb~+%r&GdN{|{{2Kg2hL6JrTt5w<'
+            '(19_3k23jjl4|^#xHG7qQy(N0^3zohd>xQpC0SpTulM|Yxb$G)Zx*b6z5Qn7WzVfg?&pE;9E_$(CyNi2&Juad>hsM3jeD%`mvJm_'
+            'c2$j7h$x;D#Pu*-hI{vsi_^SGTI@%RIR*U)mg^;W<8=UtRCABlVQZ`%X|Au14k1FM=)-Tu8$ve92E(qCpcw3^yiEgja6{+cG&|1}'
+            'J-}=j$^eiunKBu?X#e)P$Tus_mgUu<TST<bl|WJKIj-4AZ)Iq6>aW^=TXgv<eTBe9V64hJzQ+vSnx6WA)f{YTf^wFA3x>X)akk#K'
+            'K=27Y$F(`FGhSe#nx?fT+x#RJ6RnZOw<-h{wK#RC2+p~y8eSdx=C>`liMcGVkOs`@Co4Jcj)6ZZ2tGyYAk9R0Ls5>-(D7K24}!z|'
+            'Jt~%r6hEgMne!iz-?S~nyiBv5)dX55yqy#0+&8{UoHIkUP()t}4E!pE#l7If*#%{j&~My5aKwd3$=B9Ehvb@X(%Vl}+J^3B?_a*2'
+            'GAGVc&NAlgC*G1U-`)E2ez4lj#Rq972n;KjPHPQciIi`Mw@xTrR@)6F7t04H4Rli~!)cIKBE?Bo*r4XQv{G-qu0mlLEk)8~#AB!^'
+            'Cm59}am(2oieq^rV$HPRBE@AnN>0|J2%*e1`+jkKNLe!%@JPs59Tg8oTagMcq5#>&)9_GIjZfVF7O>-ekOdS*AAl#!G7Tf>mq8o4'
+            'x}gTy!^sPEp}*IWL_R}L&CT0NR;H-w(T8@RMG(>2Mw_Pat*s~K_lA2sF+H9wvB@hgFPYsEYZ=LqS>R!YSUk=&jn8%FUTa~PMWC+d'
+            'GntgF$^$)w=+1YKH4pm<rY4Dwp=E|5B-XiO=VjWY&NxdC!Z>;sd+x9j+;_+!cgBB@XndAfgwKk;Jc3iS5@`g-?Q&X1XWZ5TLiq6z'
+            '#v-<^u;jPhtm^Trw*wxE^bwA=u+f6-b>Sxz`^f&~H9`?#;o?t&8=&))>YEB<WYmIv0{@#}J2!s=f!3Fgk%F0QcDzulwU&Awhs6x?'
+            '`LJaE<`PW~Kj1sp`tN|ybmuo7&Kx5rdt$v#7B!P%+M7bq?=n3O&65zpAYu8YOMKF{nF8@+zq2JssfFI(lo5B%86~8K)Q$$Fv0*I}'
+            '#}{kO;uXAwNV-cOa7-5xa+xCc!(%aBTJ?8Im^BPgRTBZ4ypG=Cfg;RZCk>JY9oW+hG=py~C>Au82iucbu83h5GEjoJgaW$8z%J_('
+            'XozF?Jz3r?M3eSoLxkxn$M||ZCG;;yD?QU>1`YnmvFGNxsW7Ahc+-7zWfyDWL6}`e4rZR1Fz^8`7x3hcQQ`Tm=_y;a?sYZszpXQo'
+            'C}PSpl-_(xzJD?&#R8tfzXkYoGys7wFg%-m`bFarRa9a4bKafNX@g9<r3Y;Z4iMyN{YUZk*xrAmxh@iUc$wu!Y6GsFuQjkEZHk)K'
+            '&M3tp`J#SX)j4mvhRxL#@=-A+Zeg%m;pn6-`mD|U?hj(pTyMWIED(%VW}b{#1_Ld44K$MOeOvXi-lncP3PvkGk}!|2h7fiROsy4-'
+            'o@&R>@{)`d4O9Yu)B_+T6HY38ouWhs17pA2)j}V@V>-s39gM9R{br(8)P8RpYJA>8`b=Pe`@qT?-vj=_XxtH#58mbq$t$Qma9Yb4'
+            'kE%G(vO86L2<l8OprjHPX!(+=f5SAIolrH`ko)X5W_Ng`4Ji+~0zAb%_ErAg1smdrfG#ok`A7n8b5-lJ^9Mu8Qi^RwosxZ|NappX'
+            '+SX3dwsCxZ&#K7AKv@5l7aG*Zd(J5zUyDv%XYPCWegpky{z2%po-c-ws3_x#e|DQca?tt7gjEogFGS16E4m_k`H-R0X@gODC*pP}'
+            'Ma-%#PU4K<Ui%_W>6?`*uNX&OmF1m$=hj7}l+F$XonG@Z2ndjtI1vjc81$nXgj-`&f5=-9@S)u5LT=QUH>Zdkwc<^xS-P)<_>uj5'
+            'fRbL@pQ$$#{#iP&{R@0!-ijncKM3)Ed_I5`5WEc~mrg?c89O6TUu)LcOi2w=$l|VUitYL888g__f}UaP-?x78;u_Gntrf|phm<r9'
+            'kWFF6zWMu{WIiaxYMXyjN&^P(bsqA-w-dkYnfoi~ZzPk2o;OaK!J^hJKWS2unmIzy(G_HJ${!h^dbN;^nj;0$n@Y>-8BnLuL-<!+'
+            'TU8wfFW=GYI)+wB?B<;xXjzg*3s)*U{g4rg&D<eJ70#bGZ^S4?b2$U*XriLmllPFEnugsZ#i)(MWBK*WKjOQ0N?Htvvq4Z!%X+@W'
+            '8QLg))~RkXj_&vknB)^a!mz(4hYRQTIZsmNEGQMhldItZg4`#u$sz;W>&5dvS}3E%mR}ER9pbXA|2@GY#W}RNoB$<+00000hc^lY'
+            'c6D?T00H$Zs%8KHfzY??vBYQl0ssI200dcD'
+        )).decode('utf8')
+        result = self._deobfuscate(source)
+        self.assertTrue(result.endswith(inspect.cleandoc(
+            """
+            function fizzbuzz(limit) {
+              var lines = [];
+              for (var i = 1; i <= limit; i++) {
+                var line = '';
+                if (i % 3 === 0) {
+                  line += 'Fizz';
+                }
+                if (i % 5 === 0) {
+                  line += 'Buzz';
+                }
+                lines.push(line || String(i));
+              }
+              return lines.join(', ');
+            }
+            console.log('FizzBuzz: ' + fizzbuzz(15));
+            """
+        )))
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameAboutConcealedStrings(TestJsDeobfuscator):
+
+    def test_each_program_holding_a_decoyed_accessor_prints_what_it_printed(self):
+        rows = A_PROGRAM_HOLDING_A_DECOYED_ACCESSOR
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_script_calling_its_decoyed_accessor_through_the_global_object_prints_the_same(self):
+        rows = A_SCRIPT_CALLING_A_DECOYED_ACCESSOR_THROUGH_THE_GLOBAL_OBJECT
+        self.assertEqual(
+            {source: before_and_after_in_a_host(source) for source in rows},
+            each_program_still_prints(rows),
+        )
 
     def test_each_program_prints_what_it_printed(self):
         rows = A_PROGRAM_HOLDING_CONCEALED_STRINGS

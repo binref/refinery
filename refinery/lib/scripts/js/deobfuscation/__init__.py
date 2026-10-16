@@ -9,7 +9,10 @@ from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveSelfDefending
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
-from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder
+from refinery.lib.scripts.js.deobfuscation.b91strings import (
+    JsBase91AccessorDecoys,
+    JsBase91StringDecoder,
+)
 from refinery.lib.scripts.js.deobfuscation.cff import (
     JsControlFlowUnflattening,
     JsGeneratorCFFUnflattening,
@@ -75,6 +78,7 @@ _pipeline = DeobfuscationPipeline(
         TransformerGroup(
             'resolve',
             JsStringArrayResolver,
+            JsBase91AccessorDecoys,
             JsBase91StringDecoder,
             JsScrambleStringDecoder,
         ),
