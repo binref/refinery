@@ -1,6 +1,9 @@
 import pytest
 import re
 
+from itertools import zip_longest
+from typing import Iterable
+
 from refinery.lib.inno.emulator import (
     EmulatorException,
     IFPSEmulatorConfig,
@@ -12,9 +15,9 @@ from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand
 
 from .. import TestBase
 
-_SCRIPT = '8ca8a9c7454b8aab50c461b543098450f2f7ea277b67fc7614c2fe5f58d2c3a8'
 _ORACLE_LINE = re.compile(r'ORACLE (\S+) = (.*)')
-_LOGGED = {
+_INTEGER_SCRIPT = '8ca8a9c7454b8aab50c461b543098450f2f7ea277b67fc7614c2fe5f58d2c3a8'
+_INTEGER_LOG = {
     'store.s32_to_u32'                      : '4294967295',
     'store.u32_to_s32'                      : '-1',
     'store.s32_to_u8'                       : '200',
@@ -240,46 +243,138 @@ _LOGGED = {
 }
 
 
-class TestTheEmulatorLogsWhatInnoSetupLogged(TestBase):
+_ERROR_SCRIPT = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
+_ERROR_LOG = {
+    'CallerMessage'            : 'deep',
+    'CallerTrace'              : 'amfe',
+    'ExceptBlockMessage'       : 'second',
+    'ExceptBlockTrace'         : 'aeo',
+    'FinallyMessage'           : 'passing',
+    'FinallyTrace'             : 'afe',
+    'FinallyRaisesMessage'     : 'second',
+    'FinallyRaisesTrace'       : 'afe',
+    'ExitFinallyResult'        : '99',
+    'ExitFinallyTrace'         : 'afy',
+    'ExitExceptResult'         : '2',
+    'ExitExceptTrace'          : 'a',
+    'ExitCallingFinallyResult' : '102',
+    'ExitCallingFinallyTrace'  : 'afy',
+    'ExceptFinallyQuiet'       : 'abfy',
+    'ExceptFinallyRaised'      : 'aefy',
+    'FinallyExceptQuiet'       : 'abfy',
+    'FinallyExceptRaised'      : 'afey',
+    'SecondFinallyMessage'     : 'in finally',
+    'SecondFinallyTrace'       : 'affo',
+    'BreakFinallyTrace'        : '1tfn2fn3tfny',
+    'BreakExceptTrace'         : '1tn2n3tny',
+    'ContinueFinallyTrace'     : '1tfn2fn3tfny',
+    'DynamicIndexMessage'      : 'Out Of Range',
+    'StaticIndexMessage'       : 'Out Of Range',
+    'NegativeIndexMessage'     : 'Out Of Range',
+    'DivisionMessage'          : 'Division by zero',
+    'ModuloMessage'            : 'Division by zero',
+    'OverflowMessage'          : 'Integer overflow',
+    'InvalidFloatTrace'        : 'n',
+    'FloatDivisionTrace'       : 'n',
+    'MessageWithoutException'  : '(There is no current exception)',
+    'MessageAfterHandled'      : '(There is no current exception)',
+    'MessageInner'             : 'inner',
+    'MessageOuterAfterInner'   : 'outer',
+    'MessageInCallee'          : 'seen by callee',
+    'MessageInsideCalleeTry'   : '(There is no current exception)',
+    'QuietExitResult'          : '12',
+    'QuietExitTrace'           : 'af',
+    'TwoFinalliesExitResult'   : '1',
+    'TwoFinalliesExitTrace'    : 'afg',
+    'ExitInsideFinallyMessage' : 'kept in flight',
+    'ExitInsideFinallyTrace'   : 'fco',
+    'MessageInFinally'         : '(There is no current exception)',
+    'CodeInFinallyTrace'       : 'fyc',
+    'CodeSeesMessage'          : 'seen by code',
+    'CodeLogged'               : 'z',
+    'CodeLogsValue'            : 'z',
+    'AbortMessage'             : 'Operation aborted',
+    'AbortTrace'               : 'e',
+    'CodeValue'                : 'code:x',
+    'CodeKeepsLocals'          : 'kept',
+    'CodeFailsMessage'         : 'code failed: y',
+    'CodeFailsTrace'           : 'ae',
+    'End'                      : 'reached',
+    'DeinitializeSetup'        : 'entered',
+}
+
+
+def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str, str]:
+    """
+    Adds the name and value of each oracle line that the events log to the given values.
+    """
+    for event in events:
+        if (
+            isinstance(event, NewFunctionCall)
+            and event.name == 'Log'
+            and (match := _ORACLE_LINE.fullmatch(event.args[0]))
+        ):
+            values[match[1]] = match[2]
+    return values
+
+
+def _string_constants(functions: Iterable[Function]) -> set[str]:
+    return {
+        value
+        for function in functions
+        for instruction in function.body or ()
+        for operand in instruction.operands
+        if isinstance(operand, Operand)
+        and operand.value is not None
+        and isinstance(value := operand.value.value, str)
+    }
+
+
+class _OracleTest(TestBase):
     """
     Inno Setup 6.5.0 built an installer from a script whose procedures log values that Pascal Script
-    computes, one procedure per area. The installer ran on Windows with a log file, and `_LOGGED`
-    holds every value of that log; `_SCRIPT` is the compiled script taken from that installer. Each
-    test emulates one procedure and compares every value it logs with the logged value; the names of
-    those values are the string constants of the procedure and of the script functions it calls.
+    computes, one procedure per area. The installer ran on Windows with a log file: `log` holds every
+    value of that log and `script` is the compiled script taken from that installer.
     """
+    script: str
+    log: dict[str, str]
 
-    def assertEmulatedAsLogged(self, procedure: str):
-        emulator = InnoSetupEmulator(IFPSFile.Parse(self.download_sample(_SCRIPT)), IFPSEmulatorConfig(log_calls=True))
+    def emulator(self):
+        return InnoSetupEmulator(IFPSFile.Parse(self.download_sample(self.script)), IFPSEmulatorConfig(log_calls=True))
+
+    def assertEmulatedAsLogged(self, procedure: str, *names: str):
+        """
+        Emulates one procedure and compares what it logs with the log: the values of the given names,
+        or else every value that it logs with the logged values whose names are string constants of
+        the procedure and of the script functions it calls.
+        """
+        emulator = self.emulator()
         function = emulator.symbols[procedure]
-        reached: list[Function] = [function]
-        for caller in reached:
-            for instruction in caller.body or ():
-                if instruction.opcode is Op.Call:
-                    reached.extend(
-                        callee for callee in instruction.operands
-                        if isinstance(callee, Function) and callee.body is not None and callee not in reached
-                    )
-        constants = {
-            value
-            for caller in reached
-            for instruction in caller.body or ()
-            for operand in instruction.operands
-            if isinstance(operand, Operand)
-            and operand.value is not None
-            and isinstance(value := operand.value.value, str)
-        }
-        real = {name: value for name, value in _LOGGED.items() if name in constants}
-        emulated = {}
-        for event in emulator.emulate_function(function):
-            if (
-                isinstance(event, NewFunctionCall)
-                and event.name == 'Log'
-                and (match := _ORACLE_LINE.fullmatch(event.args[0]))
-            ):
-                emulated[match[1]] = match[2]
-        self.assertTrue(real)
+        emulated = _logged_values(emulator.emulate_function(function), {})
+        if names:
+            self.assertLessEqual(set(names), _string_constants(emulator.ifps.functions))
+            emulated = {name: value for name, value in emulated.items() if name in names}
+        else:
+            reached: list[Function] = [function]
+            for caller in reached:
+                for instruction in caller.body or ():
+                    if instruction.opcode is Op.Call:
+                        reached.extend(
+                            callee for callee in instruction.operands
+                            if isinstance(callee, Function) and callee.body is not None and callee not in reached
+                        )
+            names = tuple(_string_constants(reached))
+            self.assertTrue(self.log.keys() & names)
+        real = {name: value for name, value in self.log.items() if name in names}
         self.assertEqual(emulated, real)
+
+
+class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
+    """
+    The procedures of this script compute with integers, floats, sets, Variants and `Format`.
+    """
+    script = _INTEGER_SCRIPT
+    log = _INTEGER_LOG
 
     def test_stores(self):
         self.assertEmulatedAsLogged('ORACLESTORES')
@@ -352,3 +447,115 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(TestBase):
 
     def test_an_infinite_float_constant(self):
         self.assertEmulatedAsLogged('ORACLEINFINITY')
+
+
+class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
+    """
+    The procedures of this script raise errors and log what the script sees of them: which blocks
+    ran, in order, and the exception message.
+    """
+    script = _ERROR_SCRIPT
+    log = _ERROR_LOG
+
+    def test_an_error_in_a_called_function_runs_the_except_block_of_its_caller(self):
+        self.assertEmulatedAsLogged('ORACLECALLERHANDLER')
+
+    def test_an_error_in_an_except_block_leaves_the_block(self):
+        self.assertEmulatedAsLogged('ORACLEEXCEPTBLOCKRAISES')
+
+    def test_an_error_passes_through_a_finally_block(self):
+        self.assertEmulatedAsLogged('ORACLEFINALLYPASSESON')
+
+    def test_an_error_in_a_finally_block_replaces_the_error_that_passes_through(self):
+        self.assertEmulatedAsLogged('ORACLEFINALLYRAISES')
+
+    def test_an_exit_runs_the_finally_blocks_of_its_function(self):
+        self.assertEmulatedAsLogged('ORACLEEXITS')
+
+    def test_an_exit_through_finally_blocks_that_call_no_function_returns(self):
+        self.assertEmulatedAsLogged('ORACLEQUIETEXITS')
+
+    def test_an_exit_inside_a_finally_block_keeps_the_error_that_passes_through(self):
+        self.assertEmulatedAsLogged('ORACLEEXITINSIDEFINALLY')
+
+    def test_a_try_statement_with_an_except_block_and_a_finally_block(self):
+        self.assertEmulatedAsLogged('ORACLECOMBINEDBLOCKS')
+
+    def test_an_error_in_the_finally_block_after_an_except_block(self):
+        self.assertEmulatedAsLogged('ORACLESECONDFINALLYRAISES')
+
+    def test_break_and_continue_inside_a_try_block(self):
+        self.assertEmulatedAsLogged('ORACLELOOPS')
+
+    def test_runtime_errors_of_integers_and_arrays(self):
+        self.assertEmulatedAsLogged(
+            'ORACLERUNTIMEERRORS',
+            'DynamicIndexMessage',
+            'StaticIndexMessage',
+            'NegativeIndexMessage',
+            'DivisionMessage',
+            'ModuloMessage',
+            'OverflowMessage',
+        )
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='float errors are raised although Delphi 12 masks them')
+    def test_float_errors_raise_nothing(self):
+        self.assertEmulatedAsLogged(
+            'ORACLERUNTIMEERRORS',
+            'InvalidFloatTrace',
+            'InvalidFloatMessage',
+            'FloatDivisionTrace',
+            'FloatDivisionMessage',
+        )
+
+    def test_the_exception_message(self):
+        self.assertEmulatedAsLogged('ORACLEMESSAGES')
+
+    def test_an_error_that_passes_through_a_finally_block_has_no_exception_message(self):
+        self.assertEmulatedAsLogged('ORACLEMESSAGEINFINALLY')
+
+    def test_a_code_constant_runs_a_function_of_the_script(self):
+        self.assertEmulatedAsLogged('ORACLECODECONSTANTS')
+
+    def test_a_code_constant_inside_a_finally_block_ends_the_error_that_passes_through(self):
+        self.assertEmulatedAsLogged('ORACLECODEINFINALLY')
+
+    def test_a_code_constant_reads_the_exception_message_of_the_function_that_expands_it(self):
+        self.assertEmulatedAsLogged('ORACLECODEMESSAGE')
+
+    def test_a_code_constant_that_logs_a_value_is_expanded_to_its_result(self):
+        self.assertEmulatedAsLogged('ORACLECODELOGS', 'CodeLogsValue')
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the calls of a function that expands a code constant are not reported')
+    def test_a_code_constant_logs_a_value(self):
+        self.assertEmulatedAsLogged('ORACLECODELOGS', 'CodeLogged')
+
+    def test_abort_raises_an_error_that_the_script_handles(self):
+        self.assertEmulatedAsLogged('ORACLEABORT')
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='StrToInt raises an error for text that is no number instead of returning -1',
+    )
+    def test_strtoint_of_text_that_is_no_number_raises_no_error(self):
+        self.assertEmulatedAsLogged('ORACLECONVERSIONMESSAGE', 'StrToIntMessage')
+
+    def test_an_error_left_by_an_exit_inside_a_finally_block_ends_the_run(self):
+        """
+        Setup logged that `DeinitializeSetup` raised an exception with this message.
+        """
+        emulator = self.emulator()
+        logged = {}
+        with self.assertRaises(IFPSException) as raised:
+            _logged_values(emulator.emulate_function(emulator.symbols['DEINITIALIZESETUP']), logged)
+        self.assertEqual(logged, {'DeinitializeSetup': self.log['DeinitializeSetup']})
+        self.assertEqual(raised.exception.message, 'left in flight')
+
+    def test_two_runs_advanced_alternately_log_what_each_logs_alone(self):
+        emulator = self.emulator()
+        procedures = ('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
+        alone = [_logged_values(emulator.emulate_function(emulator.symbols[p]), {}) for p in procedures]
+        runs = [emulator.emulate_function(emulator.symbols[p]) for p in procedures]
+        alternately = list(zip_longest(*runs))
+        self.assertEqual([_logged_values(events, {}) for events in zip(*alternately)], alone)

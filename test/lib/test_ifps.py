@@ -22,6 +22,8 @@ _SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK = '6aebe4aac528782d132f96e970cbba2d1
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
+_SCRIPT_THAT_CATCHES_A_DIVISION_BY_ZERO = 'c47352571fb7ac45bd994f4b057ffec15898df4724f2a4cd0d9213e3eedfca29'
+_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
 _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR = (
     '0c9ffd51196d71bba19a708bb64224be87c8fceb0b22b71262080c1055b5a642',
     '441094a1a29f4ff248f289e19ae6c8c15abe1ff8bd440aefe85a0e5817482e92',
@@ -139,6 +141,28 @@ class TestIPFSEmulator(TestBase):
         data = self.download_sample('a3c40be74f061bd25a3e4b264602f4ace5652eed0ca020362a6d56d336bc650f')
         self.assertCollectorFreesLessThan(0x40000, lambda: self._emulate_the_installation(data))
 
+    def test_a_caught_division_by_zero_leaves_nothing_to_the_collector(self):
+        data = self.download_sample(_SCRIPT_THAT_CATCHES_A_DIVISION_BY_ZERO)
+        self.assertCollectorFreesLessThan(0x40000, lambda: self._emulate_the_installation(data))
+
+    def _stop_in_the_except_block_of_an_index_outside_of_an_array(self, data: bytearray):
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
+        from refinery.lib.inno.ifps import IFPSFile
+        emulator = InnoSetupEmulator(IFPSFile.Parse(bytearray(data)), IFPSEmulatorConfig(log_calls=True))
+        for event in emulator.emulate_function(emulator.symbols['ORACLERUNTIMEERRORS']):
+            if isinstance(event, NewFunctionCall) and event.name == 'GetExceptionMessage':
+                break
+
+    def test_an_emulation_stopped_inside_an_except_block_leaves_nothing_to_the_collector(self):
+        """
+        The password search stops the emulated installation where it finds the password, which can
+        be inside an except block.
+        """
+        data = self.download_sample(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        self.assertCollectorFreesLessThan(
+            0x40000, lambda: self._stop_in_the_except_block_of_an_index_outside_of_an_array(data)
+        )
+
     def test_an_exception_handler_of_a_script_runs_on_the_stack_of_its_try_block(self):
         from refinery.lib.inno.emulator import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, log_calls=True)
@@ -160,26 +184,22 @@ class TestIPFSEmulator(TestBase):
     def test_a_date_format_of_adjacent_fields_is_formatted_field_by_field(self):
         self.assertRegex(str(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')), '^[0-9]{14}$')
 
-    @pytest.mark.xfail(strict=True, reason='an exception does not leave a script function for a handler of its caller')
     def test_an_exception_in_a_called_function_runs_the_handler_of_its_caller(self):
         windows = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSDIR')
         with _failing_external('CompareText'):
             temp = self._emulated_value(_SCRIPT_WITH_NESTED_TRY, 'GETWINDOWSTEMPDIR')
         self.assertEqual(temp, F'{windows}\\temp')
 
-    @pytest.mark.xfail(strict=True, reason='an exception inside a catch block enters the same catch block again')
     def test_an_exception_in_a_catch_block_leaves_the_function(self):
         from refinery.lib.inno.emulator import IFPSException
         with _failing_external('Log'), self.assertRaises(IFPSException):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_seconds=2)
 
-    @pytest.mark.xfail(strict=True, reason='a try block with a finally block swallows the exception')
     def test_an_exception_in_a_try_block_leaves_the_function_after_its_finally_block(self):
         from refinery.lib.inno.emulator import IFPSException
         with _failing_external('GetDateTimeString'), self.assertRaises(IFPSException):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')
 
-    @pytest.mark.xfail(strict=True, reason='an exit from a try block skips its finally block')
     def test_an_exit_from_a_try_block_runs_its_finally_block(self):
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
         emulator.globals[16].set('session')
@@ -414,11 +434,6 @@ class TestIPFSEmulator(TestBase):
         # CALLSHCHANGENOTIFY calls Sleep(200).
         self.assertEqual(emulator.seconds_slept, 0.2)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=EmulatorException,
-        reason='a script function that expands a code constant clears the stack of its caller',
-    )
     def test_a_script_that_expands_a_code_constant_keeps_its_own_stack(self):
         """
         The replaced `Log` stands in for a script function that calls `ExpandConstant` with a code
@@ -581,20 +596,35 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.symbols import IFPSEvents
         self.assertEqual([IFPSEvents[event].name for event in SetupEvent], [event.value for event in SetupEvent])
 
-    def test_the_emulated_installation_of_each_sample_reports_no_script_error(self):
+    def test_the_emulated_installation_of_each_sample_reports_no_error(self):
         """
-        The emulated installation goes on after a script error. An emulated function that fails on
-        one of these samples therefore no longer ends the installation and only shows up here.
+        The emulated installation goes on after a script error, and the script can handle the error
+        of an emulated function that fails. Such a failure on one of these samples therefore does
+        not end the installation and only shows up here.
         """
         from refinery.lib.inno.archive import InnoArchive
-        from refinery.lib.inno.emulator import InnoSetupEmulator, NewScriptError
+        from refinery.lib.inno.emulator import InnoSetupEmulator, NewEmulationError, NewScriptError
         from refinery.lib.inno.ifps import IFPSFile
         for sample in _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR:
             with self.subTest(sample=sample):
                 data = self.download_sample(sample)
                 script = IFPSFile.Parse(data) if data.startswith(IFPSFile.Magic) else InnoArchive(data)
                 events = InnoSetupEmulator(script).emulate_installation()
-                self.assertEqual([str(event) for event in events if isinstance(event, NewScriptError)], [])
+                errors = [str(event) for event in events if isinstance(event, (NewScriptError, NewEmulationError))]
+                self.assertEqual(errors, [])
+
+    def test_a_failing_emulated_function_is_reported_when_the_script_handles_its_error(self):
+        from refinery.lib.inno.emulator import NewEmulationError, NewFunctionCall
+        emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS, log_calls=True)
+        with _failing_external('RaiseException'):
+            events = list(emulator.emulate_function(emulator.symbols['ORACLECALLERHANDLER']))
+        logged = [event.args for event in events if isinstance(event, NewFunctionCall) and event.name == 'Log']
+        failures = [event for event in events if isinstance(event, NewEmulationError)]
+        self.assertEqual(logged, [
+            ('ORACLE CallerMessage = RaiseException failed',),
+            ('ORACLE CallerTrace = amfe',),
+        ])
+        self.assertEqual(failures, [NewEmulationError('RaiseException', 'RaiseException failed')])
 
     def test_a_function_that_is_not_emulated_sets_its_last_output_argument_to_one(self):
         """
@@ -621,6 +651,64 @@ class TestIPFSEmulator(TestBase):
         with self.assertRaises(EmulatorException):
             emulator.emulate_function(function, 'Some', False).value
 
+    def test_a_code_constant_that_expands_itself_ends_the_emulation(self):
+        from refinery.lib.inno.emulator import EmulatorMaxCalls
+        for config in ({'max_call_stack': 5}, {}):
+            emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS, **config)
+            with self.subTest(**config), self.assertRaises(EmulatorMaxCalls):
+                emulator.emulate_function(emulator.symbols['CODERECURSION'], 'x').value
+
+    def _script_with_a_changed_instruction(self, function: str, opcode: int, change: Callable[[bytes], bytes]):
+        """
+        Parses the script that logs how Pascal Script handles errors after changing the encoding of
+        the first instruction of the given opcode in the given function.
+        """
+        from refinery.lib.inno.ifps import IFPSFile
+        data = self.download_sample(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        body = next(f for f in IFPSFile.Parse(bytearray(data)).functions if f.name == function).body
+        assert body is not None
+        code = b''.join(instruction.encoded for instruction in body)
+        start = data.find(code)
+        self.assertEqual(data.find(code, start + 1), -1)
+        instruction = next(instruction for instruction in body if instruction.opcode == opcode)
+        offset = start + instruction.offset
+        data[offset:offset + instruction.size] = change(instruction.encoded)
+        return IFPSFile.Parse(data)
+
+    def test_a_try_statement_without_an_end_ends_the_emulation_before_its_try_block(self):
+        """
+        The loop of `ORACLELOOPS` adds its counter to the trace of the script and then enters the
+        try statement, whose blocks add letters. The trace is the only global variable of the
+        script, after the two that Inno Setup declares.
+        """
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        from refinery.lib.inno.ifps import Op
+        script = self._script_with_a_changed_instruction(
+            'ORACLELOOPS',
+            Op.PushEH,
+            lambda encoded: encoded[:13] + bytes(4 * [0xFF]),
+        )
+        emulator = InnoSetupEmulator(script)
+        with self.assertRaises(EmulatorException):
+            list(emulator.emulate_function(emulator.symbols['ORACLELOOPS']))
+        self.assertEqual(emulator.globals[2].get(), '1')
+
+    def test_the_end_of_a_block_whose_try_statement_is_in_another_function_ends_the_emulation(self):
+        """
+        Without its try statement, the end of the try block in `MESSAGEINSIDETRY` would end a block
+        of the try statement in the function that calls it.
+        """
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        from refinery.lib.inno.ifps import Op
+        script = self._script_with_a_changed_instruction(
+            'MESSAGEINSIDETRY',
+            Op.PushEH,
+            lambda encoded: bytes([Op.Nop]) * len(encoded),
+        )
+        emulator = InnoSetupEmulator(script)
+        with self.assertRaises(EmulatorException):
+            list(emulator.emulate_function(emulator.symbols['ORACLEMESSAGES']))
+
     def test_a_declaration_with_parameters_keeps_its_kind(self):
         from refinery.lib.inno.symbols import IFPSClasses, IFPSEvents
         self.assertEqual(IFPSEvents['NextButtonClick'].kind, 'function')
@@ -631,11 +719,6 @@ class TestIPFSEmulator(TestBase):
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
         self.assertEqual(emulator.ExpandConstant('a}b'), 'a}b')
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=EmulatorException,
-        reason='an index outside of an array ends the emulation instead of raising the script error Out Of Range',
-    )
     def test_an_index_outside_of_an_array_raises_an_error_that_the_script_handles(self):
         """
         The script sizes an array with `SetArrayLength` and stores into its first element, inside a

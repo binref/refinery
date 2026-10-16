@@ -4,6 +4,7 @@ from refinery.lib.inno.archive import InnoArchive, is_inno_setup
 from refinery.lib.inno.emulator import (
     IFPSEmulatorConfig,
     InnoSetupEmulator,
+    NewEmulationError,
     NewFunctionCall,
     NewInstruction,
     NewMutex,
@@ -57,7 +58,7 @@ class innopwd(Unit):
             if isinstance(event, NewFunctionCall):
                 self.log_info(F'calling {event.name!s}{event.args!r}')
                 continue
-            if isinstance(event, NewScriptError):
+            if isinstance(event, (NewScriptError, NewEmulationError)):
                 self.log_warn(str(event))
                 continue
             if isinstance(event, NewMutex):

@@ -23,7 +23,7 @@ import struct
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum, IntFlag, StrEnum, auto
+from enum import Enum, IntEnum, IntFlag, StrEnum, auto
 from functools import cached_property, partial, wraps
 from pathlib import Path
 from string import Formatter
@@ -45,7 +45,7 @@ from urllib.parse import unquote
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, delphi
 from refinery.lib.inno.archive import Flags, InnoArchive
-from refinery.lib.inno.delphi import VarRec, VType
+from refinery.lib.inno.delphi import DelphiException, SysConst, VarRec, VType
 from refinery.lib.inno.ifps import (
     TC,
     AOp,
@@ -158,9 +158,13 @@ class Variable(VariableBase, Generic[_T]):
     def at(self, k: int):
         """
         Provides index access for the variable. If the variable is a pointer, it is dereferenced
-        before accessing the data.
+        before accessing the data. An index outside of the data is an error of the script, also a
+        negative one, since Pascal Script reads the index as an unsigned number.
         """
-        return self.deref().data[k]
+        var = self.deref()
+        if not 0 <= k < len(var):
+            raise IFPSException(kind=PSError.OutOfRange)
+        return var.data[k]
 
     def deref(var):
         """
@@ -381,14 +385,58 @@ class AbortEmulation(EmulatorException):
     """
 
 
+class PSError(IntEnum):
+    """
+    The kinds of runtime error that Pascal Script distinguishes, numbered as Pascal Script numbers
+    them. Pascal Script keeps the kind with every error of the script.
+    """
+    OutOfRange = 10
+    TypeMismatch = 12
+    DivideByZero = 15
+    MathError = 16
+    OutOfRecordRange = 18
+    Exception = 20
+
+    @property
+    def text(self) -> str:
+        """
+        The message that Pascal Script gives an error of this kind when it carries no exception of
+        Delphi.
+        """
+        return _PS_ERROR_TEXT[self]
+
+
+_PS_ERROR_TEXT = {
+    PSError.OutOfRange       : 'Out Of Range',
+    PSError.TypeMismatch     : 'Type Mismatch',
+    PSError.DivideByZero     : 'divide by Zero',
+    PSError.MathError        : 'Math error',
+    PSError.OutOfRecordRange : 'Out of Record Fields Range',
+    PSError.Exception        : 'Exception: ',
+}
+
+
 class IFPSException(RuntimeError):
     """
-    This class represents an exception within the IFPS runtime, i.e. an exception that is subject
-    to IFPS exception handling.
+    An error of the script, which its exception handlers can handle. Pascal Script keeps the `kind`
+    of every error, and the exception of Delphi that raised it, if any. The script reads the
+    `message` of that exception with `GetExceptionMessage`, or the text of the kind when there is
+    no exception. An error that escapes from a call of an emulated function names the `called`
+    function in its report.
     """
-    def __init__(self, msg: str, parent: BaseException | None = None):
-        super().__init__(msg)
-        self.parent = parent
+    def __init__(
+        self,
+        message: str | None = None,
+        kind: PSError = PSError.Exception,
+        called: str | None = None,
+    ):
+        if message is None:
+            message = kind.text
+        report = message if called is None else F'Error calling {called}: {message}'
+        super().__init__(report)
+        self.kind = kind
+        self.message = message
+        self.called = called
 
 
 class EmulatorTimeout(EmulatorException, TimeoutError):
@@ -422,7 +470,7 @@ class EmulatorMaxArray(EmulatorException, MemoryError):
 
 
 def _type_mismatch() -> IFPSException:
-    return IFPSException('Type Mismatch')
+    return IFPSException(kind=PSError.TypeMismatch)
 
 
 def _signed32(value: int) -> int:
@@ -570,7 +618,7 @@ def _integer_comparands(left: TC, a: int, right: TC, b) -> tuple:
 def _set_contains(members: int, set_type: TSet, code: TC, element) -> bool:
     ordinal = _ordinal(code, element) & 0xFFFFFFFF
     if ordinal >= set_type.size:
-        raise IFPSException('Out of Record Fields Range')
+        raise IFPSException(kind=PSError.OutOfRecordRange)
     return bool((members >> ordinal) & 1)
 
 
@@ -598,43 +646,229 @@ def _compare(cop: COp, left: IFPSType, a, right: IFPSType, b) -> bool:
     return _PYTHON_COMPARISON[cop](a, b)
 
 
-@dataclass
-class ExceptionHandler:
-    """
-    This class represents an exception handler within the IFPS runtime.
-    """
-    finally_one: int | None
-    """
-    Code offset of the first finally handler.
-    """
-    catch_error: int | None
-    """
-    Code offset of the catch handler.
-    """
-    finally_two: int | None
-    """
-    Code offset of the second finally handler.
-    """
-    handler_end: int
-    """
-    Code offset of the first instruction that is no longer covered.
-    """
-    current: EHType = EHType.Try
-    """
-    Represents the current state of this exception handler.
-    """
-    depth: int = 0
-    """
-    The size of the data stack when the handler was installed. The stack is cut back to this size
-    when an exception enters one of the blocks of the handler.
-    """
-
-
 class _CallState(NamedTuple):
     fn: Function
     ip: int
     sp: int
-    eh: list[ExceptionHandler]
+
+
+@dataclass
+class ExceptionHandler:
+    """
+    An exception handler of the IFPS runtime: one try statement whose try block runs or whose
+    blocks have not all ended. A block that is entered can no longer be entered by an error.
+    """
+    finally_one: int | None
+    """
+    Code offset of the first finally block, while it can be entered.
+    """
+    catch_error: int | None
+    """
+    Code offset of the except block, while it can be entered.
+    """
+    finally_two: int | None
+    """
+    Code offset of the second finally block, while it can be entered.
+    """
+    handler_end: int
+    """
+    Code offset of the first instruction after the try statement.
+    """
+    function: Function
+    """
+    The function that contains the try statement.
+    """
+    frame: int
+    """
+    The number of call frames below the function that contains the try statement.
+    """
+    sp: int
+    """
+    The stack base of the function that contains the try statement.
+    """
+    depth: int
+    """
+    The size of the data stack when the handler was installed. The stack is cut back to this size
+    when an error enters one of the blocks of the handler.
+    """
+    exception: IFPSException | None = None
+    """
+    The error that entered the except block.
+    """
+
+    def resume(self, ip: int) -> _CallState:
+        """
+        The position at the given offset of the function that contains the try statement.
+        """
+        return _CallState(self.function, ip, self.sp)
+
+
+class _ErrorInFlight:
+    """
+    The error that passes through a finally block, raised again when that block ends. A run of
+    the script and all runs nested in it have one error in flight.
+    """
+    __slots__ = 'error',
+
+    def __init__(self):
+        self.error: IFPSException | None = None
+
+
+class _ScriptRun:
+    """
+    One run of the script from the call of one of its functions until that function returns, as
+    Pascal Script runs it: the data stack, the frames of the functions that called the running one,
+    the try statements that have not ended, and the return that waits for finally blocks. A run
+    that starts while an emulated function runs for another run, as one that expands a code
+    constant, is nested in that run: it shares the error in flight and the script sees the
+    handlers of both, but an error that no handler of the nested run takes ends the nested run.
+    """
+    def __init__(self, caller: _ScriptRun | None = None):
+        self.stack: list[Variable] = []
+        self.frames: list[_CallState] = []
+        self.handlers: list[ExceptionHandler] = []
+        self.exit_point: int | None = None
+        self.caller = caller
+        if caller is None:
+            self.in_flight = _ErrorInFlight()
+            self.depth = 0
+        else:
+            self.in_flight = caller.in_flight
+            self.in_flight.error = None
+            self.depth = caller.depth + len(caller.frames) + 1
+
+    @property
+    def current_exception(self) -> IFPSException | None:
+        """
+        The error that `GetExceptionMessage` reads: the one that entered the except block of the
+        innermost try statement if an error did, else the error in flight when no try statement
+        is left.
+        """
+        run = self
+        while run is not None:
+            if handlers := run.handlers:
+                return handlers[-1].exception
+            run = run.caller
+        return self.in_flight.error
+
+    def install(self, operands: Sequence, function: Function, sp: int):
+        """
+        Installs the handler of a try statement that begins in the given function.
+        """
+        finally_one, catch_error, finally_two, handler_end = operands
+        if handler_end is None:
+            raise RuntimeError('The try statement has no end.')
+        self.handlers.append(ExceptionHandler(
+            finally_one,
+            catch_error,
+            finally_two,
+            handler_end,
+            function,
+            len(self.frames),
+            sp,
+            len(self.stack),
+        ))
+
+    def throw(self, error: IFPSException):
+        """
+        Puts the given error in flight. The run keeps a copy without traceback.
+        """
+        self.in_flight.error = copy_exception(error)
+
+    def unwind(self) -> _CallState:
+        """
+        Moves the error in flight to the innermost handler of this run that can take it, which is
+        the first of its finally block, its except block or its second finally block that can
+        still be entered. Handlers with none left are removed. An error that enters the except
+        block is no longer in flight. When no handler of this run is left, the error ends the run.
+        """
+        in_flight = self.in_flight
+        handlers = self.handlers
+        while handlers:
+            eh = handlers[-1]
+            del self.stack[eh.depth:]
+            del self.frames[eh.frame:]
+            if (ip := eh.finally_one) is not None:
+                eh.finally_one = None
+            elif (ip := eh.catch_error) is not None:
+                eh.catch_error = None
+                eh.exception, in_flight.error = in_flight.error, None
+            elif (ip := eh.finally_two) is not None:
+                eh.finally_two = None
+            else:
+                handlers.pop()
+                continue
+            return eh.resume(ip)
+        error, in_flight.error = in_flight.error, None
+        if error is None:
+            raise RuntimeError('No error is in flight.')
+        try:
+            raise error
+        finally:
+            del error
+
+    def end_block(self, block: EHType) -> _CallState | None:
+        """
+        Ends a block of the innermost try statement, which must belong to the running function.
+        The result is where the run goes on, or `None` when the error in flight unwinds.
+        """
+        handlers = self.handlers
+        if not handlers or (eh := handlers[-1]).frame != len(self.frames):
+            raise RuntimeError(F'The end of a {block.name} block has no try statement in this function.')
+        in_flight = self.in_flight
+        if block is EHType.Try:
+            if (ip := eh.finally_one) is not None:
+                eh.finally_one = None
+                return eh.resume(ip)
+            if (ip := eh.finally_two) is not None:
+                eh.catch_error = None
+                return eh.resume(ip)
+        elif block is EHType.Finally:
+            if in_flight.error is not None and (ip := eh.catch_error) is not None:
+                eh.catch_error = None
+                eh.exception, in_flight.error = in_flight.error, None
+                return eh.resume(ip)
+            if (ip := eh.finally_two) is not None:
+                eh.finally_two = None
+                return eh.resume(ip)
+        elif block is EHType.Catch:
+            eh.catch_error = None
+            if (ip := eh.finally_two) is not None:
+                eh.finally_two = None
+                return eh.resume(ip)
+            handlers.pop()
+            return eh.resume(self._after(eh))
+        handlers.pop()
+        if in_flight.error is not None:
+            return None
+        return eh.resume(self._after(eh))
+
+    def exit(self, function: Function, offset: int, sp: int) -> _CallState | None:
+        """
+        Begins the return of the running function at the given offset: it first runs each finally
+        block of its try statements, and the end of each comes back to the return. The result is
+        the next finally block, or `None` when the function returns.
+        """
+        self.exit_point = offset
+        handlers = self.handlers
+        frame = len(self.frames)
+        while handlers and (eh := handlers[-1]).frame >= frame:
+            del self.stack[eh.depth:]
+            if (ip := eh.finally_one) is not None:
+                eh.finally_one = None
+            elif (ip := eh.finally_two) is not None:
+                eh.finally_two = None
+            else:
+                handlers.pop()
+                continue
+            return _CallState(function, ip, sp)
+        self.exit_point = None
+        return None
+
+    def _after(self, eh: ExceptionHandler) -> int:
+        if (exit_point := self.exit_point) is not None:
+            return exit_point
+        return eh.handler_end
 
 
 class _WizardForm:
@@ -663,6 +897,11 @@ class IFPSEmulatedFunction(NamedTuple):
     """
     Indicates whether the handler implements a procedure rather than a function in the IFPS
     runtime.
+    """
+    caller: bool = False
+    """
+    Indicates whether the handler receives the run of the script that calls it as its keyword
+    argument `caller`. Inno Setup passes its functions the runtime that calls them.
     """
 
     @property
@@ -885,6 +1124,20 @@ class NewScriptError(NamedTuple):
         return F'script error in {self.name}{self.args!r}: {self.message}'
 
 
+class NewEmulationError(NamedTuple):
+    """
+    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each call
+    of an emulated function that fails with an error of the emulator rather than one of the
+    script. The script sees the failure as an error that it can handle. It holds the name of the
+    function and the message of the failure.
+    """
+    name: str
+    message: str
+
+    def __str__(self):
+        return F'emulation of {self.name} failed: {self.message}'
+
+
 class NewInstruction(NamedTuple):
     """
     An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
@@ -991,7 +1244,6 @@ class IFPSEmulator:
         self.config = options or IFPSEmulatorConfig(**more)
         self._wizard_form = _WizardForm()
         self._globals: list[Variable] | None = None
-        self.stack: list[Variable] = []
         self.mutexes: set[str] = set()
         self.symbols: dict[str, Function] = CaseInsensitiveDict()
         self.reset()
@@ -1003,15 +1255,14 @@ class IFPSEmulator:
 
     def reset(self):
         """
-        Reset the emulator timing, FPU word, mutexes, and stack. The script starts over with new
-        global variables that hold their default values.
+        Reset the emulator timing, FPU word, and mutexes. The script starts over with new global
+        variables that hold their default values.
         """
         self.seconds_slept = 0.0
         self.clock = 0
         self.fpucw = FPUControl.MaxPrecision | FPUControl.RoundTowardZero
         self.jumpflag = False
         self.mutexes.clear()
-        self.stack.clear()
         self._globals = None
         self._win32api_last_error = 0
         self._win32api_sorted_process_ids = sorted(self.config.processes)
@@ -1026,11 +1277,12 @@ class IFPSEmulator:
             script_globals = self._globals = [Variable(v.type, v.spec) for v in self.ifps.globals]
         return script_globals
 
-    def unimplemented(self, function: Function):
+    def unimplemented(self, function: Function, arguments: list[Variable], result: Variable | None):
         """
         The base IFPS emulator raises `refinery.lib.inno.emulator.NeedSymbol` when an external
         symbol is unimplemented. Child classes can override this function to handle the missing
-        symbol differently.
+        symbol differently; it receives the arguments of the call and the variable for its result,
+        if the symbol is a function.
         """
         raise NeedSymbol(function.name)
 
@@ -1040,29 +1292,31 @@ class IFPSEmulator:
         Emulate a function call to the given function, passing the given arguments. The method
         returns the return value of the emulated function call if it is not a procedure.
         """
-        self.stack.clear()
+        return (yield from self._execute(_ScriptRun(), function, args))
+
+    def _execute(self, run: _ScriptRun, function: Function, args: Sequence):
         decl = function.decl
         if decl is None:
             raise NotImplementedError(F'Do not know how to call {function!s}.')
         if (n := len(decl.parameters)) != (m := len(args)):
             raise ValueError(
                 F'Function {function!s} expects {n} arguments, only {m} were given.')
+        stack = run.stack
         for index, (argument, parameter) in enumerate(zip(args, decl.parameters), 1):
             variable = Variable(parameter.type, VariableSpec(index, VariableType.Local))
             variable.set(argument)
-            self.stack.append(variable)
-        self.stack.reverse()
+            stack.append(variable)
+        stack.reverse()
         if not decl.void:
             result = Variable(decl.return_type, VariableSpec(0, VariableType.Argument))
-            self.stack.append(result)
-        yield from self.call(function)
-        self.stack.clear()
+            stack.append(result)
+        yield from self._interpret(run, function)
         if not decl.void:
             return result.get()
 
-    def call(self, function: Function):
+    def _interpret(self, run: _ScriptRun, function: Function):
         """
-        Begin emulating at the start of the given function.
+        Emulates the given run of the script from the start of the given function.
         """
 
         def resolve(spec: VariableSpec) -> Variable:
@@ -1070,11 +1324,11 @@ class IFPSEmulator:
             if t is VariableType.Argument:
                 if function.decl.void:
                     i -= 1
-                return self.stack[sp - i]
+                return stack[sp - i]
             if t is VariableType.Global:
                 return script_globals[i]
             if t is VariableType.Local:
-                return self.stack[sp + i]
+                return stack[sp + i]
             raise TypeError
 
         def getvar(op: VariableSpec | Operand) -> Variable:
@@ -1105,10 +1359,11 @@ class IFPSEmulator:
                 raise RuntimeError('attempt to assign to an immediate')
             getvar(op).set(new)
 
-        callstack: list[_CallState] = []
+        frames = run.frames
+        depth = run.depth
         script_globals = self.globals
         exec_start = process_time()
-        stack = self.stack
+        stack = run.stack
         _cfg_max_call_stack = self.config.max_call_stack
         _cfg_max_data_stack = self.config.max_data_stack
         _cfg_max_seconds = self.config.max_seconds
@@ -1117,11 +1372,18 @@ class IFPSEmulator:
 
         ip: int = 0
         sp: int = len(stack) - 1
-        pending_exception = None
-        exceptions = []
+        raised: IFPSException | None = None
+        unwind = False
 
         while True:
-            if 0 < _cfg_max_call_stack < len(callstack):
+            if raised is not None:
+                run.throw(raised)
+                raised = None
+                unwind = True
+            if unwind:
+                unwind = False
+                function, ip, sp = run.unwind()
+            if 0 < _cfg_max_call_stack < depth + len(frames):
                 raise EmulatorMaxCalls
 
             if function.body is None:
@@ -1163,7 +1425,7 @@ class IFPSEmulator:
                     yield NewFunctionCall(str(function), tuple(a.get() for a in args))
 
                 if handler is None:
-                    self.unimplemented(function)
+                    self.unimplemented(function, args, None if void else stack[-1])
                 else:
                     if decl and (decl.void != handler.void or decl.argc != handler.argc):
                         ok = False
@@ -1178,25 +1440,33 @@ class IFPSEmulator:
                         if not byref:
                             args[k] = var.get()
                     args.insert(0, self)
+                    keywords = {'caller': run} if handler.caller else {}
+                    failure = None
                     try:
-                        return_value = handler.call(*args)
+                        return_value = handler.call(*args, **keywords)
                         if inspect.isgenerator(return_value):
                             return_value = yield from return_value
                     except EmulatorException:
                         raise
-                    except Exception as b:
-                        pending_exception = IFPSException(F'Error calling {function.name}: {b!s}', copy_exception(b))
+                    except RecursionError as RE:
+                        raise EmulatorMaxCalls(F'Calling {name} nests runs of the script too deeply.') from RE
+                    except IFPSException as error:
+                        raised = IFPSException(error.message, error.kind, name)
+                    except DelphiException as error:
+                        raised = IFPSException(str(error), called=name)
+                    except Exception as error:
+                        failure = str(error)
+                        raised = IFPSException(failure, called=name)
                     else:
                         if not handler.void:
                             stack[-1].set(return_value)
-                if not callstack:
-                    if pending_exception is None:
+                    if failure is not None:
+                        yield NewEmulationError(name, failure)
+                if not frames:
+                    if raised is None:
                         return
-                    try:
-                        raise pending_exception
-                    finally:
-                        pending_exception = None
-                function, ip, sp, exceptions = callstack.pop()
+                    continue
+                function, ip, sp = frames.pop()
                 continue
 
             while insn := function.code.get(ip, None):
@@ -1209,12 +1479,6 @@ class IFPSEmulator:
                 if _cfg_log_opcodes:
                     yield NewInstruction(function, insn, ip)
                 try:
-                    if pending_exception is not None:
-                        try:
-                            raise pending_exception
-                        finally:
-                            pending_exception = None
-
                     opc = insn.opcode
                     ip += insn.size
                     self.clock += 1
@@ -1243,17 +1507,21 @@ class IFPSEmulator:
                             if not self.fpucw & FPUControl.InvalidOperation:
                                 result = float('nan')
                             else:
-                                raise IFPSException('invalid operation', FPE) from FPE
+                                raise IFPSException('invalid operation', PSError.MathError) from FPE
                         except OverflowError as OFE:
-                            if fpu and self.fpucw & FPUControl.Overflow:
+                            if not fpu:
+                                raise IFPSException(SysConst.SIntOverflow) from OFE
+                            if self.fpucw & FPUControl.Overflow:
                                 result = float('nan')
                             else:
-                                raise IFPSException('arithmetic overflow', OFE) from OFE
+                                raise IFPSException('arithmetic overflow', PSError.MathError) from OFE
                         except ZeroDivisionError as ZDE:
-                            if fpu and self.fpucw & FPUControl.ZeroDivide:
+                            if not fpu:
+                                raise IFPSException(SysConst.SDivByZero, PSError.DivideByZero) from ZDE
+                            if self.fpucw & FPUControl.ZeroDivide:
                                 result = float('nan')
                             else:
-                                raise IFPSException('division by zero', ZDE) from ZDE
+                                raise IFPSException('division by zero', PSError.DivideByZero) from ZDE
                         target.set(result)
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
@@ -1263,11 +1531,10 @@ class IFPSEmulator:
                     elif opc == Op.Pop:
                         stack.pop()
                     elif opc == Op.Call:
-                        callstack.append(_CallState(function, ip, sp, exceptions))
+                        frames.append(_CallState(function, ip, sp))
                         function = insn.callee()
                         ip = 0
                         sp = len(stack) - 1
-                        exceptions = []
                         break
                     elif opc == Op.Jump:
                         ip = insn.operands[0]
@@ -1278,10 +1545,16 @@ class IFPSEmulator:
                         if not getval(insn.op(1)):
                             ip = insn.operands[0]
                     elif opc == Op.Ret:
+                        if (position := run.exit(function, insn.offset, sp)) is not None:
+                            function, ip, sp = position
+                            continue
                         del stack[sp + 1:]
-                        if not callstack:
-                            return
-                        function, ip, sp, exceptions = callstack.pop()
+                        if not frames:
+                            if run.in_flight.error is None:
+                                return
+                            unwind = True
+                            break
+                        function, ip, sp = frames.pop()
                         break
                     elif opc == Op.StackType:
                         raise OpCodeNotImplemented(str(opc))
@@ -1301,11 +1574,10 @@ class IFPSEmulator:
                         if isinstance(call, int):
                             call = self.ifps.functions[call]
                         if isinstance(call, Function):
-                            callstack.append(_CallState(function, ip, sp, exceptions))
+                            frames.append(_CallState(function, ip, sp))
                             function = call
                             ip = 0
                             sp = len(stack) - 1
-                            exceptions = []
                             break
                     elif opc == Op.SetPtr:
                         getvar(insn.op(0)).setptr(getvar(insn.op(1)))
@@ -1329,26 +1601,12 @@ class IFPSEmulator:
                         if self.jumpflag:
                             ip = insn.operands[0]
                     elif opc == Op.PushEH:
-                        exceptions.append(ExceptionHandler(*insn.operands, depth=len(stack)))
+                        run.install(insn.operands, function, sp)
                     elif opc == Op.PopEH:
-                        tp = None
-                        et = EHType(insn.operands[0])
-                        eh = exceptions[-1]
-                        if eh.current != et:
-                            raise RuntimeError(F'Expected {eh.current} block to end, but {et} was ended instead.')
-                        while tp is None:
-                            if et is None:
-                                raise RuntimeError
-                            tp, et = {
-                                EHType.Catch         : (eh.finally_one, EHType.Finally),
-                                EHType.Try           : (eh.finally_one, EHType.Finally),
-                                EHType.Finally       : (eh.finally_two, EHType.SecondFinally),
-                                EHType.SecondFinally : (eh.handler_end, None),
-                            }[et]
-                        eh.current = et
-                        ip = tp
-                        if et is None:
-                            exceptions.pop()
+                        if (position := run.end_block(EHType(insn.operands[0]))) is None:
+                            unwind = True
+                            break
+                        function, ip, sp = position
                     elif opc == Op.Inc:
                         counter = getvar(insn.op(0)).deref()
                         if not counter.type.code.integer:
@@ -1369,26 +1627,8 @@ class IFPSEmulator:
                     else:
                         raise RuntimeError(F'Function contains invalid opcode at 0x{ip:X}.')
                 except IFPSException as EE:
-                    try:
-                        eh = exceptions[-1]
-                    except IndexError:
-                        raise EE
-                    et = EHType.Try
-                    tp = None
-                    while tp is None:
-                        if et is None:
-                            raise RuntimeError
-                        tp, et = {
-                            EHType.Try           : (eh.catch_error, EHType.Catch),
-                            EHType.Catch         : (eh.finally_one, EHType.Finally),
-                            EHType.Finally       : (eh.finally_two, EHType.SecondFinally),
-                            EHType.SecondFinally : (eh.handler_end, None),
-                        }[et]
-                    if et is None:
-                        raise EE
-                    del stack[eh.depth:]
-                    eh.current = et
-                    ip = tp
+                    raised = EE
+                    break
                 except EmulatorException:
                     raise
                 except Exception as RE:
@@ -1419,10 +1659,13 @@ class IFPSEmulator:
             pfn.__doc__ = docs
 
             void = kwargs.get('void', signature.return_annotation == signature.empty)
+            caller = kwargs.get('caller', False)
             parameters: list[bool] = []
             specs = iter(signature.parameters.values())
             next(specs) # skip self
             for spec in specs:
+                if caller and spec.name == 'caller':
+                    continue
                 try:
                     hint = eval(spec.annotation, globals(), locals())
                 except Exception as E:
@@ -1431,7 +1674,7 @@ class IFPSEmulator:
                     hint = get_origin(hint)
                 var = isinstance(hint, type) and issubclass(hint, Variable)
                 parameters.append(var)
-            registry[name] = e = IFPSEmulatedFunction(pfn, parameters, void)
+            registry[name] = e = IFPSEmulatedFunction(pfn, parameters, void, caller)
             aliases = kwargs.get('alias', [])
             if isinstance(aliases, str):
                 aliases = [aliases]
@@ -1601,6 +1844,7 @@ class IFPSEmulator:
     def Abort(self):
         if self.config.throw_abort:
             raise AbortEmulation
+        raise IFPSException(SysConst.SOperationAborted)
 
     @external()
     def DirExists(self, path: str) -> bool:
@@ -1738,23 +1982,35 @@ class IFPSEmulator:
 
         return map
 
-    @external()
-    def ExpandConstant(self, string: str) -> str:
-        return self.expand_constant(string)
+    @external(caller=True)
+    def ExpandConstant(self, string: str, caller: _ScriptRun | None = None) -> str:
+        return self.expand_constant(string, caller=caller)
 
-    @external()
-    def ExpandConstantEx(self, string: str, custom_var: str, custom_val: str) -> str:
-        return self.expand_constant(string, custom_var, custom_val)
+    @external(caller=True)
+    def ExpandConstantEx(
+        self,
+        string: str,
+        custom_var: str,
+        custom_val: str,
+        caller: _ScriptRun | None = None,
+    ) -> str:
+        return self.expand_constant(string, custom_var, custom_val, caller=caller)
 
     def expand_constant(
         self,
         string: str,
         custom_var: str | None = None,
         custom_val: str | None = None,
-        unescape: bool = False
+        unescape: bool = False,
+        caller: _ScriptRun | None = None,
     ):
+        """
+        Expands the constants in the given string. A code constant runs a function of the script;
+        when the expansion is part of a run of the script, given as `caller`, that run is nested in
+        it.
+        """
         config = self.config
-        expand = partial(self.expand_constant, unescape=True)
+        expand = partial(self.expand_constant, unescape=True, caller=caller)
         string = re.sub(r'(\{\{.*?\}(?!\}))', '\\1}', string)
 
         with io.StringIO() as result:
@@ -1764,7 +2020,7 @@ class IFPSEmulator:
             try:
                 parsed = list(formatter.parse(string))
             except ValueError as VE:
-                raise IFPSException(F'invalid format string: {string!r}', VE) from VE
+                raise IFPSException(F'invalid format string: {string!r}') from VE
             for prefix, spec, modifier, conversion in parsed:
                 modifier = modifier or ''
                 if backslash and prefix[:1] == '\\':
@@ -1776,7 +2032,7 @@ class IFPSEmulator:
                     continue
                 elif spec == '\\':
                     if modifier or conversion:
-                        raise IFPSException('Invalid format string.', ValueError(string))
+                        raise IFPSException('Invalid format string.')
                     value = spec
                 elif spec == custom_var:
                     value = custom_val
@@ -1801,8 +2057,8 @@ class IFPSEmulator:
                     try:
                         function = self.symbols[symbol]
                     except KeyError as KE:
-                        raise IFPSException(F'String formatter references missing function {symbol}.', KE) from KE
-                    emulation = self.emulate_function(function, param)
+                        raise IFPSException(F'String formatter references missing function {symbol}.') from KE
+                    emulation = EventCall(self._execute(_ScriptRun(caller), function, (param,)))
                     value = str(emulation.value)
                 elif spec == 'cm':
                     # {cm:LaunchProgram,Inno Setup}
@@ -1829,7 +2085,7 @@ class IFPSEmulator:
                     try:
                         value = constants[spec]
                     except KeyError as KE:
-                        raise IFPSException(F'invalid format field {spec}', KE) from KE
+                        raise IFPSException(F'invalid format field {spec}') from KE
                 backslash = value.endswith('\\')
                 result.write(value)
             return result.getvalue()
@@ -1974,6 +2230,12 @@ class IFPSEmulator:
     @external()
     def RaiseException(self, msg: str):
         raise IFPSException(msg)
+
+    @external(caller=True)
+    def GetExceptionMessage(self, caller: _ScriptRun | None = None) -> str:
+        if caller is None or (error := caller.current_exception) is None:
+            return '(There is no current exception)'
+        return error.message
 
     @external()
     def ProcessorArchitecture(self) -> int:
@@ -2522,26 +2784,17 @@ class InnoSetupEmulator(IFPSEmulator):
         yield NewScriptError(event, args, message)
         return False
 
-    def unimplemented(self, function: Function):
+    def unimplemented(self, function: Function, arguments: list[Variable], result: Variable | None):
         """
         Any unimplemented function is essentially skipped. Any arguments passed by reference and
         all return values that are of type integer are set to `1` in an attempt to indicate success
         wherever possible.
         """
-        decl = function.decl
-        if decl is None:
-            return
-        if not decl.void:
-            rc = 1
-            rv = self.stack[-1]
-            if not rv.container:
-                rt = rv.type.py_type()
-                if isinstance(rt, type) and issubclass(rt, int):
-                    rv.set(1)
-        else:
-            rc = 0
-        for k in range(rc, rc + len(decl.parameters)):
-            ptr: Variable[Variable] = self.stack[~k]
+        if result is not None and not result.container:
+            rt = result.type.py_type()
+            if isinstance(rt, type) and issubclass(rt, int):
+                result.set(1)
+        for ptr in arguments:
             if not ptr.pointer:
                 continue
             var = ptr.deref()
