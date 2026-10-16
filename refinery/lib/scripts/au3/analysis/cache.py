@@ -18,6 +18,7 @@ from refinery.lib.scripts.au3.analysis.existence import (
     Au3ExistenceModel,
     Au3ProbeMemo,
     build_existence_model,
+    call_target,
     parse_payload,
 )
 from refinery.lib.scripts.au3.analysis.usage import (
@@ -183,10 +184,10 @@ def _call_may_read_error_state(
     """
     Whether *call* may read `@error` or `@extended` through a payload it dispatches: a callee
     computed at run time may name `Execute`, and an `Execute`, or a `Call` over the name, runs the
-    payload its argument spells — a `Call` whose name folds to a literal is read for the name it
-    dispatches, and one whose name does not fold may dispatch anything. A call to a script
-    function reads nothing this walk has to find: its body stands in the tree, where the census
-    reads it.
+    payload its argument spells — a `Call` whose name folds to a literal is read for the callee
+    `call_target` resolves the name to, and one whose name does not fold, or whose resolution
+    refuses, may dispatch anything. A call to a script function reads nothing this walk has to
+    find: its body stands in the tree, where the census reads it.
     """
     callee = ast.direct_callee(call)
     if callee is None:
@@ -198,13 +199,18 @@ def _call_may_read_error_state(
             return True
         return not _payload_free_of_error_state(call.arguments[0], functions)
     if callee.name == 'call':
+        function_names = frozenset(functions)
         name = literal_value(
             call.arguments[0] if call.arguments else None,
-            frozenset(functions),
+            function_names,
         )
-        if name is None or name.kind is not Kind.STRING:
+        spelling = None if name is None or name.kind is not Kind.STRING else to_string(name)
+        if spelling is None:
             return True
-        if to_string(name).lower() != 'execute':
+        target = call_target(spelling, call.arguments[1:], function_names)
+        if target is None:
+            return True
+        if target != 'execute':
             return False
         return not _payload_free_of_error_state(
             call.arguments[1] if len(call.arguments) > 1 else None,

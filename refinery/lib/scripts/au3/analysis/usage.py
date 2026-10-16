@@ -222,7 +222,9 @@ def callee_census(
     Count what the calls of *root* name. A member callee is the one exception to every reader: it
     dispatches through an object and reaches no builtin and no script function. A script function
     named `Call` shadows the builtin, so its first argument is an ordinary argument rather than a
-    name. Source text the parser could not read is read through the facts *unparsed* holds: a
+    name; otherwise a `Call` names the callee `call_target` resolves its string literal to, and
+    one whose name is no literal or whose resolution refuses makes any callee possible. Source
+    text the parser could not read is read through the facts *unparsed* holds: a
     computed callee it opens, or a `Call` it spells — whose argument's literalness the text cannot
     show — makes any callee possible, an `Execute` it spells joins the names, and the error-state
     macros it spells count as reads.
@@ -230,6 +232,7 @@ def callee_census(
     callees: set[str] = set()
     computed_callee = False
     reads_error_macros = False
+    function_names = frozenset(functions)
     for node in root.walk():
         if isinstance(node, Au3Macro):
             reads_error_macros = reads_error_macros or node.name in ERROR_MACROS
@@ -242,10 +245,14 @@ def callee_census(
                         ast.unwrap_parens(node.arguments[0])
                         if node.arguments else None
                     )
-                    if not isinstance(literal, Au3StringLiteral):
+                    target = (
+                        call_target(literal.value, node.arguments[1:], function_names)
+                        if isinstance(literal, Au3StringLiteral) else None
+                    )
+                    if target is None:
                         computed_callee = True
                     else:
-                        callees.add(literal.value.lower())
+                        callees.add(target)
             elif not isinstance(ast.unwrap_parens(node.callee), Au3MemberAccess):
                 computed_callee = True
     for facts in unparsed.values():
@@ -700,15 +707,11 @@ def _collect_spellings(
     return '\n'.join(pieces).lower()
 
 
-def _collect_unparsed(root: Au3Script) -> dict[Au3ErrorNode, Au3UnparsedText]:
+def _collect_unparsed(scope_model: Au3ScopeModel) -> dict[Au3ErrorNode, Au3UnparsedText]:
     """
-    The facts of every error node in *root*, keyed by the node.
+    The facts of every error node the scope model holds, keyed by the node.
     """
-    return {
-        node: read_unparsed(node.text)
-        for node in root.walk()
-        if isinstance(node, Au3ErrorNode)
-    }
+    return {node: read_unparsed(node.text) for node in scope_model.error_nodes}
 
 
 def build_usage_model(
@@ -720,7 +723,7 @@ def build_usage_model(
     Collect what *root* does with its names over the scope model's bindings and the propagation
     walk's may-write summaries.
     """
-    unparsed = _collect_unparsed(root)
+    unparsed = _collect_unparsed(scope_model)
     unparsed_variables = {
         name
         for facts in unparsed.values()

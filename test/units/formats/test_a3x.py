@@ -6,7 +6,7 @@ from refinery.units.formats.a3x import (
     A3X_APICALLS,
     A3xScript,
     A3xType,
-    _PRETTY,
+    _pretty,
     a3x_decompile,
     a3x_decompress,
     a3x_decrypt,
@@ -84,7 +84,7 @@ class TestA3X(TestUnitBase):
         self.assertSetEqual(set(out), {'unicode-script.au3'})
         self.assertContains(out['unicode-script.au3'], B"new ActiveXObject('WScript.Shell').Run")
 
-    def test_the_interpreters_call_names_and_the_analysis_table_agree(self):
+    def test_the_interpreters_call_names_and_the_builtin_table_agree(self):
         """
         The interpreter's compiled call names and the deobfuscation pipeline's builtin table
         describe the same functions, so neither may grow without the other being reconsidered.
@@ -98,15 +98,16 @@ class TestA3X(TestUnitBase):
             set(AUTOIT_FUNCTION_NAMES) | {'dummyspeedtest'},
         )
 
-    def test_the_pretty_table_prints_the_documented_function_spellings(self):
+    def test_the_name_lookup_prints_the_documented_function_spellings(self):
         """
         Nine builtins are spelled differently in the interpreter's call table and in the
-        documentation; the decompiler prints the documented spelling. `DummySpeedTest` has no
-        documentation page and keeps the interpreter's spelling, and a keyword keeps its own.
+        documentation; the decompiler's name lookup prints the documented spelling.
+        `DummySpeedTest` has no documentation page and keeps the interpreter's spelling, and a
+        keyword keeps its own.
         """
         self.assertEqual(
             {
-                name: _PRETTY[name.lower()] for name in [
+                name: _pretty(name) for name in [
                     'Acos',
                     'BitAnd',
                     'BitNot',
@@ -135,15 +136,12 @@ class TestA3X(TestUnitBase):
             },
         )
 
-    def test_an_interpreted_builtin_call_prints_the_documented_spelling(self):
-        code = _bytecode(self.download_sample(
-            '3b775e678568cd3d55187443a3f7aae2116b7e9762b3c3879f5e1c6225434b25'))
-        call = B'\x7F\x34' + _name('_SECURITY__SETPRIVILEGE')
-        start = code.find(call) + 2
-        end = start + len(_name('_SECURITY__SETPRIVILEGE'))
-        code[start - 1:end] = B'\x01' + A3X_APICALLS.index('Hwnd').to_bytes(4, 'little')
-        lines = [line for _, line in a3x_decompile(code)]
+    def test_a_name_python_folds_into_a_builtin_keeps_its_stored_spelling(self):
+        """
+        U+212A KELVIN SIGN lowercases to ASCII `k` for Python; whether AutoIt folds it too is
+        unpinned, so only the ASCII spelling of the name prints as the builtin.
+        """
         self.assertEqual(
-            [line for line in lines if line.lower().startswith('hwnd(')],
-            ['HWnd($HTOKEN, "SeDebugPrivilege", True)'],
+            {name: _pretty(name) for name in ['WINKILL', 'WIN\u212aILL']},
+            {'WINKILL': 'WinKill', 'WIN\u212aILL': 'WIN\u212aILL'},
         )

@@ -931,6 +931,45 @@ class TestAu3DynamicNameFlattening(TestAu3):
             'Func f()\n    Local $x\n    Call("Execute", "$r = @error")\n'
             '    Assign("x", 1)\n    $r = Eval("x")\nEndFunc\n')
 
+    def test_a_call_spelling_of_execute_with_a_sigil_keeps_the_flatten(self):
+        """
+        A string names a function without its leading `$`, as `call_target` resolves it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    Call("$Execute", "$r = @error")
+                    Assign("x", 1)
+                    $r = Eval("x")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $x\n    Call("$Execute", "$r = @error")\n'
+            '    Assign("x", 1)\n    $r = Eval("x")\nEndFunc\n')
+
+    def test_a_call_forwarded_through_call_keeps_the_flatten(self):
+        """
+        A `Call` of `Call` dispatches the name its second argument holds, a position no walk
+        resolves, so it may reach `Execute` and read `@error` there.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Func f()
+                    Local $x
+                    Call("Call", "Execute", "$r = @error")
+                    Assign("x", 1)
+                    $r = Eval("x")
+                EndFunc
+                ''',
+                Au3DynamicNameFlattening,
+            ),
+            'Func f()\n    Local $x\n    Call("Call", "Execute", "$r = @error")\n'
+            '    Assign("x", 1)\n    $r = Eval("x")\nEndFunc\n')
+
     def test_an_error_macro_read_keeps_the_assign_flatten(self):
         """
         A successful `Assign` clears a previous `@error`/`@extended` while the plain write

@@ -27,8 +27,10 @@ Two initializer shapes qualify: the bare builtin identifier `Execute`, and a cal
 `Execute` whose single argument is a string literal naming a script function or a table builtin.
 What `Execute` evaluates to as a value is never assumed — the rewrite is structural. A script
 function named `Execute` shadows the builtin, so a script declaring one has no aliases at all,
-and a script function owning the aliased name keeps the spelling the argument held — printing
-the builtin's official spelling there would tell the reader the call is one.
+and neither has a script with an include or a parse error, either of which may hide such a
+declaration from every walk of the tree. The rewrite prints the spelling the argument holds,
+which resolves exactly as a direct call of that spelling does; the official spelling of a
+builtin is the case normalization's to print.
 """
 from __future__ import annotations
 
@@ -39,7 +41,6 @@ from refinery.lib.scripts.au3.analysis.builtins import call_is_bounded
 from refinery.lib.scripts.au3.analysis.existence import assign_kills, execute_kills
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
-from refinery.lib.scripts.au3.lexer import ascii_lower
 from refinery.lib.scripts.au3.model import (
     Au3Assignment,
     Au3Call,
@@ -135,12 +136,10 @@ def _aliased_function(initializer: Expression | None, functions: frozenset[str])
     argument = ast.unwrap_parens(expression.arguments[0])
     if not isinstance(argument, Au3StringLiteral):
         return None
-    name = ascii_lower(argument.value)
-    if name in functions:
-        return Au3Alias(name, argument.value)
-    if name in AUTOIT_FUNCTION_NAMES:
-        return Au3Alias(name, AUTOIT_FUNCTION_NAMES[name])
-    return None
+    name = argument.value.lower()
+    if name not in functions and name not in AUTOIT_FUNCTION_NAMES:
+        return None
+    return Au3Alias(name, argument.value)
 
 
 def _pinned_execute(call: Au3Call) -> bool:
@@ -243,7 +242,11 @@ def build_alias_model(
     Collect the alias-qualified variables of *root*, validating names against the script's
     function names and cutting every name a rebinding write may cost.
     """
-    if 'execute' in scope_model.functions:
+    if (
+        'execute' in scope_model.functions
+        or scope_model.holds_an_include
+        or scope_model.holds_a_parse_error
+    ):
         return Au3AliasModel({})
     threats = _scan_rebinds(root, scope_model, summaries)
     uses: dict[Au3FunctionDeclaration | None, dict[str, _VariableUses]] = {}

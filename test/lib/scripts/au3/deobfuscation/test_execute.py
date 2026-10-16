@@ -5,6 +5,8 @@ for, which a splice must never make fatal.
 """
 from __future__ import annotations
 
+import pytest
+
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.execute import Au3ExecuteFlattening
@@ -157,6 +159,51 @@ class TestAu3ExecuteFlattening(TestAu3):
             ),
             '$x = Execute("MsgBox(0, 0, 1)")\n'
             'Call("Execute", "MsgBox(0, 0, @error)")\n')
+
+    def test_a_splice_refuses_where_a_sigiled_call_of_execute_reads_the_error_state(self):
+        """
+        A string names a function without its leading `$`, as `call_target` resolves it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = Execute("MsgBox(0, 0, 1)")
+                Call("$Execute", "MsgBox(0, 0, @error)")
+                ''',
+                Au3ExecuteFlattening,
+            ),
+            '$x = Execute("MsgBox(0, 0, 1)")\n'
+            'Call("$Execute", "MsgBox(0, 0, @error)")\n')
+
+    def test_a_splice_refuses_where_a_call_forwarded_through_call_may_read_the_error_state(self):
+        """
+        A `Call` of `Call` dispatches the name its second argument holds, a position no walk
+        resolves, so it may reach `Execute` and read `@error` there.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = Execute("MsgBox(0, 0, 1)")
+                Call("Call", "Execute", "MsgBox(0, 0, @error)")
+                ''',
+                Au3ExecuteFlattening,
+            ),
+            '$x = Execute("MsgBox(0, 0, 1)")\n'
+            'Call("Call", "Execute", "MsgBox(0, 0, @error)")\n')
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason='names are identified by `str.lower`, which folds U+212A into `k`',
+    )
+    def test_a_payload_call_python_folds_into_a_builtin_is_not_spliced(self):
+        """
+        U+212A KELVIN SIGN lowercases to ASCII `k` for Python; whether AutoIt folds it too is
+        unpinned. If it does not, the spliced call names no function and fails when the script
+        loads, where the original `Execute` fails softly when it runs.
+        """
+        self.assertEqual(
+            self._apply('$x = Execute("WinKill(""t"")")', Au3ExecuteFlattening),
+            '$x = Execute("WinKill(""t"")")\n')
 
     def test_a_call_through_a_variable_is_not_spliced(self):
         self.assertEqual(

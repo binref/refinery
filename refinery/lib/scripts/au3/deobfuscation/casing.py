@@ -73,10 +73,8 @@ class Au3BuiltinCaseNormalization(Transformer):
         return None
 
     def _normalize_callee(self, callee: Au3Identifier) -> None:
-        if ascii_lower(callee.raw) != callee.name:
-            return
-        official = AUTOIT_FUNCTION_NAMES.get(callee.name)
-        if official is None or callee.raw == official:
+        official = _official_spelling(callee.raw)
+        if official is None:
             return
         set_value(callee, 'raw', official)
         self.mark_changed()
@@ -89,12 +87,24 @@ class Au3BuiltinCaseNormalization(Transformer):
         literal = ast.unwrap_parens(call.arguments[0])
         if not isinstance(literal, Au3StringLiteral):
             return
-        name = ascii_lower(literal.value)
-        if name in self._scopes.functions:
+        if literal.value.lower() in self._scopes.functions:
             return
-        official = AUTOIT_FUNCTION_NAMES.get(name)
-        if official is None or literal.value == official:
+        official = _official_spelling(literal.value)
+        if official is None:
             return
         set_value(literal, 'value', official)
         set_value(literal, 'raw', encode_au3_string(official))
         self.mark_changed()
+
+
+def _official_spelling(spelling: str) -> str | None:
+    """
+    The official spelling of the builtin *spelling* names where the two differ in ASCII case
+    alone, or `None` where they are equal or no builtin is named. The lookup folds through
+    `refinery.lib.scripts.au3.lexer.ascii_lower`, so a spelling that only a fold beyond ASCII case
+    maps onto a builtin keeps a character no table key holds and names none.
+    """
+    official = AUTOIT_FUNCTION_NAMES.get(ascii_lower(spelling))
+    if official is None or official == spelling:
+        return None
+    return official

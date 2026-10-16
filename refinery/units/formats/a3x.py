@@ -12,6 +12,7 @@ from refinery.lib.dt import filetime
 from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
 from refinery.lib.scripts.au3.functions import AUTOIT_FUNCTION_NAMES
+from refinery.lib.scripts.au3.lexer import ascii_lower
 from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.lib.tools import exception_to_string
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -520,6 +521,17 @@ _PRETTY.update(AUTOIT_FUNCTION_NAMES)
 _PRETTY.update((name.lower(), name) for name in A3X_KEYWORDS)
 
 
+def _pretty(name: str) -> str:
+    """
+    The spelling the decompiler prints for a name the bytecode holds: the documented spelling of
+    the keyword or builtin it names where the two differ in ASCII case alone, and the stored name
+    otherwise. Python's `str.lower` also folds characters outside ASCII — U+212A KELVIN SIGN into
+    `k` — while whether AutoIt does is unpinned, so a user function or a variable spelled with one
+    keeps its stored name: the lookup folds through `refinery.lib.scripts.au3.lexer.ascii_lower`.
+    """
+    return _PRETTY.get(ascii_lower(name), name)
+
+
 def a3x_number_representation(value: float | int) -> str:
     """
     The AutoIt3 compiler will emit constants for -inf/inf/nan. However, AutoIt3 itself has no
@@ -552,16 +564,14 @@ class _Operands(dict):
         reader = self.reader
         tokens = self.tokens
         if key == 's':
-            string = reader.read_length_prefixed_string()
-            return _PRETTY.get(string.lower(), string)
+            return _pretty(reader.read_length_prefixed_string())
         elif key == 'r':
             string = reader.read_length_prefixed_string()
             return '"{}"'.format(string.replace('"', '""'))
         elif key == 'k':
             return A3X_KEYWORDS[reader.u32()]
         elif key == 'a':
-            name = A3X_APICALLS[reader.u32()]
-            return _PRETTY.get(name.lower(), name)
+            return _pretty(A3X_APICALLS[reader.u32()])
         elif key == 'i':
             number = reader.i32()
         elif key == 'q':

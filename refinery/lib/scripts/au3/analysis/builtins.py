@@ -19,20 +19,16 @@ reach a callee or a storage through, which no evaluator owns.
 
 A second, wider table answers a different question: not what a call returns, but what it can
 do. `refinery.lib.scripts.au3.functions.AUTOIT_FUNCTION_NAMES` is every core builtin AutoIt
-ships in its official spelling, transcribed from `functions.txt` of the official docs plus the
-five experimental map functions that file omits while every one of them keeps its own doc page
-— the Standard UDF Library (`libfunctions.txt`) is excluded, because calling one of those
-without the `#include` that declares it is a call to an undeclared name, already handled by the
-existing include conservatism. It lives outside the analysis, because the a3x decompiler reads
-it too. None of the 405 take a `ByRef` parameter — checked against the doc page of every
-one of them — and no builtin but `Assign` writes a named variable by itself. Every other write a
-call may reach comes through what it runs: `Call` dispatches the function its argument names,
-which may take `ByRef` parameters, and a registration builtin runs a registered script function
-on its own trigger, which may write any global — the two kinds the `DISPATCHING_NAMES` set holds
-with `Execute` and `Assign`, whose own payload readers answer the same question precisely. An
-option setter is the exception in what it changes without writing at all: an expanding one
-rewrites the meaning of every string literal evaluated after it. The table's membership answers
-which names are builtins — the alias tracker's name resolution and the `Execute`-splice gate in
+ships in its official spelling; the module that holds it names its sources. None of the 405
+take a `ByRef` parameter — checked against the doc page of every one of them — and no builtin
+but `Assign` writes a named variable by itself. Every other write a call may reach comes through
+what it runs: `Call` dispatches the function its argument names, which may take `ByRef`
+parameters, and a registration builtin runs a registered script function on its own trigger,
+which may write any global — the two kinds the `DISPATCHING_NAMES` set holds with `Execute` and
+`Assign`, whose own payload readers answer the same question precisely. An option setter is the
+exception in what it changes without writing at all: an expanding one rewrites the meaning of
+every string literal evaluated after it. The table's membership answers which names are builtins
+— the alias tracker's name resolution and the `Execute`-splice gate in
 `refinery.lib.scripts.au3.deobfuscation.execute` — while `call_is_bounded` answers what a call
 can do — the may-write summaries in `refinery.lib.scripts.au3.analysis.propagation` and the
 alias tracker's rebind scan in `refinery.lib.scripts.au3.analysis.aliases`.

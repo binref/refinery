@@ -200,6 +200,33 @@ class TestAu3BuiltinCaseNormalization(TestAu3):
             '$x = Execute("mSgBoX(0, """", ""t"")")',
             'MsgBox(0, "", "t")')
 
+    def test_a_call_through_an_alias_prints_the_official_spelling(self):
+        self._assertDeobfuscatesTo(
+            '''
+            Local $f = Execute("msGbox")
+            $x = $f(0, "", "t")
+            ''',
+            'MsgBox(0, "", "t")')
+
+    def test_a_call_through_an_alias_a_declared_function_owns_keeps_its_spelling(self):
+        self._assertDeobfuscatesTo(
+            '''
+            Func msgbox($a)
+                Return $a
+            EndFunc
+
+            Local $b = Execute("mSgBoX")
+            $b(1)
+            ''',
+            '''
+            Func msgbox($a)
+                Return $a
+            EndFunc
+
+            Local $b = Execute("mSgBoX")
+            mSgBoX(1)
+            ''')
+
     def test_every_surviving_shape_prints_its_official_spelling(self):
         """
         The flattened user-function call site keeps the spelling the `Call` argument held —

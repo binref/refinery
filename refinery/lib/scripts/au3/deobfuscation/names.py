@@ -41,6 +41,7 @@ from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Transformer, _replace_in_parent, set_child, set_child_list
 from refinery.lib.scripts.au3 import ast
+from refinery.lib.scripts.au3.analysis.builtins import OPTION_SETTERS
 from refinery.lib.scripts.au3.analysis.cache import Au3ModelCache, model_cache
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
 from refinery.lib.scripts.au3.analysis.usage import callee_census
@@ -63,10 +64,6 @@ from refinery.lib.scripts.au3.model import (
     Au3WithMember,
     Expression,
 )
-
-#: The builtins that set `MustDeclareVars`, by every name the option answers to — `Opt` is the
-#: documented alias of `AutoItSetOption`.
-_OPTION_SETTERS = frozenset({'autoitsetoption', 'opt'})
 
 #: The literal shapes a sole `Call` argument may hold: no literal can be the array a
 #: `CallArgArray` expansion reads (probe9 A14c), so a sole argument of any other shape keeps
@@ -95,11 +92,10 @@ _BYREF_LITERALS = (
 class _TreeFacts:
     """
     What the whole tree holds, read once per pass before any edit: a possible read of the error
-    state, a parse error, and a call to an option setter. The pass's edits rewrite and remove
-    calls and add plain reads, so none of the three can become true mid-pass.
+    state and a call to an option setter. The pass's edits rewrite and remove calls and add plain
+    reads, so neither can become true mid-pass.
     """
     observes_error_state: bool
-    holds_a_parse_error: bool
     calls_autoit_set_option: bool
 
 
@@ -107,17 +103,13 @@ def _tree_facts(cache: Au3ModelCache) -> _TreeFacts:
     """
     The facts the whole tree decides. The callee spellings are the census's to read — see
     `callee_census` — over the usage model's functions and error-node facts, and they answer the
-    error-state and the option-setter questions; a parse error is any error node the parser
-    recovered, live source text or a repaired construct no walk reads, so its tree is refused
-    outright rather than reasoned about — the scope model holds that fact once. The spelling of
-    the option the tree sets is unpinned either way — only that the tree may set
-    `MustDeclareVars` is a fact here.
+    error-state and the option-setter questions. The spelling of the option the tree sets is
+    unpinned either way — only that the tree may set `MustDeclareVars` is a fact here.
     """
     census = callee_census(cache.root, cache.usage.functions, cache.usage.unparsed)
     return _TreeFacts(
         census.observes_error_state(),
-        cache.scopes.holds_a_parse_error,
-        census.computed_callee or not _OPTION_SETTERS.isdisjoint(census.callees),
+        census.computed_callee or not OPTION_SETTERS.isdisjoint(census.callees),
     )
 
 
@@ -143,7 +135,7 @@ class Au3DynamicNameFlattening(Transformer):
     def __init__(self):
         super().__init__()
         self._scopes = Au3ScopeModel({})
-        self._facts = _TreeFacts(False, False, False)
+        self._facts = _TreeFacts(False, False)
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
@@ -175,7 +167,7 @@ class Au3DynamicNameFlattening(Transformer):
             return None
         if self._scopes.holds_an_include:
             return None
-        if self._facts.holds_a_parse_error:
+        if self._scopes.holds_a_parse_error:
             return None
         if not call.arguments:
             return None

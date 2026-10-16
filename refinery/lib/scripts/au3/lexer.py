@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import string
+
 from dataclasses import dataclass
 from typing import Generator
 
@@ -44,10 +46,7 @@ _ONE_CHAR_OPS: dict[str, Au3TokenKind] = {
 #: literal can spell.
 LINE_BREAKS = frozenset('\r\n\u2028\u2029')
 
-_ASCII_LOWER = str.maketrans(
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-    'abcdefghijklmnopqrstuvwxyz',
-)
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 _BLOCK_COMMENT_START = ('#cs', '#comments-start')
 _BLOCK_COMMENT_END = ('#ce', '#comments-end')

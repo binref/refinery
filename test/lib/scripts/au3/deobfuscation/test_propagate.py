@@ -6,6 +6,8 @@ or is past the growth budget its name owns.
 """
 from __future__ import annotations
 
+import pytest
+
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation import deobfuscate
@@ -37,6 +39,26 @@ class TestAu3ConstantPropagation(TestAu3):
                 Au3ConstantPropagation,
             ),
             'Global Const $c = 7\n$y = 7 + 1\n')
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason='names are identified by `str.lower`, which folds U+212A into `k`',
+    )
+    def test_a_name_python_folds_into_another_is_not_merged_with_it(self):
+        """
+        U+212A KELVIN SIGN lowercases to ASCII `k` for Python; whether AutoIt folds it too is
+        unpinned, so neither write is the value the read provably sees.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $k = 1
+                $K = 2
+                MsgBox(0, "", $k)
+                ''',
+                Au3ConstantPropagation,
+            ),
+            '$k = 1\n$K = 2\nMsgBox(0, "", $k)\n')
 
     def test_a_compound_assignment_propagates_the_known_value(self):
         self.assertEqual(
