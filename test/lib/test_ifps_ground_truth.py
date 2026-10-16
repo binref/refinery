@@ -1,7 +1,6 @@
 import pytest
 import re
 
-from refinery.lib.inno.archive import InnoArchive
 from refinery.lib.inno.emulator import (
     EmulatorException,
     IFPSEmulatorConfig,
@@ -9,11 +8,11 @@ from refinery.lib.inno.emulator import (
     InnoSetupEmulator,
     NewFunctionCall,
 )
-from refinery.lib.inno.ifps import Function, Op, Operand
+from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand
 
 from .. import TestBase
 
-_INSTALLER = '50ab31a850d3000006a1551c6c07aa470ee3ec65b95a3a521f95ac053a5441ea'
+_SCRIPT = '8ca8a9c7454b8aab50c461b543098450f2f7ea277b67fc7614c2fe5f58d2c3a8'
 _ORACLE_LINE = re.compile(r'ORACLE (\S+) = (.*)')
 _LOGGED = {
     'store.s32_to_u32'                      : '4294967295',
@@ -243,15 +242,15 @@ _LOGGED = {
 
 class TestTheEmulatorLogsWhatInnoSetupLogged(TestBase):
     """
-    The installer was built with Inno Setup 6.5.0 from a script whose procedures log values that
-    Pascal Script computes, one procedure per area. The installer ran on Windows with a log file,
-    and `_LOGGED` holds every value of that log. Each test emulates one procedure and compares
-    every value it logs with the logged value; the names of those values are the string constants
-    of the procedure and of the script functions it calls.
+    Inno Setup 6.5.0 built an installer from a script whose procedures log values that Pascal Script
+    computes, one procedure per area. The installer ran on Windows with a log file, and `_LOGGED`
+    holds every value of that log; `_SCRIPT` is the compiled script taken from that installer. Each
+    test emulates one procedure and compares every value it logs with the logged value; the names of
+    those values are the string constants of the procedure and of the script functions it calls.
     """
 
     def assertEmulatedAsLogged(self, procedure: str):
-        emulator = InnoSetupEmulator(InnoArchive(self.download_sample(_INSTALLER)), IFPSEmulatorConfig(log_calls=True))
+        emulator = InnoSetupEmulator(IFPSFile.Parse(self.download_sample(_SCRIPT)), IFPSEmulatorConfig(log_calls=True))
         function = emulator.symbols[procedure]
         reached: list[Function] = [function]
         for caller in reached:
