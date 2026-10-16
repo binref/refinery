@@ -20,6 +20,13 @@ never ran at runtime, so it is left standing for the same reason, and so is one 
 an expression holding an array literal: an array literal is legal AutoIt only where a declaration
 initializes, which no splice position is.
 
+The splice also refuses wherever a read of `@error` or `@extended` may see the state the
+`Execute` stood over: a successful `Call`, `Assign`, and `Eval` all clear both flags (probe9
+A17, probe9f A21/A22), and whether a successful `Execute` clears them is unpinned, so a tree
+that may read either — by macro, through a computed callee, through another `Execute`'s
+payload, or through an include — keeps every wrapper standing rather than guess. The model
+cache owns that question; the decode pass over script functions refuses on the same answer.
+
 The accepted behavior change — a runtime error the original `Execute` would have swallowed
 becoming fatal where it happens — is bounded by these gates and owned by the Phase 2 plan.
 """
@@ -50,10 +57,13 @@ class Au3ExecuteFlattening(Transformer):
     def __init__(self):
         super().__init__()
         self._functions: frozenset[str] = frozenset()
+        self._error_state_is_observable = False
 
     def visit(self, node: Node) -> Node | None:
         if isinstance(node, Au3Script):
-            self._functions = model_cache(self, node).scopes.function_names
+            cache = model_cache(self, node)
+            self._functions = cache.scopes.function_names
+            self._error_state_is_observable = cache.may_read_error_state
         self.generic_visit(node)
         if not isinstance(node, Au3Call):
             return None
@@ -66,13 +76,15 @@ class Au3ExecuteFlattening(Transformer):
         """
         The expression the call's literal argument names, or `None` where the call is not a
         flattenable `Execute`: a shadowed name, a non-literal or missing argument, a parse
-        failure, a bare identifier, an array literal inside the parsed expression, or a call
-        inside it this pass cannot resolve.
+        failure, a bare identifier, an array literal inside the parsed expression, a call
+        inside it this pass cannot resolve, or a tree whose error state a read may observe.
         """
         callee = ast.direct_callee(call)
         if callee is None or callee.name != 'execute':
             return None
         if 'execute' in self._functions:
+            return None
+        if self._error_state_is_observable:
             return None
         if len(call.arguments) != 1:
             return None

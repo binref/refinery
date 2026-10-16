@@ -107,6 +107,57 @@ class TestAu3ExecuteFlattening(TestAu3):
             self._apply('Execute("MsgBox(0, 0, 1)")', Au3ExecuteFlattening),
             'MsgBox(0, 0, 1)\n')
 
+    def test_a_splice_refuses_where_the_error_state_is_read(self):
+        """
+        A successful `Call`, `Assign`, and `Eval` clear `@error` and `@extended` (probe9 A17,
+        probe9f A21/A22); whether a successful `Execute` clears them is unpinned, so a splice
+        refuses wherever a later read could see the difference.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = Execute("MsgBox(0, 0, 1)")
+                If @error Then
+                    $y = 1
+                EndIf
+                ''',
+                Au3ExecuteFlattening,
+            ),
+            '$x = Execute("MsgBox(0, 0, 1)")\nIf @error Then\n    $y = 1\nEndIf\n')
+
+    def test_a_splice_refuses_where_another_payload_reads_the_error_state(self):
+        """
+        The payload of another `Execute` is a reader no walk of the tree sees, so it keeps every
+        wrapper in the tree standing — a payload provably free of the two macros splices first
+        once that reader is gone.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = Execute("MsgBox(0, 0, 1)")
+                $y = Execute("MsgBox(0, 0, @error)")
+                ''',
+                Au3ExecuteFlattening,
+            ),
+            '$x = Execute("MsgBox(0, 0, 1)")\n$y = Execute("MsgBox(0, 0, @error)")\n')
+
+    def test_a_splice_refuses_where_a_call_spelled_execute_reads_the_error_state(self):
+        """
+        `Call` dispatches builtins as well as script functions, so a `Call` over the name runs a
+        payload no walk of the tree sees — the same reader an `Execute` payload is, through the
+        one spelling the flattening itself never touches.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                $x = Execute("MsgBox(0, 0, 1)")
+                Call("Execute", "MsgBox(0, 0, @error)")
+                ''',
+                Au3ExecuteFlattening,
+            ),
+            '$x = Execute("MsgBox(0, 0, 1)")\n'
+            'Call("Execute", "MsgBox(0, 0, @error)")\n')
+
     def test_a_call_through_a_variable_is_not_spliced(self):
         self.assertEqual(
             self._apply('$x = Execute("$f()")', Au3ExecuteFlattening),

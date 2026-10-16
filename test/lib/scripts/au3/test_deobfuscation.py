@@ -128,6 +128,36 @@ class TestAu3Deobfuscation(TestBase):
         self.assertGreater(deobfuscate(ast), 0)
         self.assertEqual(Au3Synthesizer().convert(ast), 'MsgBox(0, 0, 7)\n')
 
+    def test_a_computed_name_payload_splices_folds_and_eliminates(self):
+        """
+        The cascade the wide builtin table buys end to end: the payload splices out of its
+        `Execute` wrapper, the computed name folds to a literal one, the `Call` flattens to the
+        function it names, and the elimination cascade takes the call and every store only it
+        kept alive with it — the emptied function stays, spelled in its own declaration.
+        """
+        ast = Au3Parser(
+            'Func checkip()\n'
+            'EndFunc\n'
+            'Execute("Call(""che"" & ""ckip"")")\n'
+        ).parse()
+        self.assertGreater(deobfuscate(ast), 0)
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            'Func checkip()\nEndFunc\n',
+        )
+        ast = Au3Parser(
+            'Global $g = 0\n'
+            'Func checkip()\n'
+            '    $g = 1\n'
+            'EndFunc\n'
+            'Execute("Call(""che"" & ""ckip"")")\n'
+        ).parse()
+        self.assertGreater(deobfuscate(ast), 0)
+        self.assertEqual(
+            Au3Synthesizer().convert(ast),
+            'Func checkip()\nEndFunc\n',
+        )
+
     def test_an_alias_chain_resolves_through_the_groups(self):
         """
         The distilled decoder shape: a variable naming `Execute` through one more variable

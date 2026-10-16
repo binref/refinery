@@ -49,6 +49,22 @@ class TestAu3IndirectCallRewrite(TestAu3):
             ),
             'Local $f = Execute("MsgBox")\n$x = MsgBox(0, "", "t")\n')
 
+    def test_an_alias_prints_the_official_spelling_of_the_builtin_it_names(self):
+        """
+        AutoIt resolves function names without regard to case, so the obfuscator may spell a
+        builtin any way it likes; the builtin table maps every lowercased name to the official
+        spelling, and the rewrite prints that one.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $f = Execute("msGbox")
+                $x = $f(0, "", "t")
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Local $f = Execute("msGbox")\n$x = MsgBox(0, "", "t")\n')
+
     def test_a_local_alias_inside_a_function_is_rewritten(self):
         self.assertEqual(
             self._apply(
@@ -199,6 +215,52 @@ class TestAu3IndirectCallRewrite(TestAu3):
                 Au3IndirectCallRewrite,
             ),
             'Local $e = Execute\nFunc g()\n    Global $e = 1\nEndFunc\ng()\n$x = $e("t")\n')
+
+    def test_a_call_dispatch_rebind_forfeits_the_alias(self):
+        """
+        `Call` runs the function its argument names, so a dispatch that rebinds the global the
+        initializer wrote costs the alias exactly the direct call to that function would.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $e = Execute("MsgBox")
+
+                Func w()
+                    Global $e = Execute("WinKill")
+                EndFunc
+
+                Call("w")
+                $x = $e(0, "", "t")
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Global $e = Execute("MsgBox")\n'
+            'Func w()\n    Global $e = Execute("WinKill")\nEndFunc\n'
+            'Call("w")\n$x = $e(0, "", "t")\n')
+
+    def test_a_registered_callback_rebind_forfeits_the_alias(self):
+        """
+        A registration builtin runs its registered function on a trigger no walk of the tree can
+        place, so a global alias may not survive one even where the call sites look ordered.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $e = Execute("MsgBox")
+
+                Func w()
+                    Global $e = Execute("WinKill")
+                EndFunc
+
+                AdlibRegister("w", 1000)
+                $x = $e(0, "", "t")
+                ''',
+                Au3IndirectCallRewrite,
+            ),
+            'Global $e = Execute("MsgBox")\n'
+            'Func w()\n    Global $e = Execute("WinKill")\nEndFunc\n'
+            'AdlibRegister("w", 1000)\n$x = $e(0, "", "t")\n')
 
     def test_an_unknown_name_stays_a_variable_callee(self):
         self.assertEqual(

@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
+from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES, call_is_bounded
 from refinery.lib.scripts.au3.analysis.existence import assign_kills, execute_kills
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.model import (
@@ -133,7 +133,7 @@ def _aliased_function(initializer: Expression | None, functions: frozenset[str])
         return None
     name = argument.value.lower()
     if name in functions or name in AUTOIT_FUNCTION_NAMES:
-        return Au3Alias(name, argument.value)
+        return Au3Alias(name, AUTOIT_FUNCTION_NAMES.get(name, argument.value))
     return None
 
 
@@ -157,7 +157,8 @@ def _scan_rebinds(
     Every way a call may rebind an alias without a write occurrence in the tree, collected over
     all of *root*'s scopes: an `Assign` or a code-running `Execute` standing lexically inside a
     scope threatens that scope's locals, and everything the calls of the whole script may write
-    threatens the globals.
+    threatens the globals — a `Call` and a registration builtin included, because the script
+    function one of them runs may rebind any global (`call_is_bounded`).
     """
     threats = _RebindThreats()
     for scope, body in ast.scope_bodies(root):
@@ -174,9 +175,6 @@ def _scan_rebinds(
                 else:
                     threats.global_names |= summary
                 continue
-            if callee.name not in AUTOIT_FUNCTION_NAMES:
-                threats.no_global_aliases = True
-                continue
             if callee.name == 'execute':
                 if _pinned_execute(node) and execute_kills(node) is None:
                     threats.no_global_aliases = True
@@ -189,6 +187,9 @@ def _scan_rebinds(
                     threats.forfeited_scopes.add(scope)
                 else:
                     threats.names |= names
+                continue
+            if not call_is_bounded(callee.name):
+                threats.no_global_aliases = True
     return threats
 
 

@@ -246,28 +246,18 @@ def _argument_variables(call: Au3Call) -> set[str]:
     return names
 
 
-def _call_kills(
-    call: Au3Call,
-    scope_model: Au3ScopeModel,
-    summaries: dict[str, frozenset[str] | None],
-) -> tuple[set[str] | None, set[str]]:
+def _builtin_kills(call: Au3Call) -> tuple[set[str] | None, set[str]]:
     """
-    The names a call may write — `None` for every non-constant — and the argument names it may
-    hold by reference. A script function kills its may-write summary; `Execute` and `Assign`
-    answer through their own payload reader (`execute_kills`/`assign_kills`); a call to any other
-    bounded builtin writes and captures nothing (`call_is_bounded`); a call to `Call` or to a
-    name neither the script nor the builtin table knows may run anything.
+    The names a call to a builtin may write — `None` for may-write-anything — and the argument
+    names it may hold by reference. `Execute` and `Assign` answer through their own payload
+    readers, and neither holds an argument by reference: their arguments are a payload and a
+    name. A bounded builtin writes and captures nothing; a computed callee, `Call`, a
+    registration builtin, or a name neither the script nor the builtin table knows may run
+    anything, over every variable the call passes.
     """
     callee = ast.direct_callee(call)
     if callee is None:
         return None, _argument_variables(call)
-    if callee.name in scope_model.functions:
-        summary = summaries.get(callee.name)
-        function = scope_model.functions[callee.name]
-        byref = {variable.name for variable in ast.byref_arguments(function, call.arguments)}
-        if summary is None:
-            return None, byref
-        return set(summary), byref
     if callee.name == 'execute':
         return execute_kills(call), set()
     if callee.name == 'assign':
@@ -275,6 +265,27 @@ def _call_kills(
     if call_is_bounded(callee.name):
         return set(), set()
     return None, _argument_variables(call)
+
+
+def _call_kills(
+    call: Au3Call,
+    scope_model: Au3ScopeModel,
+    summaries: dict[str, frozenset[str] | None],
+) -> tuple[set[str] | None, set[str]]:
+    """
+    The names a call may write — `None` for every non-constant — and the argument names it may
+    hold by reference. A script function kills its may-write summary; every other callee answers
+    through `_builtin_kills`.
+    """
+    callee = ast.direct_callee(call)
+    if callee is not None and callee.name in scope_model.functions:
+        summary = summaries.get(callee.name)
+        function = scope_model.functions[callee.name]
+        byref = {variable.name for variable in ast.byref_arguments(function, call.arguments)}
+        if summary is None:
+            return None, byref
+        return set(summary), byref
+    return _builtin_kills(call)
 
 
 def _written_names(
@@ -337,10 +348,7 @@ def _function_scan(
         if not isinstance(node, Au3Call):
             continue
         callee = ast.direct_callee(node)
-        if callee is None:
-            everything = True
-            continue
-        if callee.name in scope_model.functions:
+        if callee is not None and callee.name in scope_model.functions:
             callees.add(callee.name)
             target = scope_model.functions[callee.name]
             for variable in ast.byref_arguments(target, node.arguments):
@@ -348,15 +356,7 @@ def _function_scan(
                 if existence.write_may_target_global(binding, variable.name, True):
                     names.add(variable.name)
             continue
-        if callee.name == 'execute':
-            kills = execute_kills(node)
-        elif callee.name == 'assign':
-            kills = assign_kills(node)
-        elif call_is_bounded(callee.name):
-            continue
-        else:
-            everything = True
-            continue
+        kills, _held = _builtin_kills(node)
         if kills is None:
             everything = True
         else:
@@ -737,11 +737,11 @@ class _Walker:
         receives the variable itself, not its value — so its read is never recorded and a
         substitution may never replace it, and the same holds for a bare variable in the callee
         position: the call runs what the variable names, not what it holds. A call with no
-        declared function behind it — `Call`, or a name neither the script nor the builtin table
-        knows — carries the same risk for every bare-variable argument, since the unseen callee
-        may bind any of them by reference; `_call_kills`'s `byref` is exactly that set. An
-        argument of a call to a bounded builtin is still recorded and replaced:
-        `call_is_bounded` is the fact that rules the reference out.
+        declared function behind it — `Call`, a registration builtin, or a name neither the
+        script nor the builtin table knows — carries the same risk for every bare-variable
+        argument, since the unseen callee may bind any of them by reference; `_call_kills`'s
+        `byref` is exactly that set. An argument of a call to a bounded builtin is still
+        recorded and replaced: `call_is_bounded` is the fact that rules the reference out.
         """
         kills, byref = _call_kills(call, self.scope_model, self.summaries)
         if not isinstance(ast.unwrap_parens(call.callee), Au3Variable):

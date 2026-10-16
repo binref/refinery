@@ -12,16 +12,17 @@ name resolved to the string it spells — a literal shape, or a call with litera
 script function probed through `refinery.lib.scripts.au3.analysis.interpreter.Au3Interpreter.probe`
 — the variable names every call hands to a `ByRef` parameter, and the registrations whose
 registered function receives arguments, which must name a script function literally. Source text
-the parser could not read — an error node in the tree, or a payload this parser reads as nothing —
-is read through `refinery.lib.scripts.au3.analysis.unparsed.read_unparsed`, and every variable it
-spells may be a global. The parser's record list is not an input: its texts also live in the
-tree — an error node is its own record, and a repair record names a token of a line the parser
-went on to read — while the list itself outlives the edits that remove those lines, so a census
-over it would stay poisoned over a tree its own transforms had cleaned. A channel the census
-cannot read — an include it cannot see, a computed `Assign` name, an unresolvable payload or
-`Call` name, an indirect callee, a forwarding `Call` of `Call`, a registration whose name is not
-a literal script function, a registration or an option set through a `Call` whose sole argument
-may be a `CallArgArray` expansion, an option setting that may expand variables, macros, or
+the parser could not read — an error node in the tree, or a payload this parser reads as
+nothing — is read through `refinery.lib.scripts.au3.analysis.unparsed.read_unparsed`, and every
+variable it spells may be a global. The parser's record list is not an input: its texts also
+live in the tree — an error node is its own record, and a repair record names a token of a line
+the parser went on to read — while the list itself outlives the edits that remove those lines,
+so a census over it would stay poisoned over a tree its own transforms had cleaned. A channel
+the census cannot read — an include it cannot see, a computed `Assign` name, an unresolvable
+payload or `Call` name, an indirect callee, a forwarding `Call` of `Call`, a registration whose
+name is not a literal script function, a registration or an option set through a `Call` whose
+sole argument may be a `CallArgArray` expansion, an option setting that may expand variables,
+macros, or
 environment strings inside string literals, unread text that may call a channel or declare a
 function, or a probe budget the tree exhausts — answers that any name may be a global, and that
 the tree may set `MustDeclareVars`, which the unread channel may do as well. Every other callee
@@ -52,6 +53,7 @@ from typing import cast
 
 from refinery.lib.scripts import UnspellableNode
 from refinery.lib.scripts.au3 import ast
+from refinery.lib.scripts.au3.analysis.builtins import OPTION_SETTERS
 from refinery.lib.scripts.au3.analysis.interpreter import Au3Interpreter, Au3Probe
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel, Binding
 from refinery.lib.scripts.au3.analysis.unparsed import read_unparsed, spelled_name
@@ -98,9 +100,6 @@ _REGISTRATION_NAME_POSITIONS: dict[str, frozenset[int]] = {
     'objevent'                    : frozenset({1}),
 }
 
-#: The builtins that set an option: `Opt` is the documented alias of `AutoItSetOption`.
-_OPTION_SETTERS = frozenset({'opt', 'autoitsetoption'})
-
 #: The options under which a string literal expands the variables, macros, or environment
 #: strings it spells when the tree runs: a literal the census reads as a name may then spell any
 #: other, so a tree that may set one answers that any name may be a global.
@@ -113,7 +112,7 @@ _CHANNEL_BUILTINS = frozenset({
     'call',
     'execute',
     *_REGISTRATION_NAME_POSITIONS,
-    *_OPTION_SETTERS,
+    *OPTION_SETTERS,
 })
 
 #: The total steps every probe the census makes may spend together: a tree that exhausts them
@@ -182,7 +181,7 @@ def call_target(
         return None
     if (
         len(passed) == 1
-        and (target in _REGISTRATION_NAME_POSITIONS or target in _OPTION_SETTERS)
+        and (target in _REGISTRATION_NAME_POSITIONS or target in OPTION_SETTERS)
         and _may_expand(passed[0], function_names)
     ):
         return None
@@ -373,7 +372,7 @@ class _Census:
             for index in _REGISTRATION_NAME_POSITIONS[name]:
                 if index < len(arguments):
                     self._examine_registered_name(arguments[index])
-        elif name in _OPTION_SETTERS:
+        elif name in OPTION_SETTERS:
             self._examine_option(arguments)
 
     def _collect_byref(

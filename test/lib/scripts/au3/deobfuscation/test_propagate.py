@@ -226,6 +226,65 @@ class TestAu3ConstantPropagation(TestAu3):
             ),
             'Local $x = 5\nUnknown()\n$y = $x\n')
 
+    def test_a_registered_callback_kills_the_globals_after_it(self):
+        """
+        A registration builtin runs its registered function on a trigger no walk of the tree can
+        place, so a global may hold the registered write when the next statement reads it.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Global $x = 5
+
+                Func w()
+                    Global $x = 7
+                EndFunc
+
+                AdlibRegister("w", 1000)
+                $y = $x
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Global $x = 5\nFunc w()\n    Global $x = 7\nEndFunc\n'
+            'AdlibRegister("w", 1000)\n$y = $x\n')
+
+    def test_an_expanding_option_kills_the_constants_after_it(self):
+        """
+        An expanding option rewrites the meaning of every string literal evaluated after it, so a
+        binding established before the call may not hold after it: the original read of the
+        variable produced the inert pre-option text, while the substituted literal would expand.
+        """
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $a = "%TEMP%"
+                Opt("ExpandEnvStrings", 1)
+                $b = $a & "x"
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $a = "%TEMP%"\n'
+            'Opt("ExpandEnvStrings", 1)\n'
+            '$b = $a & "x"\n')
+        self.assertEqual(
+            self._apply(
+                '''
+                Local $a = "%TEMP%"
+                Func setexp()
+                    Opt("ExpandEnvStrings", 1)
+                EndFunc
+                setexp()
+                $b = $a & "x"
+                ''',
+                Au3ConstantPropagation,
+            ),
+            'Local $a = "%TEMP%"\n'
+            'Func setexp()\n'
+            '    Opt("ExpandEnvStrings", 1)\n'
+            'EndFunc\n'
+            'setexp()\n'
+            '$b = $a & "x"\n')
+
     def test_an_execute_payload_the_parser_cannot_read_kills_the_globals(self):
         """
         A payload this parser reads as nothing may still be one AutoIt runs, so the call may

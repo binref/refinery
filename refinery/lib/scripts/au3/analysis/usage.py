@@ -8,17 +8,17 @@ effect-free — each fact owned by the module that pinned it: the bindings by
 `refinery.lib.scripts.au3.analysis.propagation`, the builtin knowledge by
 `refinery.lib.scripts.au3.analysis.builtins`.
 
-Source text the parser could not read — an error node in the tree — is live source AutoIt may run
-when it reaches it, so the model reads it through
+Source text the parser could not read — an error node in the tree — is live source AutoIt may
+run when it reaches it, so the model reads it through
 `refinery.lib.scripts.au3.analysis.unparsed.read_unparsed` and counts every name it spells as a
-reference: a call, a binding that may fall either side, a spelling, a read. Text that opens a call
-on a computed callee or names the builtin `Call` makes any callee possible — the text cannot show
-the literalness of `Call`'s argument, and whether a name it spells shadows a builtin is unpinned —
-an `Execute` it spells joins the names the census counts, and the error-state macros it spells
-count as reads. The model holds the facts of every error node keyed by its node and the variables
-of every error node, for the transforms that ask them. The parser's record list is not an input: it
-outlives the edits that remove the nodes it names, so a model over it would keep refusing a tree
-its own transforms had cleaned.
+reference: a call, a binding that may fall either side, a spelling, a read. Text that opens a
+call on a computed callee or names the builtin `Call` makes any callee possible — the text
+cannot show the literalness of `Call`'s argument, and whether a name it spells shadows a
+builtin is unpinned — an `Execute` it spells joins the names the census counts, and the
+error-state macros it spells count as reads. The model holds the facts of every error node
+keyed by its node and the variables of every error node, for the transforms that ask them. The
+parser's record list is not an input: it outlives the edits that remove the nodes it names, so
+a model over it would keep refusing a tree its own transforms had cleaned.
 
 Whether a call may read a name no census sees is the question beside the write-side channel one,
 and the same walk answers both. A computed callee reads — it could name `Eval`; so does an
@@ -185,7 +185,7 @@ class Au3UsageModel:
 
 #: The interpreter's error-state macros: entering a user function clears both, so a read of
 #: either observes what every call wrote.
-_ERROR_MACROS = frozenset({'error', 'extended'})
+ERROR_MACROS = frozenset({'error', 'extended'})
 
 
 @dataclass(frozen=True)
@@ -193,8 +193,8 @@ class Au3CalleeCensus:
     """
     What the calls of one tree name, gathered once for every question that asks it: the names a
     direct identifier or a `Call` invocation over a string literal spells, whether any callee is
-    computed at run time — a value the tree does not show, which could name anything — and whether
-    the tree reads the interpreter's `@error` or `@extended`.
+    computed at run time — a value the tree does not show, which could name anything — and
+    whether the tree reads the interpreter's `@error` or `@extended`.
     """
     callees: frozenset[str]
     computed_callee: bool
@@ -232,7 +232,7 @@ def callee_census(
     reads_error_macros = False
     for node in root.walk():
         if isinstance(node, Au3Macro):
-            reads_error_macros = reads_error_macros or node.name in _ERROR_MACROS
+            reads_error_macros = reads_error_macros or node.name in ERROR_MACROS
         elif isinstance(node, Au3Call):
             callee = ast.direct_callee(node)
             if callee is not None:
@@ -256,7 +256,7 @@ def callee_census(
         )
         reads_error_macros = (
             reads_error_macros
-            or not _ERROR_MACROS.isdisjoint(facts.macros)
+            or not ERROR_MACROS.isdisjoint(facts.macros)
         )
         if 'execute' in facts.identifiers:
             callees.add('execute')

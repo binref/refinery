@@ -4,12 +4,46 @@ the function returns, and which callee shape or result position forfeits that re
 """
 from __future__ import annotations
 
+import pytest
+
 from test.lib.scripts.au3.deobfuscation import TestAu3
 
 from refinery.lib.scripts.au3.deobfuscation.evaluate import Au3FunctionEvaluation
 
 
 class TestAu3FunctionEvaluation(TestAu3):
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason='the replacement drops the entry clearing of @error and @extended',
+    )
+    def test_a_call_that_clears_the_error_state_stays_where_the_script_reads_it(self):
+        """
+        Entering a user function clears `@error` and `@extended` (probe9 A17/A17b), so a script
+        that reads either holds no call this pass may replace with its value: the replacement
+        drops the clearing, and a read after the call site sees the error state the entry would
+        have wiped. The dead branch spells the call through a builtin the widened builtin table
+        answers bounded, which is what empties the summary and admits the replacement; a precise
+        refusal needs to know which reads an intervening entry or error-setting builtin shields.
+        """
+        source = '''
+            Func dec($x)
+                If 0 Then
+                    MsgBox(0, 0, 0)
+                EndIf
+                Return $x + 1
+            EndFunc
+
+            IniDelete("nope.ini", "s")
+            $y = dec(4)
+            If @error Then
+                ConsoleWrite("E")
+            EndIf
+            '''
+        self.assertEqual(
+            self._apply(source, Au3FunctionEvaluation),
+            self._laid_out(source),
+        )
 
     def test_a_decoder_call_becomes_the_literal_of_its_result(self):
         self.assertEqual(

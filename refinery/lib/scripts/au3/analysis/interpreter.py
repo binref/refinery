@@ -37,7 +37,7 @@ from typing import cast
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.au3 import ast
-from refinery.lib.scripts.au3.analysis.builtins import EMULATED_NAMES, evaluate_builtin
+from refinery.lib.scripts.au3.analysis.builtins import evaluate_builtin
 from refinery.lib.scripts.au3.analysis.constants import Policy, constant_value, within_limit
 from refinery.lib.scripts.au3.analysis.scopes import Au3ScopeModel
 from refinery.lib.scripts.au3.analysis.values import (
@@ -646,8 +646,6 @@ class Au3Interpreter:
                 return self._call(function, list(arguments), frame.globals, frame.budget)
             except _Refusal:
                 return None
-        if name not in EMULATED_NAMES:
-            return None
         return evaluate_builtin(name, tuple(arguments))
 
     def _eval_assignment(self, node: Au3Assignment, frame: _Frame) -> Au3Value:

@@ -19,14 +19,22 @@ reach a callee or a storage through, which no evaluator owns.
 
 A second, wider table below answers a different question: not what a call returns, but what it
 can do. `AUTOIT_FUNCTION_NAMES` is every core builtin AutoIt ships in its official spelling,
-transcribed from `functions.txt` of the official docs — the Standard UDF Library
+transcribed from `functions.txt` of the official docs plus the five experimental map functions
+that file omits while every one of them keeps its own doc page — the Standard UDF Library
 (`libfunctions.txt`) is excluded, because calling one of those without the `#include` that
 declares it is a call to an undeclared name, already handled by the existing include
-conservatism. None of the 400 take a `ByRef` parameter — checked against every per-function doc
-page — and none but `Assign` write a named variable at all; a builtin answers the caller only
-through its return value. `call_is_bounded` reads this table for the callers that ask the
-can-it-do-anything question: the may-write summaries in `analysis.propagation`, the alias tracker
-in `analysis.aliases`, and the `Execute`-splice gate in `deobfuscation.execute`.
+conservatism. None of the 405 take a `ByRef` parameter — checked against the doc page of every
+one of them — and no builtin but `Assign` writes a named variable by itself. Every other write a
+call may reach comes through what it runs: `Call` dispatches the function its argument names,
+which may take `ByRef` parameters, and a registration builtin runs a registered script function
+on its own trigger, which may write any global — the two kinds the `DISPATCHING_NAMES` set holds
+with `Execute` and `Assign`, whose own payload readers answer the same question precisely. An
+option setter is the exception in what it changes without writing at all: an expanding one
+rewrites the meaning of every string literal evaluated after it. The table's membership answers
+which names are builtins — the alias tracker's name resolution and the `Execute`-splice gate in
+`refinery.lib.scripts.au3.deobfuscation.execute` — while `call_is_bounded` answers what a call
+can do — the may-write summaries in `refinery.lib.scripts.au3.analysis.propagation` and the
+alias tracker's rebind scan in `refinery.lib.scripts.au3.analysis.aliases`.
 """
 from __future__ import annotations
 
@@ -836,21 +844,23 @@ _EVALUATORS: dict[str, _Evaluator] = {
     'isptr'           : _evaluate_never,
 }
 
-#: The builtins the pipeline models as a value-producing call whose writes it pins: the emulated
-#: functions above plus `Execute` and `Assign`, which the transforms resolve structurally and
-#: never fold as a value — `Execute`'s argument is code, and `Assign`'s effect is a write the
-#: may-write summaries read. `Call` and `Eval` the transforms resolve the same way through the
-#: name-parameter table below, and neither stands here: a `Call` invocation may write any of its
-#: `ByRef` arguments, and `Eval`'s value is a read of a name the tree spells as a string. This is
-#: the narrow set: whether `evaluate_builtin` can answer a given name. `AUTOIT_FUNCTION_NAMES`
-#: below is the question every other consumer actually asks.
-EMULATED_NAMES = frozenset(_EVALUATORS) | {'execute', 'assign'}
+#: The builtins `evaluate_builtin` can answer: the emulated functions above, and nothing else.
+#: `Execute` and `Assign` never fold as a value — `Execute`'s argument is code, and `Assign`'s
+#: effect is a write the may-write summaries read — so the transforms resolve them structurally
+#: and they stand in no table here; a `Call` invocation may write any of its `ByRef` arguments,
+#: and `Eval`'s value is a read of a name the tree spells as a string, which the name-parameter
+#: table below resolves instead. `AUTOIT_FUNCTION_NAMES` below is the question every other
+#: consumer actually asks.
+EMULATED_NAMES = frozenset(_EVALUATORS)
 
 #: Every core AutoIt3 builtin function in its official spelling, transcribed from the docs'
-#: `functions.txt` (400 names), each agreeing with the heading of its own doc page — not the
-#: Standard UDF Library (`libfunctions.txt`), whose functions need an `#include` to exist at all
-#: and are already covered by the include conservatism elsewhere. The official spelling is not
-#: always PascalCase: the docs spell `ACos`, `BitAND`, `HWnd`, and `StatusbarGetText`.
+#: `functions.txt` (400 names) and the five experimental map functions that file omits while
+#: each keeps its own doc page. Every spelling is the one the function's doc page spells: most
+#: under their own heading, `UDPShutdown` and `UDPStartup` under the two-name headings they
+#: share with the TCP functions, and `Opt` as the alias the `AutoItSetOption` page names — not
+#: the Standard UDF Library (`libfunctions.txt`), whose functions need an `#include` to exist
+#: at all and are already covered by the include conservatism elsewhere. The official spelling
+#: is not always PascalCase: the docs spell `ACos`, `BitAND`, `HWnd`, and `StatusbarGetText`.
 _AUTOIT_FUNCTIONS = (
     'Abs',
     'ACos',
@@ -1080,11 +1090,16 @@ _AUTOIT_FUNCTIONS = (
     'IsHWnd',
     'IsInt',
     'IsKeyword',
+    'IsMap',
     'IsNumber',
     'IsObj',
     'IsPtr',
     'IsString',
     'Log',
+    'MapAppend',
+    'MapExists',
+    'MapKeys',
+    'MapRemove',
     'MemGetStats',
     'Mod',
     'MouseClick',
@@ -1256,22 +1271,59 @@ _AUTOIT_FUNCTIONS = (
 
 #: Every core builtin keyed by its lowercased name and mapped to its official spelling: AutoIt
 #: resolves function names without regard to case, so a membership test reads the key, and the
-#: value is the spelling that normalizes the case of a call to a known builtin. A name here is a
-#: real AutoIt function regardless of whether this project emulates its value; `call_is_bounded`
-#: is the question that actually matters to most of this table's readers.
+#: value is the spelling the alias tracker prints for the name a string literal spells. A name
+#: here is a real AutoIt function regardless of whether this project emulates its value.
 AUTOIT_FUNCTION_NAMES: dict[str, str] = {name.lower(): name for name in _AUTOIT_FUNCTIONS}
+
+#: The builtins that run script code the tree does not hold inline: `Call` dispatches to the
+#: function its argument names, and every registration builtin runs a registered script function
+#: on its own trigger — a press, a timer, a message, an event — at a moment no walk of the tree
+#: can place, so what that function writes is a write the registration may perform. `Execute`
+#: and `Assign` answer `False` for the same reason they stand outside `EMULATED_NAMES`: their
+#: payload readers own the precise answer, which a caller should prefer over this set.
+DISPATCHING_NAMES = frozenset({
+    'call',
+    'execute',
+    'assign',
+    'adlibregister',
+    'onautoitexitregister',
+    'dllcallbackregister',
+    'hotkeyset',
+    'guiregistermsg',
+    'guictrlregisterlistviewsort',
+    'guisetonevent',
+    'guictrlsetonevent',
+    'traysetonevent',
+    'trayitemsetonevent',
+    'objevent',
+})
+
+#: The builtins that set an interpreter option: an expanding one rewrites the meaning of every
+#: string literal evaluated after it, so a value a walk proved before the call may not hold
+#: after it — the same reason `refinery.lib.scripts.au3.analysis.existence` reads this set for
+#: its own census, which is why it lives here: `Opt` is the documented alias of
+#: `AutoItSetOption`.
+OPTION_SETTERS = frozenset({'opt', 'autoitsetoption'})
 
 
 def call_is_bounded(name: str) -> bool:
     """
     Whether a call to *name* can neither write an arbitrary variable nor hold a bare-variable
-    argument by reference: true for every core builtin but `Call`, confirmed by the absence of a
-    `ByRef` parameter in the official per-function docs. `Execute` and `Assign` answer `False`
-    here not because they are unbounded but because they have a more precise answer elsewhere —
-    `execute_kills` and `assign_kills` in `analysis.propagation` — which a caller should prefer
-    over this blunter fact whenever it has the call site in hand to ask them.
+    argument by reference nor change what a stored literal means: true for every core builtin
+    but the dispatching ones and the option setters, confirmed by the absence of a `ByRef`
+    parameter in the official per-function docs. `Call` runs the function its argument names
+    and may write through its `ByRef` parameters, and a registration builtin runs a registered
+    script function on its own trigger, which may write any global. `Execute` and `Assign`
+    answer `False` here not because they are unbounded but because they have a more precise
+    answer elsewhere — `execute_kills` and `assign_kills` in
+    `refinery.lib.scripts.au3.analysis.existence` — which a caller should prefer over this
+    blunter fact whenever it has the call site in hand to ask them.
     """
-    return name in AUTOIT_FUNCTION_NAMES and name not in ('call', 'execute', 'assign')
+    return (
+        name in AUTOIT_FUNCTION_NAMES
+        and name not in DISPATCHING_NAMES
+        and name not in OPTION_SETTERS
+    )
 
 
 #: The builtins that consume the name of a script function or a variable through an argument,

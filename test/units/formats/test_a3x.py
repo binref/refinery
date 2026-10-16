@@ -3,6 +3,7 @@ from .. import TestUnitBase
 import pytest
 
 from refinery.units.formats.a3x import (
+    A3X_APICALLS,
     A3xScript,
     A3xType,
     a3x_decompile,
@@ -81,3 +82,17 @@ class TestA3X(TestUnitBase):
             out[key], = value
         self.assertSetEqual(set(out), {'unicode-script.au3'})
         self.assertContains(out['unicode-script.au3'], B"new ActiveXObject('WScript.Shell').Run")
+
+    def test_the_interpreters_call_names_and_the_analysis_table_agree(self):
+        """
+        The interpreter's compiled call names and the deobfuscation pipeline's builtin table
+        describe the same functions, so neither may grow without the other being reconsidered.
+        The one exception is `DummySpeedTest`, which the interpreter knows but no documentation
+        page describes: the table transcribes the docs, so it leaves the name to the conservative
+        path.
+        """
+        from refinery.lib.scripts.au3.analysis.builtins import AUTOIT_FUNCTION_NAMES
+        self.assertEqual(
+            {name.lower() for name in A3X_APICALLS},
+            set(AUTOIT_FUNCTION_NAMES) | {'dummyspeedtest'},
+        )
