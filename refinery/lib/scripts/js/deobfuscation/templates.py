@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.analysis.model import (
     build_semantic_model,
     statement_list_of,
 )
+from refinery.lib.scripts.js.deobfuscation.helpers import names_global_value
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     LOOP_NODES,
@@ -51,37 +52,89 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.parser import JsParser
 
 
+class Shuffle(NamedTuple):
+    """
+    The statements of a template's body the obfuscator writes in an order of its choosing: those
+    from *start* on. It always writes the first *kept* of them and leaves out any of the others.
+    None of them declares a name: an own name is numbered where it first appears, and one first
+    appearing in a statement written in an order of the obfuscator's choosing would be numbered by
+    that order (`template_form` refuses such a template).
+    """
+    start: int
+    kept: int
+
+
 class Template(NamedTuple):
     """
     A helper as the obfuscator writes it, and the free names in its text that stand for a part the
-    function compared to it supplies: a name holding another helper, or a node of its own.
+    function compared to it supplies: a name holding another helper, or a node of its own. With
+    *shuffled*, the obfuscator writes some of the statements of the body in an order of its choosing
+    and leaves some of them out.
     """
     text: str
     placeholders: frozenset[str] = frozenset()
+    shuffled: Shuffle | None = None
 
 
 class Shape(NamedTuple):
     """
-    The normal form of a function: whether it is a generator, whether it is `async`, and the
-    canonical forms of its parameters and of its body.
+    The normal form of a function: whether it is a generator, whether it is `async`, the canonical
+    forms of its parameters, and the canonical form of each statement of its body, or of the
+    expression that is its body.
     """
     generator: bool
     is_async: bool
     params: tuple[object, ...]
-    body: object
+    statements: tuple[object, ...] | None
+    expression: object
+
+    def fit(self, template: Template) -> tuple[int, ...] | None:
+        """
+        Which statement of *template* each statement of the body is, by its position in the
+        template, or `None` where this is not the form of *template*. It is equal to the form of
+        *template* but for the statements the obfuscator writes in an order of its choosing: those
+        hold the ones it always writes and no statement the template does not, each at most once.
+        """
+        form = template_form(template)
+        if (
+            self.generator != form.generator
+            or self.is_async != form.is_async
+            or self.params != form.params
+            or self.expression != form.expression
+        ):
+            return None
+        written = self.statements
+        allowed = form.statements
+        if written is None or allowed is None:
+            return () if written is allowed else None
+        if (shuffled := template.shuffled) is None:
+            return tuple(range(len(allowed))) if written == allowed else None
+        start = shuffled.start
+        if written[:start] != allowed[:start]:
+            return None
+        positions = {statement: start + index for index, statement in enumerate(allowed[start:])}
+        fit = [*range(start)]
+        for statement in written[start:]:
+            if (position := positions.pop(statement, None)) is None:
+                return None
+            fit.append(position)
+        if any(start + index not in fit for index in range(shuffled.kept)):
+            return None
+        return tuple(fit)
 
 
 class NormalForm:
     """
-    The form a function is compared to a template in. Its own names are renamed in the order they
-    appear, a name of an outer helper the template refers to becomes that helper's placeholder,
-    parentheses go, a computed key that is a fixed name becomes a dotted one, the body of an `if`
-    or a loop becomes a block, a `var` or `let` declaration becomes the assignments it makes, a
-    sequence or a call of an empty function in statement position becomes one statement per
-    operand, and a negated number literal becomes the negative number constant folding leaves. Those
-    are the changes minifying, moving declarations and the other transforms of the obfuscator make
-    to a helper. A negated zero stays negated, since a literal compares by its value and zero equals
-    its negation.
+    The form a function is compared to a template in. Its own names are numbered in the order they
+    first appear once the rest is normalized, a name of an outer helper the template refers to
+    becomes that helper's placeholder, `undefined` where it still names the global value becomes
+    `void 0`, parentheses go, a computed key that is a fixed name becomes a dotted one, the body of
+    an `if` or a loop becomes a block, a `var` or `let` declaration becomes the assignments it
+    makes, a sequence or a call of an empty function in statement position becomes one statement
+    per operand, and a negated number literal becomes the negative number constant folding leaves.
+    Those are the changes minifying, moving declarations and the other transforms of the obfuscator
+    make to a helper. A negated zero stays negated, since a literal compares by its value and zero
+    equals its negation.
 
     The names *placeholders* maps by the identity of their binding stand for the placeholder they
     are mapped to, and so does every node *nodes* maps by its identity, whatever it spells: the
@@ -108,6 +161,7 @@ class NormalForm:
     def of(self, function: JsFunctionNode) -> Shape | None:
         renames: dict[int, str] = {}
         own: dict[int, str] = {}
+        undefined: set[int] = set()
         left_out = {id(statement) for statement in self.left_out}
         unread = {id(node) for statement in self.left_out for node in statement.walk()}
         for node in function.walk():
@@ -115,7 +169,11 @@ class NormalForm:
                 continue
             binding = self.model.resolve(node) or self.model.binding_of(node)
             if binding is None:
-                if self.model.is_reference(node):
+                if not self.model.is_reference(node):
+                    continue
+                if node.name == 'undefined' and names_global_value(node, self.model):
+                    undefined.add(id(node))
+                else:
                     renames[id(node)] = F'#free:{node.name}'
                 continue
             if id(binding) in self.placeholders:
@@ -123,32 +181,50 @@ class NormalForm:
             elif id(binding) in self.empty:
                 renames[id(node)] = '#empty'
             elif binding.declared_within(function):
-                renames[id(node)] = own.setdefault(id(binding), F'#v{len(own)}')
+                renames[id(node)] = own.setdefault(id(binding), F'#own:{len(own)}')
             else:
                 renames[id(node)] = '#outer'
         clone = _clone_node(function)
         swaps: list[tuple[Node, str]] = []
+        voided: list[Node] = []
         dropped: list[Node] = []
         for original, copy in zip(function.walk(), clone.walk()):
             if type(original) is not type(copy):
                 return None
             if id(original) in renames:
                 set_value(copy, 'name', renames[id(original)])
+            if id(original) in undefined:
+                voided.append(copy)
             if id(original) in self.nodes:
                 swaps.append((copy, self.nodes[id(original)]))
             if id(original) in left_out:
                 dropped.append(copy)
         for copy, placeholder in swaps:
             _replace_in_parent(copy, JsIdentifier(name=placeholder))
+        for copy in voided:
+            void = JsUnaryExpression(operator='void', operand=JsNumericLiteral(value=0))
+            _replace_in_parent(copy, void)
         for copy in dropped:
             if not _remove_from_parent(copy):
                 return None
         self._normalize(clone)
+        numbers: dict[str, str] = {}
+        for node in clone.walk_in_order():
+            if isinstance(node, JsIdentifier) and node.name.startswith('#own:'):
+                set_value(node, 'name', numbers.setdefault(node.name, F'#v{len(numbers)}'))
+        body = clone.body
+        statements = None
+        expression = None
+        if isinstance(body, JsBlockStatement):
+            statements = tuple(canonical(statement) for statement in body.body)
+        elif body is not None:
+            expression = canonical(body)
         return Shape(
             bool(getattr(clone, 'generator', False)),
             bool(getattr(clone, 'is_async', False)),
             tuple(canonical(parameter) for parameter in clone.params),
-            None if clone.body is None else canonical(clone.body),
+            statements,
+            expression,
         )
 
     def _normalize(self, root: Node) -> None:
@@ -248,16 +324,40 @@ def template_form(template: Template) -> Shape:
     The normal form of *template*. Each of its placeholders is renamed to itself, which only a name
     or a node a caller maps to it takes in the form of a function: a call of a global the program
     never declares keeps its spelling as a free name, so a function calling an undeclared `IMUL`
-    does not match a template calling the placeholder `IMUL`.
+    does not match a template calling the placeholder `IMUL`; a placeholder the template writes is
+    a name the model binds, and it is renamed to itself as well. A template one of whose statements
+    the obfuscator writes in an order of its choosing declares a name is refused (`Shuffle`).
     """
     script = JsParser(template.text).parse()
     function = script.body[0]
     assert isinstance(function, JsFunctionDeclaration)
-    form = NormalForm(build_semantic_model(script), {}, set()).of(function)
+    model = build_semantic_model(script)
+    if (shuffled := template.shuffled) is not None:
+        for statement in (statement_list_of(function) or [])[shuffled.start:]:
+            if any(
+                isinstance(node, JsIdentifier) and model.binding_of(node) is not None
+                for node in statement.walk()
+            ):
+                raise ValueError(
+                    F'a shuffled statement of the template declares a name: {template.text}'
+                )
+    written = {
+        id(binding): binding.name for node in function.walk()
+        if isinstance(node, JsIdentifier)
+        and node.name in template.placeholders
+        and (binding := model.resolve(node)) is not None
+    }
+    form = NormalForm(model, written, set()).of(function)
     assert form is not None
+    statements = form.statements
+    if statements is not None:
+        statements = tuple(
+            _rename_free(statement, template.placeholders) for statement in statements
+        )
     return form._replace(
         params=tuple(_rename_free(parameter, template.placeholders) for parameter in form.params),
-        body=_rename_free(form.body, template.placeholders),
+        statements=statements,
+        expression=_rename_free(form.expression, template.placeholders),
     )
 
 
@@ -277,6 +377,34 @@ def empty_functions_called(model: SemanticModel, function: Node) -> set[int]:
     return empty
 
 
+def match(
+    model: SemanticModel,
+    function: JsFunctionNode,
+    templates: Iterable[Template],
+    placeholders: dict[int, str],
+    nodes: dict[int, str] | None = None,
+    left_out: Collection[Node] = (),
+) -> tuple[Template, tuple[int, ...]] | None:
+    """
+    The first of *templates* whose normal form *function* has, the names *placeholders* maps and
+    the nodes *nodes* maps standing for the placeholders they are mapped to, and the statements of
+    *left_out* left out; with it, which statement of the template each statement of the body of
+    *function* is (`Shape.fit`). A function whose number of parameters no template has is refused
+    before its form is built, which costs a copy of the whole function.
+    """
+    templates = list(templates)
+    if all(len(function.params) != len(template_form(template).params) for template in templates):
+        return None
+    empty = empty_functions_called(model, function)
+    form = NormalForm(model, placeholders, empty, nodes, left_out).of(function)
+    if form is None:
+        return None
+    for template in templates:
+        if (fit := form.fit(template)) is not None:
+            return template, fit
+    return None
+
+
 def matches(
     model: SemanticModel,
     function: JsFunctionNode,
@@ -286,14 +414,6 @@ def matches(
     left_out: Collection[Node] = (),
 ) -> bool:
     """
-    Whether *function* has the normal form of one of *templates*, the names *placeholders* maps and
-    the nodes *nodes* maps standing for the placeholders they are mapped to, and the statements of
-    *left_out* left out. A function whose number of parameters no template has is refused before
-    its form is built, which costs a copy of the whole function.
+    Whether *function* has the normal form of one of *templates* (`match`).
     """
-    shapes = [template_form(template) for template in templates]
-    if all(len(function.params) != len(shape.params) for shape in shapes):
-        return False
-    empty = empty_functions_called(model, function)
-    form = NormalForm(model, placeholders, empty, nodes, left_out).of(function)
-    return form is not None and form in shapes
+    return match(model, function, templates, placeholders, nodes, left_out) is not None
