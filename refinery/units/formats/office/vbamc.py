@@ -13,7 +13,7 @@ class vbamc(PathExtractorUnit):
     """
     def unpack(self, data):
         try:
-            parser = VBAParser(bytes(data))
+            parser = VBAParser(data)
         except FileOpenError:
             return
         for macro in parser.extract_all_macros():
