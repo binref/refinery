@@ -379,11 +379,11 @@ def _expand_constant(
         return host.constant(name, original)
     if constant.startswith('%'):
         variable, default = split_constant_parameter(constant[1:], '|')
+        has_default = default is not None
         variable = decode_percent_escapes(variable)
         default = decode_percent_escapes(default or '')
         if variable is None or default is None:
             return ''
-        has_default = constant_position('|', constant) >= 0
         value = host.environment((yield from expand_constants(variable, host, custom)), has_default)
         if not value:
             value = yield from expand_constants(default, host, custom)

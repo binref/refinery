@@ -871,7 +871,7 @@ def _path_drive(name: str) -> str:
     after two slashes, else an empty string. Both kinds of slash separate.
     """
     slashes = '\\/'
-    if name[:1] in slashes and name[1:2] in slashes and len(name) >= 2:
+    if len(name) >= 2 and name[0] in slashes and name[1] in slashes:
         cursor = 2
         separators = 0
         while cursor < len(name):
@@ -884,7 +884,7 @@ def _path_drive(name: str) -> str:
             while cursor < len(name) and name[cursor] in slashes:
                 cursor += 1
         return name[:cursor]
-    if name[:1] in slashes:
+    if not name or name[0] in slashes:
         return ''
     if name[1:2] == ':':
         return name[:2]
@@ -1015,9 +1015,9 @@ class _HostSetup:
     """
     What the Setup that runs the script decides on its own, read once from the setup header and the
     configuration: its version, the active language, the directives that the walk of the wizard
-    follows, and the built-in pages that it skips. A bare script has no header; it is taken to run
-    under the current Setup with every page shown and every directive that sends an event on, so
-    that each event that the script handles is sent.
+    follows, and the built-in pages that the header makes it skip. A bare script has no header; it
+    is taken to run under the current Setup with every page shown and every directive that sends an
+    event on, so that each event that the script handles is sent.
     """
     version: InnoVersion | None
     language: int | None
@@ -1029,6 +1029,7 @@ class _HostSetup:
     always_restart: bool
     header_password: bool
     finished_page_disabled: bool
+    ready_memo_disabled: bool
     skipped_pages: frozenset[int]
 
     @classmethod
@@ -1045,6 +1046,7 @@ class _HostSetup:
                 always_restart=False,
                 header_password=True,
                 finished_page_disabled=False,
+                ready_memo_disabled=False,
                 skipped_pages=frozenset(),
             )
         header = setup_info.Header
@@ -1054,7 +1056,7 @@ class _HostSetup:
         skipped = set()
         if flags & Flags.DisableWelcomePage:
             skipped.add(PageID.wpWelcome)
-        if not texts.license or config.wizard_silent:
+        if not texts.license:
             skipped.add(PageID.wpLicense)
         if not texts.info_before:
             skipped.add(PageID.wpInfoBefore)
@@ -1083,19 +1085,36 @@ class _HostSetup:
             always_restart=bool(flags & Flags.AlwaysRestart),
             header_password=bool(flags & Flags.Password),
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
+            ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             skipped_pages=frozenset(skipped),
         )
+
+
+_ASCII_LOWER_CASE = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+
+
+def _same_text(a: str, b: str) -> bool:
+    """
+    Compares two texts as Delphi's `CompareText` does: letters from A to Z without case, any other
+    character as it is.
+    """
+    return a.translate(_ASCII_LOWER_CASE) == b.translate(_ASCII_LOWER_CASE)
 
 
 def _active_language(setup_info: TSetup, config: IFPSEmulatorConfig) -> int | None:
     """
     The index of the language that Setup activates when the user accepts its choice, as Setup's
-    `DetermineDefaultLanguage` finds it: the language whose ID is the user's language, else the
-    first whose primary language matches, else the first one. The configured language ID stands
-    for both the language of the user interface and the locale.
+    `DetermineDefaultLanguage` finds it: the language with the configured name, which stands for
+    the `/LANG=` parameter of Setup and is compared without case; else the language whose ID is
+    the user's language, else the first whose primary language matches, else the first one. The
+    configured language ID stands for both the language of the user interface and the locale.
     """
     if not (languages := setup_info.Languages):
         return None
+    chosen = config.language
+    for index, language in enumerate(languages):
+        if _same_text(language.Name, chosen):
+            return index
     if setup_info.Header.LanguageDetection == LanguageDetection.Nothing:
         return 0
     wanted = config.lcid
@@ -1607,8 +1626,11 @@ class IFPSEmulator:
         """
         Runs one emulation under a time limit: the given number of seconds or else the number in
         the configuration, no limit when it is not positive. Only the time that the emulator works
-        counts, and the runs that the emulation nests share the limit.
+        counts, and the runs that the emulation nests share the limit. An emulation that starts while
+        another one works and is given no limit of its own runs under the limit of that one.
         """
+        if max_seconds is None and self._stopwatch is not None:
+            return (yield from emulation)
         watch = _Stopwatch(self.config.max_seconds if max_seconds is None else max_seconds)
         try:
             while True:
@@ -2204,8 +2226,7 @@ class IFPSEmulator:
         map = {
             'app'               : cfg.install_to,
             'win'               : R'C:\Windows',
-            'sys'               : R'C:\Windows\System',
-            'sysnative'         : R'C:\Windows\System32',
+            'sys'               : R'C:\Windows\System32',
             'src'               : str(Path(cfg.executable).parent),
             'sd'                : R'C:',
             'commonpf'          : R'C:\Program Files',
@@ -2256,6 +2277,7 @@ class IFPSEmulator:
             'log'               : '',
         }
         if cfg.x64:
+            map['sysnative'] = R'C:\Windows\Sysnative'
             map['syswow64'] = R'C:\Windows\SysWOW64'
             map['commonpf32'] = R'C:\Program Files (x86)'
             map['commoncf32'] = R'C:\Program Files (x86)\Common Files'
@@ -2264,6 +2286,7 @@ class IFPSEmulator:
             map['dotnet2064'] = R'C:\Windows\Microsoft.NET\Framework64\v3.0'
             map['dotnet4064'] = R'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
         else:
+            map['sysnative'] = R'C:\Windows\System32'
             map['syswow64'] = R'C:\Windows\System32'
             map['commonpf32'] = R'C:\Program Files'
             map['commoncf32'] = R'C:\Program Files\Common Files'
@@ -3129,8 +3152,7 @@ class InnoSetupEmulator(IFPSEmulator):
         page = wizard.current
         if page == PageID.wpPassword:
             yield from self._check_password(password, password_test)
-        elif page in (PageID.wpSelectDir, PageID.wpSelectProgramGroup):
-            wizard.leave(page)
+        wizard.leave(page)
         yield from self._page_event(page, PageEvent.OnNextButtonClick)
         yield from self._event(SetupEvent.NextButtonClick, page)
         index = wizard.pages.index(page)
@@ -3146,7 +3168,8 @@ class InnoSetupEmulator(IFPSEmulator):
                 return
             page = wizard.pages[index]
             if page == PageID.wpReady:
-                yield from self._event(SetupEvent.UpdateReadyMemo, '      ', '\r\n', '', '', '', '', '', '')
+                if not self.setup.ready_memo_disabled:
+                    yield from self._event(SetupEvent.UpdateReadyMemo, '      ', '\r\n', '', '', '', '', '', '')
             elif page == PageID.wpPreparing:
                 yield from self._prepare_to_install()
                 if self.setup.restart_manager:
@@ -3233,15 +3256,17 @@ class InnoSetupEmulator(IFPSEmulator):
     def _setup_skips(self, page: int) -> bool:
         """
         Whether Setup skips the given page on its own: a page whose style says so, the preparing
-        page, the password page when no password is needed or one was entered, the finished page
-        when the header disables it and no restart is needed, and the pages that the header makes
-        Setup skip.
+        page, the license page of a silent installation, the password page when no password is
+        needed or one was entered, the finished page when the header disables it and no restart is
+        needed, and the pages that the header makes Setup skip.
         """
         wizard = self._wizard_form
         setup = self.setup
         if self._page_style(page) & _PageStyle.AlwaysSkip:
             return True
         if page == PageID.wpPreparing:
+            return True
+        if page == PageID.wpLicense and self.config.wizard_silent:
             return True
         if page == PageID.wpPassword:
             needed = setup.header_password or bool(self._implementations(SetupEvent.CheckPassword))

@@ -1,4 +1,5 @@
 import contextlib
+import ntpath
 import pytest
 import time
 
@@ -24,6 +25,7 @@ _SCRIPT_WITH_ONE_LOAD_FLAG_AND_ONLY_ANSI_STRINGS = 'fb0fc2e3c2059e6159540920a4ff
 _SCRIPT_THAT_WRITES_THE_PASSWORD_BOX = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_WITH_PAGES_OF_ITS_OWN = _SCRIPT_WITH_NESTED_TRY
 _INSTALLER_WITH_A_LICENSE_ONLY_IN_ITS_HEADER = 'c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'
+_INSTALLER_IN_41_LANGUAGES = '9271acdc528deb7d971f742c94d772b1f408b5db00ae949f79221a3545f41314'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 _INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX = _INSTALLER_WITH_A_DIRECTORY_PAGE
@@ -451,6 +453,40 @@ class TestIPFSEmulator(TestBase):
 
         with _failing_external('SetLength'), _replaced_external('Log', log_by_expanding_a_code_constant):
             self.assertEqual(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE'), 0)
+
+    def test_a_constant_expanded_inside_a_run_counts_against_the_time_limit_of_that_run(self):
+        """
+        The replaced `Log` stands in for an emulated function that expands a code constant, after
+        it took more than half of the time limit. The function of the constant asks twice whether
+        Windows is 64-bit, which here takes more than a quarter of the limit each time: the
+        expansion alone stays within the limit, but not together with the run that it is part of.
+        """
+        from refinery.lib.inno.emulator import EmulatorTimeout, IFPSEmulator
+        is_win64 = IFPSEmulator.external_symbols['']['IsWin64'].call
+        expanded = []
+
+        def spend(seconds: float):
+            started = time.process_time()
+            while time.process_time() - started < seconds:
+                pass
+
+        def slow_is_win64(*args):
+            spend(0.3)
+            return is_win64(*args)
+
+        def log_by_expanding_a_code_constant(emulator: IFPSEmulator, _: str):
+            spend(0.6)
+            emulator.expand_constant('{code:GETAPPPATH|x}')
+            expanded.append(True)
+
+        with (
+            _failing_external('SetLength'),
+            _replaced_external('Log', log_by_expanding_a_code_constant),
+            _replaced_external('IsWin64', slow_is_win64),
+            self.assertRaises(EmulatorTimeout),
+        ):
+            self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_seconds=1)
+        self.assertEqual(expanded, [])
 
     def test_a_script_function_named_like_an_inno_function_keeps_its_own_declaration(self):
         function = self._installer_emulator().symbols['IsDotNetInstalled']
@@ -904,6 +940,37 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.symbols import IFPSClasses, IFPSEvents
         self.assertEqual(IFPSEvents['NextButtonClick'].kind, 'function')
         self.assertEqual(IFPSClasses.Classes['TStrings'].members['Strings'].kind, 'property')
+
+    def test_the_language_that_the_configuration_names_is_active_as_with_the_lang_parameter_of_setup(self):
+        """
+        The installer has the languages `en`, `de` and `fr`, among others, with the language IDs of
+        English, German and French.
+        """
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        archive = InnoArchive(self.download_sample(_INSTALLER_IN_41_LANGUAGES))
+        active = {}
+        for language, lcid in (('DE', 0x0409), ('none of them', 0x040C), ('none of them', 0x0409)):
+            emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(language=language, lcid=lcid))
+            active[language, lcid] = emulator.expand_constant('{language}')
+        self.assertEqual(active, {
+            ('DE', 0x0409): 'de',
+            ('none of them', 0x040C): 'fr',
+            ('none of them', 0x0409): 'en',
+        })
+
+    def test_the_system_folders_of_a_64_bit_windows_are_those_that_a_32_bit_setup_sees(self):
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, x64=True)
+        windows = emulator.expand_constant('{win}')
+        self.assertEqual(
+            [emulator.expand_constant(constant) for constant in ('{sys}', '{sysnative}', '{syswow64}')],
+            [F'{windows}\\System32', F'{windows}\\Sysnative', F'{windows}\\SysWOW64'],
+        )
+        self.assertEqual(ntpath.dirname(emulator.expand_constant('{cmd}')), emulator.expand_constant('{sys}'))
+
+    def test_the_native_system_folder_of_a_32_bit_windows_is_its_system_folder(self):
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, x64=False)
+        self.assertEqual(emulator.expand_constant('{sysnative}'), emulator.expand_constant('{sys}'))
 
     def test_a_closing_brace_outside_of_a_constant_is_kept(self):
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)

@@ -4,7 +4,7 @@ import re
 from itertools import zip_longest
 from typing import Iterable
 
-from refinery.lib.inno.archive import InnoArchive
+from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.emulator import (
     EmulatorException,
     IFPSEmulatorConfig,
@@ -845,8 +845,9 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
     user. The emulated machine has `WINDIR` set, as every Windows has.
     """
 
-    def emulator(self, **config):
-        archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
+    def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config):
+        if archive is None:
+            archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
         return InnoSetupEmulator(archive, IFPSEmulatorConfig(
             log_calls=True,
             admin=False,
@@ -885,6 +886,50 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
     def test_a_silent_installation_runs_the_script_as_setup_did(self):
         self.assertInstallationLogsAsSetupDid(_HOST_LOG_OF_A_SILENT_INSTALLATION, wizard_silent=True)
 
+    def test_setup_does_not_ask_the_script_for_the_ready_memo_when_the_header_disables_the_memo(self):
+        """
+        The parsed header of the installer is changed as the directive `DisableReadyMemo` changes
+        it.
+        """
+        archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
+        archive.setup_info.Header.Flags |= Flags.DisableReadyMemo
+        events = _logged_values(self.emulator(archive, wizard_silent=False).emulate_installation(), {}).values()
+        self.assertIn('CurPageChanged(10)', events)
+        self.assertNotIn('UpdateReadyMemo', events)
+
+    def test_a_silent_installation_of_the_script_alone_never_shows_the_license_page(self):
+        """
+        Without its installer, the script runs as if every page were shown; a silent Setup still
+        skips the license page on its own.
+        """
+        script = InnoArchive(self.download_sample(_HOST_INSTALLER)).ifps
+        assert script is not None
+        silent = _logged_values(self.emulator(script, wizard_silent=True).emulate_installation(), {}).values()
+        normal = _logged_values(self.emulator(script, wizard_silent=False).emulate_installation(), {}).values()
+        self.assertIn('ShouldSkipPage(2)', normal)
+        self.assertNotIn('ShouldSkipPage(2)', silent)
+        self.assertNotIn('CurPageChanged(2)', silent)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='the program files folders do not follow the 32-bit install mode of the setup',
+    )
+    def test_a_setup_in_32_bit_install_mode_puts_the_program_files_folders_under_program_files_x86(self):
+        """
+        The installer sets no `ArchitecturesInstallIn64BitMode`, so it installs in 32-bit mode;
+        the emulated Windows is 64-bit.
+        """
+        emulator = self.emulator(x64=True)
+        self.assertEqual(
+            [emulator.expand_constant(constant) for constant in ('{commonpf}', '{commoncf}', '{dao}')],
+            [
+                R'C:\Program Files (x86)',
+                R'C:\Program Files (x86)\Common Files',
+                R'C:\Program Files (x86)\Common Files\Microsoft Shared\DAO',
+            ],
+        )
+
     @wontfix('the progress of an installation counts the bytes that Setup installs, and the emulator installs none')
     def test_an_installation_reports_its_progress(self):
         emulated = _logged_values(self.emulator(wizard_silent=False).emulate_installation(), {})
@@ -896,5 +941,5 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
 
     @wontfix('the emulator does not know the environment of the machine; a variable that the configuration does not name stays %NAME%')
     def test_an_environment_variable_that_is_not_set_expands_to_an_empty_text(self):
-        emulator = self.emulator()
-        self.assertEqual(F"[{emulator.expand_constant('{%NOSUCHORACLEVARIABLE}')}]", _HOST_LOG_OF_INITIALIZE_SETUP['ConstEnvMissing'])
+        expanded = self.emulator().expand_constant('{%NOSUCHORACLEVARIABLE}')
+        self.assertEqual(F'[{expanded}]', _HOST_LOG_OF_INITIALIZE_SETUP['ConstEnvMissing'])
