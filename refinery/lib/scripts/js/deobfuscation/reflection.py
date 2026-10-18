@@ -95,7 +95,12 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
-from refinery.lib.scripts.js.options import preserves_script_return, runs_as_module
+from refinery.lib.scripts.js.options import (
+    commonjs_wrapper_names,
+    may_run_as_es_module,
+    preserves_script_return,
+    runs_as_module,
+)
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
     declares_use_strict,
@@ -1202,7 +1207,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         pack = _try_unpack_function_constructor(
             node,
             free_global_name=self._free_global,
-            module=runs_as_module(self.options, root),
+            module=may_run_as_es_module(self.options, root),
         )
         if pack is not None:
             packed, site_resolved, substituted = pack
@@ -1682,23 +1687,24 @@ class JsReflectionInlining(ScriptLevelTransformer):
     def _destination_may_be_strict(self, site: Node, root: JsScript) -> bool:
         """
         Whether the destination of an inline could run the spliced text in strict mode. A
-        syntactically strict site is strict; and the module execution model is strictness-ambiguous —
-        `refinery.lib.scripts.js.options.ExecutionModel` covers a strict ES module and a sloppy
-        CommonJS file alike, and nothing here tells the two apart — so a module destination is
-        treated as possibly strict.
+        syntactically strict site is strict, and so is every site of a file that may run as an ES
+        module (`refinery.lib.scripts.js.options.may_run_as_es_module`): the `module` execution
+        model covers a strict ES module and a sloppy CommonJS file alike, and nothing in the file
+        tells the two apart. Under the `commonjs` model the file's own text decides.
 
         This is the one mode the reflected text must be legal and mode-invariant in, because inlining
         must be sound for the strict reading too: a sloppy-only body spliced into what turns out to be
         an ES module is a `SyntaxError` that takes the whole file down, or behaves differently, where
         the call it replaced merely raised one the site caught. The sloppy reading only ever inlines a
         strict subset of what this admits, so declining here costs a CommonJS-only recall and never a
-        soundness. This is why it is asked at every reflection strictness gate rather than left to
-        `strict_mode_at`, whose pure-tree answer is blind to the module option, and why the
+        soundness; the `commonjs` model is how an analyst who knows the file is CommonJS recovers
+        it. This is why it is asked at every reflection strictness gate rather than left to
+        `strict_mode_at`, whose pure-tree answer is blind to the execution model, and why the
         complementary sloppy-conservative gates — a mapped `arguments` object, a rest unpacking — read
         `strict_mode_at` alone: their soundness runs the other way, so they must assume the sloppy
         CommonJS reading, not the strict one.
         """
-        return strict_mode_at(site) or runs_as_module(self.options, root)
+        return strict_mode_at(site) or may_run_as_es_module(self.options, root)
 
     def _resolve_reflected_body(
         self,
@@ -1729,7 +1735,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         parsed = _try_parse(
             code,
             strict=self._destination_may_be_strict(site, root),
-            module=runs_as_module(self.options, root),
+            module=may_run_as_es_module(self.options, root),
             context=code_context_at(site) if destination is None else destination,
         )
         if parsed is None:
@@ -1759,13 +1765,17 @@ class JsReflectionInlining(ScriptLevelTransformer):
         `eval`/string-timer code — must run in the global sloppy mode it would have: a strict
         context at *site* declines a body that would diverge under strict mode
         (`diverges_under_strict`), as does a `"use strict"` prologue; every receiver `this` becomes
-        `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free
-        name that no longer denotes the same global at *site* — including one a `with` on the path could
-        capture — declines. Direct `eval` runs in the caller's scope, which is *site* itself, so its
-        references and `this` are already correct there and only the checks below apply. A top-level
-        `return` is a SyntaxError in evaluated code, so an eval body with one declines. Declaration
-        handling is delegated to `_reflected_declarations_safe`. Anything not provably safe is left
-        intact (returns `None`) — declining is always sound.
+        `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free name that
+        no longer denotes the same global at *site* — including one a `with` on the path could
+        capture — declines. Where the file may run as CommonJS, every name of
+        `refinery.lib.scripts.js.options.commonjs_wrapper_names` that no declaration binds at *site*
+        is such a name: global code reading `require` reads a global that does not exist, and the
+        same text at *site* reads the one the host hands the file. Direct `eval` runs in the
+        caller's scope, which is *site* itself, so its references and `this` are already correct
+        there and only the checks below apply. A top-level `return` is a SyntaxError in evaluated
+        code, so an eval body with one declines. Declaration handling is delegated to
+        `_reflected_declarations_safe`. Anything not provably safe is left intact (returns `None`) —
+        declining is always sound.
 
         *invocation_arguments* is the argument list of the call the splice replaces, where the site
         is the invocation of a construction: the call evaluates those arguments before the body
@@ -1844,10 +1854,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if resolves_globally and free:
             if crosses_dynamic_scope(site_scope):
                 return None
+            wrapper = commonjs_wrapper_names(self.options, root)
             for name in free:
                 if name in site_resolved:
                     continue
                 binding = root_model.lookup(name, site_scope, exclude=exclude)
+                if binding is None and name in wrapper:
+                    return None
                 if binding is not None and not root_model.reaches_global_object(
                     binding, module_scope=runs_as_module(self.options, root),
                 ):

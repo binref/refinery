@@ -210,18 +210,33 @@ def before_and_after(
     pinning an `import` or `export` declaration has to ask for: no script spells one, and the answer
     such a declaration is wrong in is the linker's rather than the parser's.
 
-    It selects the file the oracle writes and nothing else. Both files the oracle can write are the
-    module execution model as
-    `refinery.lib.scripts.js.options.DeobfuscationOptions` means it, an ES module and
-    a CommonJS file being alike in the one thing that model decides: a top-level declaration is
-    scoped to the file and never reaches the global object. So the deobfuscation is always asked
-    for under that model, and asking for it under the script model instead would rewrite the source
-    for a host the answer is never taken from, which reads as the tool having changed a program it
-    only moved.
+    It selects the file the oracle writes and nothing else. The deobfuscation is always asked for
+    under `refinery.lib.scripts.js.options.ExecutionModel.module`, which holds for an ES module and
+    a CommonJS file alike, so either file the oracle can write runs a text written for it. Asking
+    for it under the script model instead would rewrite the source for a host the answer is never
+    taken from, which reads as the tool having changed a program it only moved.
     """
     return (
         behavior(source, module=module),
         behavior(deobfuscate_source(source, execution=ExecutionModel.module), module=module),
+    )
+
+
+def before_and_after_as_commonjs(
+    source: str,
+) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
+    """
+    What Node makes of *source* run as a CommonJS file and what it makes of the text `refinery.js`
+    deobfuscates it to when told the file is one, reported together because the law is that the two
+    agree.
+
+    `before_and_after` runs the same file but asks for the deobfuscation of a module of either kind,
+    which has to hold for an ES module as well and so treats the file as strict code. This is the
+    reading that asks what the tool does knowing the file is sloppy code where it says nothing.
+    """
+    return (
+        behavior(source),
+        behavior(deobfuscate_source(source, execution=ExecutionModel.commonjs)),
     )
 
 
@@ -265,14 +280,18 @@ class Reading(Enum):
     The execution model a program is read under, which is also the model the deobfuscation it is
     compared against is written for.
 
-    The three disagree about one thing, and every entry naming one names it for that reason: what
-    a top-level declaration is. Under `MODULE` and `ES_MODULE` it is scoped to the file and reaches
-    no global object, so a question about what a name reaches through `this`, through `globalThis`,
-    or from outside the file cannot be asked at all. `SCRIPT` is the classic global script, where it
-    can. `ES_MODULE` differs from `MODULE` in being strict code with no directive saying so, and in
-    being the only one of the three an `import` or `export` declaration may appear in.
+    They disagree about two things, and every entry naming one names it for one of them. The first
+    is what a top-level declaration is. Under `MODULE`, `COMMONJS` and `ES_MODULE` it is scoped to
+    the file and reaches no global object, so a question about what a name reaches through `this`,
+    through `globalThis`, or from outside the file cannot be asked at all. `SCRIPT` is the classic
+    global script, where it can. The second is whether code is strict where it says nothing.
+    `ES_MODULE` is strict code with no directive saying so, and the only reading an `import` or
+    `export` declaration may appear in. `MODULE` runs the program as a CommonJS file but has it
+    deobfuscated for a module of either kind, a text that must hold for the strict reading too;
+    `COMMONJS` runs it as a CommonJS file and tells the deobfuscation so.
     """
     MODULE = auto()
+    COMMONJS = auto()
     ES_MODULE = auto()
     SCRIPT = auto()
 
@@ -283,6 +302,8 @@ class Reading(Enum):
         """
         if self is Reading.SCRIPT:
             return before_and_after_in_a_host(source)
+        if self is Reading.COMMONJS:
+            return before_and_after_as_commonjs(source)
         return before_and_after(source, module=self is Reading.ES_MODULE)
 
     def behaves(self, source: str) -> Behavior:

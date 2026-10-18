@@ -38,7 +38,9 @@ class js(IterativeDeobfuscator):
             'a CommonJS file; use -c when it is known to be the latter.'))] = False,
         commonjs: Param[bool, Arg.Switch('-c', help=(
             'Assume the input runs as a CommonJS module, as node file.js runs it when no package '
-            'says otherwise. This implies -m.'))] = False,
+            'says otherwise. This implies -m. Unlike an ES module, a CommonJS file is not strict '
+            'code unless it says so, so code the input runs from a string can be unpacked into '
+            'it.'))] = False,
         environment: Param[str | HostEnvironment, Arg.Option('-e', metavar='E', choices=HostEnvironment, help=(
             'Pin the host the input runs in, so that the global names that host defines are assumed '
             'present and the reads that rely on them are resolved. The default is {default}, which '

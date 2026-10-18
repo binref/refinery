@@ -5241,3 +5241,59 @@ class TestAKeyWrittenIntoTheObjectPrototypeThroughAnotherObjectIsInherited(TestB
     empty object literal answers `false`. Programs write a prototype this way rarely, and then
     mostly to pollute it on purpose.
     """
+
+
+#: Programs copying a name nothing binds into a local and asking `typeof` of the local, mapped to
+#: the behavior an engine gives them.
+A_TYPEOF_OF_A_LOCAL_HOLDING_A_NAME_NOTHING_BINDS = {
+    'a local at the top of the file': Program(
+        a_program("""
+            var r = someGlobal;
+            console.log(typeof r);
+            """),
+        ('', 'ReferenceError'),
+    ),
+    'a local of a packed program holding require, run as an ES module': Program(
+        a_program("""
+            Function("p", "var r = p.r; console.log(typeof r)")({ get r() { return require; } });
+            """),
+        ('', 'ReferenceError'),
+        Reading.ES_MODULE,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_TYPEOF_OF_A_LOCAL_HOLDING_A_NAME_NOTHING_BINDS)
+class TestATypeofOfALocalHoldingANameNothingBindsStillThrows(TestBase):
+    """
+    Reading a name nothing binds throws a `ReferenceError`, and `typeof` of such a name answers
+    `'undefined'` instead. The deobfuscation writes the name where the local holding it is read, so
+    `typeof r` becomes `typeof someGlobal` and the program that threw on the copy prints `undefined`.
+    A packed program reaches the shape when it copies a name the accessor object reads for it into a
+    local, which the obfuscator does not write itself; the program it wraps may.
+    """
+
+
+#: A program starting a timer with a string, which Node refuses, mapped to the behavior Node gives
+#: it.
+A_STRING_TIMER_THE_HOST_REFUSES = {
+    'a string timer under Node': Program(
+        a_program("""
+            try { setTimeout("console.log(1)", 0); } catch (e) { console.log(e.name); }
+            """),
+        prints('TypeError'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_STRING_TIMER_THE_HOST_REFUSES)
+class TestAStringTimerTheHostRefusesStillThrows(TestBase):
+    """
+    A browser compiles a string handed to `setTimeout` and runs it when the timer fires; Node
+    accepts only a function and throws a `TypeError`. The reflection pass lowers a string timer to a
+    function wrapping its code whatever the host, so the program that caught a `TypeError` under
+    Node prints `1` instead. The lowering holds only where the host is known to compile the string,
+    which neither the default host nor `-e node` is.
+    """

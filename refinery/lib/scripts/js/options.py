@@ -171,6 +171,27 @@ def runs_as_module(options: object | None, root: JsScript) -> bool:
     return module_execution(options) or root.module
 
 
+def may_run_as_es_module(options: object | None, root: JsScript) -> bool:
+    """
+    Whether the file at *root* may run as an ES module: it spells module syntax, or *options*
+    selects the module model without saying which kind. Code that lands at the top level of such a
+    file is strict code and is read with the Module goal, whatever it would have been where it
+    stood.
+    """
+    return root.module or execution_model(options) is ExecutionModel.module
+
+
+def commonjs_wrapper_names(options: object | None, root: JsScript) -> frozenset[str]:
+    """
+    The names the top scope of the file at *root* may bind beyond its own declarations: those of
+    `COMMONJS_WRAPPER_NAMES` where the file may run as a CommonJS file, and none where it runs as a
+    script or spells module syntax, which no host loads as CommonJS.
+    """
+    if root.module or not module_execution(options):
+        return frozenset()
+    return COMMONJS_WRAPPER_NAMES
+
+
 def is_host_entrypoint(options: object | None, name: str) -> bool:
     """
     Whether *name* is a top-level function the analyst declared a host calls by name, so removing it

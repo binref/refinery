@@ -3172,3 +3172,133 @@ class TestTheDecoderFoldUnderAnEvalSiblingPreservesBehavior(TestJsDeobfuscator):
             {source: behavior(source) for source in sources},
             {source: behavior(deobfuscate_source(source)) for source in sources},
         )
+
+
+class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
+    """
+    A CommonJS file is sloppy code unless its text says otherwise, so a payload that runs
+    differently as strict code is inlined where the file is known to be one, and left standing where
+    it may be an ES module as well. The payload is read with the Script goal there, as the file is.
+    Where the text makes the site strict — a directive, a module declaration — the payload is left
+    standing under either model.
+    """
+
+    def _reflect(self, source: str, execution: ExecutionModel) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(execution=execution)
+        )
+
+    def test_a_payload_only_sloppy_code_runs_as_written_is_inlined_into_a_commonjs_file(self):
+        rows = {
+            'Function("leak = 5;")();': 'leak = 5;',
+            'Function("with ({a: 1}) console.log(a);")();': 'with ({ a: 1 }) {\n  console.log(a);\n}',
+            'console.log(Function("return 010")());': 'console.log(010);',
+        }
+        self.assertEqual(
+            {source: self._reflect(source, ExecutionModel.commonjs) for source in rows},
+            rows,
+        )
+
+    def test_the_same_payload_is_left_standing_where_the_file_may_be_an_es_module(self):
+        rows = [
+            'Function("leak = 5;")();',
+            'Function("with ({a: 1}) console.log(a);")();',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source, ExecutionModel.module) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_payload_holding_an_html_comment_is_inlined_into_a_commonjs_file(self):
+        rows = {
+            'eval("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+            '(0, eval)("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+        }
+        self.assertEqual(
+            {source: self._reflect(source, ExecutionModel.commonjs) for source in rows},
+            rows,
+        )
+
+    def test_a_payload_is_left_standing_where_the_text_of_a_commonjs_file_makes_the_site_strict(self):
+        rows = [
+            "'use strict';\nFunction(\"leak = 5;\")();",
+            'export const t = 1;\nFunction("leak = 5;")();',
+            "function f() {\n  'use strict';\n  Function(\"leak = 5;\")();\n}\nf();",
+        ]
+        self.assertEqual(
+            {source: self._reflect(source, ExecutionModel.commonjs) for source in rows},
+            {source: source for source in rows},
+        )
+
+
+class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
+    """
+    A CommonJS host runs a file's text as the body of a function whose parameters are `require`,
+    `module`, `exports`, `__filename` and `__dirname`. Code that a `Function` construction, an
+    indirect `eval` or a string timer runs is global code outside that function, where these names
+    are not bound, so a payload reading one is left standing where the file may be CommonJS. Where
+    the file is a script or spells module syntax, nothing binds them at the site either, and the
+    payload is inlined. A read through an accessor the file defines resolves in the file's own
+    scope, so a packed body reading the name that way is unpacked.
+    """
+
+    WRAPPER_NAME_READS = {
+        'console.log(Function("return typeof require")());': 'console.log(typeof require);',
+        'console.log(Function("return typeof module")());': 'console.log(typeof module);',
+        'console.log(Function("return typeof exports")());': 'console.log(typeof exports);',
+        'console.log((0, eval)("typeof __dirname"));': 'console.log(typeof __dirname);',
+        'console.log((0, eval)("typeof __filename"));': 'console.log(typeof __filename);',
+        'setTimeout("console.log(typeof module)", 0);':
+            'setTimeout(function() {\n  console.log(typeof module);\n}, 0);',
+    }
+
+    def _reflect(self, source: str, execution: ExecutionModel) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(execution=execution)
+        )
+
+    def test_a_payload_reading_a_wrapper_name_is_left_standing_where_the_file_may_be_commonjs(self):
+        rows = self.WRAPPER_NAME_READS
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {source: self._reflect(source, execution) for source in rows},
+                    {source: source for source in rows},
+                )
+
+    def test_the_same_payload_is_inlined_into_a_script(self):
+        rows = self.WRAPPER_NAME_READS
+        self.assertEqual(
+            {source: self._reflect(source, ExecutionModel.script) for source in rows},
+            rows,
+        )
+
+    def test_the_same_payload_is_inlined_into_a_file_spelling_export(self):
+        self.assertEqual(
+            'export const t = 1;\nconsole.log(typeof require);',
+            self._reflect(
+                'export const t = 1;\nconsole.log(Function("return typeof require")());',
+                ExecutionModel.commonjs,
+            ),
+        )
+
+    def test_a_wrapper_name_read_through_an_accessor_of_the_file_is_unpacked(self):
+        source = (
+            'Function("p", "var r = p.r; console.log(typeof r)")'
+            '({ get r() { return require; } });'
+        )
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    'var r = require;\nconsole.log(typeof r);',
+                    self._reflect(source, execution),
+                )
+
+    def test_a_payload_binding_the_name_for_itself_is_inlined_into_a_commonjs_file(self):
+        self.assertEqual(
+            'let module = 1;\nconsole.log(module);',
+            self._reflect(
+                'Function("let module = 1; console.log(module)")();',
+                ExecutionModel.commonjs,
+            ),
+        )
