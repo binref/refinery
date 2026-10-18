@@ -3302,3 +3302,33 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
                 ExecutionModel.commonjs,
             ),
         )
+
+
+class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
+    """
+    A getter returning a name reads the name whenever the packed body reads its key, and throws where
+    nothing binds the name; `typeof` of the bare name answers `'undefined'` there instead. So a
+    `typeof` of such a key is left packed. A getter returning `typeof` of the name asks the question
+    itself, and a read of its key is unpacked.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_typeof_of_a_key_whose_getter_returns_a_name_is_left_packed(self):
+        rows = [
+            'Function("p", "console.log(typeof p.g)")({ get g() {\n  return someGlobal;\n} });',
+            'Function("p", "console.log(typeof (p.g))")({ get g() {\n  return someGlobal;\n} });',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_key_whose_getter_returns_typeof_of_a_name_is_unpacked(self):
+        self.assertEqual(
+            'console.log(typeof someGlobal);',
+            self._reflect(
+                'Function("p", "console.log(p.t)")({ get t() { return typeof someGlobal; } });'
+            ),
+        )

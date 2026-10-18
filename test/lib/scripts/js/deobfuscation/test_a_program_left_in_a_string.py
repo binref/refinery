@@ -624,3 +624,45 @@ class TestAPayloadBothReadingsTreatAlikeIsDeobfuscatedAlike(TestBase):
             A_PAYLOAD_BOTH_READINGS_TREAT_ALIKE,
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
+
+
+#: Packed programs asking `typeof` of a key the accessor object answers, each with what Node makes
+#: of it as a CommonJS file and as an ES module. A getter returning a name throws where nothing
+#: binds the name, which `typeof` of the bare name does not.
+A_PACKED_TYPEOF_OF_A_KEY = {
+    'a getter returning a name nothing binds': Payload(
+        a_program("""
+            Function("p", "console.log(typeof p.g)")({ get g() { return someGlobal; } });
+            """),
+        ('', 'ReferenceError'),
+        ('', 'ReferenceError'),
+    ),
+    'a getter returning require': Payload(
+        a_program("""
+            Function("p", "console.log(typeof p.r)")({ get r() { return require; } });
+            """),
+        prints('function'),
+        ('', 'ReferenceError'),
+    ),
+    'a getter returning typeof of a name nothing binds': Payload(
+        a_program("""
+            Function("p", "console.log(p.t)")({ get t() { return typeof someGlobal; } });
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPackedTypeofOfAKeyStillThrowsWhereItsGetterThrows(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_PACKED_TYPEOF_OF_A_KEY)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PACKED_TYPEOF_OF_A_KEY,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )

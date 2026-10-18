@@ -80,6 +80,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsObjectExpression,
+    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsReturnStatement,
@@ -536,6 +537,16 @@ def _build_proxy_mapping(
     return _ProxyMapping(getters, setters)
 
 
+def _is_typeof_operand(node: Node) -> bool:
+    """
+    Whether *node*, parentheses aside, is the operand of `typeof`.
+    """
+    while isinstance(node.parent, JsParenthesizedExpression):
+        node = node.parent
+    parent = node.parent
+    return isinstance(parent, JsUnaryExpression) and parent.operator == 'typeof'
+
+
 def _substitute_proxy_accesses(
     parsed: JsScript,
     body_model: SemanticModel,
@@ -552,7 +563,9 @@ def _substitute_proxy_accesses(
     splice reproduces, so it fails resolution — as does a free use that is not a member access,
     since it uses the proxy object as a value. A plain read resolves to the getter target and a
     simple `key = v` write to the setter target; a compound, update, or delete access reads via the
-    getter AND writes via the setter, which no single substitution preserves, so it fails too.
+    getter AND writes via the setter, which no single substitution preserves, so it fails too. So
+    does a read under `typeof` through a getter returning a name: the getter reads the name and
+    throws where nothing binds it, which `typeof` of the bare name does not.
     """
     bound = body_model.root_scope.bindings.get(param_name)
     if bound is not None and bound.kind is not BindingKind.IMPLICIT_GLOBAL:
@@ -583,6 +596,8 @@ def _substitute_proxy_accesses(
             if target is None:
                 return None
             if isinstance(target, str):
+                if _is_typeof_operand(member):
+                    return None
                 replacement = JsIdentifier(name=target)
             else:
                 replacement = _clone_node(target)
