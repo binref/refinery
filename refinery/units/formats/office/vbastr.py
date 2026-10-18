@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import codecs
-
 from typing import TYPE_CHECKING
 
 from refinery.lib.types import buf
@@ -20,8 +18,9 @@ class vbastr(VBAUnit):
     form that holds them, for example `Project/UserForm1/Label1/Label1.cap`. When the document
     holds more than one project, every folder is preceded by the number of its project, as with
     `refinery.vbamc`. A control inside a frame comes out below the storage of the frame inside its
-    form, and a control on the surface of the document, which belongs to no project, below the path
-    of its storage. The stem of their file name is the same as the variable's name. The variable
+    form. A form that belongs to no project whose dir stream can be read, such as the controls on a
+    worksheet, comes out below the path of its storage. The stem of their file name is the same as
+    the variable's name. The variable
     can define a caption, a control tip text, and a value; the unit extracts these with the
     synthesized file extension "cap", "tip", and "val", respectively. When the controls of a form
     cannot be parsed, the printable strings of its object stream are extracted instead, as `o.val`
@@ -63,7 +62,7 @@ class vbastr(VBAUnit):
         except OleFormParsingError as error:
             self.log_debug(str(error))
             self.log_info(F'the controls of {location} cannot be parsed; extracting its strings instead')
-            strings = [string.encode(self.codec) for string in vba_form_strings(ole, form)]
+            strings = vba_form_strings(ole, form)
             if len(strings) == 1:
                 return [('o.val', strings[0])]
             return [(F'o.v{k}.val', string) for k, string in enumerate(strings, 1)]
@@ -71,7 +70,7 @@ class vbastr(VBAUnit):
         for variable in variables:
             if not variable:
                 continue
-            name = self._text(variable['name'])
+            name = variable['name']
             for ext, key in {
                 'cap': 'caption',
                 'tip': 'control_tip_text',
@@ -80,13 +79,6 @@ class vbastr(VBAUnit):
                 if value := self._binary(variable.get(key)):
                     results.append((F'{name}/{name}.{ext}', value))
         return results
-
-    def _text(self, value: object) -> str | None:
-        if value is None or isinstance(value, str):
-            return value
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            return codecs.decode(value, self.codec)
-        return str(value)
 
     def _binary(self, value: object) -> buf | None:
         if value is None:

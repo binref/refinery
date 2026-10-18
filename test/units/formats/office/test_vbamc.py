@@ -1,6 +1,6 @@
 import collections
 
-from .. import rename_ole_entry, resize_ole_entry
+from .. import rename_ole_entry, replace_in_ole_stream, resize_ole_entry
 from . import (
     DOC,
     DOCM,
@@ -10,7 +10,6 @@ from . import (
     VBAUnitTestBase,
     invert_checksum,
     list_part_twice,
-    rename_vba_project,
 )
 
 
@@ -81,11 +80,11 @@ class TestVBAExtractor(VBAUnitTestBase):
         ])
 
     def test_a_project_name_with_a_slash_is_used_as_stored(self):
-        project = rename_vba_project(self._project(DOCM), 'VBA/dir', B'Project', B'Pro/ect')
+        project = replace_in_ole_stream(self._project(DOCM), 'VBA/dir', B'Project', B'Pro/ect')
         self.assertEqual(list(self._modules(project)), ['Pro/ect/ThisDocument', 'Pro/ect/main'])
 
     def test_a_project_name_of_dots_is_resolved_like_every_extracted_path(self):
-        project = rename_vba_project(self._project(DOCM), 'VBA/dir', B'Project', B'.......')
+        project = replace_in_ole_stream(self._project(DOCM), 'VBA/dir', B'Project', B'.......')
         # a path part of n dots removes n - 1 parents, as for every path extractor
         self.assertEqual(list(self._modules(project)), ['ThisDocument', 'main'])
 

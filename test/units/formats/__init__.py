@@ -54,6 +54,28 @@ def resize_ole_entry(document: bytes | bytearray, path: str, size: int) -> bytea
     return resized
 
 
+def replace_in_ole_stream(document: bytes | bytearray, path: str, old: bytes, new: bytes) -> bytes:
+    """
+    Writes the given new bytes over the given old bytes of the stream at the given path of the
+    given compound file. The new bytes have the length of the old ones, and the stream holds the
+    old bytes exactly once; the bytes around them identify their place in the compound file.
+    """
+    if len(old) != len(new):
+        raise ValueError('The new bytes must have the length of the old bytes.')
+    stream = bytes(OleFile(bytes(document)).openstream(path).read())
+    if stream.count(old) != 1:
+        raise LookupError(F'The stream does not hold {old!r} exactly once.')
+    position = stream.index(old)
+    start = max(position - 8, 0)
+    context = stream[start:position + len(old) + 8]
+    if document.count(context) != 1:
+        raise LookupError('The place of the bytes in the compound file is not unique.')
+    offset = document.index(context) + position - start
+    replaced = bytearray(document)
+    replaced[offset:offset + len(old)] = new
+    return bytes(replaced)
+
+
 def link_ole_child(document: bytes | bytearray, path: str, sid: int) -> bytearray:
     """
     Points the child link of the storage at the given path of the given compound file at the

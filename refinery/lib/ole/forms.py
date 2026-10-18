@@ -8,12 +8,13 @@ captions, and other metadata from embedded form controls.
 """
 from __future__ import annotations
 
+import codecs
 import struct
 
 from contextlib import contextmanager
 from enum import IntFlag
 from enum import auto as A
-from typing import IO, TYPE_CHECKING, Generator, TypeVar
+from typing import IO, TYPE_CHECKING, Generator, NamedTuple, TypeVar
 
 from refinery.lib.structures import FlagAccessMixin
 
@@ -345,7 +346,10 @@ class ExtendedStream:
             self._pad_start = prev_pad_start
 
     def unpacks(self, format: str, size: int) -> tuple:
-        return struct.unpack(format, self.read(size))
+        data = self.read(size)
+        if len(data) < size:
+            self.raise_error(F'stream ends after {len(data)} of {size} bytes', size)
+        return struct.unpack(format, data)
 
     def unpack(self, format: str, size: int):
         return self.unpacks(format, size)[0]
@@ -405,14 +409,30 @@ def consume_GuidAndPicture(stream: ExtendedStream) -> None:
     stream.read(size)
 
 
+class StringSize(NamedTuple):
+    """
+    The size of a string in bytes and whether the string is compressed; a compressed string stores
+    every character in one byte, an uncompressed string in UTF-16.
+    """
+    size: int
+    compressed: bool
+
+    def decode(self, data: bytes) -> str:
+        """
+        Decodes the given string data of this size. A character of a compressed string is the low
+        byte of a UTF-16 code unit whose high byte is zero, i.e. a Latin-1 character.
+        """
+        return codecs.decode(data, 'latin1' if self.compressed else 'utf-16le', 'replace')
+
+
 def consume_CountOfBytesWithCompressionFlag(
     stream: ExtendedStream,
-) -> int:
+) -> StringSize:
     """
     CountOfBytesWithCompressionFlag: [MS-OFORMS] 2.4.14.2 / 2.4.14.3
     """
     count = stream.unpack('<L', 4)
-    return count & 0x7FFFFFFF
+    return StringSize(count & 0x7FFFFFFF, bool(count & 0x80000000))
 
 
 def consume_SiteClassInfo(stream: ExtendedStream) -> None:
@@ -450,11 +470,12 @@ def consume_OleSiteConcreteControl(
     with stream.will_jump_to(cb_site):
         propmask = SitePropMask(stream.unpack('<L', 4))
         with stream.padded_struct():
-            name_len = tag_len = id_val = 0
+            name_size: StringSize | None = None
+            tag_len = id_val = 0
             if propmask.fName:
-                name_len = consume_CountOfBytesWithCompressionFlag(stream)
+                name_size = consume_CountOfBytesWithCompressionFlag(stream)
             if propmask.fTag:
-                tag_len = consume_CountOfBytesWithCompressionFlag(stream)
+                tag_len = consume_CountOfBytesWithCompressionFlag(stream).size
             if propmask.fID:
                 id_val = stream.unpack('<L', 4)
             consume(propmask, stream, {
@@ -471,13 +492,15 @@ def consume_OleSiteConcreteControl(
                 stream.read(2)
             control_tip_text_len = 0
             if propmask.fControlTipText:
-                control_tip_text_len = (consume_CountOfBytesWithCompressionFlag(stream))
+                control_tip_text_len = consume_CountOfBytesWithCompressionFlag(stream).size
             consume(propmask, stream, {
                 SitePropMask.fRuntimeLicKey : 4,
                 SitePropMask.fControlSource : 4,
                 SitePropMask.fRowSource     : 4,
             })
-        name = stream.read(name_len) if name_len > 0 else None
+        name = None
+        if name_size is not None and name_size.size > 0:
+            name = name_size.decode(stream.read(name_size.size))
         tag = stream.read(tag_len) if tag_len > 0 else None
         if propmask.fPosition:
             stream.read(8)
@@ -573,9 +596,9 @@ def consume_MorphDataControl(
                 MorphDataPropMask.fDropButtonStyle     : 1,
                 MorphDataPropMask.fMultiSelect         : 1,
             })
-            value_size = (consume_CountOfBytesWithCompressionFlag(stream)
+            value_size = (consume_CountOfBytesWithCompressionFlag(stream).size
                 if propmask.fValue else 0)
-            caption_size = (consume_CountOfBytesWithCompressionFlag(stream)
+            caption_size = (consume_CountOfBytesWithCompressionFlag(stream).size
                 if propmask.fCaption else 0)
             consume(propmask, stream, {
                 MorphDataPropMask.fPicturePosition : 4,
@@ -585,7 +608,7 @@ def consume_MorphDataControl(
                 MorphDataPropMask.fPicture         : 2,
                 MorphDataPropMask.fAccelerator     : 2,
             })
-            group_name_size = (consume_CountOfBytesWithCompressionFlag(stream)
+            group_name_size = (consume_CountOfBytesWithCompressionFlag(stream).size
                 if propmask.fGroupName else 0)
         stream.read(8)
         value = stream.read(value_size)
@@ -690,7 +713,7 @@ def consume_LabelControl(stream: ExtendedStream) -> bytes:
                 LabelPropMask.fBackColor           : 4,
                 LabelPropMask.fVariousPropertyBits : 4,
             })
-            caption_size = (consume_CountOfBytesWithCompressionFlag(stream)
+            caption_size = (consume_CountOfBytesWithCompressionFlag(stream).size
                 if propmask.fCaption else 0)
             consume(propmask, stream, {
                 LabelPropMask.fPicturePosition : 4,

@@ -10,7 +10,7 @@ from refinery.lib.ole.decompiler import vba_string_literal
 from refinery.lib.ole.vba import copytoken_help
 
 from ... import TestUnitBase
-from .. import resize_ole_entry
+from .. import replace_in_ole_stream, resize_ole_entry
 from . import (
     DOC,
     DOCM,
@@ -20,7 +20,6 @@ from . import (
     VBAUnitTestBase,
     invert_checksum,
     list_part_twice,
-    rename_vba_project,
 )
 
 proc_new = re.compile(
@@ -282,7 +281,7 @@ class TestVBAPC(VBAUnitTestBase):
         self.assertEqual({path: code for path, code in modules.items() if path.startswith('2/')}, expected)
 
     def test_a_project_name_with_a_slash_is_used_as_stored(self):
-        project = rename_vba_project(self._project(DOCM), 'VBA/dir', B'Project', B'Pro/ect')
+        project = replace_in_ole_stream(self._project(DOCM), 'VBA/dir', B'Project', B'Pro/ect')
         self.assertEqual(list(self._modules(project)), ['Pro/ect/ThisDocument', 'Pro/ect/main'])
 
     def test_the_stream_variable_names_the_part_and_the_stream_of_every_module(self):

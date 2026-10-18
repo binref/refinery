@@ -6,8 +6,6 @@ import zipfile
 
 from typing import Callable
 
-from refinery.lib.ole.file import OleFile
-
 from ... import TestUnitBase
 
 DOC = '4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08'
@@ -15,29 +13,6 @@ XLS = '8168819cb693a3a04f771ee119ca00e631a74f09419ad295c5088f1e7a430e98'
 DOCM = 'ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394'
 STOMPED_DOCM = '6d8a0f5949adf37330348cc9a231958ad8fb3ea3a3d905abe5e72dbfd75a3d1d'
 DOCX = '36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3'
-
-
-def rename_vba_project(container: bytes | bytearray, dir_path: str, name: bytes, new_name: bytes) -> bytes:
-    """
-    Writes a new name over the name of the VBA project whose dir stream has the given path in the
-    given compound file. The new name has the same length as the name, and the compressed dir
-    stream stores the name once, as a run of literal bytes; the bytes around it identify the place
-    of the name in the compound file.
-    """
-    if len(name) != len(new_name):
-        raise ValueError('The new name must have the length of the name.')
-    stream = bytes(OleFile(bytes(container)).openstream(dir_path).read())
-    if stream.count(name) != 1:
-        raise LookupError(F'The dir stream does not store {name!r} exactly once.')
-    position = stream.index(name)
-    start = max(position - 8, 0)
-    context = stream[start:position + len(name) + 8]
-    if container.count(context) != 1:
-        raise LookupError('The place of the name in the compound file is not unique.')
-    offset = container.index(context) + position - start
-    renamed = bytearray(container)
-    renamed[offset:offset + len(name)] = new_name
-    return bytes(renamed)
 
 
 def list_part_twice(

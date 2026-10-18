@@ -765,11 +765,11 @@ def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
         yield from compound_file.projects
 
 
-def vba_form_strings(ole: OleFileLike, storage: str) -> list[str]:
+def vba_form_strings(ole: OleFileLike, storage: str) -> list[bytes]:
     """
-    The printable strings of at least five characters in the `o` stream of the form storage with
-    the given path, except the name of the default font Tahoma.
+    The runs of at least five printable bytes in the `o` stream of the form storage with the given
+    path, as stored, except the name of the default font Tahoma.
     """
     data = ole.openstream(F'{storage}/o').read()
-    strings = (match.group().decode('utf8', errors='replace') for match in _RE_PRINTABLE_STRING.finditer(data))
-    return [string for string in strings if string != 'Tahoma']
+    strings = (match.group() for match in _RE_PRINTABLE_STRING.finditer(data))
+    return [string for string in strings if string != B'Tahoma']

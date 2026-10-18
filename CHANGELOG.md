@@ -30,7 +30,7 @@
   An input that is a compound file or an Access database that cannot be read is still an error.
 - The `vbastr` unit now extracts form variables below the folder of their VBA project and form, numbered like the folders of `vbamc`,
   for example `Project/UserForm1/Label1/Label1.cap` instead of `Label1/Label1.cap`.
-  It reports the location of the object stream of the form as `stream`, falls back to the strings of the object stream for each form on its own,
+  It reports the location of the object stream of the form as `stream`, falls back to the strings of the object stream, as stored, for each form on its own,
   reads the same documents as `vbamc`, and gives nothing instead of an error for input that is no such document.
 
 ## Version 0.11.2
