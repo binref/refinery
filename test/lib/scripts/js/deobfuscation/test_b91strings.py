@@ -20,7 +20,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder, _decode_base91
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 ALPHABET = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
@@ -1337,22 +1337,22 @@ class TestStringConcealing(TestJsDeobfuscator):
     def test_an_accessor_declared_in_a_try_block_inside_a_loop_is_resolved(self):
         self.assertEqual(
             'console.log(\'log4\');',
-            deobfuscate_source(AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP, module=True),
+            deobfuscate_source(AN_ACCESSOR_DECLARED_IN_A_TRY_BLOCK_INSIDE_A_LOOP, execution=ExecutionModel.module),
         )
 
     def test_a_function_holding_a_decoder_is_no_decoder_of_its_own(self):
         self.assertEqual(
             'console.log(\'xFizz\', \'push\');',
-            deobfuscate_source(A_PROGRAM_FUNCTION_HOLDING_A_DECODER, module=True),
+            deobfuscate_source(A_PROGRAM_FUNCTION_HOLDING_A_DECODER, execution=ExecutionModel.module),
         )
 
     def test_a_call_before_the_accessor_is_assigned_stays_a_call(self):
-        result = deobfuscate_source(AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED, module=True)
+        result = deobfuscate_source(AN_ACCESSOR_CALLED_BEFORE_IT_IS_ASSIGNED, execution=ExecutionModel.module)
         self.assertIn('early = acc(10);', result)
         self.assertIn('console.log(early, \'Fizz\');', result)
 
     def test_an_accessor_called_in_a_with_body_keeps_its_machinery(self):
-        result = deobfuscate_source(AN_ACCESSOR_CALLED_IN_A_WITH_BODY, module=True)
+        result = deobfuscate_source(AN_ACCESSOR_CALLED_IN_A_WITH_BODY, execution=ExecutionModel.module)
         self.assertIn('console.log(\'push\');', result)
         self.assertIn('console.log(acc(11), k);', result)
         self.assertIn('function acc(index)', result)
@@ -1386,19 +1386,19 @@ class TestStringConcealing(TestJsDeobfuscator):
                 console.log('Fizz');
                 """
             ),
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT, module=True),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT, execution=ExecutionModel.module),
         )
 
     def test_an_accessor_in_a_block_called_only_after_it_is_decoded(self):
         self.assertEqual(
             'console.log(\'Fizz\');',
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, module=True),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, execution=ExecutionModel.module),
         )
 
     def test_a_decoder_in_a_block_read_after_it_decodes(self):
         self.assertEqual(
             'console.log(\'push\', \'Fizz\');',
-            deobfuscate_source(A_DECODER_IN_A_BLOCK_READ_AFTER_IT, module=True),
+            deobfuscate_source(A_DECODER_IN_A_BLOCK_READ_AFTER_IT, execution=ExecutionModel.module),
         )
 
     def test_an_accessor_in_a_block_of_a_function_is_decoded_after_it(self):
@@ -1411,11 +1411,11 @@ class TestStringConcealing(TestJsDeobfuscator):
                 console.log('Fizz');
                 """
             ),
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT, module=True),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT, execution=ExecutionModel.module),
         )
 
     def test_a_call_before_the_block_declaring_the_accessor_stays_a_call(self):
-        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT, module=True)
+        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT, execution=ExecutionModel.module)
         self.assertIn('console.log(acc(11));', result)
         self.assertIn('console.log(\'push\');', result)
         self.assertIn('function acc(index)', result)
@@ -1434,7 +1434,7 @@ class TestStringConcealing(TestJsDeobfuscator):
                 console.log('push');
                 """
             ),
-            deobfuscate_source(source, module=True),
+            deobfuscate_source(source, execution=ExecutionModel.module),
         )
 
 
@@ -1443,17 +1443,17 @@ class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
     def test_every_call_slicing_an_encoded_string_is_decoded(self):
         self.assertEqual(
             'console.log(\'push\', \'Fizz\', \'log\', \'push\');',
-            deobfuscate_source(A_PROGRAM_SLICING_EVERY_STRING, module=True),
+            deobfuscate_source(A_PROGRAM_SLICING_EVERY_STRING, execution=ExecutionModel.module),
         )
 
     def test_a_long_string_the_accessor_spells_out_is_decoded(self):
         self.assertEqual(
             'console.log(\'push\', \'Fizz\', \'log\');',
-            deobfuscate_source(A_LONG_STRING_THE_ACCESSOR_SPELLS_OUT, module=True),
+            deobfuscate_source(A_LONG_STRING_THE_ACCESSOR_SPELLS_OUT, execution=ExecutionModel.module),
         )
 
     def test_a_call_whose_decoder_a_direct_eval_rebinds_stays_a_call(self):
-        result = deobfuscate_source(A_DECODER_A_DIRECT_EVAL_REBINDS, module=True)
+        result = deobfuscate_source(A_DECODER_A_DIRECT_EVAL_REBINDS, execution=ExecutionModel.module)
         self.assertIn('console.log(S(2, 5));', result)
 
     def _pass_alone(self, source: str) -> str:
@@ -1461,7 +1461,8 @@ class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
         What the pass alone makes of *source*. The pipeline writes a short long string into the
         accessor reading it before the pass runs, so only the pass alone reads the name holding it.
         """
-        return self._run_transformer(source, JsBase91StringDecoder, DeobfuscationOptions(module=True))
+        options = DeobfuscationOptions(execution=ExecutionModel.module)
+        return self._run_transformer(source, JsBase91StringDecoder, options)
 
     def test_a_slice_read_through_a_computed_key_is_decoded(self):
         self.assertIn(
@@ -1470,7 +1471,7 @@ class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
         )
         self.assertEqual(
             'console.log(\'push\', \'Fizz\', \'log\');',
-            deobfuscate_source(A_SLICE_READ_THROUGH_A_COMPUTED_KEY, module=True),
+            deobfuscate_source(A_SLICE_READ_THROUGH_A_COMPUTED_KEY, execution=ExecutionModel.module),
         )
 
     def test_a_renamed_slicing_accessor_is_decoded(self):
@@ -1480,14 +1481,14 @@ class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
         )
         self.assertEqual(
             'console.log(\'push\', \'Fizz\', \'log\');',
-            deobfuscate_source(A_SLICING_ACCESSOR_RENAMED, module=True),
+            deobfuscate_source(A_SLICING_ACCESSOR_RENAMED, execution=ExecutionModel.module),
         )
 
     def test_a_caching_shape_over_the_long_string_leaves_the_slicing_accessor_decoded(self):
         for source in A_CACHING_SHAPE_OVER_THE_LONG_STRING:
             for reading, result in [
                 ('pass alone', self._pass_alone(source)),
-                ('pipeline', deobfuscate_source(source, module=True)),
+                ('pipeline', deobfuscate_source(source, execution=ExecutionModel.module)),
             ]:
                 with self.subTest(source=source, reading=reading):
                     self.assertIn('console.log(typeof acc, \'push\', \'Fizz\', \'log\');', result)
@@ -1495,21 +1496,21 @@ class TestStringsSlicedOutOfOneLongString(TestJsDeobfuscator):
     def test_a_slice_past_the_end_or_of_a_negative_number_stays_a_call(self):
         self.assertIn(
             'console.log(JSON.stringify([S(20, 9), S(9, -1), S(-6, 4), \'Fizz\']));',
-            deobfuscate_source(A_SLICE_PAST_THE_END_OR_OF_A_NEGATIVE_NUMBER, module=True),
+            deobfuscate_source(A_SLICE_PAST_THE_END_OR_OF_A_NEGATIVE_NUMBER, execution=ExecutionModel.module),
         )
 
     def test_a_call_before_the_long_string_is_assigned_stays_a_call(self):
-        result = deobfuscate_source(A_SLICE_BEFORE_THE_LONG_STRING_IS_ASSIGNED, module=True)
+        result = deobfuscate_source(A_SLICE_BEFORE_THE_LONG_STRING_IS_ASSIGNED, execution=ExecutionModel.module)
         self.assertIn('r = S(2, 5);', result)
         self.assertIn('console.log(r, \'Fizz\');', result)
 
     def test_a_call_in_a_with_body_stays_a_call(self):
-        result = deobfuscate_source(A_SLICE_IN_A_WITH_BODY, module=True)
+        result = deobfuscate_source(A_SLICE_IN_A_WITH_BODY, execution=ExecutionModel.module)
         self.assertIn('console.log(S(2, 5));', result)
         self.assertIn('console.log(\'Fizz\');', result)
 
     def test_an_accessor_held_by_a_parameter_stays_a_call(self):
-        result = deobfuscate_source(A_SLICING_ACCESSOR_HELD_BY_A_PARAMETER, module=True)
+        result = deobfuscate_source(A_SLICING_ACCESSOR_HELD_BY_A_PARAMETER, execution=ExecutionModel.module)
         self.assertIn('return a + T(2, 5);', result)
         self.assertIn('\'Fizz\');', result)
 
@@ -1571,7 +1572,7 @@ class TestAFunctionCallingNoDecoderIsNotComparedToTheAccessorTemplate(TestJsDeob
         )
         tree = JsParser(source).parse()
         transformer = JsBase91StringDecoder()
-        transformer.options = DeobfuscationOptions(module=True)
+        transformer.options = DeobfuscationOptions(execution=ExecutionModel.module)
         start = time.perf_counter()
         transformer.visit(tree)
         first = time.perf_counter() - start
@@ -1592,7 +1593,7 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
         source = next(iter(A_PROGRAM_HOLDING_A_DECOYED_ACCESSOR))
         self.assertEqual(
             "console.log('push', 'Fizz', 'log', 'push');",
-            deobfuscate_source(source, module=True),
+            deobfuscate_source(source, execution=ExecutionModel.module),
         )
 
     def test_decoys_before_the_branch_that_decodes_go(self):
@@ -1604,7 +1605,7 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
         )
         self.assertEqual(
             "console.log('push', 'Fizz', 'log');",
-            deobfuscate_source(source, module=True),
+            deobfuscate_source(source, execution=ExecutionModel.module),
         )
 
     def test_an_accessor_whose_decoder_is_read_through_its_copy_keeps_its_decoys(self):
@@ -1621,7 +1622,7 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
             + '}\n'
             + 'f();\n'
         )
-        result = deobfuscate_source(source, module=True)
+        result = deobfuscate_source(source, execution=ExecutionModel.module)
         self.assertIn('return y[cache[z]] = other(x, y);', result)
         self.assertIn('console.log(other(12));', result)
 
@@ -1633,7 +1634,7 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
             + 'console.log(r, acc(11));\n'
             + decoder('dec') + '\n'
         )
-        self.assertIn('acc?.call(undefined, 10)', deobfuscate_source(source, module=True))
+        self.assertIn('acc?.call(undefined, 10)', deobfuscate_source(source, execution=ExecutionModel.module))
 
     def test_a_call_through_call_stays_where_the_program_replaces_call(self):
         source = (
@@ -1646,7 +1647,7 @@ class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):
             + 'console.log(r, acc(11));\n'
             + decoder('dec') + '\n'
         )
-        self.assertIn('acc.call(undefined, 10)', deobfuscate_source(source, module=True))
+        self.assertIn('acc.call(undefined, 10)', deobfuscate_source(source, execution=ExecutionModel.module))
 
     def test_full_fizzbuzz_sample(self):
         """
@@ -1806,7 +1807,8 @@ class TestNodePrintsTheSameAboutConcealedStrings(TestJsDeobfuscator):
             + 'console.log(acc(10));\n'
         )
         importer = 'import { acc } from "./m.mjs";\nconsole.log(acc(11));\n'
+        rewritten = deobfuscate_source(source, execution=ExecutionModel.module)
         self.assertEqual(
             module_graph_behavior({'m.mjs': source, 'main.mjs': importer}, 'main.mjs'),
-            module_graph_behavior({'m.mjs': deobfuscate_source(source, module=True), 'main.mjs': importer}, 'main.mjs'),
+            module_graph_behavior({'m.mjs': rewritten, 'main.mjs': importer}, 'main.mjs'),
         )

@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from samples import refuse_script_host_near_a_sample
@@ -76,21 +77,21 @@ def node_reads_as_a_program(source: str) -> bool:
 def deobfuscate_source(
     source: str,
     *,
-    module: bool = False,
+    execution: ExecutionModel = ExecutionModel.script,
     entrypoints: tuple[str, ...] = (),
     preserve_script_return: bool = False,
 ) -> str:
     """
-    Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *module*
-    selects the module execution model (the oracle runs each snippet as a CommonJS module, so a
-    scope-sensitive snippet must be deobfuscated under the same model to be comparable).
+    Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *execution*
+    selects the execution model (the oracle runs each snippet as a CommonJS module, so a
+    scope-sensitive snippet must be deobfuscated under a module model to be comparable).
     *entrypoints* names top-level functions a host calls by name, which intra-script reachability
     cannot see.
     """
     ast = JsParser(source).parse()
     deobfuscate(
         ast,
-        module=module,
+        execution=execution,
         entrypoints=entrypoints,
         preserve_script_return=preserve_script_return,
     )

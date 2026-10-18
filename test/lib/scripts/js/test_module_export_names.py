@@ -45,6 +45,7 @@ from refinery.lib.scripts.js.model import (
     JsImportSpecifier,
     JsStringLiteral,
 )
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -96,7 +97,10 @@ def _the_module_export_name(source: str) -> str | None:
 
 
 def _deobfuscated(files: Mapping[str, str]) -> dict[str, str]:
-    return {name: deobfuscate_source(text, module=True) for name, text in files.items()}
+    return {
+        name: deobfuscate_source(text, execution=ExecutionModel.module)
+        for name, text in files.items()
+    }
 
 
 def _unspelled(sources: Iterable[str]) -> list[str]:

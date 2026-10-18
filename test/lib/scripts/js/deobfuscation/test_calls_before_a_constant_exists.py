@@ -25,6 +25,8 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
 )
 
+from refinery.lib.scripts.js.options import ExecutionModel
+
 #: Programs that hand the object holding `NS.g` to code before `a` exists, where that code calls
 #: `NS.g` without the text spelling a read of it: a method call passes the object as `this`, and an
 #: accessor on the object, on its prototype, or on `Object.prototype` runs with it as `this`.
@@ -530,14 +532,20 @@ class TestAMethodCalledAfterTheConstantReadsItFolded(TestBase):
     def test_the_constant_is_folded_into_the_method(self):
         rows = THE_SAME_CALLS_AFTER_THE_CONSTANT
         self.assertEqual(
-            {source: 'a[0]' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'a[0]' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )
 
     def test_the_constant_is_folded_into_a_method_stored_after_it(self):
         rows = A_METHOD_STORED_AFTER_THE_CONSTANT_ON_AN_OBJECT_HANDED_OVER_BEFORE
         self.assertEqual(
-            {source: 'a[0]' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'a[0]' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )
 
@@ -586,7 +594,7 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
         rows = AN_EXPORT_AN_IMPORTER_CALLS_AFTER_A_BODY_THAT_SKIPPED_THE_CONSTANT
         results = {}
         for exporter, importer in rows.items():
-            rewritten = deobfuscate_source(exporter, module=True)
+            rewritten = deobfuscate_source(exporter, execution=ExecutionModel.module)
             results[exporter] = (
                 module_graph_behavior({'main.mjs': exporter, 'b.mjs': importer}, 'b.mjs'),
                 module_graph_behavior({'main.mjs': rewritten, 'b.mjs': importer}, 'b.mjs'),
@@ -606,7 +614,8 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
             const K = ['x'];
             OnEvent();
             """)
-        self.assertNotIn('K[0]', deobfuscate_source(source, module=True, entrypoints=('OnEvent',)))
+        output = deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('OnEvent',))
+        self.assertNotIn('K[0]', output)
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
     def test_an_importer_calling_an_export_before_the_constant_still_throws(self):
@@ -618,7 +627,7 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
         rows = AN_EXPORT_AN_IMPORTER_IN_A_CYCLE_CALLS_BEFORE_THE_CONSTANT
         results = {}
         for exporter, importer in rows.items():
-            rewritten = deobfuscate_source(exporter, module=True)
+            rewritten = deobfuscate_source(exporter, execution=ExecutionModel.module)
             results[exporter] = (
                 module_graph_behavior({'b.mjs': importer, 'main.mjs': exporter}, 'main.mjs'),
                 module_graph_behavior({'b.mjs': importer, 'main.mjs': rewritten}, 'main.mjs'),
@@ -642,7 +651,7 @@ class TestAFunctionCalledFromOutsideTheFile(TestBase):
             import { f } from './main.mjs';
             console.log(f());
             """)
-        rewritten = deobfuscate_source(exporter, module=True)
+        rewritten = deobfuscate_source(exporter, execution=ExecutionModel.module)
         self.assertNotIn('x[0]', rewritten)
         self.assertEqual(
             (

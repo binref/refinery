@@ -27,6 +27,7 @@ from test.lib.scripts.js.analysis.differential import (
 
 from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.lexer import JsLexer
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.js.token import JsTokenKind
@@ -220,7 +221,7 @@ def before_and_after(
     """
     return (
         behavior(source, module=module),
-        behavior(deobfuscate_source(source, module=True), module=module),
+        behavior(deobfuscate_source(source, execution=ExecutionModel.module), module=module),
     )
 
 

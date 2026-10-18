@@ -106,6 +106,7 @@ from test.lib.scripts.js.test_parser_recovery import (
     unread_spans,
 )
 
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -4452,7 +4453,7 @@ class TestAGlobalAnImporterInACycleReadsEarlyMayNotExistYet(TestBase):
     )
     def test_the_global_is_read_before_it_exists(self):
         exporter, importer = A_GLOBAL_AN_IMPORTER_IN_A_CYCLE_READS_BEFORE_IT_EXISTS
-        rewritten = deobfuscate_source(exporter, module=True)
+        rewritten = deobfuscate_source(exporter, execution=ExecutionModel.module)
         self.assertEqual(
             (
                 module_graph_behavior({'main.mjs': exporter, 'b.mjs': importer}, 'main.mjs'),

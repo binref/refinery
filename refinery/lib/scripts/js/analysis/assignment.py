@@ -113,9 +113,9 @@ class DefiniteAssignmentModel:
     """
     Build over a `refinery.lib.scripts.js.analysis.model.SemanticModel` and its
     `refinery.lib.scripts.analysis.cfg.ControlFlowModel`; query with `definitely_assigned_at`.
-    *module_scope* is the run's execution model: under the module reading every region is strict and
-    a top-level `this` does not denote the global object, so no bare write and no `this` member
-    write establishes anything.
+    *module_scope* is the run's execution model: under a module reading a region may be strict and a
+    top-level `this` does not denote the global object, so no bare write and no `this` member write
+    establishes anything.
     *host_entrypoint* names the top-level functions the analyst declared a host invokes by name;
     such a function has a call site outside the file, so the meet over its spelled call sites does
     not bound its entry facts and it gets none.

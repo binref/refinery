@@ -32,6 +32,7 @@ from test.lib.scripts.js.ledger import before_and_after, each_program_still_prin
 
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -113,7 +114,7 @@ def _deobfuscated(source: str) -> str:
     What *source* comes back as, read under the module execution model the oracle runs each program
     with, which is the model `test.lib.scripts.js.ledger.before_and_after` asks for as well.
     """
-    return deobfuscate_source(source, module=True)
+    return deobfuscate_source(source, execution=ExecutionModel.module)
 
 
 def _names_called_without_a_declaration(source: str) -> set[str]:

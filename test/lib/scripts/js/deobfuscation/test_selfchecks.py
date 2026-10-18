@@ -21,6 +21,7 @@ from test.lib.scripts.js.ledger import before_and_after, each_program_still_prin
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.deobfuscation.selfchecks import JsSelfCheckFolding
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 #: A line-break check over the function that holds it, in the shape the obfuscator writes at the
@@ -496,19 +497,19 @@ class TestTheCheckTheInputTextDecidesIsGone(TestBase):
     def test_the_deobfuscation_no_longer_holds_the_check(self):
         for source, (_, marker) in A_CHECK_THE_INPUT_TEXT_DECIDES.items():
             with self.subTest(source):
-                self.assertNotIn(marker, deobfuscate_source(source, module=True))
+                self.assertNotIn(marker, deobfuscate_source(source, execution=ExecutionModel.module))
 
     def test_the_hash_call_stays_where_its_match_statics_may_be_read(self):
         for source, (_, kept, constant) in A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED.items():
             with self.subTest(source):
-                text = deobfuscate_source(source, module=True)
+                text = deobfuscate_source(source, execution=ExecutionModel.module)
                 self.assertIn(kept, text)
                 self.assertNotIn(constant, text)
 
     def test_the_hash_call_stays_where_its_helpers_carry_an_inserted_check(self):
         for source, (_, constant) in A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK.items():
             with self.subTest(source):
-                text = deobfuscate_source(source, module=True)
+                text = deobfuscate_source(source, execution=ExecutionModel.module)
                 self.assertIn('hashText(textOf(program), 25);', text)
                 self.assertNotIn(constant, text)
 
@@ -517,7 +518,7 @@ class TestTheCheckTheInputTextDecidesIsGone(TestBase):
             PROGRAM_25,
             inserted_at_the_start_of_the_hash(F'if ({INSERTED_LINE_BREAK_CHECK}) {{ console.log("tampered"); }} '),
         )
-        self.assertNotIn('hashText', deobfuscate_source(source, module=True))
+        self.assertNotIn('hashText', deobfuscate_source(source, execution=ExecutionModel.module))
 
 
 class TestTheCheckTheInputTextDoesNotDecideStays(TestBase):
@@ -525,12 +526,12 @@ class TestTheCheckTheInputTextDoesNotDecideStays(TestBase):
     def test_the_deobfuscation_still_holds_the_check(self):
         for source, (_, marker) in A_CHECK_THE_INPUT_TEXT_DOES_NOT_DECIDE.items():
             with self.subTest(source):
-                self.assertIn(marker, deobfuscate_source(source, module=True))
+                self.assertIn(marker, deobfuscate_source(source, execution=ExecutionModel.module))
 
     def test_the_deobfuscation_still_exports_the_hash(self):
         for source in A_HASH_THE_MODULE_EXPORTS:
             with self.subTest(source):
-                self.assertIn('export var h', deobfuscate_source(source, module=True))
+                self.assertIn('export var h', deobfuscate_source(source, execution=ExecutionModel.module))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

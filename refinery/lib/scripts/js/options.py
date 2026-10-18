@@ -3,6 +3,8 @@ Caller-supplied options controlling JavaScript deobfuscation.
 """
 from __future__ import annotations
 
+import enum
+
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
@@ -13,23 +15,53 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.model import JsScript
 
 
+COMMONJS_WRAPPER_NAMES = frozenset({
+    'require',
+    'module',
+    'exports',
+    '__filename',
+    '__dirname',
+})
+"""
+The parameters of the function a CommonJS host wraps around a file's text. Where the file declares
+none of these names itself, a bare read of one reads the value the host passed; the global scope
+holds none of them. Code run by a `Function` construction, an indirect `eval` or a string timer is
+global code outside that function and does not see them.
+"""
+
+
+class ExecutionModel(enum.Enum):
+    """
+    Where the input — and therefore the deobfuscated output — is assumed to run, which decides
+    whether a top-level declaration reaches the global object and what code the top level of the
+    file is:
+
+    - `script` (the default): a browser `<script>`, a Windows Script Host `.js`, or any classic
+      global script. A top-level `var`/`function` becomes a property of the global object, so a
+      global declaration produced by indirect `eval`, a string timer, or the `Function` constructor
+      may be inlined as a plain top-level declaration without changing meaning.
+    - `commonjs`: a CommonJS file, as `node file.js` runs it when no package says otherwise. Its
+      text is the body of a function the host calls, which runs sloppy unless the file says
+      otherwise and binds the names in `COMMONJS_WRAPPER_NAMES`.
+    - `module`: a CommonJS file or an ES module, without saying which. An ES module is strict code
+      throughout, reads `await` as a reserved word and binds none of the wrapper names; a
+      deobfuscation under this model must hold for both readings.
+
+    Under `commonjs` and `module`, a top-level declaration is scoped to the file and never reaches
+    the global object. Indirect eval and string timers still run in the global scope, so inlining a
+    global declaration they produce into a plain top-level declaration would silently move it out of
+    the global object; such inlinings are therefore declined to preserve semantics.
+    """
+    script = 'script'
+    commonjs = 'commonjs'
+    module = 'module'
+
+
 @dataclass(frozen=True)
 class DeobfuscationOptions:
     """
-    Options that steer JavaScript deobfuscation. *module* selects the execution model the input — and
-    therefore the deobfuscated output — is assumed to run under, which decides whether a top-level
-    declaration reaches the global object:
-
-    - Script model (default, `module=False`): a browser `<script>`, a Windows Script Host `.js`, or
-      any classic global script. A top-level `var`/`function` becomes a property of the global object,
-      so a global declaration produced by indirect `eval`, a string timer, or the `Function`
-      constructor may be inlined as a plain top-level declaration without changing meaning.
-
-    - Module model (`module=True`): an ES module or a CommonJS file run as `node file.js`. A top-level
-      declaration is scoped to the module and never reaches the global object. Indirect eval and string
-      timers still run in the global scope, so inlining a global declaration they produce into a plain
-      top-level declaration would silently move it out of the global object; such inlinings are
-      therefore declined to preserve semantics.
+    Options that steer JavaScript deobfuscation. *execution* selects where the input is assumed to
+    run; see `ExecutionModel`.
 
     *entrypoints* holds wildcard patterns naming top-level functions that a host invokes by name — a JXA
     `run`, a Windows Script Host handler, a browser event target. Such a function has no caller inside
@@ -67,7 +99,7 @@ class DeobfuscationOptions:
     models, and so does every write the text spells. The assumption is about code that cannot be
     read, not about every way a script can reach the world.
     """
-    module: bool = False
+    execution: ExecutionModel = ExecutionModel.script
     entrypoints: tuple[str, ...] = ()
     environment: HostEnvironment = HostEnvironment.universal
     trust_eval: bool = False
@@ -77,13 +109,22 @@ class DeobfuscationOptions:
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
 
 
-def module_execution(options: object | None) -> bool:
+def execution_model(options: object | None) -> ExecutionModel:
     """
-    Whether *options* selects the module execution model, under which a top-level binding is scoped to
-    the module and never reaches the global object. Any value that is not a `DeobfuscationOptions` — a
+    The execution model *options* selects. Any value that is not a `DeobfuscationOptions` — a
     transformer run standalone, or with no options attached — defaults to the script model.
     """
-    return isinstance(options, DeobfuscationOptions) and options.module
+    if isinstance(options, DeobfuscationOptions):
+        return options.execution
+    return ExecutionModel.script
+
+
+def module_execution(options: object | None) -> bool:
+    """
+    Whether *options* selects a module execution model, under which a top-level binding is scoped to
+    the module and never reaches the global object.
+    """
+    return execution_model(options) is not ExecutionModel.script
 
 
 def host_environment(options: object | None) -> HostEnvironment:

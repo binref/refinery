@@ -38,7 +38,7 @@ from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.model import JsScript
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.pipeline import (
     DeobfuscationPipeline,
     PipelineObserver,
@@ -102,7 +102,7 @@ def deobfuscate(
     ast: JsScript,
     max_steps: int = 5000,
     *,
-    module: bool = False,
+    execution: ExecutionModel = ExecutionModel.script,
     entrypoints: tuple[str, ...] = (),
     environment: HostEnvironment = HostEnvironment.universal,
     trust_eval: bool = False,
@@ -110,19 +110,19 @@ def deobfuscate(
     observer: PipelineObserver | None = None,
 ) -> int:
     """
-    Apply all available deobfuscators to the input. A non-zero *max_steps* bounds the total number of
-    change-producing transformer passes and raises
-    `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is exceeded, so a transform that fails
-    to converge fails loudly instead of hanging. The default is generous — real inputs settle in a few
-    to a few dozen passes (the differential corpus peaks in the low tens) — so it never bounds a
-    legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely. *module*
-    selects the execution model the input is assumed to run under, *entrypoints* names top-level
-    functions a host calls by name, and *environment* pins the host whose global names are assumed
-    present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval* selects the
-    trusting model, which assumes code supplied as data is inert and is deliberately unsound; the
-    default is the suspecting model, so a caller that reads this function's output as equivalent to
-    its input keeps that claim. *observer* is called around
-    every transformer, which is how a property of the tree is attributed to the pass that moved it; see
+    Apply all available deobfuscators to the input. A non-zero *max_steps* bounds the total number
+    of change-producing transformer passes and raises
+    `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is exceeded, so a transform that
+    fails to converge fails loudly instead of hanging. The default is generous — real inputs settle
+    in a few to a few dozen passes (the differential corpus peaks in the low tens) — so it never
+    bounds a legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
+    *execution* selects the execution model the input is assumed to run under, *entrypoints* names
+    top-level functions a host calls by name, and *environment* pins the host whose global names are
+    assumed present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval*
+    selects the trusting model, which assumes code supplied as data is inert and is deliberately
+    unsound; the default is the suspecting model, so a caller that reads this function's output as
+    equivalent to its input keeps that claim. *observer* is called around every transformer, which
+    is how a property of the tree is attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
 
     A conversion of a function that is handed on, with no evidence that the program installs a
@@ -136,7 +136,7 @@ def deobfuscate(
     refused a conversion on.
     """
     options = DeobfuscationOptions(
-        module=module,
+        execution=execution,
         entrypoints=tuple(entrypoints),
         environment=environment,
         trust_eval=trust_eval,

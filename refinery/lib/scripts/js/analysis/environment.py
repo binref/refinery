@@ -236,7 +236,7 @@ Global names a current Node exposes beyond `GUARANTEED_GLOBALS`, read out of Nod
 same-realm global-object alias. The CommonJS wrapper locals `require`, `module`, `exports`, `__dirname`,
 and `__filename` are deliberately absent: they are injected into a CommonJS file's function scope rather
 than being properties of the global object, and an ES module does not see them at all, so whether a bare
-read of one resolves is the module-versus-script question `DeobfuscationOptions.module` answers, not a
+read of one resolves is the question `refinery.lib.scripts.js.options.ExecutionModel` answers, not a
 host-existence one.
 """
 

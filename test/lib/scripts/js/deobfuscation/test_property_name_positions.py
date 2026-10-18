@@ -49,6 +49,7 @@ from test.lib.scripts.js.ledger import (
 from refinery.lib.scripts.js.analysis.model import build_semantic_model, is_use_position
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.model import JsIdentifier
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -1277,7 +1278,7 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
                 module_graph_behavior(
                     {
                         'main.mjs': importer,
-                        'lib.mjs': deobfuscate_source(module, module=True),
+                        'lib.mjs': deobfuscate_source(module, execution=ExecutionModel.module),
                     },
                     'main.mjs',
                 ),
@@ -1296,7 +1297,7 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
                 module_graph_behavior(
                     {
                         'main.mjs': importer,
-                        'lib.mjs': deobfuscate_source(module, module=True),
+                        'lib.mjs': deobfuscate_source(module, execution=ExecutionModel.module),
                     },
                     'main.mjs',
                 ),
@@ -1314,7 +1315,7 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
                     module_graph_behavior(
                         {
                             'main.mjs': importer,
-                            'lib.mjs': deobfuscate_source(module, module=True),
+                            'lib.mjs': deobfuscate_source(module, execution=ExecutionModel.module),
                         },
                         'main.mjs',
                     ),
@@ -1330,7 +1331,10 @@ class TestAnExportDeclarationKeepsTheBindingItExports(TestBase):
     def test_a_read_of_an_exported_table_is_left_as_it_is(self):
         modules = MODULES_READING_AN_EXPORTED_TABLE
         self.assertEqual(
-            {module: deobfuscate_source(module, module=True) for module in modules},
+            {
+                module: deobfuscate_source(module, execution=ExecutionModel.module)
+                for module in modules
+            },
             {module: printed(module) for module in modules},
         )
 

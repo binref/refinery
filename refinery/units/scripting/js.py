@@ -3,6 +3,7 @@ from __future__ import annotations
 from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.model import JsScript
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.types import Param
@@ -17,8 +18,9 @@ class js(IterativeDeobfuscator):
     Parses the script into an abstract syntax tree, applies simplifying transformations, and
     synthesizes clean output. This deobfuscator iterates until stable; running it twice does
     not change the output. By default the input is assumed to run as a classic global script; pass
-    the module switch when it runs as an ES or CommonJS module instead. Name any entrypoint a host
-    calls into, or dead-code removal will discard it as unreachable.
+    the module switch when it runs as an ES or CommonJS module instead, or the CommonJS switch when
+    it is known to run as the latter. Name any entrypoint a host calls into, or dead-code removal
+    will discard it as unreachable.
     """
 
     def __init__(
@@ -30,9 +32,13 @@ class js(IterativeDeobfuscator):
             'everything only it reached. Give a single asterisk to keep every top-level function.'))],
         timeout=500,
         module: Param[bool, Arg.Switch('-m', help=(
-            'Assume the input runs as an ES or CommonJS module (for example, node file.js), where a '
-            'top-level declaration is scoped to the module and does not attach to the global object, '
-            'rather than as a classic global script (a browser script tag, Windows Script Host).'))] = False,
+            'Assume the input runs as a module, where a top-level declaration is scoped to the '
+            'module and does not attach to the global object, rather than as a classic global '
+            'script (a browser script tag, Windows Script Host). The module may be an ES module or '
+            'a CommonJS file; use -c when it is known to be the latter.'))] = False,
+        commonjs: Param[bool, Arg.Switch('-c', help=(
+            'Assume the input runs as a CommonJS module, as node file.js runs it when no package '
+            'says otherwise. This implies -m.'))] = False,
         environment: Param[str | HostEnvironment, Arg.Option('-e', metavar='E', choices=HostEnvironment, help=(
             'Pin the host the input runs in, so that the global names that host defines are assumed '
             'present and the reads that rely on them are resolved. The default is {default}, which '
@@ -46,6 +52,7 @@ class js(IterativeDeobfuscator):
         super().__init__(
             timeout=timeout,
             module=module,
+            commonjs=commonjs,
             entrypoints=entrypoints,
             environment=Arg.AsOption(environment, HostEnvironment),
             strict=strict,
@@ -55,9 +62,15 @@ class js(IterativeDeobfuscator):
         return JsParser(data).parse()
 
     def transform(self, ast: JsScript) -> int:
+        if self.args.commonjs:
+            execution = ExecutionModel.commonjs
+        elif self.args.module:
+            execution = ExecutionModel.module
+        else:
+            execution = ExecutionModel.script
         return deobfuscate(
             ast,
-            module=self.args.module,
+            execution=execution,
             entrypoints=tuple(self.args.entrypoints),
             environment=self.args.environment,
             trust_eval=not self.args.strict,

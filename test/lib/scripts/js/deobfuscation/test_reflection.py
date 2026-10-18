@@ -19,7 +19,7 @@ from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
 from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
 
 from refinery.lib.scripts import tree_version
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -54,7 +54,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def _reflect_module(self, source: str) -> str:
         return self._run_transformer(
-            source, JsReflectionInlining, DeobfuscationOptions(module=True))
+            source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.module))
 
     def test_a_constant_fold_before_a_sibling_construction_check_does_not_trip_the_pin(self):
         """
@@ -2032,7 +2032,7 @@ class TestAPayloadBindingAwaitStaysBehindTheEvalInAModule(TestJsDeobfuscator):
         self.assertEqual(
             (
                 behavior(source, module=True),
-                behavior(deobfuscate_source(source, module=True), module=True),
+                behavior(deobfuscate_source(source, execution=ExecutionModel.module), module=True),
             ),
             (('3\n', None), ('3\n', None)),
         )
@@ -2682,7 +2682,7 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def _reflect_module(self, source: str) -> str:
         return self._run_transformer(
-            source, JsReflectionInlining, DeobfuscationOptions(module=True)
+            source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.module)
         )
 
     def test_an_opener_payload_is_inlined_into_a_script(self):

@@ -1683,8 +1683,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         Whether the destination of an inline could run the spliced text in strict mode. A
         syntactically strict site is strict; and the module execution model is strictness-ambiguous —
-        `DeobfuscationOptions.module` covers a strict ES module and a sloppy CommonJS file alike, and
-        nothing here tells the two apart — so a module destination is treated as possibly strict.
+        `refinery.lib.scripts.js.options.ExecutionModel` covers a strict ES module and a sloppy
+        CommonJS file alike, and nothing here tells the two apart — so a module destination is
+        treated as possibly strict.
 
         This is the one mode the reflected text must be legal and mode-invariant in, because inlining
         must be sound for the strict reading too: a sloppy-only body spliced into what turns out to be

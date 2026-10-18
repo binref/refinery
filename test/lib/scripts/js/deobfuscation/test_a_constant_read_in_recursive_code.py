@@ -18,6 +18,8 @@ from test.lib.scripts.js.ledger import (
     each_program_still_prints,
 )
 
+from refinery.lib.scripts.js.options import ExecutionModel
+
 #: Programs that define an array before the first call into recursive code reading it, mapped to
 #: what Node prints for them.
 AN_ARRAY_DEFINED_BEFORE_RECURSIVE_CODE_RUNS = {
@@ -164,14 +166,20 @@ class TestAConstantReadInRecursiveCodeIsFolded(TestBase):
     def test_an_array_defined_first_is_folded(self):
         rows = AN_ARRAY_DEFINED_BEFORE_RECURSIVE_CODE_RUNS
         self.assertEqual(
-            {source: 'a[' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'a[' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )
 
     def test_an_array_defined_after_the_first_call_is_not_folded(self):
         rows = AN_ARRAY_DEFINED_AFTER_RECURSIVE_CODE_RUNS
         self.assertEqual(
-            {source: 'a[0]' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'a[0]' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: True for source in rows},
         )
 
@@ -179,21 +187,25 @@ class TestAConstantReadInRecursiveCodeIsFolded(TestBase):
         rows = A_GLOBAL_VALUE_READ_WHERE_ITS_NAME_MEANS_A_PARAMETER
         written = '[void 0, 0 / 0, 1e999]'
         self.assertEqual(
-            {source: written in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: written in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: True for source in rows},
         )
 
     def test_an_element_naming_a_parameter_is_not_a_constant(self):
         source, = AN_ELEMENT_NAMING_A_PARAMETER_CALLED_UNDEFINED
-        self.assertNotIn('void 0', deobfuscate_source(source, module=True))
+        self.assertNotIn('void 0', deobfuscate_source(source, execution=ExecutionModel.module))
 
     def test_a_long_string_is_written_once(self):
         source, = A_LONG_STRING_READ_OFTEN_IN_RECURSIVE_CODE
-        self.assertEqual(deobfuscate_source(source, module=True).count('abcdefghijklmnop'), 1)
+        output = deobfuscate_source(source, execution=ExecutionModel.module)
+        self.assertEqual(output.count('abcdefghijklmnop'), 1)
 
     def test_a_long_string_read_once_is_written_where_it_is_read(self):
         source, = A_LONG_STRING_READ_ONCE_BESIDE_A_PARAMETER_OF_ITS_NAME
-        output = deobfuscate_source(source, module=True)
+        output = deobfuscate_source(source, execution=ExecutionModel.module)
         self.assertEqual(
             (output.count('abcdefghijklmnop'), 'var s' in output),
             (1, False),

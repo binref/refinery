@@ -27,6 +27,7 @@ from test.lib.scripts.js.ledger import (
     printed,
 )
 
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.units.scripting.js import js
 
 #: Programs calling an accessor whose table, or a function whose constant, is in place before every
@@ -643,49 +644,70 @@ class TestATableReadThroughAnAccessorIsFolded(TestBase):
     def test_the_accessor_is_gone_once_the_table_is_in_place_for_every_call(self):
         rows = A_CALL_THE_TABLE_IS_IN_PLACE_FOR
         self.assertEqual(
-            {source: 'A(' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'A(' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )
 
     def test_a_call_before_the_table_is_in_place_becomes_the_read_it_makes(self):
         rows = A_CALL_BEFORE_THE_TABLE_IS_IN_PLACE
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) + '\n' for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module) + '\n'
+                for source in rows
+            },
             {source: written for source, (_, written) in rows.items()},
         )
 
     def test_a_call_whose_table_may_change_is_left_as_it_is(self):
         rows = A_CALL_WHOSE_TABLE_MAY_CHANGE
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: printed(source) for source in rows},
         )
 
     def test_a_call_changing_the_array_it_reads_is_left_as_it_is(self):
         rows = A_CALL_CHANGING_THE_ARRAY_IT_READS
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: printed(source) for source in rows},
         )
 
     def test_a_call_into_a_function_a_running_function_declares_becomes_its_value(self):
         rows = A_CALL_INTO_A_FUNCTION_A_RUNNING_FUNCTION_DECLARES
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: written for source, (_, written) in rows.items()},
         )
 
     def test_a_closure_reading_a_name_its_run_has_not_put_in_place_is_left_as_it_is(self):
         rows = A_CLOSURE_READING_A_NAME_ITS_RUN_HAS_NOT_PUT_IN_PLACE
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: printed(source) for source in rows},
         )
 
     def test_a_chain_calling_back_into_a_function_not_yet_in_place_is_left_as_it_is(self):
         rows = A_CHAIN_CALLING_BACK_INTO_A_FUNCTION_NOT_YET_IN_PLACE
         self.assertEqual(
-            {source: deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: printed(source) for source in rows},
         )
 
@@ -717,7 +739,10 @@ class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
     def test_a_call_that_calls_a_method_on_the_table_is_folded(self):
         rows = A_CALL_THAT_CALLS_A_METHOD_ON_THE_TABLE
         self.assertEqual(
-            {source: 'A(' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'A(' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )
 
@@ -725,6 +750,9 @@ class TestATableReadThroughAnAccessorIsNotYetFolded(TestBase):
     def test_a_call_whose_closure_reads_a_table_of_its_function_is_folded(self):
         rows = A_CALL_WHOSE_CLOSURE_READS_A_TABLE_OF_ITS_FUNCTION
         self.assertEqual(
-            {source: 'outer(' in deobfuscate_source(source, module=True) for source in rows},
+            {
+                source: 'outer(' in deobfuscate_source(source, execution=ExecutionModel.module)
+                for source in rows
+            },
             {source: False for source in rows},
         )

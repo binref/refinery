@@ -12,6 +12,7 @@ from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, InterpreterError
 from refinery.lib.scripts.js.lexer import JsLexer
 from refinery.lib.scripts.js.model import JsIdentifier
+from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.token import JsTokenKind
 
@@ -1285,7 +1286,8 @@ class TestDeobfuscationModuleScope(TestBase):
     """
 
     def _check(self, source: str, *, module: bool = False):
-        deobfuscated = deobfuscate_source(source, module=module)
+        execution = ExecutionModel.module if module else ExecutionModel.script
+        deobfuscated = deobfuscate_source(source, execution=execution)
         self.assertEqual(
             behavior(source),
             behavior(deobfuscated),
@@ -4074,18 +4076,20 @@ class TestUndeclaredHostObservableGlobals(TestBase):
         the binding never joins, and would compare `undefined` against `undefined`.
         """
         source = 'var handler = function () { return 5; };'
-        self.assertEqual(deobfuscate_source(source, module=True, entrypoints=('handler',)), '')
+        output = deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('handler',))
+        self.assertEqual(output, '')
 
     def test_module_scoped_global_still_folds_when_exported(self):
         source = 'var VERSION = 3; console.log(VERSION);'
         self.assertEqual(
-            deobfuscate_source(source, module=True, entrypoints=('VERSION',)),
+            deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('VERSION',)),
             'console.log(3);')
 
     @unittest.expectedFailure
     def test_module_scoped_dead_function_is_removed_even_when_exported(self):
         source = 'function handler() { return 5; }'
-        self.assertEqual(deobfuscate_source(source, module=True, entrypoints=('handler',)), '')
+        output = deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('handler',))
+        self.assertEqual(output, '')
 
 
 class TestDeobfuscateWithin(TestBase):

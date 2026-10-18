@@ -9,7 +9,7 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
 
 from refinery.lib.scripts import tree_version
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import (
     JsUnusedCodeRemoval,
@@ -1790,7 +1790,7 @@ class TestHostEntrypoints(TestJsDeobfuscator):
             self._run_transformer(
                 source,
                 JsUnusedCodeRemoval,
-                DeobfuscationOptions(module=True, entrypoints=('run',)),
+                DeobfuscationOptions(execution=ExecutionModel.module, entrypoints=('run',)),
             ),
         )
 
