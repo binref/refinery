@@ -666,3 +666,52 @@ class TestAPackedTypeofOfAKeyStillThrowsWhereItsGetterThrows(TestBase):
             A_PACKED_TYPEOF_OF_A_KEY,
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
+
+
+#: Packed programs writing a global through the accessor object with an operator that reads it as
+#: well, each with what Node makes of it as a CommonJS file and as an ES module. The global's getter
+#: and setter are written at the top of the file, so the setter's write is as strict as the file.
+A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL = {
+    'a compound write, an update and a logical assignment': Payload(
+        a_program("""
+            Function("p", "p.k = 1; p.k += 15; p.k++; p.k ||= 0; console.log(p.k, counter);")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            """),
+        prints('17 17'),
+        ('', 'ReferenceError'),
+    ),
+    'a compound write on a global nothing has assigned yet': Payload(
+        a_program("""
+            Function("p", "p.k += 1; console.log('after');")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            """),
+        ('', 'ReferenceError'),
+        ('', 'ReferenceError'),
+    ),
+    'a compound write whose right side writes the global first': Payload(
+        a_program("""
+            Function("p", "p.k = 1; p.k += (p.k = 10, 1); console.log(p.k);")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            """),
+        prints('2'),
+        ('', 'ReferenceError'),
+    ),
+    'a delete through the accessor object': Payload(
+        a_program("""
+            Function("p", "console.log(delete p.k, p.k);")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            """),
+        prints('true undefined'),
+        prints('true undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPackedCompoundWriteOnAGlobalStillPrintsWhatItPrints(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )

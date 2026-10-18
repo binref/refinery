@@ -3332,3 +3332,62 @@ class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
                 'Function("p", "console.log(p.t)")({ get t() { return typeof someGlobal; } });'
             ),
         )
+
+
+class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator):
+    """
+    A packed body writes a program's `+=`, `++` or `||=` on a global through the global's key, whose
+    getter and setter both name the global: the access reads through the one and writes through the
+    other, in the order the same operator on the name reads and writes it. Where getter and setter
+    name different variables, or where the access is a `delete`, which removes the proxy object's
+    own property, or a `for-in` head, the body stays packed.
+    """
+
+    ACCESSORS = '({ get k() { return counter; }, set k(v) { return counter = v; } })'
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.commonjs)
+        )
+
+    def test_each_compound_write_and_update_becomes_the_same_operator_on_the_name(self):
+        source = (
+            'Function("p", "p.k = 0; p.k += 15; p.k++; --p.k; p.k ||= 3; (p.k) **= 2;'
+            ' console.log(p.k);")' + self.ACCESSORS + ';'
+        )
+        self.assertEqual(
+            self._reflect(source),
+            inspect.cleandoc(
+                """
+                counter = 0;
+                counter += 15;
+                counter++;
+                --counter;
+                counter ||= 3;
+                (counter) **= 2;
+                console.log(counter);
+                """
+            ),
+        )
+
+    def test_a_compound_write_through_a_getter_and_a_setter_naming_different_variables_stays_packed(self):
+        source = 'Function("p", "p.k += 1;")({ get k() {\n  return a;\n}, set k(v) {\n  return b = v;\n} });'
+        self.assertEqual(self._reflect(source), source)
+
+    def test_a_compound_write_through_a_key_with_no_setter_stays_packed(self):
+        source = 'Function("p", "p.k += 1;")({ get k() {\n  return a;\n} });'
+        self.assertEqual(self._reflect(source), source)
+
+    def test_a_delete_through_the_accessor_object_stays_packed(self):
+        source = (
+            'Function("p", "console.log(delete p.k);")'
+            '({ get k() {\n  return counter;\n}, set k(v) {\n  return counter = v;\n} });'
+        )
+        self.assertEqual(self._reflect(source), source)
+
+    def test_a_for_in_head_through_the_accessor_object_stays_packed(self):
+        source = (
+            'Function("p", "for (p.k in {a: 1}); console.log(p.k);")'
+            '({ get k() {\n  return counter;\n}, set k(v) {\n  return counter = v;\n} });'
+        )
+        self.assertEqual(self._reflect(source), source)

@@ -537,14 +537,14 @@ def _build_proxy_mapping(
     return _ProxyMapping(getters, setters)
 
 
-def _is_typeof_operand(node: Node) -> bool:
+def _is_operand_of(node: Node, operator: str) -> bool:
     """
-    Whether *node*, parentheses aside, is the operand of `typeof`.
+    Whether *node*, parentheses aside, is the operand of the unary *operator*.
     """
     while isinstance(node.parent, JsParenthesizedExpression):
         node = node.parent
     parent = node.parent
-    return isinstance(parent, JsUnaryExpression) and parent.operator == 'typeof'
+    return isinstance(parent, JsUnaryExpression) and parent.operator == operator
 
 
 def _substitute_proxy_accesses(
@@ -562,10 +562,14 @@ def _substitute_proxy_accesses(
     left alone, while a top-level binding of the name aliases the parameter itself, which no script
     splice reproduces, so it fails resolution — as does a free use that is not a member access,
     since it uses the proxy object as a value. A plain read resolves to the getter target and a
-    simple `key = v` write to the setter target; a compound, update, or delete access reads via the
-    getter AND writes via the setter, which no single substitution preserves, so it fails too. So
-    does a read under `typeof` through a getter returning a name: the getter reads the name and
-    throws where nothing binds it, which `typeof` of the bare name does not.
+    simple `key = v` write to the setter target. A compound assignment or an update reads through
+    the getter and writes through the setter, in the order the same operator on a name reads and
+    writes it, so it resolves to the name where getter and setter both name it, which is how the
+    packer writes a program's `+=` or `++` on a global; any other such access fails, as does a
+    `delete`, which removes the proxy object's own property and leaves the name alone, and a
+    `for-in`/`for-of` head. So does a read under `typeof` through a getter returning a name: the
+    getter reads the name and throws where nothing binds it, which `typeof` of the bare name does
+    not.
     """
     bound = body_model.root_scope.bindings.get(param_name)
     if bound is not None and bound.kind is not BindingKind.IMPLICIT_GLOBAL:
@@ -589,6 +593,11 @@ def _substitute_proxy_accesses(
             if key not in setters:
                 return None
             replacement: JsIdentifier | JsUnaryExpression = JsIdentifier(name=setters[key])
+        elif reference_role(member) is Role.READWRITE and not _is_operand_of(member, 'delete'):
+            name = setters.get(key)
+            if name is None or getters.get(key) != name:
+                return None
+            replacement = JsIdentifier(name=name)
         elif is_member_write_target(member):
             return None
         else:
@@ -596,7 +605,7 @@ def _substitute_proxy_accesses(
             if target is None:
                 return None
             if isinstance(target, str):
-                if _is_typeof_operand(member):
+                if _is_operand_of(member, 'typeof'):
                     return None
                 replacement = JsIdentifier(name=target)
             else:
