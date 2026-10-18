@@ -38,6 +38,16 @@ def without_cycle_collector():
             gc.enable()
 
 
+def wontfix(reason: str):
+    """
+    Marks a test of a defect that will not be fixed, for the given reason: the test states the
+    correct behavior, and it never runs.
+    """
+    if not reason.strip():
+        raise ValueError('a test is marked as not to be fixed only for a stated reason')
+    return unittest.skip(F'will not be fixed: {reason}')
+
+
 class NameUnknownException(Exception):
     def __init__(self, name):
         super().__init__('could not resolve: {}'.format(name))

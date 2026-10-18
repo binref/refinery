@@ -1290,6 +1290,16 @@ class SetupHeader(InnoStruct):
     def get_license(self):
         return self._license
 
+    def uninstallable(self) -> bool | str:
+        """
+        Whether the setup is uninstallable, as Setup reads the `Uninstallable` directive; see
+        `setup_directive`.
+        """
+        text = self.Uninstallable
+        if TYPE_CHECKING:
+            assert isinstance(text, str)
+        return setup_directive(text, bool(self.Flags & Flags.Uninstallable))
+
     def get_script(self):
         return self._CompiledCode
 
@@ -2312,6 +2322,23 @@ class SetupRunEntry(InnoStruct):
         reader.byte_align()
 
 
+def setup_directive(text: str, flag: bool) -> bool | str:
+    """
+    Reads a yes-or-no directive of the setup header as Setup does. Older versions keep it as the
+    given flag and write no text. A text is yes or no, spelled `yes`, `true` or `1` and `no`,
+    `false` or `0` in any case; any other text is an expression of functions of the script that
+    Setup evaluates when it needs the value, and it is returned as it is.
+    """
+    if not text:
+        return flag
+    folded = text.lower() if text.isascii() else text
+    if folded in ('0', 'no', 'false'):
+        return False
+    if folded in ('1', 'yes', 'true'):
+        return True
+    return text
+
+
 class TSetup(InnoStruct):
 
     def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeaderV3 | None):
@@ -2338,7 +2365,7 @@ class TSetup(InnoStruct):
         else:
             h.recode_strings('utf-16le')
 
-        if h.Uninstallable == 'yes':
+        if h.uninstallable() is True:
             h.Flags |= Flags.Uninstallable
 
         if version < (4, 0, 0):

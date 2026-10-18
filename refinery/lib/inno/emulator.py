@@ -12,7 +12,6 @@ import bisect
 import fnmatch
 import hashlib
 import inspect
-import io
 import math
 import ntpath
 import operator
@@ -24,9 +23,8 @@ import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, IntEnum, IntFlag, StrEnum, auto
-from functools import cached_property, partial, wraps
+from functools import cached_property, wraps
 from pathlib import Path
-from string import Formatter
 from time import process_time
 from typing import (
     TYPE_CHECKING,
@@ -40,11 +38,10 @@ from typing import (
     TypeVar,
     get_origin,
 )
-from urllib.parse import unquote
 
 from refinery.lib import json
-from refinery.lib.inno import CaseInsensitiveDict, delphi
-from refinery.lib.inno.archive import Flags, InnoArchive
+from refinery.lib.inno import CaseInsensitiveDict, constants, delphi
+from refinery.lib.inno.archive import InnoArchive, InnoVersion, LanguageDetection, TSetup
 from refinery.lib.inno.delphi import DelphiException, SysConst, VarRec, VType
 from refinery.lib.inno.ifps import (
     TC,
@@ -868,6 +865,32 @@ class _ScriptRun:
         return eh.handler_end
 
 
+def _path_drive(name: str) -> str:
+    """
+    The drive of a path as Inno Setup's `PathExtractDrive` reads it: `x:` or a server and share
+    after two slashes, else an empty string. Both kinds of slash separate.
+    """
+    slashes = '\\/'
+    if name[:1] in slashes and name[1:2] in slashes and len(name) >= 2:
+        cursor = 2
+        separators = 0
+        while cursor < len(name):
+            if name[cursor] not in slashes:
+                cursor += 1
+                continue
+            separators += 1
+            if separators >= 2:
+                break
+            while cursor < len(name) and name[cursor] in slashes:
+                cursor += 1
+        return name[:cursor]
+    if name[:1] in slashes:
+        return ''
+    if name[1:2] == ':':
+        return name[:2]
+    return ''
+
+
 def _incompatible_call(handler: IFPSEmulatedFunction, argc: int, void: bool) -> str:
     def shape(argc: int, void: bool):
         arguments = 'argument' if argc == 1 else 'arguments'
@@ -883,6 +906,111 @@ class _WizardForm:
     """
     def __repr__(self):
         return 'WizardForm'
+
+
+@dataclass(frozen=True)
+class _HostSetup:
+    """
+    What the Setup that runs the script decides on its own, read once from the setup header and the
+    configuration: its version, the active language, and whether the setup is uninstallable. A
+    bare script has no header; it is taken to run under the current Setup as an uninstallable
+    setup.
+    """
+    version: InnoVersion | None
+    language: int | None
+    language_name: str
+    uninstallable: bool
+
+    @classmethod
+    def of(cls, setup_info: TSetup | None, version: InnoVersion | None, config: IFPSEmulatorConfig) -> _HostSetup:
+        if setup_info is None:
+            return cls(
+                version=None,
+                language=None,
+                language_name=config.language,
+                uninstallable=True,
+            )
+        language = _active_language(setup_info, config)
+        return cls(
+            version=version,
+            language=language,
+            language_name=setup_info.Languages[language].Name if language is not None else config.language,
+            uninstallable=setup_info.Header.uninstallable() is not False,
+        )
+
+
+def _active_language(setup_info: TSetup, config: IFPSEmulatorConfig) -> int | None:
+    """
+    The index of the language that Setup activates when the user accepts its choice, as Setup's
+    `DetermineDefaultLanguage` finds it: the language whose ID is the user's language, else the
+    first whose primary language matches, else the first one. The configured language ID stands
+    for both the language of the user interface and the locale.
+    """
+    if not (languages := setup_info.Languages):
+        return None
+    if setup_info.Header.LanguageDetection == LanguageDetection.Nothing:
+        return 0
+    wanted = config.lcid
+    for index, language in enumerate(languages):
+        if language.LanguageId.Value == wanted:
+            return index
+    for index, language in enumerate(languages):
+        lcid = language.LanguageId.Value
+        if lcid & 0x3FF != wanted & 0x3FF:
+            continue
+        if wanted & 0x3FF != 0x04 or (lcid in (0x0804, 0x1004)) == (wanted in (0x0804, 0x1004)):
+            return index
+    return 0
+
+
+class _EmulatedConstants:
+    """
+    The `refinery.lib.inno.constants.ConstantHost` that the emulator stands for when it expands
+    constants for a run of the script, or for no run.
+    """
+    def __init__(self, emulator: IFPSEmulator, caller: _ScriptRun | None):
+        self.emulator = emulator
+        self.caller = caller
+        setup = emulator.setup
+        self.version = setup.version and setup.version.semver
+        self.admin = emulator.config.admin
+        self.win64 = emulator.config.x64
+
+    def constant(self, name: str, original: str) -> str:
+        return self.emulator.constant_value(name, original)
+
+    def environment(self, name: str, has_default: bool) -> str:
+        if (value := self.emulator.config.environment.get(name)) is not None:
+            return value
+        return '' if has_default else F'%{name}%'
+
+    def registry(self, root: str, view: int | None, key: str) -> bool:
+        return False
+
+    def registry_value(self, root: str, view: int | None, key: str, value: str, default: str) -> str:
+        return default
+
+    def ini_value(self, file: str, section: str, key: str, default: str) -> str:
+        return default
+
+    def parameter(self, name: str, default: str) -> str:
+        return default
+
+    def custom_message(self, name: str) -> str | None:
+        return self.emulator.custom_message(name)
+
+    def format_message(self, message: str, arguments: list[str]) -> str:
+        return self.emulator.FmtMessage(message, arguments)
+
+    def drive(self, path: str) -> str:
+        return _path_drive(path)
+
+    def run_code(self, function: str, argument: str):
+        emulator = self.emulator
+        if (code := emulator.symbols.get(function)) is None or code.body is None:
+            raise DelphiException('Script error: Could not call proc')
+        value = yield from emulator._execute(_ScriptRun(self.caller), code, [argument])
+        return str(value)
 
 
 class IFPSEmulatedFunction(NamedTuple):
@@ -1237,16 +1365,18 @@ class IFPSEmulator:
                 symbol: _ml[module] + k * 0x1000 for module, symbols in self.winapi.items() for k, symbol in enumerate(symbols)}
             self.winapi_addr_to_symbol = {addr: module for module, addr in _sl.items()}
 
+        self.config = config = options or IFPSEmulatorConfig(**more)
         if isinstance(archive, InnoArchive):
             self.setup_info = archive.setup_info
+            self.setup = _HostSetup.of(archive.setup_info, archive.version, config)
             ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
         else:
             self.setup_info = None
+            self.setup = _HostSetup.of(None, None, config)
             ifps = archive
         self.ifps = ifps
-        self.config = options or IFPSEmulatorConfig(**more)
         self._wizard_form = _WizardForm()
         self._globals: list[Variable] | None = None
         self.mutexes: set[str] = set()
@@ -1859,11 +1989,17 @@ class IFPSEmulator:
 
     @cached_property
     def constant_map(self) -> dict[str, str]:
+        """
+        The values of the constants without parameters on the emulated machine, by the names that
+        Setup reads them as. Names whose value depends on the version of Windows or on the setup are
+        decided by `constant_value`.
+        """
         cfg = self.config
         tmp = cfg.temp_path
         if not tmp:
             tmp = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=5))
             tmp = RF'C:\Windows\Temp\IS-{tmp}'
+        user = RF'C:\Users\{cfg.user_name}'
         map = {
             'app'               : cfg.install_to,
             'win'               : R'C:\Windows',
@@ -1881,18 +2017,22 @@ class IFPSEmulator:
             'dotnet2032'        : R'C:\Windows\Microsoft.NET\Framework\v3.0',
             'dotnet40'          : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
             'dotnet4032'        : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
-            'group'             : RF'C:\Users\{cfg.user_name}\Start Menu\Programs\{cfg.inno_name}',
-            'localappdata'      : RF'C:\Users\{cfg.user_name}\AppData\Local',
-            'userappdata'       : RF'C:\Users\{cfg.user_name}\AppData\Roaming',
-            'userdesktop'       : RF'C:\Users\{cfg.user_name}\Desktop',
-            'userdocs'          : RF'C:\Users\{cfg.user_name}\Documents',
-            'userfavourites'    : RF'C:\Users\{cfg.user_name}\Favourites',
-            'usersavedgames'    : RF'C:\Users\{cfg.user_name}\Saved Games',
-            'usersendto'        : RF'C:\Users\{cfg.user_name}\SendTo',
-            'userstartmenu'     : RF'C:\Users\{cfg.user_name}\Start Menu',
-            'userprograms'      : RF'C:\Users\{cfg.user_name}\Start Menu\Programs',
-            'userstartup'       : RF'C:\Users\{cfg.user_name}\Start Menu\Programs\Startup',
-            'usertemplates'     : RF'C:\Users\{cfg.user_name}\Templates',
+            'group'             : RF'{user}\Start Menu\Programs\{cfg.inno_name}',
+            'localappdata'      : RF'{user}\AppData\Local',
+            'userappdata'       : RF'{user}\AppData\Roaming',
+            'userdesktop'       : RF'{user}\Desktop',
+            'userdocs'          : RF'{user}\Documents',
+            'userfavorites'     : RF'{user}\Favorites',
+            'commonfavorites'   : RF'{user}\Favorites',
+            'usersavedgames'    : RF'{user}\Saved Games',
+            'usersendto'        : RF'{user}\SendTo',
+            'userstartmenu'     : RF'{user}\Start Menu',
+            'userprograms'      : RF'{user}\Start Menu\Programs',
+            'userstartup'       : RF'{user}\Start Menu\Programs\Startup',
+            'usertemplates'     : RF'{user}\Templates',
+            'userpf'            : RF'{user}\AppData\Local\Programs',
+            'usercf'            : RF'{user}\AppData\Local\Programs\Common',
+            'userfonts'         : RF'{user}\AppData\Local\Microsoft\Windows\Fonts',
             'commonappdata'     : R'C:\ProgramData',
             'commondesktop'     : R'C:\ProgramData\Microsoft\Windows\Desktop',
             'commondocs'        : R'C:\ProgramData\Microsoft\Windows\Documents',
@@ -1905,7 +2045,6 @@ class IFPSEmulator:
             'groupname'         : cfg.inno_name,
             'hwnd'              : '0',
             'wizardhwnd'        : '0',
-            'language'          : cfg.language,
             'srcexe'            : cfg.executable,
             'sysuserinfoname'   : '{sysuserinfoname}',
             'sysuserinfoorg'    : '{sysuserinfoorg}',
@@ -1915,10 +2054,6 @@ class IFPSEmulator:
             'username'          : cfg.user_name,
             'log'               : '',
         }
-
-        if (setup_info := self.setup_info) is None or (setup_info.Header.Flags & Flags.Uninstallable):
-            map['uninstallexe'] = RF'{cfg.install_to}\unins000.exe'
-
         if cfg.x64:
             map['syswow64'] = R'C:\Windows\SysWOW64'
             map['commonpf32'] = R'C:\Program Files (x86)'
@@ -1931,55 +2066,54 @@ class IFPSEmulator:
             map['syswow64'] = R'C:\Windows\System32'
             map['commonpf32'] = R'C:\Program Files'
             map['commoncf32'] = R'C:\Program Files\Common Files'
-
-        if cfg.windows_os_version[0] >= 10:
-            map['userfonts'] = RF'{map["localappdata"]}\Microsoft\Windows\Fonts'
-
-        if cfg.windows_os_version[0] >= 7:
-            map['usercf'] = RF'{map["localappdata"]}\Programs\Common'
-            map['userpf'] = RF'{map["localappdata"]}\Programs'
-
-        for auto_var, admin_var, user_var in [
-            ('autoappdata',       'commonappdata',       'userappdata',   ), # noqa
-            ('autocf',            'commoncf',            'usercf',        ), # noqa
-            ('autocf32',          'commoncf32',          'usercf',        ), # noqa
-            ('autocf64',          'commoncf64',          'usercf',        ), # noqa
-            ('autodesktop',       'commondesktop',       'userdesktop',   ), # noqa
-            ('autodocs',          'commondocs',          'userdocs',      ), # noqa
-            ('autofonts',         'commonfonts',         'userfonts',     ), # noqa
-            ('autopf',            'commonpf',            'userpf',        ), # noqa
-            ('autopf32',          'commonpf32',          'userpf',        ), # noqa
-            ('autopf64',          'commonpf64',          'userpf',        ), # noqa
-            ('autoprograms',      'commonprograms',      'userprograms',  ), # noqa
-            ('autostartmenu',     'commonstartmenu',     'userstartmenu', ), # noqa
-            ('autostartup',       'commonstartup',       'userstartup',   ), # noqa
-            ('autotemplates',     'commontemplates',     'usertemplates', ), # noqa
-        ]:
-            try:
-                map[auto_var] = map[admin_var] if cfg.admin else map[user_var]
-            except KeyError:
-                continue
-
-        for legacy, new in [
-            ('cf',     'commoncf',    ), # noqa
-            ('cf32',   'commoncf32',  ), # noqa
-            ('cf64',   'commoncf64',  ), # noqa
-            ('fonts',  'commonfonts', ), # noqa
-            ('pf',     'commonpf',    ), # noqa
-            ('pf32',   'commonpf32',  ), # noqa
-            ('pf64',   'commonpf64',  ), # noqa
-            ('sendto', 'usersendto',  ), # noqa
-        ]:
-            try:
-                map[legacy] = map[new]
-            except KeyError:
-                continue
-
         return map
 
+    def constant_value(self, name: str, original: str) -> str:
+        """
+        The value of a constant without parameters, given by the name that Setup reads it as and the
+        name that the script wrote, as Setup's `ExpandIndividualConst` gives it on the emulated
+        machine.
+        """
+        cfg = self.config
+        if name in ('commonpf64', 'commoncf64', 'dotnet2064', 'dotnet4064') and not cfg.x64:
+            raise constants.ConstantError(F'Cannot expand "{original}" constant on this version of Windows')
+        if (
+            name in ('userpf', 'usercf') and cfg.windows_os_version < (6, 1)
+            or name == 'usersavedgames' and cfg.windows_os_version < (6, 0)
+        ):
+            raise constants.ConstantError(F'Failed to expand shell folder constant "{original}"')
+        if name == 'uninstallexe':
+            if not self.setup.uninstallable:
+                return ''
+            return RF'{cfg.install_to}\unins000.exe'
+        if name == 'language':
+            return self.setup.language_name
+        try:
+            return self.constant_map[name]
+        except KeyError:
+            raise NotImplementedError(F'The emulator has no value for the constant {original}.') from None
+
+    def custom_message(self, name: str) -> str | None:
+        """
+        The custom message with the given name, compared without case, as Setup's
+        `GetCustomMessageValue` finds it: the last one that is for all languages or for the active
+        language. The emulator does not know the messages of a bare script; the message is then the
+        constant that names it, as other values that the emulator does not know.
+        """
+        if (setup_info := self.setup_info) is None:
+            return F'{{cm:{name}}}'
+        value = None
+        folded = name.casefold()
+        for message in setup_info.Messages:
+            if message.EncodedName.casefold() != folded:
+                continue
+            if (index := message.get_language_index()) == -1 or index == self.setup.language:
+                value = message.Value
+        return value
+
     @external(caller=True)
-    def ExpandConstant(self, string: str, caller: _ScriptRun | None = None) -> str:
-        return self.expand_constant(string, caller=caller)
+    def ExpandConstant(self, string: str, caller: _ScriptRun | None = None) -> Generator[Any, Any, str]:
+        return constants.expand_constants(string, _EmulatedConstants(self, caller))
 
     @external(caller=True)
     def ExpandConstantEx(
@@ -1988,102 +2122,19 @@ class IFPSEmulator:
         custom_var: str,
         custom_val: str,
         caller: _ScriptRun | None = None,
-    ) -> str:
-        return self.expand_constant(string, custom_var, custom_val, caller=caller)
+    ) -> Generator[Any, Any, str]:
+        return constants.expand_constants(string, _EmulatedConstants(self, caller), (custom_var, custom_val))
 
-    def expand_constant(
-        self,
-        string: str,
-        custom_var: str | None = None,
-        custom_val: str | None = None,
-        unescape: bool = False,
-        caller: _ScriptRun | None = None,
-    ):
+    def expand_constant(self, string: str, custom_var: str | None = None, custom_val: str = '') -> str:
         """
-        Expands the constants in the given string. A code constant runs a function of the script;
-        when the expansion is part of a run of the script, given as `caller`, that run is nested in
-        it.
+        Expands the constants in the given string as Setup expands them, with one optional custom
+        constant. A code constant runs a function of the script; its calls are not reported.
         """
-        config = self.config
-        expand = partial(self.expand_constant, unescape=True, caller=caller)
-        string = re.sub(r'(\{\{.*?\}(?!\}))', '\\1}', string)
-
-        with io.StringIO() as result:
-            constants = self.constant_map
-            formatter = Formatter()
-            backslash = False
-            try:
-                parsed = list(formatter.parse(string))
-            except ValueError as VE:
-                raise IFPSException(F'invalid format string: {string!r}') from VE
-            for prefix, spec, modifier, conversion in parsed:
-                modifier = modifier or ''
-                if backslash and prefix[:1] == '\\':
-                    prefix = prefix[1:]
-                if unescape:
-                    prefix = unquote(prefix)
-                result.write(prefix)
-                if spec is None:
-                    continue
-                elif spec == '\\':
-                    if modifier or conversion:
-                        raise IFPSException('Invalid format string.')
-                    value = spec
-                elif spec == custom_var:
-                    value = custom_val
-                elif spec.startswith('%'):
-                    name, p, default = spec[1:].partition('|')
-                    name = expand(name)
-                    default = expand(default)
-                    try:
-                        value = config.environment[name]
-                    except KeyError:
-                        value = default if p else F'%{name}%'
-                elif spec == 'drive':
-                    value = self.ExtractFileDrive(expand(modifier))
-                elif spec == 'ini':
-                    # {ini:Filename,Section,Key|DefaultValue}
-                    _, _, default = modifier.partition('|')
-                    value = expand(default)
-                elif spec == 'code':
-                    # {code:FunctionName|Param}
-                    symbol, _, param = modifier.partition('|')
-                    param = expand(param)
-                    try:
-                        function = self.symbols[symbol]
-                    except KeyError as KE:
-                        raise IFPSException(F'String formatter references missing function {symbol}.') from KE
-                    emulation = EventCall(self._execute(_ScriptRun(caller), function, (param,)))
-                    value = str(emulation.value)
-                elif spec == 'cm':
-                    # {cm:LaunchProgram,Inno Setup}
-                    # The example above translates to "Launch Inno Setup" if English is the active language.
-                    name, _, placeholders = modifier.partition(',')
-                    value = self.CustomMessage(expand(name))
-                    if placeholders:
-                        def _placeholder(match: re.Match[str]):
-                            try:
-                                return placeholders[int(match[1]) - 1]
-                            except Exception:
-                                return match[0]
-                        placeholders = [ph.strip() for ph in placeholders.split(',')]
-                        value = re.sub('(?<!%)%([1-9]\\d*)', _placeholder, value)
-                elif spec == 'reg':
-                    # {reg:HKXX\SubkeyName,ValueName|DefaultValue}
-                    _, _, default = modifier.partition('|')
-                    value = expand(default)
-                elif spec == 'param':
-                    # {param:ParamName|DefaultValue}
-                    _, _, default = modifier.partition('|')
-                    value = expand(default)
-                else:
-                    try:
-                        value = constants[spec]
-                    except KeyError as KE:
-                        raise IFPSException(F'invalid format field {spec}') from KE
-                backslash = value.endswith('\\')
-                result.write(value)
-            return result.getvalue()
+        custom = None if custom_var is None else (custom_var, custom_val)
+        expansion = EventCall(constants.expand_constants(string, _EmulatedConstants(self, None), custom))
+        value = expansion.value
+        assert value is not None
+        return value
 
     @external()
     def DeleteFile(self, path: str) -> bool:
@@ -2168,27 +2219,13 @@ class IFPSEmulator:
 
     @external()
     def ActiveLanguage(self) -> str:
-        return 'en'
+        return self.setup.language_name
 
     @external()
     def CustomMessage(self, msg_name: str) -> str:
-        by_language = {}
-        if (setup_info := self.setup_info) is None:
-            return ''
-        for msg in setup_info.Messages:
-            if msg.EncodedName == msg_name and (lv := msg.get_language_value()):
-                lng = lv.Name
-                if lng == self.config.language:
-                    return msg.Value
-                by_language[lng] = msg.Value
-        try:
-            return by_language[0]
-        except KeyError:
-            pass
-        try:
-            return next(iter(by_language.values()))
-        except StopIteration:
-            raise IFPSException(F'Custom message with name {msg_name} not found.')
+        if (message := self.custom_message(msg_name)) is None:
+            raise DelphiException(F'Internal error: Unknown custom message name "{msg_name}"')
+        return message
 
     @external()
     def FmtMessage(self, fmt: str, args: list[str]) -> str:
@@ -2573,18 +2610,7 @@ class IFPSEmulator:
 
     @external()
     def ExtractFileDrive(self, name: str) -> str:
-        if name:
-            parts = Path(name).parts
-            if len(parts) >= 2 and parts[0] == '\\' and parts[1] == '?':
-                parts = parts[2:]
-            if parts[0] == '\\':
-                if len(parts) >= 3:
-                    return '\\'.join(parts[:3])
-            else:
-                root = parts[0]
-                if len(root) == 2 and root[1] == ':':
-                    return root
-        return ''
+        return _path_drive(name)
 
     @external()
     def ExtractRelativePath(self, base: str, dst: str) -> str:

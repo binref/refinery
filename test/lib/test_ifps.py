@@ -7,7 +7,7 @@ from unittest import mock
 
 from refinery.lib.inno.emulator import EmulatorException, IFPSException
 
-from .. import TestBase
+from .. import TestBase, wontfix
 
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
 _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
@@ -797,10 +797,14 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(IFPSEvents['NextButtonClick'].kind, 'function')
         self.assertEqual(IFPSClasses.Classes['TStrings'].members['Strings'].kind, 'property')
 
-    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='a constant is expanded as a Python format string')
     def test_a_closing_brace_outside_of_a_constant_is_kept(self):
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
-        self.assertEqual(emulator.ExpandConstant('a}b'), 'a}b')
+        self.assertEqual(emulator.expand_constant('a}b'), 'a}b')
+
+    @wontfix('no script nests a constant hundreds of levels deep; the emulation ends at the recursion limit of Python')
+    def test_a_constant_nested_a_thousand_levels_deep_expands_to_its_innermost_default(self):
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.expand_constant('{%NOSUCHVARIABLE|' * 1000 + 'z' + '}' * 1000), 'z')
 
     def test_an_index_outside_of_an_array_raises_an_error_that_the_script_handles(self):
         """

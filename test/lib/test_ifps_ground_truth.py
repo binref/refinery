@@ -4,6 +4,7 @@ import re
 from itertools import zip_longest
 from typing import Iterable
 
+from refinery.lib.inno.archive import InnoArchive
 from refinery.lib.inno.emulator import (
     EmulatorException,
     IFPSEmulatorConfig,
@@ -13,7 +14,7 @@ from refinery.lib.inno.emulator import (
 )
 from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand
 
-from .. import TestBase
+from .. import TestBase, wontfix
 
 _ORACLE_LINE = re.compile(r'ORACLE (\S+) = (.*)')
 _INTEGER_SCRIPT = '8ca8a9c7454b8aab50c461b543098450f2f7ea277b67fc7614c2fe5f58d2c3a8'
@@ -303,6 +304,69 @@ _ERROR_LOG = {
     'DeinitializeSetup'        : 'entered',
 }
 
+_HOST_INSTALLER = '6b237b785ae7f7d5fae8d87d7b3015a2fdf296d1b74286a85c1906c141edae22'
+_HOST_LOG_OF_INITIALIZE_SETUP = {
+    'Event001'               : 'InitializeSetup',
+    'ConstLoneBrace'         : '[a}b]',
+    'ConstEscapedBrace'      : '[{tmp}]',
+    'ConstBackslash'         : R'[\x]',
+    'ConstBackslashTwice'    : R'[\\x]',
+    'ConstNested'            : R'[\]',
+    'ConstCodeNested'        : '[z]',
+    'ConstPercent'           : '[a}b]',
+    'ConstPercentBrace'      : R'[\]',
+    'ConstPercentBad'        : 'raised: Internal error: Failed to parse "code" constant',
+    'ConstDoubleInside'      : '[a{b]',
+    'ConstUnknown'           : 'raised: Internal error: Unknown constant "nosuchconstant"',
+    'ConstEmpty'             : 'raised: Internal error: Unknown constant ""',
+    'ConstUnclosed'          : 'raised: Internal error: Unclosed constant',
+    'ConstLastBrace'         : 'raised: Internal error: Unclosed constant',
+    'ConstCase'              : 'raised: Internal error: Unknown constant "Tmp"',
+    'ConstMissingCode'       : 'raised: Script error: Could not call proc',
+    'ConstCustomMessage'     : '[Hello a and b,c]',
+    'ConstEnvDefault'        : '[dflt]',
+    'ConstEnvMissing'        : '[]',
+    'ConstRegBadRoot'        : 'raised: Internal error: Failed to parse "reg" constant',
+    'ConstRegDefault'        : '[dflt]',
+    'ConstIniDefault'        : '[dflt]',
+    'ConstParamDefault'      : '[dflt]',
+    'ConstDrive'             : '[C:]',
+    'ConstCustom'            : R'[value\x]',
+    'ConstCustomBuiltin'     : R'[\]',
+    'ConstRenamed'           : 'equal',
+    'ConstHwnd'              : 'raised: Internal error: Unknown constant "hwnd"',
+    'ConstUserFavorites'     : 'expands',
+    'ConstCommonFavorites'   : 'equal',
+    'ConstAutoFavorites'     : 'equal',
+    'ConstUserPf'            : 'expands',
+    'ConstUserFonts'         : 'expands',
+    'ConstUserFavourites'    : 'raised: Internal error: Unknown constant "userfavourites"',
+    'ConstAppEarly'          : 'raised: Internal error: An attempt was made to expand the "app" constant before it was initialized',
+    'ConstGroupEarly'        : 'raised: Internal error: An attempt was made to expand the "group" constant before it was initialized',
+    'ConstUninstallExeEarly' : '[]',
+    'ConstCmUnknown'         : 'raised: Internal error: Unknown custom message name "NoSuchMessage" in "cm" constant',
+    'ConstCmCase'            : '[Hello x and y]',
+    'CustomMessageUnknown'   : 'raised: Internal error: Unknown custom message name "NoSuchMessage"',
+    'ActiveLanguage'         : 'default',
+    'ConstLanguage'          : '[default]',
+    'ConstEnvLazy'           : 'expands',
+    'LazyAfterEnv'           : '0',
+    'ConstEnvEmpty'          : '[dflt]',
+    'ConstRegLazy'           : '[dflt]',
+    'Event002'               : 'Lazy(default)',
+    'Event003'               : 'Lazy(key)',
+    'ConstRegOrder'          : '[default]',
+    'Event004'               : R'Lazy(C:\nosuch\oracle.ini)',
+    'Event005'               : 'Lazy(section)',
+    'Event006'               : 'Lazy(key)',
+    'Event007'               : 'Lazy(default)',
+    'ConstIniOrder'          : '[default]',
+    'Event008'               : 'Lazy(nosuchparam)',
+    'Event009'               : 'Lazy(default)',
+    'ConstParamOrder'        : '[default]',
+    'LazyCount'              : '8',
+}
+
 
 def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str, str]:
     """
@@ -543,7 +607,6 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
     def test_a_code_constant_that_logs_a_value_is_expanded_to_its_result(self):
         self.assertEmulatedAsLogged('ORACLECODELOGS', 'CodeLogsValue')
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the calls of a function that expands a code constant are not reported')
     def test_a_code_constant_logs_a_value(self):
         self.assertEmulatedAsLogged('ORACLECODELOGS', 'CodeLogged')
 
@@ -571,3 +634,44 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
 
     def test_two_runs_advanced_alternately_log_what_each_logs_alone(self):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
+
+
+class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
+    """
+    Inno Setup 6.5.0 built an installer whose script logs the events that Setup sends and how Setup
+    expands constants. The installer ran on Windows with a log file, installing for the current
+    user. The emulated machine has `WINDIR` set, as every Windows has.
+    """
+
+    def emulator(self, **config):
+        archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
+        return InnoSetupEmulator(archive, IFPSEmulatorConfig(
+            log_calls=True,
+            admin=False,
+            environment={'WINDIR': R'C:\WINDOWS'},
+            **config,
+        ))
+
+    def test_initialize_setup_expands_constants_as_setup_did(self):
+        """
+        The values of `{app}`, `{group}` and `{uninstallexe}` depend on how far the installation
+        got, which a run of `InitializeSetup` alone does not show.
+        """
+        emulator = self.emulator()
+        emulated = _logged_values(emulator.emulate_function(emulator.symbols['INITIALIZESETUP']), {})
+        compared = _HOST_LOG_OF_INITIALIZE_SETUP.keys() - {
+            'ConstAppEarly',
+            'ConstGroupEarly',
+            'ConstUninstallExeEarly',
+            'ConstEnvMissing',
+        }
+        self.assertEqual(emulated.keys(), _HOST_LOG_OF_INITIALIZE_SETUP.keys())
+        self.assertEqual(
+            {name: emulated[name] for name in compared},
+            {name: _HOST_LOG_OF_INITIALIZE_SETUP[name] for name in compared},
+        )
+
+    @wontfix('the emulator does not know the environment of the machine; a variable that the configuration does not name stays %NAME%')
+    def test_an_environment_variable_that_is_not_set_expands_to_an_empty_text(self):
+        emulator = self.emulator()
+        self.assertEqual(F"[{emulator.expand_constant('{%NOSUCHORACLEVARIABLE}')}]", _HOST_LOG_OF_INITIALIZE_SETUP['ConstEnvMissing'])
