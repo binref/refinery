@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from refinery.lib.access import is_access_database
+from typing import TYPE_CHECKING
+
 from refinery.lib.types import Param
 from refinery.units import Arg
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.units.formats.office import VBAModuleUnit
+
+if TYPE_CHECKING:
+    from refinery.lib.ole.vba import VBAModule, VBAProject
 
 
-class vbapc(PathExtractorUnit):
+class vbapc(VBAModuleUnit):
     """
     Extract and decompile VBA macro p-code from Office documents and Microsoft Access databases
     (.mdb and .accdb).
@@ -15,15 +19,13 @@ class vbapc(PathExtractorUnit):
     the embedded macro source code is stomped and does not represent the p-code
     functionality that the document will actually execute. Use the -R flag to get raw
     disassembled p-code instead of decompiled output.
-    """
-    @classmethod
-    def handles(cls, data) -> bool:
-        if data[:4] == B'\xD0\xCF\x11\xE0':
-            return True
-        if is_access_database(data):
-            return True
-        return False
 
+    Every module is extracted below a folder that is named after its VBA project, for example
+    `Project/ThisDocument`. When the document holds more than one project, such as an embedded
+    workbook, every folder is preceded by the number of its project: `1/Project/ThisDocument` and
+    `2/VBAProject/ThisWorkbook`. The meta variable `stream` holds the location of the module stream
+    in the document.
+    """
     def __init__(
         self,
         *paths,
@@ -32,16 +34,19 @@ class vbapc(PathExtractorUnit):
     ):
         super().__init__(*paths, raw=raw, **keywords)
 
-    def unpack(self, data):
+    def _module_reader(self, project: VBAProject):
+        from refinery.lib.ole.decompiler import PCodeParser
         from refinery.lib.ole.pcode import PCodeDisassembler, format_pcode_text
-        disassembler = PCodeDisassembler(data)
-        for module in disassembler.iter_modules():
-            if self.args.raw:
-                code = format_pcode_text(module.path, 0, module.lines)
+        disassembler = PCodeDisassembler(project)
+        raw = self.args.raw
+
+        def read(module: VBAModule) -> str | None:
+            pcode = disassembler.disassemble(module)
+            if raw:
+                code = format_pcode_text(pcode.path, 0, pcode.lines)
             else:
-                from refinery.lib.ole.decompiler import PCodeParser
-                parser = PCodeParser()
-                code = parser.decompile_module(module)
-            if not code.strip():
-                continue
-            yield UnpackResult(module.path, code.encode(self.codec))
+                code = PCodeParser().decompile_module(pcode)
+            if code.strip():
+                return code
+
+        return read

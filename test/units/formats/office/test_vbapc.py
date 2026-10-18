@@ -10,7 +10,14 @@ from refinery.lib.ole.decompiler import vba_string_literal
 from refinery.lib.ole.vba import copytoken_help
 
 from ... import TestUnitBase
-from . import list_part_twice
+from .. import resize_ole_entry
+from . import invert_checksum, list_part_twice, rename_vba_project
+
+DOC = '4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08'
+XLS = '8168819cb693a3a04f771ee119ca00e631a74f09419ad295c5088f1e7a430e98'
+DOCM = 'ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394'
+STOMPED_DOCM = '6d8a0f5949adf37330348cc9a231958ad8fb3ea3a3d905abe5e72dbfd75a3d1d'
+DOCX = '36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3'
 
 proc_new = re.compile(
     r'(?i)^\s*(((Public|Private|Friend)\s+)?(Static\s+)?(Sub|Function(?!\s+As\b)|Property\s+(Get|Let|Set)))\b')
@@ -150,7 +157,7 @@ class TestVBAPC(TestUnitBase):
 
     def test_no_orphan_end_from_ifdef(self):
         data = self._get_big_sample()
-        code = self._get_module(data, 'Macros/VBA/APIRegistryUtil')
+        code = self._get_module(data, 'TemplateProject/APIRegistryUtil')
         depth = 0
         for lno, line in enumerate(code.splitlines(), 1):
             if proc_new.match(line):
@@ -161,7 +168,7 @@ class TestVBAPC(TestUnitBase):
 
     def test_no_runaway_indentation(self):
         data = self._get_big_sample()
-        code = self._get_module(data, 'Macros/VBA/BBPT_modExcelLinkHandler')
+        code = self._get_module(data, 'TemplateProject/BBPT_modExcelLinkHandler')
         max_indent = 0
         for line in code.splitlines():
             if line.strip():
@@ -174,7 +181,7 @@ class TestVBAPC(TestUnitBase):
 
     def test_no_single_line_select_at_zero_indent(self):
         data = self.download_sample('0f822b8f6b34755495585f3c22689081edc3300c2700fc0b69a35061db768700')
-        code = self._get_module(data, 'VBA/Module2')
+        code = self._get_module(data, 'VBAProject/Module2')
         select_re = re.compile(r'(?i)^Select Case .+End Select')
         for lno, line in enumerate(code.splitlines(), 1):
             self.assertIsNone(select_re.match(line), F'At line {lno}: single-line Select without indentation')
@@ -209,7 +216,7 @@ class TestVBAPC(TestUnitBase):
 
     def test_next_multi_var_indentation(self):
         data = self.download_sample('2052b1c9455383827cc6d14da43249fd2172e6bdd82e1b782383391ac36baceb')
-        code = self._get_module(data, '_VBA_PROJECT_CUR/VBA/ThisWorkbook')
+        code = self._get_module(data, 'VBAProject/ThisWorkbook')
         for lno, line in enumerate(code.splitlines(), 1):
             if not (m := proc_end.match(line)):
                 continue
@@ -218,7 +225,7 @@ class TestVBAPC(TestUnitBase):
 
     def test_no_trailing_whitespace_on_resume(self):
         data = self._get_big_sample()
-        code = self._get_module(data, 'Macros/VBA/BBPTv2_modPasteFromExcel')
+        code = self._get_module(data, 'TemplateProject/BBPTv2_modPasteFromExcel')
         for lno, line in enumerate(code.splitlines(), 1):
             stripped = line.rstrip()
             self.assertFalse(stripped != line and stripped.endswith('Resume'),
@@ -233,6 +240,113 @@ class TestVBAPC(TestUnitBase):
         expected = collections.Counter(bytes(chunk) for chunk in first | self.load())
         expected.update(bytes(chunk) for chunk in second | self.load())
         self.assertEqual(collections.Counter(bytes(chunk) for chunk in doubled | self.load()), expected)
+
+    def _project(self, sample: str) -> bytes:
+        with zipfile.ZipFile(io.BytesIO(self.download_sample(sample))) as archive:
+            return archive.read('word/vbaProject.bin')
+
+    def _modules(self, data, *args, **kwargs) -> dict[str, bytes]:
+        return {str(chunk.meta['path']): bytes(chunk) for chunk in data | self.load(*args, **kwargs)}
+
+    def _streams(self, data) -> list[str]:
+        return [str(chunk.meta['stream']) for chunk in data | self.load()]
+
+    def _logged_modules(self, data) -> tuple[dict[str, bytes], list[str]]:
+        with self.load_logged() as (unit, log):
+            modules = {str(chunk.meta['path']): bytes(chunk) for chunk in data | unit}
+        return modules, log
+
+    def _with_embedded(self, part: bytes | bytearray) -> bytes:
+        return list_part_twice(self.download_sample(DOCM), 'word/vbaProject.bin', lambda _: bytes(part), 'word/embeddings/oleObject1.bin')
+
+    def test_the_modules_of_a_project_come_out_below_the_name_of_the_project(self):
+        for sample, paths in [
+            (DOC, ['Project/ThisDocument', 'Project/UserForm1', 'Project/Module1']),
+            (XLS, ['VBAProject/ThisWorkbook', 'VBAProject/Sheet1']),
+            (DOCM, ['Project/ThisDocument', 'Project/main']),
+        ]:
+            with self.subTest(sample=sample[:8]):
+                self.assertEqual(list(self._modules(self.download_sample(sample))), paths)
+
+    def test_two_projects_with_one_name_get_a_numbered_folder_each(self):
+        other = self._project(STOMPED_DOCM)
+        data = self._with_embedded(other)
+        own = self._modules(self.download_sample(DOCM))
+        embedded = self._modules(other)
+        self.assertEqual(list(own), ['Project/ThisDocument', 'Project/main'])
+        self.assertEqual(list(embedded), ['Project/ThisDocument'])
+        expected = {F'1/{path}': code for path, code in own.items()} | {F'2/{path}': code for path, code in embedded.items()}
+        self.assertEqual(self._modules(data), expected)
+
+    def test_a_module_path_without_the_number_selects_the_module_of_every_project(self):
+        data = self._with_embedded(self._project(STOMPED_DOCM))
+        self.assertEqual(list(self._modules(data, 'Project/ThisDocument')), ['1/Project/ThisDocument', '2/Project/ThisDocument'])
+        self.assertEqual(list(self._modules(data, '1/Project/ThisDocument')), ['1/Project/ThisDocument'])
+
+    def test_an_embedded_project_with_another_name_is_disassembled(self):
+        workbook = self.download_sample(XLS)
+        modules = self._modules(self._with_embedded(workbook))
+        self.assertEqual(list(modules), [
+            '1/Project/ThisDocument',
+            '1/Project/main',
+            '2/VBAProject/ThisWorkbook',
+            '2/VBAProject/Sheet1',
+        ])
+        expected = {F'2/{path}': code for path, code in self._modules(workbook).items()}
+        self.assertEqual({path: code for path, code in modules.items() if path.startswith('2/')}, expected)
+
+    def test_a_project_name_with_a_slash_is_used_as_stored(self):
+        project = rename_vba_project(self._project(DOCM), 'VBA/dir', B'Project', B'Pro/ect')
+        self.assertEqual(list(self._modules(project)), ['Pro/ect/ThisDocument', 'Pro/ect/main'])
+
+    def test_the_stream_variable_names_the_part_and_the_stream_of_every_module(self):
+        data = self._with_embedded(self.download_sample(XLS))
+        self.assertEqual(self._streams(data), [
+            'word/vbaProject.bin/VBA/ThisDocument',
+            'word/vbaProject.bin/VBA/main',
+            'word/embeddings/oleObject1.bin/_VBA_PROJECT_CUR/VBA/ThisWorkbook',
+            'word/embeddings/oleObject1.bin/_VBA_PROJECT_CUR/VBA/Sheet1',
+        ])
+        self.assertEqual(self._streams(self.download_sample(DOC)), [
+            'Macros/VBA/ThisDocument',
+            'Macros/VBA/UserForm1',
+            'Macros/VBA/Module1',
+        ])
+
+    def test_the_header_of_raw_pcode_names_the_stream_of_the_module(self):
+        modules = self._modules(self._with_embedded(self.download_sample(XLS)), raw=True)
+        header = modules['2/VBAProject/ThisWorkbook'].splitlines()[0]
+        self.assertTrue(header.startswith(B'word/embeddings/oleObject1.bin/_VBA_PROJECT_CUR/VBA/ThisWorkbook - '), header)
+
+    def test_a_project_whose_dir_stream_is_cut_short_is_skipped_with_a_warning(self):
+        data = self._with_embedded(resize_ole_entry(self._project(STOMPED_DOCM), 'VBA/dir', 100))
+        modules, log = self._logged_modules(data)
+        self.assertEqual(modules, self._modules(self.download_sample(DOCM)))
+        self.assertTrue(any('word/embeddings/oleObject1.bin/VBA/dir' in message for message in log), log)
+
+    def test_an_unreadable_part_is_skipped_with_a_warning(self):
+        data = invert_checksum(self._with_embedded(self.download_sample(XLS)), 'word/vbaProject.bin')
+        modules, log = self._logged_modules(data)
+        self.assertEqual(modules, self._modules(self.download_sample(XLS)))
+        self.assertTrue(any('word/vbaProject.bin' in message for message in log), log)
+
+    def test_a_module_stream_cut_short_is_skipped_with_a_warning(self):
+        project = self._project(DOCM)
+        intact = self._modules(project)
+        modules, log = self._logged_modules(resize_ole_entry(project, 'VBA/ThisDocument', 2))
+        self.assertEqual(modules, {'Project/main': intact['Project/main']})
+        self.assertTrue(any('VBA/ThisDocument' in message for message in log), log)
+
+    def test_a_compound_file_that_cannot_be_opened_is_an_error(self):
+        data = self.download_sample(DOC)[:0x1000]
+        with self.assertRaises(Exception):
+            list(data | self.load())
+
+    def test_a_document_without_macros_gives_nothing(self):
+        self.assertEqual(list(self.download_sample(DOCX) | self.load()), [])
+
+    def test_the_format_check_accepts_a_macro_document(self):
+        self.assertTrue(self.unit().handles(self.download_sample(DOCM)))
 
 
 class TestVBAStringLiteral(TestUnitBase):

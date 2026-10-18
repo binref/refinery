@@ -20,6 +20,13 @@
   Pipelines that use `{kind}` or `var:kind` have to be updated.
 - The `xt7z` unit now reports the checksum stored in the archive as `checksum` rather than `crc32`.
   The latter is the name of a property that refinery computes from a chunk, and a unit is no longer permitted to overwrite such a name.
+- The units `vbamc` and `vbapc` now extract every module below a folder named after its VBA project,
+  for example `Project/ThisDocument` instead of `Macros/VBA/ThisDocument`.
+  When a document holds more than one project, such as an embedded workbook, every folder is preceded by the number of its project:
+  `1/Project/ThisDocument` and `2/VBAProject/ThisWorkbook`.
+  The location of the module stream in the document is available as the meta variable `stream`.
+  Patterns that name the old storage path, such as `Macros/VBA/*`, no longer match; patterns that name a module, such as `ThisDocument`, still do.
+  The `vbapc` unit now also reads projects embedded in a document, and both units skip a part, project, or module that cannot be read with a warning.
 
 ## Version 0.11.2
 - The `php` unit was added; it parses PHP into an abstract syntax tree and pretty-prints it.

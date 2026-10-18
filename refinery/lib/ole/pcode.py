@@ -24,8 +24,8 @@ import struct as _struct
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
-from refinery.lib.ole.file import OleFile, OleFileLike
-from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
+if TYPE_CHECKING:
+    from refinery.lib.ole.vba import VBAModule, VBAProject
 
 logger = logging.getLogger(__name__)
 
@@ -1930,126 +1930,24 @@ def format_pcode_text(
 
 class PCodeDisassembler:
     """
-    VBA p-code disassembler that produces structured PCodeModule output. The output is suitable for
-    consumption by the decompiler for reconstruction to VBA source code.
+    VBA p-code disassembler for the modules of one `refinery.lib.ole.vba.VBAProject`. It produces
+    structured PCodeModule output, which is suitable for consumption by the decompiler for
+    reconstruction to VBA source code. The identifiers of the project are read from its
+    _VBA_PROJECT stream when the disassembler is created.
     """
 
-    def __init__(self, data: bytes | bytearray | memoryview):
-        self._data = data
+    def __init__(self, project: VBAProject):
+        self._project = project
+        self._vba_project_data = project.ole.openstream(F'{project.storage}VBA/_VBA_PROJECT').read()
+        self._identifiers = _get_identifiers(self._vba_project_data, project.codec)
 
-    def iter_modules(self):
+    def disassemble(self, module: VBAModule) -> PCodeModule:
         """
-        Yield PCodeModule objects for each VBA module.
+        Disassemble the p-code of the given module of the project. The path of the result is the
+        location of the module stream.
         """
-        data = self._data
-        from refinery.lib.access import AccessDatabase, is_access_database
-        if is_access_database(data):
-            try:
-                ole = AccessDatabase(bytes(data)).open_vba()
-            except Exception:
-                ole = None
-            if ole is not None:
-                yield from self._iter_project_modules(ole)
-            return
-        for ole_data in self._get_ole_streams():
-            ole = OleFile(ole_data)
-            yield from self._iter_project_modules(ole)
-
-    def _iter_project_modules(
-        self,
-        ole: OleFileLike,
-    ):
-        """
-        Iterate over VBA modules in an OLE file, yielding PCodeModule per module.
-        """
-        vba_projects = _find_vba_projects(ole)
-        if not vba_projects:
-            return
-        for vba_root, _, dir_path in vba_projects:
-            codec, code_modules, is_64bit = self._process_dir(ole, dir_path)
-            vba_project_path = vba_root + 'VBA/_VBA_PROJECT'
-            vba_project_data = self._process_vba_project(ole, vba_project_path)
-            identifiers = _get_identifiers(vba_project_data, codec)
-            identifiers_stripped = not identifiers
-            for module in code_modules:
-                module_path = F'{vba_root}VBA/{module}'
-                try:
-                    module_data = ole.openstream(module_path).read()
-                except Exception:
-                    continue
-                lines = _pcode_dump(
-                    module_data, vba_project_data, identifiers, is_64bit, codec)
-                yield PCodeModule(module_path, lines, identifiers_stripped)
-
-    def _get_ole_streams(self) -> list[bytes | bytearray | memoryview]:
-        """
-        Extract OLE data from the input. If the input is already an OLE compound file, returns it
-        directly. If it's a ZIP (OOXML), extracts all vbaProject.bin entries.
-        """
-        if self._data[:8] == b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
-            return [self._data]
-        if self._data[:2] == b'PK':
-            import zipfile
-
-            from refinery.lib.structures import MemoryFile
-            results: list[bytes | bytearray | memoryview] = []
-            try:
-                with zipfile.ZipFile(MemoryFile(self._data, bytes)) as zf:
-                    for info in zf.infolist():
-                        if info.filename.lower().endswith('vbaproject.bin'):
-                            results.append(zf.read(info))
-            except zipfile.BadZipFile:
-                pass
-            return results
-        return [self._data]
-
-    def _process_dir(
-        self,
-        ole: OleFileLike,
-        dir_path: str,
-    ) -> tuple[str, list[str], bool]:
-        """
-        Parse the VBA dir stream to find module names and codepage. Returns (codec, code_modules,
-        is_64bit).
-        """
-        dir_data_compressed = ole.openstream(dir_path).read()
-        dir_data = decompress_stream(dir_data_compressed)
-        stream_size = len(dir_data)
-        code_modules: list[str] = []
-        is_64bit = False
-        codec = 'latin1'
-        offset = 0
-        while offset < stream_size:
-            try:
-                tag = _get_word(dir_data, offset, '<')
-                w_length = _get_word(dir_data, offset + 2, '<')
-                if tag == 9:
-                    w_length = 6
-                elif tag == 3:
-                    w_length = 2
-                offset += 6
-                if w_length:
-                    if tag == 3:
-                        codepage = _get_word(dir_data, offset, '<')
-                        codec = _codepage_to_codec(codepage)
-                    elif tag == 50:
-                        stream_name = codecs.decode(
-                            dir_data[offset:offset + w_length], 'utf_16_le', errors='replace')
-                        code_modules.append(stream_name)
-                    elif tag == 1:
-                        sys_kind = _get_dword(dir_data, offset, '<')
-                        is_64bit = sys_kind == 3
-                    offset += w_length
-            except Exception:
-                break
-        return codec, code_modules, is_64bit
-
-    def _process_vba_project(
-        self,
-        ole: OleFileLike,
-        vba_project_path: str,
-    ) -> bytes | bytearray | memoryview:
-        """
-        Read the _VBA_PROJECT stream (raw, not compressed).
-        """
-        return ole.openstream(vba_project_path).read()
+        project = self._project
+        lines = _pcode_dump(
+            module.read(), self._vba_project_data, self._identifiers, project.is_64bit, project.codec
+        )
+        return PCodeModule(module.location, lines, not self._identifiers)

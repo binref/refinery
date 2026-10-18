@@ -6,6 +6,31 @@ import zipfile
 
 from typing import Callable
 
+from refinery.lib.ole.file import OleFile
+
+
+def rename_vba_project(container: bytes | bytearray, dir_path: str, name: bytes, new_name: bytes) -> bytes:
+    """
+    Writes a new name over the name of the VBA project whose dir stream has the given path in the
+    given compound file. The new name has the same length as the name, and the compressed dir
+    stream stores the name once, as a run of literal bytes; the bytes around it identify the place
+    of the name in the compound file.
+    """
+    if len(name) != len(new_name):
+        raise ValueError('The new name must have the length of the name.')
+    stream = bytes(OleFile(bytes(container)).openstream(dir_path).read())
+    if stream.count(name) != 1:
+        raise LookupError(F'The dir stream does not store {name!r} exactly once.')
+    position = stream.index(name)
+    start = max(position - 8, 0)
+    context = stream[start:position + len(name) + 8]
+    if container.count(context) != 1:
+        raise LookupError('The place of the name in the compound file is not unique.')
+    offset = container.index(context) + position - start
+    renamed = bytearray(container)
+    renamed[offset:offset + len(name)] = new_name
+    return bytes(renamed)
+
 
 def list_part_twice(
     document: bytes | bytearray,

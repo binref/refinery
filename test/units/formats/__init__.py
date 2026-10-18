@@ -44,6 +44,16 @@ def rename_ole_entry(document: bytes | bytearray, path: str, name: str) -> bytea
     return renamed
 
 
+def resize_ole_entry(document: bytes | bytearray, path: str, size: int) -> bytearray:
+    """
+    Writes a new stream size into the directory entry at the given path of the given compound file.
+    """
+    offset = ole_entry_offset(document, path)
+    resized = bytearray(document)
+    resized[offset + 0x78:offset + 0x7C] = size.to_bytes(4, 'little')
+    return resized
+
+
 def link_ole_child(document: bytes | bytearray, path: str, sid: int) -> bytearray:
     """
     Points the child link of the storage at the given path of the given compound file at the

@@ -1,36 +1,24 @@
 from __future__ import annotations
 
-from refinery.lib.access import is_access_database
-from refinery.lib.id import buffer_contains
-from refinery.lib.ole.vba import FileOpenError, VBAParser
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from typing import TYPE_CHECKING
+
+from refinery.units.formats.office import VBAModuleUnit
+
+if TYPE_CHECKING:
+    from refinery.lib.ole.vba import VBAProject
 
 
-class vbamc(PathExtractorUnit):
+class vbamc(VBAModuleUnit):
     """
     Extract VBA macro code from Office documents such as Word and Excel, as well as from Microsoft
     Access databases (.mdb and .accdb).
-    """
-    def unpack(self, data):
-        try:
-            parser = VBAParser(data)
-        except FileOpenError:
-            return
-        for macro in parser.extract_all_macros():
-            if not macro.stream_path:
-                continue
-            if code := macro.code:
-                yield UnpackResult(macro.stream_path, code.encode(self.codec))
 
-    @classmethod
-    def handles(cls, data):
-        if data[:8] == b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
-            return True
-        if is_access_database(data):
-            return True
-        if data[:2] == B'PK':
-            return buffer_contains(data, B'xl/vbaProject.bin')
-        return any(buffer_contains(data, ns) for ns in [
-            b'http://schemas.microsoft.com/office/word/2003/wordml',
-            b'http://schemas.microsoft.com/office/2006/xmlPackage',
-        ])
+    Every module is extracted below a folder that is named after its VBA project, for example
+    `Project/ThisDocument`. When the document holds more than one project, such as an embedded
+    workbook, every folder is preceded by the number of its project: `1/Project/ThisDocument` and
+    `2/VBAProject/ThisWorkbook`. The meta variable `stream` holds the location of the module stream
+    in the document.
+    """
+    def _module_reader(self, project: VBAProject):
+        from refinery.lib.ole.vba import VBAModule
+        return VBAModule.source

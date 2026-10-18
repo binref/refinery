@@ -1,9 +1,11 @@
 """
 Parser for VBA macro extraction from OLE and OOXML documents.
 
-Implements MS-OVBA decompression and VBA project/dir stream parsing to extract VBA source code from
-Word, Excel, PowerPoint, and related formats. Supports OLE, OpenXML (ZIP), Word 2003 XML, Flat OPC,
-and MHTML containers.
+Implements MS-OVBA decompression and the parsing of the dir stream of a VBA project. VBA projects
+are stored in compound files: the input itself, a part of an OpenXML (ZIP) document, a Word 2003
+XML or Flat OPC document, an MHTML file, or the VBA storage of a Microsoft Access database. The
+function `vba_containers` lists the compound files of an input, `vba_projects` lists the VBA
+projects inside them, and every `VBAProject` lists its modules as `VBAModule` objects.
 """
 from __future__ import annotations
 
@@ -18,24 +20,25 @@ import struct
 import zipfile
 import zlib
 
-from io import BytesIO
-from typing import Generator, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 from defusedxml.ElementTree import fromstring
 
+from refinery.lib.access import AccessDatabase, is_access_database
+from refinery.lib.id import buffer_contains
 from refinery.lib.ole.file import MAGIC as OLE_MAGIC
 from refinery.lib.ole.file import STGTY, OleFile, OleFileLike
-from refinery.lib.structures import Struct, StructReader
+from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.types import buf
 
-MODULE_EXTENSION = 'bas'
-CLASS_EXTENSION = 'cls'
-FORM_EXTENSION = 'frm'
+_NAMESPACE_WORD2003 = 'http://schemas.microsoft.com/office/word/2003/wordml'
+_NAMESPACE_FLATOPC = 'http://schemas.microsoft.com/office/2006/xmlPackage'
 
-NS_W = '{http://schemas.microsoft.com/office/word/2003/wordml}'
+NS_W = F'{{{_NAMESPACE_WORD2003}}}'
 TAG_BINDATA = F'{NS_W}binData'
 ATTR_NAME = F'{NS_W}name'
 
-NS_XMLPACKAGE = '{http://schemas.microsoft.com/office/2006/xmlPackage}'
+NS_XMLPACKAGE = F'{{{_NAMESPACE_FLATOPC}}}'
 TAG_PKGPART = F'{NS_XMLPACKAGE}part'
 ATTR_PKG_NAME = F'{NS_XMLPACKAGE}name'
 ATTR_PKG_CONTENTTYPE = F'{NS_XMLPACKAGE}contentType'
@@ -44,42 +47,13 @@ CTYPE_VBAPROJECT = 'application/vnd.ms-office.vbaProject'
 
 MSO_ACTIVEMIME_HEADER = b'ActiveMime'
 
-# MS-OVBA dir stream record IDs (MS-OVBA 2.3.4.2)
-_DIR_PROJECTMODULES        = 0x000F  # noqa: E221
-_DIR_REFERENCEREGISTERED   = 0x000D  # noqa: E221
-_DIR_REFERENCEPROJECT      = 0x000E  # noqa: E221
-_DIR_REFERENCENAME         = 0x0016  # noqa: E221
-_DIR_REFERENCENAME_UNICODE = 0x003E  # noqa: E221
-_DIR_REFERENCECONTROL      = 0x002F  # noqa: E221
-_DIR_REFERENCEORIGINAL     = 0x0033  # noqa: E221
-_DIR_PROJECTCOMPATVERSION  = 0x004A  # noqa: E221
-_DIR_MODULENAME            = 0x0019  # noqa: E221
-_DIR_MODULENAMEUNICODE     = 0x0047  # noqa: E221
-_DIR_MODULESTREAMNAME      = 0x001A  # noqa: E221
-_DIR_MODULEDOCSTRING       = 0x001C  # noqa: E221
-_DIR_MODULEHELPCONTEXT     = 0x001E  # noqa: E221
-_DIR_MODULEOFFSET          = 0x0031  # noqa: E221
-_DIR_MODULECOOKIE          = 0x002C  # noqa: E221
-_DIR_MODULETYPE_STD        = 0x0021  # noqa: E221
-_DIR_MODULETYPE_CLASS      = 0x0022  # noqa: E221
-_DIR_MODULEREADONLY        = 0x0025  # noqa: E221
-_DIR_MODULEPRIVATE         = 0x0028  # noqa: E221
-_DIR_TERMINATOR            = 0x002B  # noqa: E221
-
 _RE_PRINTABLE_STRING = re.compile(b'[\\t\\r\\n\\x20-\\xFF]{5,}')
 
-
-class VBAModule(NamedTuple):
-    stream_path: str | None
-    filename: str | None
-    code: str | None
-
-
-class VBAMacro(NamedTuple):
-    subfilename: str
-    stream_path: str | None
-    filename: str | None
-    code: str | None
+Reporter = Callable[[str, Exception], None]
+"""
+A function that receives the location of a part of the input that cannot be read, and the error
+that occurred while reading it.
+"""
 
 
 class VBAFormString(NamedTuple):
@@ -134,28 +108,44 @@ def _codepage_to_codec(cp: int) -> str:
         return 'cp1252'
 
 
-def _find_vba_projects(
-    ole: OleFileLike,
-) -> list[tuple[str, str, str]]:
+def _find_vba_projects(ole: OleFileLike) -> list[str]:
     """
-    Find all VBA project root storages in an OLE file. Returns a list of (vba_root,
-    project_path, dir_path) tuples.
+    The storages of all VBA projects in the given compound file. Each storage is given as a path
+    prefix, which is empty for the root storage and otherwise ends with a forward slash.
     """
-    results: list[tuple[str, str, str]] = []
+    storages: list[str] = []
     for storage, entry in ole.walk(streams=False, storages=True):
         if storage[-1].upper() != 'VBA' or ole.find('/'.join(storage)) is not entry:
             continue
         vba_root = '/'.join(storage[:-1])
         if vba_root:
             vba_root += '/'
-        if ole.get_type(project_path := F'{vba_root}PROJECT') != STGTY.STREAM:
+        if ole.get_type(F'{vba_root}PROJECT') != STGTY.STREAM:
             continue
         if ole.get_type(F'{vba_root}VBA/_VBA_PROJECT') != STGTY.STREAM:
             continue
-        if ole.get_type(dir_path := F'{vba_root}VBA/dir') != STGTY.STREAM:
+        if ole.get_type(F'{vba_root}VBA/dir') != STGTY.STREAM:
             continue
-        results.append((vba_root, project_path, dir_path))
-    return results
+        storages.append(vba_root)
+    return storages
+
+
+def _find_vba_forms(ole: OleFileLike) -> list[str]:
+    """
+    The paths of all form storages in the given compound file, i.e. storages that hold a stream
+    named `f` and a stream named `o`.
+    """
+    forms: list[str] = []
+    for storage, entry in ole.walk(streams=False, storages=True):
+        prefix = '/'.join(storage)
+        if ole.find(prefix) is not entry:
+            continue
+        if (
+            ole.get_type(F'{prefix}/o') == STGTY.STREAM
+            and ole.get_type(F'{prefix}/f') == STGTY.STREAM
+        ):
+            forms.append(prefix)
+    return forms
 
 
 class FileOpenError(Exception):
@@ -266,11 +256,11 @@ def decompress_stream(data: bytes | bytearray | memoryview) -> bytearray:
     return decompressed
 
 
-def _is_mso_file(data: bytes | bytearray) -> bool:
+def _is_mso_file(data: buf) -> bool:
     return data[:len(MSO_ACTIVEMIME_HEADER)] == MSO_ACTIVEMIME_HEADER
 
 
-def _mso_file_extract(data: bytes | bytearray) -> bytes:
+def _mso_file_extract(data: buf) -> bytes:
     """
     Extract OLE data from an ActiveMime/MSO container by decompressing the embedded zlib stream.
     """
@@ -295,682 +285,482 @@ def _mso_file_extract(data: bytes | bytearray) -> bytes:
     raise ValueError('unable to decompress data from MSO/ActiveMime file')
 
 
-class PROJECTSYSKIND(Struct[memoryview]):
+def _is_mhtml(data: buf) -> bool:
+    if (mime := re.search(B'(?i)mime', data)) is None:
+        return False
+    if (version := re.search(B'(?i)version', data)) is None:
+        return False
+    if re.search(B'(?i)multipart', data) is None:
+        return False
+    return abs(version.start() - mime.start()) < 20
+
+
+def is_vba_container(data: buf) -> bool:
+    """
+    A quick check whether the given data looks like one of the containers that `vba_containers`
+    reads: a compound file, a Microsoft Access database, an OpenXML document, a Word 2003 XML or
+    Flat OPC document, or an MHTML file.
+    """
+    view = memoryview(data)
+    if view[:8] == OLE_MAGIC or is_access_database(view):
+        return True
+    if view[:2] == B'PK':
+        return buffer_contains(view, B'[Content_Types].xml')
+    if buffer_contains(view, _NAMESPACE_WORD2003.encode()):
+        return True
+    if buffer_contains(view, _NAMESPACE_FLATOPC.encode()):
+        return True
+    return _is_mhtml(view)
+
+
+class VBAContainer(NamedTuple):
+    """
+    A compound file of an input, which may hold VBA projects. The part is the name under which the
+    input stores the compound file, or `None` when the compound file is the input itself. The
+    compound file is read only when `open` is called, which raises the error of the read when the
+    part cannot be read or is no compound file.
+    """
+    part: str | None
+    open: Callable[[], OleFileLike]
+
+
+def _ole_containers(data: memoryview) -> list[VBAContainer]:
+    if data[:8] != OLE_MAGIC:
+        return []
+    return [VBAContainer(None, lambda: OleFile(data))]
+
+
+def _zip_containers(data: memoryview) -> list[VBAContainer]:
+    if data[:2] != B'PK':
+        return []
+    try:
+        archive = zipfile.ZipFile(MemoryFile(data, bytes))
+    except Exception:
+        return []
+    containers: list[VBAContainer] = []
+    for info in archive.infolist():
+        try:
+            with archive.open(info) as part:
+                is_ole = part.read(8) == OLE_MAGIC
+        except Exception:
+            is_ole = True
+        if is_ole:
+            containers.append(VBAContainer(info.filename, lambda info=info: OleFile(archive.read(info))))
+    return containers
+
+
+def _word2003_containers(data: memoryview) -> list[VBAContainer]:
+    if not buffer_contains(data, _NAMESPACE_WORD2003.encode()):
+        return []
+    try:
+        document = fromstring(bytes(data))
+    except Exception:
+        return []
+
+    def extract(text: str):
+        return OleFile(_mso_file_extract(base64.b64decode(text)))
+
+    containers: list[VBAContainer] = []
+    for bindata in document.iter(TAG_BINDATA):
+        text = bindata.text or ''
+        try:
+            is_mso = _is_mso_file(base64.b64decode(text))
+        except Exception:
+            is_mso = True
+        if is_mso:
+            containers.append(VBAContainer(bindata.get(ATTR_NAME, 'noname.mso'), lambda text=text: extract(text)))
+    return containers
+
+
+def _flatopc_containers(data: memoryview) -> list[VBAContainer]:
+    if not buffer_contains(data, _NAMESPACE_FLATOPC.encode()):
+        return []
+    try:
+        document = fromstring(bytes(data))
+    except Exception:
+        return []
+    containers: list[VBAContainer] = []
+    for package_part in document.iter(TAG_PKGPART):
+        if package_part.get(ATTR_PKG_CONTENTTYPE, 'unknown') != CTYPE_VBAPROJECT:
+            continue
+        name = package_part.get(ATTR_PKG_NAME, 'unknown')
+        for bindata in package_part.iterfind(TAG_PKGBINDATA):
+            text = bindata.text or ''
+            containers.append(VBAContainer(name, lambda text=text: OleFile(base64.b64decode(text))))
+    return containers
+
+
+def _mhtml_containers(data: memoryview) -> list[VBAContainer]:
+    if not _is_mhtml(data):
+        return []
+    try:
+        stripped = bytes(data).lstrip(b'\r\n\t ')
+        mime_offset = stripped.find(b'MIME')
+        content_offset = stripped.find(b'Content')
+        if -1 < mime_offset <= content_offset:
+            stripped = stripped[mime_offset:]
+        elif content_offset > -1:
+            stripped = stripped[content_offset:]
+        old_header_re = getattr(email.feedparser, 'headerRE')
+        loose_re = re.compile(r'^(From |[\041-\071\073-\176]{1,}:?|[\t ])')
+        setattr(email.feedparser, 'headerRE', loose_re)
+        try:
+            mhtml = email.message_from_bytes(stripped)
+        finally:
+            setattr(email.feedparser, 'headerRE', old_header_re)
+        containers: list[VBAContainer] = []
+        for part in mhtml.walk():
+            payload = part.get_payload(decode=True)
+            if not isinstance(payload, bytes):
+                continue
+            if _is_mso_file(payload):
+                name = part.get_filename('editdata.mso')
+                containers.append(VBAContainer(name, lambda payload=payload: OleFile(_mso_file_extract(payload))))
+            elif payload[:8] == OLE_MAGIC:
+                name = part.get_filename('embedded.ole')
+                containers.append(VBAContainer(name, lambda payload=payload: OleFile(payload)))
+    except Exception:
+        return []
+    return containers
+
+
+def _access_containers(data: memoryview) -> list[VBAContainer]:
+    if not is_access_database(data):
+        return []
+    if (ole := AccessDatabase(bytes(data)).open_vba()) is None:
+        return []
+    return [VBAContainer(None, lambda: ole)]
+
+
+def vba_containers(data: buf) -> list[VBAContainer]:
+    """
+    The compound files of the given input that may hold VBA projects, in the order in which the
+    input stores them. The input is a compound file, an OpenXML document or any other zip archive,
+    a Word 2003 XML or Flat OPC document, an MHTML file, or a Microsoft Access database. The parts
+    of these containers are found without reading them in full; a part that cannot be read is
+    listed, so that the error of opening it can be reported. Raises `FileOpenError` when the input
+    is none of these containers or has no part that may be a compound file. The error of reading
+    the VBA storage of an Access database is raised.
+    """
+    view = memoryview(data)
+    for find_containers in (
+        _ole_containers,
+        _zip_containers,
+        _word2003_containers,
+        _flatopc_containers,
+        _mhtml_containers,
+        _access_containers,
+    ):
+        if containers := find_containers(view):
+            return containers
+    raise FileOpenError('data is not a supported file type for VBA extraction')
+
+
+def _open_containers(
+    containers: list[VBAContainer],
+    report: Reporter,
+) -> Iterator[tuple[str | None, OleFileLike]]:
+    """
+    Opens the given containers one at a time and lists each part name with its compound file. A
+    part that cannot be opened is passed to the given function with the error and skipped. When the
+    input itself cannot be opened, the error is raised.
+    """
+    for container in containers:
+        try:
+            ole = container.open()
+        except Exception as error:
+            if container.part is None:
+                raise
+            report(container.part, error)
+            continue
+        yield container.part, ole
+
+
+def _location(part: str | None, path: str) -> str:
+    if part is None:
+        return path
+    return F'{part}/{path}'
+
+
+class DirRecord(enum.IntEnum):
+    """
+    The ids of the records of a dir stream that are read for their content or that have a body of
+    fixed size (MS-OVBA 2.3.4.2).
+    """
+    PROJECTSYSKIND = 0x0001
+    PROJECTLCID = 0x0002
+    PROJECTCODEPAGE = 0x0003
+    PROJECTNAME = 0x0004
+    PROJECTHELPCONTEXT = 0x0007
+    PROJECTLIBFLAGS = 0x0008
+    PROJECTVERSION = 0x0009
+    PROJECTMODULES = 0x000F
+    PROJECTCOOKIE = 0x0013
+    PROJECTLCIDINVOKE = 0x0014
+    MODULENAME = 0x0019
+    MODULESTREAMNAME = 0x001A
+    MODULEHELPCONTEXT = 0x001E
+    MODULETYPEPROCEDURAL = 0x0021
+    MODULETYPEDOCUMENT = 0x0022
+    MODULEREADONLY = 0x0025
+    MODULEPRIVATE = 0x0028
+    MODULETERMINATOR = 0x002B
+    MODULECOOKIE = 0x002C
+    MODULEOFFSET = 0x0031
+    MODULESTREAMNAMEUNICODE = 0x0032
+    MODULENAMEUNICODE = 0x0047
+    PROJECTCOMPATVERSION = 0x004A
+
+
+_FIXED_BODY_SIZES: dict[int, int] = {
+    DirRecord.PROJECTSYSKIND       : 4,
+    DirRecord.PROJECTLCID          : 4,
+    DirRecord.PROJECTCODEPAGE      : 2,
+    DirRecord.PROJECTHELPCONTEXT   : 4,
+    DirRecord.PROJECTLIBFLAGS      : 4,
+    DirRecord.PROJECTVERSION       : 6,
+    DirRecord.PROJECTMODULES       : 2,
+    DirRecord.PROJECTCOOKIE        : 2,
+    DirRecord.PROJECTLCIDINVOKE    : 4,
+    DirRecord.MODULEHELPCONTEXT    : 4,
+    DirRecord.MODULETYPEPROCEDURAL : 0,
+    DirRecord.MODULETYPEDOCUMENT   : 0,
+    DirRecord.MODULEREADONLY       : 0,
+    DirRecord.MODULEPRIVATE        : 0,
+    DirRecord.MODULETERMINATOR     : 0,
+    DirRecord.MODULECOOKIE         : 2,
+    DirRecord.MODULEOFFSET         : 4,
+    DirRecord.PROJECTCOMPATVERSION : 4,
+}
+
+
+class _DirStreamRecord(Struct[memoryview]):
+    """
+    A record of a dir stream: a 16-bit id, a 32-bit size, and a body. The body has the given size,
+    unless the record is listed in `_FIXED_BODY_SIZES`; for these, the 32-bit field is a reserved
+    value or the size of a body whose size is fixed anyway.
+    """
     def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0001
-        reader.u32()  # size
-        self.syskind = reader.u32()
+        self.id = reader.u16()
+        size = reader.u32()
+        self.body = reader.read_exactly(_FIXED_BODY_SIZES.get(self.id, size))
+
+    @property
+    def value(self) -> int:
+        return int.from_bytes(self.body, 'little')
 
 
-class PROJECTCOMPATVERSION(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        self.compat_version = reader.read_length_prefixed()
-
-
-class PROJECTLCID(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u32()  # size
-        self.lcid = reader.u32()
-
-
-class PROJECTLCIDINVOKE(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0014
-        reader.u32()  # size
-        self.lcid_invoke = reader.u32()
-
-
-class PROJECTCODEPAGE(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0003
-        reader.u32()  # size
-        self.codepage = reader.u16()
-        self.codec: str = _codepage_to_codec(self.codepage)
-
-
-class PROJECTNAME(Struct[memoryview]):
+class VBAModuleRecord(Struct[memoryview]):
+    """
+    The MODULE record of a dir stream (MS-OVBA 2.3.4.2.3.2): the name of a module, the name of its
+    stream, both also in UTF-16 if present, and the offset of the compressed source code in the
+    stream. The record begins with the name of the module and ends with a terminator; records
+    between them that are not listed here are skipped.
+    """
     def __init__(self, reader: StructReader[memoryview], codec: str):
-        reader.u16()  # id 0x0004
-        self.name = codecs.decode(reader.read_length_prefixed(), codec, 'replace')
+        if (record := _DirStreamRecord(reader)).id != DirRecord.MODULENAME:
+            raise ValueError(F'Expected a module record, found a record with id 0x{record.id:04X}.')
+        self.name = codecs.decode(record.body, codec, 'replace')
+        self.name_unicode: str | None = None
+        self.stream_name: str | None = None
+        self.stream_name_unicode: str | None = None
+        self.text_offset: int | None = None
+        while (record := _DirStreamRecord(reader)).id != DirRecord.MODULETERMINATOR:
+            if record.id == DirRecord.MODULENAMEUNICODE:
+                self.name_unicode = codecs.decode(record.body, 'utf-16le', 'replace')
+            elif record.id == DirRecord.MODULESTREAMNAME:
+                self.stream_name = codecs.decode(record.body, codec, 'replace')
+            elif record.id == DirRecord.MODULESTREAMNAMEUNICODE:
+                self.stream_name_unicode = codecs.decode(record.body, 'utf-16le', 'replace')
+            elif record.id == DirRecord.MODULEOFFSET:
+                self.text_offset = record.value
+
+    @property
+    def stream_names(self) -> list[str]:
+        """
+        The names under which the stream of the module may be stored, in the order in which they
+        are tried: the names of the stream, then the names of the module.
+        """
+        names = (self.stream_name, self.stream_name_unicode, self.name, self.name_unicode)
+        return list(dict.fromkeys(name for name in names if name is not None))
 
 
-class PROJECTDOCSTRING(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview], codec: str):
-        reader.u16()  # id 0x0005
-        self.docstring = codecs.decode(reader.read_length_prefixed(), codec, 'replace')
-        reader.u16()  # reserved 0x0040
-        self.docstring_unicode = reader.read_length_prefixed()
-
-
-class PROJECTHELPFILEPATH(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview], codec: str):
-        reader.u16()  # id 0x0006
-        self.path = codecs.decode(reader.read_length_prefixed(), codec, 'replace')
-        reader.u16()  # reserved 0x003D
-        self.path_unicode = reader.read_length_prefixed()
-
-
-class PROJECTHELPCONTEXT(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0007
-        reader.u32()  # size
-        self.help_context = reader.u32()
-
-
-class PROJECTLIBFLAGS(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0008
-        reader.u32()  # size
-        self.lib_flags = reader.u32()
-
-
-class PROJECTVERSION(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview]):
-        reader.u16()  # id 0x0009
-        reader.u32()  # reserved size
-        self.major = reader.u32()
-        self.minor = reader.u16()
-
-
-class PROJECTCONSTANTS(Struct[memoryview]):
-    def __init__(self, reader: StructReader[memoryview], codec: str):
-        reader.u16()  # id 0x000C
-        self.constants = codecs.decode(reader.read_length_prefixed(), codec, 'replace')
-        reader.u16()  # reserved 0x003C
-        self.constants_unicode = reader.read_length_prefixed()
-
-
-class REFERENCENAME(Struct[memoryview]):
+class VBADirectory(Struct[memoryview]):
     """
-    MS-OVBA 2.3.4.2.2.2 — optional name prefix for a reference.
+    The decompressed dir stream of a VBA project (MS-OVBA 2.3.4.2): the system kind, the code page
+    and the name of the project as stored, and a `VBAModuleRecord` for every module. The stream is
+    a sequence of records; the records in front of the list of modules, which include the
+    references, are read in any order. Every record is read with its exact length, so that a record
+    which runs past the end of the stream raises `refinery.lib.structures.EOF`.
     """
     def __init__(self, reader: StructReader[memoryview]):
-        self.name = reader.read_length_prefixed()
-        reserved = reader.u16()
-        self.next_id: int = reserved
-        if reserved == _DIR_REFERENCENAME_UNICODE:
-            self.name_unicode = reader.read_length_prefixed()
-            self.next_id = -1
+        information: dict[int, memoryview] = {}
+        while (record := _DirStreamRecord(reader)).id != DirRecord.PROJECTMODULES:
+            information[record.id] = record.body
+        count = record.value
+        if (record := _DirStreamRecord(reader)).id != DirRecord.PROJECTCOOKIE:
+            raise ValueError(F'Expected a project cookie record, found a record with id 0x{record.id:04X}.')
+
+        def field(record: DirRecord) -> memoryview:
+            try:
+                return information[record]
+            except KeyError:
+                raise ValueError(F'The dir stream has no {record.name} record.') from None
+
+        self.syskind = int.from_bytes(field(DirRecord.PROJECTSYSKIND), 'little')
+        self.codepage = int.from_bytes(field(DirRecord.PROJECTCODEPAGE), 'little')
+        self.codec = _codepage_to_codec(self.codepage)
+        self.name = codecs.decode(field(DirRecord.PROJECTNAME), self.codec, 'replace')
+        self.modules = [VBAModuleRecord(reader, self.codec) for _ in range(count)]
+
+    @property
+    def is_64bit(self) -> bool:
+        return self.syskind == 3
 
 
-class REFERENCEORIGINAL(Struct[memoryview]):
+class VBAProject:
     """
-    MS-OVBA 2.3.4.2.2.4 — REFERENCEORIGINAL record body.
+    A VBA project in a compound file of the input. The part is the name under which the input
+    stores the compound file, or `None` when the compound file is the input itself. The storage is
+    the path prefix of the project inside the compound file, which is empty for the root storage
+    and otherwise ends with a forward slash.
     """
-    def __init__(self, reader: StructReader[memoryview]):
-        self.libid_original = reader.read_length_prefixed()
-
-
-class REFERENCECONTROL(Struct[memoryview]):
-    """
-    MS-OVBA 2.3.4.2.2.3 — REFERENCECONTROL record body.
-    """
-    def __init__(self, reader: StructReader[memoryview]):
-        self.size_twiddled = reader.u32()
-        self.libid_twiddled = reader.read_length_prefixed()
-        self._reserved1 = reader.u32()
-        self._reserved2 = reader.u16()
-        self._reserved3 = check2 = reader.u16()
-        self.ext_name_unicode = None
-        self.ext_name = None
-        if check2 == _DIR_REFERENCENAME:
-            self.ext_name = reader.read_length_prefixed()
-            self._reserved3 = ext_reserved = reader.u16()
-            if ext_reserved == _DIR_REFERENCENAME_UNICODE:
-                self.ext_name_unicode = reader.read_length_prefixed()
-                self._reserved3 = reader.u16()  # reserved3
-        self.size_extended = reader.u32()
-        self.libid_extended = reader.read_length_prefixed()
-        self._reserved4 = reader.u32()
-        self._reserved5 = reader.u16()
-        self.original_typelib = reader.read_guid()
-        self.cookie = reader.u32()
-
-
-class REFERENCEREGISTERED(Struct[memoryview]):
-    """
-    MS-OVBA 2.3.4.2.2.5 — REFERENCEREGISTERED record body.
-    """
-    def __init__(self, reader: StructReader[memoryview]):
-        self.size = reader.u32()
-        self.libid = reader.read_length_prefixed()
-        self._reserved1 = reader.u32()
-        self._reserved2 = reader.u16()
-
-
-class REFERENCEPROJECT(Struct[memoryview]):
-    """
-    MS-OVBA 2.3.4.2.2.6 — REFERENCEPROJECT record body.
-    """
-    def __init__(self, reader: StructReader[memoryview]):
-        self.size = reader.u32()
-        self.abs_path = reader.read_length_prefixed()
-        self.rel_path = reader.read_length_prefixed()
-        self.major = reader.u32()
-        self.minor = reader.u16()
-
-
-class _VBAProject(Struct[memoryview]):
-    """
-    Parses the dir stream of a single VBA project inside an OLE file and extracts the VBA source
-    code for each module.
-    """
-
     def __init__(
         self,
-        reader: StructReader[memoryview],
+        part: str | None,
         ole: OleFileLike,
-        vba_root: str,
-        project_path: str,
+        storage: str,
+        directory: VBADirectory,
     ):
+        self.part = part
         self.ole = ole
-        self.vba_root = vba_root
-        self.project_path = project_path
-        self.module_ext: dict[str, str] = {}
+        self.storage = storage
+        self.directory = directory
+        self.modules = [VBAModule(self, record) for record in directory.modules]
 
-        # PROJECTINFORMATION records
-        self.syskind = PROJECTSYSKIND(reader)
+    @property
+    def name(self) -> str:
+        return self.directory.name
 
-        record_id = reader.u16()
-        if record_id == _DIR_PROJECTCOMPATVERSION:
-            PROJECTCOMPATVERSION(reader)
-            record_id = reader.u16()
+    @property
+    def codec(self) -> str:
+        return self.directory.codec
 
-        # record_id is now the PROJECTLCID id; the struct reads from the size field onward
-        self.clsid = PROJECTLCID(reader)
-        self.cid_invoke = PROJECTLCIDINVOKE(reader)
-        cp = PROJECTCODEPAGE(reader)
-        self.codepage = cp.codepage
-        self.codec = cp.codec
-        self.project_name = PROJECTNAME(reader, self.codec)
-        self.project_docstring = PROJECTDOCSTRING(reader, self.codec)
-        self.project_file_path = PROJECTHELPFILEPATH(reader, self.codec)
-        self.project_help_ctxt = PROJECTHELPCONTEXT(reader)
-        self.project_lib_flags = PROJECTLIBFLAGS(reader)
-        self.project_version = PROJECTVERSION(reader)
-        self.project_constants = PROJECTCONSTANTS(reader, self.codec)
+    @property
+    def is_64bit(self) -> bool:
+        return self.directory.is_64bit
 
-        references: list[
-            REFERENCENAME | REFERENCEORIGINAL | REFERENCECONTROL | REFERENCEREGISTERED | REFERENCEPROJECT
-        ] = []
-        self.references = references
-        while (check := reader.u16()) != _DIR_PROJECTMODULES:
-            if check == _DIR_REFERENCENAME:
-                ref_name = REFERENCENAME(reader)
-                references.append(ref_name)
-                if ref_name.next_id == -1:
-                    continue
-                check = ref_name.next_id
-            if check == _DIR_REFERENCEORIGINAL:
-                ref = REFERENCEORIGINAL(reader)
-            elif check == _DIR_REFERENCECONTROL:
-                ref = REFERENCECONTROL(reader)
-            elif check == _DIR_REFERENCEREGISTERED:
-                ref = REFERENCEREGISTERED(reader)
-            elif check == _DIR_REFERENCEPROJECT:
-                ref = REFERENCEPROJECT(reader)
-            else:
-                raise ValueError(F'invalid reference record id 0x{check:04X}')
-            references.append(ref)
-
-        self._reader = reader
-
-    def parse_project_stream(self) -> None:
+    def location(self, path: str) -> str:
         """
-        Parse the PROJECT stream to determine module file extensions.
+        The location of the stream with the given path in the compound file of this project: the
+        path, preceded by the part when there is one.
         """
-        self.module_ext = {}
-        project_data = self.ole.openstream(self.project_path).read()
-        for raw_line in re.split(br'\r\n', project_data):
-            line = codecs.decode(raw_line, self.codec, 'replace').strip()
-            if '=' not in line:
-                continue
-            name, value = line.split('=', 1)
-            value = value.lower()
-            if name == 'Document':
-                value = value.split('/', 1)[0]
-                self.module_ext[value] = CLASS_EXTENSION
-            elif name == 'Module':
-                self.module_ext[value] = MODULE_EXTENSION
-            elif name == 'Class':
-                self.module_ext[value] = CLASS_EXTENSION
-            elif name == 'BaseClass':
-                self.module_ext[value] = FORM_EXTENSION
+        return _location(self.part, path)
 
-    def parse_modules(self) -> Generator[VBAModule, None, None]:
+
+class VBAModule:
+    """
+    A module of a `VBAProject`. The name of the module is the first name in the `stream_names` of
+    its record under which the project holds a stream, or the first of these names when there is
+    no such stream. The path and the location refer to the stream with that name.
+    """
+    def __init__(self, project: VBAProject, record: VBAModuleRecord):
+        self.project = project
+        self.record = record
+        code = F'{project.storage}VBA/'
+        names = record.stream_names
+        stored = [name for name in names if project.ole.get_type(F'{code}{name}') == STGTY.STREAM]
+        self.name = (stored or names)[0]
+        self.path = F'{code}{self.name}'
+        self.location = project.location(self.path)
+
+    def read(self) -> memoryview:
         """
-        Parse MODULE records from the dir stream and yield a VBAModule for each module.
+        The content of the module stream.
         """
-        reader = self._reader
-        # PROJECTMODULES record — 0x000F was already consumed
-        reader.u32()  # size
-        modules_count = reader.u16()
-        # ProjectCookieRecord
-        reader.u16()  # id
-        reader.u32()  # size
-        reader.u16()  # cookie
+        return self.project.ole.openstream(self.path).read()
 
-        for _ in range(modules_count):
-            result = self._parse_one_module()
-            if result is not None:
-                yield result
-
-    def _parse_one_module(self) -> VBAModule | None:
+    def source(self) -> str:
         """
-        Parse a single MODULE record and return its VBA source code as a VBAModule.
+        The decompressed source code of the module.
         """
-        reader = self._reader
-        module_name: str | None = None
-        module_name_unicode: str | None = None
-        stream_name: str | None = None
-        stream_name_unicode: str | None = None
-        text_offset: int = 0
+        if (offset := self.record.text_offset) is None:
+            raise ValueError('The module record has no offset of the source code.')
+        if offset >= len(data := self.read()):
+            raise ValueError(F'The source code offset {offset} lies outside the stream of {len(data)} bytes.')
+        return decompress_stream(data[offset:]).decode(self.project.codec, 'replace')
 
-        section_id = reader.u16()
-        if section_id != _DIR_MODULENAME:
-            return None
 
-        module_name = codecs.decode(reader.read_length_prefixed(), self.codec, 'replace')
-
-        section_id = reader.u16()
-        while section_id != _DIR_TERMINATOR:
-            if section_id == _DIR_MODULENAMEUNICODE:
-                module_name_unicode = codecs.decode(reader.read_length_prefixed(), 'utf-16-le', 'replace')
-            elif section_id == _DIR_MODULESTREAMNAME:
-                stream_name = codecs.decode(reader.read_length_prefixed(), self.codec, 'replace')
-                reader.u16()  # reserved 0x0032
-                stream_name_unicode = codecs.decode(reader.read_length_prefixed(), 'utf-16-le', 'replace')
-            elif section_id == _DIR_MODULEDOCSTRING:
-                reader.read_length_prefixed()
-                reader.u16()  # reserved 0x0048
-                reader.read_length_prefixed()
-            elif section_id == _DIR_MODULEOFFSET:
-                reader.u32()  # size
-                text_offset = reader.u32()
-            elif section_id == _DIR_MODULEHELPCONTEXT:
-                reader.u32()  # size
-                reader.u32()  # help_context
-            elif section_id == _DIR_MODULECOOKIE:
-                reader.u32()  # size
-                reader.u16()  # cookie
-            elif section_id in (_DIR_MODULETYPE_STD, _DIR_MODULETYPE_CLASS):
-                reader.u32()  # reserved
-            elif section_id == _DIR_MODULEREADONLY:
-                reader.u32()  # reserved
-            elif section_id == _DIR_MODULEPRIVATE:
-                reader.u32()  # reserved
-            section_id = reader.u16()
-        reader.u32()  # terminator reserved
-
-        code_data: bytes | memoryview | None = None
-        try_names = (
-            stream_name,
-            stream_name_unicode,
-            module_name,
-            module_name_unicode,
-        )
-        code_path: str | None = None
-        for name in try_names:
-            if name is None:
-                continue
-            full_path = F'{self.vba_root}VBA/{name}'
+def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
+    """
+    The VBA projects of the given input, in the order of the compound files that `vba_containers`
+    lists, which are read one at a time. An input that is no supported container has no projects.
+    A part that cannot be opened as a compound file, and a project whose dir stream cannot be read
+    or parsed, are passed to the given function with their location and the error; the others are
+    listed. When the input itself is a compound file or an Access database that cannot be read, the
+    error is raised.
+    """
+    try:
+        containers = vba_containers(data)
+    except FileOpenError:
+        return
+    for part, ole in _open_containers(containers, report):
+        for storage in _find_vba_projects(ole):
+            path = F'{storage}VBA/dir'
             try:
-                code_data = self.ole.openstream(full_path).read()
-                code_path = full_path
-                break
-            except Exception:
+                directory = VBADirectory.Parse(memoryview(decompress_stream(ole.openstream(path).read())))
+            except Exception as error:
+                report(_location(part, path), error)
                 continue
-
-        if code_data is None:
-            return None
-
-        code_data = code_data[text_offset:]
-        if not code_data:
-            return None
-
-        try:
-            vba_code_raw = decompress_stream(code_data)
-        except Exception:
-            return None
-
-        vba_code = vba_code_raw.decode(self.codec, errors='replace')
-        ext = self.module_ext.get((module_name or '').lower(), 'vba')
-        filename = F'{module_name}.{ext}' if module_name else None
-
-        return VBAModule(code_path, filename, vba_code)
-
-
-class DocumentFormat(enum.Enum):
-    OLE          = 'OLE'          # noqa: E221
-    OPENXML      = 'OpenXML'      # noqa: E221
-    WORD2003_XML = 'Word2003/XML'
-    FLATOPC_XML  = 'FlatOPC/XML'  # noqa: E221
-    MHTML        = 'MHTML'        # noqa: E221
-    ACCESS       = 'Access'       # noqa: E221
+            yield VBAProject(part, ole, storage, directory)
 
 
 class VBAParser:
     """
-    Parser for extracting VBA macros from Office documents. Supports OLE (.doc, .xls), OpenXML/ZIP
-    (.docm, .xlsm), Word 2003 XML, Flat OPC XML, and MHTML containers.
+    Extracts the strings and variables of the forms of VBA projects from the compound files of an
+    input, as listed by `vba_containers`. Raises `FileOpenError` when the input is no supported
+    container. Parts of the input that cannot be opened as compound files are skipped.
     """
 
-    def __init__(self, data: bytes | bytearray | memoryview):
-        if isinstance(data, memoryview):
-            data = bytes(data)
-        self._data = data
-        self._ole: OleFileLike | None = None
-        self._ole_subfiles: list[tuple[str, bytes]] = []
-        self._type: DocumentFormat | None = None
-        self._vba_projects: list[tuple[str, str, str]] | None = None
-        self._vba_forms: list[str] | None = None
+    def __init__(self, data: buf):
+        self._containers = vba_containers(data)
 
-        if self._try_ole(data):
-            return
-        if self._try_zip(data):
-            return
-        if self._try_word2003xml(data):
-            return
-        if self._try_flatopc(data):
-            return
-        if self._try_mhtml(data):
-            return
-        if self._try_access(data):
-            return
+    def _compound_files(self) -> Iterator[tuple[str, OleFileLike]]:
+        for part, ole in _open_containers(self._containers, lambda location, error: None):
+            yield part or '', ole
 
-        raise FileOpenError('data is not a supported file type for VBA extraction')
-
-    def _try_ole(self, data: bytes | bytearray) -> bool:
-        if data[:8] != OLE_MAGIC:
-            return False
-        try:
-            self._ole = OleFile(data)
-            self._type = DocumentFormat.OLE
-            return True
-        except Exception:
-            return False
-
-    def _try_access(self, data: bytes | bytearray) -> bool:
-        from refinery.lib.access import AccessDatabase, is_access_database
-        if not is_access_database(data):
-            return False
-        try:
-            ole = AccessDatabase(bytes(data)).open_vba()
-        except Exception:
-            return False
-        if ole is None:
-            return False
-        self._ole = ole
-        self._type = DocumentFormat.ACCESS
-        return True
-
-    def _try_zip(self, data: bytes | bytearray) -> bool:
-        if data[:2] != b'PK':
-            return False
-        try:
-            fp = BytesIO(data)
-            if not zipfile.is_zipfile(fp):
-                return False
-            fp.seek(0)
-            with zipfile.ZipFile(fp) as zf:
-                for info in zf.infolist():
-                    with zf.open(info) as fh:
-                        magic = fh.read(8)
-                    if magic[:8] == OLE_MAGIC:
-                        with zf.open(info) as fh:
-                            ole_data = fh.read()
-                        self._ole_subfiles.append((info.filename, ole_data))
-            if self._ole_subfiles:
-                self._type = DocumentFormat.OPENXML
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _try_word2003xml(self, data: bytes | bytearray) -> bool:
-        ns = b'http://schemas.microsoft.com/office/word/2003/wordml'
-        if ns not in data:
-            return False
-        try:
-            et = fromstring(data)
-            found = False
-            for bindata in et.iter(TAG_BINDATA):
-                fname = bindata.get(ATTR_NAME, 'noname.mso')
-                mso_data = base64.b64decode(bindata.text or '')
-                if _is_mso_file(mso_data):
-                    try:
-                        ole_data = _mso_file_extract(mso_data)
-                        self._ole_subfiles.append((fname, ole_data))
-                        found = True
-                    except Exception:
-                        pass
-            if found:
-                self._type = DocumentFormat.WORD2003_XML
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _try_flatopc(self, data: bytes | bytearray) -> bool:
-        ns = b'http://schemas.microsoft.com/office/2006/xmlPackage'
-        if ns not in data:
-            return False
-        try:
-            et = fromstring(data)
-            found = False
-            for pkgpart in et.iter(TAG_PKGPART):
-                content_type = pkgpart.get(ATTR_PKG_CONTENTTYPE, 'unknown')
-                if content_type != CTYPE_VBAPROJECT:
-                    continue
-                for bindata in pkgpart.iterfind(TAG_PKGBINDATA):
-                    try:
-                        ole_data = base64.b64decode(bindata.text or '')
-                        fname = pkgpart.get(ATTR_PKG_NAME, 'unknown')
-                        self._ole_subfiles.append((fname, ole_data))
-                        found = True
-                    except Exception:
-                        pass
-            if found:
-                self._type = DocumentFormat.FLATOPC_XML
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _try_mhtml(self, data: bytes | bytearray) -> bool:
-        data_lower = data.lower()
-        if b'mime' not in data_lower:
-            return False
-        if b'version' not in data_lower:
-            return False
-        if b'multipart' not in data_lower:
-            return False
-        mime_pos = data_lower.find(b'mime')
-        vers_pos = data_lower.find(b'version')
-        if abs(vers_pos - mime_pos) >= 20:
-            return False
-
-        try:
-            stripped = data.lstrip(b'\r\n\t ')
-            mime_offset = stripped.find(b'MIME')
-            content_offset = stripped.find(b'Content')
-            if -1 < mime_offset <= content_offset:
-                stripped = stripped[mime_offset:]
-            elif content_offset > -1:
-                stripped = stripped[content_offset:]
-
-            old_header_re = getattr(email.feedparser, 'headerRE')
-            loose_re = re.compile(r'^(From |[\041-\071\073-\176]{1,}:?|[\t ])')
-            setattr(email.feedparser, 'headerRE', loose_re)
-            try:
-                mhtml = email.message_from_bytes(stripped)
-            finally:
-                setattr(email.feedparser, 'headerRE', old_header_re)
-
-            found = False
-            for part in mhtml.walk():
-                part_data = part.get_payload(decode=True)
-                if not isinstance(part_data, bytes):
-                    continue
-                if _is_mso_file(part_data):
-                    try:
-                        ole_data = _mso_file_extract(part_data)
-                        fname = part.get_filename('editdata.mso')
-                        self._ole_subfiles.append((fname, ole_data))
-                        found = True
-                    except Exception:
-                        pass
-                elif part_data[:8] == OLE_MAGIC:
-                    fname = part.get_filename('embedded.ole')
-                    self._ole_subfiles.append((fname, part_data))
-                    found = True
-            if found:
-                self._type = DocumentFormat.MHTML
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _find_vba_forms(
-        self,
-        ole: OleFileLike,
-    ) -> list[str]:
-        """
-        Find form storages containing 'f' and 'o' streams.
-        """
-        results: list[str] = []
-        for storage, entry in ole.walk(streams=False, storages=True):
-            prefix = '/'.join(storage)
-            if ole.find(prefix) is not entry:
-                continue
-            o_stream = F'{prefix}/o'
-            f_stream = F'{prefix}/f'
-            if (ole.exists(o_stream)
-                    and ole.get_type(o_stream) == STGTY.STREAM
-                    and ole.exists(f_stream)
-                    and ole.get_type(f_stream) == STGTY.STREAM):
-                results.append(prefix)
-        return results
-
-    def _extract_vba(
-        self,
-        ole: OleFileLike,
-        vba_root: str,
-        project_path: str,
-        dir_path: str,
-    ) -> Generator[VBAModule, None, None]:
-        """
-        Extract VBA macros from one VBA project inside an OLE file.
-        """
-        dir_data = decompress_stream(ole.openstream(dir_path).read())
-        project = _VBAProject.Parse(
-            memoryview(dir_data), ole, vba_root, project_path)
-        project.parse_project_stream()
-        yield from project.parse_modules()
-
-    def extract_macros(self) -> Generator[VBAMacro, None, None]:
-        """
-        Extract and decompress VBA macro source code from the file. Yields a VBAMacro for each
-        VBA module found.
-        """
-        if self._ole is not None:
-            yield from self._extract_macros_from_ole('', self._ole)
-        for subfile_name, ole_data in self._ole_subfiles:
-            try:
-                sub_ole = OleFile(ole_data)
-            except Exception:
-                continue
-            yield from self._extract_macros_from_ole(subfile_name, sub_ole)
-
-    def _extract_macros_from_ole(
-        self,
-        subfilename: str,
-        ole: OleFileLike,
-    ) -> Generator[VBAMacro, None, None]:
-        """
-        Extract macros from a single OLE file object.
-        """
-        projects = _find_vba_projects(ole)
-        for vba_root, project_path, dir_path in projects:
-            try:
-                for module in self._extract_vba(ole, vba_root, project_path, dir_path):
-                    yield VBAMacro(
-                        subfilename,
-                        module.stream_path,
-                        module.filename,
-                        module.code,
-                    )
-            except Exception:
-                continue
-
-    def extract_all_macros(self) -> list[VBAMacro]:
-        """
-        Extract all VBA macros and return them as a list of VBAMacro entries.
-        """
-        return list(self.extract_macros())
-
-    def extract_form_strings(self) -> Generator[VBAFormString, None, None]:
+    def extract_form_strings(self) -> Iterator[VBAFormString]:
         """
         Extract printable strings from VBA form object streams. Yields a VBAFormString for each
         string found in form 'o' streams.
         """
-        if self._ole is not None:
-            yield from self._extract_form_strings_from_ole('', self._ole)
-        for subfile_name, ole_data in self._ole_subfiles:
-            try:
-                sub_ole = OleFile(ole_data)
-            except Exception:
-                continue
-            yield from self._extract_form_strings_from_ole(subfile_name, sub_ole)
+        for filename, ole in self._compound_files():
+            for form_storage in _find_vba_forms(ole):
+                o_stream = F'{form_storage}/o'
+                try:
+                    form_data = ole.openstream(o_stream).read()
+                except Exception:
+                    continue
+                for m in _RE_PRINTABLE_STRING.finditer(form_data):
+                    found_str = m.group().decode('utf8', errors='replace')
+                    if found_str != 'Tahoma':
+                        yield VBAFormString(filename, o_stream, found_str)
 
-    def _extract_form_strings_from_ole(
-        self,
-        filename: str,
-        ole: OleFileLike,
-    ) -> Generator[VBAFormString, None, None]:
-        forms = self._find_vba_forms(ole)
-        for form_storage in forms:
-            o_stream = F'{form_storage}/o'
-            try:
-                form_data = ole.openstream(o_stream).read()
-            except Exception:
-                continue
-            for m in _RE_PRINTABLE_STRING.finditer(form_data):
-                found_str = m.group().decode('utf8', errors='replace')
-                if found_str != 'Tahoma':
-                    yield VBAFormString(filename, o_stream, found_str)
-
-    def extract_form_strings_extended(self) -> Generator[VBAFormVariable, None, None]:
+    def extract_form_strings_extended(self) -> Iterator[VBAFormVariable]:
         """
         Extract extended form variable data using OLE form parsing. Yields a VBAFormVariable for
         each form control variable found.
         """
-        if self._ole is not None:
-            yield from self._extract_form_strings_extended_from_ole('', self._ole)
-        for subfile_name, ole_data in self._ole_subfiles:
-            try:
-                sub_ole = OleFile(ole_data)
-            except Exception:
-                continue
-            yield from self._extract_form_strings_extended_from_ole(subfile_name, sub_ole)
-
-    def _extract_form_strings_extended_from_ole(
-        self,
-        filename: str,
-        ole: OleFileLike,
-    ) -> Generator[VBAFormVariable, None, None]:
         from refinery.lib.ole.forms import (
             OleFormParsingError,
             extract_OleFormVariables,
         )
-        forms = self._find_vba_forms(ole)
-        for form_storage in forms:
-            try:
-                for variable in extract_OleFormVariables(
-                    ole, form_storage
-                ):
-                    yield VBAFormVariable(filename, form_storage, variable)
-            except OleFormParsingError:
-                raise
-            except Exception:
-                continue
+        for filename, ole in self._compound_files():
+            for form_storage in _find_vba_forms(ole):
+                try:
+                    for variable in extract_OleFormVariables(ole, form_storage):
+                        yield VBAFormVariable(filename, form_storage, variable)
+                except OleFormParsingError:
+                    raise
+                except Exception:
+                    continue
