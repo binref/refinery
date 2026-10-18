@@ -27,21 +27,30 @@ def vba_project_folders(names: list[str]) -> list[str]:
     return [F'{number}/{name}' for number, name in enumerate(names, 1)]
 
 
-class VBAModuleUnit(PathExtractorUnit, abstract=True):
+class VBAUnit(PathExtractorUnit, abstract=True):
     """
-    The base of units that extract one output for every module of the VBA projects in an Office
-    document. Every module is extracted below the folder of its project, as given by
-    `vba_project_folders`, under the name of its stream. The meta variable `stream` holds the
-    location of the module stream: the part of the document that holds the project, followed by the
-    path of the stream inside it. A part, project, or module that cannot be read is skipped with a
-    warning that names its location; when a module record of a dir stream cannot be read, the
-    modules in front of it are still extracted.
+    The base of units that extract data from the VBA projects in an Office document. Outputs of a
+    project are extracted below the folder of the project, as given by `vba_project_folders`. The
+    meta variable `stream` holds the location of the stream that an output comes from: the part of
+    the document that holds the compound file, followed by the path of the stream inside it. A part
+    or project that cannot be read is skipped with a warning that names its location.
     """
     @classmethod
     def handles(cls, data) -> bool:
         from refinery.lib.ole.vba import is_vba_container
         return is_vba_container(data)
 
+    def _skip(self, location: str, error: Exception):
+        self.log_warn(F'skipping {location}: {exception_to_string(error)}')
+
+
+class VBAModuleUnit(VBAUnit, abstract=True):
+    """
+    The base of units that extract one output for every module of the VBA projects in an Office
+    document, under the name of the module stream. A module that cannot be read is skipped with a
+    warning; when a module record of a dir stream cannot be read, the modules in front of it are
+    still extracted.
+    """
     @abc.abstractmethod
     def _module_reader(self, project: VBAProject) -> Callable[[VBAModule], str | None]:
         """
@@ -49,9 +58,6 @@ class VBAModuleUnit(PathExtractorUnit, abstract=True):
         module has no output.
         """
         raise NotImplementedError
-
-    def _skip(self, location: str, error: Exception):
-        self.log_warn(F'skipping {location}: {exception_to_string(error)}')
 
     def unpack(self, data):
         from refinery.lib.ole.vba import vba_projects

@@ -28,6 +28,10 @@
   Patterns that name the old storage path, such as `Macros/VBA/*`, no longer match; patterns that name a module, such as `ThisDocument`, still do.
   The `vbapc` unit now also reads projects embedded in a document, and both units skip a part, project, or module that cannot be read with a warning.
   An input that is a compound file or an Access database that cannot be read is still an error.
+- The `vbastr` unit now extracts form variables below the folder of their VBA project and form, numbered like the folders of `vbamc`,
+  for example `Project/UserForm1/Label1/Label1.cap` instead of `Label1/Label1.cap`.
+  It reports the location of the object stream of the form as `stream`, falls back to the strings of the object stream for each form on its own,
+  reads the same documents as `vbamc`, and gives nothing instead of an error for input that is no such document.
 
 ## Version 0.11.2
 - The `php` unit was added; it parses PHP into an abstract syntax tree and pretty-prints it.

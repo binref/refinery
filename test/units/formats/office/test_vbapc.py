@@ -17,7 +17,7 @@ from . import (
     DOCX,
     STOMPED_DOCM,
     XLS,
-    VBAModuleUnitTestBase,
+    VBAUnitTestBase,
     invert_checksum,
     list_part_twice,
     rename_vba_project,
@@ -29,7 +29,7 @@ proc_end = re.compile(
     r'(?i)^\s*End\s+(Sub|Function|Property)\b')
 
 
-class TestVBAPC(VBAModuleUnitTestBase):
+class TestVBAPC(VBAUnitTestBase):
 
     def test_maldoc_01(self):
         data = self.download_sample('4bdc8e660ff4fb05e5b6c0a2dd70c537817f46ac3270d779fdddc8e459829c08')

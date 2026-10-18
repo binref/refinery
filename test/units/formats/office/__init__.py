@@ -89,9 +89,9 @@ def invert_checksum(document: bytes | bytearray, name: str) -> bytes:
     return bytes(data)
 
 
-class VBAModuleUnitTestBase(TestUnitBase):
+class VBAUnitTestBase(TestUnitBase):
     """
-    Helpers for the tests of the units that extract the modules of VBA projects.
+    Helpers for the tests of the units that extract data from VBA projects.
     """
 
     def _project(self, sample: str) -> bytes:

@@ -4,8 +4,9 @@ Parser for VBA macro extraction from OLE and OOXML documents.
 Implements MS-OVBA decompression and the parsing of the dir stream of a VBA project. VBA projects
 are stored in compound files: the input itself, a part of an OpenXML (ZIP) document, a Word 2003
 XML or Flat OPC document, an MHTML file, or the VBA storage of a Microsoft Access database. The
-function `vba_containers` lists the compound files of an input, `vba_projects` lists the VBA
-projects inside them, and every `VBAProject` lists its modules as `VBAModule` objects.
+function `vba_containers` lists the compound files of an input, `vba_compound_files` opens them and
+lists the VBA projects inside each, and every `VBAProject` lists its modules as `VBAModule` objects.
+The forms of a compound file are listed by `vba_form_storages`.
 """
 from __future__ import annotations
 
@@ -54,18 +55,6 @@ Reporter = Callable[[str, Exception], None]
 A function that receives the location of a part of the input that cannot be read, and the error
 that occurred while reading it.
 """
-
-
-class VBAFormString(NamedTuple):
-    filename: str
-    stream_path: str
-    value: str
-
-
-class VBAFormVariable(NamedTuple):
-    filename: str
-    stream_path: str
-    variable: dict[str, object]
 
 
 _CODEPAGE_OVERRIDES = {
@@ -134,10 +123,11 @@ def _dir_path(storage: str) -> str:
     return F'{storage}VBA/dir'
 
 
-def _find_vba_forms(ole: OleFileLike) -> list[str]:
+def vba_form_storages(ole: OleFileLike) -> list[str]:
     """
     The paths of all form storages in the given compound file, i.e. storages that hold a stream
-    named `f` and a stream named `o`.
+    named `f` and a stream named `o`. The storage of a frame inside a form is a form storage below
+    the storage of the form.
     """
     forms: list[str] = []
     for storage, entry in ole.walk(streams=False, storages=True):
@@ -722,20 +712,40 @@ class VBAModule:
         return decompress_stream(data[offset:]).decode(self.project.codec, 'replace')
 
 
-def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
+class VBACompoundFile:
     """
-    The VBA projects of the given input, in the order of the compound files that `vba_containers`
-    lists, which are read one at a time. An input that is no supported container has no projects.
-    A part that cannot be opened as a compound file, and a project whose dir stream cannot be read
-    or parsed, are passed to the given function with their location and the error; the others are
-    listed. When the input itself is a compound file or an Access database that cannot be read, the
-    error is raised.
+    A compound file of the input and the VBA projects inside it whose dir stream can be read. The
+    part is the name under which the input stores the compound file, or `None` when the compound
+    file is the input itself.
+    """
+    def __init__(self, part: str | None, ole: OleFileLike, projects: list[VBAProject]):
+        self.part = part
+        self.ole = ole
+        self.projects = projects
+
+    def location(self, path: str) -> str:
+        """
+        The location of the stream or storage with the given path in this compound file: the path,
+        preceded by the part when there is one.
+        """
+        return _location(self.part, path)
+
+
+def vba_compound_files(data: buf, report: Reporter) -> Iterator[VBACompoundFile]:
+    """
+    The compound files of the given input that `vba_containers` lists, read one at a time, each with
+    its VBA projects. An input that is no supported container has no compound files. A part that
+    cannot be opened as a compound file, and a project whose dir stream cannot be read or parsed,
+    are passed to the given function with their location and the error; the others are listed.
+    When the input itself is a compound file or an Access database that cannot be read, the error
+    is raised.
     """
     try:
         containers = vba_containers(data)
     except FileOpenError:
         return
     for part, ole in _open_containers(containers, report):
+        projects: list[VBAProject] = []
         for storage in _find_vba_projects(ole):
             path = _dir_path(storage)
             try:
@@ -743,55 +753,23 @@ def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
             except Exception as error:
                 report(_location(part, path), error)
                 continue
-            yield VBAProject(part, ole, storage, directory)
+            projects.append(VBAProject(part, ole, storage, directory))
+        yield VBACompoundFile(part, ole, projects)
 
 
-class VBAParser:
+def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
     """
-    Extracts the strings and variables of the forms of VBA projects from the compound files of an
-    input, as listed by `vba_containers`. Raises `FileOpenError` when the input is no supported
-    container. Parts of the input that cannot be opened as compound files are skipped.
+    The VBA projects of the compound files that `vba_compound_files` lists, in their order.
     """
+    for compound_file in vba_compound_files(data, report):
+        yield from compound_file.projects
 
-    def __init__(self, data: buf):
-        self._containers = vba_containers(data)
 
-    def _compound_files(self) -> Iterator[tuple[str, OleFileLike]]:
-        for part, ole in _open_containers(self._containers, lambda location, error: None):
-            yield part or '', ole
-
-    def extract_form_strings(self) -> Iterator[VBAFormString]:
-        """
-        Extract printable strings from VBA form object streams. Yields a VBAFormString for each
-        string found in form 'o' streams.
-        """
-        for filename, ole in self._compound_files():
-            for form_storage in _find_vba_forms(ole):
-                o_stream = F'{form_storage}/o'
-                try:
-                    form_data = ole.openstream(o_stream).read()
-                except Exception:
-                    continue
-                for m in _RE_PRINTABLE_STRING.finditer(form_data):
-                    found_str = m.group().decode('utf8', errors='replace')
-                    if found_str != 'Tahoma':
-                        yield VBAFormString(filename, o_stream, found_str)
-
-    def extract_form_strings_extended(self) -> Iterator[VBAFormVariable]:
-        """
-        Extract extended form variable data using OLE form parsing. Yields a VBAFormVariable for
-        each form control variable found.
-        """
-        from refinery.lib.ole.forms import (
-            OleFormParsingError,
-            extract_OleFormVariables,
-        )
-        for filename, ole in self._compound_files():
-            for form_storage in _find_vba_forms(ole):
-                try:
-                    for variable in extract_OleFormVariables(ole, form_storage):
-                        yield VBAFormVariable(filename, form_storage, variable)
-                except OleFormParsingError:
-                    raise
-                except Exception:
-                    continue
+def vba_form_strings(ole: OleFileLike, storage: str) -> list[str]:
+    """
+    The printable strings of at least five characters in the `o` stream of the form storage with
+    the given path, except the name of the default font Tahoma.
+    """
+    data = ole.openstream(F'{storage}/o').read()
+    strings = (match.group().decode('utf8', errors='replace') for match in _RE_PRINTABLE_STRING.finditer(data))
+    return [string for string in strings if string != 'Tahoma']
