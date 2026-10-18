@@ -27,6 +27,7 @@
   The location of the module stream in the document is available as the meta variable `stream`.
   Patterns that name the old storage path, such as `Macros/VBA/*`, no longer match; patterns that name a module, such as `ThisDocument`, still do.
   The `vbapc` unit now also reads projects embedded in a document, and both units skip a part, project, or module that cannot be read with a warning.
+  An input that is a compound file or an Access database that cannot be read is still an error.
 
 ## Version 0.11.2
 - The `php` unit was added; it parses PHP into an abstract syntax tree and pretty-prints it.

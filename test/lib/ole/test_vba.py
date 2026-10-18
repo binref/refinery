@@ -23,8 +23,8 @@ class TestDirStream(TestBase):
         self.assertEqual(directory.name, 'Project')
         self.assertEqual(directory.codepage, 1251)
         self.assertTrue(directory.is_64bit)
-        self.assertEqual([module.name for module in directory.modules], ['ThisDocument', 'main'])
-        self.assertEqual([module.stream_name_unicode for module in directory.modules], ['ThisDocument', 'main'])
+        self.assertEqual([module.name for module in directory.module_records()], ['ThisDocument', 'main'])
+        self.assertEqual([module.stream_name_unicode for module in directory.module_records()], ['ThisDocument', 'main'])
 
     def test_a_project_name_that_runs_past_the_end_of_the_stream_makes_the_dir_stream_unreadable(self):
         data = self._dir_stream()

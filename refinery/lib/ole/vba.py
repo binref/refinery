@@ -124,10 +124,14 @@ def _find_vba_projects(ole: OleFileLike) -> list[str]:
             continue
         if ole.get_type(F'{vba_root}VBA/_VBA_PROJECT') != STGTY.STREAM:
             continue
-        if ole.get_type(F'{vba_root}VBA/dir') != STGTY.STREAM:
+        if ole.get_type(_dir_path(vba_root)) != STGTY.STREAM:
             continue
         storages.append(vba_root)
     return storages
+
+
+def _dir_path(storage: str) -> str:
+    return F'{storage}VBA/dir'
 
 
 def _find_vba_forms(ole: OleFileLike) -> list[str]:
@@ -357,18 +361,23 @@ def _word2003_containers(data: memoryview) -> list[VBAContainer]:
     except Exception:
         return []
 
-    def extract(text: str):
-        return OleFile(_mso_file_extract(base64.b64decode(text)))
+    def extract(text: str, decoded: bytes | None):
+        if decoded is None:
+            decoded = base64.b64decode(text)
+        return OleFile(_mso_file_extract(decoded))
 
     containers: list[VBAContainer] = []
     for bindata in document.iter(TAG_BINDATA):
         text = bindata.text or ''
         try:
-            is_mso = _is_mso_file(base64.b64decode(text))
+            decoded = base64.b64decode(text)
         except Exception:
-            is_mso = True
-        if is_mso:
-            containers.append(VBAContainer(bindata.get(ATTR_NAME, 'noname.mso'), lambda text=text: extract(text)))
+            decoded = None
+        else:
+            if not _is_mso_file(decoded):
+                continue
+        name = bindata.get(ATTR_NAME, 'noname.mso')
+        containers.append(VBAContainer(name, lambda text=text, decoded=decoded: extract(text, decoded)))
     return containers
 
 
@@ -445,11 +454,11 @@ def vba_containers(data: buf) -> list[VBAContainer]:
     view = memoryview(data)
     for find_containers in (
         _ole_containers,
+        _access_containers,
         _zip_containers,
         _word2003_containers,
         _flatopc_containers,
         _mhtml_containers,
-        _access_containers,
     ):
         if containers := find_containers(view):
             return containers
@@ -588,18 +597,18 @@ class VBAModuleRecord(Struct[memoryview]):
 class VBADirectory(Struct[memoryview]):
     """
     The decompressed dir stream of a VBA project (MS-OVBA 2.3.4.2): the system kind, the code page
-    and the name of the project as stored, and a `VBAModuleRecord` for every module. The stream is
-    a sequence of records; the records in front of the list of modules, which include the
-    references, are read in any order. Every record is read with its exact length, so that a record
-    which runs past the end of the stream raises `refinery.lib.structures.EOF`.
+    and the name of the project as stored, and the number of its modules. The stream is a sequence
+    of records; the records in front of the list of modules, which include the references, are read
+    in any order. Every record is read with its exact length, so that a record which runs past the
+    end of the stream raises `refinery.lib.structures.EOF`. The module records that follow are read
+    by `module_records`, one at a time.
     """
     def __init__(self, reader: StructReader[memoryview]):
         information: dict[int, memoryview] = {}
         while (record := _DirStreamRecord(reader)).id != DirRecord.PROJECTMODULES:
             information[record.id] = record.body
-        count = record.value
-        if (record := _DirStreamRecord(reader)).id != DirRecord.PROJECTCOOKIE:
-            raise ValueError(F'Expected a project cookie record, found a record with id 0x{record.id:04X}.')
+        self.module_count = record.value
+        self._module_data = reader.read()
 
         def field(record: DirRecord) -> memoryview:
             try:
@@ -611,11 +620,22 @@ class VBADirectory(Struct[memoryview]):
         self.codepage = int.from_bytes(field(DirRecord.PROJECTCODEPAGE), 'little')
         self.codec = _codepage_to_codec(self.codepage)
         self.name = codecs.decode(field(DirRecord.PROJECTNAME), self.codec, 'replace')
-        self.modules = [VBAModuleRecord(reader, self.codec) for _ in range(count)]
 
     @property
     def is_64bit(self) -> bool:
         return self.syskind == 3
+
+    def module_records(self) -> Iterator[VBAModuleRecord]:
+        """
+        The module records of the stream, in their order, preceded by the project cookie record if
+        there is one. A record that cannot be read raises its error after the records in front of
+        it have been listed.
+        """
+        reader = StructReader(self._module_data)
+        if reader.u16(peek=True) == DirRecord.PROJECTCOOKIE:
+            _DirStreamRecord(reader)
+        for _ in range(self.module_count):
+            yield VBAModuleRecord(reader, self.codec)
 
 
 class VBAProject:
@@ -636,7 +656,18 @@ class VBAProject:
         self.ole = ole
         self.storage = storage
         self.directory = directory
-        self.modules = [VBAModule(self, record) for record in directory.modules]
+
+    @property
+    def dir_path(self) -> str:
+        return _dir_path(self.storage)
+
+    def modules(self) -> Iterator[VBAModule]:
+        """
+        The modules of the project, in the order of the dir stream. A module record that cannot be
+        read raises its error after the modules in front of it have been listed.
+        """
+        for record in self.directory.module_records():
+            yield VBAModule(self, record)
 
     @property
     def name(self) -> str:
@@ -706,7 +737,7 @@ def vba_projects(data: buf, report: Reporter) -> Iterator[VBAProject]:
         return
     for part, ole in _open_containers(containers, report):
         for storage in _find_vba_projects(ole):
-            path = F'{storage}VBA/dir'
+            path = _dir_path(storage)
             try:
                 directory = VBADirectory.Parse(memoryview(decompress_stream(ole.openstream(path).read())))
             except Exception as error:

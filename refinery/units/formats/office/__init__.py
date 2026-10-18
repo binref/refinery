@@ -18,8 +18,9 @@ def vba_project_folders(names: list[str]) -> list[str]:
     """
     The folders for VBA projects with the given names, in their order. The folder of a project is
     its name as stored; when there is more than one project, the number of the project, counted
-    from one, precedes the name of every folder. Names are never compared, so no two projects
-    share a folder.
+    from one, precedes the name of every folder. Names are never compared, so two projects with
+    the same name get different folders. A name that holds a path separator or consists of dots
+    is used as stored and resolved like every extracted path.
     """
     if len(names) < 2:
         return list(names)
@@ -33,7 +34,8 @@ class VBAModuleUnit(PathExtractorUnit, abstract=True):
     `vba_project_folders`, under the name of its stream. The meta variable `stream` holds the
     location of the module stream: the part of the document that holds the project, followed by the
     path of the stream inside it. A part, project, or module that cannot be read is skipped with a
-    warning that names its location.
+    warning that names its location; when a module record of a dir stream cannot be read, the
+    modules in front of it are still extracted.
     """
     @classmethod
     def handles(cls, data) -> bool:
@@ -62,7 +64,13 @@ class VBAModuleUnit(PathExtractorUnit, abstract=True):
             except Exception as error:
                 self._skip(project.location(F'{project.storage}VBA'), error)
                 continue
-            for module in project.modules:
+            modules: list[VBAModule] = []
+            try:
+                for module in project.modules():
+                    modules.append(module)
+            except Exception as error:
+                self._skip(project.location(project.dir_path), error)
+            for module in modules:
                 try:
                     output = read(module)
                 except Exception as error:
