@@ -11,6 +11,7 @@ does not see these names, and the same text unpacked into the file would read th
 """
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from typing import NamedTuple
@@ -32,6 +33,7 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.units.scripting.js import js
 
 
 class Payload(NamedTuple):
@@ -715,3 +717,73 @@ class TestAPackedCompoundWriteOnAGlobalStillPrintsWhatItPrints(TestBase):
             A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL,
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
+
+
+#: The packer's output for an eleven-line fizzbuzz that reads no global it would map: the accessor
+#: object is empty.
+PACKED_FIZZBUZZ = (
+    r'Function("ZvYyC4L","function fizzbuzz(limit){var lines=[];for(var i=1;i<=limit;i++){var '
+    r'line=\"\";if(i%3===0){line+=\"Fizz\"}if(i%5===0){line+=\"Buzz\"}lines[\"push\"](line||St'
+    r'ring(i))}return lines[\"join\"](\", \")}return console[\"log\"](\"FizzBuzz: \"+fizzbuzz('
+    r'15));")({});'
+)
+
+#: The packer's output for the same fizzbuzz run on an undeclared global it assigns and adds to,
+#: printed beside what `typeof module` says and a name `require("path")` computes: getters, a
+#: setter, and a getter answering `typeof` for the program.
+PACKED_GLOBALS = (
+    r'Function("ym9Tun8","function fizzbuzz(limit){var lines=[];for(var i=1;i<=limit;i++){var '
+    r'line=\"\";if(i%3===0){line+=\"Fizz\"}if(i%5===0){line+=\"Buzz\"}lines[\"push\"](line||St'
+    r'ring(i))}return lines[\"join\"](\", \")}ym9Tun8[\"KADlpg\"]=0;ym9Tun8[\"KADlpg\"]+=15;va'
+    r'r kind=ym9Tun8[\"FCHW63\"]===\"object\"?\"commonjs\":\"other\";return console[\"log\"]('
+    r'\"FizzBuzz: \"+fizzbuzz(ym9Tun8[\"KADlpg\"]),kind,ym9Tun8[\"VM9Zxy\"](\"path\")[\"basena'
+    r'me\"](\"a/b.js\"));")({get"KADlpg"(){return counter},set"KADlpg"(ym9Tun8){return counter'
+    r'=ym9Tun8},get"VM9Zxy"(){return require},get"FCHW63"(){return typeof module}});'
+)
+
+
+class TestThePackersOwnOutputIsUnpacked(TestBase):
+    """
+    The packer's own output for two small programs, deobfuscated as an analyst runs `refinery.js` on
+    a Node script and read as text only. Each program writes through the accessor object only where
+    the accessors stand, at the top of the file, so it unpacks whether the file is known to be
+    CommonJS or may be an ES module as well.
+    """
+
+    def _deobfuscated(self, source: str, *switches: str) -> str:
+        return source.encode('utf8') | js.assemble(*switches, '-e', 'node') | str
+
+    def test_a_program_reading_no_global_is_recovered_as_the_line_it_prints(self):
+        printed_line = (
+            "console.log('FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14,"
+            " FizzBuzz');"
+        )
+        for switch in ('-c', '-m'):
+            with self.subTest(switch):
+                self.assertEqual(self._deobfuscated(PACKED_FIZZBUZZ, switch), printed_line)
+
+    def test_a_program_reading_and_writing_globals_is_recovered(self):
+        program = inspect.cleandoc(
+            """
+            function fizzbuzz(limit) {
+              var lines = [];
+              for (var i = 1; i <= limit; i++) {
+                var line = "";
+                if (i % 3 === 0) {
+                  line += "Fizz";
+                }
+                if (i % 5 === 0) {
+                  line += "Buzz";
+                }
+                lines.push(line || String(i));
+              }
+              return lines.join(", ");
+            }
+            counter = 0;
+            counter += 15;
+            console.log("FizzBuzz: " + fizzbuzz(counter), typeof module === "object" ? "commonjs" : "other", require("path").basename("a/b.js"));
+            """
+        )
+        for switch in ('-c', '-m'):
+            with self.subTest(switch):
+                self.assertEqual(self._deobfuscated(PACKED_GLOBALS, switch), program)

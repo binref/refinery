@@ -5297,3 +5297,39 @@ class TestAStringTimerTheHostRefusesStillThrows(TestBase):
     Node prints `1` instead. The lowering holds only where the host is known to compile the string,
     which neither the default host nor `-e node` is.
     """
+
+
+#: Packed programs calling a global function through the accessor object, where the function reads
+#: `this`, mapped to the behavior an engine gives them.
+A_FUNCTION_CALLED_THROUGH_THE_PACKED_ACCESSOR_OBJECT = {
+    'a function comparing this with the global object': Program(
+        a_program("""
+            Function("Q", "globalThis.helper = function () { return this === globalThis; }; console.log(Q['k']());")({ get 'k'() { return helper; } });
+            """),
+        prints('false'),
+        Reading.COMMONJS,
+    ),
+}
+
+#: The packer's output for the program of the row above, read as text only.
+PACKED_THIS = (
+    r'Function("cP2i872","globalThis[\"helper\"]=function(){return this===globalThis};return c'
+    r'onsole[\"log\"](cP2i872[\"JC7DQ0X\"]());")({get"JC7DQ0X"(){return helper}});'
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTION_CALLED_THROUGH_THE_PACKED_ACCESSOR_OBJECT)
+class TestAFunctionCalledThroughThePackedAccessorObjectKeepsItsReceiver(TestBase):
+    """
+    A call through a key of the accessor object runs the function the getter returns with the
+    accessor object as `this`; the bare call that unpacking writes runs it with `undefined`, which
+    sloppy code reads as the global object. The packer writes every call of a global function this
+    way, and most such functions never read `this`, so refusing every such call would keep most
+    packed programs packed; telling them apart needs to know what the callee reads.
+    """
+
+    @unittest.expectedFailure
+    def test_the_packers_own_output_does_not_call_the_function_bare(self):
+        output = deobfuscate_source(PACKED_THIS, execution=ExecutionModel.commonjs)
+        self.assertNotIn('helper()', output)
