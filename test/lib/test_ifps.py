@@ -22,8 +22,11 @@ _SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK = '6aebe4aac528782d132f96e970cbba2d1
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
 _SCRIPT_WITH_ONE_LOAD_FLAG_AND_ONLY_ANSI_STRINGS = 'fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc'
 _SCRIPT_THAT_WRITES_THE_PASSWORD_BOX = _SCRIPT_WITH_NESTED_TRY
+_SCRIPT_WITH_PAGES_OF_ITS_OWN = _SCRIPT_WITH_NESTED_TRY
+_INSTALLER_WITH_A_LICENSE_ONLY_IN_ITS_HEADER = 'c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73'
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
+_INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX = _INSTALLER_WITH_A_DIRECTORY_PAGE
 _SCRIPT_THAT_CATCHES_A_DIVISION_BY_ZERO = 'c47352571fb7ac45bd994f4b057ffec15898df4724f2a4cd0d9213e3eedfca29'
 _SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
 _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR = (
@@ -578,6 +581,8 @@ class TestIPFSEmulator(TestBase):
         For the page that selects the target directory, `ShouldSkipPage` ends by passing the result
         of `ExtractFileDir` to `DirExistsNoRedir`. When `ExtractFileDir` fails, Inno Setup shows the
         error and does not skip the page, which is also the answer of the script without the error.
+        Setup asks whether the page is skipped when Next reaches it, and again when the next page
+        decides whether it shows the Back button.
         """
         from refinery.lib.inno.emulator import (
             IFPSEmulatorConfig,
@@ -606,10 +611,113 @@ class TestIPFSEmulator(TestBase):
         checker = emulator()
         unreached = calls_and_errors(checker.emulate_function(checker.symbols['DIREXISTSNOREDIR'], ''))
         errors = [event for event in failed if isinstance(event, NewScriptError)]
-        self.assertEqual([(error.name, error.args) for error in errors], [(SetupEvent.ShouldSkipPage, (PageID.wpSelectDir,))])
-        k = failed.index(errors[0])
+        self.assertEqual([(error.name, error.args) for error in errors], 2 * [(SetupEvent.ShouldSkipPage, (PageID.wpSelectDir,))])
+        completed = []
+        for event in failed:
+            completed.extend(unreached if isinstance(event, NewScriptError) else [event])
         # names only: two clean runs differ in time stamps and random numbers, never in the calls
-        self.assertEqual(failed[:k] + unreached + failed[k + 1:], clean)
+        self.assertEqual(completed, clean)
+
+    def test_a_second_installation_runs_the_script_as_the_first(self):
+        from refinery.lib.inno.emulator import NewFunctionCall, NewPassword
+        emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True)
+
+        def calls_and_passwords():
+            return [
+                event if isinstance(event, NewPassword) else event.name
+                for event in emulator.emulate_installation() if isinstance(event, (NewFunctionCall, NewPassword))
+            ]
+
+        first = calls_and_passwords()
+        self.assertIn('NFfB5qf2o1EJOkmBRrMvFcmj4QmKfwyNE5yoMOMRmFE4yfEEEMImIyyEYIQYFiO0', first)
+        self.assertEqual(calls_and_passwords(), first)
+
+    def test_check_password_runs_only_when_setup_rejects_the_text_of_the_password_box(self):
+        """
+        On the password page, the script writes `Zet0` into the password box, and its
+        `CheckPassword` writes another text into the box.
+        """
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
+        archive = InnoArchive(self.download_sample(_INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX))
+        for accepted in (False, True):
+            with self.subTest(accepted=accepted):
+                tested = []
+
+                def password_test(text: str) -> bool:
+                    tested.append(text)
+                    return accepted
+
+                emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(log_calls=True))
+                written = [
+                    event.args[1] for event in emulator.emulate_installation(password_test=password_test)
+                    if isinstance(event, NewFunctionCall) and event.name == 'TPasswordEdit.SetText'
+                ]
+                self.assertEqual(tested, ['Zet0'])
+                self.assertEqual(written[written.index('Zet0') + 1:], [] if accepted else ['The password is protected!'])
+
+    def test_a_language_without_a_license_shows_the_license_of_the_setup_header(self):
+        from refinery.lib.inno.archive import InnoArchive
+        setup = InnoArchive(self.download_sample(_INSTALLER_WITH_A_LICENSE_ONLY_IN_ITS_HEADER)).setup_info
+        language, = setup.Languages
+        self.assertEqual(language.LicenseText, '')
+        self.assertTrue(setup.Header.get_license())
+        self.assertEqual(setup.wizard_texts(0).license, setup.Header.get_license())
+
+    def test_the_handlers_that_a_script_gives_its_pages_run_when_setup_reaches_the_pages(self):
+        """
+        The script creates 17 pages and gives each a function that tells whether Setup skips it.
+        The pages that are shown also have a function for their activation and one for the Next
+        button.
+        """
+        from refinery.lib.inno.emulator import NewFunctionCall, NewInstruction
+        emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True, log_opcodes=True)
+        assigned: dict[str, tuple[object, str]] = {}
+        handled: list[tuple[object, str]] = []
+        for event in emulator.emulate_installation():
+            if isinstance(event, NewFunctionCall) and event.name.startswith('TWizardPage.SetOn'):
+                page, handler = event.args
+                assigned[handler.name] = (page, event.name.removeprefix('TWizardPage.Set'))
+            elif isinstance(event, NewInstruction) and event.offset == 0 and event.function.name in assigned:
+                handled.append(assigned[event.function.name])
+        pages = {page for page, _ in assigned.values()}
+        self.assertEqual(len(pages), 17)
+        self.assertEqual({page for page, event in handled if event == 'OnShouldSkipPage'}, pages)
+        activations = [k for k, (_, event) in enumerate(handled) if event == 'OnActivate']
+        self.assertTrue(activations)
+        for k in activations:
+            page, _ = handled[k]
+            self.assertIn((page, 'OnShouldSkipPage'), handled[:k])
+            self.assertEqual(handled[k + 1], (page, 'OnNextButtonClick'))
+
+    def test_an_installation_ends_at_its_time_limit(self):
+        from refinery.lib.inno.emulator import EmulatorTimeout
+        emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN)
+        started = time.process_time()
+        with self.assertRaises(EmulatorTimeout):
+            for _ in emulator.emulate_installation(max_seconds=0.2):
+                pass
+        self.assertLess(time.process_time() - started, 1)
+
+    def test_the_password_search_ends_at_its_time_limit(self):
+        """
+        The script creates a page in `InitializeWizard`, before it writes its password into the
+        password box; here, creating the page takes more than a second of processor time.
+        """
+        from refinery.lib.inno.archive import InnoArchive
+        from refinery.lib.inno.emulator import IFPSEmulator
+        create_page = IFPSEmulator.external_symbols['']['CreateInputDirPage'].call
+
+        def slow_create_page(*args):
+            started = time.process_time()
+            while time.process_time() - started < 1.1:
+                pass
+            return create_page(*args)
+
+        data = self.download_sample(_INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX)
+        with _replaced_external('CreateInputDirPage', slow_create_page):
+            found = {timeout: InnoArchive(data).guess_password(timeout) for timeout in (1, 10)}
+        self.assertEqual(found, {1: False, 10: True})
 
     def test_a_reported_script_error_keeps_no_exception_alive_while_it_is_handled(self):
         import gc

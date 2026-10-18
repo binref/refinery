@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+
 from refinery.lib.inno.archive import InnoArchive, is_inno_setup
 from refinery.lib.inno.emulator import (
     IFPSEmulatorConfig,
@@ -26,13 +28,14 @@ class innopwd(Unit):
         if data.startswith(IFPSFile.Magic):
             inno = IFPSFile.Parse(data)
             self.log_info('running in script-only mode; cannot check passwords')
-            file = None
+            password_test = None
         else:
             inno = InnoArchive(data, self)
             file = inno.get_encrypted_sample()
             if file is None:
                 self.log_info('the archive is not password-protected, password is empty')
                 return None
+            password_test = functools.partial(inno.check_password, file)
             assert file.crypto
             self.log_info('password type:', file.crypto.PasswordType.name)
             self.log_info('password test:', file.crypto.PasswordTest)
@@ -48,7 +51,7 @@ class innopwd(Unit):
         ))
         function = None
 
-        for event in emulator.emulate_installation():
+        for event in emulator.emulate_installation(password_test=password_test):
             if isinstance(event, NewInstruction):
                 if not function or function.name != event.function.name:
                     function = event.function
@@ -65,11 +68,11 @@ class innopwd(Unit):
                 self.log_info(F'mutex registered: {event!s}')
                 continue
             if isinstance(event, NewPassword):
-                if isinstance(inno, InnoArchive) and file and not inno.check_password(file, event):
+                if password_test is not None and not password_test(event):
                     self.log_info('discarding password:', event)
                     continue
                 yield event.encode(self.codec)
-                if file is not None:
+                if password_test is not None:
                     self.log_info('aborting emulation after validating password')
                     return
 

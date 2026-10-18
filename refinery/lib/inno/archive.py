@@ -873,6 +873,8 @@ class SetupHeader(InnoStruct):
             self.AppModifyPath = read_string()
         if version >= (5, 3, 8):
             self.CreateUninstallRegistryKey = read_string()
+        else:
+            self.CreateUninstallRegistryKey = B''
         if version >= (5, 3, 10):
             self.Uninstallable = read_string()
         else:
@@ -1300,6 +1302,16 @@ class SetupHeader(InnoStruct):
             assert isinstance(text, str)
         return setup_directive(text, bool(self.Flags & Flags.Uninstallable))
 
+    def creates_uninstall_key(self) -> bool | str:
+        """
+        Whether the setup creates its key in the list of installed programs, as Setup reads the
+        `CreateUninstallRegistryKey` directive; see `setup_directive`.
+        """
+        text = self.CreateUninstallRegistryKey
+        if TYPE_CHECKING:
+            assert isinstance(text, str)
+        return setup_directive(text, bool(self.Flags & Flags.CreateUninstallRegKey))
+
     def get_script(self):
         return self._CompiledCode
 
@@ -1413,6 +1425,8 @@ class SetupLanguage(InnoStruct):
             self.LicenseText = reader.read_length_prefixed_ascii()
             self.InfoBefore = reader.read_length_prefixed_ascii()
             self.InfoAfter = reader.read_length_prefixed_ascii()
+        else:
+            self.LicenseText = self.InfoBefore = self.InfoAfter = ''
 
         self.LanguageId = LanguageId(reader, version)
 
@@ -2339,6 +2353,16 @@ def setup_directive(text: str, flag: bool) -> bool | str:
     return text
 
 
+class WizardTexts(NamedTuple):
+    """
+    The license and the information texts that the wizard shows before and after the installation.
+    An empty text means that the wizard skips its page.
+    """
+    license: str
+    info_before: str
+    info_after: str
+
+
 class TSetup(InnoStruct):
 
     def __init__(self, reader: StructReaderBits[memoryview], version: InnoVersion, encryption: SetupEncryptionHeaderV3 | None):
@@ -2393,6 +2417,19 @@ class TSetup(InnoStruct):
 
         if version >= (4, 0, 0):
             self._load_wizard_and_decompressor(reader, version)
+
+    def wizard_texts(self, language: int | None) -> WizardTexts:
+        """
+        The texts that the wizard shows in the language with the given index: each one is that of
+        the language, or that of the setup header when the language has none.
+        """
+        header = self.Header
+        texts = WizardTexts(header.get_license(), header.InfoHead, header.InfoTail)
+        if language is None or not 0 <= language < len(self.Languages):
+            return texts
+        entry = self.Languages[language]
+        own = WizardTexts(entry.LicenseText, entry.InfoBefore, entry.InfoAfter)
+        return WizardTexts(*(text or fallback for text, fallback in zip(own, texts)))
 
     def get_wizard_images_large(self):
         return self._WizardImagesLarge
@@ -2809,13 +2846,14 @@ class InnoArchive:
                 if (emulator := self.emulator) is None:
                     self._log_comment('the archive has no script to determine the password from')
                     return False
-                for p in emulator.reset().emulate_installation():
+                password_test = functools.partial(self.check_password, file)
+                for p in emulator.emulate_installation(max_seconds=timeout, password_test=password_test):
                     if isinstance(p, (NewScriptError, NewEmulationError)):
                         self._log_comment(str(p))
                         continue
                     if not isinstance(p, NewPassword):
                         continue
-                    if self.check_password(file, p):
+                    if password_test(p):
                         self._log_comment('found password via emulation:', p)
                         self._password = p
                         return True
