@@ -24,11 +24,6 @@ class IFPSSignature(NamedTuple):
     parameters: tuple[IFPSParam]
     return_type: str | None
     void: bool
-    readable: bool | None = None
-    writable: bool | None = None
-
-    def is_property(self):
-        return self.kind == 'property'
 
     @property
     def argc(self):
@@ -51,7 +46,7 @@ class ParsingError(RuntimeError):
         super().__init__(F'{what}: {symbol}')
 
 
-def parse_decl(decl: str, kind: str, void: bool | None = None, **kwargs):
+def parse_decl(decl: str, kind: str, void: bool | None = None):
     def try_type(type: str):
         if not type:
             return None
@@ -96,7 +91,7 @@ def parse_decl(decl: str, kind: str, void: bool | None = None, **kwargs):
             for part in group.split(','):
                 args.append(IFPSParam(part.strip(), try_type(at), passing != 'var'))
 
-    return IFPSSignature(name, kind, tuple(args), type, void, **kwargs)
+    return IFPSSignature(name, kind, tuple(args), type, void)
 
 
 def parse_function(symbol: str) -> IFPSSignature:
@@ -457,24 +452,21 @@ def _parse_class_reference(cls) -> IFPSClassReference:
         members = CaseInsensitiveDict()
         for member in body:
             kind, _, decl = member.lstrip().rstrip(';').partition(' ')
-            kwargs = {}
+            attributes = []
             if kind == 'property':
                 decl, _, attributes = decl.partition(';')
                 attributes = attributes.strip().split()
-                kwargs.update(
-                    writable=('write' in attributes),
-                    readable=('read' in attributes))
-            sig = parse_decl(decl, kind, **kwargs)
+            sig = parse_decl(decl, kind)
 
             if kind == 'property':
                 parameters = sig.parameters
                 this = IFPSParam('This', name, True)
-                if kwargs['writable']:
+                if 'write' in attributes:
                     setter_name = F'Set{sig.name}'
                     setter_args = (this, *parameters, IFPSParam('Value', sig.return_type, True))
                     setter = IFPSSignature(setter_name, 'setter', setter_args, None, True)
                     members[setter_name] = setter
-                if kwargs['readable']:
+                if 'read' in attributes:
                     if not sig.return_type or sig.void:
                         raise RuntimeError(F'Readable property {sig.name} had no type.')
                     getter_name = F'Get{sig.name}'

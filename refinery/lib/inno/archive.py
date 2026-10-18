@@ -2755,10 +2755,18 @@ class InnoArchive:
     def ifps(self):
         """
         An `refinery.lib.inno.ifps.IFPSFile` representing the embedded IFPS script, if it exists.
+        Inno Setup 5.2.0 and later write two load flags into the declaration of a DLL import; for
+        older versions, the calls of the script decide.
         """
         if script := self.setup_info.Header.get_script():
+            version = self.version
             return IFPSFile.Parse(
-                script, self.script_codec, self.version.unicode, self.setup_info.Header.is_64bit)
+                script,
+                self.script_codec,
+                version.unicode,
+                self.setup_info.Header.is_64bit,
+                2 if version >= (5, 2, 0) else None,
+            )
 
     def guess_password(self, timeout: int) -> bool:
         """

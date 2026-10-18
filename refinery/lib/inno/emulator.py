@@ -868,6 +868,14 @@ class _ScriptRun:
         return eh.handler_end
 
 
+def _incompatible_call(handler: IFPSEmulatedFunction, argc: int, void: bool) -> str:
+    def shape(argc: int, void: bool):
+        arguments = 'argument' if argc == 1 else 'arguments'
+        result = 'no result' if void else 'a result'
+        return F'{argc} {arguments} and {result}'
+    return F'the emulation takes {shape(handler.argc, handler.void)}, the call passes {shape(argc, void)}'
+
+
 class _WizardForm:
     """
     Stands in for the wizard form of a setup: a script can keep it and pass it to the methods of
@@ -1389,25 +1397,18 @@ class IFPSEmulator:
                 namespace = ''
 
                 if decl := function.decl:
-                    if decl.is_property:
-                        if stack[-1].type.code == TC.Class:
-                            function = function.setter
-                        else:
-                            function = function.getter
-                        decl = function.decl
-                    namespace = (
-                        decl.classname or decl.module or '')
+                    namespace = decl.classname or decl.module or ''
 
                 name = function.name
                 registry: dict[str, IFPSEmulatedFunction] = self.external_symbols.get(namespace, {})
                 handler = registry.get(name)
 
-                if handler:
-                    void = handler.void
-                    argc = handler.argc
-                elif decl:
+                if decl:
                     void = decl.void
                     argc = decl.argc
+                elif handler:
+                    void = handler.void
+                    argc = handler.argc
                 else:
                     void = True
                     argc = 0
@@ -1425,16 +1426,11 @@ class IFPSEmulator:
 
                 if handler is None:
                     self.unimplemented(function, args, None if void else stack[-1])
+                elif handler.argc != argc or handler.void and not void:
+                    failure = _incompatible_call(handler, argc, void)
+                    raised = IFPSException(failure, called=name)
+                    yield NewEmulationError(name, failure)
                 else:
-                    if decl and (decl.void != handler.void or decl.argc != handler.argc):
-                        ok = False
-                        if 1 + decl.argc - decl.void == 1 + handler.argc - handler.void:
-                            if decl.void and not decl.parameters[0].const:
-                                ok = True
-                            elif handler.void and handler.spec[0]:
-                                ok = True
-                        if not ok:
-                            raise RuntimeError(F'Handler for {function!s} is incompatible with declaration.')
                     for k, (var, byref) in enumerate(zip(args, handler.spec)):
                         if not byref:
                             args[k] = var.get()
@@ -1457,7 +1453,7 @@ class IFPSEmulator:
                         failure = exception_to_string(error)
                         raised = IFPSException(failure, called=name)
                     else:
-                        if not handler.void:
+                        if not void:
                             stack[-1].set(return_value)
                     if failure is not None:
                         yield NewEmulationError(name, failure)

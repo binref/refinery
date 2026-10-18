@@ -20,6 +20,8 @@ _SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_READS_A_SETTING_FROM_THE_REGISTRY = _SCRIPT_WITH_NESTED_TRY
 _SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK = '6aebe4aac528782d132f96e970cbba2d182b7b3b78abddce7846a6fecd32b2d1'
 _SCRIPT_FOR_AN_OLDER_INNO_SETUP = '2d3f393969037a0d0f19e1e01637bed00e0d766fafbb8916a2f6d0b1f8d4cdcd'
+_SCRIPT_WITH_ONE_LOAD_FLAG_AND_ONLY_ANSI_STRINGS = 'fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc'
+_SCRIPT_THAT_WRITES_THE_PASSWORD_BOX = _SCRIPT_WITH_NESTED_TRY
 _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 _SCRIPT_THAT_CATCHES_A_DIVISION_BY_ZERO = 'c47352571fb7ac45bd994f4b057ffec15898df4724f2a4cd0d9213e3eedfca29'
@@ -447,21 +449,11 @@ class TestIPFSEmulator(TestBase):
         with _failing_external('SetLength'), _replaced_external('Log', log_by_expanding_a_code_constant):
             self.assertEqual(self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE'), 0)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='an Inno Setup declaration replaces the declaration of a script function of the same name',
-    )
     def test_a_script_function_named_like_an_inno_function_keeps_its_own_declaration(self):
         function = self._installer_emulator().symbols['IsDotNetInstalled']
         assert function.decl is not None
         self.assertEqual(function.decl.parameters, [])
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='an Inno Setup declaration renames the types of a script function of the same name',
-    )
     def test_a_type_is_only_named_cardinal_when_it_is_an_unsigned_32_bit_integer(self):
         from refinery.lib.inno.ifps import TC
         emulator = self._installer_emulator()
@@ -469,22 +461,69 @@ class TestIPFSEmulator(TestBase):
             if str(type) == 'Cardinal':
                 self.assertEqual(type.code, TC.U32)
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='a declared String resolves to the first string type of the script')
     def test_a_unicode_script_reads_a_declared_string_as_a_unicode_string(self):
         from refinery.lib.inno.ifps import TC
         decl = self._installer_emulator().symbols['Copy'].decl
         assert decl is not None and decl.return_type is not None
         self.assertEqual(decl.return_type.code, TC.UnicodeString)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='when a script reads and writes a property, its reader is named Set and its writer Get',
-    )
     def test_a_file_placed_in_a_directory_from_a_wizard_page_keeps_that_directory(self):
         from refinery.lib.inno.archive import InnoArchive
         inno = InnoArchive(self.download_sample(_INSTALLER_WITH_A_DIRECTORY_PAGE))
         self.assertEqual(inno.files[0].path, 'data/$InputDir0/HalfTime.dll')
+
+    def test_the_calls_of_a_script_decide_how_many_load_flags_its_dll_imports_have(self):
+        """
+        The revision of Pascal Script that compiled this script wrote one load flag into the
+        declaration of a DLL import. With that count, `GetTickCount` of `kernel32` returns a value
+        and takes no argument, as Windows declares it.
+        """
+        from refinery.lib.inno.ifps import IFPSFile
+        ifps = IFPSFile.Parse(self.download_sample(_SCRIPT_WITH_ONE_LOAD_FLAG_AND_ONLY_ANSI_STRINGS))
+        decl = next(function.decl for function in ifps.functions if function.name == 'GetTickCount')
+        assert decl is not None
+        self.assertEqual((decl.module, decl.void, decl.argc), ('kernel32', False, 0))
+
+    def test_a_script_whose_only_string_type_is_ansistring_reads_a_declared_string_as_an_ansi_string(self):
+        from refinery.lib.inno.ifps import IFPSFile, TC
+        ifps = IFPSFile.Parse(self.download_sample(_SCRIPT_WITH_ONE_LOAD_FLAG_AND_ONLY_ANSI_STRINGS))
+        decl = next(function.decl for function in ifps.functions if function.name == 'GetEnv')
+        assert decl is not None and decl.return_type is not None
+        self.assertEqual([parameter.type and parameter.type.code for parameter in decl.parameters], [TC.AnsiString])
+        self.assertEqual(decl.return_type.code, TC.AnsiString)
+
+    def test_a_property_that_takes_more_arguments_than_any_call_can_pass_is_refused(self):
+        import struct
+        from refinery.lib.inno.ifps import IFPSFile
+        data = self.download_sample(_SCRIPT_THAT_WRITES_THE_PASSWORD_BOX)
+        write = b'class:TPASSWORDEDIT|TEXT@|'
+        count = data.find(write) + len(write)
+        self.assertEqual(data[count:count + 4], struct.pack('<I', 1))
+        data[count:count + 4] = struct.pack('<I', len(data))
+        with self.assertRaisesRegex(ValueError, 'property TEXT takes'):
+            IFPSFile.Parse(data)
+
+    def test_a_call_whose_declaration_disagrees_with_its_emulation_fails_as_that_call(self):
+        """
+        The declaration of the import of `Log` is changed from a procedure to a function, which the
+        emulated `Log` is not.
+        """
+        import struct
+        from refinery.lib.inno.emulator import InnoSetupEmulator, NewEmulationError
+        from refinery.lib.inno.ifps import IFPSFile
+        data = self.download_sample(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
+        procedure_of_one_argument = bytes([3]) + b'LOG' + struct.pack('<I', 2) + bytes(2)
+        declaration = data.find(procedure_of_one_argument) + 8
+        self.assertEqual(data.find(procedure_of_one_argument, declaration), -1)
+        data[declaration] = 1
+        emulator = InnoSetupEmulator(IFPSFile.Parse(data))
+        failures = []
+        with self.assertRaises(IFPSException) as raised:
+            for event in emulator.emulate_function(emulator.symbols['PUT'], 'Name', 'Value'):
+                if isinstance(event, NewEmulationError):
+                    failures.append(event)
+        self.assertEqual([failure.name for failure in failures], ['Log'])
+        self.assertEqual(raised.exception.message, failures[0].message)
 
     def test_a_negative_hresult_matches_the_case_label_of_its_bit_pattern(self):
         emulator = self._script_emulator(_SCRIPT_THAT_NAMES_HRESULTS)
@@ -756,7 +795,7 @@ class TestIPFSEmulator(TestBase):
     def test_a_declaration_with_parameters_keeps_its_kind(self):
         from refinery.lib.inno.symbols import IFPSClasses, IFPSEvents
         self.assertEqual(IFPSEvents['NextButtonClick'].kind, 'function')
-        self.assertTrue(IFPSClasses.Classes['TStrings'].members['Strings'].is_property())
+        self.assertEqual(IFPSClasses.Classes['TStrings'].members['Strings'].kind, 'property')
 
     @pytest.mark.xfail(strict=True, raises=IFPSException, reason='a constant is expanded as a Python format string')
     def test_a_closing_brace_outside_of_a_constant_is_kept(self):
@@ -791,11 +830,6 @@ class TestIPFSEmulator(TestBase):
         description = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD).SysErrorMessage(0x80072EE7)
         self.assertTrue(message.endswith(description))
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='a call is read with the declaration of the current Inno Setup, where StringChange returns a value',
-    )
     def test_a_script_for_an_older_inno_setup_calls_string_change_without_a_result(self):
         from refinery.lib.inno.emulator import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_FOR_AN_OLDER_INNO_SETUP, log_calls=True)
