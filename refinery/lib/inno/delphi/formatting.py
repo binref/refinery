@@ -1,6 +1,5 @@
 """
-Behavior of the Delphi run-time library that Inno Setup scripts reach through functions which Inno
-Setup registers from it, like `format`.
+Delphi's function `Format`, which Inno Setup registers for scripts.
 """
 from __future__ import annotations
 
@@ -8,6 +7,8 @@ import enum
 import re
 
 from typing import NamedTuple, Sequence
+
+from refinery.lib.inno.delphi.errors import EConvertError
 
 
 class VType(enum.IntEnum):
@@ -42,29 +43,6 @@ class VarRec(NamedTuple):
     """
     kind: VType
     value: int | float | str | object | None
-
-
-class SysConst(enum.StrEnum):
-    """
-    Messages of exceptions that the Delphi run-time library raises, named as in its unit `SysConst`.
-    """
-    SDivByZero = 'Division by zero'
-    SIntOverflow = 'Integer overflow'
-    SOperationAborted = 'Operation aborted'
-
-
-class DelphiException(Exception):
-    """
-    An exception that a function of the Delphi run-time library raises, with the message that
-    Delphi gives it.
-    """
-
-
-class EConvertError(DelphiException, ValueError):
-    """
-    Delphi's exception for a value that cannot be converted. The function `format` raises it for an
-    invalid format and for an argument that is missing or does not fit its format specifier.
-    """
 
 
 _TEXT_KINDS = frozenset((

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Generator, NamedTuple, Protocol
 
-from refinery.lib.inno.delphi import DelphiException
+from refinery.lib.inno.delphi.errors import DelphiException
 
 _HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 

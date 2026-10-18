@@ -22,7 +22,7 @@ import struct
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum, IntEnum, IntFlag, StrEnum, auto
+from enum import Enum, IntFlag, StrEnum, auto
 from functools import cached_property, wraps
 from pathlib import Path
 from time import process_time
@@ -40,9 +40,11 @@ from typing import (
 )
 
 from refinery.lib import json
-from refinery.lib.inno import CaseInsensitiveDict, constants, delphi
+from refinery.lib.inno import CaseInsensitiveDict, constants, pascal
 from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion, LanguageDetection, TSetup
-from refinery.lib.inno.delphi import DelphiException, SysConst, VarRec, VType
+from refinery.lib.inno.delphi import formatting
+from refinery.lib.inno.delphi.errors import DelphiException, SysConst
+from refinery.lib.inno.delphi.formatting import VarRec, VType
 from refinery.lib.inno.ifps import (
     TC,
     AOp,
@@ -57,13 +59,13 @@ from refinery.lib.inno.ifps import (
     TArray,
     TPrimitive,
     TRecord,
-    TSet,
     TStaticArray,
     Value,
     VariableBase,
     VariableSpec,
     VariableType,
 )
+from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
 from refinery.lib.tools import copy_exception, exception_to_string
@@ -307,7 +309,7 @@ class Variable(VariableBase, Generic[_T]):
             elif isinstance(target := copied.data, Variable):
                 element.setptr(target, copy=target.spec is None)
             else:
-                raise _type_mismatch()
+                raise type_mismatch()
 
     def get(self) -> _T:
         """
@@ -378,59 +380,6 @@ class AbortEmulation(EmulatorException):
     """
 
 
-class PSError(IntEnum):
-    """
-    The kinds of runtime error that Pascal Script distinguishes, numbered as Pascal Script numbers
-    them. Pascal Script keeps the kind with every error of the script.
-    """
-    OutOfRange = 10
-    TypeMismatch = 12
-    DivideByZero = 15
-    MathError = 16
-    OutOfRecordRange = 18
-    Exception = 20
-
-    @property
-    def text(self) -> str:
-        """
-        The message that Pascal Script gives an error of this kind when it carries no exception of
-        Delphi.
-        """
-        return _PS_ERROR_TEXT[self]
-
-
-_PS_ERROR_TEXT = {
-    PSError.OutOfRange       : 'Out Of Range',
-    PSError.TypeMismatch     : 'Type Mismatch',
-    PSError.DivideByZero     : 'divide by Zero',
-    PSError.MathError        : 'Math error',
-    PSError.OutOfRecordRange : 'Out of Record Fields Range',
-    PSError.Exception        : 'Exception: ',
-}
-
-
-class IFPSException(RuntimeError):
-    """
-    An error of the script, which its exception handlers can handle. Pascal Script keeps the `kind`
-    of every error, and the exception of Delphi that raised it, if any. The script reads the
-    `message` of that exception with `GetExceptionMessage`, or the text of the kind when there is
-    no exception. An error that escapes from a call of an emulated function names the `called`
-    function in its report.
-    """
-    def __init__(
-        self,
-        message: str | None = None,
-        kind: PSError = PSError.Exception,
-        called: str | None = None,
-    ):
-        message = kind.text if message is None else str(message)
-        report = message if called is None else F'Error calling {called}: {message}'
-        super().__init__(report)
-        self.kind = kind
-        self.message = message
-        self.called = called
-
-
 class EmulatorTimeout(EmulatorException, TimeoutError):
     """
     The emulation timed out based on the given time limit in the configuration.
@@ -459,183 +408,6 @@ class EmulatorMaxArray(EmulatorException, MemoryError):
     """
     The script requested an array longer than the array length limit given in the configuration.
     """
-
-
-def _type_mismatch() -> IFPSException:
-    return IFPSException(kind=PSError.TypeMismatch)
-
-
-def _signed32(value: int) -> int:
-    return ((value + 0x80000000) & 0xFFFFFFFF) - 0x80000000
-
-
-def _ordinal(code: TC, value) -> int:
-    """
-    Reads an operand as Pascal Script reads it for integer arithmetic and comparisons: an integer as
-    its value and a character as its code point. Any other operand is a type mismatch.
-    """
-    if code.integer:
-        return value
-    if code.character:
-        return ord(value)
-    raise _type_mismatch()
-
-
-def _truncated_division(a: int, b: int) -> tuple[int, int]:
-    """
-    Divides as Delphi's `div` and `mod` do: The quotient is truncated toward zero, and the remainder
-    has the sign of the dividend.
-    """
-    if b == 0:
-        raise ZeroDivisionError('division by zero')
-    quotient = abs(a) // abs(b)
-    if (a < 0) != (b < 0):
-        quotient = -quotient
-    return quotient, a - quotient * b
-
-
-def _python_division(a, b):
-    return a // b if isinstance(a, int) and isinstance(b, int) else a / b
-
-
-_PYTHON_ARITHMETIC = {
-    AOp.Add: operator.add,
-    AOp.Sub: operator.sub,
-    AOp.Mul: operator.mul,
-    AOp.Div: _python_division,
-    AOp.Mod: operator.mod,
-    AOp.Shl: operator.lshift,
-    AOp.Shr: operator.rshift,
-    AOp.And: operator.and_,
-    AOp.BOr: operator.or_,
-    AOp.Xor: operator.xor,
-}
-
-_SET_ARITHMETIC = {
-    AOp.Add: operator.or_,
-    AOp.Sub: lambda a, b: a & ~b,
-    AOp.Mul: operator.and_,
-}
-
-_BIT_EXACT_ARITHMETIC = frozenset((
-    AOp.Add,
-    AOp.Sub,
-    AOp.Mul,
-    AOp.And,
-    AOp.BOr,
-    AOp.Xor,
-))
-
-
-def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b) -> int:
-    """
-    Pascal Script's arithmetic for a destination of an integer type. Addition, subtraction,
-    multiplication, and the bitwise operators give the bits that the destination keeps however the
-    operands are read. For division and shifts, the destination's type decides how the source is
-    read and how wide the computation is: 64 bits for an Int64 destination and for a 32-bit
-    destination with an Int64 source, 32 bits otherwise, unsigned for an unsigned destination.
-    """
-    b = _ordinal(source, b)
-    if aop in _BIT_EXACT_ARITHMETIC:
-        return _PYTHON_ARITHMETIC[aop](a, b)
-    wide = target.width > 4
-    if aop is AOp.Shl:
-        return a << (b & (63 if wide else 31))
-    if aop is AOp.Shr:
-        if wide:
-            return (a & 0xFFFFFFFFFFFFFFFF) >> (b & 63)
-        return (a & 0xFFFFFFFF) >> (b & 31)
-    if not wide and (target.width < 4 or source.width <= 4):
-        if target.signed:
-            b = _signed32(b)
-            if a == -0x80000000 and b == -1:
-                raise OverflowError('Integer overflow')
-        else:
-            b &= 0xFFFFFFFF
-    quotient, remainder = _truncated_division(a, b)
-    return quotient if aop is AOp.Div else remainder
-
-
-def _calculate(aop: AOp, target: TC, a, source: TC, b):
-    """
-    Pascal Script's arithmetic for a destination with type code `target` that holds `a` and a
-    source with type code `source` that holds `b`. Python's operators compute it for destinations
-    of other types than integers and sets, and for Variant sources.
-    """
-    if source is not TC.Variant:
-        if target.integer:
-            return _integer_arithmetic(aop, target, a, source, b)
-        if target is TC.Set:
-            if (calculate := _SET_ARITHMETIC.get(aop)) is None:
-                raise _type_mismatch()
-            return calculate(a, b)
-    return _PYTHON_ARITHMETIC[aop](a, b)
-
-
-_PYTHON_COMPARISON = {
-    COp.GE: operator.ge,
-    COp.LE: operator.le,
-    COp.GT: operator.gt,
-    COp.LT: operator.lt,
-    COp.NE: operator.ne,
-    COp.EQ: operator.eq,
-    COp.IN: lambda a, b: a in b,
-    COp.IS: operator.is_,
-}
-
-
-def _integer_comparands(left: TC, a: int, right: TC, b) -> tuple:
-    """
-    Reads the operands of a comparison whose left operand has an integer type as Pascal Script
-    reads them. The left operand's type decides how the right operand is read.
-    """
-    if left is TC.S32:
-        if right is TC.U32:
-            return a, _signed32(b)
-        if right.integer or right in (TC.Single, TC.Double, TC.Extended):
-            return a, b
-        if right.character:
-            return a, ord(b)
-        raise _type_mismatch()
-    if left is TC.U08 and right in (TC.AnsiString, TC.PChar):
-        return chr(a), b
-    b = _ordinal(right, b)
-    if left.width > 4:
-        return a, b
-    if left.signed:
-        return a, _signed32(b)
-    return a, b & 0xFFFFFFFF
-
-
-def _set_contains(members: int, set_type: TSet, code: TC, element) -> bool:
-    ordinal = _ordinal(code, element) & 0xFFFFFFFF
-    if ordinal >= set_type.size:
-        raise IFPSException(kind=PSError.OutOfRecordRange)
-    return bool((members >> ordinal) & 1)
-
-
-def _compare(cop: COp, left: IFPSType, a, right: IFPSType, b) -> bool:
-    """
-    Pascal Script's comparison of `a`, which has the type `left`, with `b`, which has the type
-    `right`. Python's operators compare operands of other types than integers and sets, and
-    Variants.
-    """
-    lc = left.code
-    rc = right.code
-    if cop is COp.IN:
-        if isinstance(right, TSet) and lc is not TC.Variant:
-            return _set_contains(b, right, lc, a)
-    elif cop is not COp.IS and lc is not TC.Variant and rc is not TC.Variant:
-        if lc.integer:
-            a, b = _integer_comparands(lc, a, rc, b)
-        elif lc is TC.Set:
-            if cop is COp.GE:
-                return b & ~a == 0
-            if cop is COp.LE:
-                return a & ~b == 0
-            if cop is not COp.EQ and cop is not COp.NE:
-                raise _type_mismatch()
-    return _PYTHON_COMPARISON[cop](a, b)
 
 
 class _CallState(NamedTuple):
@@ -1245,7 +1017,7 @@ def _open_array_element(element: Variable) -> VarRec:
         return VarRec(VType.Integer, 0)
     value = target.get()
     if kind is VType.Integer:
-        value = _signed32(value)
+        value = signed32(value)
     return VarRec(kind, value)
 
 
@@ -1843,7 +1615,7 @@ class IFPSEmulator:
                         dv = target.get()
                         fpu = isinstance(sv, float) or isinstance(dv, float)
                         try:
-                            result = _calculate(aop, target.type.code, dv, st.code, sv)
+                            result = pascal.calculate(aop, target.type.code, dv, st.code, sv)
                             if fpu and not isinstance(result, float):
                                 raise FloatingPointError
                         except FloatingPointError as FPE:
@@ -1911,7 +1683,7 @@ class IFPSEmulator:
                             raise TypeError(F'Operator for {opc} was of type {cop.__class__.__name__} rather than COp.')
                         lt, lv = gettyped(insn.op(1))
                         rt, rv = gettyped(insn.op(2))
-                        getvar(insn.op(0)).set(_compare(cop, lt, lv, rt, rv))
+                        getvar(insn.op(0)).set(pascal.compare(cop, lt, lv, rt, rv))
                     elif opc == Op.CallVar:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
@@ -1953,12 +1725,12 @@ class IFPSEmulator:
                     elif opc == Op.Inc:
                         counter = getvar(insn.op(0)).deref()
                         if not counter.type.code.integer:
-                            raise _type_mismatch()
+                            raise type_mismatch()
                         counter.set(counter.get() + 1)
                     elif opc == Op.Dec:
                         counter = getvar(insn.op(0)).deref()
                         if not counter.type.code.integer:
-                            raise _type_mismatch()
+                            raise type_mismatch()
                         counter.set(counter.get() - 1)
                     elif opc == Op.JumpPop1:
                         stack.pop()
@@ -2467,7 +2239,7 @@ class IFPSEmulator:
     @external()
     def Format(self, fmt: str, args: Variable[list]) -> str:
         elements = args.deref()
-        return delphi.format(fmt, [_open_array_element(elements.at(k)) for k in range(len(elements))])
+        return formatting.format(fmt, [_open_array_element(elements.at(k)) for k in range(len(elements))])
 
     @external()
     def SetupMessage(self, id: int) -> str:
