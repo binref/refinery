@@ -108,6 +108,7 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
+from refinery.units.scripting.js import js
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -5269,9 +5270,9 @@ class TestATypeofOfALocalHoldingANameNothingBindsStillThrows(TestBase):
     """
     Reading a name nothing binds throws a `ReferenceError`, and `typeof` of such a name answers
     `'undefined'` instead. The deobfuscation writes the name where the local holding it is read, so
-    `typeof r` becomes `typeof someGlobal` and the program that threw on the copy prints `undefined`.
-    A packed program reaches the shape when it copies a name the accessor object reads for it into a
-    local, which the obfuscator does not write itself; the program it wraps may.
+    `typeof r` becomes `typeof someGlobal`, and the program that threw on the copy prints
+    `undefined`. A packed program reaches the shape when it copies a name the accessor object reads
+    for it into a local, which the obfuscator does not write itself; the program it wraps may.
     """
 
 
@@ -5304,7 +5305,9 @@ class TestAStringTimerTheHostRefusesStillThrows(TestBase):
 A_FUNCTION_CALLED_THROUGH_THE_PACKED_ACCESSOR_OBJECT = {
     'a function comparing this with the global object': Program(
         a_program("""
-            Function("Q", "globalThis.helper = function () { return this === globalThis; }; console.log(Q['k']());")({ get 'k'() { return helper; } });
+            Function("Q", "globalThis.helper = function () { return this === globalThis; }; console.log(Q['k']());")(
+              { get 'k'() { return helper; } }
+            );
             """),
         prints('false'),
         Reading.COMMONJS,
@@ -5333,3 +5336,334 @@ class TestAFunctionCalledThroughThePackedAccessorObjectKeepsItsReceiver(TestBase
     def test_the_packers_own_output_does_not_call_the_function_bare(self):
         output = deobfuscate_source(PACKED_THIS, execution=ExecutionModel.commonjs)
         self.assertNotIn('helper()', output)
+
+
+#: A program reading a property of the global object named like a parameter of the CommonJS
+#: wrapper, mapped to the behavior Node gives it as a CommonJS file.
+A_GLOBAL_PROPERTY_NAMED_LIKE_A_WRAPPER_PARAMETER = {
+    'a property of globalThis named exports': Program(
+        a_program("""
+            globalThis.exports = 5;
+            console.log(globalThis.exports);
+            """),
+        prints('5'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_GLOBAL_PROPERTY_NAMED_LIKE_A_WRAPPER_PARAMETER)
+class TestANameTheCommonJsWrapperBindsIsNotTheGlobalOfThatName(TestBase):
+    """
+    A CommonJS file is the body of a function whose parameters are `require`, `module`, `exports`,
+    `__filename` and `__dirname`, so at the top of the file each of these names reads the parameter
+    and not a property of the global object. The semantic model binds none of them, so a pass that
+    asks whether a bare name reaches the global takes each for the global: `globalThis.exports`
+    becomes `exports`, and under `-e browser` the test `typeof module` folds to `'undefined'`,
+    because a browser has no global of that name.
+    """
+
+    @unittest.expectedFailure
+    def test_a_commonjs_file_in_a_browser_keeps_its_test_for_module(self):
+        source = 'if (typeof module === "object") console.log("cjs"); else console.log("global");'
+        output = source.encode('utf8') | js.assemble('-c', '-e', 'browser') | str
+        self.assertIn('cjs', output)
+
+
+#: A program awaiting at the top level of a file no package marks as a module, mapped to the
+#: behavior Node gives it.
+A_FILE_AWAITING_AT_ITS_TOP_LEVEL = {
+    'a payload only sloppy code runs as written': Program(
+        a_program("""
+            await null;
+            Function("with ({a: 1}) console.log(a);")();
+            """),
+        prints('1'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FILE_AWAITING_AT_ITS_TOP_LEVEL)
+class TestAFileAwaitingAtItsTopLevelIsAnEsModule(TestBase):
+    """
+    Node runs a `.js` file as an ES module when the file spells what only a module may, and a
+    top-level `await` is such a spelling. The parser reads no top-level `await`
+    (`TestAModulesTopLevelAwaitIsAProgram`), so under `-c` the file is taken for CommonJS, which is
+    sloppy code, and a payload only sloppy code runs as written is unpacked into strict code.
+    """
+
+
+#: A program that is an ES module only because it declares a name the CommonJS wrapper binds,
+#: mapped to the behavior Node gives it.
+A_FILE_DECLARING_A_WRAPPER_NAME_AT_ITS_TOP = {
+    'a const exports nothing reads': Program(
+        a_program("""
+            const exports = 0;
+            console.log(typeof this, typeof require);
+            """),
+        prints('undefined undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFileDeclaringAWrapperNameAtItsTopStaysAnEsModule(TestBase):
+    """
+    A `const` declaring `exports` at the top of a file redeclares a parameter of the CommonJS
+    wrapper, so Node cannot compile the file as CommonJS and runs it as an ES module instead. The
+    deobfuscation removes the declaration nothing reads, and Node runs what is left as CommonJS,
+    where `this` is an object and `require` is bound.
+    """
+
+    @wontfix(
+        'no file is an ES module only by declaring a name of the CommonJS wrapper: a module that '
+        'takes one of these names for its own imports what it binds there, which marks it as one'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_FILE_DECLARING_A_WRAPPER_NAME_AT_ITS_TOP
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+#: Programs whose function declares a variable of its own, lifted to the top of a classic script,
+#: mapped to the behavior a host gives them.
+A_FUNCTIONS_OWN_VARIABLE_LIFTED_INTO_A_SCRIPT = {
+    'a Function body': Program(
+        a_program("""
+            Function("var helper = [Date.now()]; helper.push(1); console.log(helper.length);")();
+            console.log(typeof globalThis.helper);
+            """),
+        prints('2', 'undefined'),
+        Reading.SCRIPT,
+    ),
+    'a function called once': Program(
+        a_program("""
+            function f() { var helper = [Date.now()]; helper.push(1); console.log(helper.length); }
+            f();
+            console.log(typeof globalThis.helper);
+            """),
+        prints('2', 'undefined'),
+        Reading.SCRIPT,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FUNCTIONS_OWN_VARIABLE_LIFTED_INTO_A_SCRIPT)
+class TestAFunctionsOwnVariableStaysOffTheGlobalObject(TestBase):
+    """
+    A variable a function declares is its own. Spliced into the top of a classic script, the
+    declaration makes it a property of the global object, which other scripts see and which may be
+    one the host already has: in a browser, a `var status` lifted this way writes the window's own.
+    The reflection pass lifts the declarations of a `Function` body this way, and the single-use
+    function inliner those of the function it inlines. Refusing every such lift would keep most
+    wrapped scripts wrapped.
+    """
+
+
+#: A program whose direct `eval` declares a function the file declares as well, mapped to the
+#: behavior Node gives it.
+A_DIRECT_EVAL_DECLARING_A_FUNCTION_THE_FILE_DECLARES = {
+    'a function the file declares after the call': Program(
+        a_program("""
+            eval("function q() { return 'eval'; }");
+            console.log(q());
+            function q() { return 'file'; }
+            """),
+        prints('eval'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFunctionADirectEvalDeclaresAgainReplacesTheFilesOwn(TestBase):
+    """
+    A sloppy direct `eval` declaring a function the scope already declares replaces it when the
+    `eval` runs. The call wrapper inliner reads the call from the declaration of the file and folds
+    it to the value that function returns.
+    """
+
+    @wontfix(
+        'no program has a direct eval declare again a function the file declares, which replaces '
+        'the function only once the eval has run'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_DIRECT_EVAL_DECLARING_A_FUNCTION_THE_FILE_DECLARES
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+#: Packed programs whose access through the accessor object the unpacked program makes otherwise,
+#: each made as the program the packer was given made it, mapped to the behavior Node gives them as
+#: a CommonJS file.
+A_PACKED_ACCESS_THE_PROGRAM_BEFORE_PACKING_MADE_OTHERWISE = {
+    'an update in a class body on a global no write may change': Program(
+        a_program("""
+            Object.defineProperty(globalThis, 'counter', { value: 0, writable: false });
+            try {
+              Function("p", "class A { static run() { p.k++; } } A.run(); console.log(p.k);")(
+                { get k() { return counter; }, set k(v) { return counter = v; } }
+              );
+            } catch (e) {
+              console.log(e.name);
+            }
+            """),
+        prints('0'),
+        Reading.COMMONJS,
+    ),
+    'a logical assignment of an anonymous function': Program(
+        a_program("""
+            var handler = 0;
+            Function("p", "p.k ||= function () {}; console.log(JSON.stringify(p.k.name));")(
+              { get k() { return handler; }, set k(v) { return handler = v; } }
+            );
+            """),
+        prints('""'),
+        Reading.COMMONJS,
+    ),
+    'a compound write in a with body whose object holds the name': Program(
+        a_program("""
+            Function("p", "p.k = 1; with ({counter: 100}) { p.k += 1; } console.log(p.k);")(
+              { get k() { return counter; }, set k(v) { return counter = v; } }
+            );
+            """),
+        prints('2'),
+        Reading.COMMONJS,
+    ),
+    'a read in a with body whose object holds the name': Program(
+        a_program("""
+            globalThis.counter = 1;
+            Function("p", "with ({counter: 100}) { console.log(p.k); }")({ get k() { return counter; } });
+            """),
+        prints('1'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPackedAccessDoesWhatTheAccessorDid(TestBase):
+    """
+    The accessors of the accessor object stand at the top of the file: the setter writes a global
+    as sloppy code, its value is an argument, which no function takes its name from, and the name
+    each accessor spells resolves outside every `with` body of the packed program. The unpacked
+    access is the one the program the packer was given made: inside a class body it is strict code
+    and throws where the global may not be written, an anonymous function written to the name is
+    named after it, and inside a `with` body whose object holds the name it reaches the object.
+    """
+
+    @wontfix(
+        'the unpacked access is the one the program the packer was given made: a write throws only '
+        'where that program threw, a function is named as that program named it, which only a read '
+        'of its name tells apart, and a with object holding the name captures it as it did there'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_PACKED_ACCESS_THE_PROGRAM_BEFORE_PACKING_MADE_OTHERWISE
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+#: A program deleting a variable a direct `eval` declared, mapped to the behavior Node gives it as
+#: a CommonJS file.
+A_VARIABLE_A_DIRECT_EVAL_DECLARED_DELETED = {
+    'a var the eval declares': Program(
+        a_program("""
+            eval("var q = 1;");
+            console.log(delete q, typeof q);
+            """),
+        prints('true undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAVariableADirectEvalDeclaredCanBeDeleted(TestBase):
+    """
+    A variable a sloppy direct `eval` declares can be deleted, and one the text declares cannot, so
+    once the `eval` is inlined `delete q` answers `false` and leaves the variable in place.
+    """
+
+    @wontfix(
+        'no program deletes a variable by its name, which only sloppy code may write and which '
+        'removes only a variable an eval declared'
+    )
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_VARIABLE_A_DIRECT_EVAL_DECLARED_DELETED
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+#: A program calling `execScript` under Node, mapped to the behavior Node gives it.
+A_STRING_RUN_BY_EXECSCRIPT_UNDER_NODE = {
+    'a call Node cannot resolve': Program(
+        a_program("""
+            try { execScript("console.log(1)"); } catch (e) { console.log(e.name); }
+            """),
+        prints('ReferenceError'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAStringRunByExecScriptRunsOnlyWhereTheHostDefinesIt(TestBase):
+    """
+    Only Internet Explorer defines `execScript`; elsewhere a call of it throws a `ReferenceError`.
+    The reflection pass inlines the string it is given whatever the host, so under Node the program
+    that caught the error runs the string instead.
+    """
+
+    @wontfix('no program run by Node calls execScript, which only Internet Explorer defines')
+    def test_the_deobfuscation_behaves_as_the_program_does(self):
+        rows = A_STRING_RUN_BY_EXECSCRIPT_UNDER_NODE
+        self.assertEqual(
+            {label: row.read() for label, row in rows.items()},
+            {label: row.required() for label, row in rows.items()},
+        )
+
+
+#: Programs whose fold rests on code being sloppy where its text does not make it strict, mapped
+#: to the behavior Node gives them as an ES module.
+A_FOLD_RESTING_ON_SLOPPY_CODE_IN_AN_ES_MODULE = {
+    'a global finder returning this from a function called bare': Program(
+        a_program("""
+            function g() { var r; try { r = window; } catch (e) {} return r || this; }
+            console.log(g() === globalThis);
+            """),
+        prints('false'),
+        Reading.ES_MODULE,
+    ),
+    'a call of a block function after its block': Program(
+        a_program("""
+            try { g(); } catch (e) { console.log(e.name); }
+            { function g() { return 1; } }
+            try { console.log(g()); } catch (e) { console.log(e.name); }
+            """),
+        prints('ReferenceError', 'ReferenceError'),
+        Reading.ES_MODULE,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FOLD_RESTING_ON_SLOPPY_CODE_IN_AN_ES_MODULE)
+class TestAFoldRestingOnSloppyCodeHoldsInAnEsModule(TestBase):
+    """
+    Under `-m` the file may be an ES module, which is strict code throughout, so a fold is sound
+    only where it holds for strict code as well. Two folds ask only whether the text makes the code
+    strict. The global finder takes `this` of a function called bare for the global object, which
+    is `undefined` in strict code. The semantic model gives a function declared in a block the
+    binding outside the block that only sloppy code gives it.
+    """

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
+
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.singleuse import JsSingleUseFunctionInliner
-from refinery.lib.scripts.js.options import DeobfuscationOptions
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 
 
 class TestSingleUseFunctionInliner(TestJsDeobfuscator):
@@ -53,6 +55,58 @@ class TestSingleUseFunctionInliner(TestJsDeobfuscator):
             '}\n'
             'a();')
         self.assertEqual('print(1);', self._singleuse(once))
+
+    def test_a_commonjs_wrapper_name_declared_in_the_body_keeps_the_wrapper(self):
+        rows = [
+            inspect.cleandoc(
+                """
+                function w() {
+                  let module = [];
+                  print(module.length);
+                }
+                w();
+                """
+            ),
+            inspect.cleandoc(
+                """
+                function w() {
+                  var exports;
+                  print(typeof exports);
+                }
+                w();
+                """
+            ),
+        ]
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            options = DeobfuscationOptions(execution=execution)
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {
+                        source: self._run_transformer(source, JsSingleUseFunctionInliner, options)
+                        for source in rows
+                    },
+                    {source: source for source in rows},
+                )
+
+    def test_a_commonjs_wrapper_name_declared_in_the_body_folds_into_a_script(self):
+        source = inspect.cleandoc(
+            """
+            function w() {
+              let module = [];
+              print(module.length);
+            }
+            w();
+            """
+        )
+        self.assertEqual(
+            self._singleuse(source),
+            inspect.cleandoc(
+                """
+                let module = [];
+                print(module.length);
+                """
+            ),
+        )
 
     def test_a_reflection_surface_refuses_the_fold(self):
         source = 'var e = eval;\nfunction w() {\n  print(1);\n}\nw();'

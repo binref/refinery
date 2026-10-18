@@ -1282,12 +1282,12 @@ class TestGuaranteedGlobalNamesInWithScope(TestBase):
 class TestDeobfuscationModuleScope(TestBase):
     """
     Semantics preservation for the module execution model. The oracle runs each snippet as a CommonJS
-    module (`node <file>`), so a scope-sensitive snippet is deobfuscated with `module=True` to match.
+    module (`node <file>`), so a scope-sensitive snippet is deobfuscated under
+    `refinery.lib.scripts.js.options.ExecutionModel.module` to match.
     """
 
-    def _check(self, source: str, *, module: bool = False):
-        execution = ExecutionModel.module if module else ExecutionModel.script
-        deobfuscated = deobfuscate_source(source, execution=execution)
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source, execution=ExecutionModel.module)
         self.assertEqual(
             behavior(source),
             behavior(deobfuscated),
@@ -1307,8 +1307,8 @@ class TestDeobfuscationModuleScope(TestBase):
             'var SINK = [];'
             ' (0, eval)("var g = 7;");'
             ' SINK.push(globalThis.g);'
-            " console.log(SINK.join('|'));",
-            module=True)
+            " console.log(SINK.join('|'));"
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -4083,7 +4083,8 @@ class TestUndeclaredHostObservableGlobals(TestBase):
         source = 'var VERSION = 3; console.log(VERSION);'
         self.assertEqual(
             deobfuscate_source(source, execution=ExecutionModel.module, entrypoints=('VERSION',)),
-            'console.log(3);')
+            'console.log(3);',
+        )
 
     @unittest.expectedFailure
     def test_module_scoped_dead_function_is_removed_even_when_exported(self):

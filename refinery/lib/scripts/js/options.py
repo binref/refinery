@@ -15,18 +15,14 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.model import JsScript
 
 
-COMMONJS_WRAPPER_NAMES = frozenset({
-    'require',
-    'module',
-    'exports',
-    '__filename',
-    '__dirname',
-})
+COMMONJS_WRAPPER_NAMES = frozenset({'require', 'module', 'exports', '__filename', '__dirname'})
 """
 The parameters of the function a CommonJS host wraps around a file's text. Where the file declares
-none of these names itself, a bare read of one reads the value the host passed; the global scope
-holds none of them. Code run by a `Function` construction, an indirect `eval` or a string timer is
-global code outside that function and does not see them.
+none of these names itself, a bare read of one reads the value the host passed and a bare
+assignment writes it; the global scope holds none of them. Code run by a `Function` construction,
+an indirect `eval` or a string timer is global code outside that function and does not see them.
+A `let`, `const` or `class` declaration of one at the top of the file redeclares a parameter, which
+Node refuses to compile as CommonJS; it runs such a file as an ES module.
 """
 
 
@@ -38,8 +34,8 @@ class ExecutionModel(enum.Enum):
 
     - `script` (the default): a browser `<script>`, a Windows Script Host `.js`, or any classic
       global script. A top-level `var`/`function` becomes a property of the global object, so a
-      global declaration produced by indirect `eval`, a string timer, or the `Function` constructor
-      may be inlined as a plain top-level declaration without changing meaning.
+      global declaration produced by indirect `eval` or a string timer may be inlined as a plain
+      top-level declaration without changing meaning.
     - `commonjs`: a CommonJS file, as `node file.js` runs it when no package says otherwise. Its
       text is the body of a function the host calls, which runs sloppy unless the file says
       otherwise and binds the names in `COMMONJS_WRAPPER_NAMES`.
@@ -163,9 +159,10 @@ def preserves_script_return(options: object | None) -> bool:
 
 def runs_as_module(options: object | None, root: JsScript) -> bool:
     """
-    Whether the file at *root* runs under the module execution model: *options* selects it, or the
+    Whether the file at *root* runs as a module of either kind, where a top-level declaration is
+    scoped to the file: *options* selects the `commonjs` or the `module` execution model, or the
     file spells module syntax, which no host loads as a script. Every reader of the model asks here,
-    so that no file is judged under the script model by one pass and under the module model by
+    so that no file is judged under the script model by one pass and under a module model by
     another.
     """
     return module_execution(options) or root.module

@@ -258,7 +258,4 @@ class TestJsModuleKind(TestUnitBase):
         )
 
     def test_a_classic_global_script_holds_the_payload_unpacked(self):
-        self.assertEqual(
-            self.SLOPPY_PAYLOAD | self.load() | str,
-            'leak = 5;\nconsole.log(leak);',
-        )
+        self.assertEqual(self.SLOPPY_PAYLOAD | self.load() | str, 'leak = 5;\nconsole.log(leak);')

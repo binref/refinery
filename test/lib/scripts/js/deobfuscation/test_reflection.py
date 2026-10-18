@@ -15,7 +15,7 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
 )
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
-from test.lib.scripts.js.ledger import Program, Reading, a_program, prints
+from test.lib.scripts.js.ledger import Program, Reading, a_program, printed, prints
 from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
 
 from refinery.lib.scripts import tree_version
@@ -54,7 +54,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def _reflect_module(self, source: str) -> str:
         return self._run_transformer(
-            source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.module))
+            source, JsReflectionInlining, DeobfuscationOptions(execution=ExecutionModel.module)
+        )
 
     def test_a_constant_fold_before_a_sibling_construction_check_does_not_trip_the_pin(self):
         """
@@ -3200,10 +3201,7 @@ class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
         )
 
     def test_the_same_payload_is_left_standing_where_the_file_may_be_an_es_module(self):
-        rows = [
-            'Function("leak = 5;")();',
-            'Function("with ({a: 1}) console.log(a);")();',
-        ]
+        rows = ['Function("leak = 5;")();', 'Function("with ({a: 1}) console.log(a);")();']
         self.assertEqual(
             {source: self._reflect(source, ExecutionModel.module) for source in rows},
             {source: source for source in rows},
@@ -3221,14 +3219,72 @@ class TestACommonJsFileRunsAPayloadAsSloppyCode(TestJsDeobfuscator):
 
     def test_a_payload_is_left_standing_where_the_text_of_a_commonjs_file_makes_the_site_strict(self):
         rows = [
-            "'use strict';\nFunction(\"leak = 5;\")();",
-            'export const t = 1;\nFunction("leak = 5;")();',
-            "function f() {\n  'use strict';\n  Function(\"leak = 5;\")();\n}\nf();",
+            inspect.cleandoc(
+                """
+                'use strict';
+                Function("leak = 5;")();
+                """
+            ),
+            inspect.cleandoc(
+                """
+                export const t = 1;
+                Function("leak = 5;")();
+                """
+            ),
+            inspect.cleandoc(
+                """
+                function f() {
+                  'use strict';
+                  Function("leak = 5;")();
+                }
+                f();
+                """
+            ),
         ]
         self.assertEqual(
             {source: self._reflect(source, ExecutionModel.commonjs) for source in rows},
             {source: source for source in rows},
         )
+
+    def test_a_direct_eval_declaring_a_name_the_file_declares_otherwise_is_left_standing(self):
+        rows = [
+            inspect.cleandoc(
+                """
+                eval("var q = 1;");
+                let q = 0;
+                """
+            ),
+            inspect.cleandoc(
+                """
+                eval("var q = 1;");
+                class q {}
+                """
+            ),
+            inspect.cleandoc(
+                """
+                eval("function q() {}");
+                function q() {}
+                """
+            ),
+        ]
+        for execution in (ExecutionModel.commonjs, ExecutionModel.script):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {source: self._reflect(source, execution) for source in rows},
+                    {source: source for source in rows},
+                )
+
+    def test_a_payload_holding_a_direct_eval_is_left_standing_where_the_file_runs_as_a_module(self):
+        rows = [
+            'console.log(Function("return eval(\'typeof require\')")());',
+            '(0, eval)("eval(\'var q = 1\')");',
+        ]
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {source: self._reflect(source, execution) for source in rows},
+                    {source: source for source in rows},
+                )
 
 
 class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
@@ -3239,7 +3295,10 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
     are not bound, so a payload reading one is left standing where the file may be CommonJS. Where
     the file is a script or spells module syntax, nothing binds them at the site either, and the
     payload is inlined. A read through an accessor the file defines resolves in the file's own
-    scope, so a packed body reading the name that way is unpacked.
+    scope, so a packed body reading the name that way is unpacked. A file assigning the name writes
+    the wrapper's parameter and binds no global, so a payload reading it is left standing as well.
+    The top of a CommonJS file is the body of the function the wrapper is, which may not declare
+    these names again, so a payload declaring one is left standing where it would land there.
     """
 
     WRAPPER_NAME_READS = {
@@ -3294,22 +3353,68 @@ class TestAPayloadReadingANameTheCommonJsWrapperBinds(TestJsDeobfuscator):
                     self._reflect(source, execution),
                 )
 
-    def test_a_payload_binding_the_name_for_itself_is_inlined_into_a_commonjs_file(self):
+    def test_a_payload_reading_a_wrapper_name_the_file_assigns_is_left_standing(self):
+        source = inspect.cleandoc(
+            """
+            exports = module.exports = {};
+            console.log(Function("return typeof exports")());
+            """
+        )
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(self._reflect(source, execution), source)
+
+    def test_a_payload_declaring_a_wrapper_name_is_left_standing_at_the_top_of_the_file(self):
+        rows = [
+            'Function("let module = 1; console.log(module)")();',
+            'Function("var exports = 3; console.log(exports)")();',
+            'eval("const require = 2; console.log(require)");',
+        ]
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {source: self._reflect(source, execution) for source in rows},
+                    {source: source for source in rows},
+                )
+
+    def test_a_payload_declaring_a_wrapper_name_is_inlined_into_a_function(self):
+        source = inspect.cleandoc(
+            """
+            function g() {
+              Function("let module = 1; console.log(module)")();
+            }
+            """
+        )
         self.assertEqual(
-            'let module = 1;\nconsole.log(module);',
-            self._reflect(
-                'Function("let module = 1; console.log(module)")();',
-                ExecutionModel.commonjs,
+            self._reflect(source, ExecutionModel.commonjs),
+            inspect.cleandoc(
+                """
+                function g() {
+                  let module = 1;
+                  console.log(module);
+                }
+                """
+            ),
+        )
+
+    def test_a_payload_declaring_a_wrapper_name_is_inlined_at_the_top_of_a_script(self):
+        self.assertEqual(
+            self._reflect('Function("let module = 1; console.log(module)")();', ExecutionModel.script),
+            inspect.cleandoc(
+                """
+                let module = 1;
+                console.log(module);
+                """
             ),
         )
 
 
 class TestAPackedTypeofThroughAGetterReturningAName(TestJsDeobfuscator):
     """
-    A getter returning a name reads the name whenever the packed body reads its key, and throws where
-    nothing binds the name; `typeof` of the bare name answers `'undefined'` there instead. So a
-    `typeof` of such a key is left packed. A getter returning `typeof` of the name asks the question
-    itself, and a read of its key is unpacked.
+    A getter returning a name reads the name whenever the packed body reads its key, and throws
+    where nothing binds the name; `typeof` of the bare name answers `'undefined'` there instead. So
+    a `typeof` of such a key is left packed. A getter returning `typeof` of the name asks the
+    question itself, and a read of its key is unpacked.
     """
 
     def _reflect(self, source: str) -> str:
@@ -3351,10 +3456,8 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
         )
 
     def test_each_compound_write_and_update_becomes_the_same_operator_on_the_name(self):
-        source = (
-            'Function("p", "p.k = 0; p.k += 15; p.k++; --p.k; p.k ||= 3; (p.k) **= 2;'
-            ' console.log(p.k);")' + self.ACCESSORS + ';'
-        )
+        body = 'p.k = 0; p.k += 15; p.k++; --p.k; p.k ||= 3; (p.k) **= 2; console.log(p.k);'
+        source = F'Function("p", "{body}"){self.ACCESSORS};'
         self.assertEqual(
             self._reflect(source),
             inspect.cleandoc(
@@ -3391,3 +3494,46 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
             '({ get k() {\n  return counter;\n}, set k(v) {\n  return counter = v;\n} });'
         )
         self.assertEqual(self._reflect(source), source)
+
+    def test_a_write_to_a_target_the_language_refuses_stays_packed(self):
+        rows = [
+            F'Function("p", "p?.k += 1;"){self.ACCESSORS};',
+            F'Function("p", "[p.k] += 1;"){self.ACCESSORS};',
+            F'Function("p", "p?.k = 1;"){self.ACCESSORS};',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: printed(source) for source in rows},
+        )
+
+
+class TestAPackTheBareNamesDoNotReproduce(TestJsDeobfuscator):
+    """
+    A pack is unpacked by writing the name each accessor answers with in place of the access. Its
+    parameter has to be one plain name for the accesses to be found, and a call through a getter
+    returning `eval` is an indirect `eval`, which the bare name would turn into a direct one.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_a_pack_whose_parameter_text_is_no_single_name_stays_packed(self):
+        rows = [
+            'Function("a,b", "console.log(typeof a, typeof b);")({});',
+            'Function("...p", "console.log(p.length);")({});',
+            'Function("p = 1", "console.log(p);")({});',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: printed(source) for source in rows},
+        )
+
+    def test_a_pack_whose_parameter_is_padded_with_whitespace_is_unpacked(self):
+        self.assertEqual(
+            self._reflect('Function(" p ", "console.log(p.k);")({ get k() { return x; } });'),
+            'console.log(x);',
+        )
+
+    def test_a_call_through_a_getter_returning_eval_stays_packed(self):
+        source = 'Function("p", "console.log(p.e(\'typeof y\'));")({ get e() { return eval; } });'
+        self.assertEqual(self._reflect(source), printed(source))

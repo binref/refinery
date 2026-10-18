@@ -1905,12 +1905,32 @@ def hoist_path_is_clear(
     return True
 
 
+def redeclares_a_wrapper_name(
+    names: Collection[str],
+    root_model: SemanticModel,
+    scope: Scope,
+    wrapper_names: Collection[str],
+) -> bool:
+    """
+    Whether a declaration of one of *names* that lands in *scope* redeclares one of
+    *wrapper_names*: the parameters of the function a CommonJS host wraps around the text of the
+    file, which `refinery.lib.scripts.js.options.commonjs_wrapper_names` lists where the file may
+    run as one. Only the top scope of the file is the body of that function. A `let`, `const` or
+    `class` declaration there redeclares a parameter, which Node refuses to compile as CommonJS: it
+    runs the file as an ES module instead, strict code with none of these names bound. A `var` or
+    function declaration there names the parameter itself, which holds what the host passed and not
+    the `undefined` a fresh `var` starts out as.
+    """
+    return scope is root_model.root_scope and any(name in wrapper_names for name in names)
+
+
 def inlined_declarations_safe(
     declared_scope: Scope,
     root_model: SemanticModel,
     site_scope: Scope,
     *,
     exclude: Collection[Binding] = (),
+    wrapper_names: Collection[str] = (),
 ) -> bool:
     """
     Whether the names a spliced body declares at its own top level — the bindings of
@@ -1924,7 +1944,8 @@ def inlined_declarations_safe(
 
     *exclude* names the bindings the same edit deletes elsewhere: a use resolving to one is
     carried off by the deletion rather than captured, so the introduced declaration may share its
-    name.
+    name. *wrapper_names* are the names a CommonJS host binds around the file, which no declaration
+    landing at the top of the file may name (`redeclares_a_wrapper_name`).
     """
     bindings = declared_scope.bindings
     hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
@@ -1933,11 +1954,13 @@ def inlined_declarations_safe(
         var_scope = site_scope.var_scope
         if var_scope is None or root_model.would_capture(hoisted, var_scope, exclude=exclude):
             return False
+        if redeclares_a_wrapper_name(hoisted, root_model, var_scope, wrapper_names):
+            return False
         if not hoist_path_is_clear(hoisted, site_scope, var_scope, exclude=exclude):
             return False
     if lexical and root_model.would_capture(lexical, site_scope, exclude=exclude):
         return False
-    return True
+    return not redeclares_a_wrapper_name(lexical, root_model, site_scope, wrapper_names)
 
 
 def extract_identifier_params(params: list) -> list[str] | None:

@@ -33,11 +33,14 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
-    is_member_write_target,
+    enclosing_operator,
+    is_direct_eval_call,
+    is_invocation_target,
     is_simple_assignment_target,
     name_uses_in_scope,
     reference_role,
     references_new_target,
+    tolerates_unresolvable,
 )
 from refinery.lib.scripts.js.analysis.tampering import (
     denotes_function_intrinsic,
@@ -50,12 +53,15 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     body_returns_undefined,
     extract_literal_value,
     get_body,
+    hoist_path_is_clear,
     inlined_declarations_safe,
+    is_valid_identifier,
     names_this_realms_global_object,
     nothing_still_names,
     preserve_script_end_value,
     property_key,
     reaches_script_completion,
+    redeclares_a_wrapper_name,
     references_receiver_this,
     remove_declarator,
     replace_with_value,
@@ -80,7 +86,6 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsObjectExpression,
-    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsReturnStatement,
@@ -88,6 +93,7 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
+    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     Statement,
@@ -537,16 +543,6 @@ def _build_proxy_mapping(
     return _ProxyMapping(getters, setters)
 
 
-def _is_operand_of(node: Node, operator: str) -> bool:
-    """
-    Whether *node*, parentheses aside, is the operand of the unary *operator*.
-    """
-    while isinstance(node.parent, JsParenthesizedExpression):
-        node = node.parent
-    parent = node.parent
-    return isinstance(parent, JsUnaryExpression) and parent.operator == operator
-
-
 def _substitute_proxy_accesses(
     parsed: JsScript,
     body_model: SemanticModel,
@@ -566,10 +562,12 @@ def _substitute_proxy_accesses(
     the getter and writes through the setter, in the order the same operator on a name reads and
     writes it, so it resolves to the name where getter and setter both name it, which is how the
     packer writes a program's `+=` or `++` on a global; any other such access fails, as does a
-    `delete`, which removes the proxy object's own property and leaves the name alone, and a
-    `for-in`/`for-of` head. So does a read under `typeof` through a getter returning a name: the
-    getter reads the name and throws where nothing binds it, which `typeof` of the bare name does
-    not.
+    `delete`, which removes the proxy object's own property and leaves the name alone, a
+    `for-in`/`for-of` head, and a target the language refuses, an optional chain or a member
+    inside a literal. So does a read under `typeof` through a getter returning a name: the getter
+    reads the name and throws where nothing binds it, which `typeof` of the bare name does not
+    (`refinery.lib.scripts.js.analysis.model.tolerates_unresolvable`). A call through a getter
+    returning `eval` is an indirect `eval`, which the bare name would make direct.
     """
     bound = body_model.root_scope.bindings.get(param_name)
     if bound is not None and bound.kind is not BindingKind.IMPLICIT_GLOBAL:
@@ -589,27 +587,35 @@ def _substitute_proxy_accesses(
         key = access_key(member)
         if key is None:
             return None
-        if is_simple_assignment_target(member):
-            if key not in setters:
-                return None
-            replacement: JsIdentifier | JsUnaryExpression = JsIdentifier(name=setters[key])
-        elif reference_role(member) is Role.READWRITE and not _is_operand_of(member, 'delete'):
-            name = setters.get(key)
-            if name is None or getters.get(key) != name:
-                return None
-            replacement = JsIdentifier(name=name)
-        elif is_member_write_target(member):
-            return None
-        else:
+        role = reference_role(member)
+        if role is Role.READ:
             target = getters.get(key)
             if target is None:
                 return None
             if isinstance(target, str):
-                if _is_operand_of(member, 'typeof'):
+                if tolerates_unresolvable(member):
                     return None
-                replacement = JsIdentifier(name=target)
+                if target == 'eval' and is_invocation_target(member):
+                    return None
+                replacement: JsIdentifier | JsUnaryExpression = JsIdentifier(name=target)
             else:
                 replacement = _clone_node(target)
+        elif member.optional:
+            return None
+        elif role is Role.WRITE:
+            if not is_simple_assignment_target(member) or key not in setters:
+                return None
+            replacement = JsIdentifier(name=setters[key])
+        else:
+            name = setters.get(key)
+            operator = enclosing_operator(member)
+            if (
+                not isinstance(operator, (JsAssignmentExpression, JsUpdateExpression))
+                or name is None
+                or getters.get(key) != name
+            ):
+                return None
+            replacement = JsIdentifier(name=name)
         _replace_in_parent(member, replacement)
         if isinstance(replacement, JsIdentifier):
             replaced.append(replacement)
@@ -662,6 +668,9 @@ def _try_unpack_function_constructor(
         param_name = string_value(inner_args[0])
         code = string_value(inner_args[1])
         if param_name is None:
+            return None
+        param_name = param_name.strip(TRIMMABLE_WHITESPACE)
+        if param_name and not is_valid_identifier(param_name):
             return None
     else:
         return None
@@ -1723,10 +1732,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         strict subset of what this admits, so declining here costs a CommonJS-only recall and never a
         soundness; the `commonjs` model is how an analyst who knows the file is CommonJS recovers
         it. This is why it is asked at every reflection strictness gate rather than left to
-        `strict_mode_at`, whose pure-tree answer is blind to the execution model, and why the
-        complementary sloppy-conservative gates — a mapped `arguments` object, a rest unpacking — read
-        `strict_mode_at` alone: their soundness runs the other way, so they must assume the sloppy
-        CommonJS reading, not the strict one.
+        `refinery.lib.scripts.js.strict.strict_mode_at`, whose pure-tree answer is blind to the
+        execution model, and why the complementary sloppy-conservative gates — a mapped `arguments`
+        object, a rest unpacking — read `refinery.lib.scripts.js.strict.strict_mode_at` alone: their
+        soundness runs the other way, so they must assume the sloppy CommonJS reading, not the
+        strict one.
         """
         return strict_mode_at(site) or may_run_as_es_module(self.options, root)
 
@@ -1794,7 +1804,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         capture — declines. Where the file may run as CommonJS, every name of
         `refinery.lib.scripts.js.options.commonjs_wrapper_names` that no declaration binds at *site*
         is such a name: global code reading `require` reads a global that does not exist, and the
-        same text at *site* reads the one the host hands the file. Direct `eval` runs in the
+        same text at *site* reads the one the host hands the file. A name the file only assigns is
+        one of them too, for the assignment writes the parameter the host passed and creates no
+        global, although the model records it as an implicit one. A direct `eval` in such a body
+        reads and declares names on the scope chain at run time, which no free-name check sees;
+        where the file runs as a module, the chain at *site* holds the file's own scope and, for a
+        CommonJS file, the host's parameters, so the body declines. Direct `eval` runs in the
         caller's scope, which is *site* itself, so its references and `this` are already correct
         there and only the checks below apply. A top-level `return` is a SyntaxError in evaluated
         code, so an eval body with one declines. Declaration handling is delegated to
@@ -1878,12 +1893,20 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if resolves_globally and free:
             if crosses_dynamic_scope(site_scope):
                 return None
+            if (
+                runs_as_module(self.options, root)
+                and any(is_direct_eval_call(node) for node in parsed.walk())
+            ):
+                return None
             wrapper = commonjs_wrapper_names(self.options, root)
             for name in free:
                 if name in site_resolved:
                     continue
                 binding = root_model.lookup(name, site_scope, exclude=exclude)
-                if binding is None and name in wrapper:
+                if (
+                    name in wrapper
+                    and (binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL)
+                ):
                     return None
                 if binding is not None and not root_model.reaches_global_object(
                     binding, module_scope=runs_as_module(self.options, root),
@@ -1915,7 +1938,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
             return inlined_declarations_safe(
-                body_model.root_scope, root_model, site_scope, exclude=exclude)
+                body_model.root_scope,
+                root_model,
+                site_scope,
+                exclude=exclude,
+                wrapper_names=commonjs_wrapper_names(self.options, root_model.root),
+            )
         return self._eval_declarations_safe(
             body_model, root_model, site_scope, site, scope, at_global_scope,
         )
@@ -1933,22 +1961,31 @@ class JsReflectionInlining(ScriptLevelTransformer):
         Whether an `eval` body's top-level declarations can be inlined at the call site. A
         `let`/`const`/`class` lives in a declarative environment discarded when the evaluation
         returns, so a persistent inlined binding differs only if a name it declares is referenced
-        outside the body; it is declined exactly when introducing it at the site would capture such a
-        reference. A `var` or function persists: under indirect eval it becomes a global-object
-        property, reproducible only at top-level script scope and never under the module model; under
-        direct eval it lands in the caller's variable scope, but never under a strict direct eval,
-        whose `var` stays local to the eval. The module execution model could be a strict ES module,
-        where the `var` is ephemeral, so `_destination_may_be_strict` treats a module direct eval as
-        possibly strict and declines the inline; the sloppy CommonJS reading would leak the `var` and
-        keep the inline, but declining is sound for both. Such a declaration hoists to the head of its
-        variable scope, so it is inlined only when the eval site strictly dominates every reference to
-        the name already there — one that runs before it or shares its statement, or reads the name
-        through a closure, would be rebound.
+        outside the body; it is declined where introducing it at the site would capture such a
+        reference, and where it would land at the top of a file that may run as CommonJS and name a
+        parameter of the host's wrapper (`redeclares_a_wrapper_name`). A `var` or function persists:
+        under indirect eval it becomes a global-object property, reproducible only at top-level
+        script scope and never under a module model; under direct eval it lands in the caller's
+        variable scope, but never under a strict direct eval, whose `var` stays local to the eval.
+        The `module` execution model could be a strict ES module, where the `var` is ephemeral, so
+        `_destination_may_be_strict` treats a direct eval there as possibly strict and declines the
+        inline; the sloppy CommonJS reading would leak the `var` and keep the inline, but declining
+        is sound for both. Under the `commonjs` model a site the text leaves sloppy keeps it. Such a
+        declaration hoists to the head of its variable scope, so it is inlined only when the eval
+        site strictly dominates every reference to the name already there — one that runs before it
+        or shares its statement, or reads the name through a closure, would be rebound — and only
+        where no scope from the site up to that variable scope declares the name otherwise: against
+        a `let`, `const` or `class` the evaluation throws a `SyntaxError` the site catches, and a
+        function it declares replaces one of the file only when it runs, where the same text spliced
+        in is a redeclaration the file cannot survive or a function that wins at hoisting instead.
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings
         lexical = {name for name, binding in bindings.items() if binding.is_lexical}
         if lexical and root_model.would_capture(lexical, site_scope):
+            return False
+        wrapper_names = commonjs_wrapper_names(self.options, root)
+        if redeclares_a_wrapper_name(lexical, root_model, site_scope, wrapper_names):
             return False
         hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
         if not hoisted:
@@ -1959,7 +1996,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         elif self._destination_may_be_strict(site, root) or declares_use_strict(body_model.root):
             return False
         var_scope = site_scope.var_scope
-        if var_scope is None:
+        if var_scope is None or not hoist_path_is_clear(hoisted, site_scope, var_scope):
+            return False
+        if any(
+            binding is not None and (binding.is_lexical or binding.kind is BindingKind.FUNCTION)
+            for binding in map(var_scope.bindings.get, hoisted)
+        ):
             return False
         dominance = model_cache(self, root).dominance
         return all(

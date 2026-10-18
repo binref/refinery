@@ -7,7 +7,9 @@ one, a payload that runs differently as strict code is unpacked into it. Where t
 ES module as well, such a payload stays in its string, because unpacked it would run as strict
 code. Either way a payload reading a name the CommonJS wrapper binds — `require`, `module`,
 `exports`, `__filename`, `__dirname` — stays in its string: the string runs as global code, which
-does not see these names, and the same text unpacked into the file would read the wrapper's.
+does not see these names, and the same text unpacked into the file would read the wrapper's. So
+does a payload declaring one where it would land at the top of the file, which is the body of the
+function the wrapper is, and a payload holding a direct `eval`, which reads the scope it runs in.
 """
 from __future__ import annotations
 
@@ -69,11 +71,10 @@ def _each_reading_still_prints(
 
 def _node_prints_what_each_row_pins(test: unittest.TestCase, rows: dict[str, Payload]):
     for label, row in rows.items():
-        with test.subTest(label):
-            test.assertEqual(
-                (behavior(row.text), behavior(row.text, module=True)),
-                (row.as_commonjs, row.as_an_es_module),
-            )
+        for reading in (Reading.COMMONJS, Reading.ES_MODULE):
+            program = row.read_as(reading)
+            with test.subTest(label=label, reading=reading.name):
+                test.assertEqual(program.behaves(), program.prints)
 
 
 #: Programs whose payload runs differently as strict code, each with what Node makes of it as a
@@ -204,12 +205,25 @@ A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN = {
         prints('1 undefined'),
         ('', 'ReferenceError'),
     ),
-    'a packed program with a frozen object, a class and an async tail': Payload(
+}
+
+#: Packed programs whose payload runs alike as strict code, each with what Node makes of it as a
+#: CommonJS file and as an ES module. A file known to be CommonJS holds each unpacked; whether a
+#: file that may be an ES module does is left to the strict-mode check.
+A_PACKED_PROGRAM_STRICT_CODE_RUNS_ALIKE = {
+    'a packed program spreading a frozen object': Payload(
         a_program("""
-            Function("Q", "const D = Object.freeze({a: 1, b: 2}); function p(n) { const o = {...D}; o[n] = 3; return o; } class E extends Error { constructor(m) { super(m); this.name = 'E'; } } console.log(JSON.stringify(p('a')), new E('x').name); return (async () => { console.log('done'); })();")({});
+            Function("Q", "const D = Object.freeze({a: 1, b: 2}); const o = {...D}; o.a = 3; console.log(JSON.stringify(o), D.a);")({});
             """),
-        prints('{"a":3,"b":2} E', 'done'),
-        prints('{"a":3,"b":2} E', 'done'),
+        prints('{"a":3,"b":2} 1'),
+        prints('{"a":3,"b":2} 1'),
+    ),
+    'a packed program with a class and an async tail': Payload(
+        a_program("""
+            Function("Q", "class E extends Error {} console.log(new E() instanceof E); return (async () => console.log('done'))();")({});
+            """),
+        prints('true', 'done'),
+        prints('true', 'done'),
     ),
 }
 
@@ -253,6 +267,31 @@ class TestAPayloadOnlySloppyCodeRunsAsWrittenIsUnpackedOnlyIntoACommonJsFile(Tes
             self,
             A_PAYLOAD_ONLY_SLOPPY_CODE_RUNS_AS_WRITTEN,
             (Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPackedProgramStrictCodeRunsAlikeIsUnpackedIntoACommonJsFile(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_PACKED_PROGRAM_STRICT_CODE_RUNS_ALIKE)
+
+    def test_a_commonjs_file_holds_each_payload_unpacked(self):
+        rows = A_PACKED_PROGRAM_STRICT_CODE_RUNS_ALIKE
+        unpacked = {
+            label: deobfuscate_source(row.text, execution=ExecutionModel.commonjs)
+            for label, row in rows.items()
+        }
+        self.assertEqual(
+            {label: _runs_a_string(text) for label, text in unpacked.items()},
+            {label: False for label in rows},
+        )
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PACKED_PROGRAM_STRICT_CODE_RUNS_ALIKE,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
 
 
@@ -336,7 +375,7 @@ class TestAPayloadAtAStrictSiteStaysInItsStringInACommonJsFile(TestBase):
 
 #: Programs whose payload reads a name the CommonJS wrapper binds, each with what Node makes of it
 #: as a CommonJS file and as an ES module. The string runs as global code, where none of these names
-#: is bound.
+#: is bound; an assignment the file makes to one writes the wrapper's parameter and binds none.
 A_PAYLOAD_READING_A_WRAPPER_NAME = {
     'a Function body returning typeof require': Payload(
         a_program("""
@@ -391,11 +430,11 @@ A_PAYLOAD_READING_A_WRAPPER_NAME = {
     ),
     'a Function body testing for module as a UMD wrapper does': Payload(
         a_program("""
-            Function("var api = {v: 1}; if (typeof module === 'object' && module.exports) { module.exports = api; console.log('cjs'); } else { globalThis.api = api; console.log('global'); }")();
+            Function("var api = {v: 1}; if (typeof module === 'object') module.exports = api; else globalThis.api = api;")();
             console.log(typeof globalThis.api);
             """),
-        prints('global', 'object'),
-        prints('global', 'object'),
+        prints('object'),
+        prints('object'),
     ),
     'a file declaring its own var require': Payload(
         a_program("""
@@ -405,28 +444,20 @@ A_PAYLOAD_READING_A_WRAPPER_NAME = {
         prints('undefined 5'),
         prints('undefined 5'),
     ),
+    'a Function body reading exports in a file assigning it': Payload(
+        a_program("""
+            exports = module.exports = {};
+            console.log(Function("return typeof exports")());
+            """),
+        prints('undefined'),
+        ('', 'ReferenceError'),
+    ),
 }
 
-#: Programs whose payload declares a name the CommonJS wrapper binds for itself, or reads one
-#: through an accessor the file defines, each with what Node makes of it as a CommonJS file and as
-#: an ES module.
+#: Programs whose payload declares a name the CommonJS wrapper binds inside a function of the file,
+#: or reads one through an accessor the file defines, each with what Node makes of it as a CommonJS
+#: file and as an ES module.
 A_PAYLOAD_BINDING_A_WRAPPER_NAME_FOR_ITSELF = {
-    'a Function body declaring let module': Payload(
-        a_program("""
-            Function("let module = 1; console.log(module)")();
-            console.log('after');
-            """),
-        prints('1', 'after'),
-        prints('1', 'after'),
-    ),
-    'a Function body declaring const require': Payload(
-        a_program("""
-            Function("const require = 2; console.log(require)")();
-            console.log('after');
-            """),
-        prints('2', 'after'),
-        prints('2', 'after'),
-    ),
     'a Function body inside a function declaring let module': Payload(
         a_program("""
             function g() { Function("let module = 1; console.log(module)")(); }
@@ -445,6 +476,53 @@ A_PAYLOAD_BINDING_A_WRAPPER_NAME_FOR_ITSELF = {
     ),
 }
 
+#: Programs whose payload declares a name the CommonJS wrapper binds where it would land at the top
+#: of the file, each with what Node makes of it as a CommonJS file and as an ES module. The top of a
+#: CommonJS file is the body of the function the wrapper is: a `let`, `const` or `class` there
+#: redeclares a parameter, which Node refuses to compile as CommonJS and runs as an ES module, and a
+#: `var` there is the parameter itself, holding what the host passed.
+A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE = {
+    'a Function body declaring let module': Payload(
+        a_program("""
+            Function("let module = 1; console.log(module)")();
+            console.log('after');
+            """),
+        prints('1', 'after'),
+        prints('1', 'after'),
+    ),
+    'a Function body declaring const require': Payload(
+        a_program("""
+            Function("const require = 2; console.log(require)")();
+            console.log('after');
+            """),
+        prints('2', 'after'),
+        prints('2', 'after'),
+    ),
+    'a Function body declaring let module in a file reading require after it': Payload(
+        a_program("""
+            Function("let module = [Date.now()]; module.push(2); console.log(module.length)")();
+            console.log(typeof require);
+            """),
+        prints('2', 'function'),
+        prints('2', 'undefined'),
+    ),
+    'a direct eval declaring let require in a file reading __filename after it': Payload(
+        a_program("""
+            eval("let require = [Date.now()]; require.push(1); console.log(require.length)");
+            console.log(typeof __filename);
+            """),
+        prints('2', 'string'),
+        prints('2', 'undefined'),
+    ),
+    'a Function body declaring var exports from its own value': Payload(
+        a_program("""
+            Function("var exports = exports || {x: 1}; console.log(exports.x);")();
+            """),
+        prints('1'),
+        prints('1'),
+    ),
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
@@ -452,6 +530,9 @@ class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
     def test_node_prints_what_each_row_pins(self):
         _node_prints_what_each_row_pins(self, A_PAYLOAD_READING_A_WRAPPER_NAME)
         _node_prints_what_each_row_pins(self, A_PAYLOAD_BINDING_A_WRAPPER_NAME_FOR_ITSELF)
+        _node_prints_what_each_row_pins(
+            self, A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE
+        )
 
     def test_each_payload_stays_as_written_where_the_file_may_be_commonjs(self):
         rows = A_PAYLOAD_READING_A_WRAPPER_NAME
@@ -492,12 +573,31 @@ class TestAPayloadReadingANameTheCommonJsWrapperBindsStaysInItsString(TestBase):
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
 
+    def test_a_payload_declaring_the_name_at_the_top_of_the_file_stays_as_written(self):
+        rows = A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {
+                        label: deobfuscate_source(row.text, execution=execution)
+                        for label, row in rows.items()
+                    },
+                    {label: printed(row.text) for label, row in rows.items()},
+                )
+
+    def test_a_program_whose_payload_declares_the_name_at_the_top_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PAYLOAD_DECLARING_A_WRAPPER_NAME_AT_THE_TOP_OF_THE_FILE,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
 
 #: Programs whose function, called once, declares a name the CommonJS wrapper binds, each with what
-#: Node makes of it as a CommonJS file and as an ES module. Inlining the function moves the
-#: declaration to the top of the file, where a CommonJS file may declare each of these names: the
-#: wrapper binds them as parameters of the function around the file's text, which its body may
-#: shadow.
+#: Node makes of it as a CommonJS file and as an ES module. Inlining the function would move the
+#: declaration to the top of the file, which is the body of the function the wrapper is: a `let`,
+#: `const` or `class` there redeclares a parameter, which Node refuses to compile as CommonJS and
+#: runs as an ES module, and a `var` there is the parameter itself, holding what the host passed.
 A_FUNCTION_CALLED_ONCE_DECLARING_A_WRAPPER_NAME = {
     'let module': Payload(
         a_program("""
@@ -540,11 +640,28 @@ A_FUNCTION_CALLED_ONCE_DECLARING_A_WRAPPER_NAME = {
         prints('2'),
         prints('2'),
     ),
+    'let module, the file reading require after the call': Payload(
+        a_program("""
+            function f() { let module = [Date.now()]; module.push(2); console.log(module.length); }
+            f();
+            console.log(typeof require);
+            """),
+        prints('2', 'function'),
+        prints('2', 'undefined'),
+    ),
+    'var module, read before anything assigns it': Payload(
+        a_program("""
+            function f() { var module; console.log(typeof module); }
+            f();
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFunctionDeclaringAWrapperNameMayBeInlinedAtTheTopOfTheFile(TestBase):
+class TestAFunctionDeclaringAWrapperNameStillPrintsWhatItPrints(TestBase):
 
     def test_node_prints_what_each_row_pins(self):
         _node_prints_what_each_row_pins(self, A_FUNCTION_CALLED_ONCE_DECLARING_A_WRAPPER_NAME)
@@ -628,6 +745,109 @@ class TestAPayloadBothReadingsTreatAlikeIsDeobfuscatedAlike(TestBase):
         )
 
 
+#: Programs whose payload holds a direct `eval`, each with what Node makes of it as a CommonJS file
+#: and as an ES module. The `eval` runs in the scope of the payload, which is global code; unpacked
+#: into a file that runs as a module, it would run in the scope of the file.
+A_PAYLOAD_HOLDING_A_DIRECT_EVAL = {
+    'a Function body evaluating typeof require': Payload(
+        a_program("""
+            console.log(Function("return eval('typeof require')")());
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+    'a Function body evaluating typeof of a name the file declares': Payload(
+        a_program("""
+            var x = 1;
+            console.log(Function("return eval('typeof x')")());
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+    'an indirect eval declaring a global through a direct eval': Payload(
+        a_program("""
+            (0, eval)("eval('var q = 1')");
+            console.log(typeof globalThis.q);
+            """),
+        prints('number'),
+        prints('number'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPayloadHoldingADirectEvalStaysInItsString(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_PAYLOAD_HOLDING_A_DIRECT_EVAL)
+
+    def test_each_payload_stays_as_written_where_the_file_runs_as_a_module(self):
+        rows = A_PAYLOAD_HOLDING_A_DIRECT_EVAL
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {
+                        label: deobfuscate_source(row.text, execution=execution)
+                        for label, row in rows.items()
+                    },
+                    {label: printed(row.text) for label, row in rows.items()},
+                )
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PAYLOAD_HOLDING_A_DIRECT_EVAL,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
+#: Programs whose direct `eval` declares a name the scope it runs in already declares otherwise,
+#: each with what Node makes of it as a CommonJS file and as an ES module. A sloppy evaluation
+#: throws a `SyntaxError` the site catches; a strict one keeps the `var` to itself.
+A_DIRECT_EVAL_DECLARING_A_NAME_THE_SCOPE_DECLARES = {
+    'a var the file declares with let after it': Payload(
+        a_program("""
+            try { eval("var q = 1;"); } catch (e) { console.log(e.name); }
+            let q = 0;
+            console.log(q);
+            """),
+        prints('SyntaxError', '0'),
+        prints('0'),
+    ),
+    'a var the file declares as a class after it': Payload(
+        a_program("""
+            try { eval("var q = 1;"); } catch (e) { console.log(e.name); }
+            class q {}
+            console.log(typeof q);
+            """),
+        prints('SyntaxError', 'function'),
+        prints('function'),
+    ),
+    'a var a function declares with let after it': Payload(
+        a_program("""
+            function f() { try { eval("var q = 1;"); } catch (e) { console.log(e.name); } let q = 2; return q; }
+            console.log(f());
+            """),
+        prints('SyntaxError', '2'),
+        prints('2'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADirectEvalDeclaringANameTheScopeDeclaresStillPrintsWhatItPrints(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_DIRECT_EVAL_DECLARING_A_NAME_THE_SCOPE_DECLARES)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_DIRECT_EVAL_DECLARING_A_NAME_THE_SCOPE_DECLARES,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
 #: Packed programs asking `typeof` of a key the accessor object answers, each with what Node makes
 #: of it as a CommonJS file and as an ES module. A getter returning a name throws where nothing
 #: binds the name, which `typeof` of the bare name does not.
@@ -676,7 +896,9 @@ class TestAPackedTypeofOfAKeyStillThrowsWhereItsGetterThrows(TestBase):
 A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL = {
     'a compound write, an update and a logical assignment': Payload(
         a_program("""
-            Function("p", "p.k = 1; p.k += 15; p.k++; p.k ||= 0; console.log(p.k, counter);")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            Function("p", "p.k = 1; p.k += 15; p.k++; p.k ||= 0; console.log(p.k, counter);")(
+              { get k() { return counter; }, set k(v) { return counter = v; } }
+            );
             """),
         prints('17 17'),
         ('', 'ReferenceError'),
@@ -690,7 +912,9 @@ A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL = {
     ),
     'a compound write whose right side writes the global first': Payload(
         a_program("""
-            Function("p", "p.k = 1; p.k += (p.k = 10, 1); console.log(p.k);")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            Function("p", "p.k = 1; p.k += (p.k = 10, 1); console.log(p.k);")(
+              { get k() { return counter; }, set k(v) { return counter = v; } }
+            );
             """),
         prints('2'),
         ('', 'ReferenceError'),
@@ -701,6 +925,32 @@ A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL = {
             """),
         prints('true undefined'),
         prints('true undefined'),
+    ),
+    'a compound write to an optional chain': Payload(
+        a_program("""
+            globalThis.counter = 0;
+            try {
+              Function("p", "p?.k += 1")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            } catch (e) {
+              console.log(e.name);
+            }
+            console.log('end');
+            """),
+        prints('SyntaxError', 'end'),
+        prints('SyntaxError', 'end'),
+    ),
+    'a compound write to an array literal holding the key': Payload(
+        a_program("""
+            globalThis.counter = 0;
+            try {
+              Function("p", "[p.k] += 1")({ get k() { return counter; }, set k(v) { return counter = v; } });
+            } catch (e) {
+              console.log(e.name);
+            }
+            console.log('end');
+            """),
+        prints('SyntaxError', 'end'),
+        prints('SyntaxError', 'end'),
     ),
 }
 
@@ -715,6 +965,40 @@ class TestAPackedCompoundWriteOnAGlobalStillPrintsWhatItPrints(TestBase):
         _each_reading_still_prints(
             self,
             A_PACKED_COMPOUND_WRITE_ON_A_GLOBAL,
+            (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
+        )
+
+
+#: Packed programs whose access the bare name the accessor object answers with would not
+#: reproduce, each with what Node makes of it as a CommonJS file and as an ES module.
+A_PACKED_ACCESS_THE_BARE_NAME_DOES_NOT_REPRODUCE = {
+    'a parameter text naming two parameters': Payload(
+        a_program("""
+            Function("a,b", "console.log(typeof a, typeof b)")({});
+            """),
+        prints('object undefined'),
+        prints('object undefined'),
+    ),
+    'a call through a getter returning eval': Payload(
+        a_program("""
+            Function("p", "var y = 2; console.log(p.e('typeof y'))")({ get e() { return eval; } });
+            """),
+        prints('undefined'),
+        prints('undefined'),
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAPackedAccessTheBareNameDoesNotReproduceStillPrintsWhatItPrints(TestBase):
+
+    def test_node_prints_what_each_row_pins(self):
+        _node_prints_what_each_row_pins(self, A_PACKED_ACCESS_THE_BARE_NAME_DOES_NOT_REPRODUCE)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        _each_reading_still_prints(
+            self,
+            A_PACKED_ACCESS_THE_BARE_NAME_DOES_NOT_REPRODUCE,
             (Reading.COMMONJS, Reading.MODULE, Reading.ES_MODULE),
         )
 
@@ -741,6 +1025,29 @@ PACKED_GLOBALS = (
     r'=ym9Tun8},get"VM9Zxy"(){return require},get"FCHW63"(){return typeof module}});'
 )
 
+#: The program `PACKED_GLOBALS` packs, as `refinery.js` writes it once unpacked.
+PACKED_GLOBALS_UNPACKED = inspect.cleandoc(
+    """
+    function fizzbuzz(limit) {
+      var lines = [];
+      for (var i = 1; i <= limit; i++) {
+        var line = "";
+        if (i % 3 === 0) {
+          line += "Fizz";
+        }
+        if (i % 5 === 0) {
+          line += "Buzz";
+        }
+        lines.push(line || String(i));
+      }
+      return lines.join(", ");
+    }
+    counter = 0;
+    counter += 15;
+    console.log("FizzBuzz: " + fizzbuzz(counter), typeof module === "object" ? "commonjs" : "other", require("path").basename("a/b.js"));
+    """
+)
+
 
 class TestThePackersOwnOutputIsUnpacked(TestBase):
     """
@@ -755,35 +1062,16 @@ class TestThePackersOwnOutputIsUnpacked(TestBase):
 
     def test_a_program_reading_no_global_is_recovered_as_the_line_it_prints(self):
         printed_line = (
-            "console.log('FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14,"
-            " FizzBuzz');"
+            'console.log(\'FizzBuzz: 1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14,'
+            ' FizzBuzz\');'
         )
         for switch in ('-c', '-m'):
             with self.subTest(switch):
                 self.assertEqual(self._deobfuscated(PACKED_FIZZBUZZ, switch), printed_line)
 
     def test_a_program_reading_and_writing_globals_is_recovered(self):
-        program = inspect.cleandoc(
-            """
-            function fizzbuzz(limit) {
-              var lines = [];
-              for (var i = 1; i <= limit; i++) {
-                var line = "";
-                if (i % 3 === 0) {
-                  line += "Fizz";
-                }
-                if (i % 5 === 0) {
-                  line += "Buzz";
-                }
-                lines.push(line || String(i));
-              }
-              return lines.join(", ");
-            }
-            counter = 0;
-            counter += 15;
-            console.log("FizzBuzz: " + fizzbuzz(counter), typeof module === "object" ? "commonjs" : "other", require("path").basename("a/b.js"));
-            """
-        )
         for switch in ('-c', '-m'):
             with self.subTest(switch):
-                self.assertEqual(self._deobfuscated(PACKED_GLOBALS, switch), program)
+                self.assertEqual(
+                    self._deobfuscated(PACKED_GLOBALS, switch), PACKED_GLOBALS_UNPACKED
+                )

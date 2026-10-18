@@ -201,6 +201,7 @@ def before_and_after(
     source: str,
     *,
     module: bool = False,
+    execution: ExecutionModel = ExecutionModel.module,
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
     What Node makes of *source* and what it makes of the text `refinery.js` deobfuscates it to,
@@ -210,33 +211,17 @@ def before_and_after(
     pinning an `import` or `export` declaration has to ask for: no script spells one, and the answer
     such a declaration is wrong in is the linker's rather than the parser's.
 
-    It selects the file the oracle writes and nothing else. The deobfuscation is always asked for
-    under `refinery.lib.scripts.js.options.ExecutionModel.module`, which holds for an ES module and
-    a CommonJS file alike, so either file the oracle can write runs a text written for it. Asking
-    for it under the script model instead would rewrite the source for a host the answer is never
-    taken from, which reads as the tool having changed a program it only moved.
+    It selects the file the oracle writes and nothing else. The deobfuscation is asked for under
+    *execution*, by default `refinery.lib.scripts.js.options.ExecutionModel.module`, which holds for
+    an ES module and a CommonJS file alike, so either file the oracle can write runs a text written
+    for it. `ExecutionModel.commonjs` asks what the tool does knowing the file is a CommonJS file,
+    sloppy code where it says nothing. Asking for it under the script model instead would rewrite
+    the source for a host the answer is never taken from, which reads as the tool having changed a
+    program it only moved.
     """
     return (
         behavior(source, module=module),
-        behavior(deobfuscate_source(source, execution=ExecutionModel.module), module=module),
-    )
-
-
-def before_and_after_as_commonjs(
-    source: str,
-) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
-    """
-    What Node makes of *source* run as a CommonJS file and what it makes of the text `refinery.js`
-    deobfuscates it to when told the file is one, reported together because the law is that the two
-    agree.
-
-    `before_and_after` runs the same file but asks for the deobfuscation of a module of either kind,
-    which has to hold for an ES module as well and so treats the file as strict code. This is the
-    reading that asks what the tool does knowing the file is sloppy code where it says nothing.
-    """
-    return (
-        behavior(source),
-        behavior(deobfuscate_source(source, execution=ExecutionModel.commonjs)),
+        behavior(deobfuscate_source(source, execution=execution), module=module),
     )
 
 
@@ -303,7 +288,7 @@ class Reading(Enum):
         if self is Reading.SCRIPT:
             return before_and_after_in_a_host(source)
         if self is Reading.COMMONJS:
-            return before_and_after_as_commonjs(source)
+            return before_and_after(source, execution=ExecutionModel.commonjs)
         return before_and_after(source, module=self is Reading.ES_MODULE)
 
     def behaves(self, source: str) -> Behavior:
