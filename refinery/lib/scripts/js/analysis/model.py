@@ -38,6 +38,7 @@ from refinery.lib.scripts.js.analysis.environment import (
     COMMONJS_WRAPPER_PARAMETERS,
     FileKind,
     HostEnvironment,
+    node_require_runs_no_code,
 )
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -2403,6 +2404,7 @@ class SemanticModel:
         self.file_kind = file_kind
         self.exports_read_outside = exports_read_outside
         self._module_exports_unread: bool | None = None
+        self._code_load_sites: list[Node] | None = None
         self._node_scope: dict[Node, Scope] = {}
         self._binding_of: dict[Node, Binding] = {}
         self._reflection_surface: bool | None = None
@@ -4029,6 +4031,53 @@ class SemanticModel:
         if reference_role(node) is not Role.READ:
             return False
         return self.lookup(node.name, self._node_scope.get(node)) is None
+
+    def code_load_sites(self) -> list[Node]:
+        """
+        The calls by which the program has Node's `require` load code its text does not hold
+        (`_loads_code_from_outside`): a file, a package, or a built-in module that runs code. What
+        such code does is unknown; what a loaded module commonly does is set up globals, such as a
+        `window` for code written for a page or an AMD `define`. A question that orders a point
+        against code the text does not hold takes these as sites
+        (`refinery.lib.scripts.js.analysis.tampering.TamperingModel`, and the `typeof` of a global
+        name through `refinery.lib.scripts.js.analysis.cache.ModelCache.code_load_may_precede`).
+        They are no reflection surface: that would withdraw every trust the whole program is asked
+        for from a file that holds one in a function it never calls. Memoized.
+        """
+        if self._code_load_sites is None:
+            self._code_load_sites = [
+                site for node in self.root.walk()
+                if isinstance(node, JsIdentifier) and (site := self._loads_code_from_outside(node)) is not None
+            ]
+        return self._code_load_sites
+
+    def _loads_code_from_outside(self, node: JsIdentifier) -> Node | None:
+        """
+        The call `require(m)` *node* is the callee of, where it calls the host's `require` and may
+        load code the text does not hold: *m* is not a string naming a built-in module that runs no
+        code (`node_require_runs_no_code`). The name is the host's where it resolves to no binding,
+        or to the one the host passed that the file does not declare or assign. `None` where *node*
+        is no such callee, and where the trusting model assumes the code inert: a call of `vm`,
+        which runs only code the program hands it as data. A `require` read for anything but a call
+        is not followed: real programs hold it under another name (`global.r = require`) and call
+        it with built-in names, and a site at every such read would order nothing after it.
+        """
+        if node.name != 'require' or not self.is_reference(node):
+            return None
+        call = enclosing_operator(node)
+        if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not node:
+            return None
+        binding = self.resolve(node)
+        if binding is not None and (not binding.supplied_by_host or binding.declarations or binding.writes):
+            return None
+        arguments = call.arguments
+        if len(arguments) == 1 and isinstance(module := strip_parens(arguments[0]), JsStringLiteral):
+            name = module.value
+            if name is not None and node_require_runs_no_code(name):
+                return None
+            if self.trust_eval and name in ('vm', 'node:vm'):
+                return None
+        return call
 
     def _computed_read_aliases_a_global(self, member: JsMemberExpression) -> bool:
         """

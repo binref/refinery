@@ -108,6 +108,7 @@ from test.lib.scripts.js.test_parser_recovery import (
     unread_spans,
 )
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -5616,4 +5617,34 @@ class TestAFoldRestingOnSloppyCodeHoldsInAnEsModule(TestBase):
     called bare for the global object, which is `undefined` in strict code, where the value it
     returns is `r || this` and `r` may be `undefined` on the path through the `catch`: it judges
     the value as a whole, not each path into it.
+    """
+
+
+#: A program that holds `require` under another name and loads a file through it before a `typeof`
+#: of a name the file creates, mapped to the behavior Node gives it as a CommonJS file.
+A_FILE_REQUIRED_THROUGH_ANOTHER_NAME = {
+    'a file required through a second name creates the name': Program(
+        a_program("""
+            var r = require;
+            r("fs").writeFileSync(r("path").join(__dirname, "win.js"), "global.window = 1;");
+            r("./win.js");
+            console.log(typeof window);
+            """),
+        prints('number'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FILE_REQUIRED_THROUGH_ANOTHER_NAME)
+class TestAFileRequiredThroughAnotherNameIsALoad(TestBase):
+    """
+    A file the program has `require` load may set up a global name, so a `typeof` of such a name
+    folds only where no load may precede it
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.code_load_sites`). Only a call of the
+    name `require` itself counts as a load: a real program holds `require` under another name and
+    calls it with the names of built-in modules, and a site at every read of the value would order
+    nothing after it. A file loaded through that other name is not seen.
     """

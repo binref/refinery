@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import json
+import unittest
+
 from test import TestBase
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
 from refinery.lib.scripts.js.analysis.environment import (
+    _NODE_ABSENT,
     _SPECS,
     GUARANTEED_GLOBALS,
+    NODE_BUILTIN_MODULES,
     HostEnvironment,
     Presence,
+    node_require_runs_no_code,
     typeof_of_global,
 )
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
@@ -165,6 +172,13 @@ class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
         self.assertEqual(typeof_of_global('window', HostEnvironment.node), 'undefined')
         self.assertEqual(typeof_of_global('global', HostEnvironment.browser), 'undefined')
 
+    def test_what_a_page_gets_from_a_library_it_loads_is_absent_under_node_only(self):
+        for name in ('define', 'angular'):
+            with self.subTest(name=name):
+                self.assertEqual(typeof_of_global(name, HostEnvironment.node), 'undefined')
+                self.assertIsNone(typeof_of_global(name, HostEnvironment.browser))
+                self.assertIsNone(typeof_of_global(name, HostEnvironment.universal))
+
     def test_every_provided_host_conditional_name_has_a_typeof(self):
         """
         A name a host provides beyond the language floor must have a recorded `typeof`, or `typeof
@@ -208,3 +222,46 @@ class TestDeletingAHostGlobalWithholdsItsPinnedPresence(TestBase):
     def test_a_delete_off_a_shadowed_alias_withholds_nothing(self):
         source = 'var globalThis = 0; delete globalThis.Buffer; Buffer;'
         self.assertFalse(_bare_read_may_throw(source, 'Buffer', HostEnvironment.node))
+
+
+class TestARequireOfABuiltinModuleRunsNoCode(TestBase):
+
+    def test_a_builtin_module_runs_no_code_with_or_without_the_prefix(self):
+        for specifier in ('fs', 'node:fs', 'fs/promises', 'node:fs/promises', 'child_process', 'node:http2'):
+            with self.subTest(specifier=specifier):
+                self.assertTrue(node_require_runs_no_code(specifier))
+
+    def test_a_module_node_loads_only_under_its_prefix_runs_no_code_under_it(self):
+        for specifier in ('node:test', 'node:sea', 'node:sqlite'):
+            with self.subTest(specifier=specifier):
+                self.assertTrue(node_require_runs_no_code(specifier))
+
+    def test_without_its_prefix_such_a_name_is_a_package(self):
+        for specifier in ('test', 'sea', 'sqlite'):
+            with self.subTest(specifier=specifier):
+                self.assertFalse(node_require_runs_no_code(specifier))
+
+    def test_a_builtin_module_that_runs_source_text_runs_code(self):
+        for specifier in ('vm', 'node:vm', 'module', 'repl', 'inspector', 'node:inspector/promises'):
+            with self.subTest(specifier=specifier):
+                self.assertFalse(node_require_runs_no_code(specifier))
+
+    def test_a_file_or_a_package_runs_code(self):
+        for specifier in ('./setup.js', '../package', '/abs/path.js', 'lodash', 'node:lodash'):
+            with self.subTest(specifier=specifier):
+                self.assertFalse(node_require_runs_no_code(specifier))
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodeAgreesWithTheEnvironment(TestBase):
+
+    def test_the_builtin_modules_are_the_ones_node_lists(self):
+        out, error = behavior('console.log(JSON.stringify(require("module").builtinModules));')
+        self.assertIsNone(error)
+        self.assertEqual(set(json.loads(out)), NODE_BUILTIN_MODULES)
+
+    def test_every_name_absent_under_node_has_type_undefined_there(self):
+        names = sorted(_NODE_ABSENT)
+        out, error = behavior('console.log(JSON.stringify([' + ', '.join(F'typeof {name}' for name in names) + ']));')
+        self.assertIsNone(error)
+        self.assertEqual(dict(zip(names, json.loads(out))), {name: 'undefined' for name in names})

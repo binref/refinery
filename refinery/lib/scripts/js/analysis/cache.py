@@ -18,7 +18,7 @@ from refinery.lib.scripts.js.analysis.assignment import (
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control_flow_model
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
-from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
@@ -221,6 +221,19 @@ class ModelCache(ModelCacheBase):
         ask keeps the program-wide refusal the no-anchor arms answer.
         """
         return self.tampering.builtins_intact_at(anchor)
+
+    def trust_at(self, anchor: Node) -> AnchoredTrust:
+        """
+        The trust questions of a fold at *anchor*:
+        `refinery.lib.scripts.js.analysis.tampering.TamperingModel.trust_at` on the run's tampering
+        model, the one place the oracle and the per-name arms are composed. The tampering model is
+        built only where a question needs the oracle.
+        """
+        return AnchoredTrust(
+            self.effects,
+            lambda: self.builtins_intact_at(anchor),
+            lambda: self.dominance.code_load_may_precede(anchor),
+        )
 
     def call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
         """

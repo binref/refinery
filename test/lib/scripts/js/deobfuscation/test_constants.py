@@ -1975,8 +1975,8 @@ AN_ALIAS_OF_ANOTHER_GLOBAL_CALLED = (
 #: deobfuscation writes for it under the module reading `before_and_after` takes. Only a call
 #: written as the name `eval` is a direct eval, so the one thing substituting the alias's value may
 #: not write for such a call is that name in the callee position. The last two rows are the
-#: controls: a use no call applies takes the bare name, and a name bound to any other global calls
-#: bare as well.
+#: controls: a use no call applies takes the bare name, whose `typeof` then folds, since nothing
+#: runs the alias, and a name bound to any other global calls bare as well.
 A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL = {
     AN_ALIAS_CALL_READING_A_LOCAL_OF_ITS_CALLER: (
         'function f() {\n'
@@ -1995,10 +1995,7 @@ A_CALL_THROUGH_A_NAME_BOUND_TO_EVAL = {
         'console.log(f());'
     ),
     AN_ALIAS_OF_EVAL_READ_WITHOUT_A_CALL: (
-        'function f() {\n'
-        '  return typeof eval;\n'
-        '}\n'
-        'console.log(f());'
+        "console.log('function');"
     ),
     AN_ALIAS_OF_ANOTHER_GLOBAL_CALLED: (
         'console.log(7);'

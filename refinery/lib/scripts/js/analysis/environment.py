@@ -363,13 +363,128 @@ _NODE_ABSENT = frozenset({
     'XMLHttpRequest',
     'requestAnimationFrame',
     'Image',
+    'define',
+    'angular',
 })
 """
 Well-known browser globals a bare read of which is certain to throw under Node, read out of Node v24 as
-`typeof` `'undefined'`. `navigator` is deliberately absent from this set: Node exposes it, so it is a
-present name, not an absent one — the trap a `typeof` fold must not fall into. The set is used only to fold
-`typeof <name>` to `'undefined'` under `-e node`; a name neither provided nor listed here stays unknown.
+`typeof` `'undefined'`, and two a page gets from a library it loads: the `define` of an AMD loader and
+AngularJS's `angular`, which code built to run anywhere probes before it hands itself to them.
+`navigator` is deliberately absent from this set: Node exposes it, so it is a present name, not an
+absent one — the trap a `typeof` fold must not fall into. The set is used only to fold `typeof <name>`
+to `'undefined'` under `-e node`; a name neither provided nor listed here stays unknown.
 """
+
+NODE_BUILTIN_MODULES = frozenset({
+    '_http_agent',
+    '_http_client',
+    '_http_common',
+    '_http_incoming',
+    '_http_outgoing',
+    '_http_server',
+    '_stream_duplex',
+    '_stream_passthrough',
+    '_stream_readable',
+    '_stream_transform',
+    '_stream_wrap',
+    '_stream_writable',
+    '_tls_common',
+    '_tls_wrap',
+    'assert',
+    'assert/strict',
+    'async_hooks',
+    'buffer',
+    'child_process',
+    'cluster',
+    'console',
+    'constants',
+    'crypto',
+    'dgram',
+    'diagnostics_channel',
+    'dns',
+    'dns/promises',
+    'domain',
+    'events',
+    'fs',
+    'fs/promises',
+    'http',
+    'http2',
+    'https',
+    'inspector',
+    'inspector/promises',
+    'module',
+    'net',
+    'os',
+    'path',
+    'path/posix',
+    'path/win32',
+    'perf_hooks',
+    'process',
+    'punycode',
+    'querystring',
+    'readline',
+    'readline/promises',
+    'repl',
+    'stream',
+    'stream/consumers',
+    'stream/promises',
+    'stream/web',
+    'string_decoder',
+    'sys',
+    'timers',
+    'timers/promises',
+    'tls',
+    'trace_events',
+    'tty',
+    'url',
+    'util',
+    'util/types',
+    'v8',
+    'vm',
+    'wasi',
+    'worker_threads',
+    'zlib',
+    'node:sea',
+    'node:sqlite',
+    'node:test',
+    'node:test/reporters',
+})
+"""
+The modules Node's `require` loads from itself rather than from a file, read out of Node v24 as
+`require('module').builtinModules`. A name with the `node:` prefix is one Node loads only under that
+prefix; every other one it also loads with the prefix.
+"""
+
+NODE_MODULES_THAT_RUN_CODE = frozenset({
+    'inspector',
+    'inspector/promises',
+    'module',
+    'repl',
+    'vm',
+})
+"""
+The built-in modules through which a program has code run that its text does not hold: `vm` and
+`repl` evaluate source text, the inspector evaluates it through a session, and `module` loads any
+file and compiles source into a module.
+"""
+
+
+def node_require_runs_no_code(specifier: str) -> bool:
+    """
+    Whether Node's `require` of *specifier* runs no code the file's text does not hold: it names a
+    built-in module (`NODE_BUILTIN_MODULES`), with or without the `node:` prefix it allows, outside
+    `NODE_MODULES_THAT_RUN_CODE`. Any other specifier names a file or a package, whose code runs
+    when it is loaded.
+    """
+    name = specifier
+    if name.startswith('node:'):
+        if specifier in NODE_BUILTIN_MODULES:
+            return True
+        name = name[5:]
+    elif F'node:{name}' in NODE_BUILTIN_MODULES:
+        return False
+    return name in NODE_BUILTIN_MODULES and name not in NODE_MODULES_THAT_RUN_CODE
+
 
 _BROWSER_ABSENT = frozenset({
     'global',

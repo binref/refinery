@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Callable
 
-    from refinery.lib.scripts.js.analysis.effects import EffectModel
+    from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel
     from refinery.lib.scripts.js.analysis.tampering import TamperingModel
     from refinery.lib.scripts.js.deobfuscation.helpers import Value
 
@@ -1319,11 +1319,16 @@ class JsInterpreter:
         self._constant = constant
         self._entered: set[JsFunctionNode] = set() if entered is None else entered
         self._constants: dict[Binding, tuple[bool, Value]] = {} if constants is None else constants
-        self._anchor_verdict: bool | None = None
+        self._trust: AnchoredTrust | None = None
         """
-        The tampering oracle's answer for the anchor, computed once: the anchor and the tree it
-        was pinned over are fixed for this interpreter's lifetime.
+        The trust questions at the anchor, which ask the tampering oracle once: the anchor and the
+        tree it was pinned over are fixed for this interpreter's lifetime. Without an anchor or an
+        oracle they are asked of the whole program, and without an effect model not at all.
         """
+        if tampering is not None and anchor is not None:
+            self._trust = tampering.trust_at(anchor)
+        elif effects is not None:
+            self._trust = effects.program_trust()
         self._intact_callees: dict[JsCallExpression, bool] = {}
         self._host_object_names: dict[JsIdentifier, bool] = {}
         self._intact_prototypes: dict[type, bool] = {}
@@ -2084,8 +2089,11 @@ class JsInterpreter:
                 return js_typeof(value)
             if self._resolves_to_a_binding(operand):
                 raise IrreducibleExpression(node)
-            environment = self._model.environment if self._model is not None else HostEnvironment.universal
-            result = typeof_of_global(name, environment)
+            if (trust := self._trust) is not None:
+                result = trust.global_typeof(name)
+            else:
+                environment = self._model.environment if self._model is not None else HostEnvironment.universal
+                result = typeof_of_global(name, environment)
             if result is None:
                 raise IrreducibleExpression(node)
             return result
@@ -2314,14 +2322,8 @@ class JsInterpreter:
         `False`: the trust questions below then fall through to their no-anchor arms, which refuse
         wherever a reflective surface could have done the replacing.
         """
-        verdict = self._anchor_verdict
-        if verdict is None:
-            self._anchor_verdict = verdict = (
-                self._tampering is not None
-                and self._anchor is not None
-                and self._tampering.builtins_intact_at(self._anchor)
-            )
-        return verdict
+        trust = self._trust
+        return trust is not None and trust.cleared
 
     def _callee_is_intact(self, node: JsCallExpression) -> bool:
         """
@@ -2376,14 +2378,8 @@ class JsInterpreter:
         """
         memo = self._intact_prototypes
         if value_type not in memo:
-            effects = self._effects
-            if effects is None:
-                answer = True
-            elif self._builtins_intact():
-                answer = effects.prototype_name_unwritten(value_type)
-            else:
-                answer = effects.trusted_prototype(value_type)
-            memo[value_type] = answer
+            trust = self._trust
+            memo[value_type] = True if trust is None else trust.prototype(value_type)
         return memo[value_type]
 
     def _chain_is_intact(self, value_type: type) -> bool:
@@ -2394,12 +2390,8 @@ class JsInterpreter:
         arms ask; without an effect model there is no chain to consult and the caller owns the
         assumption.
         """
-        effects = self._effects
-        if effects is None:
-            return True
-        if self._builtins_intact():
-            return effects.chain_roots_unwritten(value_type)
-        return effects.read_chain_intact(value_type)
+        trust = self._trust
+        return True if trust is None else trust.chain(value_type)
 
     def _callback_is_contained(self, callback: JsFunctionNode) -> bool:
         """

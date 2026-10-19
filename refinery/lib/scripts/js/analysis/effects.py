@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.analysis.intrinsics import (
     unambiguous_callee,
     unambiguous_function,
 )
+from refinery.lib.scripts.js.analysis.environment import typeof_of_global
 from refinery.lib.scripts.js.analysis.model import (
     _TESTED_FORMS,
     FUNCTION_NODES,
@@ -2180,6 +2181,13 @@ class EffectModel:
             return None
         return node.name
 
+    def program_trust(self) -> AnchoredTrust:
+        """
+        The trust questions of a fold no point is given for, each answered for the whole program:
+        the oracle vouches for no anchor, and a load of code anywhere may precede the fold.
+        """
+        return AnchoredTrust(self, lambda: False, lambda: bool(self.model.code_load_sites()))
+
     def trusted_intrinsic_name(self, name: str) -> bool:
         """
         `EffectModel.trusted_intrinsic` for a caller that holds a global name rather than a node
@@ -2639,6 +2647,7 @@ class EffectModel:
         node: JsCallExpression,
         *,
         receiver_type: type | None = None,
+        trust: AnchoredTrust | None = None,
     ) -> bool:
         """
         Whether the call *node* may be evaluated to a constant and have its result replace it. This is the
@@ -2672,12 +2681,19 @@ class EffectModel:
         undisturbed — true, and no help, since no such built-in exists to fold. Whether a callee can
         actually be evaluated is the caller's question, answered by its own registry lookup before it asks
         this one; conflating the two is what let a registry entry exist with no matching trust rule.
+
+        The first question is asked of the whole program, or at a point where *trust* is given: the
+        `AnchoredTrust` of that point answers it, for the call and for every call nested in its
+        arguments.
         """
-        if not self._callee_is_trusted(node, receiver_type):
+        if trust is None:
+            if not self._callee_is_trusted(node, receiver_type):
+                return False
+        elif not trust.callee(node, receiver_type):
             return False
         if not self._call_stores_nothing(node):
             return False
-        return all(self._argument_is_admissible(arg) for arg in node.arguments)
+        return all(self._argument_is_admissible(arg, trust) for arg in node.arguments)
 
     def call_names_an_unwritten_builtin(
         self,
@@ -2752,7 +2768,7 @@ class EffectModel:
             return False
         return self.trusted_prototype(receiver_type)
 
-    def _argument_is_admissible(self, arg: Node | None) -> bool:
+    def _argument_is_admissible(self, arg: Node | None, trust: AnchoredTrust | None = None) -> bool:
         """
         Whether *arg* may be evaluated as part of a fold that then replaces the whole call, deleting
         the argument's text along with it.
@@ -2771,7 +2787,7 @@ class EffectModel:
             summary = self.summary_of(node)
             return summary.is_effect_free_when_discarded and not summary.written_bindings
         if isinstance(node, JsCallExpression):
-            return self.call_is_foldable(node)
+            return self.call_is_foldable(node, trust=trust)
         return self._stores_nothing(node)
 
     def _stores_nothing(self, node: Node | None) -> bool:
@@ -3188,6 +3204,99 @@ def _global_pristine(model: SemanticModel) -> bool:
         if _writes_the_global_prototype(model, node):
             return False
     return True
+
+
+class AnchoredTrust:
+    """
+    The questions whether the built-ins are still the language's, asked at one point of the program,
+    the anchor. Each is the program-wide question of the `EffectModel`, or, where the tampering
+    oracle vouches that no built-in was replaced before the anchor runs (*oracle*), its per-name arm
+    alone: the oracle has answered the reflection terms at the anchor, and the writes the text
+    attributes to a name are what remains. This is the composition the oracle's consumers share, so
+    no consumer asks a per-name arm without the oracle having cleared its point. The oracle is asked
+    once, and only where a program-wide question refuses. *loads* says whether code the text does
+    not hold may have been loaded before the anchor, which may have set up a global name. Built by
+    `refinery.lib.scripts.js.analysis.tampering.TamperingModel.trust_at`, and for no point at all by
+    `EffectModel.program_trust`.
+    """
+
+    def __init__(self, effects: EffectModel, oracle: Callable[[], bool], loads: Callable[[], bool]):
+        self._effects = effects
+        self._oracle = oracle
+        self._loads = loads
+        self._cleared: bool | None = None
+
+    @property
+    def cleared(self) -> bool:
+        """
+        Whether the oracle vouches for the anchor.
+        """
+        if (cleared := self._cleared) is None:
+            self._cleared = cleared = self._oracle()
+        return cleared
+
+    def intrinsic(self, node: Node | None) -> str | None:
+        """
+        `EffectModel.trusted_intrinsic` at the anchor.
+        """
+        effects = self._effects
+        if (name := effects.trusted_intrinsic(node)) is not None:
+            return name
+        return effects.intrinsic_name_unwritten(node) if self.cleared else None
+
+    def intrinsic_name(self, name: str) -> bool:
+        """
+        `EffectModel.trusted_intrinsic_name` at the anchor.
+        """
+        effects = self._effects
+        if effects.trusted_intrinsic_name(name):
+            return True
+        return self.cleared and name not in effects._globals_written
+
+    def global_typeof(self, name: str) -> str | None:
+        """
+        What `typeof name` yields at the anchor, for a name that resolves to no binding there: the
+        answer of the host (`typeof_of_global`), where the name is still the host's at the anchor
+        (`intrinsic_name`) and no code the text does not hold may have been loaded before it.
+        """
+        folded = typeof_of_global(name, self._effects.model.environment)
+        if folded is None or not self.intrinsic_name(name) or self._loads():
+            return None
+        return folded
+
+    def prototype(self, value_type: type) -> bool:
+        """
+        `EffectModel.trusted_prototype` at the anchor.
+        """
+        effects = self._effects
+        if effects.trusted_prototype(value_type):
+            return True
+        return self.cleared and effects.prototype_name_unwritten(value_type)
+
+    def chain(self, value_type: type) -> bool:
+        """
+        `EffectModel.read_chain_intact` at the anchor.
+        """
+        effects = self._effects
+        if effects.read_chain_intact(value_type):
+            return True
+        return self.cleared and effects.chain_roots_unwritten(value_type)
+
+    def callee(self, node: JsCallExpression, receiver_type: type | None = None) -> bool:
+        """
+        Whether the built-in the call *node* spells is still that built-in at the anchor: the trust
+        leg of `EffectModel.call_is_foldable` there.
+        """
+        effects = self._effects
+        if effects._callee_is_trusted(node, receiver_type):
+            return True
+        return self.cleared and effects.call_names_an_unwritten_builtin(node, receiver_type=receiver_type)
+
+    def call_is_foldable(self, node: JsCallExpression, receiver_type: type | None = None) -> bool:
+        """
+        `EffectModel.call_is_foldable` at the anchor.
+        """
+        return self._effects.call_is_foldable(node, receiver_type=receiver_type, trust=self)
 
 
 def build_effects(

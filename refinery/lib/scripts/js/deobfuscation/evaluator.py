@@ -442,12 +442,16 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
         Walking outermost-first means the longest chain is attempted before any of its links, so a whole
         decoder collapses in one step and the inner links are gone before they are reached. Admission is
-        the shared gate's decision alone; this adds no question of its own, because every one it would ask
-        — is the prototype intact, does a callback write outside itself, is an argument effectful — the gate
-        already asks.
+        the shared gate's decision alone, asked at the call (`ModelCache.trust_at`); this adds no question
+        of its own, because every one it would ask — is the prototype intact, does a callback write outside
+        itself, is an argument effectful — the gate already asks.
         """
         effects = self._effects
-        if effects is None or not effects.call_is_foldable(node):
+        if effects is None:
+            return
+        cache = self._cache_for(node)
+        trust = None if cache is None else cache.trust_at(node)
+        if not effects.call_is_foldable(node, trust=trust):
             return
         self._evaluate_expression_and_replace(node)
 

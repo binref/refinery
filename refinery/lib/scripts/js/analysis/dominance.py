@@ -318,6 +318,14 @@ class DominanceModel(DominatorModel):
             return False
         return self._runs_after(anchor, self._activation_of(anchor), reference)
 
+    def code_load_may_precede(self, anchor: Node) -> bool:
+        """
+        Whether code the text does not hold may have been loaded before *anchor* runs: a site of
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.code_load_sites` that `cannot_precede`
+        cannot place after it.
+        """
+        return not all(self.cannot_precede(site, anchor) for site in self.model.code_load_sites())
+
     def callee_established_before(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
         Whether the name *call* reads its callee through holds its `singular_value` before *call*

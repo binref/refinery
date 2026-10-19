@@ -15,6 +15,8 @@ import time
 
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.effects import AnchoredTrust
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.analysis.model import Role, enclosing_function, reference_role
 from refinery.lib.scripts.js.analysis.tampering import denotes_function_intrinsic
 from refinery.lib.scripts.js.deobfuscation.interpreter import InterpreterError, JsInterpreter
@@ -23,6 +25,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
+    JsUnaryExpression,
     strip_parens,
 )
 from refinery.lib.scripts.js.options import DeobfuscationOptions
@@ -116,6 +119,12 @@ _A_SITE_BEFORE_THE_ANCHOR = {
     ),
     'a with statement anywhere': (
         'var o, x;\nwith (o) { x = 1; }\nString.fromCharCode(65);'
+    ),
+    'a file required before the anchor': (
+        'require("./setup.js");\nString.fromCharCode(65);'
+    ),
+    'vm required before the anchor': (
+        'require("vm");\nString.fromCharCode(65);'
     ),
     'a span of source the model never read': (
         'var k = "abc\n;String.fromCharCode(65);'
@@ -240,6 +249,12 @@ _A_SITE_THE_ANCHOR_ESCAPED = {
     'a benign construction': (
         'var d = new Date();\nd.getTime();\nString.fromCharCode(65);'
     ),
+    'a file required only after the anchor': (
+        'String.fromCharCode(65);\nrequire("./setup.js");'
+    ),
+    'a builtin module that runs no code required before the anchor': (
+        'require("fs");\nString.fromCharCode(65);'
+    ),
     'a script-scope named activation with the surface removed': (
         'var k, v;\nfunction g() { String.fromCharCode(65); globalThis[k] = v; }\ng();'
     ),
@@ -338,6 +353,80 @@ class TestBuiltinsIntactAt(TestBase):
         self.assertTrue(ModelCache(ast).builtins_intact_at(anchor))
         options = DeobfuscationOptions(entrypoints=('g',))
         self.assertFalse(ModelCache(ast, options).builtins_intact_at(anchor))
+
+
+class TestTheTrustQuestionsAtAnAnchor(TestBase):
+    """
+    The trust questions a fold asks at its point: each is the program-wide question where that one
+    holds, and the per-name question where the oracle clears the point.
+    """
+
+    _CLEAN = 'var s = String.fromCharCode(65);\nvar t = ["x"].concat("a|b".split("|"));'
+    _SURFACE_AFTER = (
+        'var s = String.fromCharCode(65);\n'
+        'var t = ["x"].concat("a|b".split("|"));\n'
+        'var k;\n'
+        'eval(k);'
+    )
+    _SURFACE_BEFORE = (
+        'var k;\n'
+        'eval(k);\n'
+        'var s = String.fromCharCode(65);\n'
+        'var t = ["x"].concat("a|b".split("|"));'
+    )
+
+    def test_a_question_the_whole_program_answers_asks_no_oracle(self):
+        ast = JsParser(self._CLEAN).parse()
+        cache = ModelCache(ast)
+
+        def oracle() -> bool:
+            raise AssertionError('the oracle was asked')
+
+        trust = AnchoredTrust(cache.effects, oracle, lambda: False)
+        self.assertTrue(trust.intrinsic_name('String'))
+        self.assertTrue(trust.prototype(str))
+        self.assertTrue(trust.chain(list))
+        self.assertEqual(trust.global_typeof('String'), 'function')
+
+    def test_a_surface_after_the_anchor_is_cleared_at_the_anchor_only(self):
+        ast = JsParser(self._SURFACE_AFTER).parse()
+        cache = ModelCache(ast)
+        anchor = _call_with_property(ast, _FROM_CHAR_CODE)
+        self.assertFalse(cache.effects.trusted_intrinsic_name('String'))
+        self.assertTrue(cache.trust_at(anchor).intrinsic_name('String'))
+        self.assertTrue(cache.trust_at(anchor).prototype(str))
+        self.assertFalse(cache.effects.program_trust().intrinsic_name('String'))
+
+    def test_a_surface_before_the_anchor_is_not_cleared(self):
+        ast = JsParser(self._SURFACE_BEFORE).parse()
+        cache = ModelCache(ast)
+        anchor = _call_with_property(ast, _FROM_CHAR_CODE)
+        self.assertFalse(cache.trust_at(anchor).intrinsic_name('String'))
+        self.assertFalse(cache.trust_at(anchor).prototype(str))
+
+    def test_a_call_nested_in_an_argument_is_cleared_through_the_view(self):
+        for label, source, foldable in (
+            ('a surface after the call', self._SURFACE_AFTER, True),
+            ('a surface before the call', self._SURFACE_BEFORE, False),
+        ):
+            with self.subTest(label):
+                ast = JsParser(source).parse()
+                cache = ModelCache(ast)
+                concat = _call_with_property(ast, 'concat')
+                self.assertFalse(cache.effects.call_is_foldable(concat))
+                self.assertEqual(cache.effects.call_is_foldable(concat, trust=cache.trust_at(concat)), foldable)
+
+    def test_a_typeof_of_a_name_the_host_lacks_folds_only_before_every_load(self):
+        source = 'var a = typeof window;\nrequire("./setup.js");\nvar b = typeof window;'
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast, DeobfuscationOptions(environment=HostEnvironment.node))
+        first, second = (
+            node.operand for node in ast.walk_in_order()
+            if isinstance(node, JsUnaryExpression) and node.operator == 'typeof'
+        )
+        self.assertEqual(cache.trust_at(first).global_typeof('window'), 'undefined')
+        self.assertIsNone(cache.trust_at(second).global_typeof('window'))
+        self.assertIsNone(cache.effects.program_trust().global_typeof('window'))
 
 
 class TestSingularValueAt(TestBase):

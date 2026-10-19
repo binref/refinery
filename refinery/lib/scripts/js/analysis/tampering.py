@@ -15,7 +15,8 @@ conjunction of:
   facts that cannot be ordered against an anchor at all;
 - a site enumeration by forward value-flow — every store through a base that may be the global
   object under a key only the runtime resolves, every read of the global object in an argument
-  position, every code-execution surface, and every recognized construction, followed to the
+  position, every code-execution surface, every load of code the text does not hold
+  (`SemanticModel.code_load_sites`), and every recognized construction, followed to the
   positions that obtain its value: a callee position is an invocation of it, a binding initializer
   flows onward through that binding's reads, and any other position is an unreadable escape;
 - multiplicity: the anchor executes at most once, counted by invocation *capability* — the
@@ -50,7 +51,7 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
-from refinery.lib.scripts.js.analysis.effects import EffectModel, side_effect_free
+from refinery.lib.scripts.js.analysis.effects import AnchoredTrust, EffectModel, side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     ScopeKind,
@@ -360,7 +361,8 @@ class TamperingModel:
     `refinery.lib.scripts.js.analysis.effects.EffectModel`, a
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, and the control-flow model the
     cycle questions go through. Ask whether the built-ins are intact at one point with
-    `builtins_intact_at`; ask which single value a binding holds at one point with
+    `builtins_intact_at`, and the trust questions of a fold or an execution there with `trust_at`;
+    ask which single value a binding holds at one point with
     `singular_value_at` — the positioned value question the same models answer; ask whether every
     invocation of a function discards its completion value with
     `every_invocation_discards_the_value`. Build through `build_tampering`.
@@ -404,6 +406,17 @@ class TamperingModel:
             cached = self._compute_intact(anchor)
             self._anchor_cache[id(anchor)] = cached
         return cached
+
+    def trust_at(self, anchor: Node) -> AnchoredTrust:
+        """
+        The questions whether the built-ins are still the language's when *anchor* is evaluated:
+        `builtins_intact_at` composed with the effect model's per-name arms (`AnchoredTrust`).
+        """
+        return AnchoredTrust(
+            self.effects,
+            lambda: self.builtins_intact_at(anchor),
+            lambda: self.dominance.code_load_may_precede(anchor),
+        )
 
     def _compute_intact(self, anchor: Node) -> bool:
         if not self._program_is_clear():
@@ -729,6 +742,8 @@ class TamperingModel:
                 sites.append(node)
         for site in self.model.opaque_reflection_sites():
             sites.extend(self._surface_sites(site))
+        for site in self.model.code_load_sites():
+            sites.extend(self._surface_sites(site))
         for node in root.walk():
             if not isinstance(node, (JsCallExpression, JsNewExpression)):
                 continue
@@ -747,13 +762,14 @@ class TamperingModel:
 
     def _surface_sites(self, site: Node) -> list[Node]:
         """
-        The sites an opaque reflective surface implies. A dynamic `import()` and a string timer run
-        code at their own node; every other surface is a value-read of a reflective intrinsic, so
-        the sites are the positions that value reaches — its invocations and escapes, by the one
-        forward walk. A read of `eval` invokes the code it is handed, while a read of `Function`
-        builds with it and the walk continues through the construction; a computed read on the
-        global object names an unknown global and is followed without the construction
-        continuation, so a call it flows into is a site at that call.
+        The sites an opaque reflective surface or a load of code implies. A dynamic `import()`, a
+        string timer and a `require` that loads code run code at their own node; every other surface
+        is a value-read of a reflective intrinsic, so the sites are the positions that value
+        reaches — its invocations and escapes, by the one forward walk. A read of `eval` invokes the
+        code it is handed, while a read of `Function` builds with it and the walk continues through
+        the construction; a computed read on the global object names an unknown global and is
+        followed without the construction continuation, so a call it flows into is a site at that
+        call.
         """
         if isinstance(site, (JsImportExpression, JsCallExpression)):
             return [site]
