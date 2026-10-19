@@ -12,7 +12,6 @@ import bisect
 import fnmatch
 import hashlib
 import inspect
-import math
 import ntpath
 import operator
 import random
@@ -23,6 +22,7 @@ import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, IntFlag, StrEnum, auto
+from fractions import Fraction
 from functools import cached_property, wraps
 from pathlib import Path
 from time import process_time
@@ -42,9 +42,11 @@ from typing import (
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, pascal
 from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion, LanguageDetection, TSetup
-from refinery.lib.inno.delphi import formatting
-from refinery.lib.inno.delphi.errors import DelphiException, SysConst
+from refinery.lib.inno.delphi import formatting, numbers, variants, x87
+from refinery.lib.inno.delphi.errors import DelphiException, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
+from refinery.lib.inno.delphi.runtime import Runtime
+from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.ifps import (
     TC,
     AOp,
@@ -79,6 +81,9 @@ _Y = TypeVar('_Y')
 
 
 ERROR_NO_MORE_FILES = 0x100123
+
+_INVALID_FLOAT = 'Invalid float'
+_NIL_INVOKE = 'Variant is null, cannot invoke'
 
 
 class OleObject:
@@ -117,7 +122,6 @@ class Variable(VariableBase, Generic[_T]):
     __slots__ = (
         'data',
         'path',
-        '_range',
     )
 
     @property
@@ -152,7 +156,7 @@ class Variable(VariableBase, Generic[_T]):
         if var.container:
             var.at(key).set(v)
         else:
-            var.data[key] = var._wrap(v)
+            var.data[key] = v
 
     def at(self, k: int):
         """
@@ -181,7 +185,6 @@ class Variable(VariableBase, Generic[_T]):
     ):
         super().__init__(type, spec)
         self.path = path
-        self._range = type.code.integer_range
         self.setdefault()
         if data is not None:
             self.set(data)
@@ -207,25 +210,9 @@ class Variable(VariableBase, Generic[_T]):
             elif type.code == TC.Pointer:
                 return Variable(_VariantType)
             else:
-                return type.default()
+                return pascal.default(type)
 
         self.data = default(self.type)
-
-    def _wrap(self, value: Value | _T, key: int | None = None) -> _T:
-        if (t := self.type.py_type(key)) and not isinstance(value, t):
-            if issubclass(t, int) and isinstance(value, str) and len(value) == 1:
-                return self._wrap(ord(value), key)
-            if issubclass(t, int) and isinstance(value, float):
-                return self._wrap(int(value), key)
-            if issubclass(t, str) and isinstance(value, int):
-                return chr(value)
-            if issubclass(t, float) and isinstance(value, int):
-                return float(value)
-            raise TypeError(F'Assigning value {value!r} to variable of type {self.type}.')
-        if (valid := self._range) is not None and isinstance(value, int):
-            start = valid.start
-            return start + (value - start) % (valid.stop - start)
-        return value
 
     def resize(self, n: int):
         """
@@ -267,21 +254,22 @@ class Variable(VariableBase, Generic[_T]):
         For container types, it can also be a sequence of those. A container variable is copied
         element by element, and a pointer element as Pascal Script copies it: A pointer to a
         variable of the script points to the same variable, and a pointer that owns its target
-        points to a copy of that target. A Variant that receives a Boolean holds a truth value, as
-        Pascal Script converts a Boolean into a Variant.
+        points to a copy of that target. A value of Python code is converted as
+        `refinery.lib.inno.pascal.representation` converts it; the interpreter converts between the
+        types of the script.
         """
         if self.pointer:
             return self.deref().set(value)
-        origin = None
         assigned = value
         if isinstance(value, Variable):
             source = value.deref()
             if self.container and source.container:
                 return self._copy_elements(source)
-            origin = source.type
+            if source.type == self.type and not source.container:
+                self.data = source.data
+                return
             assigned = source.get()
         elif isinstance(value, Value):
-            origin = value.type
             assigned = value.value
         elif isinstance(value, Enum):
             assigned = value.value
@@ -292,9 +280,7 @@ class Variable(VariableBase, Generic[_T]):
             for k, v in enumerate(assigned):
                 self.data[k].set(v)
         else:
-            if origin is not None and self.type.code is TC.Variant and origin.boolean:
-                assigned = bool(assigned)
-            self.data = self._wrap(assigned)
+            self.data = pascal.representation(self.type, assigned)
 
     def _copy_elements(self, source: Variable):
         if (
@@ -407,6 +393,13 @@ class EmulatorMaxCalls(EmulatorException, MemoryError):
 class EmulatorMaxArray(EmulatorException, MemoryError):
     """
     The script requested an array longer than the array length limit given in the configuration.
+    """
+
+
+class EmulatorUndefined(EmulatorException):
+    """
+    The script asked for a result that depends on state that the emulator does not model, such as
+    memory that Delphi reads or writes beyond the end of a buffer.
     """
 
 
@@ -788,10 +781,12 @@ class _HostSetup:
     What the Setup that runs the script decides on its own, read once from the setup header and the
     configuration: its version, the active language, the directives that the walk of the wizard
     follows, and the built-in pages that the header makes it skip. A bare script has no header; it
-    is taken to run under the current Setup with every page shown and every directive that sends an
-    event on, so that each event that the script handles is sent.
+    is taken to run under the Setup of the configured version, or the current Setup without one,
+    with every page shown and every directive that sends an event on, so that each event that the
+    script handles is sent.
     """
     version: InnoVersion | None
+    release: tuple[int, ...] | None
     language: int | None
     language_name: str
     page_changes_only: bool
@@ -803,15 +798,18 @@ class _HostSetup:
     finished_page_disabled: bool
     ready_memo_disabled: bool
     skipped_pages: frozenset[int]
+    control_word: int
 
     @classmethod
     def of(cls, setup_info: TSetup | None, version: InnoVersion | None, config: IFPSEmulatorConfig) -> _HostSetup:
         if setup_info is None:
+            release = config.setup_version
             return cls(
                 version=None,
+                release=release,
                 language=None,
                 language_name=config.language,
-                page_changes_only=False,
+                page_changes_only=_changes_pages_only(release),
                 restart_manager=True,
                 uninstallable=True,
                 uninstall_key=True,
@@ -820,6 +818,7 @@ class _HostSetup:
                 finished_page_disabled=False,
                 ready_memo_disabled=False,
                 skipped_pages=frozenset(),
+                control_word=_control_word(release),
             )
         header = setup_info.Header
         flags = header.Flags
@@ -846,11 +845,13 @@ class _HostSetup:
             skipped.add(PageID.wpReady)
         if not texts.info_after:
             skipped.add(PageID.wpInfoAfter)
+        release = version.semver if version else None
         return cls(
             version=version,
+            release=release,
             language=language,
             language_name=setup_info.Languages[language].Name if language is not None else config.language,
-            page_changes_only=(6, 5, 0) <= version.semver < (6, 6, 0) if version else False,
+            page_changes_only=_changes_pages_only(release),
             restart_manager=bool(flags & Flags.CloseApplications) and config.windows_os_version >= (6, 0),
             uninstallable=header.uninstallable() is not False,
             uninstall_key=header.creates_uninstall_key() is not False,
@@ -859,7 +860,25 @@ class _HostSetup:
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
             ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             skipped_pages=frozenset(skipped),
+            control_word=_control_word(release),
         )
+
+
+def _changes_pages_only(release: tuple[int, ...] | None) -> bool:
+    """
+    Whether Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
+    """
+    return release is not None and (6, 5, 0) <= release < (6, 6, 0)
+
+
+def _control_word(release: tuple[int, ...] | None) -> int:
+    """
+    The control word of the x87 that Setup runs the script with: Delphi 12, which builds Inno Setup
+    from 6.4.3 on, masks every exception.
+    """
+    if release is None or release >= (6, 4, 3):
+        return x87.MASKED_CONTROL_WORD
+    return x87.DEFAULT_CONTROL_WORD
 
 
 _ASCII_LOWER_CASE = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
@@ -911,7 +930,7 @@ class _EmulatedConstants:
         self.emulator = emulator
         self.caller = caller
         setup = emulator.setup
-        self.version = setup.version and setup.version.semver
+        self.version = setup.release
         self.admin = emulator.config.admin
         self.win64 = emulator.config.x64
 
@@ -1007,6 +1026,14 @@ _OPEN_ARRAY_KINDS = {
 }
 
 
+def _holds_integer(type: IFPSType) -> bool:
+    """
+    Whether a variable of the type holds an integer: an integer type, an enumeration, or a set.
+    """
+    code = type.code
+    return code.integer or code is TC.Enum or code is TC.Set
+
+
 def _open_array_element(element: Variable) -> VarRec:
     """
     Converts an element of an `array of const` into the argument that Pascal Script passes for it
@@ -1077,6 +1104,7 @@ class IFPSEmulatorConfig:
         5305: 'chrome.exe',
     }
     lcid: int = 0x0409
+    setup_version: tuple[int, int, int] | None = None
 
     @property
     def cwd(self):
@@ -1168,10 +1196,32 @@ class SetupEvent(StrEnum):
 class NewFunctionCall(NamedTuple):
     """
     An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` which
-    represents a call to the function with the given name and arguments.
+    represents a call to the function with the given name and arguments. Its text shows a float as
+    a Python float and a Variant as the value it holds.
     """
     name: str
     args: tuple
+
+    def __str__(self):
+        return F'{self.name}({", ".join(_display(a) for a in self.args)})'
+
+
+def _display(value: Any) -> str:
+    if isinstance(value, Variant):
+        if value.type == VarType.Empty:
+            return 'Unassigned'
+        if value.type == VarType.Null:
+            return 'Null'
+        value = value.value
+    if isinstance(value, x87.Extended):
+        return numbers.shortest(value)
+    if isinstance(value, Fraction):
+        return variants.currency_text(value, numbers.FormatSettings())
+    if isinstance(value, list):
+        return F'[{", ".join(_display(v) for v in value)}]'
+    if value is None:
+        return 'nil'
+    return repr(value)
 
 
 class NewPassword(str):
@@ -1267,30 +1317,6 @@ class EventCall(Generic[_Y, _T]):
         return self._value
 
 
-class FPUControl(IntFlag):
-    """
-    An integer flag representing FPU control words.
-    """
-    InvalidOperation    = 0b0_00_0_00_00_00_000001 # noqa
-    DenormalizedOperand = 0b0_00_0_00_00_00_000010 # noqa
-    ZeroDivide          = 0b0_00_0_00_00_00_000100 # noqa
-    Overflow            = 0b0_00_0_00_00_00_001000 # noqa
-    Underflow           = 0b0_00_0_00_00_00_010000 # noqa
-    PrecisionError      = 0b0_00_0_00_00_00_100000 # noqa
-    Reserved1           = 0b0_00_0_00_00_01_000000 # noqa
-    Reserved2           = 0b0_00_0_00_00_10_000000 # noqa
-    ExtendPrecision     = 0b0_00_0_00_01_00_000000 # noqa
-    DoublePrecision     = 0b0_00_0_00_10_00_000000 # noqa
-    MaxPrecision        = 0b0_00_0_00_11_00_000000 # noqa
-    RoundDown           = 0b0_00_0_01_00_00_000000 # noqa
-    RoundUp             = 0b0_00_0_10_00_00_000000 # noqa
-    RoundTowardZero     = 0b0_00_0_11_00_00_000000 # noqa
-    AffineInfinity      = 0b0_00_1_00_00_00_000000 # noqa
-    Reserved3           = 0b0_01_0_00_00_00_000000 # noqa
-    Reserved4           = 0b0_10_0_00_00_00_000000 # noqa
-    ReservedBits        = 0b0_11_0_00_00_11_000000 # noqa
-
-
 class _Stopwatch:
     """
     The processor time that one emulation spends. It runs only while the emulator works, not while
@@ -1355,12 +1381,15 @@ class IFPSEmulator:
 
     def reset(self):
         """
-        Reset the emulator timing, FPU word, and mutexes. The script starts over with new global
-        variables that hold their default values.
+        Reset the emulator timing, the state of the Delphi run-time library, and mutexes. The
+        script starts over with new global variables that hold their default values.
         """
         self.seconds_slept = 0.0
         self.clock = 0
-        self.fpucw = FPUControl.MaxPrecision | FPUControl.RoundTowardZero
+        self.runtime = Runtime(
+            x87.FPU(self.setup.control_word),
+            numbers.FormatSettings.of_locale(self.config.lcid),
+        )
         self.mutexes.clear()
         self._wizard_form = _WizardForm()
         self._globals = None
@@ -1481,13 +1510,9 @@ class IFPSEmulator:
             var = getvar(op).deref()
             return var.type, var.get()
 
-        def setval(op: Operand, new):
-            if op.immediate:
-                raise RuntimeError('attempt to assign to an immediate')
-            getvar(op).set(new)
-
         frames = run.frames
         depth = run.depth
+        runtime = self.runtime
         script_globals = self.globals
         watch = self._stopwatch
         stack = run.stack
@@ -1565,6 +1590,8 @@ class IFPSEmulator:
                         raise
                     except RecursionError as RE:
                         raise EmulatorMaxCalls(F'Calling {name} exceeded the recursion limit of Python.') from RE
+                    except Undefined as UE:
+                        raise EmulatorUndefined(F'Calling {name}: {UE}') from UE
                     except IFPSException as error:
                         raised = IFPSException(error.message, error.kind, name)
                     except DelphiException as error:
@@ -1601,43 +1628,26 @@ class IFPSEmulator:
                     if opc == Op.Nop:
                         continue
                     elif opc == Op.Assign:
-                        dst = getvar(insn.op(0))
+                        dst = getvar(insn.op(0)).deref()
                         src = insn.op(1)
                         if src.immediate:
-                            dst.set(src.value)
+                            source = src.value
+                            st, sv = source.type, source.value
                         else:
-                            dst.set(getvar(src))
+                            source = getvar(src).deref()
+                            st, sv = source.type, source.data
+                        if dst.container or dst.pointer or st.container or st.code is TC.Pointer:
+                            if not pascal.assignable(dst.type, st):
+                                raise type_mismatch()
+                            dst.set(source)
+                        else:
+                            dst.data = pascal.store(dst.type, st, sv, runtime)
                     elif opc == Op.Calculate:
                         if not isinstance((aop := insn.operator), AOp):
                             raise TypeError(F'Operator for {opc} was of type {aop.__class__.__name__} rather than AOp.')
                         target = getvar(insn.op(0)).deref()
                         st, sv = gettyped(insn.op(1))
-                        dv = target.get()
-                        fpu = isinstance(sv, float) or isinstance(dv, float)
-                        try:
-                            result = pascal.calculate(aop, target.type.code, dv, st.code, sv)
-                            if fpu and not isinstance(result, float):
-                                raise FloatingPointError
-                        except FloatingPointError as FPE:
-                            if not self.fpucw & FPUControl.InvalidOperation:
-                                result = float('nan')
-                            else:
-                                raise IFPSException('invalid operation', PSError.MathError) from FPE
-                        except OverflowError as OFE:
-                            if not fpu:
-                                raise IFPSException(SysConst.SIntOverflow) from OFE
-                            if self.fpucw & FPUControl.Overflow:
-                                result = float('nan')
-                            else:
-                                raise IFPSException('arithmetic overflow', PSError.MathError) from OFE
-                        except ZeroDivisionError as ZDE:
-                            if not fpu:
-                                raise IFPSException(SysConst.SDivByZero, PSError.DivideByZero) from ZDE
-                            if self.fpucw & FPUControl.ZeroDivide:
-                                result = float('nan')
-                            else:
-                                raise IFPSException('division by zero', PSError.DivideByZero) from ZDE
-                        target.set(result)
+                        target.data = pascal.calculate(aop, target.type, target.data, st, sv, runtime)
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
                         stack.append(getval(insn.op(0)))
@@ -1654,10 +1664,10 @@ class IFPSEmulator:
                     elif opc == Op.Jump:
                         ip = insn.operands[0]
                     elif opc == Op.JumpTrue:
-                        if getval(insn.op(1)):
+                        if pascal.truth(*gettyped(insn.op(1))):
                             ip = insn.operands[0]
                     elif opc == Op.JumpFalse:
-                        if not getval(insn.op(1)):
+                        if not pascal.truth(*gettyped(insn.op(1))):
                             ip = insn.operands[0]
                     elif opc == Op.Ret:
                         if (position := run.exit(function, insn.offset, sp)) is not None:
@@ -1683,7 +1693,9 @@ class IFPSEmulator:
                             raise TypeError(F'Operator for {opc} was of type {cop.__class__.__name__} rather than COp.')
                         lt, lv = gettyped(insn.op(1))
                         rt, rv = gettyped(insn.op(2))
-                        getvar(insn.op(0)).set(pascal.compare(cop, lt, lv, rt, rv))
+                        truth = pascal.compare(cop, lt, lv, rt, rv, runtime)
+                        into = getvar(insn.op(0)).deref()
+                        into.data = pascal.boolean(into.type, truth)
                     elif opc == Op.CallVar:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
@@ -1704,14 +1716,17 @@ class IFPSEmulator:
                         else:
                             dst.setptr(Variable(constant.type, data=constant.value))
                     elif opc == Op.BooleanNot:
-                        setval(a := insn.op(0), not getval(a))
+                        var = getvar(insn.op(0)).deref()
+                        var.data = pascal.logical_not(var.type, var.data, runtime)
                     elif opc == Op.IntegerNot:
-                        setval(a := insn.op(0), ~getval(a))
+                        var = getvar(insn.op(0)).deref()
+                        var.data = pascal.invert(var.type, var.data, runtime)
                     elif opc == Op.Neg:
-                        setval(a := insn.op(0), -getval(a))
+                        var = getvar(insn.op(0)).deref()
+                        var.data = pascal.negate(var.type, var.data, runtime)
                     elif opc == Op.SetFlag:
                         condition, negated = insn.operands
-                        jump = bool(getval(condition)) ^ negated
+                        jump = pascal.truth(*gettyped(condition)) ^ negated
                     elif opc == Op.JumpFlag:
                         if jump:
                             ip = insn.operands[0]
@@ -2160,8 +2175,36 @@ class IFPSEmulator:
         return False
 
     @external()
-    def Trunc(self, x: float) -> int:
-        return math.trunc(x)
+    def Round(self, x: x87.Real) -> int:
+        return self.runtime.fpu.integer(x)
+
+    @external()
+    def Trunc(self, x: x87.Real) -> int:
+        return self.runtime.fpu.integer(x, x87.Rounding.TowardZero)
+
+    @external()
+    def Int(self, x: x87.Real) -> x87.Real:
+        return self.runtime.fpu.round_integral(x, x87.Rounding.TowardZero)
+
+    @external()
+    def Abs(self, x: x87.Real) -> x87.Real:
+        return self.runtime.fpu.absolute(x)
+
+    @external()
+    def Pi(self) -> x87.Real:
+        return self.runtime.fpu.pi()
+
+    @external()
+    def Sqrt(self, x: x87.Real) -> x87.Real:
+        return self.runtime.fpu.square_root(x)
+
+    @external()
+    def Sin(self, x: x87.Real) -> x87.Real:
+        return self.runtime.fpu.sine(x)
+
+    @external()
+    def Cos(self, x: x87.Real) -> x87.Real:
+        return self.runtime.fpu.cosine(x)
 
     @external()
     def GetSpaceOnDisk(
@@ -2239,7 +2282,8 @@ class IFPSEmulator:
     @external()
     def Format(self, fmt: str, args: Variable[list]) -> str:
         elements = args.deref()
-        return formatting.format(fmt, [_open_array_element(elements.at(k)) for k in range(len(elements))])
+        arguments = [_open_array_element(elements.at(k)) for k in range(len(elements))]
+        return formatting.format(fmt, arguments, self.runtime)
 
     @external()
     def SetupMessage(self, id: int) -> str:
@@ -2397,20 +2441,36 @@ class IFPSEmulator:
         self._set_page_handler(this, PageEvent.OnCancelButtonClick, handler)
 
     @external()
-    def Unassigned(self) -> None:
-        return None
+    def Unassigned(self) -> Variant:
+        return variants.EMPTY
 
     @external()
-    def Null(self) -> None:
-        return None
+    def Null(self) -> Variant:
+        return variants.NULL
+
+    @external()
+    def VarType(self, v: Variant) -> int:
+        return v.type
+
+    @external()
+    def VarIsNull(self, v: Variant) -> bool:
+        return v.type == VarType.Null
+
+    @external()
+    def VarIsEmpty(self, v: Variant) -> bool:
+        return v.type == VarType.Empty
+
+    @external()
+    def VarIsClear(self, v: Variant) -> bool:
+        return v.type == VarType.Empty or v.type in (VarType.Dispatch, VarType.Unknown) and v.value is None
 
     @external()
     def Set8087CW(self, cw: int):
-        self.fpucw = FPUControl(cw)
+        self.runtime.fpu.control = cw & 0xFFFF
 
     @external()
     def Get8087CW(self) -> int:
-        return self.fpucw.value
+        return self.runtime.fpu.control | x87.RESERVED_BIT
 
     @external()
     def GetDateTimeString(
@@ -2507,7 +2567,7 @@ class IFPSEmulator:
     def Uppercase(self, string: str) -> str:
         return string.upper()
 
-    @external()
+    @external(alias='Replicate')
     def StringOfChar(self, c: str, count: int) -> str:
         return c * count
 
@@ -2623,24 +2683,50 @@ class IFPSEmulator:
     def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:
         return self.StringSplitEx(string, separators, None, how)
 
-    @external(alias='StrToInt64')
+    @external()
     def StrToInt(self, s: str) -> int:
-        return int(s)
-
-    @external(alias='StrToInt64Def')
-    def StrToIntDef(self, s: str, d: int) -> int:
-        try:
-            return int(s)
-        except Exception:
-            return d
+        value, error = numbers.val_integer(s, 32)
+        return -1 if error else value
 
     @external()
-    def StrToFloat(self, s: str) -> float:
-        return float(s)
+    def StrToIntDef(self, s: str, d: int) -> int:
+        value, error = numbers.val_integer(s, 32)
+        return d if error else value
 
-    @external(alias='FloatToStr')
+    @external()
+    def StrToInt64(self, s: str) -> int:
+        return numbers.str_to_int64(s)
+
+    @external()
+    def StrToInt64Def(self, s: str, d: int) -> int:
+        return numbers.str_to_int64_default(s, d)
+
+    @external()
+    def StrToFloat(self, s: str) -> x87.Real:
+        value, error = numbers.val_float(s, self.runtime.fpu)
+        if error or value is None:
+            raise IFPSException(_INVALID_FLOAT)
+        return value
+
+    @external()
+    def FloatToStr(self, e: x87.Real) -> str:
+        return numbers.str_fixed(e, 12)
+
+    @external(alias='Int64ToStr')
     def IntToStr(self, i: int) -> str:
         return str(i)
+
+    @external()
+    def PadL(self, s: str, n: int) -> str:
+        return s.rjust(n)
+
+    @external()
+    def PadR(self, s: str, n: int) -> str:
+        return s.ljust(n)
+
+    @external()
+    def PadZ(self, s: str, n: int) -> str:
+        return s.rjust(n, '0')
 
     @external()
     def StrToVersion(self, s: str, v: Variable[int]) -> bool:
@@ -2814,8 +2900,10 @@ class IFPSEmulator:
         return OleObject(name)
 
     @external()
-    def IDispatchInvoke(self, ole: OleObject, prop_set: bool, name: str, value: Any) -> int:
-        return 0
+    def IDispatchInvoke(self, ole: OleObject | None, prop_set: bool, name: str, value: Any) -> Variant:
+        if ole is None:
+            raise IFPSException(_NIL_INVOKE)
+        return variants.EMPTY
 
     @external()
     def FindWindowByClassName(self, name: str) -> int:
@@ -3155,16 +3243,11 @@ class InnoSetupEmulator(IFPSEmulator):
         all return values that are of type integer are set to `1` in an attempt to indicate success
         wherever possible.
         """
-        if result is not None and not result.container:
-            rt = result.type.py_type()
-            if isinstance(rt, type) and issubclass(rt, int):
-                result.set(1)
+        if result is not None and not result.container and _holds_integer(result.type):
+            result.set(1)
         for ptr in arguments:
             if not ptr.pointer:
                 continue
             var = ptr.deref()
-            if var.container:
-                continue
-            vt = var.type.py_type()
-            if isinstance(vt, type) and issubclass(vt, int):
+            if not var.container and _holds_integer(var.type):
                 var.set(1)

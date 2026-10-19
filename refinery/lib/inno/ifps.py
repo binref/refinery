@@ -12,6 +12,7 @@ import math
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import (
     Callable,
     Generator,
@@ -21,6 +22,7 @@ from typing import (
 from uuid import UUID
 
 from refinery.lib.inno import CaseInsensitiveDict
+from refinery.lib.inno.delphi import numbers, x87
 from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents, IFPSSignature
 from refinery.lib.structures import Struct, StructReader
 
@@ -29,33 +31,23 @@ _E = TypeVar('_E', bound=type[enum.Enum])
 _TAB = '\x20\x20'
 
 
-def extended(_data: bytes):
+def extended(_data: bytes) -> x87.Real:
     """
-    A helper function to parse 10 bytes into an extended type float value within the IFPS runtime.
+    Parses the 10 bytes of an x87 extended-precision float into its exact value.
     """
     if len(_data) != 10:
         raise ValueError
     data = int.from_bytes(_data, 'little')
-    sign = data >> 79
-    data = data ^ (sign << 79)
-    sign = -1.0 if sign else +1.0
-    exponent = data >> 64
-    data = data ^ (exponent << 64)
-    if exponent == 0:
-        if data == 0:
-            return sign * 0
-        exponent = -16382
-    elif exponent == 0b111111111111111:
-        if data == 1 << 63:
-            return sign * float('Inf')
-        else:
-            return sign * float('NaN')
-    else:
-        exponent = exponent - 16383
-    try:
-        return sign * math.ldexp(data, exponent - 63)
-    except OverflowError:
-        return sign * float('Inf')
+    negative = bool(data >> 79)
+    exponent = (data >> 64) & 0x7FFF
+    mantissa = data & 0xFFFFFFFFFFFFFFFF
+    if exponent == 0x7FFF:
+        if mantissa & 0x7FFFFFFFFFFFFFFF == 0:
+            return -math.inf if negative else math.inf
+        return math.nan
+    if mantissa == 0:
+        return -0.0 if negative else 0.0
+    return x87.real(-mantissa if negative else mantissa, max(exponent, 1) - 16383 - 63)
 
 
 def represent(cls: _E) -> _E:
@@ -328,22 +320,6 @@ class IFPSTypeBase(abc.ABC):
         """
         return indent * _TAB + self.code.name
 
-    @abc.abstractmethod
-    def py_type(self, key: int | None = None) -> type | None:
-        """
-        If possible, provide a Python type equivalent for this IFPS type. The optional key argument
-        is required only for the `refinery.lib.inno.ifps.TRecord` class.
-        """
-        ...
-
-    @abc.abstractmethod
-    def default(self, key: int | None = None):
-        """
-        Compute the default value for this type. The optional key argument is required only for the
-        `refinery.lib.inno.ifps.TRecord` class.
-        """
-        ...
-
     @property
     def primitive(self) -> bool:
         """
@@ -377,14 +353,6 @@ class TPrimitive(IFPSTypeBase):
     """
     A primitive IFPS type.
     """
-    def py_type(self, *_) -> type | None:
-        return _PRIMITIVE_PY_TYPE.get(self.code)
-
-    def default(self, *_):
-        try:
-            return _PRIMITIVE_DEFAULT[self.code]
-        except KeyError:
-            raise TypeError(F'The type {self} has no default value.') from None
 
 
 @dataclass
@@ -394,12 +362,6 @@ class TProcPtr(IFPSTypeBase):
     """
     void: bool
     args: tuple[DeclSpecParam, ...]
-
-    def py_type(self, *_):
-        return None
-
-    def default(self, *_):
-        return None
 
     def display(self, indent=0):
         name = super().display(indent)
@@ -422,12 +384,6 @@ class TInterface(IFPSTypeBase):
     """
     uuid: UUID
 
-    def py_type(self, *_):
-        return object
-
-    def default(self, *_):
-        return None
-
     def display(self, indent=0):
         display = super().display(indent)
         return F'{display}({self.uuid!s})'
@@ -440,12 +396,6 @@ class TClass(IFPSTypeBase):
     """
     name: str
 
-    def py_type(self, *_):
-        return None
-
-    def default(self, *_):
-        return None
-
 
 @dataclass
 class TSet(IFPSTypeBase):
@@ -453,12 +403,6 @@ class TSet(IFPSTypeBase):
     An IFPS type representing a bit vector.
     """
     size: int
-
-    def py_type(self, *_):
-        return int
-
-    def default(self, *_):
-        return 0
 
     @property
     def size_in_bytes(self):
@@ -477,16 +421,6 @@ class TArray(IFPSTypeBase):
     """
     type: IFPSType
 
-    def py_type(self, key: int | None = None):
-        if key is None:
-            return list
-        return self.type.py_type()
-
-    def default(self, key: int | None = None):
-        if key is None:
-            return []
-        return self.type.default()
-
     def display(self, indent=0):
         display = F'{_TAB * indent}{self.type!s}'
         return F'array of {display}'
@@ -503,16 +437,6 @@ class TStaticArray(IFPSTypeBase):
     type: IFPSType
     size: int
     offset: int | None = None
-
-    def py_type(self, key: int | None = None):
-        if key is None:
-            return list
-        return self.type.py_type(key)
-
-    def default(self, key: int | None = None):
-        if key is None:
-            return [self.type.default() for _ in range(self.size)]
-        return self.type.default()
 
     def display(self, indent=0):
         display = F'{_TAB * indent}{self.type!s}'
@@ -532,16 +456,6 @@ class TRecord(IFPSTypeBase):
     @property
     def size(self):
         return len(self.members)
-
-    def py_type(self, key: int | None = None):
-        if key is None:
-            return list
-        return self.members[key].py_type()
-
-    def default(self, key: int | None = None):
-        if key is None:
-            return [member.default() for member in self.members]
-        return self.members[key].default()
 
     def simple(self, nested: bool = False) -> bool:
         if nested:
@@ -597,13 +511,7 @@ class Value(NamedTuple):
     A value of the given type within the IFPS runtime.
     """
     type: IFPSType
-    value: str | int | float | bytes | Function
-
-    def convert(self, *_):
-        return self.type.py_type()
-
-    def default(self, *_):
-        return self.type.default()
+    value: str | int | float | x87.Extended | Fraction | bytes | Function
 
     def __repr__(self):
         value = self.value
@@ -615,6 +523,8 @@ class Value(NamedTuple):
         v = self.value
         if isinstance(v, Function):
             return F'&{v!s}'
+        if isinstance(v, x87.Extended):
+            return numbers.shortest(v)
         return repr(v)
 
 
@@ -984,39 +894,6 @@ class VariableBase:
 
     def __str__(self):
         return F'{self.spec}: {self.type!s}'
-
-
-_PRIMITIVE_PY_TYPE = {
-    TC.ReturnAddress       : int,
-    TC.U08                 : int,
-    TC.S08                 : int,
-    TC.U16                 : int,
-    TC.S16                 : int,
-    TC.U32                 : int,
-    TC.S32                 : int,
-    TC.Single              : float,
-    TC.Double              : float,
-    TC.Extended            : float,
-    TC.AnsiString          : str,
-    TC.Pointer             : VariableBase,
-    TC.PChar               : str,
-    TC.ResourcePointer     : VariableBase,
-    TC.Variant             : object,
-    TC.S64                 : int,
-    TC.U64                 : int,
-    TC.Char                : str,
-    TC.WideString          : str,
-    TC.WideChar            : str,
-    TC.Currency            : float,
-    TC.UnicodeString       : str,
-    TC.Enum                : int,
-    TC.Type                : IFPSType,
-}
-
-_PRIMITIVE_DEFAULT: dict[TC, int | float | str | None] = {
-    code: '\0' if code in (TC.Char, TC.WideChar, TC.PChar) else t() if t in (int, float, str) else None
-    for code, t in _PRIMITIVE_PY_TYPE.items() if isinstance(t, type)
-}
 
 
 @represent
@@ -1534,7 +1411,7 @@ class IFPSFile(Struct):
             TC.WideChar      : lambda: chr(reader.u16()),
             TC.ProcPtr       : lambda: self.functions[reader.u32()],
             TC.Set           : lambda: int.from_bytes(reader.read(type.size_in_bytes), 'little'),
-            TC.Currency      : lambda: reader.u64() / 10_000,
+            TC.Currency      : lambda: Fraction(reader.i64(), 10_000),
         }.get(type.code, None)
         if processor is not None:
             data = processor()

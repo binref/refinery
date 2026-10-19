@@ -8,7 +8,10 @@ import re
 
 from typing import NamedTuple, Sequence
 
+from refinery.lib.inno.delphi import variants
 from refinery.lib.inno.delphi.errors import EConvertError
+from refinery.lib.inno.delphi.numbers import FloatFormat, float_to_text
+from refinery.lib.inno.delphi.runtime import Runtime
 
 
 class VType(enum.IntEnum):
@@ -75,12 +78,6 @@ _INVALID_FORMAT = 'Format \'%s\' invalid or incompatible with argument'
 _MISSING_ARGUMENT = 'No argument for format \'%s\''
 
 
-def _variant_text(value) -> str:
-    if value is None:
-        return ''
-    return str(value)
-
-
 def _number(fmt: str, cursor: int) -> tuple[str, int]:
     """
     Reads the digits at the cursor. Returns them and the cursor after them.
@@ -96,12 +93,13 @@ def _integer(number: str) -> int:
     The value of digits that spell an Integer, and -1 for no digits or a value beyond the range of
     an Integer.
     """
-    if number and (value := int(number)) in _INTEGER_RANGE:
+    number = number.lstrip('0') or number[:1]
+    if number and len(number) <= 10 and (value := int(number)) in _INTEGER_RANGE:
         return value
     return -1
 
 
-def format(fmt: str, args: Sequence[VarRec]) -> str:
+def format(fmt: str, args: Sequence[VarRec], runtime: Runtime) -> str:
     """
     Delphi's `Format` function as Delphi 12 implements it: Each format specifier has the form
 
@@ -112,12 +110,14 @@ def format(fmt: str, args: Sequence[VarRec]) -> str:
     an Integer, or an Int64 in the range of an Integer. A negative width from an argument pads on
     the other side. An index or width whose digits do not spell a non-negative Integer is an
     error, and such a precision is ignored. A specifier without an index takes the argument after
-    the one that the previous specifier took. The type is one of `d u x s p e f g`, in any case,
-    and `%%` writes a percent sign. A specifier that does not end in a letter ends the output.
-    Hex digits are upper case, a precision is the minimum number of digits for an integer and the
-    maximum length of a string, and the width pads with spaces. The floating-point types are
-    converted by the Python format operator with the same type and precision; Delphi's types `n`
-    and `m` are rejected.
+    the one that the previous specifier took. The type is one of `d u x s p e f g n m`, in any
+    case, and `%%` writes a percent sign. A specifier that does not end in a letter ends the
+    output. Hex digits are upper case, a precision is the minimum number of digits for an integer
+    and the maximum length of a string, and the width pads with spaces. The floating-point types
+    are written as `refinery.lib.inno.delphi.numbers.float_to_text` writes them, with the regional
+    settings of the runtime: `e` and `g` with 15 significant digits by default and at least three
+    exponent digits, `f` and `n` with two decimals by default, and `m` with the currency decimals
+    of the settings, at most 18 digits. A Variant is accepted only by `s`, and Null is empty.
     """
     output: list[str] = []
     cursor = 0
@@ -191,14 +191,14 @@ def format(fmt: str, args: Sequence[VarRec]) -> str:
         if star_precision:
             precision = asterisk()
         kind, value = argument()
-        if (text := _convert(letter, kind, value, precision)) is None:
+        if (text := _convert(letter, kind, value, precision, runtime)) is None:
             raise error(_INVALID_FORMAT)
         output.append(text.ljust(width) if left else text.rjust(width))
     output.append(fmt[cursor:])
     return ''.join(output)
 
 
-def _convert(letter: str, kind: VType, value, precision: int) -> str | None:
+def _convert(letter: str, kind: VType, value, precision: int, runtime: Runtime) -> str | None:
     conversion = letter.upper()
     if conversion in 'DUX':
         if (mask := _INTEGER_MASK.get(kind)) is None or not isinstance(value, int):
@@ -213,7 +213,7 @@ def _convert(letter: str, kind: VType, value, precision: int) -> str | None:
         if kind in _TEXT_KINDS and isinstance(value, str):
             text = value
         elif kind is VType.Variant:
-            text = _variant_text(value)
+            text = variants.to_text(value, runtime)
         else:
             return None
         return text if precision < 0 else text[:precision]
@@ -221,9 +221,23 @@ def _convert(letter: str, kind: VType, value, precision: int) -> str | None:
         if kind is not VType.Pointer:
             return None
         return F'{value or 0:08X}'
-    if conversion in 'EFG':
-        if kind is not VType.Extended or not isinstance(value, float):
+    if (style := _FLOAT_FORMATS.get(conversion)) is not None:
+        if kind is not VType.Extended:
             return None
-        spec = letter if precision < 0 else F'.{precision}{letter}'
-        return F'%{spec}' % value
+        settings = runtime.settings
+        precision = min(precision, 18)
+        if style is FloatFormat.General or style is FloatFormat.Exponent:
+            return float_to_text(value, style, 15 if precision < 0 else precision, 3, settings)
+        if precision < 0:
+            precision = settings.currency_decimals if style is FloatFormat.Currency else 2
+        return float_to_text(value, style, 18, precision, settings)
     return None
+
+
+_FLOAT_FORMATS = {
+    'E': FloatFormat.Exponent,
+    'F': FloatFormat.Fixed,
+    'G': FloatFormat.General,
+    'N': FloatFormat.Number,
+    'M': FloatFormat.Currency,
+}

@@ -59,7 +59,7 @@ class innopwd(Unit):
                 self.log_debug(F'\x20\x20{event.offset:#08x} {event.instruction!s}')
                 continue
             if isinstance(event, NewFunctionCall):
-                self.log_info(F'calling {event.name!s}{event.args!r}')
+                self.log_info(F'calling {event!s}')
                 continue
             if isinstance(event, (NewScriptError, NewEmulationError)):
                 self.log_warn(str(event))

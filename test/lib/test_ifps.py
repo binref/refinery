@@ -1,6 +1,5 @@
 import contextlib
 import ntpath
-import pytest
 import time
 
 from typing import Callable
@@ -1018,19 +1017,63 @@ class TestIPFSEmulator(TestBase):
         ]
         self.assertEqual(set(changes), {('\\', '/')})
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=EmulatorException,
-        reason='an operation on values of mismatched types ends the emulation instead of raising a script exception',
-    )
-    def test_a_type_mismatch_in_a_try_block_runs_its_except_block(self):
+    def test_an_emulated_com_property_is_unassigned(self):
         """
-        The emulated COM object answers its `StatusText` property with 0, which the script adds to a
-        string. Pascal Script raises this type mismatch as an exception that the script can handle.
+        The script reads the `Status` and `StatusText` of an emulated HTTP request, which answer
+        Unassigned; Delphi converts Unassigned to 0 and to the empty string.
         """
         from refinery.lib.inno.emulator import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, log_calls=True)
         call = emulator.emulate_function(emulator.symbols['GETADSERVERRESPONSE'])
         logged = [event.args for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
-        self.assertEqual(logged[-1], ('Failed to get configuration',))
+        self.assertEqual(logged[-1], ('HTTP Error: 0 ',))
         self.assertFalse(call.value)
+
+    def test_every_wmi_query_of_a_script_is_in_the_call_log(self):
+        """
+        The emulated WMI locator answers its `ConnectServer` call with Unassigned, so the script
+        sends each query to a nil service object, which raises an error that the script handles.
+        """
+        from refinery.lib.inno.emulator import NewFunctionCall
+        emulator = self._script_emulator(_SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK, log_calls=True)
+        calls = [
+            event.args for event in emulator.emulate_installation()
+            if isinstance(event, NewFunctionCall) and event.name == 'IDispatchInvoke' and event.args[2] == 'ExecQuery'
+        ]
+        self.assertEqual({service for service, *_ in calls}, {None})
+        self.assertEqual([arguments[0].value for *_, arguments in calls], [
+            'SELECT NumberOfCores FROM Win32_Processor',
+            'SELECT TotalPhysicalMemory FROM Win32_ComputerSystem',
+            'SELECT * FROM Win32_SystemDriver',
+            'SELECT Caption FROM Win32_Process WHERE NOT Caption IS NULL',
+            'SELECT DeviceID FROM Win32_PnPEntity WHERE DeviceID LIKE \'%PNP0F13%\' AND DeviceID LIKE \'%22F5829E%\'',
+            'SELECT DeviceID FROM Win32_PnPEntity WHERE DeviceID LIKE \'%PNP0303%\' AND DeviceID LIKE \'%22F5829E%\'',
+            'SELECT DeviceID FROM Win32_PnPEntity WHERE DeviceID LIKE \'%RHT1234%\' AND DeviceID LIKE \'%22F5829E%\'',
+            'SELECT Name FROM Win32_Processor',
+            'SELECT Name FROM Win32_Service WHERE Name="A3E64E56_fl"',
+        ])
+
+    def test_an_installer_built_before_inno_setup_6_4_3_does_not_mask_float_errors(self):
+        """
+        Delphi sets the control word `$1332` before Delphi 12, which builds Inno Setup from 6.4.3 on.
+        The x87 reports its reserved bit `$40` as set.
+        """
+        self.assertEqual(self._installer_emulator().Get8087CW(), 0x1372)
+
+    @wontfix('the x87 reduces the operand of FSIN by a pi of 66 bits; the emulator computes the sine of the exact operand')
+    def test_the_sine_of_pi_is_that_of_the_x87(self):
+        """
+        The x87 subtracts its pi of 66 bits from the Double nearest to pi, which leaves
+        1.2246063538223773e-16 instead of the exact sine 1.2246467991473532e-16.
+        """
+        import math
+        from refinery.lib.inno.delphi.x87 import Format
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.runtime.fpu.store(emulator.Sin(math.pi), Format.Double), 1.2246063538223773e-16)
+
+    def test_the_language_id_of_the_machine_selects_the_regional_format_of_windows(self):
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        german = FormatSettings.of_locale(0x0407)
+        english = FormatSettings.of_locale(0x0409)
+        self.assertEqual((german.decimal_separator, german.thousand_separator, german.currency_string), (',', '.', '\u20ac'))
+        self.assertEqual((english.decimal_separator, english.thousand_separator, english.currency_string), ('.', ',', '$'))

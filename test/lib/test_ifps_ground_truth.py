@@ -6,19 +6,20 @@ from typing import Iterable
 
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.emulator import (
-    EmulatorException,
+    EmulatorUndefined,
     IFPSEmulatorConfig,
     IFPSException,
     InnoSetupEmulator,
     NewFunctionCall,
 )
-from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand
+from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand, Value
 
 from .. import TestBase, wontfix
 
 _ORACLE_LINE = re.compile(r'ORACLE (\S+) = (.*)')
-_INTEGER_SCRIPT = '8ca8a9c7454b8aab50c461b543098450f2f7ea277b67fc7614c2fe5f58d2c3a8'
-_INTEGER_LOG = {
+_MESSAGE_REFERENCE = re.compile(r'!(\d+)')
+_VALUE_SCRIPT = 'ddff7277b0ecf390016c2200d91b671ab0f5f6f63edb29a6948010ba5ff19d51'
+_VALUE_LOG = {
     'store.s32_to_u32'                      : '4294967295',
     'store.u32_to_s32'                      : '-1',
     'store.s32_to_u8'                       : '200',
@@ -241,6 +242,649 @@ _INTEGER_LOG = {
     'variant.for_counter'                   : 'raised after 1',
     'fmt.array_of_strings'                  : 'raised',
     'const.extended_infinity'               : 'true',
+    'vstore.byte'                           : '17:200',
+    'vstore.boolean'                        : '11:True',
+    'vstore.shortint'                       : '16:-100',
+    'vstore.word'                           : '18:60000',
+    'vstore.smallint'                       : '2:-30000',
+    'vstore.cardinal'                       : '19:4000000000',
+    'vstore.integer'                        : '3:-7',
+    'vstore.int64'                          : '20:-1099511627776',
+    'vstore.single'                         : '5:0,100000001490116',
+    'vstore.double'                         : '5:0,1',
+    'vstore.extended'                       : '5:0,1',
+    'vstore.currency'                       : '6:0,1',
+    'vstore.ansistring'                     : '256:ab',
+    'vstore.char'                           : '8:c',
+    'vstore.string'                         : '258:de',
+    'vstore.widestring'                     : '8:fg',
+    'vstore.integer_constant'               : '3:5',
+    'vstore.int64_constant'                 : '20:5000000000',
+    'vstore.float_constant'                 : '5:1,5',
+    'vstore.char_constant'                  : '8:h',
+    'vstore.string_constant'                : '258:ij',
+    'vstore.true_constant'                  : '11:True',
+    'vstore.unassigned'                     : '0:',
+    'msg.0'                                 : 'Could not convert variant of type (Null) into type (OleStr)',
+    'vstore.null'                           : '1:!0',
+    'vconv.empty'                           : '0|0|0|0|0.000000000000|0.000000000000|[]|0|0',
+    'msg.1'                                 : 'Could not convert variant of type (Null) into type (Integer)',
+    'msg.2'                                 : 'Could not convert variant of type (Null) into type (Int64)',
+    'msg.3'                                 : 'Could not convert variant of type (Null) into type (Double)',
+    'msg.4'                                 : 'Could not convert variant of type (Null) into type (Currency)',
+    'vconv.null'                            : '!1|!2|!2|!2|!3|!4|!0|!2|!2',
+    'vconv.int'                             : '7|7|7|7|7.000000000000|7.000000000000|[7]|7|7',
+    'vconv.minus_one'                       : '-1|4294967295|255|-1|-1.000000000000|-1.000000000000|[-1]|65535|255',
+    'msg.5'                                 : 'Overflow while converting variant of type (Int64) into type (Integer)',
+    'vconv.int64'                           : (
+        '!5|7|7|1099511627783|1099511627783.000000000000|1099511627783.000000000000|[1099511627783]|'
+        '7|7'
+    ),
+    'vconv.int64_minus_one'                 : '-1|4294967295|255|-1|-1.000000000000|-1.000000000000|[-1]|65535|255',
+    'vconv.double_half'                     : '0|0|0|0|0.500000000000|0.500000000000|[0,5]|0|0',
+    'vconv.double_two_and_a_half'           : '2|2|2|2|2.500000000000|2.500000000000|[2,5]|2|2',
+    'vconv.double_three_and_a_half'         : '4|4|4|4|3.500000000000|3.500000000000|[3,5]|4|4',
+    'vconv.double_negative_two_and_a_half'  : '-2|4294967294|254|-2|-2.500000000000|-2.500000000000|[-2,5]|65534|254',
+    'msg.6'                                 : 'Overflow while converting variant of type (Double) into type (Integer)',
+    'vconv.double_large'                    : (
+        '!6|1410065408|0|10000000000|10000000000.000000000000|10000000000.000000000000|'
+        '[10000000000]|58368|0'
+    ),
+    'vconv.currency'                        : '2|2|2|2|2.500000000000|2.500000000000|[2,5]|2|2',
+    'vconv.text_number'                     : '12|12|12|12|12.000000000000|12.000000000000|[12]|12|12',
+    'vconv.text_padded'                     : '12|12|12|12|12.000000000000|12.000000000000|[ 12 ]|12|12',
+    'msg.7'                                 : 'Could not convert variant of type (UnicodeString) into type (Double)',
+    'msg.8'                                 : 'Could not convert variant of type (UnicodeString) into type (Currency)',
+    'vconv.text_dollar_hex'                 : '31|31|31|31|!7|!8|[$1F]|31|31',
+    'vconv.text_zero_x_hex'                 : '31|31|31|31|!7|!8|[0x1F]|31|31',
+    'vconv.text_point'                      : '15|15|15|15|15.000000000000|15.000000000000|[1.5]|15|15',
+    'vconv.text_comma'                      : '2|2|2|2|1.500000000000|1.500000000000|[1,5]|2|2',
+    'vconv.text_comma_half'                 : '2|2|2|2|2.500000000000|2.500000000000|[2,5]|2|2',
+    'vconv.text_exponent'                   : '1000|1000|232|1000|1000.000000000000|1000.000000000000|[1e3]|1000|232',
+    'msg.9'                                 : 'Could not convert variant of type (UnicodeString) into type (Integer)',
+    'msg.10'                                : 'Could not convert variant of type (UnicodeString) into type (Int64)',
+    'vconv.text_empty'                      : '!9|!10|!10|!10|!7|!8|[]|!10|!10',
+    'vconv.text_letters'                    : '!9|!10|!10|!10|!7|!8|[ab]|!10|!10',
+    'vconv.text_true'                       : '1|1|1|1|!7|!8|[True]|1|1',
+    'vconv.text_char'                       : '!9|!10|!10|!10|!7|!8|[c]|!10|!10',
+    'msg.11'                                : 'Overflow while converting variant of type (UnicodeString) into type (Integer)',
+    'vconv.text_large'                      : (
+        '!11|3000000000|0|3000000000|3000000000.000000000000|3000000000.000000000000|[3000000000]|'
+        '24064|0'
+    ),
+    'vconv.true'                            : '-1|4294967295|255|-1|-1.000000000000|-1.000000000000|[True]|65535|255',
+    'vconv.false'                           : '0|0|0|0|0.000000000000|0.000000000000|[False]|0|0',
+    'vop.add.empty'                         : '0:|1:!0|3:7|20:1099511627776|5:2,5|6:2,5|8:12|8:ab|5:-1',
+    'vop.add.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.add.int'                           : '3:7|1:!0|3:14|20:1099511627783|5:9,5|6:9,5|5:19|!7|3:6',
+    'vop.add.int64'                         : (
+        '20:1099511627776|1:!0|20:1099511627783|20:2199023255552|5:1099511627778,5|'
+        '6:1099511627778,5|5:1099511627788|!7|20:1099511627775'
+    ),
+    'vop.add.double'                        : '5:2,5|1:!0|5:9,5|5:1099511627778,5|5:5|6:5|5:14,5|!7|5:1,5',
+    'vop.add.currency'                      : '6:2,5|1:!0|6:9,5|6:1099511627778,5|6:5|6:5|6:14,5|!8|6:1,5',
+    'vop.add.numtext'                       : '258:12|1:!0|5:19|5:1099511627788|5:14,5|6:14,5|258:1212|258:12ab|5:11',
+    'vop.add.text'                          : '258:ab|1:!0|!7|!7|!7|!8|258:ab12|258:abab|!7',
+    'vop.add.true'                          : '5:-1|1:!0|3:6|20:1099511627775|5:1,5|6:1,5|5:11|!7|5:-2',
+    'vop.sub.empty'                         : '0:|1:!0|3:-7|20:-1099511627776|5:-2,5|6:-2,5|5:-12|!7|5:1',
+    'vop.sub.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.sub.int'                           : '3:7|1:!0|3:0|20:-1099511627769|5:4,5|6:4,5|5:-5|!7|3:8',
+    'vop.sub.int64'                         : (
+        '20:1099511627776|1:!0|20:1099511627769|20:0|5:1099511627773,5|6:1099511627773,5|'
+        '5:1099511627764|!7|20:1099511627777'
+    ),
+    'vop.sub.double'                        : '5:2,5|1:!0|5:-4,5|5:-1099511627773,5|5:0|6:0|5:-9,5|!7|5:3,5',
+    'vop.sub.currency'                      : '6:2,5|1:!0|6:-4,5|6:-1099511627773,5|6:0|6:0|6:-9,5|!8|6:3,5',
+    'vop.sub.numtext'                       : '5:12|1:!0|5:5|5:-1099511627764|5:9,5|6:9,5|5:0|!7|5:13',
+    'vop.sub.text'                          : '!7|1:!0|!7|!7|!7|!8|!7|!7|!7',
+    'vop.sub.true'                          : '5:-1|1:!0|3:-8|20:-1099511627777|5:-3,5|6:-3,5|5:-13|!7|5:0',
+    'vop.mul.empty'                         : '0:|1:!0|3:0|20:0|5:0|6:0|5:0|!7|5:0',
+    'vop.mul.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.mul.int'                           : '3:0|1:!0|3:49|20:7696581394432|5:17,5|6:17,5|5:84|!7|3:-7',
+    'vop.mul.int64'                         : (
+        '20:0|1:!0|20:7696581394432|20:0|5:2748779069440|6:2748779069440|5:13194139533312|!7|'
+        '20:-1099511627776'
+    ),
+    'vop.mul.double'                        : '5:0|1:!0|5:17,5|5:2748779069440|5:6,25|6:6,25|5:30|!7|5:-2,5',
+    'vop.mul.currency'                      : '6:0|1:!0|6:17,5|6:2748779069440|6:6,25|6:6,25|6:30|!7|6:-2,5',
+    'vop.mul.numtext'                       : '5:0|1:!0|5:84|5:13194139533312|5:30|6:30|5:144|!7|5:-12',
+    'vop.mul.text'                          : '!7|1:!0|!7|!7|!7|!7|!7|!7|!7',
+    'vop.mul.true'                          : '5:0|1:!0|3:-7|20:-1099511627776|5:-2,5|6:-2,5|5:-12|!7|5:1',
+    'msg.12'                                : 'Division by zero',
+    'vop.slash.empty'                       : '!12|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:0',
+    'vop.slash.null'                        : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.slash.int'                         : '!12|1:!0|3:1|20:0|3:3|3:3|3:0|!9|3:-7',
+    'vop.slash.int64'                       : '!12|1:!0|20:157073089682|20:1|!5|!5|!5|!5|20:-1099511627776',
+    'vop.slash.double'                      : '5:INF|1:!0|5:0,357142857142857|5:2,27373675443232E-12|5:1|5:1|5:0,208333333333333|!7|5:-2,5',
+    'vop.slash.currency'                    : '6:-922337203685477,5808|1:!0|6:0,3571|6:0|6:1|6:1|6:0,2083|!7|6:-2,5',
+    'vop.slash.numtext'                     : '!12|1:!0|3:1|!5|3:6|3:6|3:1|!9|3:-12',
+    'vop.slash.text'                        : '!9|1:!0|!9|!9|!9|!9|!9|!9|!9',
+    'vop.slash.true'                        : '!12|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:1',
+    'vop.div.empty'                         : '!12|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:0',
+    'vop.div.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.div.int'                           : '!12|1:!0|3:1|20:0|3:3|3:3|3:0|!9|3:-7',
+    'vop.div.int64'                         : '!12|1:!0|20:157073089682|20:1|!5|!5|!5|!5|20:-1099511627776',
+    'vop.div.double'                        : '5:INF|1:!0|5:0,357142857142857|5:2,27373675443232E-12|5:1|5:1|5:0,208333333333333|!7|5:-2,5',
+    'vop.div.currency'                      : '6:-922337203685477,5808|1:!0|6:0,3571|6:0|6:1|6:1|6:0,2083|!7|6:-2,5',
+    'vop.div.numtext'                       : '!12|1:!0|3:1|!5|3:6|3:6|3:1|!9|3:-12',
+    'vop.div.text'                          : '!9|1:!0|!9|!9|!9|!9|!9|!9|!9',
+    'vop.div.true'                          : '!12|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:1',
+    'vop.mod.empty'                         : '!12|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:0',
+    'vop.mod.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.mod.int'                           : '!12|1:!0|3:0|20:7|3:1|3:1|3:7|!9|3:0',
+    'vop.mod.int64'                         : '!12|1:!0|20:2|20:0|!5|!5|!5|!5|20:0',
+    'vop.mod.double'                        : '!12|1:!0|3:2|!5|3:0|3:0|3:2|!9|3:0',
+    'vop.mod.currency'                      : '!12|1:!0|3:2|!5|3:0|3:0|3:2|!9|3:0',
+    'vop.mod.numtext'                       : '!12|1:!0|3:5|!5|3:0|3:0|3:0|!9|3:0',
+    'vop.mod.text'                          : '!9|1:!0|!9|!9|!9|!9|!9|!9|!9',
+    'vop.mod.true'                          : '!12|1:!0|3:-1|20:-1|3:-1|3:-1|3:-1|!9|3:0',
+    'vop.shl.empty'                         : '0:|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:0',
+    'vop.shl.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.shl.int'                           : '3:7|1:!0|3:896|20:7|3:28|3:28|3:28672|!9|3:-2147483648',
+    'vop.shl.int64'                         : '20:1099511627776|1:!0|20:140737488355328|20:1099511627776|!5|!5|!5|!5|20:0',
+    'vop.shl.double'                        : '3:2|1:!0|3:256|!5|3:8|3:8|3:8192|!9|3:0',
+    'vop.shl.currency'                      : '3:2|1:!0|3:256|!5|3:8|3:8|3:8192|!9|3:0',
+    'vop.shl.numtext'                       : '3:12|1:!0|3:1536|!5|3:48|3:48|3:49152|!9|3:0',
+    'vop.shl.text'                          : '!9|1:!0|!9|!9|!9|!9|!9|!9|!9',
+    'vop.shl.true'                          : '3:-1|1:!0|3:-128|20:-1|3:-4|3:-4|3:-4096|!9|3:-2147483648',
+    'vop.shr.empty'                         : '0:|1:!0|3:0|20:0|3:0|3:0|3:0|!9|3:0',
+    'vop.shr.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.shr.int'                           : '3:7|1:!0|3:0|20:7|3:1|3:1|3:0|!9|3:0',
+    'vop.shr.int64'                         : '20:1099511627776|1:!0|20:8589934592|20:1099511627776|!5|!5|!5|!5|20:0',
+    'vop.shr.double'                        : '3:2|1:!0|3:0|!5|3:0|3:0|3:0|!9|3:0',
+    'vop.shr.currency'                      : '3:2|1:!0|3:0|!5|3:0|3:0|3:0|!9|3:0',
+    'vop.shr.numtext'                       : '3:12|1:!0|3:0|!5|3:3|3:3|3:0|!9|3:0',
+    'vop.shr.text'                          : '!9|1:!0|!9|!9|!9|!9|!9|!9|!9',
+    'vop.shr.true'                          : '3:-1|1:!0|3:33554431|20:-1|3:1073741823|3:1073741823|3:1048575|!9|3:1',
+    'vop.and.empty'                         : '0:|0:|3:0|20:0|3:0|3:0|3:0|!9|11:False',
+    'msg.13'                                : 'Could not convert variant of type (UnicodeString) into type (Boolean)',
+    'vop.and.null'                          : '0:|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|!13|1:!0',
+    'vop.and.int'                           : '3:0|1:!0|3:7|20:0|3:2|3:2|3:4|!9|3:7',
+    'vop.and.int64'                         : '20:0|1:!0|20:0|20:1099511627776|!5|!5|!5|!5|20:1099511627776',
+    'vop.and.double'                        : '3:0|1:!0|3:2|!5|3:2|3:2|3:0|!9|3:2',
+    'vop.and.currency'                      : '3:0|1:!0|3:2|!5|3:2|3:2|3:0|!9|3:2',
+    'vop.and.numtext'                       : '3:0|1:!0|3:4|!5|3:0|3:0|3:12|!9|11:True',
+    'vop.and.text'                          : '!9|!13|!9|!9|!9|!9|!9|!9|!13',
+    'vop.and.true'                          : '11:False|1:!0|3:7|20:1099511627776|3:2|3:2|11:True|!13|11:True',
+    'vop.or.empty'                          : '0:|1:!0|3:7|20:1099511627776|3:2|3:2|3:12|!9|11:True',
+    'vop.or.null'                           : '1:!0|1:!0|3:7|20:1099511627776|5:2,5|6:2,5|258:12|!13|11:True',
+    'vop.or.int'                            : '3:7|3:7|3:7|20:1099511627783|3:7|3:7|3:15|!9|3:-1',
+    'vop.or.int64'                          : '20:1099511627776|20:1099511627776|20:1099511627783|20:1099511627776|!5|!5|!5|!5|20:-1',
+    'vop.or.double'                         : '3:2|5:2,5|3:7|!5|3:2|3:2|3:14|!9|3:-1',
+    'vop.or.currency'                       : '3:2|6:2,5|3:7|!5|3:2|3:2|3:14|!9|3:-1',
+    'vop.or.numtext'                        : '3:12|258:12|3:15|!5|3:14|3:14|3:12|!9|11:True',
+    'vop.or.text'                           : '!9|!13|!9|!9|!9|!9|!9|!9|!13',
+    'vop.or.true'                           : '11:True|11:True|3:-1|20:-1|3:-1|3:-1|11:True|11:True|11:True',
+    'vop.xor.empty'                         : '0:|1:!0|3:7|20:1099511627776|3:2|3:2|3:12|!9|11:True',
+    'vop.xor.null'                          : '1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0|1:!0',
+    'vop.xor.int'                           : '3:7|1:!0|3:0|20:1099511627783|3:5|3:5|3:11|!9|3:-8',
+    'vop.xor.int64'                         : '20:1099511627776|1:!0|20:1099511627783|20:0|!5|!5|!5|!5|20:-1099511627777',
+    'vop.xor.double'                        : '3:2|1:!0|3:5|!5|3:0|3:0|3:14|!9|3:-3',
+    'vop.xor.currency'                      : '3:2|1:!0|3:5|!5|3:0|3:0|3:14|!9|3:-3',
+    'vop.xor.numtext'                       : '3:12|1:!0|3:11|!5|3:14|3:14|3:0|!9|11:False',
+    'vop.xor.text'                          : '!9|1:!0|!9|!9|!9|!9|!9|!9|!13',
+    'vop.xor.true'                          : '11:True|1:!0|3:-8|20:-1099511627777|3:-3|3:-3|11:False|!13|11:False',
+    'vcmp.eq.empty'                         : 't|f|f|f|f|f|f|f|f|f|f',
+    'vcmp.eq.null'                          : 'f|t|f|f|f|f|f|f|f|f|f',
+    'vcmp.eq.int'                           : 'f|f|t|t|t|f|t|t|!7|!7|f',
+    'vcmp.eq.int64'                         : 'f|f|t|t|t|f|t|t|!7|!7|f',
+    'vcmp.eq.double'                        : 'f|f|t|t|t|f|t|t|!7|!7|f',
+    'vcmp.eq.fraction'                      : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vcmp.eq.currency'                      : 'f|f|t|t|t|f|t|t|!8|!8|f',
+    'vcmp.eq.numtext'                       : 'f|f|t|t|t|f|t|t|f|f|t',
+    'vcmp.eq.lower'                         : 'f|f|!7|!7|!7|!7|!8|f|t|f|!13',
+    'vcmp.eq.upper'                         : 'f|f|!7|!7|!7|!7|!8|f|f|t|!13',
+    'vcmp.eq.true'                          : 'f|f|f|f|f|f|f|t|!13|!13|t',
+    'vcmp.ne.empty'                         : 'f|t|t|t|t|t|t|t|t|t|t',
+    'vcmp.ne.null'                          : 't|f|t|t|t|t|t|t|t|t|t',
+    'vcmp.ne.int'                           : 't|t|f|f|f|t|f|f|!7|!7|t',
+    'vcmp.ne.int64'                         : 't|t|f|f|f|t|f|f|!7|!7|t',
+    'vcmp.ne.double'                        : 't|t|f|f|f|t|f|f|!7|!7|t',
+    'vcmp.ne.fraction'                      : 't|t|t|t|t|f|t|t|!7|!7|t',
+    'vcmp.ne.currency'                      : 't|t|f|f|f|t|f|f|!8|!8|t',
+    'vcmp.ne.numtext'                       : 't|t|f|f|f|t|f|f|t|t|f',
+    'vcmp.ne.lower'                         : 't|t|!7|!7|!7|!7|!8|t|f|t|!13',
+    'vcmp.ne.upper'                         : 't|t|!7|!7|!7|!7|!8|t|t|f|!13',
+    'vcmp.ne.true'                          : 't|t|t|t|t|t|t|f|!13|!13|f',
+    'vcmp.lt.empty'                         : 'f|f|t|t|t|t|t|t|t|t|t',
+    'vcmp.lt.null'                          : 't|f|t|t|t|t|t|t|t|t|t',
+    'vcmp.lt.int'                           : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vcmp.lt.int64'                         : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vcmp.lt.double'                        : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vcmp.lt.fraction'                      : 'f|f|f|f|f|f|f|f|!7|!7|f',
+    'vcmp.lt.currency'                      : 'f|f|f|f|f|t|f|f|!8|!8|f',
+    'vcmp.lt.numtext'                       : 'f|f|f|f|f|t|f|f|t|t|f',
+    'vcmp.lt.lower'                         : 'f|f|!7|!7|!7|!7|!8|f|f|f|!13',
+    'vcmp.lt.upper'                         : 'f|f|!7|!7|!7|!7|!8|f|t|f|!13',
+    'vcmp.lt.true'                          : 'f|f|t|t|t|t|t|f|!13|!13|f',
+    'vcmp.le.empty'                         : 't|f|t|t|t|t|t|t|t|t|t',
+    'vcmp.le.null'                          : 't|t|t|t|t|t|t|t|t|t|t',
+    'vcmp.le.int'                           : 'f|f|t|t|t|t|t|t|!7|!7|f',
+    'vcmp.le.int64'                         : 'f|f|t|t|t|t|t|t|!7|!7|f',
+    'vcmp.le.double'                        : 'f|f|t|t|t|t|t|t|!7|!7|f',
+    'vcmp.le.fraction'                      : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vcmp.le.currency'                      : 'f|f|t|t|t|t|t|t|!8|!8|f',
+    'vcmp.le.numtext'                       : 'f|f|t|t|t|t|t|t|t|t|t',
+    'vcmp.le.lower'                         : 'f|f|!7|!7|!7|!7|!8|f|t|f|!13',
+    'vcmp.le.upper'                         : 'f|f|!7|!7|!7|!7|!8|f|t|t|!13',
+    'vcmp.le.true'                          : 'f|f|t|t|t|t|t|t|!13|!13|t',
+    'vcmp.gt.empty'                         : 'f|t|f|f|f|f|f|f|f|f|f',
+    'vcmp.gt.null'                          : 'f|f|f|f|f|f|f|f|f|f|f',
+    'vcmp.gt.int'                           : 't|t|f|f|f|f|f|f|!7|!7|t',
+    'vcmp.gt.int64'                         : 't|t|f|f|f|f|f|f|!7|!7|t',
+    'vcmp.gt.double'                        : 't|t|f|f|f|f|f|f|!7|!7|t',
+    'vcmp.gt.fraction'                      : 't|t|t|t|t|f|t|t|!7|!7|t',
+    'vcmp.gt.currency'                      : 't|t|f|f|f|f|f|f|!8|!8|t',
+    'vcmp.gt.numtext'                       : 't|t|f|f|f|f|f|f|f|f|f',
+    'vcmp.gt.lower'                         : 't|t|!7|!7|!7|!7|!8|t|f|t|!13',
+    'vcmp.gt.upper'                         : 't|t|!7|!7|!7|!7|!8|t|f|f|!13',
+    'vcmp.gt.true'                          : 't|t|f|f|f|f|f|f|!13|!13|f',
+    'vcmp.ge.empty'                         : 't|t|f|f|f|f|f|f|f|f|f',
+    'vcmp.ge.null'                          : 'f|t|f|f|f|f|f|f|f|f|f',
+    'vcmp.ge.int'                           : 't|t|t|t|t|f|t|t|!7|!7|t',
+    'vcmp.ge.int64'                         : 't|t|t|t|t|f|t|t|!7|!7|t',
+    'vcmp.ge.double'                        : 't|t|t|t|t|f|t|t|!7|!7|t',
+    'vcmp.ge.fraction'                      : 't|t|t|t|t|t|t|t|!7|!7|t',
+    'vcmp.ge.currency'                      : 't|t|t|t|t|f|t|t|!8|!8|t',
+    'vcmp.ge.numtext'                       : 't|t|t|t|t|f|t|t|f|f|t',
+    'vcmp.ge.lower'                         : 't|t|!7|!7|!7|!7|!8|t|t|t|!13',
+    'vcmp.ge.upper'                         : 't|t|!7|!7|!7|!7|!8|t|f|t|!13',
+    'vcmp.ge.true'                          : 't|t|f|f|f|f|f|t|!13|!13|t',
+    'vint.byte_add'                         : '3:256',
+    'vint.byte_sub'                         : '3:-1',
+    'vint.byte_mul'                         : '3:40000',
+    'vint.shortint_add'                     : '3:128',
+    'vint.word_add'                         : '3:65536',
+    'vint.smallint_add'                     : '3:32768',
+    'vint.cardinal_add'                     : '20:4294967296',
+    'vint.cardinal_sub'                     : '20:-1',
+    'vint.integer_add'                      : '5:2147483648',
+    'vint.integer_sub'                      : '5:-2147483649',
+    'vint.integer_mul'                      : '5:4294967296',
+    'vint.integer_neg'                      : '3:-2147483648',
+    'msg.14'                                : 'Integer overflow',
+    'vint.integer_div'                      : '!14',
+    'vint.int64_add'                        : '20:-9223372036854775808',
+    'vint.int64_mul'                        : '20:0',
+    'vint.integer_shl'                      : '3:256',
+    'vint.integer_shl_31'                   : '3:-2147483648',
+    'vint.int64_shl'                        : '20:1099511627776',
+    'vint.byte_shl'                         : '3:512',
+    'vint.integer_shr'                      : '3:2147483644',
+    'vint.cardinal_shr'                     : '20:2147483647',
+    'vint.integer_not'                      : '3:-6',
+    'vint.byte_not'                         : '17:250',
+    'vint.integer_div_zero'                 : '!12',
+    'vint.integer_mod_zero'                 : '!12',
+    'vint.integer_mod_negative'             : '3:-1',
+    'msg.15'                                : 'Type Mismatch',
+    'vunary.neg'                            : '2:0|1:!0|3:-7|20:-1099511627776|5:-2,5|6:-2,5|5:-12|!15|2:-1',
+    'vunary.not'                            : '16:-1|1:!0|3:-8|20:-1099511627777|3:-3|3:-3|3:-13|!15|11:False',
+    'vcalc.integer_add'                     : '8|2|4|13|!7|0|1|!1|!5|4',
+    'vcalc.integer_div'                     : '1|3|3|0|!9|-7|!12|!1|0|3',
+    'vcalc.byte_add'                        : '8|2|4|13|!7|0|1|!2|1|4',
+    'vcalc.cardinal_add'                    : '8|2|4|13|!7|0|1|!2|1|4',
+    'vcalc.int64_add'                       : '8|2|4|13|!7|0|1|!2|1099511627777|4',
+    'vcalc.double_add'                      : (
+        '8.000000000000|2.500000000000|3.500000000000|13.000000000000|!7|0.000000000000|'
+        '1.000000000000|!3|1099511627777.000000000000|3.500000000000'
+    ),
+    'vcalc.string_add'                      : '!7|!7|!7|[x12]|[xab]|!7|[x]|!0|!7|!8',
+    'vtcmp.integer_eq'                      : 'f|f|t|t|t|f|t|t|!7|!7|f',
+    'vtcmp.integer_lt'                      : 'f|f|f|f|f|t|f|f|!7|!7|f',
+    'vtcmp.byte_eq'                         : 'f|!2|t|t|t|t|t|t|!10|!10|f',
+    'vtcmp.cardinal_eq'                     : 'f|!2|t|t|t|t|t|t|!10|!10|f',
+    'vtcmp.int64_eq'                        : 'f|!2|t|t|t|t|t|t|!10|!10|f',
+    'vtcmp.double_eq'                       : 'f|!3|t|t|t|f|t|t|!7|!7|f',
+    'vtcmp.string_eq'                       : 'f|!0|t|t|t|f|t|t|f|f|f',
+    'vtcmp.string_lt'                       : 'f|!0|f|f|f|t|f|f|t|t|t',
+    'vtext.double'                          : '2,5|2,5',
+    'vtext.double_third'                    : '0,333333333333333|0,333333333333333',
+    'vtext.double_small'                    : '1E-5|1E-5',
+    'vtext.double_large'                    : '1,23456789012346E17|1,23456789012346E17',
+    'vtext.double_e15'                      : '1E15|1E15',
+    'vtext.double_negative'                 : '-0,5|-0,5',
+    'vtext.single'                          : '0,100000001490116|0,100000001490116',
+    'vtext.currency'                        : '2,5|2,5',
+    'vtext.currency_negative'               : '-1,5|-1,5',
+    'vtext.currency_third'                  : '0,3333|0,3333',
+    'vtext.int64_minimum'                   : '-9223372036854775808|-9223372036854775808',
+    'vtext.false'                           : 'False|False',
+    'vtext.null'                            : '|!0',
+    'vtext.empty'                           : '|',
+    'msg.16'                                : 'Format \'%f\' invalid or incompatible with argument',
+    'vtext.format_f'                        : '!16',
+    'msg.17'                                : 'Format \'%g\' invalid or incompatible with argument',
+    'vtext.format_g'                        : '!17',
+    'fpu.control_word'                      : '895',
+    'fpu.masked_division_by_zero'           : '+Inf;INF',
+    'fpu.masked_zero_by_zero'               : 'Nan;NAN',
+    'fpu.masked_negative_by_zero'           : '-Inf;-INF',
+    'fpu.masked_overflow'                   : '+Inf;INF',
+    'fpu.masked_underflow'                  : ' 1.0E-0318;9,999987484956E-319',
+    'fpu.masked_nan_equals_nan'             : 'f',
+    'fpu.masked_round_of_infinity'          : '0',
+    'fpu.masked_round_beyond_int64'         : '0',
+    'fpu.round_beyond_integer'              : '-1294967296',
+    'fpu.masked_single_overflow'            : '+Inf',
+    'fpu.masked_currency_overflow'          : '-922337203685477.581000000000',
+    'msg.18'                                : 'Floating point division by zero',
+    'fpu.unmasked_division_by_zero'         : '!18',
+    'msg.19'                                : 'Invalid floating point operation',
+    'fpu.unmasked_zero_by_zero'             : '!19',
+    'msg.20'                                : 'Floating point overflow',
+    'fpu.unmasked_overflow'                 : '!20',
+    'fpu.unmasked_underflow'                : ' 1.0E-0318;9,999987484956E-319',
+    'fpu.unmasked_round_beyond_int64'       : '!19',
+    'fpu.unmasked_currency_overflow'        : '!19',
+    'fpu.control_word_after_set'            : '4978',
+    'float.round_and_trunc'                 : '0|2|2|0|-2|-2|3|2|-2|1',
+    'float.float_to_str_row'                : (
+        '100000000000000000000.000000000000|0.000000000000|123456789.123456791000|0.666666666667|'
+        '0.000000000000|0.000000000002|0.000000000000|0.000000000000|+Inf|-Inf|Nan'
+    ),
+    'float.float_to_str_range'              : (
+        '100000000000000000.000000000000|1000000000000000000.000000000000|'
+        '10000000000000000000.000000000000|1000000000000000020000000000000.000000000000| 1.0E+0038|'
+        ' 1.0E+0039| 1.0E+0100| 1.0E+0300|-1.0E+0300| 1.0E-0100| 1.0E-0300| 2.2E-0308| 1.0E-0309|'
+        ' 1.0E+4000| 1.0E-4000'
+    ),
+    'prec.double_sum_equals_constant'       : 'f',
+    'prec.double_sum_residue'               : '-1,11130722679764E-017',
+    'prec.extended_sum_residue'             : '0,00000000000000E+000',
+    'prec.double_equals_constant'           : 'f',
+    'prec.extended_equals_constant'         : 't',
+    'prec.extended_minus_double'            : '1,85127520951900E-017',
+    'prec.double_third_times_three'         : 't',
+    'prec.double_odd_beyond_53_bits'        : '9007199254740992',
+    'prec.extended_odd_beyond_53_bits'      : '9007199254740993',
+    'prec.single_odd_beyond_24_bits'        : '16777216',
+    'prec.single_product'                   : '0.300000011921',
+    'prec.currency_tie_even'                : '2.000000000000',
+    'prec.currency_tie_odd'                 : '2.000200000000',
+    'prec.currency_third'                   : '0.333300000000',
+    'prec.currency_product'                 : '2.250200000000',
+    'prec.currency_half_of_smallest'        : '0.000000000000',
+    'ffmt.g_e15'                            : '[1E015]',
+    'ffmt.g_e16'                            : '[1E016]',
+    'ffmt.g_digits'                         : '[123456,789012345]',
+    'ffmt.g_ten_thousandth'                 : '[0,0001]',
+    'ffmt.g_hundred_thousandth'             : '[1E-005]',
+    'ffmt.g_e100'                           : '[1E100]',
+    'ffmt.g_precision'                      : '[1,23E003]',
+    'ffmt.g_zero'                           : '[0]',
+    'ffmt.e_precision'                      : '[1,23E+003]',
+    'ffmt.e_zero'                           : '[0,00000000000000E+000]',
+    'ffmt.e_tiny'                           : '[1,00000000000000E-300]',
+    'ffmt.f_tie_even'                       : '[3]',
+    'ffmt.f_tie_odd'                        : '[4]',
+    'ffmt.f_one_decimal'                    : '[0,1]',
+    'ffmt.f_two_decimals'                   : '[1,01]',
+    'ffmt.f_width'                          : '[      3,14]',
+    'ffmt.f_left'                           : '[3,14      ]',
+    'ffmt.f_large'                          : '[1E20]',
+    'ffmt.f_negative_zero'                  : '[0,0]',
+    'ffmt.n_negative'                       : '[-1.234.567,89]',
+    'ffmt.n_no_decimals'                    : '[1.235]',
+    'ffmt.m_zero'                           : '[0,00 €]',
+    'ffmt.m_no_decimals'                    : '[3 €]',
+    'ffmt.m_large'                          : '[1E20]',
+    'ffmt.g_infinity'                       : '[INF]',
+    'ffmt.f_infinity'                       : '[INF]',
+    'ffmt.g_nan'                            : '[NAN]',
+    'ffmt.f_currency'                       : '!16',
+    'msg.21'                                : 'Format \'%m\' invalid or incompatible with argument',
+    'ffmt.m_currency'                       : '!21',
+    'ffmt.g_single'                         : '[0,100000001490116]',
+    'msg.22'                                : 'Format \'%s\' invalid or incompatible with argument',
+    'ffmt.s_of_float'                       : '!22',
+    'msg.23'                                : '\'12 \' is not a valid integer value',
+    'msg.24'                                : '\'\' is not a valid integer value',
+    'msg.25'                                : '\' \' is not a valid integer value',
+    'msg.26'                                : '\'1e3\' is not a valid integer value',
+    'msg.27'                                : '\'12a\' is not a valid integer value',
+    'msg.28'                                : '\'$\' is not a valid integer value',
+    'msg.29'                                : '\'- 12\' is not a valid integer value',
+    'msg.30'                                : '\'\t12\' is not a valid integer value',
+    'msg.31'                                : '\'9223372036854775808\' is not a valid integer value',
+    'msg.32'                                : '\'1.0\' is not a valid integer value',
+    'parse.strtoint'                        : (
+        '12|12|-1|12|-12|31|31|31|31|-1|-1|2147483647|-1|-2147483648|-1|-1|-1|-1|-1|-1|12|-1|-31|-1|'
+        '-1|-1|-1|-1|-1|31|-1'
+    ),
+    'parse.strtointdef'                     : (
+        '12|12|99|12|-12|31|31|31|31|-1|99|2147483647|99|-2147483648|99|99|99|99|99|99|12|99|-31|99|'
+        '99|99|99|99|99|31|99'
+    ),
+    'parse.strtoint64'                      : (
+        '12|12|!23|12|-12|31|31|31|31|4294967295|4294967296|2147483647|2147483648|-2147483648|'
+        '-2147483649|4294967295|!24|!25|!26|!27|12|!28|-31|!29|!30|9223372036854775807|!31|-1|'
+        '-9223372036854775808|31|!32'
+    ),
+    'parse.strtoint64def'                   : (
+        '12|12|99|12|-12|31|31|31|31|4294967295|4294967296|2147483647|2147483648|-2147483648|'
+        '-2147483649|4294967295|99|99|99|99|12|99|-31|99|99|9223372036854775807|99|-1|'
+        '-9223372036854775808|31|99'
+    ),
+    'msg.33'                                : 'Invalid float',
+    'parse.strtofloat'                      : (
+        '1.500000000000|1.500000000000|!33|!33|1000.000000000000|1000.000000000000|0.500000000000|'
+        '5.000000000000|1.500000000000|-1.500000000000|!33|!33|!33|!33|!33| 1.0E+0400|!33|'
+        ' 1.0E-0400|12.000000000000'
+    ),
+    'msg.34'                                : 'Could not call proc',
+    'msg.35'                                : 'Out of string range',
+    'sindex.string_read'                    : 'o!34|o!34|ra|rb|rc|o!34',
+    'sindex.string_read_finally'            : 'fo!35|fo!35|raf|rbf|rcf|fo!35',
+    'sindex.string_write'                   : 'e!35abc|e!35abc|wxbc|waxc|wabx|e!35abc',
+    'sindex.ansistring_read'                : 'o!34|o!34|ra|rb|rc|o!34',
+    'sindex.ansistring_write'               : 'e!35abc|e!35abc|wxbc|waxc|wabx|e!35abc',
+    'sindex.empty_read'                     : 'o!34',
+    'share.assigned'                        : 'x',
+    'share.resized'                         : 'a',
+    'share.resized_to_same_length'          : 'x',
+    'share.assigned_other_way'              : 'y',
+    'share.parameter_by_value'              : 'by value',
+    'share.parameter_resized'               : 'a;2',
+    'share.parameter_by_reference'          : 'by reference',
+    'share.record_copy'                     : 'x;x',
+    'share.nested'                          : 'x',
+    'share.cleared_source'                  : 'a;2',
+    'share.static_array'                    : 'a',
+    'probe.str_large'                       : (
+        '9999999999999999640000000000000.000000000000|99999999999999987400000000000000.000000000000|'
+        '999999999999999946000000000000000.000000000000|'
+        '9999999999999999460000000000000000.000000000000|'
+        '99999999999999996900000000000000000.000000000000| 1.0E+0036| 1.0E+0037| 1.0E+0038|'
+        ' 5.0E+0037| 9.0E+0037| 1.0E+0038| 1.0E+0038'
+    ),
+    'probe.str_small'                       : (
+        '0.000000000000|0.000000000000|0.000000000000|0.000000000000|0.000000000000|0.000000000000|'
+        '0.000000000000|0.000000000000|0.000000000000|0.000000000000|0.000000000000|0.000000000000|'
+        '0.000000000000|0.000000000000| 1.0E-0035| 1.0E-0036| 1.0E-0037| 1.0E-0038| 1.0E-0039|'
+        ' 1.0E-0040| 1.0E-0041| 1.0E-0042| 1.0E-0043| 1.0E-0044| 1.0E-0045| 1.0E-0038| 1.0E-0039'
+    ),
+    'probe.null_logic'                      : '11:False|11:False|1:!0|1:!0|3:0|3:0|1:!0|1:!0|1:!0|11:False',
+    'probe.text_to_double'                  : (
+        '1234.500000000000|-1.500000000000|3.000000000000|123.000000000000|-12.000000000000|'
+        '-12.000000000000|31.000000000000|150.000000000000|12.000000000000|!7|12.500000000000|'
+        '13.500000000000|!7|!7|!7|0.500000000000|1.000000000000|!7'
+    ),
+    'probe.text_to_integer'                 : '1234|-2|3|123|-12|-12|31|150|12|!9|12|14|0|1|!9|0|1|!9',
+    'probe.strtofloat'                      : (
+        '0.000000000000|0.000000000000|!33|!33|+Inf|-0.500000000000|5.000000000000|!33|'
+        '0.000000000000|0.100000000000|!33|!33'
+    ),
+    'probe.variant_integers'                : (
+        '20:4000000001|20:-2446744073709551616|20:-4000000000|19:294967295|18:65530|3:-5|2:-6|3:0|'
+        '3:400'
+    ),
+    'probe.variant_strings'                 : '256:abcd|258:cdab|8:efcd|258:cdef|8:ef|8:gh',
+    'msg.36'                                : 'Could not convert variant of type (Null) into type (String)',
+    'probe.variant_reads'                   : '99|99|!15|!2|!36|!0|0',
+    'builtin.str_bands'                     : (
+        '99999999999999996900000000000000000.000000000000|'
+        '199999999999999994000000000000000000.000000000000|'
+        '500000000000000021000000000000000000.000000000000| 1.0E-0035|0.000000000000|0.000000000000'
+    ),
+    'builtin.math'                          : (
+        '2.000000000000|-2.000000000000|2.500000000000|1.414213562373|Nan|3.141592653590|'
+        '0.841470984808|0.540302305868|3,14159265358979324E+000|1,41421356237309505E+000|'
+        '8,41470984807896507E-001|-4|1410065408'
+    ),
+    'builtin.text'                          : '[   ab]|[abcdef]|[ab  ]|[0]|[00-7]|[xxx]|[]|[-5]|[9223372036854775807]',
+    'builtin.varisnull'                     : 'f|t|f|f|f|f|f|f|f',
+    'builtin.varisempty'                    : 't|f|f|f|f|f|f|f|f',
+    'builtin.varisclear'                    : 't|f|f|f|f|f|f|f|f',
+    'msg.37'                                : 'Could not convert variant of type (Integer) into type (Dispatch)',
+    'msg.38'                                : 'Could not convert variant of type (Null) into type (Dispatch)',
+    'msg.39'                                : 'Could not convert variant of type (UnicodeString) into type (Dispatch)',
+    'msg.40'                                : 'Could not convert variant of type (Dispatch) into type (OleStr)',
+    'builtin.dispatch'                      : '!37|ok|!38|!39|9:!40|t',
+    'split'                                 : '4[a]["b c"][d][e]|3[x]["y,z"][w]|2[p][q]',
+    'zero.add.0'                            : '3:3|3:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|5:2|5:2',
+    'zero.add.1'                            : '5:3|5:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|5:2|5:2',
+    'zero.add.2'                            : '5:3|5:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|5:2|5:2',
+    'zero.add.3'                            : '6:3|6:3|6:2,5|6:2,5|6:-2,5|6:-2,5|6:1,5|6:1,5|6:2|6:2',
+    'zero.add.4'                            : '5:3|5:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|258:02|258:20',
+    'zero.add.5'                            : '3:3|3:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|5:2|5:2',
+    'zero.add.6'                            : '3:3|3:3|5:2,5|5:2,5|5:-2,5|5:-2,5|6:1,5|6:1,5|8:2|258:2',
+    'zero.sub.0'                            : '3:-3|3:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.sub.1'                            : '5:-3|5:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.sub.2'                            : '5:-3|5:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.sub.3'                            : '6:-3|6:3|6:-2,5|6:2,5|6:2,5|6:-2,5|6:-1,5|6:1,5|6:-2|6:2',
+    'zero.sub.4'                            : '5:-3|5:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.sub.5'                            : '3:-3|3:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.sub.6'                            : '3:-3|3:3|5:-2,5|5:2,5|5:2,5|5:-2,5|6:-1,5|6:1,5|5:-2|5:2',
+    'zero.mul.0'                            : '3:0|3:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.mul.1'                            : '5:0|5:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.mul.2'                            : '5:0|5:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.mul.3'                            : '6:0|6:0|6:0|6:0|6:0|6:0|6:0|6:0|6:0|6:0',
+    'zero.mul.4'                            : '5:0|5:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.mul.5'                            : '3:0|3:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.mul.6'                            : '3:0|3:0|5:0|5:0|5:0|5:0|6:0|6:0|5:0|5:0',
+    'zero.slash.0'                          : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.slash.1'                          : '5:0|!12|5:0|5:INF|5:0|5:-INF|5:0|6:-922337203685477,5808|5:0|!12',
+    'zero.slash.2'                          : '5:0|!12|5:0|5:-INF|5:0|5:INF|5:0|6:-922337203685477,5808|5:0|!12',
+    'zero.slash.3'                          : '6:0|!12|6:0|5:INF|6:0|5:-INF|6:0|6:-922337203685477,5808|6:0|!12',
+    'zero.slash.4'                          : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.slash.5'                          : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.slash.6'                          : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.div.0'                            : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.div.1'                            : '5:0|!12|5:0|5:INF|5:0|5:-INF|5:0|6:-922337203685477,5808|5:0|!12',
+    'zero.div.2'                            : '5:0|!12|5:0|5:-INF|5:0|5:INF|5:0|6:-922337203685477,5808|5:0|!12',
+    'zero.div.3'                            : '6:0|!12|6:0|5:INF|6:0|5:-INF|6:0|6:-922337203685477,5808|6:0|!12',
+    'zero.div.4'                            : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.div.5'                            : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.div.6'                            : '3:0|!12|3:0|5:INF|3:0|5:-INF|3:0|6:-922337203685477,5808|3:0|!12',
+    'zero.mod.0'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.1'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.2'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.3'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.4'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.5'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.mod.6'                            : '3:0|!12|3:0|!12|3:0|!12|3:0|!12|3:0|!12',
+    'zero.typed'                            : (
+        '0.000000000000|0.000000000000|0.000000000000|0.000000000000|0.000000000000 0 0,0|5:0|6:0|'
+        '6:0|6:0'
+    ),
+    'unassigned'                            : '0:|true|false|false|true|false|true|0:|6:0|0.000000000000 0.000000000000|[]0 0|[]',
+    'msg.41'                                : 'Variant is null, cannot invoke',
+    'dispatch.nil'                          : '!41|!38|!37|!39',
+    'currency.operands'                     : '6:2|6:-2|6:0|6:0|6:2|6:-2|6:0|6:0|6:3,5|6:3|6:-922337203685477,5808|6:0',
+    'parse.long'                            : (
+        'true 6,75399432318247178E-010|true 3,53295631822787147E+013|true 3,46975596141450231E+024|'
+        'true 2,53171521814181526E+004|true 9,83905176009339721E+004|true 7,45969329741637866E+013'
+    ),
+    'parse.extreme'                         : (
+        'INF|0,00000000000000000E+000|INF|1,00000000000000000E+001|INF|1,00000000000000000E+001|'
+        '1,00000000000000000E+001|INF|0,00000000000000000E+000|INF|INF|1,00000000000000000E+000'
+    ),
+    'msg.42'                                : 'Overflow while converting variant of type (UnicodeString) into type (Double)',
+    'msg.43'                                : 'Overflow while converting variant of type (UnicodeString) into type (Currency)',
+    'msg.44'                                : 'Overflow while converting variant of type (UnicodeString) into type (Int64)',
+    'ole.double'                            : (
+        '!42|!42|0,0000000000000000E+000|4,9406564584124654E-323|2,4703282292062327E-323|'
+        '1,0000000000000000E+030|9,2233720368547800E+014|9,2233720368547758E+018|'
+        '-9,2233720368547758E+018|2,1474836475000000E+010|2,1474836465000000E+010|'
+        '1,0000000000000002E+053|1,0000000000000001E+058|!42|!42|1,0000000000000000E+000'
+    ),
+    'ole.currency'                          : '!43|!43|0|0|0|!43|!43|!43|!43|21474836475|21474836465|!43|!43|!43|!43|1',
+    'ole.integer'                           : '!11|!11|0|0|0|!11|!11|!11|!11|!11|!11|!11|!11|!11|!11|1',
+    'ole.int64'                             : (
+        '!44|!44|0|0|0|-9223372036854775808|922337203685478|-9223372036854775808|'
+        '-9223372036854775808|21474836475|21474836465|-9223372036854775808|-9223372036854775808|!44|'
+        '!44|1'
+    ),
+    'ole.boolean'                           : '!44|!44|false|false|false|false|true|false|false|true|true|false|false|!44|!44|true',
+    'text.large'                            : (
+        ' 1.0E+4900 1E4900| 1.0E-4900 1E-4900| 1.0E-4940 0| 1.0E+4901 1E4901|'
+        '599999999999999981000000000000000000.000000000000| 7.0E+0035| 8.0E+0035| 9.0E+0035|'
+        ' 1.0E+0036| 1.1E-0035|0.000000000000|0.000000000000'
+    ),
+    'parse.powers'                          : (
+        'true 1,25167000000000000E-048|true 5,81000000000000000E+031|true 2,02796597296790000E+029|'
+        'true 4,62086660000000000E-047|true 2,76410000000000000E+031|true 3,60000000000000000E-010'
+    ),
+    'parse.scales'                          : 'INF|INF|INF|1,00000000000000000E-4901',
+    'parse.first_infinite_exponent'         : '4998',
+    'parse.edge'                            : '1,00000000000000000E+4932|1,00000000000000000E+4932|1,00000000000000000E+4932',
+    'parse.exponent_limit'                  : 'INF|INF|INF|0,00000000000000000E+000|INF',
+    'strings.char_20m'                      : '20000000 [xxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxx]',
+    'msg.45'                                : 'Format \'[%99999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_11'               : '!45',
+    'msg.46'                                : 'Format \'[%999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_12'               : '!46',
+    'msg.47'                                : 'Format \'[%9999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_13'               : '!47',
+    'msg.48'                                : 'Format \'[%99999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_14'               : '!48',
+    'msg.49'                                : 'Format \'[%999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_15'               : '!49',
+    'msg.50'                                : 'Format \'[%9999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_16'               : '!50',
+    'msg.51'                                : 'Format \'[%99999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_17'               : '!51',
+    'msg.52'                                : 'Format \'[%999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_18'               : '!52',
+    'msg.53'                                : 'Format \'[%9999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_19'               : '!53',
+    'msg.54'                                : 'Format \'[%99999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_20'               : '!54',
+    'msg.55'                                : 'Format \'[%999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_21'               : '!55',
+    'msg.56'                                : 'Format \'[%9999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_22'               : '!56',
+    'msg.57'                                : 'Format \'[%99999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_23'               : '!57',
+    'msg.58'                                : 'Format \'[%999999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_24'               : '!58',
+    'msg.59'                                : 'Format \'[%9999999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_25'               : '!59',
+    'msg.60'                                : 'Format \'[%99999999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_26'               : '!60',
+    'msg.61'                                : 'Format \'[%999999999999999999999999999d]\' invalid or incompatible with argument',
+    'strings.width_digits_27'               : '!61',
+    'msg.62'                                : 'Format \'[%9999999999999999999999999999d\' invalid or incompatible with argument',
+    'strings.width_digits_28'               : '!62',
+    'msg.63'                                : 'Format \'[%99999999999999999999999999999\' invalid or incompatible with argument',
+    'strings.width_digits_29'               : '!63',
+    'strings.width_digits_30'               : '!63',
+    'strings.width_digits_31'               : '!63',
+    'strings.width_digits_32'               : '!63',
+    'strings.width_digits_33'               : '!63',
+    'strings.width_digits_34'               : '!63',
+    'strings.width_digits_35'               : '!63',
+    'strings.width_digits_36'               : '!63',
+    'strings.width_digits_37'               : '!63',
+    'strings.width_digits_38'               : '!63',
+    'strings.width_digits_39'               : '!63',
+    'strings.width_digits_40'               : '!63',
+    'strings.width_2g'                      : '!14',
+    'strings.setlength_2g'                  : '!14',
+    'msg.64'                                : 'Out of memory',
+    'strings.char_2g'                       : '!64',
+    'strings.step'                          : 'end',
 }
 
 
@@ -584,6 +1228,19 @@ def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str
     return values
 
 
+def _resolved(values: dict[str, str]) -> dict[str, str]:
+    """
+    The value oracle logs each exception message once, as the value of `msg.N`, and every value
+    that contains the message as `!N`, numbered in the order of the run. Returns the values without
+    the messages, with each reference replaced by `!` and the message.
+    """
+    messages = {name: value for name, value in values.items() if name.startswith('msg.')}
+    return {
+        name: _MESSAGE_REFERENCE.sub(lambda m: F'!{messages.get(F"msg.{m[1]}", m[0])}', value)
+        for name, value in values.items() if name not in messages
+    }
+
+
 def _string_constants(functions: Iterable[Function]) -> set[str]:
     return {
         value
@@ -599,26 +1256,37 @@ def _string_constants(functions: Iterable[Function]) -> set[str]:
 class _OracleTest(TestBase):
     """
     Inno Setup 6.5.0 built an installer from a script whose procedures log values that Pascal Script
-    computes, one procedure per area. The installer ran on Windows with a log file: `log` holds
-    every value of that log and `script` is the compiled script taken from that installer.
+    computes, one procedure per area. The installer ran with a log file on a German Windows, whose
+    language ID is 0x0407: `log` holds every value of that log and `script` is the compiled script
+    taken from that installer.
     """
     script: str
     log: dict[str, str]
 
     def emulator(self, **config):
         script = IFPSFile.Parse(self.download_sample(self.script))
-        return InnoSetupEmulator(script, IFPSEmulatorConfig(log_calls=True, **config))
+        return InnoSetupEmulator(script, IFPSEmulatorConfig(
+            log_calls=True,
+            lcid=0x0407,
+            setup_version=(6, 5, 0),
+            **config,
+        ))
 
-    def assertEmulatedAsLogged(self, procedure: str, *names: str):
+    def assertEmulatedAsLogged(self, procedure: str, *names: str, prefix: str | None = None):
         """
         Emulates one procedure and compares what it logs with the log: the values of the given
-        names, or else every value that it logs with the logged values whose names are string
-        constants of the procedure and of the script functions it calls.
+        names, the values whose names start with the given prefix, or else every value that it
+        logs with the logged values whose names are string constants of the procedure and of the
+        script functions it calls. Exception messages are compared by their text.
         """
         emulator = self.emulator()
         function = emulator.symbols[procedure]
-        emulated = _logged_values(emulator.emulate_function(function), {})
-        if names:
+        emulated = _resolved(_logged_values(emulator.emulate_function(function), {}))
+        log = _resolved(self.log)
+        if prefix is not None:
+            names = tuple(name for name in log.keys() | emulated.keys() if name.startswith(prefix))
+            self.assertTrue(names)
+        elif names:
             self.assertLessEqual(set(names), _string_constants(emulator.ifps.functions))
             emulated = {name: value for name, value in emulated.items() if name in names}
         else:
@@ -631,8 +1299,8 @@ class _OracleTest(TestBase):
                             if isinstance(callee, Function) and callee.body is not None and callee not in reached
                         )
             names = tuple(_string_constants(reached))
-            self.assertTrue(self.log.keys() & names)
-        real = {name: value for name, value in self.log.items() if name in names}
+            self.assertTrue(log.keys() & names)
+        real = {name: value for name, value in log.items() if name in names}
         self.assertEqual(emulated, real)
 
     def assertRunsAdvancedAlternatelyLogWhatEachLogsAlone(self, *procedures: str, **config):
@@ -651,10 +1319,11 @@ class _OracleTest(TestBase):
 
 class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
     """
-    The procedures of this script compute with integers, floats, sets, Variants and `Format`.
+    The procedures of this script store, compute with, compare, convert, parse, and format values
+    of every type: integers, floats, Currency, sets, strings, Variants, and dynamic arrays.
     """
-    script = _INTEGER_SCRIPT
-    log = _INTEGER_LOG
+    script = _VALUE_SCRIPT
+    log = _VALUE_LOG
 
     def test_stores(self):
         self.assertEmulatedAsLogged('ORACLESTORES')
@@ -680,7 +1349,6 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
     def test_format(self):
         self.assertEmulatedAsLogged('ORACLEFORMAT')
 
-    @pytest.mark.xfail(strict=True, raises=IFPSException, reason='floats are not converted to text as Delphi converts them')
     def test_floats(self):
         self.assertEmulatedAsLogged('ORACLEFLOATS')
 
@@ -690,7 +1358,6 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
     def test_booleans(self):
         self.assertEmulatedAsLogged('ORACLEBOOLEANS')
 
-    @pytest.mark.xfail(strict=True, raises=EmulatorException, reason='Variant operators follow Python instead of Delphi')
     def test_variants(self):
         self.assertEmulatedAsLogged('ORACLEVARIANTS')
 
@@ -703,19 +1370,9 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
     def test_booleans_in_variants(self):
         self.assertEmulatedAsLogged('ORACLEBOOLEANVARIANTS')
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='a Variant compared with a Cardinal or Word is compared by its value, not read as a Cardinal',
-    )
     def test_comparisons_of_integers_with_variants(self):
         self.assertEmulatedAsLogged('ORACLEVARIANTCOMPARISONS')
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='a Variant holding a float is converted to text by Python, not as Delphi converts it',
-    )
     def test_variants_holding_floats_as_text(self):
         self.assertEmulatedAsLogged('ORACLEVARIANTTEXT')
 
@@ -727,6 +1384,97 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
 
     def test_an_infinite_float_constant(self):
         self.assertEmulatedAsLogged('ORACLEINFINITY')
+
+    def test_values_of_every_type_stored_into_a_variant(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTSTORES')
+
+    def test_conversions_of_variants_of_every_type(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTCONVERSIONS', prefix='vconv.')
+
+    def test_operators_on_every_pair_of_variant_types(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTOPERATORS', prefix='vop.')
+
+    def test_comparisons_of_every_pair_of_variant_types(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTCOMPARISONMATRIX', prefix='vcmp.')
+
+    def test_variants_of_small_integer_types_that_overflow(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTOVERFLOW')
+
+    def test_negation_and_not_of_variants(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTUNARY')
+
+    def test_typed_variables_that_compute_with_a_variant(self):
+        self.assertEmulatedAsLogged('ORACLETYPEDCALCULATIONS')
+
+    def test_typed_variables_compared_with_a_variant(self):
+        self.assertEmulatedAsLogged('ORACLETYPEDCOMPARISONS')
+
+    def test_text_of_variants(self):
+        self.assertEmulatedAsLogged('ORACLEVARIANTTEXTS')
+
+    def test_infinities_nan_and_float_errors_under_both_control_words(self):
+        self.assertEmulatedAsLogged('ORACLEFLOATSPECIALS')
+
+    def test_float_to_str_of_large_and_small_values(self):
+        self.assertEmulatedAsLogged('ORACLEFLOATTOSTRRANGE')
+
+    def test_precision_and_rounding_of_floats_and_currency(self):
+        self.assertEmulatedAsLogged('ORACLEFLOATPRECISION')
+
+    def test_format_of_floats(self):
+        self.assertEmulatedAsLogged('ORACLEFLOATFORMATS')
+
+    def test_parsing_of_integers(self):
+        self.assertEmulatedAsLogged('ORACLEPARSING')
+
+    def test_parsing_of_floats(self):
+        self.assertEmulatedAsLogged('ORACLEFLOATPARSING')
+
+    def test_text_and_conversions_at_the_edges_of_their_ranges(self):
+        self.assertEmulatedAsLogged('ORACLEPROBES')
+
+    def test_built_in_functions_for_floats_and_variants(self):
+        self.assertEmulatedAsLogged('ORACLEBUILTINS')
+
+    def test_operations_on_the_zero_of_every_type(self):
+        self.assertEmulatedAsLogged('ORACLEZEROS', prefix='zero.')
+
+    def test_a_new_variant_and_an_unset_result_are_unassigned(self):
+        self.assertEmulatedAsLogged('ORACLEUNASSIGNED')
+
+    def test_a_call_on_a_nil_com_object_raises_an_error(self):
+        self.assertEmulatedAsLogged('ORACLENILINVOKE')
+
+    def test_parsing_of_numbers_with_many_digits(self):
+        self.assertEmulatedAsLogged('ORACLELONGPARSING')
+
+    def test_variant_strings_beyond_the_range_of_a_double(self):
+        self.assertEmulatedAsLogged('ORACLEOLELIMITS')
+
+    def test_text_of_floats_near_the_ends_of_their_range(self):
+        self.assertEmulatedAsLogged('ORACLELARGETEXT')
+
+    def test_parsing_scales_by_one_power_of_ten(self):
+        self.assertEmulatedAsLogged('ORACLEPARSINGPOWERS')
+
+    def test_an_exponent_that_reaches_beyond_the_table_of_powers_of_ten_ends_the_emulation(self):
+        """
+        The text of a constant that the procedure parses is changed to one whose exponent is read
+        as -2**31. Delphi then scales by a power of ten from after the end of its table: two runs
+        of the oracle parsed this text to NaN and to 2.38E+4756.
+        """
+        emulator = self.emulator()
+        procedure = emulator.symbols['ORACLEPARSINGPOWERS']
+        replaced = 0
+        for instruction in procedure.body or ():
+            for k, operand in enumerate(instruction.operands):
+                if isinstance(operand, Operand) and (constant := operand.value) and constant.value == '1e4932':
+                    instruction.operands[k] = operand._replace(value=Value(constant.type, '1e2147483648'))
+                    replaced += 1
+        self.assertEqual(replaced, 1)
+        with self.assertRaises(EmulatorUndefined):
+            for _ in emulator.emulate_function(procedure):
+                pass
 
     def test_two_runs_advanced_alternately_by_instruction_log_what_each_logs_alone(self):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLECOMPARISONS', 'ORACLESETS', log_opcodes=True)
@@ -781,7 +1529,6 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
             'OverflowMessage',
         )
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='float errors are raised although Delphi 12 masks them')
     def test_float_errors_raise_nothing(self):
         self.assertEmulatedAsLogged(
             'ORACLERUNTIMEERRORS',
@@ -815,11 +1562,6 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
     def test_abort_raises_an_error_that_the_script_handles(self):
         self.assertEmulatedAsLogged('ORACLEABORT')
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='StrToInt raises an error for text that is no number instead of returning -1',
-    )
     def test_strtoint_of_text_that_is_no_number_raises_no_error(self):
         self.assertEmulatedAsLogged('ORACLECONVERSIONMESSAGE', 'StrToIntMessage')
 

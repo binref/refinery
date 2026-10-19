@@ -83,6 +83,12 @@ class TestInnoExtractor(TestUnitBase):
         pwds = data | unit | {str}
         self.assertContains(pwds, r'fb1282c9-cffb-4dfb-bd71-a3a333110eeb')
 
+    def test_the_call_log_names_a_nil_object_and_shows_variant_arguments_by_their_values(self):
+        data = self.download_sample('6aebe4aac528782d132f96e970cbba2d182b7b3b78abddce7846a6fecd32b2d1')
+        with self.load_logged('-v') as (unit, log):
+            list(data | unit)
+        self.assertIn('calling IDispatchInvoke(nil, 0, \'ExecQuery\', [\'SELECT NumberOfCores FROM Win32_Processor\'])', log)
+
     def test_a_script_error_in_initialize_wizard_does_not_keep_the_password_page_from_running(self):
         data = self.download_sample('aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42')
         with failing_inno_function('CreateInputDirPage'), self.load_logged() as (unit, log):
