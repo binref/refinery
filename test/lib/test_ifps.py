@@ -1,5 +1,6 @@
 import contextlib
 import ntpath
+import pytest
 import time
 
 from typing import Callable
@@ -29,6 +30,7 @@ _INSTALLER_THAT_STRIPS_ACCELERATOR_KEYS = 'cdbc92e0d280e54a66c347b0178d0b34a9ee8
 _INSTALLER_WITH_A_DIRECTORY_PAGE = 'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42'
 _INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX = _INSTALLER_WITH_A_DIRECTORY_PAGE
 _SCRIPT_THAT_CATCHES_A_DIVISION_BY_ZERO = 'c47352571fb7ac45bd994f4b057ffec15898df4724f2a4cd0d9213e3eedfca29'
+_SCRIPT_WITH_A_GLOBAL_RESOURCE_POINTER = 'dd4b75e1045c32756de639404b1d9644394891dfb53adc8b701c7a5c2a4b650c'
 _SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
 _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR = (
     '0c9ffd51196d71bba19a708bb64224be87c8fceb0b22b71262080c1055b5a642',
@@ -1102,3 +1104,71 @@ class TestIPFSEmulator(TestBase):
         english = FormatSettings.of_locale(0x0409)
         self.assertEqual((german.decimal_separator, german.thousand_separator, german.currency_string), (',', '.', '\u20ac'))
         self.assertEqual((english.decimal_separator, english.thousand_separator, english.currency_string), ('.', ',', '$'))
+
+    def test_an_extended_that_overflows_the_double_of_a_variant_raises_an_error_of_the_script(self):
+        from refinery.lib.inno import pascal
+        from refinery.lib.inno.delphi import x87
+        from refinery.lib.inno.delphi.runtime import Runtime
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        runtime = Runtime(x87.FPU(x87.DEFAULT_CONTROL_WORD))
+        with self.assertRaises(IFPSException) as raised:
+            pascal.store(TPrimitive(TC.Variant), TPrimitive(TC.Extended), x87.real(1, 5000), runtime)
+        self.assertEqual(raised.exception.kind, pascal.PSError.MathError)
+
+    def test_a_double_beyond_the_range_of_a_currency_in_a_comparison_raises_an_error_of_the_script(self):
+        from fractions import Fraction
+        from refinery.lib.inno import pascal
+        from refinery.lib.inno.delphi import x87
+        from refinery.lib.inno.delphi.runtime import Runtime
+        from refinery.lib.inno.ifps import TC, COp, TPrimitive
+        runtime = Runtime(x87.FPU(x87.DEFAULT_CONTROL_WORD))
+        with self.assertRaises(IFPSException):
+            pascal.compare(COp.LT, TPrimitive(TC.Currency), Fraction(1), TPrimitive(TC.Double), 1e300, runtime)
+
+    def test_a_currency_that_python_code_gives_a_variant_is_a_currency(self):
+        from fractions import Fraction
+        from refinery.lib.inno.delphi.variants import VarType, from_python
+        self.assertEqual(from_python(Fraction(3, 2)).type, VarType.Currency)
+
+    def test_a_currency_constant_is_shown_as_its_decimal_text(self):
+        from fractions import Fraction
+        from refinery.lib.inno.ifps import TC, TPrimitive, Value
+        self.assertEqual(str(Value(TPrimitive(TC.Currency), Fraction(-3, 2))), '-1.5')
+
+    def test_separators_between_quotes_do_not_count_toward_the_array_limit_of_a_split(self):
+        from refinery.lib.inno.emulator import TSplitType
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_array_length=3)
+        self.assertEqual(emulator.StringSplitEx('a,"b,c,d",e', [','], '"', TSplitType.stAll), ['a', '"b,c,d"', 'e'])
+
+    def test_excluded_empty_parts_do_not_count_toward_the_array_limit_of_a_split(self):
+        from refinery.lib.inno.emulator import TSplitType
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_array_length=3)
+        self.assertEqual(emulator.StringSplitEx('a,,,,,,b', [','], '', TSplitType.stExcludeEmpty), ['a', 'b'])
+
+    def test_an_exact_denormal_result_raises_an_unmasked_underflow(self):
+        from refinery.lib.inno.delphi import x87
+        from refinery.lib.inno.delphi.errors import EUnderflow
+        fpu = x87.FPU(x87.MASKED_CONTROL_WORD & ~x87.Fault.Underflow)
+        with self.assertRaises(EUnderflow):
+            fpu.multiply(x87.real(1, -16000), x87.real(1, -400))
+
+    def test_a_global_resource_pointer_starts_as_nil(self):
+        from refinery.lib.inno.ifps import TC
+        emulator = self._script_emulator(_SCRIPT_WITH_A_GLOBAL_RESOURCE_POINTER)
+        self.assertEqual([v.type.code for v in emulator.globals], [TC.ResourcePointer])
+        self.assertIsNone(emulator.globals[0].get())
+        list(emulator.emulate_installation())
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='StringOfChar keeps the whole character; Pascal Script keeps its low byte as an ANSI character',
+    )
+    def test_string_of_char_repeats_the_low_byte_of_the_character_as_an_ansi_character(self):
+        """
+        Pascal Script reads the character as an integer and casts it to an `AnsiChar`, which keeps
+        the low byte $AC of the euro sign; the code page 1252 of English (United States) reads it
+        as the sign of negation.
+        """
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.StringOfChar('\u20ac', 2), '\u00ac\u00ac')

@@ -33,6 +33,8 @@ from typing import (
     ClassVar,
     Generator,
     Generic,
+    Iterable,
+    Iterator,
     NamedTuple,
     Sequence,
     TypeVar,
@@ -1107,6 +1109,36 @@ def _holds_integer(type: IFPSType) -> bool:
     return code.integer or code is TC.Enum or code is TC.Set
 
 
+def _split_spans(string: str, separators: list[str], quote: str) -> Iterator[tuple[int, int]]:
+    """
+    The start and end of each part of a string that Delphi's `string.Split` finds: it splits at the
+    first of the separators that starts at the earliest position outside of quotes, and a quote
+    character opens a quote that the next one closes.
+    """
+    alternatives = [re.escape(s) for s in separators if s]
+    if len(quote) == 1:
+        q = re.escape(quote)
+        alternatives.insert(0, F'(?P<quoted>{q}[^{q}]*(?:{q}|\\Z))')
+    start = 0
+    if alternatives:
+        for match in re.finditer('|'.join(alternatives), string):
+            if match.lastgroup == 'quoted':
+                continue
+            yield start, match.start()
+            start = match.end()
+    yield start, len(string)
+
+
+def _without_empty_last(spans: Iterable[tuple[int, int]]) -> Iterator[tuple[int, int]]:
+    previous = None
+    for span in spans:
+        if previous is not None:
+            yield previous
+        previous = span
+    if previous is not None and previous[0] < previous[1]:
+        yield previous
+
+
 def _open_array_element(element: Variable) -> VarRec:
     """
     Converts an element of an `array of const` into the argument that Pascal Script passes for it
@@ -1765,11 +1797,13 @@ class IFPSEmulator:
                         else:
                             source = getvar(src).deref()
                             st, sv = source.type, source.data
-                        if dst.container or dst.pointer or st.container or st.code is TC.Pointer:
+                        if dst.container or st.code is TC.Pointer:
                             if not pascal.assignable(dst.type, st):
                                 raise type_mismatch()
                             dst.set(source)
                         else:
+                            if isinstance(source, Variable) and source.container:
+                                sv = source.get()
                             dst.data = pascal.store(dst.type, st, sv, runtime)
                     elif opc == Op.Calculate:
                         if not isinstance((aop := insn.operator), AOp):
@@ -2476,8 +2510,6 @@ class IFPSEmulator:
     @external()
     def SetArrayLength(self, array: Variable, n: int):
         array = array.deref()
-        if 0 < (limit := self.config.max_array_length) < n:
-            raise EmulatorMaxArray(F'Requested array length {n} exceeds the limit {limit}.')
         if isinstance(t := array.type, TArray):
             self._reserve_variables(t.type, n)
         array.resize(n)
@@ -2801,28 +2833,15 @@ class IFPSEmulator:
 
     @external()
     def StringSplitEx(self, string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
-        separators = [s for s in separators if s]
-        self._reserve_variables(_StringType, 1 + sum(string.count(s) for s in separators))
-        parts = []
-        start = position = 0
-        quoted = False
-        while position < len(string):
-            if quote and string[position] == quote:
-                quoted = not quoted
-                position += 1
-                continue
-            if not quoted and (separator := next((s for s in separators if string.startswith(s, position)), None)):
-                parts.append(string[start:position])
-                position += len(separator)
-                start = position
-                continue
-            position += 1
-        parts.append(string[start:])
-        if how == TSplitType.stExcludeEmpty:
-            parts = [part for part in parts if part]
-        elif how == TSplitType.stExcludeLastEmpty and parts and not parts[-1]:
-            parts.pop()
-        return parts
+        def spans():
+            found = _split_spans(string, separators, quote)
+            if how == TSplitType.stExcludeEmpty:
+                return (span for span in found if span[0] < span[1])
+            if how == TSplitType.stExcludeLastEmpty:
+                return _without_empty_last(found)
+            return found
+        self._reserve_variables(_StringType, sum(1 for _ in spans()))
+        return [string[start:end] for start, end in spans()]
 
     @external()
     def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:

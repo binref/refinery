@@ -272,9 +272,9 @@ class FPU:
             q = magnitude
             quantum = exponent
             inexact = False
+        if tiny and self._inexact_traps & Fault.Underflow:
+            self.fault(Fault.Underflow)
         if inexact and self._inexact_traps:
-            if tiny:
-                self.fault(Fault.Underflow)
             self.fault(Fault.Precision)
         if q >> bits:
             q >>= 1

@@ -207,10 +207,11 @@ def default(t: IFPSType) -> Any:
     """
     The value of a new variable of a type that holds no other variables. Pascal Script fills a new
     variable with zero bytes: zero, the empty string, the character 0, the empty set, nil, and an
-    unassigned Variant.
+    unassigned Variant. It leaves a return address, a resource pointer, and a type as they are;
+    these start as zero and nil.
     """
     code = t.code
-    if code.integer or code is TC.Enum or code is TC.Set:
+    if code.integer or code is TC.Enum or code is TC.Set or code is TC.ReturnAddress:
         return 0
     if code in _FLOAT_FORMATS:
         return 0.0
@@ -222,7 +223,7 @@ def default(t: IFPSType) -> Any:
         return ''
     if code is TC.Variant:
         return variants.EMPTY
-    if code in (TC.Class, TC.Interface, TC.ProcPtr):
+    if code in (TC.Class, TC.Interface, TC.ProcPtr, TC.ResourcePointer, TC.Type):
         return None
     raise TypeError(F'The type {t} has no default value.')
 
@@ -311,7 +312,7 @@ def read_currency(t: IFPSType, value: Any, runtime: Runtime) -> Fraction:
     if code.integer:
         return Fraction(value)
     if code in _FLOAT_FORMATS:
-        return variants.currency(value, runtime)
+        return _delphi(variants.currency, value, runtime)
     if code is TC.Currency:
         return value
     if code is TC.Variant:
@@ -351,7 +352,7 @@ def to_variant(t: IFPSType, value: Any, runtime: Runtime) -> Variant:
     vtype = _VARIANT_TYPES.get(code)
     if vtype is not None:
         if code is TC.Extended:
-            return Variant(vtype, runtime.fpu.store(value, Format.Double))
+            return Variant(vtype, _delphi(runtime.fpu.store, value, Format.Double))
         if code is TC.Single:
             return Variant(vtype, float(value))
         return Variant(vtype, value)
@@ -429,7 +430,7 @@ def store(target: IFPSType, source: IFPSType, value: Any, runtime: Runtime) -> A
             raise type_mismatch()
         return _delphi(runtime.fpu.store, real, fmt)
     if code is TC.Currency:
-        return _delphi(read_currency, source, value, runtime)
+        return read_currency(source, value, runtime)
     if code is TC.AnsiString or code is TC.PChar:
         return read_string(source, value, runtime, TC.AnsiString)
     if code is TC.WideString:
@@ -614,7 +615,7 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
         if aop not in (AOp.Add, AOp.Sub, AOp.Mul, AOp.Div):
             raise type_mismatch()
         if sc is TC.Variant:
-            double = a if code is not TC.Extended else runtime.fpu.store(a, Format.Double)
+            double = a if code is not TC.Extended else _delphi(runtime.fpu.store, a, Format.Double)
             result = _operate(aop, Variant(VarType.Double, double), b, runtime, True)
             real = _delphi(variants.to_real, result, runtime)
             return _delphi(runtime.fpu.store, real, fmt)

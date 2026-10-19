@@ -181,6 +181,8 @@ def from_python(value: Any) -> Variant:
         return Variant(VarType.Double, value)
     if isinstance(value, x87.Extended):
         return Variant(VarType.Double, _NEAREST.store(value, Format.Double))
+    if isinstance(value, Fraction):
+        return Variant(VarType.Currency, value)
     if isinstance(value, str):
         return Variant(VarType.UString, value)
     if isinstance(value, (list, tuple)):

@@ -22,7 +22,7 @@ from typing import (
 from uuid import UUID
 
 from refinery.lib.inno import CaseInsensitiveDict
-from refinery.lib.inno.delphi import numbers, x87
+from refinery.lib.inno.delphi import numbers, variants, x87
 from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents, IFPSSignature
 from refinery.lib.structures import Struct, StructReader
 
@@ -525,6 +525,8 @@ class Value(NamedTuple):
             return F'&{v!s}'
         if isinstance(v, x87.Extended):
             return numbers.shortest(v)
+        if isinstance(v, Fraction):
+            return variants.currency_text(v, numbers.FormatSettings())
         return repr(v)
 
 
