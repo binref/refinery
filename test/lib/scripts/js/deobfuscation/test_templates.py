@@ -156,3 +156,14 @@ class TestTemplatesWithShuffledStatements(TestBase):
         )
         with self.assertRaises(ValueError):
             template_form(template)
+
+    def test_a_minified_boolean_matches_the_literal_it_spells(self):
+        for template, source, matched in (
+            ('function F(s) { s.k = !0; }', 'function g(t) { t.k = true; }', True),
+            ('function F(s) { s.k = true; }', 'function g(t) { t.k = !0; }', True),
+            ('function F(s) { s.k = !1; }', 'function g(t) { t.k = false; }', True),
+            ('function F(s) { s.k = !0; }', 'function g(t) { t.k = false; }', False),
+            ('function F(s) { s.k = !2; }', 'function g(t) { t.k = false; }', False),
+        ):
+            with self.subTest(template=template, source=source):
+                self.assertEqual(_matches(JsParser(source).parse(), Template(template)), matched)

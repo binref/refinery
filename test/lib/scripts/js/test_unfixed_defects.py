@@ -5575,3 +5575,55 @@ class TestAFileRequiredThroughAnotherNameIsALoad(TestBase):
     calls it with the names of built-in modules, and a site at every read of the value would order
     nothing after it. A file loaded through that other name is not seen.
     """
+
+
+#: Programs whose accessor a function called where it is written builds over values it closes over,
+#: mapped to the behavior Node gives each as a CommonJS file.
+AN_ACCESSOR_BUILT_OVER_VALUES_IT_CLOSES_OVER = {
+    'the accessor writes into the array it closes over': Program(
+        a_program("""
+            var X = function () { var a = [0]; return function () { a[0]++; return a[0]; }; }();
+            console.log(X(), X(), X());
+            """),
+        prints('1 2 3'),
+        Reading.COMMONJS,
+    ),
+    'the name is read before the accessor is built': Program(
+        a_program("""
+            console.log(typeof X);
+            var X = function () { var a = [1, 2]; return function (i) { return a[i]; }; }();
+            console.log(X(0));
+            """),
+        prints('undefined', '1'),
+        Reading.COMMONJS,
+    ),
+    'the accessor returns the array it closes over': Program(
+        a_program("""
+            var X = function () { var a = [1, 2]; return function () { return a; }; }();
+            console.log(X() === X());
+            """),
+        prints('true'),
+        Reading.COMMONJS,
+    ),
+    'the accessor stores into an object it closes over': Program(
+        a_program("""
+            var X = function () { var c = {}; return function (k) { c[k] = (c[k] || 0) + 1; return c[k]; }; }();
+            console.log(X("a"), X("a"));
+            """),
+        prints('1 2'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(AN_ACCESSOR_BUILT_OVER_VALUES_IT_CLOSES_OVER)
+class TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.iifeaccessor` rewrites `var X = function () { var a =
+    [...]; return function (...) {...}; }()` into a function declaration that builds the closed-over
+    values inside itself, without asking the model whether that keeps what the program computes. A
+    write into the closed-over array then runs on a fresh array at every call, a returned array is a
+    new one each call, and the declaration is hoisted above reads that saw `undefined`. The rewrite
+    holds only for values no call writes, hands out, or is read before the build.
+    """

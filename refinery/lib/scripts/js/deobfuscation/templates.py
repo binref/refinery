@@ -33,6 +33,7 @@ from refinery.lib.scripts.js.model import (
     LOOP_NODES,
     JsAssignmentExpression,
     JsBlockStatement,
+    JsBooleanLiteral,
     JsCallExpression,
     JsExpressionStatement,
     JsForStatement,
@@ -134,7 +135,8 @@ class NormalForm:
     `void 0`, parentheses go, a computed key that is a fixed name becomes a dotted one, the body of
     an `if` or a loop becomes a block, a `var` or `let` declaration becomes the assignments it
     makes, a sequence or a call of an empty function in statement position becomes one statement
-    per operand, and a negated number literal becomes the negative number constant folding leaves.
+    per operand, a negated number literal becomes the negative number constant folding leaves, and
+    `!0` and `!1` become the `true` and `false` a minifier spells that way.
     Those are the changes minifying, moving declarations and the other transforms of the obfuscator
     make to a helper. A negated zero stays negated, since a literal compares by its value and zero
     equals its negation.
@@ -241,6 +243,13 @@ class NormalForm:
                 and node.operand.value != 0
             ):
                 _replace_in_parent(node, JsNumericLiteral(value=-node.operand.value))
+            if (
+                isinstance(node, JsUnaryExpression)
+                and node.operator == '!'
+                and isinstance(node.operand, JsNumericLiteral)
+                and node.operand.value in (0, 1)
+            ):
+                _replace_in_parent(node, JsBooleanLiteral(value=node.operand.value == 0))
             if isinstance(node, JsMemberExpression) and node.computed:
                 key = static_property_key(node)
                 if key is not None and key.isidentifier():

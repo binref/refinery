@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapp
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
 from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
+from refinery.lib.scripts.js.deobfuscation.lzstrings import JsLZStringDecoder
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.paramcopy import JsParameterCopyCoalescing
@@ -81,6 +82,7 @@ _pipeline = DeobfuscationPipeline(
             JsBase91AccessorDecoys,
             JsBase91StringDecoder,
             JsScrambleStringDecoder,
+            JsLZStringDecoder,
         ),
         TransformerGroup(
             'cleanup',
@@ -147,6 +149,7 @@ def deobfuscate(
     )
     settlement = ConversionSettlement()
     models = ModelCache(ast, options, settlement)
+    JsLZStringDecoder.read_input(models)
     steps = _pipeline.run(
         ast,
         max_steps=max_steps,
