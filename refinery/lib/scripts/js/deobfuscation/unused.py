@@ -914,12 +914,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         return a_host_reaches_the_binding(self.model, binding, self.options)
 
-    def _at_script_scope(self, parent: Node) -> bool:
+    def _binds_names_global_code_sees(self, parent: Node) -> bool:
         """
-        Whether *parent* (a body) lies at the script scope rather than inside any function, so the
-        names it binds are globals. When a reflection surface is present these must be preserved,
-        because reflective code could read them by name.
+        Whether the names *parent* (a body) binds are seen by global code, which names a binding by
+        its name at runtime: the body lies outside every function of a script, where its names are
+        globals. When a reflection surface is present these must be preserved, because such code
+        could read them. In a module of either kind the names of its top scope are the file's own,
+        which only the file's text can name, and each removal asks about every name it takes
+        (`_reflection_reachable`).
         """
+        if self.model.file_kind.scopes_declarations_to_the_file:
+            return False
         scope = self.model.scope_of(parent)
         while scope is not None:
             if scope.kind is ScopeKind.FUNCTION:
@@ -956,7 +961,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         return isinstance(parent, JsBlockStatement) and isinstance(parent.parent, FUNCTION_NODES)
 
     def _process_body(self, parent: Node, body: list[Statement]):
-        if self.preserve_globals and self._has_reflection and self._at_script_scope(parent):
+        if self.preserve_globals and self._has_reflection and self._binds_names_global_code_sees(parent):
             return
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)

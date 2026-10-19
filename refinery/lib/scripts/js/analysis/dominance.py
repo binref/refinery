@@ -65,6 +65,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Binding,
     SemanticModel,
     enclosing_function,
+    enclosing_operator,
     is_invocation_target,
     is_member_write_target,
     is_simple_assignment_target,
@@ -81,6 +82,8 @@ from refinery.lib.scripts.js.model import (
     JsNewExpression,
     JsObjectExpression,
     JsParenthesizedExpression,
+    is_async_function,
+    is_generator_function,
     object_member_access_runs_accessor,
     strip_parens,
     value_is_discarded,
@@ -163,6 +166,7 @@ class DominanceModel(DominatorModel):
         self._entered_from: dict[Node, dict[Node, bool]] = {}
         self._hand_overs: dict[Binding, _HandOver | None] = {}
         self._runs_with_its_node_cache: dict[Node, bool] = {}
+        self._lifts_cache: dict[Node, list[tuple[Node, Node]]] = {}
 
     def completes_before(self, definition: Node, point: Node) -> bool:
         """
@@ -198,11 +202,25 @@ class DominanceModel(DominatorModel):
         """
         Whether the statement evaluating *definition* has completed on every run that finishes the
         script, the point where an importer outside every import cycle calls what a module
-        exports: every edge that enters the exit of the script's graph without a throw leaves that
-        statement, or one it `completes_before_node`. A run that ends in a throw finishes nothing,
-        since no importer runs after a module whose body threw.
+        exports: `_completes_before_exit` of the script's graph. A run that ends in a throw finishes
+        nothing, since no importer runs after a module whose body threw.
         """
-        graph = self._flow.graph_of(self.model.root)
+        return self._completes_before_exit(self.model.root, definition)
+
+    def _completes_on_every_return(self, function: Node, definition: Node) -> bool:
+        """
+        Whether the statement evaluating *definition* has completed on every run of *function* that
+        returns rather than throws: `_completes_before_exit` of the function's graph.
+        """
+        return self._completes_before_exit(function, definition)
+
+    def _completes_before_exit(self, activation: Node, definition: Node) -> bool:
+        """
+        Whether the statement evaluating *definition* has completed on every run of *activation*
+        that ends without a throw: every edge that enters the exit of its graph without a throw
+        leaves that statement, or one it `completes_before_node`.
+        """
+        graph = self._flow.graph_of(activation)
         located = self.locate(definition)
         if graph is None or located is None or located[0] is not graph:
             return False
@@ -233,12 +251,14 @@ class DominanceModel(DominatorModel):
         can precede the earliest of them. So *definition* runs before every invocation exactly when
         it runs before every reference point — and that, per point, is `completes_before` when the
         point lies in *definition*'s own function, or the same question applied to the function the
-        point lies in, recursing up the call graph. The ordering is *strict*: a reference sharing
-        the definition's statement — an earlier declarator or sequence operand evaluated before it —
-        is not accepted, since statement-granularity dominance is reflexive and cannot order within
-        one statement. A reference's function is its nearest enclosing function (its
-        `_activation_of`), so a use in a function's parameter defaults is attributed to that
-        function's invocation, not to the statement that declares it. Functions that reach each
+        point lies in, recursing up the call graph. Where *definition* stands in a function the
+        program calls where it writes it, a point outside that function is ordered by the call
+        instead, once every return of the function follows *definition* (`_lifts`). The ordering is
+        *strict*: a reference sharing the definition's statement — an earlier declarator or sequence
+        operand evaluated before it — is not accepted, since statement-granularity dominance is
+        reflexive and cannot order within one statement. A reference's function is its nearest
+        enclosing function (its `_activation_of`), so a use in a function's parameter defaults is
+        attributed to that function's invocation, not to the statement that declares it. Functions that reach each
         other's invocations — a recursive function, mutually recursive ones — are answered together
         (`_solve_invocation_orders`). This is the interprocedural counterpart of `dominates`, and
         the sound replacement for ordering a cross-function inline by statement position.
@@ -255,18 +275,18 @@ class DominanceModel(DominatorModel):
     def runs_before_every_invocation(self, definition: Node, function: Node) -> bool:
         """
         Whether *definition* is guaranteed to run before every invocation of *function*, and
-        *function* is entered from the activation that runs *definition* (`_entered`) —
-        `runs_before_function` with the vacuity refused. A reader nothing in the file obtains, or
-        one only code nothing obtains calls, answers the ordering question over no invocation at
-        all and passes vacuously; a value established against no invocation is established for no
-        read, so such a reader does not qualify. An object handed to code does not enter the
+        *function* is entered from the activation that runs *definition*, or from one a call it
+        lifts to runs in (`_entered`, `_lifts`) — `runs_before_function` with the vacuity
+        refused. A reader nothing in the file obtains, or one only code nothing obtains calls,
+        answers the ordering question over no invocation at all and passes vacuously; a value
+        established against no invocation is established for no read, so such a reader does not
+        qualify. An object handed to code does not enter the
         methods stored on it. An anonymous function expression created in that activation is
         entered by its own creation, the one point no invocation can precede.
         """
-        return (
-            self.runs_before_function(definition, function)
-            and self._entered(self._activation_of(definition), function)
-        )
+        if not self.runs_before_function(definition, function):
+            return False
+        return any(self._entered(owner, function) for _, owner in self._lifts(definition))
 
     def runs_before(self, definition: Node, reference: Node) -> bool:
         """
@@ -284,22 +304,17 @@ class DominanceModel(DominatorModel):
         """
         return (
             self._runs_with_its_node(definition)
-            and self._runs_after(definition, self._activation_of(definition), reference)
+            and self._runs_after(definition, reference)
         )
 
     def runs_before_all(self, definition: Node, references: Iterable[Node]) -> bool:
         """
         Whether *definition* is guaranteed to run before every reference in *references* — `runs_before`
-        for each, vacuously `True` for an empty iterable. The definition's activation is resolved once
-        and shared across the references.
+        for each, vacuously `True` for an empty iterable.
         """
         if not self._runs_with_its_node(definition):
             return False
-        definition_owner = self._activation_of(definition)
-        return all(
-            self._runs_after(definition, definition_owner, reference)
-            for reference in references
-        )
+        return all(self._runs_after(definition, reference) for reference in references)
 
     def cannot_precede(self, reference: Node, anchor: Node) -> bool:
         """
@@ -316,7 +331,7 @@ class DominanceModel(DominatorModel):
         element = None if located is None else located[1].element
         if element is None or not evaluated_with(anchor, element):
             return False
-        return self._runs_after(anchor, self._activation_of(anchor), reference)
+        return self._runs_after(anchor, reference)
 
     def code_load_may_precede(self, anchor: Node) -> bool:
         """
@@ -411,10 +426,11 @@ class DominanceModel(DominatorModel):
         explicit stack so a long chain of calls cannot exhaust the interpreter's. A point that is a
         `_HandOver` is a node of the graph in its own right, shared by every function installed on
         one object. The members of one component reach each other's invocations and get one
-        answer: they are ordered when every point outside the component is, one in the
-        definition's activation by `_statement_completes_before`, one in another function or
-        hand-over by that node's answer. A function expression the definition's activation creates
-        only after the definition has completed is ordered without its points (`_created_after`).
+        answer: they are ordered when every point outside the component is, one in an activation
+        that runs the definition or a call returning only once it has (`_site_in`) by
+        `_statement_completes_before` of that site, one in another function or hand-over by that
+        node's answer. A function expression such an activation creates only after the site has
+        completed is ordered without its points (`_created_after`).
 
         This is sound because the earliest invocation of any function in a component follows a
         reference to it that nothing in the component can have evaluated yet, so that reference is
@@ -423,7 +439,6 @@ class DominanceModel(DominatorModel):
         however the other points stand. Every other component is stored only once every component
         it reaches is, which is what makes each stored answer final.
         """
-        owner = self._activation_of(definition)
         index: dict[Node | _HandOver, int] = {}
         lowlink: dict[Node | _HandOver, int] = {}
         ordered: dict[Node | _HandOver, bool] = {}
@@ -433,7 +448,7 @@ class DominanceModel(DominatorModel):
         def open_frame(opened: Node | _HandOver):
             index[opened] = lowlink[opened] = len(index)
             stack.append(opened)
-            if self._created_after(definition, owner, opened):
+            if self._created_after(definition, opened):
                 points = ()
             else:
                 points = self._reference_points(opened)
@@ -450,8 +465,8 @@ class DominanceModel(DominatorModel):
                     activation: Node | _HandOver = point
                 else:
                     activation = self._activation_of(point)
-                    if activation is owner:
-                        if not self._statement_completes_before(definition, point):
+                    if (site := self._site_in(definition, activation)) is not None:
+                        if not self._statement_completes_before(site, point):
                             ordered[current] = False
                         continue
                     if not isinstance(activation, FUNCTION_NODES):
@@ -482,19 +497,18 @@ class DominanceModel(DominatorModel):
                 else:
                     lowlink[parent] = min(lowlink[parent], lowlink[current])
 
-    def _created_after(self, definition: Node, owner: Node, activation: Node | _HandOver) -> bool:
+    def _created_after(self, definition: Node, activation: Node | _HandOver) -> bool:
         """
-        Whether *activation* is a function expression that *owner*, the activation running
-        *definition*, creates only once *definition* has completed. No copy of the function exists
-        before that, so none is invoked before it, whatever its reference points are: a method call
-        that hands its object over before the method is stored there cannot call the method yet. A
+        Whether *activation* is a function expression created, in an activation `_site_in` places
+        *definition* in, only once that site has completed. No copy of the function exists before
+        that, so none is invoked before it, whatever its reference points are: a method call that
+        hands its object over before the method is stored there cannot call the method yet. A
         function declaration exists from the start of its activation and never qualifies.
         """
-        return (
-            isinstance(activation, (JsFunctionExpression, JsArrowFunctionExpression))
-            and self._activation_of(activation) is owner
-            and self._statement_completes_before(definition, activation)
-        )
+        if not isinstance(activation, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return False
+        site = self._site_in(definition, self._activation_of(activation))
+        return site is not None and self._statement_completes_before(site, activation)
 
     def _entered(self, owner: Node, function: Node) -> bool:
         """
@@ -793,13 +807,55 @@ class DominanceModel(DominatorModel):
             binding.exported,
         )
 
-    def _runs_after(self, definition: Node, definition_owner: Node, point: Node) -> bool:
+    def _runs_after(self, definition: Node, point: Node) -> bool:
         owner = self._activation_of(point)
-        if owner is definition_owner:
-            return self._statement_completes_before(definition, point)
+        if (site := self._site_in(definition, owner)) is not None:
+            return self._statement_completes_before(site, point)
         if isinstance(owner, FUNCTION_NODES):
             return self._ordered(definition, owner)
         return False
+
+    def _site_in(self, definition: Node, activation: Node | _HandOver) -> Node | None:
+        """
+        The node of *activation* whose completion orders *definition*: *definition* itself where
+        *activation* runs it, and otherwise the call that runs a function *definition* stands in,
+        climbing outward through such calls (`_lifts`). `None` where *activation* is not on that
+        climb.
+        """
+        for site, owner in self._lifts(definition):
+            if owner is activation:
+                return site
+        return None
+
+    def _lifts(self, definition: Node) -> list[tuple[Node, Node]]:
+        """
+        *definition* with its activation, followed by every call it lifts to: where a function
+        expression the program calls where it writes it holds the site so far, and every run of the
+        function that returns rather than throws has evaluated the site
+        (`_completes_on_every_return`), the call has returned only after the site ran, so the call,
+        in its own activation, orders the site for every point there. A generator or an `async`
+        function returns before its body has run, and holds no such site; the statement evaluating
+        the call must evaluate it whenever it completes (`_runs_with_its_node`). Memoized.
+        """
+        if (lifts := self._lifts_cache.get(definition)) is not None:
+            return lifts
+        site = definition
+        owner = self._activation_of(definition)
+        lifts = [(site, owner)]
+        while (
+            isinstance(owner, (JsFunctionExpression, JsArrowFunctionExpression))
+            and not is_generator_function(owner)
+            and not is_async_function(owner)
+            and isinstance(call := enclosing_operator(owner), JsCallExpression)
+            and strip_parens(call.callee) is owner
+            and self._completes_on_every_return(owner, site)
+            and self._runs_with_its_node(call)
+        ):
+            site = call
+            owner = self._activation_of(call)
+            lifts.append((site, owner))
+        self._lifts_cache[definition] = lifts
+        return lifts
 
     def _activation_of(self, element: Node) -> Node:
         """

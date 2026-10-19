@@ -883,3 +883,64 @@ class TestAStoreItsStatementMaySkip(TestBase):
             if isinstance(node, JsIdentifier) and node.name in ('c', 'g')
         ]
         self.assertFalse(dom.cannot_precede(after, anchor))
+
+
+class TestADefinitionInsideAFunctionCalledWhereItIsWritten(TestBase):
+    """
+    A function expression the program calls where it writes it has run the definitions it holds by
+    the time the call returns, on every run that returns rather than throws, so the call orders them
+    for the code after it. Each question that orders a definition against a read answers alike: the
+    one per read, the two per function, and whether the name is established before the read.
+    """
+
+    @staticmethod
+    def _answers(source: str) -> tuple[bool, bool, bool, bool]:
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        dominance = build_dominance(model)
+        definition = next(node for node in ast.walk() if isinstance(node, JsAssignmentExpression))
+        reader = next(
+            node for node in ast.walk()
+            if isinstance(node, JsFunctionDeclaration) and node.id is not None and node.id.name == 'f'
+        )
+        read = next(node for node in reader.walk() if isinstance(node, JsIdentifier) and node.name == 'T')
+        binding = model.resolve(read)
+        assert binding is not None
+        return (
+            dominance.runs_before(definition, read),
+            dominance.runs_before_function(definition, reader),
+            dominance.runs_before_every_invocation(definition, reader),
+            dominance.binding_established_before(binding, read),
+        )
+
+    def test_the_call_orders_the_definition_for_a_function_called_after_it(self):
+        source = 'var T; (function () { T = ["a", "b"]; })(); function f(i) { return T[i]; } console.log(f(0), f(1));'
+        self.assertEqual(self._answers(source), (True, True, True, True))
+
+    def test_nested_calls_order_the_definition(self):
+        source = 'var T; (function () { (function () { T = ["a"]; })(); })(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (True, True, True, True))
+
+    def test_a_return_before_the_definition_orders_nothing(self):
+        source = 'var T; (function (c) { if (c) { return; } T = ["a"]; })(c); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
+    def test_an_async_function_orders_nothing(self):
+        source = 'var T; (async function () { await 0; T = ["a"]; })(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
+    def test_a_generator_function_orders_nothing(self):
+        source = 'var T; (function* () { T = ["a"]; })(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
+    def test_a_call_on_one_branch_orders_nothing(self):
+        source = 'var T; c && (function () { T = ["a"]; })(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
+    def test_a_read_the_call_makes_before_the_definition_is_not_ordered(self):
+        source = 'var T; function f() { return T[0]; } (function () { f(); T = ["a"]; })(); f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))
+
+    def test_a_function_called_later_but_not_where_it_is_written_orders_nothing(self):
+        source = 'var T; var g = function () { T = ["a"]; }; g(); function f() { return T[0]; } f();'
+        self.assertEqual(self._answers(source), (False, False, False, False))

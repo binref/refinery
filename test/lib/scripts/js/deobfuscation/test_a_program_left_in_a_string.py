@@ -749,6 +749,14 @@ class TestAPayloadHoldingADirectEvalStaysInItsString(TestBase):
 
     def test_each_payload_stays_as_written_where_the_file_runs_as_a_module(self):
         rows = A_PAYLOAD_HOLDING_A_DIRECT_EVAL
+        written = {label: printed(row.text) for label, row in rows.items()}
+        # In a module the `var x` is the file's own, which the payload, run as global code, cannot
+        # name, so it goes as any name nothing reads does.
+        written['a Function body evaluating typeof of a name the file declares'] = printed(
+            a_program("""
+                console.log(Function("return eval('typeof x')")());
+                """)
+        )
         for execution in (ExecutionModel.commonjs, ExecutionModel.module):
             with self.subTest(execution.name):
                 self.assertEqual(
@@ -756,7 +764,7 @@ class TestAPayloadHoldingADirectEvalStaysInItsString(TestBase):
                         label: deobfuscate_source(row.text, execution=execution)
                         for label, row in rows.items()
                     },
-                    {label: printed(row.text) for label, row in rows.items()},
+                    written,
                 )
 
     def test_each_program_still_prints_what_it_prints(self):
