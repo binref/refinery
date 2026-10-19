@@ -252,10 +252,10 @@ def _convert(letter: str, kind: VType, value, precision: int, runtime: Runtime) 
         settings = runtime.settings
         precision = min(precision, 18)
         if style is FloatFormat.General or style is FloatFormat.Exponent:
-            return float_to_text(value, style, 15 if precision < 0 else precision, 3, settings)
+            return float_to_text(value, style, 15 if precision < 0 else precision, 3, runtime)
         if precision < 0:
             precision = settings.currency_decimals if style is FloatFormat.Currency else 2
-        return float_to_text(value, style, 18, precision, settings)
+        return float_to_text(value, style, 18, precision, runtime)
     return None
 
 

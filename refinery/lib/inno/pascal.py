@@ -22,10 +22,10 @@ from refinery.lib.inno.delphi.errors import (
     EMathError,
     EZeroDivide,
 )
-from refinery.lib.inno.delphi.runtime import Runtime
+from refinery.lib.inno.delphi.runtime import Operation, Runtime, units
 from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.delphi.x87 import FPU, MASKED_CONTROL_WORD, Format, Real
-from refinery.lib.inno.ifps import TC, AOp, COp, IFPSType, TArray, TSet, TStaticArray
+from refinery.lib.inno.ifps import TC, AOp, COp, IFPSType, TArray, TRecord, TSet, TStaticArray
 
 _T = TypeVar('_T')
 
@@ -298,7 +298,7 @@ def read_real(t: IFPSType, value: Any, runtime: Runtime) -> Real:
     if code in _FLOAT_FORMATS:
         return value
     if code is TC.Currency:
-        return _delphi(variants.currency_to_real, value, runtime.fpu)
+        return _delphi(runtime.currency_to_real, value)
     if code is TC.Variant:
         return _delphi(variants.to_real, value, runtime)
     raise type_mismatch()
@@ -310,9 +310,9 @@ def read_currency(t: IFPSType, value: Any, runtime: Runtime) -> Fraction:
     """
     code = t.code
     if code.integer:
-        return Fraction(value)
+        return runtime.currency_of_integer(value)
     if code in _FLOAT_FORMATS:
-        return _delphi(variants.currency, value, runtime)
+        return _delphi(runtime.currency, value)
     if code is TC.Currency:
         return value
     if code is TC.Variant:
@@ -341,6 +341,7 @@ def read_string(t: IFPSType, value: Any, runtime: Runtime, target: TC = TC.Unico
 def to_variant(t: IFPSType, value: Any, runtime: Runtime) -> Variant:
     """
     Pascal Script's `IntPIFVariantToVariant`: the Variant that holds a value of the given type.
+    Pascal Script asks for the length of a static array as for a dynamic array, which fails.
     """
     code = t.code
     if code is TC.Variant:
@@ -356,7 +357,9 @@ def to_variant(t: IFPSType, value: Any, runtime: Runtime) -> Variant:
         if code is TC.Single:
             return Variant(vtype, float(value))
         return Variant(vtype, value)
-    if isinstance(t, (TArray, TStaticArray)):
+    if isinstance(t, TStaticArray):
+        raise IFPSException('Invalid array')
+    if isinstance(t, TArray):
         element = t.type
         return Variant(VarType.Array | VarType.Variant, [to_variant(element, v, runtime) for v in value])
     if code is TC.Interface:
@@ -537,6 +540,13 @@ _VARIANT_OPERATORS = {
 
 _VARIANT_ARITHMETIC = frozenset((AOp.Add, AOp.Sub, AOp.Mul, AOp.Div, AOp.Mod))
 
+_OPERATIONS = {
+    AOp.Add : Operation.Add,
+    AOp.Sub : Operation.Subtract,
+    AOp.Mul : Operation.Multiply,
+    AOp.Div : Operation.Divide,
+}
+
 
 def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b: int) -> int:
     """
@@ -621,8 +631,10 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
             return _delphi(runtime.fpu.store, real, fmt)
         if not (sc.integer or sc in _FLOAT_FORMATS or sc is TC.Currency):
             raise type_mismatch()
+        if sc is TC.Currency and aop is AOp.Div:
+            return _delphi(runtime.real_divided_by_currency, a, b, fmt)
         other = read_real(source, b, runtime)
-        return _delphi(_real_arithmetic, runtime, aop, a, other, fmt)
+        return _delphi(runtime.real_arithmetic, _OPERATIONS[aop], a, other, fmt)
     if code is TC.Currency:
         if aop not in (AOp.Add, AOp.Sub, AOp.Mul, AOp.Div):
             raise type_mismatch()
@@ -633,7 +645,7 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
             raise type_mismatch()
         if sc is TC.U32 or sc is TC.S64:
             return _delphi(_currency_read_as_double, runtime, aop, a, b)
-        return _delphi(_currency_arithmetic, runtime, aop, a, sc, b)
+        return _delphi(runtime.currency_arithmetic, _OPERATIONS[aop], a, b)
     if code in _STRINGS:
         if aop is not AOp.Add:
             raise type_mismatch()
@@ -652,57 +664,13 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
     raise type_mismatch()
 
 
-def _currency_arithmetic(runtime: Runtime, aop: AOp, a: Fraction, sc: TC, b: Any) -> Fraction:
-    """
-    Delphi computes with a Currency in units of 1/10000: the x87 loads the units, computes with the
-    other operand, and stores the result as an integer, rounded as the control word says. A
-    Currency operand counts in units, an integer in whole numbers, a float as its value.
-    """
-    fpu = runtime.fpu
-    units = x87.real(_units(a))
-    if sc is TC.Currency:
-        other = x87.real(_units(b))
-        if aop is AOp.Mul:
-            result = fpu.divide(fpu.multiply(units, other), 10000.0)
-        elif aop is AOp.Div:
-            result = fpu.multiply(fpu.divide(units, other), 10000.0)
-        else:
-            result = _real_arithmetic(runtime, aop, units, other)
-    elif aop in (AOp.Add, AOp.Sub):
-        other = x87.real(b * 10000) if sc.integer else fpu.multiply(b, 10000.0)
-        result = _real_arithmetic(runtime, aop, units, other)
-    else:
-        result = _real_arithmetic(runtime, aop, units, x87.real(b) if sc.integer else b)
-    return Fraction(fpu.integer(result), 10000)
-
-
 def _currency_read_as_double(runtime: Runtime, aop: AOp, a: Fraction, b: int) -> Fraction:
     """
     Pascal Script computes a Currency with a Cardinal or an Int64 from the eight bytes of the
     Currency read as a Double, and stores the result as a Currency.
     """
-    double, = struct.unpack('<d', struct.pack('<q', _signed(_units(a), 64)))
-    return variants.currency(_real_arithmetic(runtime, aop, double, x87.real(b)), runtime)
-
-
-def _units(value: Fraction) -> int:
-    return value.numerator * (10000 // value.denominator)
-
-
-def _real_arithmetic(runtime: Runtime, aop: AOp, a: Real, b: Real, fmt: Format = Format.Extended) -> Real:
-    """
-    Computes on the x87 and stores the result into a variable of the given format.
-    """
-    fpu = runtime.fpu
-    if aop is AOp.Add:
-        result = fpu.add(a, b)
-    elif aop is AOp.Sub:
-        result = fpu.subtract(a, b)
-    elif aop is AOp.Mul:
-        result = fpu.multiply(a, b)
-    else:
-        result = fpu.divide(a, b)
-    return fpu.store(result, fmt)
+    double, = struct.unpack('<d', struct.pack('<q', _signed(units(a), 64)))
+    return runtime.currency(runtime.real_arithmetic(_OPERATIONS[aop], double, x87.real(b)))
 
 
 def _integer_comparands(left: TC, a: int, right: TC, b) -> tuple:
@@ -848,7 +816,7 @@ def negate(t: IFPSType, value: Any, runtime: Runtime) -> Any:
     if code.integer:
         return _in_range(code, -value)
     if code is TC.Currency:
-        return Fraction(_signed(-_units(value), 64), 10000)
+        return Fraction(_signed(-units(value), 64), 10000)
     if code is TC.Variant:
         try:
             return variants.negate(value, runtime)
@@ -886,6 +854,29 @@ def logical_not(t: IFPSType, value: Any, runtime: Runtime) -> Any:
         except DelphiException:
             raise type_mismatch()
     raise type_mismatch()
+
+
+def size_of(t: IFPSType, runtime: Runtime) -> int:
+    """
+    Pascal Script's `SizeOf`: the size of a variable of the given type on the Setup's platform.
+    """
+    code = t.code
+    pointer = runtime.pointer_size
+    if isinstance(t, TStaticArray):
+        return t.size * size_of(t.type, runtime)
+    if isinstance(t, TRecord):
+        return sum(size_of(m, runtime) for m in t.members)
+    if isinstance(t, TSet):
+        return t.size_in_bytes
+    if code in (TC.AnsiString, TC.WideString, TC.UnicodeString, TC.PChar, TC.Class, TC.Interface, TC.Array):
+        return pointer
+    if code is TC.Variant:
+        return runtime.variant_size
+    if code is TC.Extended:
+        return runtime.extended_size
+    if code in (TC.ProcPtr, TC.Pointer):
+        return 3 * pointer
+    return code.width
 
 
 def truth(t: IFPSType, value: Any) -> bool:

@@ -12,11 +12,15 @@ import re
 
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.errors import EConvertError, SysConst, Undefined
 from refinery.lib.inno.delphi.x87 import FPU, Real
 from refinery.lib.resources import datapath
+
+if TYPE_CHECKING:
+    from refinery.lib.inno.delphi.runtime import Runtime
 
 
 @dataclass(frozen=True)
@@ -149,6 +153,21 @@ class Special(enum.Enum):
 
 
 @dataclass(frozen=True)
+class Library:
+    """
+    The routines of Delphi's run-time library that convert between floats and text, as Delphi builds
+    them for a platform. They compute on `unit` and write at most `digits` significant digits. They
+    scale by powers of ten from a table whose powers `10 ** (32 * k)` end at `k = table_end`. `Val`
+    gives an infinity when the exponent and the number of decimals add up to more than
+    `exponent_limit`.
+    """
+    unit: FPU
+    digits: int
+    table_end: int
+    exponent_limit: int
+
+
+@dataclass(frozen=True)
 class Decimal:
     """
     A float as decimal digits: the value is `0.digits * 10 ** exponent`, negative or not. Delphi's
@@ -163,14 +182,16 @@ def decimal(
     value: Real,
     precision: int,
     decimals: int | None = None,
+    *,
+    library: Library,
     denormal_is_zero: bool = True,
 ) -> Decimal | Special:
     """
     Delphi's `FloatToDecimal`: the digits of the value rounded to the given number of significant
-    digits, and to the given number of digits after the decimal point. The x87 first converts the
-    value to 18 significant digits, rounding to the nearest; these digits are then rounded half up.
-    Trailing zeros are removed; zero has no digits, and so has a denormal Extended unless the
-    caller is `Str`, which writes its digits.
+    digits, at most those of the library, and to the given number of digits after the decimal point.
+    The digits come from `_stored_digits` and are rounded half up. Trailing zeros are removed; zero
+    has no digits, and so has a denormal Extended unless the caller is `Str`, which writes its
+    digits.
     """
     if isinstance(value, float):
         if math.isnan(value):
@@ -181,25 +202,44 @@ def decimal(
     if value == 0:
         return Decimal(negative, '', 0)
     mantissa, power = x87.parts(value)
-    mantissa = abs(mantissa)
-    if denormal_is_zero and mantissa.bit_length() + power <= _EXTENDED_DENORMAL:
+    if denormal_is_zero and abs(mantissa).bit_length() + power <= _EXTENDED_DENORMAL:
         return Decimal(negative, '', 0)
-    exponent = _decimal_exponent(mantissa, power)
-    numerator, denominator = _scaled(mantissa, power, 18 - exponent)
-    digits, remainder = divmod(numerator, denominator)
-    twice = 2 * remainder
-    if twice > denominator or twice == denominator and digits & 1:
-        digits += 1
-    if digits >= 10 ** 18:
-        digits //= 10
+    text, exponent = _stored_digits(value, library)
+    return _rounded(negative, text, exponent, min(precision, library.digits), decimals)
+
+
+def _stored_digits(value: Real, library: Library) -> tuple[str, int]:
+    """
+    The 18 decimal digits that Delphi's `FloatToDecimal` stores for a finite value other than zero,
+    and the exponent of the value `0.digits * 10 ** exponent`. The library estimates the decimal
+    exponent from the binary one, multiplies by a power of ten to leave 18 integer digits, rounds
+    to an integer, divides by ten when that has 19 digits, and stores the integer as 18 digits. The
+    estimate is one too high for some small values, whose digits then start with a zero.
+    """
+    unit = library.unit
+    mantissa, power = x87.parts(value)
+    mantissa = abs(mantissa)
+    exponent = ((mantissa.bit_length() - 1 + power) * 19728 >> 16) + 1
+    scaled = unit.round_integral(_power_of_ten(library, x87.real(mantissa, power), 18 - exponent))
+    if unit.compare(scaled, 1e18) != -1:
+        scaled = unit.divide(scaled, 10.0)
         exponent += 1
-    text = str(digits)
-    keep = min(precision, 18)
+    digits = unit.integer(scaled)
+    if digits >= 10 ** 18:
+        raise Undefined('Delphi stores a value of 19 decimal digits, which the x87 cannot store as 18.')
+    return F'{digits:018d}', exponent
+
+
+def _rounded(negative: bool, text: str, exponent: int, keep: int, decimals: int | None) -> Decimal:
+    """
+    The stored digits rounded half up to the given number of significant digits and to the given
+    number of digits after the decimal point, without trailing zeros.
+    """
     if decimals is not None:
         keep = min(keep, exponent + decimals)
     if keep < 0:
         return Decimal(negative, '', 0)
-    if keep < 18:
+    if keep < len(text):
         rounded = int(text[:keep] or '0')
         if text[keep] >= '5':
             rounded += 1
@@ -207,9 +247,9 @@ def decimal(
             if rounded:
                 return Decimal(negative, '1', exponent + 1)
             return Decimal(negative, '', 0)
-        if len(str(rounded)) > keep:
+        if rounded >= 10 ** keep:
             exponent += 1
-        text = str(rounded)
+        text = str(rounded).zfill(keep)
     text = text.rstrip('0')
     if not text:
         return Decimal(negative, '', 0)
@@ -297,7 +337,7 @@ def float_to_text(
     style: FloatFormat,
     precision: int,
     digits: int,
-    settings: FormatSettings,
+    runtime: Runtime,
 ) -> str:
     """
     Delphi's `FloatToText`: the general format writes the shortest text of at most `precision`
@@ -308,13 +348,16 @@ def float_to_text(
     number and currency formats separate thousands, and the currency format places the currency
     string as the settings say.
     """
+    settings = runtime.settings
+    library = runtime.library
     if style is FloatFormat.General or style is FloatFormat.Exponent:
-        rounded = decimal(value, precision)
+        precision = min(precision, library.digits)
+        rounded = decimal(value, precision, library=library)
     else:
-        rounded = decimal(value, 18)
-        if isinstance(rounded, Decimal) and rounded.exponent > precision:
-            return float_to_text(value, FloatFormat.General, precision, 0, settings)
-        rounded = decimal(value, 18, digits)
+        rounded = decimal(value, 18, library=library)
+        if isinstance(rounded, Decimal) and rounded.exponent > min(precision, library.digits):
+            return float_to_text(value, FloatFormat.General, precision, digits, runtime)
+        rounded = decimal(value, 18, digits, library=library)
     if isinstance(rounded, Special):
         return rounded.value
     point = settings.decimal_separator
@@ -374,18 +417,19 @@ def _fixed(rounded: Decimal, decimals: int | None, point: str, thousands: str = 
     return whole
 
 
-def float_to_str(value: Real, settings: FormatSettings) -> str:
+def float_to_str(value: Real, runtime: Runtime) -> str:
     """
     SysUtils' `FloatToStr`: the general format with 15 significant digits.
     """
-    return float_to_text(value, FloatFormat.General, 15, 0, settings)
+    return float_to_text(value, FloatFormat.General, 15, 0, runtime)
 
 
-def str_fixed(value: Real, decimals: int) -> str:
+def str_fixed(value: Real, decimals: int, library: Library) -> str:
     """
     Delphi's `Str(Value:0:Decimals)`, which Pascal Script's `FloatToStr` calls with 12 decimals. It
     writes the value with a point and the given number of decimals, and a value below 2**-116 or
-    from 2**119 on in scientific notation with two significant digits and a four-digit exponent.
+    from 2**119 on in scientific notation with two significant digits and a four-digit exponent;
+    those digits start after a leading zero of the stored digits.
     """
     if isinstance(value, float):
         if math.isnan(value):
@@ -394,34 +438,34 @@ def str_fixed(value: Real, decimals: int) -> str:
             return '-Inf' if value < 0 else '+Inf'
     magnitude = abs(x87.exact(value))
     if magnitude != 0 and not _STR_FIXED_RANGE[0] <= magnitude < _STR_FIXED_RANGE[1]:
-        rounded = decimal(value, 2, denormal_is_zero=False)
-        assert isinstance(rounded, Decimal)
+        text, exponent = _stored_digits(value, library)
+        if text.startswith('0'):
+            text, exponent = text[1:], exponent - 1
+        rounded = _rounded(x87.is_negative(value), text, exponent, 2, None)
         mantissa = rounded.digits.ljust(2, '0')
         e = rounded.exponent - 1
         sign = '-' if rounded.negative else ' '
         return F'{sign}{mantissa[0]}.{mantissa[1]}E{"-" if e < 0 else "+"}{abs(e):04d}'
-    rounded = decimal(value, 18, decimals, denormal_is_zero=False)
+    rounded = decimal(value, 18, decimals, library=library, denormal_is_zero=False)
     assert isinstance(rounded, Decimal)
     number = _fixed(rounded, decimals, '.')
-    return F'-{number}' if rounded.negative and rounded.digits else number
+    return F'-{number}' if rounded.negative and magnitude != 0 else number
 
 
 _STR_FIXED_RANGE = (Fraction(1, 1 << 116), Fraction(1 << 119))
 
 
-def val_float(text: str, fpu: FPU) -> tuple[Real | None, int]:
+def val_float(text: str, library: Library) -> tuple[Real | None, int]:
     """
     Delphi's `Val` for a float: the value that the text spells and the error code, which is 0 on
     success and otherwise the position of the first character that is not part of the number,
     counting from 1. Leading spaces are skipped, a sign may follow, then digits with an optional
     point and an optional exponent with at least one digit. The digits may be missing, which reads
-    as zero, but the text may not be empty after the spaces. The x87 computes the value: it takes
-    the digits one by one, multiplying by ten and adding the digit, and scales the result by ten to
-    the exponent minus the number of decimals. The exponent is read as a 32-bit integer that wraps
-    around; when the exponent and the number of decimals add up to more than `_EXPONENT_LIMIT`, the
-    value is an infinity, whatever the digits. The scaling multiplies by a power of ten, or divides
-    by it for a negative power, as the product of three powers from a table of Extended values:
-    `10 ** a`, `10 ** (32 * b)`, and `10 ** (512 * c)`.
+    as zero, but the text may not be empty after the spaces. The library's unit computes the value:
+    it takes the digits one by one, multiplying by ten and adding the digit, and scales the result
+    by ten to the exponent minus the number of decimals. The exponent is read as a 32-bit integer
+    that wraps around; when the exponent and the number of decimals add up to more than the
+    library's limit, the value is an infinity, whatever the digits.
     """
     match = _VAL_FLOAT.match(text)
     assert match is not None
@@ -434,6 +478,7 @@ def val_float(text: str, fpu: FPU) -> tuple[Real | None, int]:
     if end < len(text):
         return None, end + 1
     fraction = fraction or ''
+    fpu = library.unit
     value: Real = 0.0
     for digit in (whole + fraction).lstrip('0'):
         value = fpu.add(fpu.multiply(value, 10.0), _DIGIT_VALUES[digit])
@@ -442,10 +487,10 @@ def val_float(text: str, fpu: FPU) -> tuple[Real | None, int]:
     power = -len(fraction)
     if exponent:
         exponent_value = _wrapped_exponent(exponent_sign, exponent)
-        if exponent_value + len(fraction) > _EXPONENT_LIMIT:
+        if exponent_value + len(fraction) > library.exponent_limit:
             value = math.inf
         power = _signed32(power + exponent_value)
-    value = _power_of_ten(fpu, value, power)
+    value = _power_of_ten(library, value, power)
     return (fpu.negate(value) if sign == '-' else value), 0
 
 
@@ -454,10 +499,10 @@ _DIGIT_VALUES = {str(k): float(k) for k in range(10)}
 _POWER_LIMIT = 5120
 
 
-_EXPONENT_LIMIT = 5197
+EXPONENT_LIMIT = 5197
 """
-The largest sum of the exponent and the number of decimals that Delphi scales by; this bound fits
-every probe of the oracle (exponents from 4932 to 6000 with up to 5201 decimals).
+The largest sum of the exponent and the number of decimals that 32-bit Delphi's `Val` scales by;
+this bound fits every probe of the oracle (exponents from 4932 to 6000 with up to 5201 decimals).
 """
 
 
@@ -497,11 +542,14 @@ _POWERS_32 = [_table(32 * k) for k in range(16)]
 _POWERS_512 = [_table(512 * k) for k in range(10)]
 
 
-def _power_of_ten(fpu: FPU, value: Real, power: int) -> Real:
+def _power_of_ten(library: Library, value: Real, power: int) -> Real:
     """
-    The value times ten to the given power, as Delphi's `FPower10` computes it: a power of 5120 or
-    more gives an infinity, and one of -5120 or less zero. Delphi cannot negate the power -2**31
-    and reads a power after the end of its table, which is `Undefined`.
+    The value times ten to the given power, as Delphi's `FPower10` computes it: it multiplies by a
+    power of ten, or divides by it for a negative power, as the product of three powers from a table
+    of Extended values: `10 ** a`, `10 ** (32 * b)`, and `10 ** (512 * c)`. When `b` is beyond the
+    end of the library's table, the library scales by two of its powers. A power of 5120 or more
+    gives an infinity, and one of -5120 or less zero. The power -2**31, which Delphi cannot negate,
+    reads a power after the end of the table, which is `Undefined`.
     """
     if power == 0:
         return value
@@ -511,9 +559,14 @@ def _power_of_ten(fpu: FPU, value: Real, power: int) -> Real:
     power = abs(power)
     if power >= _POWER_LIMIT:
         return 0.0 if negative else math.inf
+    fpu = library.unit
     scale = fpu.divide if negative else fpu.multiply
     value = scale(value, _POWERS[power & 31])
     if b := (power >> 5) & 15:
+        end = library.table_end
+        if b > end:
+            value = scale(value, _POWERS_32[b - end])
+            b = end
         value = scale(value, _POWERS_32[b])
     if c := power >> 9:
         value = scale(value, _POWERS_512[c])

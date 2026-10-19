@@ -15,7 +15,7 @@ import enum
 import math
 
 from fractions import Fraction
-from typing import Callable, Union
+from typing import Union
 
 from refinery.lib.inno.delphi.errors import (
     EInvalidOp,
@@ -545,16 +545,20 @@ class FPU:
         """
         if a == 0:
             return a
-        return self._trigonometric(a, _sine)
+        return self._trigonometric(a, 0)
 
     def cosine(self, a: Real) -> Real:
         """
         The cosine, rounded as the result of an instruction. The x87 leaves an operand of 2**63 or
         more unchanged.
         """
-        return self._trigonometric(a, _cosine)
+        return self._trigonometric(a, 1)
 
-    def _trigonometric(self, a: Real, series: Callable[[decimal.Decimal], decimal.Decimal]) -> Real:
+    def _trigonometric(self, a: Real, quadrant: int) -> Real:
+        """
+        The x87 reduces the operand by multiples of half its pi of 66 bits and then computes
+        exactly. The cosine is the sine one quadrant on.
+        """
         if is_special(a):
             assert isinstance(a, float)
             if math.isnan(a):
@@ -567,10 +571,13 @@ class FPU:
                 return a
         with decimal.localcontext(prec=_SERIES_DIGITS):
             x = exact(a)
-            value = decimal.Decimal(x.numerator) / decimal.Decimal(x.denominator)
-            tau = 2 * _PI_DIGITS
-            value -= tau * (value / tau).to_integral_value(decimal.ROUND_FLOOR)
-            result = Fraction(series(value))
+            turns = round(x / _PI66 * 2)
+            reduced = x - turns * _PI66 / 2
+            value = decimal.Decimal(reduced.numerator) / decimal.Decimal(reduced.denominator)
+            quadrant = (quadrant + turns) % 4
+            result = Fraction((_cosine if quadrant % 2 else _sine)(value))
+            if quadrant >= 2:
+                result = -result
         return self.rational(result.numerator, result.denominator)
 
 
@@ -578,6 +585,7 @@ _SERIES_DIGITS = 80
 _PI_DIGITS = decimal.Decimal(
     '3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798')
 _PI = Fraction(_PI_DIGITS)
+_PI66 = Fraction(0x3243F6A8885A308D3, 1 << 64)
 
 
 def _taylor(x: decimal.Decimal, term: decimal.Decimal, start: int) -> decimal.Decimal:

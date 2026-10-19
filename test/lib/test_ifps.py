@@ -1087,7 +1087,6 @@ class TestIPFSEmulator(TestBase):
         """
         self.assertEqual(self._installer_emulator().Get8087CW(), 0x1372)
 
-    @wontfix('the x87 reduces the operand of FSIN by a pi of 66 bits; the emulator computes the sine of the exact operand')
     def test_the_sine_of_pi_is_that_of_the_x87(self):
         """
         The x87 subtracts its pi of 66 bits from the Double nearest to pi, which leaves
@@ -1108,9 +1107,10 @@ class TestIPFSEmulator(TestBase):
     def test_an_extended_that_overflows_the_double_of_a_variant_raises_an_error_of_the_script(self):
         from refinery.lib.inno import pascal
         from refinery.lib.inno.delphi import x87
-        from refinery.lib.inno.delphi.runtime import Runtime
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win32
         from refinery.lib.inno.ifps import TC, TPrimitive
-        runtime = Runtime(x87.FPU(x87.DEFAULT_CONTROL_WORD))
+        runtime = Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD)
         with self.assertRaises(IFPSException) as raised:
             pascal.store(TPrimitive(TC.Variant), TPrimitive(TC.Extended), x87.real(1, 5000), runtime)
         self.assertEqual(raised.exception.kind, pascal.PSError.MathError)
@@ -1119,9 +1119,10 @@ class TestIPFSEmulator(TestBase):
         from fractions import Fraction
         from refinery.lib.inno import pascal
         from refinery.lib.inno.delphi import x87
-        from refinery.lib.inno.delphi.runtime import Runtime
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win32
         from refinery.lib.inno.ifps import TC, COp, TPrimitive
-        runtime = Runtime(x87.FPU(x87.DEFAULT_CONTROL_WORD))
+        runtime = Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD)
         with self.assertRaises(IFPSException):
             pascal.compare(COp.LT, TPrimitive(TC.Currency), Fraction(1), TPrimitive(TC.Double), 1e300, runtime)
 

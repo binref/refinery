@@ -241,7 +241,7 @@ def _integer(v: Variant, runtime: Runtime, bits: int, target: str) -> int:
     elif kind is _Kind.Float:
         value = runtime.fpu.integer(v.value)
     elif kind is _Kind.Currency:
-        value = runtime.fpu.integer(currency_to_real(v.value, runtime.fpu))
+        value = runtime.fpu.integer(runtime.currency_to_real(v.value))
     elif kind is _Kind.String:
         return _string_to_integer(v, runtime, bits, target)
     else:
@@ -295,28 +295,10 @@ def to_real(v: Variant, runtime: Runtime) -> Real:
     if kind is _Kind.Float:
         return v.value
     if kind is _Kind.Currency:
-        return currency_to_real(v.value, runtime.fpu)
+        return runtime.currency_to_real(v.value)
     if kind is _Kind.String and (number := ole_number(v.value, runtime.settings)) is not None:
         return _ole_double(number, v, 'Double')
     raise EVariantTypeCastError(type_text(v), 'Double')
-
-
-def currency(value: Real, runtime: Runtime) -> Fraction:
-    """
-    Converts a float to a Currency as the x87 does: the value times 10000, rounded as a result,
-    and then to an integer as the control word says. A value out of range signals an invalid
-    operation and gives the smallest Currency.
-    """
-    fpu = runtime.fpu
-    return Fraction(fpu.integer(fpu.multiply(value, 10000.0)), 10000)
-
-
-def currency_to_real(value: Fraction, fpu: FPU) -> Real:
-    """
-    Converts a Currency to a float as the x87 does: it loads the units of 1/10000 as an integer and
-    divides them by 10000.
-    """
-    return fpu.divide(x87.real(value.numerator * (10000 // value.denominator)), 10000.0)
 
 
 def to_currency(v: Variant, runtime: Runtime) -> Fraction:
@@ -333,7 +315,9 @@ def to_currency(v: Variant, runtime: Runtime) -> Fraction:
     elif kind is _Kind.Currency:
         return v.value
     elif kind is _Kind.Float:
-        return currency(v.value, runtime)
+        if x87.is_special(v.value) or not _in_currency_range(x87.exact(v.value)):
+            raise EVariantOverflowError(type_text(v), 'Currency')
+        return runtime.variant_currency(v.value)
     elif kind is _Kind.String and (number := ole_number(v.value, runtime.settings)) is not None:
         value = Fraction(round(number * 10000), 10000)
     else:
@@ -367,7 +351,7 @@ def to_string(v: Variant, runtime: Runtime, target: str = 'OleStr') -> str:
     if kind is _Kind.Integer or kind is _Kind.Int64:
         return str(v.value)
     if kind is _Kind.Float:
-        return float_to_str(v.value, runtime.settings)
+        return float_to_str(v.value, runtime)
     if kind is _Kind.Currency:
         return currency_text(v.value, runtime.settings)
     if kind is _Kind.String:
@@ -507,7 +491,7 @@ def _arithmetic(op: Operator, a: Variant, b: Variant, ka: _Kind, kb: _Kind, runt
         if op is Operator.Multiply:
             x = to_real(a, runtime)
             y = to_real(b, runtime)
-            return Variant(VarType.Currency, currency(fpu.multiply(x, y), runtime))
+            return Variant(VarType.Currency, runtime.currency(fpu.multiply(x, y)))
         x = to_currency(a, runtime)
         y = to_currency(b, runtime)
         result = x + y if op is Operator.Add else x - y
@@ -548,10 +532,22 @@ _ARITHMETIC = {
 
 
 def _divide(a: Variant, b: Variant, runtime: Runtime) -> Variant:
+    """
+    Delphi's division of Variants. A float divided by a Currency becomes a Currency first, which
+    can overflow; a float that divides a Currency counts with its value. The quotient is a Currency
+    when the dividend is one and a Double otherwise.
+    """
     fpu = runtime.fpu
+    x = to_real(a, runtime)
+    if b.type == VarType.Currency:
+        if _kind(a) is _Kind.Float:
+            x = runtime.currency_to_real(to_currency(a, runtime))
+        if _kind(a) in (_Kind.Float, _Kind.Currency):
+            runtime.check_currency_divisor(b.value)
+    quotient = fpu.divide(x, to_real(b, runtime))
     if a.type == VarType.Currency:
-        return Variant(VarType.Currency, currency(fpu.divide(to_real(a, runtime), to_real(b, runtime)), runtime))
-    return Variant(VarType.Double, fpu.store(fpu.divide(to_real(a, runtime), to_real(b, runtime)), Format.Double))
+        return Variant(VarType.Currency, runtime.currency(quotient))
+    return Variant(VarType.Double, fpu.store(quotient, Format.Double))
 
 
 def _integral(op: Operator, a: Variant, b: Variant, ka: _Kind, kb: _Kind, runtime: Runtime) -> Variant:

@@ -47,7 +47,7 @@ from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion,
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
-from refinery.lib.inno.delphi.runtime import Runtime
+from refinery.lib.inno.delphi.runtime import Runtime, Win32
 from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.ifps import (
     TC,
@@ -873,7 +873,6 @@ class _HostSetup:
     finished_page_disabled: bool
     ready_memo_disabled: bool
     skipped_pages: frozenset[int]
-    control_word: int
 
     @classmethod
     def of(cls, setup_info: TSetup | None, version: InnoVersion | None, config: IFPSEmulatorConfig) -> _HostSetup:
@@ -893,7 +892,6 @@ class _HostSetup:
                 finished_page_disabled=False,
                 ready_memo_disabled=False,
                 skipped_pages=frozenset(),
-                control_word=_control_word(release),
             )
         header = setup_info.Header
         flags = header.Flags
@@ -935,8 +933,13 @@ class _HostSetup:
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
             ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             skipped_pages=frozenset(skipped),
-            control_word=_control_word(release),
         )
+
+    def runtime(self, settings: numbers.FormatSettings) -> Runtime:
+        """
+        The run-time library of a new process of this Setup.
+        """
+        return Win32(settings, _control_word(self.release))
 
 
 def _changes_pages_only(release: tuple[int, ...] | None) -> bool:
@@ -1493,10 +1496,7 @@ class IFPSEmulator:
         """
         self.seconds_slept = 0.0
         self.clock = 0
-        self.runtime = Runtime(
-            x87.FPU(self.setup.control_word),
-            numbers.FormatSettings.of_locale(self.config.lcid),
-        )
+        self.runtime = self.setup.runtime(numbers.FormatSettings.of_locale(self.config.lcid))
         self.mutexes.clear()
         self._wizard_form = _WizardForm()
         self._globals = None
@@ -2335,10 +2335,14 @@ class IFPSEmulator:
 
     @external()
     def Inc(self, p: Variable[int]):
+        if not p.deref().type.code.integer:
+            raise IFPSException(kind=PSError.CouldNotCallProc)
         p.set(p.get() + 1)
 
     @external()
     def Dec(self, p: Variable[int]):
+        if not p.deref().type.code.integer:
+            raise IFPSException(kind=PSError.CouldNotCallProc)
         p.set(p.get() - 1)
 
     @external()
@@ -2347,6 +2351,9 @@ class IFPSEmulator:
 
     @external()
     def Round(self, x: x87.Real) -> int:
+        release = self.setup.release
+        if release is None or release >= (6, 6, 0):
+            return self.runtime.fpu.integer(x, x87.Rounding.Nearest)
         return self.runtime.fpu.integer(x)
 
     @external()
@@ -2638,11 +2645,11 @@ class IFPSEmulator:
 
     @external()
     def Set8087CW(self, cw: int):
-        self.runtime.fpu.control = cw & 0xFFFF
+        self.runtime.control_word = cw & 0xFFFF
 
     @external()
     def Get8087CW(self) -> int:
-        return self.runtime.fpu.control | x87.RESERVED_BIT
+        return self.runtime.control_word | x87.RESERVED_BIT
 
     @external()
     def GetDateTimeString(
@@ -2867,14 +2874,14 @@ class IFPSEmulator:
 
     @external()
     def StrToFloat(self, s: str) -> x87.Real:
-        value, error = numbers.val_float(s, self.runtime.fpu)
+        value, error = numbers.val_float(s, self.runtime.library)
         if error or value is None:
             raise IFPSException(_INVALID_FLOAT)
         return value
 
     @external()
     def FloatToStr(self, e: x87.Real) -> str:
-        return numbers.str_fixed(e, 12)
+        return numbers.str_fixed(e, 12, self.runtime.library)
 
     @external(alias='Int64ToStr')
     def IntToStr(self, i: int) -> str:
@@ -3087,11 +3094,7 @@ class IFPSEmulator:
 
     @external()
     def SizeOf(self, var: Variable) -> int:
-        if var.pointer:
-            return (self.config.x64 + 1) * 4
-        if var.container:
-            return sum(self.SizeOf(x) for x in var.data)
-        return var.type.code.width
+        return pascal.size_of(var.type, self.runtime)
 
     del external
 
