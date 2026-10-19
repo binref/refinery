@@ -1575,7 +1575,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
             load_bearing = (
-                annex_b_suppressor_names(stmt)
+                annex_b_suppressor_names(stmt, self.model.file_kind)
                 if stmt.kind in (JsVarKind.LET, JsVarKind.CONST)
                 else frozenset()
             )

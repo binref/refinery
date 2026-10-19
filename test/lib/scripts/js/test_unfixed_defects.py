@@ -110,7 +110,6 @@ from test.lib.scripts.js.test_parser_recovery import (
 
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
-from refinery.units.scripting.js import js
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -620,6 +619,32 @@ class TestAWriteOnlyStrictCodeRefusesIsNotADeadStore(TestBase):
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},
         )
+
+
+#: A program storing into a name the CommonJS wrapper binds, which an ES module leaves unbound,
+#: mapped to the behavior Node gives it as an ES module.
+A_STORE_INTO_A_WRAPPER_NAME_AN_ES_MODULE_LEAVES_UNBOUND = {
+    'a store to exports nothing reads': Program(
+        a_program("""
+            try { exports = 1; } catch (e) { console.log(e.name); }
+            console.log('end');
+            """),
+        prints('ReferenceError', 'end'),
+        Reading.ES_MODULE,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_STORE_INTO_A_WRAPPER_NAME_AN_ES_MODULE_LEAVES_UNBOUND)
+class TestAStoreIntoANameAnEsModuleLeavesUnboundIsNotADeadStore(TestBase):
+    """
+    Under `-m` the file may be an ES module, which binds none of the names the CommonJS wrapper
+    binds and is strict code, so a store into one of them throws there. The sweep reads the store
+    as dead, as it reads a store into no binding in strict code
+    (`TestAWriteOnlyStrictCodeRefusesIsNotADeadStore`), and the throw goes with it. The store and
+    the binding it may not find have to be decided together here too.
+    """
 
 
 #: A program whose one function reads a global-object alias Node does not put on the global object,
@@ -5256,39 +5281,6 @@ class TestAFunctionCalledThroughThePackedAccessorObjectKeepsItsReceiver(TestBase
     def test_the_packers_own_output_does_not_call_the_function_bare(self):
         output = deobfuscate_source(PACKED_THIS, execution=ExecutionModel.commonjs)
         self.assertNotIn('helper()', output)
-
-
-#: A program reading a property of the global object named like a parameter of the CommonJS
-#: wrapper, mapped to the behavior Node gives it as a CommonJS file.
-A_GLOBAL_PROPERTY_NAMED_LIKE_A_WRAPPER_PARAMETER = {
-    'a property of globalThis named exports': Program(
-        a_program("""
-            globalThis.exports = 5;
-            console.log(globalThis.exports);
-            """),
-        prints('5'),
-        Reading.COMMONJS,
-    ),
-}
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_GLOBAL_PROPERTY_NAMED_LIKE_A_WRAPPER_PARAMETER)
-class TestANameTheCommonJsWrapperBindsIsNotTheGlobalOfThatName(TestBase):
-    """
-    A CommonJS file is the body of a function whose parameters are `require`, `module`, `exports`,
-    `__filename` and `__dirname`, so at the top of the file each of these names reads the parameter
-    and not a property of the global object. The semantic model binds none of them, so a pass that
-    asks whether a bare name reaches the global takes each for the global: `globalThis.exports`
-    becomes `exports`, and under `-e browser` the test `typeof module` folds to `'undefined'`,
-    because a browser has no global of that name.
-    """
-
-    @unittest.expectedFailure
-    def test_a_commonjs_file_in_a_browser_keeps_its_test_for_module(self):
-        source = 'if (typeof module === "object") console.log("cjs"); else console.log("global");'
-        output = source.encode('utf8') | js.assemble('-c', '-e', 'browser') | str
-        self.assertIn('cjs', output)
 
 
 #: A program awaiting at the top level of a file no package marks as a module, mapped to the

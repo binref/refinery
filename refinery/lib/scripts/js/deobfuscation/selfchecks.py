@@ -305,7 +305,7 @@ class _HelperRecognizer:
             if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
                 continue
             binding = self.model.resolve(node.callee)
-            if binding is None:
+            if binding is None or self.model.supplied_from_outside(binding):
                 continue
             if binding.declared_within(function):
                 continue
@@ -487,7 +487,7 @@ def _helper_names(model: SemanticModel, function: Node, found: dict[int, Binding
         if not isinstance(node, JsCallExpression) or not isinstance(node.callee, JsIdentifier):
             continue
         binding = model.resolve(node.callee)
-        if binding is None or id(binding) in found:
+        if binding is None or model.supplied_from_outside(binding) or id(binding) in found:
             continue
         if binding.declared_within(function):
             continue

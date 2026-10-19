@@ -36,11 +36,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     Statement,
 )
-from refinery.lib.scripts.js.options import (
-    commonjs_wrapper_names,
-    is_host_entrypoint,
-    preserves_script_return,
-)
+from refinery.lib.scripts.js.options import is_host_entrypoint, preserves_script_return
 from refinery.lib.scripts.js.strict import declares_use_strict
 
 
@@ -147,12 +143,7 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
         wrapper_scope = model.function_scope(declaration)
         if wrapper_scope is None:
             return False
-        if not inlined_declarations_safe(
-            wrapper_scope,
-            model,
-            model.root_scope,
-            wrapper_names=commonjs_wrapper_names(self.options, root),
-        ):
+        if not inlined_declarations_safe(wrapper_scope, model, model.root_scope):
             return False
         if not model.file_kind.scopes_declarations_to_the_file and any(
             is_host_entrypoint(self.options, name)

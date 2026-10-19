@@ -243,6 +243,15 @@ A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED = {
     ),
 }
 
+#: A program wrapped in the older hash guard whose hash helper starts with a check calling a name the
+#: CommonJS wrapper binds, mapped to what Node prints and to the constant compared.
+A_CHECK_DECIDED_OVER_A_HELPER_CALLING_WHAT_THE_HOST_PASSED = {
+    wrapped(
+        PROGRAM_25,
+        inserted_at_the_start_of_the_hash('if (require("os").platform() === "x") { console.log("os"); } '),
+    ): ('ran\n', str(PROGRAM_25)),
+}
+
 #: Programs wrapped in the older hash guard whose helpers carry a check the obfuscator inserted,
 #: mapped to what Node prints and to the constant compared. The deobfuscation keeps the hash call,
 #: which runs the inserted check where it ran, although the comparison is gone.
@@ -513,6 +522,12 @@ class TestTheCheckTheInputTextDecidesIsGone(TestBase):
                 self.assertIn('hashText(textOf(program), 25);', text)
                 self.assertNotIn(constant, text)
 
+    def test_a_check_over_a_helper_calling_what_the_host_passed_is_gone(self):
+        for source, (_, constant) in A_CHECK_DECIDED_OVER_A_HELPER_CALLING_WHAT_THE_HOST_PASSED.items():
+            for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+                with self.subTest(execution=execution.name):
+                    self.assertNotIn(constant, deobfuscate_source(source, execution=execution))
+
     def test_a_hash_call_nothing_reads_goes_once_its_inserted_check_is_decided(self):
         source = wrapped(
             PROGRAM_25,
@@ -554,6 +569,12 @@ class TestNodePrintsTheSameAboutASelfCheck(TestBase):
     def test_a_decided_check_over_helpers_carrying_an_inserted_check_prints_what_the_program_prints(self):
         self._assert_each_still_prints({
             source: prints for source, (prints, _) in A_CHECK_DECIDED_OVER_HELPERS_CARRYING_AN_INSERTED_CHECK.items()})
+
+    def test_a_decided_check_over_a_helper_calling_what_the_host_passed_prints_what_the_program_prints(self):
+        self._assert_each_still_prints({
+            source: prints
+            for source, (prints, _) in A_CHECK_DECIDED_OVER_A_HELPER_CALLING_WHAT_THE_HOST_PASSED.items()
+        })
 
     def test_a_check_left_standing_prints_what_the_program_prints(self):
         self._assert_each_still_prints({

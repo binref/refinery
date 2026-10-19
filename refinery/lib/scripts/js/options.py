@@ -163,17 +163,6 @@ def file_kind(options: object | None, root: JsScript) -> FileKind:
     return FileKind.commonjs_or_es_module
 
 
-def commonjs_wrapper_names(options: object | None, root: JsScript) -> frozenset[str]:
-    """
-    The names the top scope of the file at *root* may bind beyond its own declarations: the
-    parameters of the CommonJS wrapper where the file may run as a CommonJS file, and none where it
-    is a script or an ES module.
-    """
-    if not file_kind(options, root).may_be_commonjs:
-        return frozenset()
-    return frozenset(COMMONJS_WRAPPER_PARAMETERS)
-
-
 def is_host_entrypoint(options: object | None, name: str) -> bool:
     """
     Whether *name* is a top-level function the analyst declared a host calls by name, so removing it

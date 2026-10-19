@@ -26,7 +26,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
-    annex_b_var_home,
+    annex_b_function_home,
     is_member_write_target,
     is_simple_assignment_target,
     is_use_position,
@@ -2589,8 +2589,9 @@ def _hoisted_names(statements: list[Statement], home: JsFunctionNode | None) -> 
     """
     The names the statements of a body bind for the whole function beyond their own lexical
     declarations: every `var` outside nested functions and classes, and every function declared in
-    a nested block whose name Annex B copies into the function *home* (`annex_b_var_home`). A list
-    of statements not yet standing in the function it becomes the body of is given no such copy.
+    a nested block whose name Annex B copies into the function *home* (`annex_b_function_home`).
+    A list of statements not yet standing in the function it becomes the body of is given no such
+    copy.
     """
     names: set[str] = set()
     queue: deque[Node] = deque(statements)
@@ -2602,7 +2603,7 @@ def _hoisted_names(statements: list[Statement], home: JsFunctionNode | None) -> 
                 and node.id is not None
                 and not is_generator_function(node)
                 and not is_async_function(node)
-                and annex_b_var_home(node) is home
+                and annex_b_function_home(node) is home
             ):
                 names.add(node.id.name)
             continue

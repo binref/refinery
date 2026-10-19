@@ -394,6 +394,7 @@ class _TemplateReader:
             binding = bindings[role] = _present(model.resolve(first))
             _require(all(model.resolve(reference) is binding for reference in others))
             _require(not binding.declared_within(self.function))
+            _require(not binding.supplied_by_host)
         own = _present(model.binding_of(_as(self.function.id, JsIdentifier)))
         _require(len(own.declarations) == 1)
         names = _present(model.function_names(self.function))

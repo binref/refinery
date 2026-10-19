@@ -34,7 +34,11 @@ from dataclasses import dataclass, field
 from typing import Callable, Collection, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.analysis.environment import FileKind, HostEnvironment
+from refinery.lib.scripts.js.analysis.environment import (
+    COMMONJS_WRAPPER_PARAMETERS,
+    FileKind,
+    HostEnvironment,
+)
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsArrayExpression,
@@ -288,6 +292,15 @@ class Binding:
     #: The copies Annex B makes into this `var` from the block bindings of functions declared in
     #: blocks of its function, script or static block.
     copies_received: list[AnnexBCopy] = field(default_factory=list)
+    #: Whether the host supplies this binding: a parameter or the `arguments` of the function a
+    #: CommonJS host wraps around the text of the file, which holds what the host passed from the
+    #: moment the file starts to run. A `var` or function declaration of the file joins it, as one
+    #: in the body of a function joins a parameter.
+    supplied_by_host: bool = False
+    #: Whether the binding exists in one way the file may run and not in another, so that a
+    #: reference to it may find no binding at all: a binding the host supplies where the file may
+    #: also be an ES module, which binds none of them, unless a declaration of the file joins it.
+    may_be_absent: bool = False
 
     def note_reference_from(self, scope: Scope | None) -> None:
         """
@@ -1164,7 +1177,9 @@ def _lexical_function_names(statements: list[Statement]) -> frozenset[str]:
 
 
 def annex_b_var_home(
-    declaration: JsFunctionDeclaration, cache: LexicalNameCache | None = None,
+    declaration: JsFunctionDeclaration,
+    file_kind: FileKind,
+    cache: LexicalNameCache | None = None,
 ) -> Node | None:
     """
     The function, script or static block whose `var` names the function *declaration* declares, or
@@ -1189,6 +1204,12 @@ def annex_b_var_home(
     destructuring one does, being a lexical declaration the `var` would conflict with. Both were
     read from an engine rather than from the text of the specification.
 
+    What the file is (*file_kind*) decides two more. An ES module is strict code throughout and
+    makes no copy. The top of a file that may be CommonJS is the body of the function the host
+    wraps around it, whose parameters
+    (`refinery.lib.scripts.js.analysis.environment.COMMONJS_WRAPPER_PARAMETERS`) and `arguments`
+    stop a copy there as a function's own do.
+
     *cache* holds the lexical names of the lists the climb passes, for a caller asking this of many
     declarations over a tree it is not rewriting.
     """
@@ -1196,7 +1217,12 @@ def annex_b_var_home(
     home = statement_list_holding(declaration)
     if home is not None and is_a_var_home(home):
         return home
-    if declaration.generator or declaration.is_async or strict_mode_at(declaration):
+    if (
+        declaration.generator
+        or declaration.is_async
+        or file_kind is FileKind.es_module
+        or strict_mode_at(declaration)
+    ):
         return None
     name = declaration.id.name if declaration.id is not None else None
     if name is None:
@@ -1219,6 +1245,12 @@ def annex_b_var_home(
                 and not isinstance(cursor, JsArrowFunctionExpression)
             ):
                 return None
+            if (
+                isinstance(cursor, JsScript)
+                and file_kind.may_be_commonjs
+                and (name == 'arguments' or name in COMMONJS_WRAPPER_PARAMETERS)
+            ):
+                return None
             if any(
                 ident.name == name
                 for param in getattr(cursor, 'params', ())
@@ -1230,8 +1262,21 @@ def annex_b_var_home(
     return None
 
 
+def annex_b_function_home(
+    declaration: JsFunctionDeclaration, cache: LexicalNameCache | None = None,
+) -> Node | None:
+    """
+    The function or static block whose `var` names the function *declaration* declares, or `None`
+    where that is the top of the file or nothing (`annex_b_var_home`). Only the top of the file
+    has a home the kind of the file decides, so a caller asking about a function needs no file
+    kind.
+    """
+    home = annex_b_var_home(declaration, FileKind.script, cache)
+    return None if isinstance(home, JsScript) else home
+
+
 def annex_b_suppressor_names(
-    declaration: Statement, cache: LexicalNameCache | None = None,
+    declaration: Statement, file_kind: FileKind, cache: LexicalNameCache | None = None,
 ) -> frozenset[str]:
     """
     The names *declaration* binds lexically whose binding keeps a block-scoped function declaration
@@ -1266,7 +1311,7 @@ def annex_b_suppressor_names(
             and node.id is not None
             and node.id.name in names
             and node.id.name not in suppressed
-            and annex_b_var_home(node, cache) is None
+            and annex_b_var_home(node, file_kind, cache) is None
         ):
             suppressed.add(node.id.name)
     return frozenset(suppressed)
@@ -1883,7 +1928,7 @@ def _is_delete_operand(node: Node) -> bool:
 
 def _displaces_arguments(
     binding: Binding,
-    fn: JsFunctionExpression | JsFunctionDeclaration,
+    fn: JsFunctionExpression | JsFunctionDeclaration | JsScript,
 ) -> bool:
     """
     Whether the name `arguments` inside *fn* denotes something other than the mapped object *fn* is
@@ -1911,7 +1956,7 @@ def _displaces_arguments(
     if any(not _is_delete_operand(write) for write in binding.writes):
         return True
     for site in binding.declarations:
-        if site is fn.id:
+        if not isinstance(fn, JsScript) and site is fn.id:
             continue
         declarator = site.parent
         if not isinstance(declarator, JsVariableDeclarator) or declarator.id is not site:
@@ -2507,6 +2552,7 @@ class SemanticModel:
           function nobody calls — throws exactly as a free name does
         - a name resolved through a `with` body whose object may not carry it and which has no
           lexical binding to fall through to, which the `cross_dynamic` lookup is what distinguishes
+        - a binding one way the file may run has and another does not (`Binding.may_be_absent`)
 
         A reference that is written and not read answers `False`, as do the two operator positions
         `tolerates_unresolvable` names. The write case is a scope boundary, not a claim that
@@ -2523,7 +2569,11 @@ class SemanticModel:
             return False
         scope = self._node_scope.get(node)
         binding = self.lookup(node.name, scope, cross_dynamic=True)
-        return binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL
+        return (
+            binding is None
+            or binding.kind is BindingKind.IMPLICIT_GLOBAL
+            or binding.may_be_absent
+        )
 
     def _certainly_resolves(self, name: str) -> bool:
         """
@@ -2724,7 +2774,7 @@ class SemanticModel:
         return False
 
     def _stores_into_without_throwing(self, binding: Binding, store: Node) -> bool:
-        if binding.kind not in _BINDINGS_A_STORE_CANNOT_REFUSE:
+        if binding.kind not in _BINDINGS_A_STORE_CANNOT_REFUSE or binding.may_be_absent:
             return False
         return binding.scope is not self.root_scope or not strict_mode_at(store)
 
@@ -3124,6 +3174,12 @@ class SemanticModel:
             ignore_dynamic_rebinds
             or not self.binding_maybe_reassigned_dynamically(binding)
         )
+        if binding.supplied_by_host and not any(
+            isinstance(declaration.parent, JsFunctionDeclaration)
+            and declaration.parent.id is declaration
+            for declaration in binding.declarations
+        ):
+            complete = False
         for declaration in binding.declarations:
             parent = declaration.parent
             if (
@@ -3268,6 +3324,23 @@ class SemanticModel:
             for copy in block.copies_made
             if copy.declaration is declaration
         )
+
+    def declaration_may_land(
+        self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
+    ) -> bool:
+        """
+        Whether declarations of *names* may be introduced directly in *scope*: none of them captures
+        a use already meaningful there (`would_capture`), and none lands on a binding the host
+        supplies (`Binding.supplied_by_host`), which no identifier of the text spells for that walk
+        to find. At the top of a CommonJS file a `let` of a parameter's name makes Node refuse the
+        file as CommonJS, and a `var` of it starts out holding what the host passed rather than
+        `undefined`.
+        """
+        for name in names:
+            binding = scope.bindings.get(name)
+            if binding is not None and binding.supplied_by_host:
+                return False
+        return not self.would_capture(names, scope, exclude=exclude)
 
     def would_capture(
         self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
@@ -3449,13 +3522,16 @@ class SemanticModel:
         """
         Whether code running in the global scope, which every reflective surface but a direct `eval`
         runs, can name *binding*: an implicit global, and where the file is a script, every binding
-        of its top scope. In a module of either kind a top-level declaration is scoped to the file.
+        of its top scope. In a module of either kind a top-level declaration is scoped to the file,
+        but a binding of its top scope that may be absent leaves its name to a global in the reading
+        without it (`Binding.may_be_absent`).
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is not ScopeKind.SCRIPT:
             return False
         return (
             binding.kind is BindingKind.IMPLICIT_GLOBAL
+            or binding.may_be_absent
             or not self.file_kind.scopes_declarations_to_the_file
         )
 
@@ -3724,6 +3800,30 @@ class SemanticModel:
         if owner is None or self._named_by_global_code(binding):
             return self.opaque_global_write_replacement_sites(binding)
         return self.reflection_surface_sites(binding) + self.dynamic_references(binding)
+
+    def holds_what_the_host_passed(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is supplied by the host and still holds what the host passed wherever it
+        is read: nothing in the file declares or writes it, and no direct `eval` or span of source
+        this model never read stands where it could. Where the ES-module reading leaves the name to
+        a global, no reflective surface may reach it either.
+        """
+        return (
+            binding.supplied_by_host
+            and not binding.declarations
+            and not binding.writes
+            and self.binding_dynamic_rebind_sites(binding) == []
+            and not (binding.may_be_absent and self.reflection_can_reach(binding))
+        )
+
+    def supplied_from_outside(self, binding: Binding | None) -> bool:
+        """
+        Whether a name resolving to *binding* holds something the file does not supply: it resolves
+        to no binding, so to a global the host may define, or to one the host passed and the file
+        never replaces (`holds_what_the_host_passed`). A callee read through such a name runs
+        nothing the file declares.
+        """
+        return binding is None or self.holds_what_the_host_passed(binding)
 
     def binding_never_reassigned(self, binding: Binding) -> bool:
         """
@@ -4429,6 +4529,11 @@ class SemanticModel:
         A name that resolves to nothing is still taken for the object where it stands: resolution
         answers `None` for a free name and across a `with`, neither of which is evidence that something
         else was bound.
+
+        The function a CommonJS host wraps around the file has an `arguments` of its own too, whose
+        elements alias the wrapper's parameters in their order
+        (`refinery.lib.scripts.js.analysis.environment.COMMONJS_WRAPPER_PARAMETERS`), and its
+        references are recorded the same way (`_record_wrapper_arguments`).
         """
         for fn in self.root.walk():
             if not isinstance(fn, (JsFunctionExpression, JsFunctionDeclaration)):
@@ -4440,40 +4545,64 @@ class SemanticModel:
                 continue
             if _displaces_arguments(own, fn):
                 continue
-            params = _last_positions([
+            self._record_mapped_arguments(fn, own, _last_positions([
                 self.binding_of(param) if isinstance(param, JsIdentifier) else None
                 for param in fn.params
-            ])
-            for node in walk_receiver_scope(fn):
-                if not isinstance(node, JsIdentifier) or node.name != 'arguments':
+            ]))
+        self._record_wrapper_arguments()
+
+    def _record_wrapper_arguments(self):
+        """
+        Record the references the `arguments` of the function a CommonJS host wraps around the file
+        makes to that function's parameters, where the file may be CommonJS and its text leaves the
+        top sloppy.
+        """
+        if not self.file_kind.may_be_commonjs or strict_mode_at(self.root):
+            return
+        own = self.root_scope.bindings.get('arguments')
+        if own is None or not own.supplied_by_host:
+            return
+        if not references_own_arguments(self.root) or _displaces_arguments(own, self.root):
+            return
+        self._record_mapped_arguments(self.root, own, [
+            self.root_scope.bindings.get(name) for name in COMMONJS_WRAPPER_PARAMETERS
+        ])
+
+    def _record_mapped_arguments(self, fn: Node, own: Binding, params: list[Binding | None]):
+        """
+        Record, against each of *params* by its position, the references the `arguments` object
+        *own* of *fn* makes to it (`_record_arguments_alias_references`).
+        """
+        for node in walk_receiver_scope(fn):
+            if not isinstance(node, JsIdentifier) or node.name != 'arguments':
+                continue
+            if not self.is_reference(node):
+                continue
+            denotes = self.resolve(node)
+            if denotes is not None and denotes is not own:
+                continue
+            access = _enclosing_member_access(node)
+            if access is not None and denotes is not None:
+                named = _aliased_parameter_positions(access, len(params))
+                if named is not None:
+                    role = reference_role(access)
+                    for index in named:
+                        self._record_alias_reference(params[index], access, role)
                     continue
-                if not self.is_reference(node):
+            if access is None:
+                governor = enclosing_operator(node)
+                if _observes_identity_alone(governor, node):
                     continue
-                denotes = self.resolve(node)
-                if denotes is not None and denotes is not own:
+                if _reads_every_element_alone(governor, node):
+                    for binding in params:
+                        self._record_alias_reference(binding, node, Role.READ)
                     continue
-                access = _enclosing_member_access(node)
-                if access is not None and denotes is not None:
-                    named = _aliased_parameter_positions(access, len(params))
-                    if named is not None:
-                        role = reference_role(access)
-                        for index in named:
-                            self._record_alias_reference(params[index], access, role)
-                        continue
-                if access is None:
-                    governor = enclosing_operator(node)
-                    if _observes_identity_alone(governor, node):
-                        continue
-                    if _reads_every_element_alone(governor, node):
-                        for binding in params:
-                            self._record_alias_reference(binding, node, Role.READ)
-                        continue
-                site: JsIdentifier | JsMemberExpression = node if access is None else access
-                may_write = access is None or reference_role(access) is not Role.READ
-                for binding in params:
-                    self._record_alias_reference(binding, node, Role.READ)
-                    if may_write:
-                        self._record_alias_reference(binding, site, Role.WRITE)
+            site: JsIdentifier | JsMemberExpression = node if access is None else access
+            may_write = access is None or reference_role(access) is not Role.READ
+            for binding in params:
+                self._record_alias_reference(binding, node, Role.READ)
+                if may_write:
+                    self._record_alias_reference(binding, site, Role.WRITE)
 
     def _record_global_object_alias_references(self):
         """
@@ -4856,12 +4985,43 @@ class _ScopeBuilder:
     def build(self, root: JsScript) -> Scope:
         scope = Scope(kind=ScopeKind.SCRIPT, node=root)
         self.model._node_scope[root] = scope
+        self._declare_host_parameters(scope)
         self._hoist(root.body, scope)
         self._collect_imports(root.body, scope)
         self._collect_lexical(root.body, scope)
+        self._settle_absence(scope)
         for stmt in root.body:
             self._visit(stmt, scope)
         return scope
+
+    def _declare_host_parameters(self, scope: Scope):
+        """
+        Declare in the top scope of a file that may be CommonJS what the function the host wraps
+        around its text binds there: its parameters, in their order, and its `arguments`. No
+        statement declares them, and they hold what the host passed. Where the file may be an ES
+        module as well, which binds none of them, each may be absent.
+        """
+        kind = self.model.file_kind
+        if not kind.may_be_commonjs:
+            return
+        supplied = [
+            self._declare(scope, name, BindingKind.PARAM, None) for name in COMMONJS_WRAPPER_PARAMETERS
+        ]
+        supplied.append(self._declare(scope, 'arguments', BindingKind.ARGUMENTS, None))
+        for binding in supplied:
+            binding.supplied_by_host = True
+            binding.may_be_absent = kind is not FileKind.commonjs
+
+    @staticmethod
+    def _settle_absence(scope: Scope):
+        """
+        Clear `Binding.may_be_absent` for every binding the host supplies that a declaration of the
+        file joins: the ES-module reading binds that declaration where the CommonJS reading binds
+        the parameter, so the name is bound however the file runs.
+        """
+        for binding in scope.bindings.values():
+            if binding.supplied_by_host and binding.declarations:
+                binding.may_be_absent = False
 
     def _new_scope(self, kind: ScopeKind, node: Node, parent: Scope) -> Scope:
         scope = Scope(kind=kind, node=node, parent=parent)
@@ -4897,7 +5057,8 @@ class _ScopeBuilder:
                         for ident in pattern_identifiers(decl.id):
                             self._declare(func_scope, ident.name, BindingKind.VAR, ident)
             elif isinstance(node, JsFunctionDeclaration) and node.id is not None:
-                if annex_b_var_home(node, self._lexical_names) is func_scope.node:
+                home = annex_b_var_home(node, self.model.file_kind, self._lexical_names)
+                if home is func_scope.node:
                     self._declare(func_scope, node.id.name, BindingKind.FUNCTION, node.id)
 
     def _collect_imports(self, stmts: list, scope: Scope):
@@ -4939,7 +5100,7 @@ class _ScopeBuilder:
             elif isinstance(stmt, JsClassDeclaration) and stmt.id is not None:
                 self._declare(scope, stmt.id.name, BindingKind.CLASS, stmt.id)
             elif isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
-                home = annex_b_var_home(stmt, self._lexical_names)
+                home = annex_b_var_home(stmt, self.model.file_kind, self._lexical_names)
                 if home is not None and scope.is_var_scope:
                     continue
                 binding = self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)

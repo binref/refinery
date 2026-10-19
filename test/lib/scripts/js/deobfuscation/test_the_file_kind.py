@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
 from test.lib.scripts.js.deobfuscation.test_b91strings import SLICED, decoder, slicing
 from test.lib.scripts.js.ledger import (
     FileProgram,
@@ -21,6 +21,9 @@ from test.lib.scripts.js.ledger import (
     node_prints_what_each_row_pins,
     prints,
 )
+
+from refinery.lib.scripts.js.options import ExecutionModel
+from refinery.units.scripting.js import js
 
 #: The three readings of a file Node runs as a module: `MODULE` and `ES_MODULE` share the text the
 #: deobfuscation writes for a module of either kind and run it as a CommonJS file and as an ES
@@ -274,6 +277,192 @@ A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES = {
     **A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES,
 }
 
+#: Programs reading or declaring a name the CommonJS wrapper binds at the top of the file, each with
+#: what Node makes of it as a CommonJS file and as an ES module, which binds none of them.
+A_NAME_THE_WRAPPER_BINDS = {
+    'a top-level var of a wrapper name holds what the host passed': FileProgram(
+        a_program("""
+            var module;
+            console.log(typeof module);
+            """),
+        prints('object'),
+        prints('undefined'),
+    ),
+    'a top-level function of a wrapper name replaces it': FileProgram(
+        a_program("""
+            console.log(typeof exports);
+            function exports() {}
+            """),
+        prints('function'),
+        prints('function'),
+    ),
+    'a function declared in a block under a wrapper name': FileProgram(
+        a_program("""
+            { function module() {} }
+            console.log(typeof module);
+            """),
+        prints('object'),
+        prints('undefined'),
+    ),
+    'a dropped branch declaring a function under a wrapper name': FileProgram(
+        a_program("""
+            if (false) { function module() {} }
+            console.log(typeof module);
+            """),
+        prints('object'),
+        prints('undefined'),
+    ),
+    'a typeof of each wrapper name': FileProgram(
+        a_program("""
+            console.log(typeof require, typeof module, typeof exports);
+            console.log(typeof __filename, typeof __dirname);
+            """),
+        prints('function object object', 'string string'),
+        prints('undefined undefined undefined', 'undefined undefined'),
+    ),
+    'a test for module as a UMD wrapper writes it': FileProgram(
+        a_program("""
+            if (typeof module === 'object' && module.exports) {
+              module.exports = { a: 1 };
+              console.log('cjs');
+            } else {
+              console.log('global');
+            }
+            """),
+        prints('cjs'),
+        prints('global'),
+    ),
+    'a var require holding a function of the file': FileProgram(
+        a_program("""
+            var require = function (x) { return x + 1; };
+            console.log(require(1));
+            """),
+        prints('2'),
+        prints('2'),
+    ),
+    'a function module called once': FileProgram(
+        a_program("""
+            function module() { return 3; }
+            console.log(module());
+            """),
+        prints('3'),
+        prints('3'),
+    ),
+    'writes through exports and module.exports': FileProgram(
+        a_program("""
+            exports.a = 1;
+            module.exports.b = 2;
+            console.log(JSON.stringify(module.exports));
+            """),
+        prints('{"a":1,"b":2}'),
+        ('', 'ReferenceError'),
+    ),
+    'a constant read across a write of module.exports': FileProgram(
+        a_program("""
+            var k = 'a' + 'b';
+            module.exports = function () { return k; };
+            console.log(module.exports());
+            """),
+        prints('ab'),
+        ('', 'ReferenceError'),
+    ),
+    'a require call between a constant and its read': FileProgram(
+        a_program("""
+            var k = [Date.now()];
+            require('path');
+            console.log(k.length);
+            """),
+        prints('1'),
+        ('', 'ReferenceError'),
+    ),
+    'a dead read of require': FileProgram(
+        a_program("""
+            try { require; } catch (e) { console.log(e.name); }
+            console.log(1);
+            """),
+        prints('1'),
+        prints('ReferenceError', '1'),
+    ),
+    'a property of globalThis named exports': FileProgram(
+        a_program("""
+            globalThis.exports = 5;
+            console.log(globalThis.exports, typeof exports);
+            """),
+        prints('5 object'),
+        prints('5 number'),
+    ),
+}
+
+#: Files Node runs as an ES module because they declare a name the CommonJS wrapper binds with
+#: `let`, `const` or `class` at their top, mapped to the read of another such name each makes,
+#: which throws there.
+A_READ_IN_A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE = {
+    'const exports = 0;\nrequire;\nconsole.log(1);': 'require;',
+    'class module {}\n__dirname;\nconsole.log(1);': '__dirname;',
+    'let require = 0;\nexports;\nconsole.log(require);': 'exports;',
+}
+
+#: Programs reading the `arguments` of the function the CommonJS wrapper is, each with what Node
+#: makes of it as a CommonJS file and as an ES module, which has none.
+THE_ARGUMENTS_OF_THE_WRAPPER = {
+    'the top-level arguments': FileProgram(
+        a_program("""
+            console.log(arguments.length, arguments[1] === require);
+            """),
+        prints('5 true'),
+        ('', 'ReferenceError'),
+    ),
+    'a store to exports read back through arguments': FileProgram(
+        a_program("""
+            exports = 1;
+            console.log(arguments[0]);
+            """),
+        prints('1'),
+        ('', 'ReferenceError'),
+    ),
+}
+
+#: Programs naming `arguments` for a declaration of their own at the top of the file, each with
+#: what Node makes of it as a CommonJS file and as an ES module, whose strict code may declare no
+#: such name. An ES module cannot hold them, so only the readings Node runs as CommonJS are asked.
+THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME = {
+    'a store to exports past a block function named arguments': FileProgram(
+        a_program("""
+            exports = 1;
+            { function arguments() {} }
+            console.log(arguments[0]);
+            """),
+        prints('undefined'),
+        ('', 'SyntaxError'),
+    ),
+    'a store to exports past a branch declaring a function named arguments': FileProgram(
+        a_program("""
+            exports = 1;
+            if (true) { function arguments() {} }
+            console.log(arguments[0]);
+            """),
+        prints('undefined'),
+        ('', 'SyntaxError'),
+    ),
+    'a store to exports read back through arguments past a var of its name': FileProgram(
+        a_program("""
+            exports = 1;
+            var arguments;
+            console.log(arguments[0]);
+            """),
+        prints('1'),
+        ('', 'SyntaxError'),
+    ),
+    'a dropped branch declaring a function named arguments': FileProgram(
+        a_program("""
+            if (false) { function arguments() {} }
+            console.log(arguments.length);
+            """),
+        prints('5'),
+        ('', 'SyntaxError'),
+    ),
+}
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestABareWriteInSloppyCodeOfACommonJsFileCreatesTheGlobal(TestBase):
@@ -348,3 +537,64 @@ class TestADirectEvalReachesTheTopLevelVariablesOfAModule(TestBase):
     def test_each_program_still_prints_what_it_prints(self):
         each_reading_still_prints(
             self, A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES, EVERY_MODULE_READING)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheTopOfACommonJsFileIsTheBodyOfTheWrapper(TestBase):
+    """
+    A CommonJS host runs the text of a file as the body of a function whose parameters are
+    `exports`, `require`, `module`, `__filename` and `__dirname`, so each of these names reads what
+    the host passed, a `var` of one keeps it and a function declaration of one replaces it, and no
+    function declared in a block gets a `var` of its name. An ES module binds none of them, and
+    Node runs a file declaring one with `let`, `const` or `class` at its top as an ES module.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        node_prints_what_each_row_pins(self, A_NAME_THE_WRAPPER_BINDS)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        each_reading_still_prints(self, A_NAME_THE_WRAPPER_BINDS, EVERY_MODULE_READING)
+
+    def test_a_read_of_a_wrapper_name_stays_where_the_file_is_an_es_module_by_declaring_one(self):
+        rows = A_READ_IN_A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertEqual(
+                    {
+                        source: read in deobfuscate_source(source, execution=execution)
+                        for source, read in rows.items()
+                    },
+                    {source: True for source in rows},
+                )
+
+    def test_a_commonjs_file_in_a_browser_keeps_its_test_for_module(self):
+        source = 'if (typeof module === "object") console.log("cjs"); else console.log("global");'
+        output = source.encode('utf8') | js.assemble('-c', '-e', 'browser') | str
+        self.assertIn('cjs', output)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestTheArgumentsOfTheWrapperAliasItsParameters(TestBase):
+    """
+    The function a CommonJS host wraps around a file has an `arguments` of its own, which code at
+    the top of the file reads, and in sloppy code its elements alias the wrapper's parameters in
+    their order: a store to `exports` is read back as `arguments[0]`. A function declared in a
+    block under the name `arguments` gets no `var` of it, and a `var` of it keeps the object.
+    """
+
+    def test_node_prints_what_each_row_pins(self):
+        node_prints_what_each_row_pins(self, THE_ARGUMENTS_OF_THE_WRAPPER)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        each_reading_still_prints(self, THE_ARGUMENTS_OF_THE_WRAPPER, EVERY_MODULE_READING)
+
+    def test_node_prints_what_each_row_declaring_its_name_pins(self):
+        node_prints_what_each_row_pins(
+            self, THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME)
+
+    def test_each_program_declaring_its_name_still_prints_what_it_prints_as_commonjs(self):
+        each_reading_still_prints(
+            self,
+            THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME,
+            (Reading.COMMONJS, Reading.MODULE),
+        )

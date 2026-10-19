@@ -61,7 +61,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     preserve_script_end_value,
     property_key,
     reaches_script_completion,
-    redeclares_a_wrapper_name,
     references_receiver_this,
     remove_declarator,
     replace_with_value,
@@ -102,10 +101,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
-from refinery.lib.scripts.js.options import (
-    commonjs_wrapper_names,
-    preserves_script_return,
-)
+from refinery.lib.scripts.js.options import preserves_script_return
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
     declares_use_strict,
@@ -1800,12 +1796,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         (`diverges_under_strict`), as does a `"use strict"` prologue; every receiver `this` becomes
         `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free name that
         no longer denotes the same global at *site* — including one a `with` on the path could
-        capture — declines. Where the file may run as CommonJS, every name of
-        `refinery.lib.scripts.js.options.commonjs_wrapper_names` that no declaration binds at *site*
-        is such a name: global code reading `require` reads a global that does not exist, and the
-        same text at *site* reads the one the host hands the file. A name the file only assigns is
-        one of them too, for the assignment writes the parameter the host passed and creates no
-        global, although the model records it as an implicit one. A direct `eval` in such a body
+        capture — declines. Where the file may run as CommonJS, a name the host binds around the
+        file (`refinery.lib.scripts.js.analysis.model.Binding.supplied_by_host`) is such a name,
+        written or not: global code reading `require` reads a global that does not exist, and the
+        same text at *site* reads the one the host hands the file. A direct `eval` in such a body
         reads and declares names on the scope chain at run time, which no free-name check sees;
         where the file runs as a module, the chain at *site* holds the file's own scope and, for a
         CommonJS file, the host's parameters, so the body declines. Direct `eval` runs in the
@@ -1897,16 +1891,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 and any(is_direct_eval_call(node) for node in parsed.walk())
             ):
                 return None
-            wrapper = commonjs_wrapper_names(self.options, root)
             for name in free:
                 if name in site_resolved:
                     continue
                 binding = root_model.lookup(name, site_scope, exclude=exclude)
-                if (
-                    name in wrapper
-                    and (binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL)
-                ):
-                    return None
                 if binding is not None and not root_model.reaches_global_object(binding):
                     return None
         if declared and not self._reflected_declarations_safe(
@@ -1939,7 +1927,6 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 root_model,
                 site_scope,
                 exclude=exclude,
-                wrapper_names=commonjs_wrapper_names(self.options, root_model.root),
             )
         return self._eval_declarations_safe(
             body_model, root_model, site_scope, site, scope, at_global_scope,
@@ -1959,8 +1946,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         `let`/`const`/`class` lives in a declarative environment discarded when the evaluation
         returns, so a persistent inlined binding differs only if a name it declares is referenced
         outside the body; it is declined where introducing it at the site would capture such a
-        reference, and where it would land at the top of a file that may run as CommonJS and name a
-        parameter of the host's wrapper (`redeclares_a_wrapper_name`). A `var` or function persists:
+        reference, and where it would land on a name the host binds around a CommonJS file
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`). A `var` or function persists:
         under indirect eval it becomes a global-object property, reproducible only at top-level
         script scope and never under a module model; under direct eval it lands in the caller's
         variable scope, but never under a strict direct eval, whose `var` stays local to the eval.
@@ -1979,10 +1966,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         root = root_model.root
         bindings = body_model.root_scope.bindings
         lexical = {name for name, binding in bindings.items() if binding.is_lexical}
-        if lexical and root_model.would_capture(lexical, site_scope):
-            return False
-        wrapper_names = commonjs_wrapper_names(self.options, root)
-        if redeclares_a_wrapper_name(lexical, root_model, site_scope, wrapper_names):
+        if lexical and not root_model.declaration_may_land(lexical, site_scope):
             return False
         hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
         if not hoisted:

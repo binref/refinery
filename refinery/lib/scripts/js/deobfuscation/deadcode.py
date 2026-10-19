@@ -92,7 +92,7 @@ def _the_names_a_dropped_branch_still_declares(
                 for ident in pattern_identifiers(declarator.id)
             ]
         elif isinstance(node, JsFunctionDeclaration) and node.id is not None:
-            if annex_b_var_home(node) is None:
+            if annex_b_var_home(node, model.file_kind) is None:
                 continue
             if model.file_kind.may_be_an_es_module:
                 if model.annex_b_copy_observed(node):
