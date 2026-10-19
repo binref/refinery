@@ -1457,6 +1457,9 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
     def test_parsing_scales_by_one_power_of_ten(self):
         self.assertEmulatedAsLogged('ORACLEPARSINGPOWERS')
 
+    def test_a_currency_computed_with_a_cardinal_or_an_int64_is_read_as_a_double(self):
+        self.assertEmulatedAsLogged('ORACLECURRENCYOPERANDS')
+
     def test_an_exponent_that_reaches_beyond_the_table_of_powers_of_ten_ends_the_emulation(self):
         """
         The text of a constant that the procedure parses is changed to one whose exponent is read

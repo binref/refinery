@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 import math
 import operator
+import struct
 
 from fractions import Fraction
 from typing import Any, Callable, TypeVar
@@ -621,6 +622,8 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
             return _delphi(variants.to_currency, result, runtime)
         if not (sc.integer or sc in _FLOAT_FORMATS or sc is TC.Currency):
             raise type_mismatch()
+        if sc is TC.U32 or sc is TC.S64:
+            return _delphi(_currency_read_as_double, runtime, aop, a, b)
         return _delphi(_currency_arithmetic, runtime, aop, a, sc, b)
     if code in _STRINGS:
         if aop is not AOp.Add:
@@ -662,6 +665,15 @@ def _currency_arithmetic(runtime: Runtime, aop: AOp, a: Fraction, sc: TC, b: Any
     else:
         result = _real_arithmetic(runtime, aop, units, x87.real(b) if sc.integer else b)
     return Fraction(fpu.integer(result), 10000)
+
+
+def _currency_read_as_double(runtime: Runtime, aop: AOp, a: Fraction, b: int) -> Fraction:
+    """
+    Pascal Script computes a Currency with a Cardinal or an Int64 from the eight bytes of the
+    Currency read as a Double, and stores the result as a Currency.
+    """
+    double, = struct.unpack('<d', struct.pack('<q', _signed(_units(a), 64)))
+    return variants.currency(_real_arithmetic(runtime, aop, double, x87.real(b)), runtime)
 
 
 def _units(value: Fraction) -> int:
