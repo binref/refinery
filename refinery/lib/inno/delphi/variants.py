@@ -19,7 +19,13 @@ from refinery.lib.inno.delphi.errors import (
     EVariantOverflowError,
     EVariantTypeCastError,
 )
-from refinery.lib.inno.delphi.numbers import FormatSettings, float_to_str, ole_number, val_integer
+from refinery.lib.inno.delphi.numbers import (
+    FormatSettings,
+    float_to_str,
+    ole_number,
+    val_integer,
+    val_unsigned,
+)
 from refinery.lib.inno.delphi.runtime import Runtime
 from refinery.lib.inno.delphi.x87 import FPU, Format, Real
 
@@ -96,6 +102,7 @@ class _Kind(enum.Enum):
     Null = enum.auto()
     Integer = enum.auto()
     Int64 = enum.auto()
+    UInt64 = enum.auto()
     Float = enum.auto()
     Currency = enum.auto()
     String = enum.auto()
@@ -113,7 +120,7 @@ _KINDS = {
     VarType.Word     : _Kind.Integer,
     VarType.LongWord : _Kind.Int64,
     VarType.Int64    : _Kind.Int64,
-    VarType.UInt64   : _Kind.Int64,
+    VarType.UInt64   : _Kind.UInt64,
     VarType.Single   : _Kind.Float,
     VarType.Double   : _Kind.Float,
     VarType.Currency : _Kind.Currency,
@@ -122,6 +129,8 @@ _KINDS = {
     VarType.UString  : _Kind.String,
     VarType.Boolean  : _Kind.Boolean,
 }
+
+_INTEGERS = frozenset((_Kind.Integer, _Kind.Int64, _Kind.UInt64))
 
 _INTEGER_WIDTHS = {
     VarType.ShortInt : (8, True),
@@ -234,7 +243,9 @@ def _integer(v: Variant, runtime: Runtime, bits: int, target: str) -> int:
     valid = range(-(1 << (bits - 1)), 1 << (bits - 1))
     if kind is _Kind.Empty:
         return 0
-    if kind is _Kind.Integer or kind is _Kind.Int64:
+    if kind is _Kind.UInt64 and bits == 64:
+        value = v.value - (1 << 64) if v.value >> 63 else v.value
+    elif kind in _INTEGERS:
         value = v.value
     elif kind is _Kind.Boolean:
         return -1 if v.value else 0
@@ -267,9 +278,27 @@ def to_int64(v: Variant, runtime: Runtime) -> int:
 
 def to_uint64(v: Variant, runtime: Runtime) -> int:
     """
-    Delphi's conversion of a Variant to a UInt64, as the bits of its conversion to an Int64.
+    Delphi's conversion of a Variant to a UInt64: a negative integer or a float out of range
+    overflows, a string is read as an unsigned number, and Null cannot be converted.
     """
-    return to_int64(v, runtime) & 0xFFFFFFFFFFFFFFFF
+    kind = _kind(v)
+    if kind is _Kind.UInt64:
+        return v.value
+    if kind is _Kind.Null:
+        raise EVariantTypeCastError(type_text(v), 'Cardinal')
+    if kind is _Kind.String:
+        value, error = val_unsigned(v.value)
+        if not error:
+            return value
+    if kind is _Kind.Float:
+        value = runtime.fpu.integer(v.value)
+        if x87.is_special(v.value) or not 0 <= x87.exact(v.value) < (1 << 64):
+            raise EVariantOverflowError(type_text(v), 'UInt64')
+        return value & 0xFFFFFFFFFFFFFFFF
+    value = to_int64(v, runtime)
+    if value < 0 and kind in (_Kind.Integer, _Kind.Int64):
+        raise EVariantOverflowError(type_text(v), 'UInt64')
+    return value & 0xFFFFFFFFFFFFFFFF
 
 
 def to_cardinal(v: Variant, runtime: Runtime) -> int:
@@ -288,7 +317,7 @@ def to_real(v: Variant, runtime: Runtime) -> Real:
     kind = _kind(v)
     if kind is _Kind.Empty:
         return 0.0
-    if kind is _Kind.Integer or kind is _Kind.Int64:
+    if kind in _INTEGERS:
         return x87.real(v.value)
     if kind is _Kind.Boolean:
         return -1.0 if v.value else 0.0
@@ -308,7 +337,7 @@ def to_currency(v: Variant, runtime: Runtime) -> Fraction:
     kind = _kind(v)
     if kind is _Kind.Empty:
         return Fraction(0)
-    if kind is _Kind.Integer or kind is _Kind.Int64:
+    if kind in _INTEGERS:
         value = Fraction(v.value)
     elif kind is _Kind.Boolean:
         value = Fraction(-1 if v.value else 0)
@@ -348,7 +377,7 @@ def to_string(v: Variant, runtime: Runtime, target: str = 'OleStr') -> str:
     kind = _kind(v)
     if kind is _Kind.Empty:
         return ''
-    if kind is _Kind.Integer or kind is _Kind.Int64:
+    if kind in _INTEGERS:
         return str(v.value)
     if kind is _Kind.Float:
         return float_to_str(v.value, runtime)
@@ -390,7 +419,7 @@ def to_boolean(v: Variant, runtime: Runtime) -> bool:
         return False
     if kind is _Kind.Boolean:
         return bool(v.value)
-    if kind in (_Kind.Integer, _Kind.Int64, _Kind.Float, _Kind.Currency):
+    if kind in _INTEGERS or kind is _Kind.Float or kind is _Kind.Currency:
         return v.value != 0
     if kind is _Kind.String:
         if (truth := _text_truth(v.value)) is not None:
@@ -426,7 +455,7 @@ def is_float(v: Variant) -> bool:
 
 
 _LOGICAL = frozenset((_Kind.Boolean, _Kind.String, _Kind.Empty))
-_INT64_OPERANDS = frozenset((_Kind.Empty, _Kind.Integer, _Kind.Int64, _Kind.Boolean))
+_INT64_OPERANDS = frozenset((_Kind.Empty, _Kind.Integer, _Kind.Int64, _Kind.UInt64, _Kind.Boolean))
 
 
 def _is_logical(ka: _Kind, kb: _Kind) -> bool:
@@ -458,6 +487,8 @@ def operate(op: Operator, a: Variant, b: Variant, runtime: Runtime) -> Variant:
             return Variant(VarType.OleStr, b.value)
         if kb is _Kind.Empty:
             return a
+    if _is_unsigned(ka, kb):
+        return _unsigned(op, a, b, runtime)
     if op in (Operator.Add, Operator.Subtract, Operator.Multiply):
         return _arithmetic(op, a, b, ka, kb, runtime)
     if op is Operator.Divide:
@@ -481,6 +512,8 @@ def _logic(op: Operator, a: Variant, b: Variant, ka: _Kind, kb: _Kind, runtime: 
         if left is not conjunction:
             return Variant(VarType.Boolean, left)
         return Variant(VarType.Boolean, to_boolean(b, runtime))
+    if _is_unsigned(ka, kb):
+        return _unsigned(op, a, b, runtime)
     return _integral(op, a, b, ka, kb, runtime)
 
 
@@ -548,6 +581,41 @@ def _divide(a: Variant, b: Variant, runtime: Runtime) -> Variant:
     if a.type == VarType.Currency:
         return Variant(VarType.Currency, runtime.currency(quotient))
     return Variant(VarType.Double, fpu.store(quotient, Format.Double))
+
+
+def _is_unsigned(ka: _Kind, kb: _Kind) -> bool:
+    return _Kind.UInt64 in (ka, kb) and ka in _INT64_OPERANDS and kb in _INT64_OPERANDS
+
+
+def _unsigned(op: Operator, a: Variant, b: Variant, runtime: Runtime) -> Variant:
+    """
+    Delphi's operators on a UInt64 and another integer: both operands become UInt64 values, which
+    overflows for a negative one, and the operator computes on 64 bits without a sign. Both
+    divisions give the integer quotient.
+    """
+    x = to_uint64(a, runtime)
+    y = to_uint64(b, runtime)
+    if op is Operator.Add:
+        result = x + y
+    elif op is Operator.Subtract:
+        result = x - y
+    elif op is Operator.Multiply:
+        result = x * y
+    elif op in (Operator.Divide, Operator.IntDivide, Operator.Modulus):
+        if y == 0:
+            raise EDivByZero
+        result = x // y if op is not Operator.Modulus else x % y
+    elif op is Operator.ShiftLeft:
+        result = x << (y & 63)
+    elif op is Operator.ShiftRight:
+        result = x >> (y & 63)
+    elif op is Operator.And:
+        result = x & y
+    elif op is Operator.Or:
+        result = x | y
+    else:
+        result = x ^ y
+    return Variant(VarType.UInt64, result & 0xFFFFFFFFFFFFFFFF)
 
 
 def _integral(op: Operator, a: Variant, b: Variant, ka: _Kind, kb: _Kind, runtime: Runtime) -> Variant:
@@ -624,7 +692,7 @@ def negate(v: Variant, runtime: Runtime) -> Variant:
         return NULL
     if kind is _Kind.Integer:
         return Variant(VarType.Integer, _wrap(-v.value, 32))
-    if kind is _Kind.Int64:
+    if kind is _Kind.Int64 or kind is _Kind.UInt64:
         return Variant(VarType.Int64, _wrap(-v.value, 64))
     if kind is _Kind.Float or kind is _Kind.Currency:
         return Variant(v.type, -v.value)
@@ -646,7 +714,7 @@ def invert(v: Variant, runtime: Runtime) -> Variant:
         return NULL
     if kind is _Kind.Boolean:
         return Variant(VarType.Boolean, not v.value)
-    if kind is _Kind.Integer or kind is _Kind.Int64:
+    if kind in _INTEGERS:
         bits, signed = _INTEGER_WIDTHS[v.type]  # type: ignore
         return Variant(v.type, _wrap(~v.value, bits, signed))
     return Variant(VarType.Integer, ~to_integer(v, runtime))

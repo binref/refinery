@@ -116,6 +116,40 @@ def val_integer(text: str, bits: int) -> tuple[int, int]:
     return result, 0
 
 
+def val_unsigned(text: str) -> tuple[int, int]:
+    """
+    Delphi's `Val` for a UInt64: as for an Int64, but a decimal number may fill all 64 bits and only
+    zero may have a minus sign.
+    """
+    stripped = text.lstrip(' ')
+    negative = stripped.startswith('-')
+    if negative:
+        stripped = stripped[1:]
+    elif stripped.startswith('+'):
+        stripped = stripped[1:]
+    offset = len(text) - len(stripped)
+    if not stripped:
+        return 0, offset + 1 if text else 1
+    hexadecimal = stripped[0] in '$xX' or stripped[:2] in ('0x', '0X')
+    body = stripped[2:] if stripped[:2] in ('0x', '0X') else stripped[1:] if hexadecimal else stripped
+    head = len(stripped) - len(body)
+    digits = _HEX_DIGITS if hexadecimal else _DECIMAL_DIGITS
+    base = 16 if hexadecimal else 10
+    value = 0
+    for k, character in enumerate(body):
+        digit = digits.get(character)
+        if digit is None:
+            return value, offset + head + k + 1
+        value = value * base + digit
+        if value >> 64:
+            return 0, offset + head + k + 1
+    if not body:
+        return 0, offset + head + 1
+    if negative and value:
+        return 0, 1
+    return value, 0
+
+
 _DECIMAL_DIGITS = {chr(48 + k): k for k in range(10)}
 _HEX_DIGITS = {
     **_DECIMAL_DIGITS,
@@ -140,6 +174,25 @@ def str_to_int64_default(text: str, default: int) -> int:
     SysUtils' `StrToInt64Def`: the default for a text that `Val` does not read as an Int64.
     """
     value, error = val_integer(text, 64)
+    return default if error else value
+
+
+def str_to_uint64(text: str) -> int:
+    """
+    SysUtils' `StrToUInt64`: raises an `EConvertError` for a text that `Val` does not read as a
+    UInt64.
+    """
+    value, error = val_unsigned(text)
+    if error:
+        raise EConvertError(SysConst.SInvalidInteger % text)
+    return value
+
+
+def str_to_uint64_default(text: str, default: int) -> int:
+    """
+    SysUtils' `StrToUInt64Def`: the default for a text that `Val` does not read as a UInt64.
+    """
+    value, error = val_unsigned(text)
     return default if error else value
 
 

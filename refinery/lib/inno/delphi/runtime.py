@@ -11,6 +11,7 @@ import enum
 from fractions import Fraction
 
 from refinery.lib.inno.delphi import x87
+from refinery.lib.inno.delphi.errors import EDivByZero
 from refinery.lib.inno.delphi.numbers import EXPONENT_LIMIT, FormatSettings, Library
 from refinery.lib.inno.delphi.x87 import FPU, Format, Real
 
@@ -38,6 +39,19 @@ def units(value: Fraction) -> int:
     A Currency as its integer number of units of 1/10000.
     """
     return value.numerator * (10000 // value.denominator)
+
+
+def truncated_division(a: int, b: int) -> tuple[int, int]:
+    """
+    Divides as Delphi's `div` and `mod` do: The quotient is truncated toward zero, and the remainder
+    has the sign of the dividend.
+    """
+    if b == 0:
+        raise EDivByZero
+    quotient = abs(a) // abs(b)
+    if (a < 0) != (b < 0):
+        quotient = -quotient
+    return quotient, a - quotient * b
 
 
 _INT64 = range(-0x8000000000000000, 0x8000000000000000)
@@ -151,6 +165,12 @@ class Runtime(abc.ABC):
         Raises the error of a division by a Currency of zero, if the platform raises one.
         """
 
+    @abc.abstractmethod
+    def int64_division(self, a: int, b: int) -> tuple[int, int]:
+        """
+        The quotient and the remainder of Int64 operands, truncated toward zero.
+        """
+
 
 class Win32(Runtime):
     """
@@ -189,3 +209,9 @@ class Win32(Runtime):
 
     def check_currency_divisor(self, b: Fraction):
         return
+
+    def int64_division(self, a: int, b: int) -> tuple[int, int]:
+        """
+        The run-time library divides; the smallest Int64 divided by -1 gives itself.
+        """
+        return truncated_division(a, b)

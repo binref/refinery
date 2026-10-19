@@ -1109,10 +1109,10 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.delphi import x87
         from refinery.lib.inno.delphi.numbers import FormatSettings
         from refinery.lib.inno.delphi.runtime import Win32
-        from refinery.lib.inno.ifps import TC, TPrimitive
-        runtime = Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD)
+        from refinery.lib.inno.ifps import TC, Dialect, TPrimitive
+        machine = pascal.Machine(Dialect.Inno6, Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD))
         with self.assertRaises(IFPSException) as raised:
-            pascal.store(TPrimitive(TC.Variant), TPrimitive(TC.Extended), x87.real(1, 5000), runtime)
+            pascal.store(TPrimitive(TC.Variant), TPrimitive(TC.Extended), x87.real(1, 5000), machine)
         self.assertEqual(raised.exception.kind, pascal.PSError.MathError)
 
     def test_a_double_beyond_the_range_of_a_currency_in_a_comparison_raises_an_error_of_the_script(self):
@@ -1121,10 +1121,10 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.delphi import x87
         from refinery.lib.inno.delphi.numbers import FormatSettings
         from refinery.lib.inno.delphi.runtime import Win32
-        from refinery.lib.inno.ifps import TC, COp, TPrimitive
-        runtime = Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD)
+        from refinery.lib.inno.ifps import TC, COp, Dialect, TPrimitive
+        machine = pascal.Machine(Dialect.Inno6, Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD))
         with self.assertRaises(IFPSException):
-            pascal.compare(COp.LT, TPrimitive(TC.Currency), Fraction(1), TPrimitive(TC.Double), 1e300, runtime)
+            pascal.compare(COp.LT, TPrimitive(TC.Currency), Fraction(1), TPrimitive(TC.Double), 1e300, machine)
 
     def test_a_currency_that_python_code_gives_a_variant_is_a_currency(self):
         from fractions import Fraction

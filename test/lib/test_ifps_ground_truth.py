@@ -820,6 +820,40 @@ class _A32BitBuild(_ValueOracleTest):
         self.assertCellEmulatedAsLogged('ORACLEROUNDING', 'round.nearest', 15)
 
 
+class _AnInnoSetup7Build(_ValueOracleTest):
+    """
+    The procedures of a build of Inno Setup 7, whose Pascal Script has the type UInt64.
+    """
+
+    def test_uint64_arithmetic_comparisons_and_conversions(self):
+        self.assertEmulatedAsLogged('ORACLEUINT64')
+
+    def test_text_of_uint64_values_and_their_parsing(self):
+        self.assertEmulatedAsLogged('ORACLEUINT64TEXT')
+
+    def test_variants_of_a_uint64_and_another_integer(self):
+        self.assertEmulatedAsLogged('ORACLEUINT64VARIANTINTEGERS')
+
+    def test_integers_divided_by_a_uint64(self):
+        self.assertEmulatedAsLogged('ORACLEINT64BYUINT64')
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='as keeps every object; the emulator does not model the classes of Setup that it would check',
+    )
+    def test_a_cast_with_as_to_a_class_that_the_object_is_not(self):
+        self.assertCellEmulatedAsLogged('ORACLECLASSCASTS', 'class.as', 1)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='as keeps every object; the emulator does not model the classes of Setup that it would check',
+    )
+    def test_a_cast_of_nil_with_as(self):
+        self.assertCellEmulatedAsLogged('ORACLECLASSCASTS', 'class.as', 2)
+
+
 class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
     """
     The build of Inno Setup 6.5.0.
@@ -897,6 +931,21 @@ class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLECOMPARISONS', 'ORACLESETS', log_opcodes=True)
 
 
+class TestTheEmulatorLogsWhatInnoSetup7Logged(_EveryBuild, _A32BitBuild, _AnInnoSetup7Build):
+    """
+    The build of Inno Setup 7.1.0 for a 32-bit Setup.
+    """
+    __test__ = True
+    build = 'x86'
+    setup_version = (7, 1, 0)
+    defects = frozenset({
+        ('round.nearest', 15),
+        ('variant.static_array', 1),
+        ('class.as', 1),
+        ('class.as', 2),
+    })
+
+
 class TestTheScriptTellsWhichInnoSetupCompiledIt(TestBase):
     """
     The three builds of the value oracle compile the same script.
@@ -946,6 +995,49 @@ class TestTheScriptTellsWhichInnoSetupCompiledIt(TestBase):
         self.assertEqual(x87.exact(constants('inno6')[-1]), Fraction(9007199254740995, 2))
         self.assertEqual(x64[-1], 4503599627370498.0)
         self.assertEqual(x64, constants('x86'))
+
+
+class TestTheSetupAgreesWithTheScript(TestBase):
+    """
+    A script of Inno Setup 7 runs only under a Setup of Inno Setup 7, and an earlier script only
+    under an earlier Setup. The stored installer was built by Inno Setup 6.5.0; its script is
+    replaced by one of the value oracle and its header changed as Inno Setup 7 writes it.
+    """
+
+    def script(self, build: str) -> IFPSFile:
+        return IFPSFile.Parse(_value_oracle_file(self, build, 'ifps'))
+
+    def installer(self) -> InnoArchive:
+        return InnoArchive(self.download_sample(_HOST_INSTALLER))
+
+    def test_a_setup_version_before_7_refuses_a_script_of_inno_setup_7(self):
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(self.script('x86'), IFPSEmulatorConfig(setup_version=(6, 5, 0)))
+
+    def test_a_setup_version_of_7_refuses_a_script_of_inno_setup_6(self):
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(self.script('inno6'), IFPSEmulatorConfig(setup_version=(7, 1, 0)))
+
+    def test_an_installer_of_inno_setup_6_refuses_a_script_of_inno_setup_7(self):
+        installer = self.installer()
+        installer.ifps = self.script('x86')
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(installer, IFPSEmulatorConfig())
+
+    def test_an_installer_of_inno_setup_6_5_runs_its_script_by_the_rules_of_pascal_script_6(self):
+        setup = InnoSetupEmulator(self.installer(), IFPSEmulatorConfig()).setup
+        self.assertEqual((setup.release, setup.dialect), ((6, 5, 0, 0), Dialect.Inno6))
+
+    def test_the_release_of_an_installer_of_inno_setup_7_is_the_version_of_its_compiled_code(self):
+        """
+        Inno Setup 7.1.0 writes the version of its compiled code, 7.1.0, into the header of a 32-bit
+        Setup; the version of its data is 7.0.0.3.
+        """
+        installer = self.installer()
+        installer.setup_info.Header.CompiledCodeVersion = 0x07010000
+        installer.ifps = self.script('x86')
+        setup = InnoSetupEmulator(installer, IFPSEmulatorConfig()).setup
+        self.assertEqual((setup.release, setup.dialect), ((7, 1, 0), Dialect.Inno7))
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):

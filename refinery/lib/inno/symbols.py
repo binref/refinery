@@ -235,6 +235,12 @@ class IFPSAPI:
     function StrToInt(S: String): LongInt;
     function StrToInt64Def(S: String; Def: Int64): Int64;
     function StrToInt64(S: String): Int64;
+    function Low(var X): Int64;
+    function High(var X): Int64;
+    function StrToUInt64Def(S: String; Def: UInt64): UInt64;
+    function StrToUInt64(S: String): UInt64;
+    function UInt64ToStr(I: UInt64): String;
+    function UIntToStr(I: UInt64): String;
     function StrToFloat(S: String): Extended;
     function IntToStr(I: Int64): String;
     function FloatToStr(E: Extended): String;

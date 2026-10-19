@@ -11,6 +11,7 @@ import math
 import operator
 import struct
 
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Callable, TypeVar
 
@@ -22,12 +23,32 @@ from refinery.lib.inno.delphi.errors import (
     EMathError,
     EZeroDivide,
 )
-from refinery.lib.inno.delphi.runtime import Operation, Runtime, units
+from refinery.lib.inno.delphi.runtime import Operation, Runtime, truncated_division, units
 from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.delphi.x87 import FPU, MASKED_CONTROL_WORD, Format, Real
-from refinery.lib.inno.ifps import TC, AOp, COp, IFPSType, TArray, TRecord, TSet, TStaticArray
+from refinery.lib.inno.ifps import (
+    TC,
+    AOp,
+    COp,
+    Dialect,
+    IFPSType,
+    TArray,
+    TRecord,
+    TSet,
+    TStaticArray,
+)
 
 _T = TypeVar('_T')
+
+
+@dataclass
+class Machine:
+    """
+    The state that Pascal Script's rules for values read: the version of the rules and the state
+    of the Delphi run-time library that Pascal Script runs on.
+    """
+    dialect: Dialect
+    runtime: Runtime
 
 
 class PSError(enum.IntEnum):
@@ -36,6 +57,7 @@ class PSError(enum.IntEnum):
     them. Pascal Script keeps the kind with every error of the script.
     """
     InvalidType = 2
+    InvalidOpcodeParameter = 6
     OutOfRange = 10
     TypeMismatch = 12
     DivideByZero = 15
@@ -56,6 +78,7 @@ class PSError(enum.IntEnum):
 
 _PS_ERROR_TEXT = {
     PSError.InvalidType      : 'Invalid Type',
+    PSError.InvalidOpcodeParameter : 'Invalid Opcode Parameter',
     PSError.OutOfRange       : 'Out Of Range',
     PSError.TypeMismatch     : 'Type Mismatch',
     PSError.DivideByZero     : 'divide by Zero',
@@ -338,11 +361,13 @@ def read_string(t: IFPSType, value: Any, runtime: Runtime, target: TC = TC.Unico
     raise type_mismatch()
 
 
-def to_variant(t: IFPSType, value: Any, runtime: Runtime) -> Variant:
+def to_variant(t: IFPSType, value: Any, machine: Machine) -> Variant:
     """
     Pascal Script's `IntPIFVariantToVariant`: the Variant that holds a value of the given type.
-    Pascal Script asks for the length of a static array as for a dynamic array, which fails.
+    Before Inno Setup 7, Pascal Script asks for the length of a static array as for a dynamic
+    array, which fails.
     """
+    runtime = machine.runtime
     code = t.code
     if code is TC.Variant:
         return value
@@ -357,11 +382,11 @@ def to_variant(t: IFPSType, value: Any, runtime: Runtime) -> Variant:
         if code is TC.Single:
             return Variant(vtype, float(value))
         return Variant(vtype, value)
-    if isinstance(t, TStaticArray):
+    if isinstance(t, TStaticArray) and machine.dialect is Dialect.Inno6:
         raise IFPSException('Invalid array')
-    if isinstance(t, TArray):
+    if isinstance(t, (TArray, TStaticArray)):
         element = t.type
-        return Variant(VarType.Array | VarType.Variant, [to_variant(element, v, runtime) for v in value])
+        return Variant(VarType.Array | VarType.Variant, [to_variant(element, v, machine) for v in value])
     if code is TC.Interface:
         return Variant(VarType.Dispatch, value)
     raise type_mismatch()
@@ -374,6 +399,7 @@ _VARIANT_TYPES = {
     TC.U32           : VarType.LongWord,
     TC.S32           : VarType.Integer,
     TC.S64           : VarType.Int64,
+    TC.U64           : VarType.UInt64,
     TC.Single        : VarType.Double,
     TC.Double        : VarType.Double,
     TC.Extended      : VarType.Double,
@@ -387,11 +413,12 @@ _VARIANT_TYPES = {
 }
 
 
-def store(target: IFPSType, source: IFPSType, value: Any, runtime: Runtime) -> Any:
+def store(target: IFPSType, source: IFPSType, value: Any, machine: Machine) -> Any:
     """
     Pascal Script's `SetVariantValue` for a primitive destination: the value that a variable of the
     target type holds after the assignment of a value of the source type.
     """
+    runtime = machine.runtime
     code = target.code
     sc = source.code
     if code is TC.U08:
@@ -447,7 +474,7 @@ def store(target: IFPSType, source: IFPSType, value: Any, runtime: Runtime) -> A
     if code is TC.Variant:
         if sc is TC.Interface:
             return Variant(VarType.Dispatch, value)
-        return to_variant(source, value, runtime)
+        return to_variant(source, value, machine)
     if code is TC.Interface:
         if sc is TC.Variant:
             return _delphi(variants.to_dispatch, value, runtime)
@@ -463,11 +490,12 @@ def store(target: IFPSType, source: IFPSType, value: Any, runtime: Runtime) -> A
     raise type_mismatch()
 
 
-def assignable(target: IFPSType, source: IFPSType) -> bool:
+def assignable(target: IFPSType, source: IFPSType, machine: Machine) -> bool:
     """
     Whether Pascal Script assigns a value of the source type to a variable of the target type that
     holds other variables: a dynamic array only takes a dynamic array whose elements have the same
-    type.
+    type, and from Inno Setup 7 on also one whose elements have the same base type, unless that is
+    a record, a set, or an array.
     """
     if (
         isinstance(target, TArray)
@@ -475,8 +503,16 @@ def assignable(target: IFPSType, source: IFPSType) -> bool:
         and target.code is TC.Array
         and source.code is TC.Array
     ):
-        return target.type is source.type
+        if target.type is source.type:
+            return True
+        if machine.dialect is Dialect.Inno6:
+            return False
+        code = target.type.code
+        return code is source.type.code and code not in _CONTAINERS
     return True
+
+
+_CONTAINERS = frozenset((TC.Record, TC.Set, TC.StaticArray, TC.Array))
 
 
 def _in_range(code: TC, value: int) -> int:
@@ -496,19 +532,6 @@ def ordinal(code: TC, value) -> int:
     if code.character:
         return ord(value)
     raise type_mismatch()
-
-
-def truncated_division(a: int, b: int) -> tuple[int, int]:
-    """
-    Divides as Delphi's `div` and `mod` do: The quotient is truncated toward zero, and the remainder
-    has the sign of the dividend.
-    """
-    if b == 0:
-        raise delphi_error(EDivByZero())
-    quotient = abs(a) // abs(b)
-    if (a < 0) != (b < 0):
-        quotient = -quotient
-    return quotient, a - quotient * b
 
 
 _INTEGER_OPERATIONS = {
@@ -548,13 +571,15 @@ _OPERATIONS = {
 }
 
 
-def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b: int) -> int:
+def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b: int, runtime: Runtime) -> int:
     """
     Pascal Script's arithmetic for a destination of an integer type. Addition, subtraction,
     multiplication, and the bitwise operators give the bits that the destination keeps however the
     operands are read. For division and shifts, the destination's type decides how the source is
-    read and how wide the computation is: 64 bits for an Int64 destination and for a 32-bit
-    destination with an Int64 source, 32 bits otherwise, unsigned for an unsigned destination.
+    read and how wide the computation is. An Int64 destination reads the source as an Int64 and a
+    UInt64 destination as a UInt64. A 32-bit destination with a 64-bit source divides on 64 bits,
+    without a sign when the source is a UInt64. Otherwise the division takes 32 bits, unsigned for
+    an unsigned destination.
     """
     if (calculate := _INTEGER_OPERATIONS.get(aop)) is not None:
         return calculate(a, b)
@@ -565,6 +590,9 @@ def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b: int) -> int
         if wide:
             return (a & 0xFFFFFFFFFFFFFFFF) >> (b & 63)
         return (a & 0xFFFFFFFF) >> (b & 31)
+    if target is TC.S64:
+        quotient, remainder = _delphi(runtime.int64_division, a, _signed(b, 64))
+        return quotient if aop is AOp.Div else remainder
     if target is TC.U64:
         b &= 0xFFFFFFFFFFFFFFFF
     elif not wide and (target.width < 4 or source.width <= 4):
@@ -574,7 +602,9 @@ def _integer_arithmetic(aop: AOp, target: TC, a: int, source: TC, b: int) -> int
                 raise delphi_error(EIntOverflow())
         else:
             b &= 0xFFFFFFFF
-    quotient, remainder = truncated_division(a, b)
+    elif source is TC.U64:
+        a &= 0xFFFFFFFFFFFFFFFF
+    quotient, remainder = _delphi(truncated_division, a, b)
     return quotient if aop is AOp.Div else remainder
 
 
@@ -589,16 +619,22 @@ def _operate(aop: AOp, left: Variant, right: Variant, runtime: Runtime, divide: 
     return _delphi(variants.operate, op, left, right, runtime)
 
 
-def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runtime: Runtime) -> Any:
+def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, machine: Machine) -> Any:
     """
     Pascal Script's `DoCalc`: the value that a variable of the target type holds after computing
     with the source operand. Byte, ShortInt, Word, SmallInt, and Int64 destinations read a Variant
     operand as an integer; Cardinal and Integer destinations compute with Delphi's Variant
     operators for addition, subtraction, multiplication, and division; float and Currency
-    destinations compute with Delphi's Variant operators for any Variant operand.
+    destinations compute with Delphi's Variant operators for any Variant operand. From Inno Setup
+    7 on, `as` keeps the object; Setup's classes are not modelled, so its class is not checked.
     """
+    runtime = machine.runtime
     code = target.code
     sc = source.code
+    if aop is AOp.As:
+        if machine.dialect is Dialect.Inno6:
+            raise IFPSException(kind=PSError.InvalidOpcodeParameter)
+        return a
     if code.integer:
         if sc is TC.Variant:
             if code in (TC.U32, TC.S32) and aop in _VARIANT_ARITHMETIC:
@@ -616,7 +652,7 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
                 b, sc = read_integer(source, b, runtime), TC.S32
             else:
                 b, sc = read_cardinal(source, b, runtime), TC.U32
-        return _in_range(code, _integer_arithmetic(aop, code, a, sc, ordinal(sc, b)))
+        return _in_range(code, _integer_arithmetic(aop, code, a, sc, ordinal(sc, b), runtime))
     if code is TC.Set:
         if (operation := _SET_OPERATIONS.get(aop)) is None or not isinstance(source, TSet):
             raise type_mismatch()
@@ -643,7 +679,7 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
             return _delphi(variants.to_currency, result, runtime)
         if not (sc.integer or sc in _FLOAT_FORMATS or sc is TC.Currency):
             raise type_mismatch()
-        if sc is TC.U32 or sc is TC.S64:
+        if machine.dialect is Dialect.Inno6 and (sc is TC.U32 or sc is TC.S64):
             return _delphi(_currency_read_as_double, runtime, aop, a, b)
         return _delphi(runtime.currency_arithmetic, _OPERATIONS[aop], a, b)
     if code in _STRINGS:
@@ -660,14 +696,14 @@ def calculate(aop: AOp, target: IFPSType, a: Any, source: IFPSType, b: Any, runt
             raise type_mismatch()
         return chr((ord(a) + read_cardinal(source, b, runtime)) & 0xFFFF)
     if code is TC.Variant:
-        return _operate(aop, a, to_variant(source, b, runtime), runtime)
+        return _operate(aop, a, to_variant(source, b, machine), runtime)
     raise type_mismatch()
 
 
 def _currency_read_as_double(runtime: Runtime, aop: AOp, a: Fraction, b: int) -> Fraction:
     """
-    Pascal Script computes a Currency with a Cardinal or an Int64 from the eight bytes of the
-    Currency read as a Double, and stores the result as a Currency.
+    Pascal Script before Inno Setup 7 computes a Currency with a Cardinal or an Int64 from the eight
+    bytes of the Currency read as a Double, and stores the result as a Currency.
     """
     double, = struct.unpack('<d', struct.pack('<q', _signed(units(a), 64)))
     return runtime.currency(runtime.real_arithmetic(_OPERATIONS[aop], double, x87.real(b)))
@@ -717,11 +753,13 @@ _TESTS = {
 }
 
 
-def compare(cop: COp, left: IFPSType, a: Any, right: IFPSType, b: Any, runtime: Runtime) -> bool:
+def compare(cop: COp, left: IFPSType, a: Any, right: IFPSType, b: Any, machine: Machine) -> bool:
     """
     Pascal Script's `DoBooleanCalc`: compares `a`, which has the type `left`, with `b`, which has
-    the type `right`. The left operand's type decides how the right one is read.
+    the type `right`. The left operand's type decides how the right one is read. From Inno Setup 7
+    on, an Integer compares with a Currency as floats.
     """
+    runtime = machine.runtime
     lc = left.code
     rc = right.code
     if cop is COp.IN:
@@ -742,8 +780,8 @@ def compare(cop: COp, left: IFPSType, a: Any, right: IFPSType, b: Any, runtime: 
             if lc.signed:
                 return test(a, read_integer(right, b, runtime))
             return test(a, read_cardinal(right, b, runtime))
-        if lc is TC.S32 and rc in _FLOAT_FORMATS:
-            return _real_test(test, x87.real(a), b, runtime)
+        if lc is TC.S32 and (rc in _FLOAT_FORMATS or rc is TC.Currency and machine.dialect is Dialect.Inno7):
+            return _real_test(test, x87.real(a), read_real(right, b, runtime), runtime)
         a, b = _integer_comparands(lc, a, rc, b)
         return test(a, b)
     if lc is TC.Set:
@@ -769,7 +807,7 @@ def compare(cop: COp, left: IFPSType, a: Any, right: IFPSType, b: Any, runtime: 
     if lc is TC.UnicodeString:
         return test(a, read_string(right, b, runtime, TC.UnicodeString))
     if lc is TC.Variant:
-        return test(_variant_order(a, to_variant(right, b, runtime), runtime), 0)
+        return test(_variant_order(a, to_variant(right, b, machine), runtime), 0)
     if lc in _REFERENCES and cop in (COp.EQ, COp.NE):
         if rc is not lc:
             raise type_mismatch()
@@ -877,6 +915,20 @@ def size_of(t: IFPSType, runtime: Runtime) -> int:
     if code in (TC.ProcPtr, TC.Pointer):
         return 3 * pointer
     return code.width
+
+
+def step(t: IFPSType, value: Any, up: bool, machine: Machine) -> Any:
+    """
+    Pascal Script's increment or decrement of the counter of a for loop: an integer wraps around in
+    its range; from Inno Setup 7 on, a Variant counts with Delphi's Variant addition or subtraction.
+    """
+    code = t.code
+    if code.integer:
+        return _in_range(code, value + 1 if up else value - 1)
+    if code is TC.Variant and machine.dialect is Dialect.Inno7:
+        op = variants.Operator.Add if up else variants.Operator.Subtract
+        return _delphi(variants.operate, op, value, Variant(VarType.Integer, 1), machine.runtime)
+    raise type_mismatch()
 
 
 def truth(t: IFPSType, value: Any) -> bool:

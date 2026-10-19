@@ -53,6 +53,7 @@ from refinery.lib.inno.ifps import (
     TC,
     AOp,
     COp,
+    Dialect,
     EHType,
     Function,
     IFPSFile,
@@ -88,6 +89,18 @@ _OUT_OF_STRING_RANGE = 'Out of string range'
 _INVALID_FLOAT = 'Invalid float'
 _NIL_INVOKE = 'Variant is null, cannot invoke'
 _LONGEST_WIDE_STRING = (0x7FFFFFFF - 14) // 2
+
+
+def _index_error(array: Variable, index: int, dialect: Dialect) -> IFPSException:
+    """
+    The error of an index outside of an array: Pascal Script names the index and the length from
+    Inno Setup 7 on.
+    """
+    if dialect is Dialect.Inno6:
+        return IFPSException(kind=PSError.OutOfRange)
+    kind = 'Static array' if array.type.code is TC.StaticArray else 'Array'
+    message = F'{kind} index out of bounds ({signed32(index)}). Length is {len(array)}.'
+    return IFPSException(message, PSError.CustomError)
 
 
 class OleObject:
@@ -529,6 +542,10 @@ class ExceptionHandler:
     """
     The error that entered the except block.
     """
+    exit_point: int | None = None
+    """
+    From Inno Setup 7 on, the offset of the return that entered a finally block of this handler.
+    """
 
     def resume(self, ip: int) -> _CallState:
         """
@@ -557,7 +574,8 @@ class _ScriptRun:
     constant, is nested in that run: it shares the error in flight and the script sees the
     handlers of both, but an error that no handler of the nested run takes ends the nested run.
     """
-    def __init__(self, caller: _ScriptRun | None = None):
+    def __init__(self, dialect: Dialect, caller: _ScriptRun | None = None):
+        self.dialect = dialect
         self.stack: list[Variable] = []
         self.frames: list[_CallState] = []
         self.handlers: list[ExceptionHandler] = []
@@ -681,9 +699,14 @@ class _ScriptRun:
         """
         Begins the return of the running function at the given offset: it first runs each finally
         block of its try statements, and the end of each comes back to the return. The result is
-        the next finally block, or `None` when the function returns.
+        the next finally block, or `None` when the function returns. Before Inno Setup 7, Pascal
+        Script keeps one return for the run, which any return of a function that a finally block
+        calls clears; the end of that block then goes on after its try statement. From Inno Setup 7
+        on, each try statement keeps the return that entered its finally block.
         """
-        self.exit_point = offset
+        per_handler = self.dialect is Dialect.Inno7
+        if not per_handler:
+            self.exit_point = offset
         handlers = self.handlers
         frame = len(self.frames)
         while handlers and (eh := handlers[-1]).frame >= frame:
@@ -695,12 +718,15 @@ class _ScriptRun:
             else:
                 handlers.pop()
                 continue
+            if per_handler:
+                eh.exit_point = offset
             return _CallState(function, ip, sp)
         self.exit_point = None
         return None
 
     def _after(self, eh: ExceptionHandler) -> int:
-        if (exit_point := self.exit_point) is not None:
+        exit_point = eh.exit_point if self.dialect is Dialect.Inno7 else self.exit_point
+        if exit_point is not None:
             return exit_point
         return eh.handler_end
 
@@ -858,7 +884,8 @@ class _HostSetup:
     follows, and the built-in pages that the header makes it skip. A bare script has no header; it
     is taken to run under the Setup of the configured version, or the current Setup without one,
     with every page shown and every directive that sends an event on, so that each event that the
-    script handles is sent.
+    script handles is sent. The script tells which Pascal Script compiled it; the version of an
+    installer or the configured version must agree.
     """
     version: InnoVersion | None
     release: tuple[int, ...] | None
@@ -873,11 +900,20 @@ class _HostSetup:
     finished_page_disabled: bool
     ready_memo_disabled: bool
     skipped_pages: frozenset[int]
+    dialect: Dialect
 
     @classmethod
-    def of(cls, setup_info: TSetup | None, version: InnoVersion | None, config: IFPSEmulatorConfig) -> _HostSetup:
+    def of(
+        cls,
+        setup_info: TSetup | None,
+        version: InnoVersion | None,
+        ifps: IFPSFile,
+        config: IFPSEmulatorConfig,
+    ) -> _HostSetup:
+        dialect = ifps.dialect
         if setup_info is None:
             release = config.setup_version
+            _check_generation(release, dialect, 'The configured Setup version')
             return cls(
                 version=None,
                 release=release,
@@ -892,6 +928,7 @@ class _HostSetup:
                 finished_page_disabled=False,
                 ready_memo_disabled=False,
                 skipped_pages=frozenset(),
+                dialect=dialect,
             )
         header = setup_info.Header
         flags = header.Flags
@@ -918,7 +955,8 @@ class _HostSetup:
             skipped.add(PageID.wpReady)
         if not texts.info_after:
             skipped.add(PageID.wpInfoAfter)
-        release = version.semver if version else None
+        release = _release(header.CompiledCodeVersion, version)
+        _check_generation(release, dialect, 'The installer')
         return cls(
             version=version,
             release=release,
@@ -933,6 +971,7 @@ class _HostSetup:
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
             ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             skipped_pages=frozenset(skipped),
+            dialect=dialect,
         )
 
     def runtime(self, settings: numbers.FormatSettings) -> Runtime:
@@ -940,6 +979,31 @@ class _HostSetup:
         The run-time library of a new process of this Setup.
         """
         return Win32(settings, _control_word(self.release))
+
+
+def _release(compiled_code_version: int, version: InnoVersion | None) -> tuple[int, ...] | None:
+    """
+    The release of Inno Setup that built an installer: the version of its compiled code, which
+    installers write from Inno Setup 7 on, else the version of its data.
+    """
+    if compiled_code_version:
+        return (
+            compiled_code_version >> 24 & 0x7F,
+            compiled_code_version >> 16 & 0xFF,
+            compiled_code_version >> 8 & 0xFF,
+        )
+    return version.semver if version else None
+
+
+def _check_generation(release: tuple[int, ...] | None, dialect: Dialect, source: str):
+    """
+    Refuses a release that contradicts the Pascal Script that compiled the script.
+    """
+    if release is None or (release >= (7,)) == (dialect is Dialect.Inno7):
+        return
+    compiler = 'Inno Setup 7 or later' if dialect is Dialect.Inno7 else 'a version of Inno Setup before 7'
+    version = '.'.join(map(str, release))
+    raise ValueError(F'{source} names Inno Setup {version}, but the script was compiled by {compiler}.')
 
 
 def _changes_pages_only(release: tuple[int, ...] | None) -> bool:
@@ -1045,7 +1109,7 @@ class _EmulatedConstants:
         emulator = self.emulator
         if (code := emulator.symbols.get(function)) is None or code.body is None:
             raise DelphiException('Script error: Could not call proc')
-        value = yield from emulator._execute(_ScriptRun(self.caller), code, [argument])
+        value = yield from emulator._execute(_ScriptRun(emulator.setup.dialect, self.caller), code, [argument])
         return str(value)
 
 
@@ -1089,6 +1153,7 @@ _OPEN_ARRAY_KINDS = {
     TC.U32           : VType.Integer,
     TC.S32           : VType.Integer,
     TC.S64           : VType.Int64,
+    TC.U64           : VType.Int64,
     TC.Single        : VType.Extended,
     TC.Double        : VType.Extended,
     TC.Extended      : VType.Extended,
@@ -1145,7 +1210,8 @@ def _without_empty_last(spans: Iterable[tuple[int, int]]) -> Iterator[tuple[int,
 def _open_array_element(element: Variable) -> VarRec:
     """
     Converts an element of an `array of const` into the argument that Pascal Script passes for it
-    to a function of Delphi. Pascal Script passes an element of any other type as the Integer 0.
+    to a function of Delphi. Pascal Script passes a UInt64 as the Int64 of its bits, and an element
+    of any other type as the Integer 0.
     """
     target = element.deref()
     if (kind := _OPEN_ARRAY_KINDS.get(target.type.code)) is None:
@@ -1153,6 +1219,8 @@ def _open_array_element(element: Variable) -> VarRec:
     value = target.get()
     if kind is VType.Integer:
         value = signed32(value)
+    elif kind is VType.Int64:
+        value = ((value + 0x8000000000000000) & 0xFFFFFFFFFFFFFFFF) - 0x8000000000000000
     return VarRec(kind, value)
 
 
@@ -1468,14 +1536,14 @@ class IFPSEmulator:
         self.config = config = options or IFPSEmulatorConfig(**more)
         if isinstance(archive, InnoArchive):
             self.setup_info = archive.setup_info
-            self.setup = _HostSetup.of(archive.setup_info, archive.version, config)
             ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
+            self.setup = _HostSetup.of(archive.setup_info, archive.version, ifps, config)
         else:
             self.setup_info = None
-            self.setup = _HostSetup.of(None, None, config)
             ifps = archive
+            self.setup = _HostSetup.of(None, None, ifps, config)
         self.ifps = ifps
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
@@ -1497,6 +1565,7 @@ class IFPSEmulator:
         self.seconds_slept = 0.0
         self.clock = 0
         self.runtime = self.setup.runtime(numbers.FormatSettings.of_locale(self.config.lcid))
+        self.machine = pascal.Machine(self.setup.dialect, self.runtime)
         self.mutexes.clear()
         self._wizard_form = _WizardForm()
         self._globals = None
@@ -1573,7 +1642,7 @@ class IFPSEmulator:
         Emulate a function call to the given function, passing the given arguments. The method
         returns the return value of the emulated function call if it is not a procedure.
         """
-        return (yield from self._timed(self._execute(_ScriptRun(), function, args)))
+        return (yield from self._timed(self._execute(_ScriptRun(self.setup.dialect), function, args)))
 
     def _timed(self, emulation: Generator[Any, Any, _T], max_seconds: float | None = None) -> Generator[Any, Any, _T]:
         """
@@ -1648,7 +1717,7 @@ class IFPSEmulator:
             if k is None:
                 return var
             if not 0 <= k < len(var := var.deref()):
-                raise IFPSException(kind=PSError.OutOfRange)
+                raise _index_error(var, k, dialect)
             return var.at(k)
 
         def getval(op: Operand):
@@ -1664,7 +1733,8 @@ class IFPSEmulator:
 
         frames = run.frames
         depth = run.depth
-        runtime = self.runtime
+        machine = self.machine
+        dialect = machine.dialect
         script_globals = self.globals
         watch = self._stopwatch
         stack = run.stack
@@ -1798,19 +1868,19 @@ class IFPSEmulator:
                             source = getvar(src).deref()
                             st, sv = source.type, source.data
                         if dst.container or st.code is TC.Pointer:
-                            if not pascal.assignable(dst.type, st):
+                            if not pascal.assignable(dst.type, st, machine):
                                 raise type_mismatch()
                             dst.set(source)
                         else:
                             if isinstance(source, Variable) and source.container:
                                 sv = source.get()
-                            dst.data = pascal.store(dst.type, st, sv, runtime)
+                            dst.data = pascal.store(dst.type, st, sv, machine)
                     elif opc == Op.Calculate:
                         if not isinstance((aop := insn.operator), AOp):
                             raise TypeError(F'Operator for {opc} was of type {aop.__class__.__name__} rather than AOp.')
                         target = getvar(insn.op(0)).deref()
                         st, sv = gettyped(insn.op(1))
-                        result = pascal.calculate(aop, target.type, target.data, st, sv, runtime)
+                        result = pascal.calculate(aop, target.type, target.data, st, sv, machine)
                         if isinstance(result, str):
                             self._reserve_text(len(result))
                         elif isinstance(result, Variant) and isinstance(result.value, str):
@@ -1862,7 +1932,7 @@ class IFPSEmulator:
                             raise TypeError(F'Operator for {opc} was of type {cop.__class__.__name__} rather than COp.')
                         lt, lv = gettyped(insn.op(1))
                         rt, rv = gettyped(insn.op(2))
-                        truth = pascal.compare(cop, lt, lv, rt, rv, runtime)
+                        truth = pascal.compare(cop, lt, lv, rt, rv, machine)
                         into = getvar(insn.op(0)).deref()
                         into.data = pascal.boolean(into.type, truth)
                     elif opc == Op.CallVar:
@@ -1886,13 +1956,13 @@ class IFPSEmulator:
                             dst.setptr(Variable(constant.type, data=constant.value))
                     elif opc == Op.BooleanNot:
                         var = getvar(insn.op(0)).deref()
-                        var.data = pascal.logical_not(var.type, var.data, runtime)
+                        var.data = pascal.logical_not(var.type, var.data, machine.runtime)
                     elif opc == Op.IntegerNot:
                         var = getvar(insn.op(0)).deref()
-                        var.data = pascal.invert(var.type, var.data, runtime)
+                        var.data = pascal.invert(var.type, var.data, machine.runtime)
                     elif opc == Op.Neg:
                         var = getvar(insn.op(0)).deref()
-                        var.data = pascal.negate(var.type, var.data, runtime)
+                        var.data = pascal.negate(var.type, var.data, machine.runtime)
                     elif opc == Op.SetFlag:
                         condition, negated = insn.operands
                         jump = pascal.truth(*gettyped(condition)) ^ negated
@@ -1908,14 +1978,10 @@ class IFPSEmulator:
                         function, ip, sp = position
                     elif opc == Op.Inc:
                         counter = getvar(insn.op(0)).deref()
-                        if not counter.type.code.integer:
-                            raise type_mismatch()
-                        counter.set(counter.get() + 1)
+                        counter.data = pascal.step(counter.type, counter.data, True, machine)
                     elif opc == Op.Dec:
                         counter = getvar(insn.op(0)).deref()
-                        if not counter.type.code.integer:
-                            raise type_mismatch()
-                        counter.set(counter.get() - 1)
+                        counter.data = pascal.step(counter.type, counter.data, False, machine)
                     elif opc == Op.JumpPop1:
                         stack.pop()
                         ip = insn.operands[0]
@@ -2128,7 +2194,11 @@ class IFPSEmulator:
     def WStrGet(self, string: Variable[str], index: int) -> str:
         text = string.get()
         if not 1 <= index <= len(text):
-            raise IFPSException(_OUT_OF_STRING_RANGE, PSError.CustomError, failed_call=True)
+            raise IFPSException(
+                _OUT_OF_STRING_RANGE,
+                PSError.CustomError,
+                failed_call=self.setup.dialect is Dialect.Inno6,
+            )
         return text[index - 1]
 
     @external(alias='StrSet')
@@ -2881,7 +2951,21 @@ class IFPSEmulator:
 
     @external()
     def FloatToStr(self, e: x87.Real) -> str:
-        return numbers.str_fixed(e, 12, self.runtime.library)
+        if self.setup.dialect is Dialect.Inno6:
+            return numbers.str_fixed(e, 12, self.runtime.library)
+        return numbers.float_to_str(e, self.runtime)
+
+    @external()
+    def StrToUInt64(self, s: str) -> int:
+        return numbers.str_to_uint64(s)
+
+    @external()
+    def StrToUInt64Def(self, s: str, d: int) -> int:
+        return numbers.str_to_uint64_default(s, d)
+
+    @external(alias='UInt64ToStr')
+    def UIntToStr(self, i: int) -> str:
+        return str(i & 0xFFFFFFFFFFFFFFFF)
 
     @external(alias='Int64ToStr')
     def IntToStr(self, i: int) -> str:
@@ -3091,6 +3175,28 @@ class IFPSEmulator:
     @external()
     def WizardSilent(self) -> bool:
         return self.config.wizard_silent
+
+    @external()
+    def Low(self, var: Variable) -> int:
+        return self._bound(var.deref(), False)
+
+    @external()
+    def High(self, var: Variable) -> int:
+        return self._bound(var.deref(), True)
+
+    def _bound(self, var: Variable, high: bool) -> int:
+        t = var.type
+        code = t.code
+        if code is TC.Array:
+            return len(var) - 1 if high else 0
+        if isinstance(t, TStaticArray):
+            start = t.offset or 0
+            return start + t.size - 1 if high else start
+        if code is TC.AnsiString:
+            return len(var.get()) if high else 1
+        if (valid := code.integer_range) is not None:
+            return valid.stop - 1 if high else valid.start
+        raise IFPSException(kind=PSError.CouldNotCallProc)
 
     @external()
     def SizeOf(self, var: Variable) -> int:
@@ -3379,7 +3485,7 @@ class InnoSetupEmulator(IFPSEmulator):
         result = default
         for function in self._implementations(event):
             try:
-                value = yield from self._execute(_ScriptRun(), function, args)
+                value = yield from self._execute(_ScriptRun(self.setup.dialect), function, args)
             except IFPSException as error:
                 message = str(error)
             else:
@@ -3402,7 +3508,7 @@ class InnoSetupEmulator(IFPSEmulator):
         if (function := custom.handlers.get(event)) is None:
             return None
         try:
-            return (yield from self._execute(_ScriptRun(), function, (custom,)))
+            return (yield from self._execute(_ScriptRun(self.setup.dialect), function, (custom,)))
         except IFPSException as error:
             message = str(error)
         yield NewScriptError(event, (custom,), message)
