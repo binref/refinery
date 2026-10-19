@@ -556,9 +556,13 @@ class _ValueOracleTest(_ScriptOracleTest):
             _cells({name: log[name] for name in names}, self.defects),
         )
 
-    def assertCellEmulatedAsLogged(self, procedure: str, name: str, cell: int):
+    def assertCellsEmulatedAsLogged(self, procedure: str, *cells: tuple[str, int]):
         emulated = self.emulated(self.emulator(), procedure)
-        self.assertEqual(emulated[name].split('|')[cell], self.log()[name].split('|')[cell])
+        log = self.log()
+        self.assertEqual(
+            {(name, k): emulated[name].split('|')[k] for name, k in cells},
+            {(name, k): log[name].split('|')[k] for name, k in cells},
+        )
 
 
 class _EveryBuild(_ValueOracleTest):
@@ -782,7 +786,7 @@ class _EveryBuild(_ValueOracleTest):
 
     @wontfix('VarArrayGet is not emulated; it reads nothing from an array in a Variant')
     def test_an_element_of_a_static_array_in_a_variant(self):
-        self.assertCellEmulatedAsLogged('ORACLESTATICARRAYVARIANT', 'variant.static_array', 1)
+        self.assertCellsEmulatedAsLogged('ORACLESTATICARRAYVARIANT', ('variant.static_array', 1))
 
 
 class _A32BitBuild(_ValueOracleTest):
@@ -817,7 +821,7 @@ class _A32BitBuild(_ValueOracleTest):
 
     @wontfix('the x87 computes the sine of the Double nearest to 1/3 with an error of 0.55 units in the last place; the emulator rounds the exact sine')
     def test_the_sine_of_a_third_is_that_of_the_x87(self):
-        self.assertCellEmulatedAsLogged('ORACLEROUNDING', 'round.nearest', 15)
+        self.assertCellsEmulatedAsLogged('ORACLEROUNDING', ('round.nearest', 15))
 
 
 class _AnInnoSetup7Build(_ValueOracleTest):
@@ -843,7 +847,7 @@ class _AnInnoSetup7Build(_ValueOracleTest):
         reason='as keeps every object; the emulator does not model the classes of Setup that it would check',
     )
     def test_a_cast_with_as_to_a_class_that_the_object_is_not(self):
-        self.assertCellEmulatedAsLogged('ORACLECLASSCASTS', 'class.as', 1)
+        self.assertCellsEmulatedAsLogged('ORACLECLASSCASTS', ('class.as', 1))
 
     @pytest.mark.xfail(
         strict=True,
@@ -851,7 +855,7 @@ class _AnInnoSetup7Build(_ValueOracleTest):
         reason='as keeps every object; the emulator does not model the classes of Setup that it would check',
     )
     def test_a_cast_of_nil_with_as(self):
-        self.assertCellEmulatedAsLogged('ORACLECLASSCASTS', 'class.as', 2)
+        self.assertCellsEmulatedAsLogged('ORACLECLASSCASTS', ('class.as', 2))
 
 
 class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
@@ -873,7 +877,7 @@ class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
         reason='StringOfChar keeps the whole character; Pascal Script keeps its low byte as an ANSI character',
     )
     def test_string_of_char_of_a_character_beyond_ansi(self):
-        self.assertCellEmulatedAsLogged('ORACLEWIDECHARACTERS', 'wide.string_of_char', 0)
+        self.assertCellsEmulatedAsLogged('ORACLEWIDECHARACTERS', ('wide.string_of_char', 0))
 
     @wontfix('Inno Setup 5.5.3 and 5.5.4 copy a shared dynamic array that keeps its length; the emulator follows 5.5.5 and later')
     def test_inno_setup_5_5_4_copies_a_shared_dynamic_array_that_keeps_its_length(self):
@@ -997,6 +1001,125 @@ class TestTheScriptTellsWhichInnoSetupCompiledIt(TestBase):
         self.assertEqual(x64, constants('x86'))
 
 
+class TestTheEmulatorLogsWhatA64BitSetupOfInnoSetup7Logged(_EveryBuild, _AnInnoSetup7Build):
+    """
+    The build of Inno Setup 7.1.0 for a 64-bit Setup, which computes floats with SSE.
+    """
+    __test__ = True
+    build = 'x64'
+    setup_version = (7, 1, 0)
+    random_numbers_of_more_than_16_digits = (
+        ('fit.val.0', 4),
+        ('fit.val.3', 3),
+        ('fit.val.8', 2),
+        ('fit.val.17', 1),
+        ('fit.val.24', 8),
+        ('fit.val.29', 7),
+        ('fit.val.36', 5),
+        ('fit.val.37', 9),
+        ('fit.val.38', 2),
+        ('fit.val.54', 9),
+        ('fit.val.61', 4),
+        ('fit.val.64', 2),
+        ('fit.val.78', 0),
+        ('fit.val.81', 8),
+        ('fit.val.fixed.1', 9),
+        ('fit.val.fixed.2', 0),
+        ('fit.val.fixed.2', 1),
+        ('fit.val.fixed.4', 6),
+    )
+    a_number_of_18_digits_under_each_control_word = (
+        ('round.nearest', 12),
+        ('round.down', 12),
+        ('round.up', 12),
+        ('round.zero', 12),
+        ('round.double_precision', 12),
+        ('round.single_precision', 12),
+    )
+    sines_and_cosines_below_2_to_the_53 = (
+        ('fit.math.1', 4),
+        ('fit.math.2', 3),
+        ('fit.math.special', 5),
+        ('fit.math.random.2', 3),
+    )
+    defects = frozenset({
+        *random_numbers_of_more_than_16_digits,
+        *a_number_of_18_digits_under_each_control_word,
+        *sines_and_cosines_below_2_to_the_53,
+        ('parse.extreme', 2),
+        ('parse.exponent_limit', 4),
+        ('fit.text.52', 5),
+        ('fit.tenths.15', 14),
+        ('ole7.double', 6),
+        ('class.as', 1),
+        ('class.as', 2),
+        ('variant.static_array', 1),
+    })
+
+    def test_strings_of_up_to_20_million_characters(self):
+        self.assertEmulatedAsLogged('ORACLELONGSTRINGS', max_string_length=40_000_000)
+
+    def test_the_sine_of_2_to_the_53_or_more_ends_the_emulation(self):
+        with self.assertRaises(EmulatorUndefined):
+            self.emulated(self.emulator(), 'ORACLEFITMATHLARGE')
+
+    @wontfix('64-bit Delphi reduces the operand of a sine or cosine of 2**53 or more in a way that is not known')
+    def test_sine_cosine_square_root_and_rounding_of_floats_of_2_to_the_53_or_more(self):
+        self.assertEmulatedAsLogged('ORACLEFITMATHLARGE')
+
+    @wontfix('64-bit Delphi computes a sine or cosine within one unit in the last place, not always correctly rounded, by an algorithm that is not known')
+    def test_sines_and_cosines_below_2_to_the_53_that_64_bit_delphi_does_not_round_correctly(self):
+        self.assertCellsEmulatedAsLogged('ORACLEFITMATH', *self.sines_and_cosines_below_2_to_the_53)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='64-bit Val is modelled on an x87 at 53 bits, which rounds some numbers of more than 16 digits differently',
+    )
+    def test_parsing_of_random_numbers_of_more_than_16_digits(self):
+        self.assertCellsEmulatedAsLogged('ORACLEFITVAL', *self.random_numbers_of_more_than_16_digits)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='64-bit Val is modelled on an x87 at 53 bits, which rounds some numbers of more than 16 digits differently',
+    )
+    def test_parsing_of_a_number_of_18_digits_under_each_control_word(self):
+        self.assertCellsEmulatedAsLogged('ORACLEROUNDING', *self.a_number_of_18_digits_under_each_control_word)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='64-bit Val reads a number of thousands of digits with a negative exponent as zero; the emulator as an infinity',
+    )
+    def test_parsing_of_5000_digits_with_a_negative_exponent(self):
+        self.assertCellsEmulatedAsLogged('ORACLELONGPARSING', ('parse.extreme', 2))
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='64-bit Val reads a number of thousands of digits with a negative exponent as zero; the emulator as an infinity',
+    )
+    def test_parsing_of_4951_digits_with_a_negative_exponent(self):
+        self.assertCellsEmulatedAsLogged('ORACLEPARSINGPOWERS', ('parse.exponent_limit', 4))
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='the text of a subnormal Double from 64-bit Delphi differs in its last digits',
+    )
+    def test_text_of_subnormal_doubles(self):
+        self.assertCellsEmulatedAsLogged('ORACLEFITTEXT', ('fit.text.52', 5), ('fit.tenths.15', 14))
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='64-bit Windows converts a Variant string of 309 digits to a Double that is one unit in the last place off',
+    )
+    def test_a_variant_string_of_309_digits_converted_to_a_double(self):
+        self.assertCellsEmulatedAsLogged('ORACLEOLE7', ('ole7.double', 6))
+
+
 class TestTheSetupAgreesWithTheScript(TestBase):
     """
     A script of Inno Setup 7 runs only under a Setup of Inno Setup 7, and an earlier script only
@@ -1026,7 +1149,25 @@ class TestTheSetupAgreesWithTheScript(TestBase):
 
     def test_an_installer_of_inno_setup_6_5_runs_its_script_by_the_rules_of_pascal_script_6(self):
         setup = InnoSetupEmulator(self.installer(), IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release, setup.dialect), ((6, 5, 0, 0), Dialect.Inno6))
+        self.assertEqual((setup.release, setup.dialect, setup.platform), ((6, 5, 0, 0), Dialect.Inno6, Platform.Win32))
+
+    def test_32_bit_windows_refuses_a_script_of_a_64_bit_setup(self):
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(self.script('x64'), IFPSEmulatorConfig(x64=False))
+
+    def test_a_32_bit_installer_refuses_a_script_of_a_64_bit_setup(self):
+        installer = self.installer()
+        installer.setup_info.Header.CompiledCodeVersion = 0x07010000
+        installer.ifps = self.script('x64')
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(installer, IFPSEmulatorConfig())
+
+    def test_a_64_bit_installer_refuses_a_script_of_a_32_bit_setup(self):
+        installer = self.installer()
+        installer.setup_info.Header.CompiledCodeVersion = 0x87010000
+        installer.ifps = self.script('x86')
+        with self.assertRaises(ValueError):
+            InnoSetupEmulator(installer, IFPSEmulatorConfig())
 
     def test_the_release_of_an_installer_of_inno_setup_7_is_the_version_of_its_compiled_code(self):
         """
@@ -1037,7 +1178,17 @@ class TestTheSetupAgreesWithTheScript(TestBase):
         installer.setup_info.Header.CompiledCodeVersion = 0x07010000
         installer.ifps = self.script('x86')
         setup = InnoSetupEmulator(installer, IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release, setup.dialect), ((7, 1, 0), Dialect.Inno7))
+        self.assertEqual((setup.release, setup.dialect, setup.platform), ((7, 1, 0), Dialect.Inno7, Platform.Win32))
+
+    def test_the_release_of_a_64_bit_installer_of_inno_setup_7_is_the_version_of_its_compiled_code(self):
+        """
+        The header of a 64-bit Setup sets the highest bit of the version of its compiled code.
+        """
+        installer = self.installer()
+        installer.setup_info.Header.CompiledCodeVersion = 0x87010000
+        installer.ifps = self.script('x64')
+        setup = InnoSetupEmulator(installer, IFPSEmulatorConfig()).setup
+        self.assertEqual((setup.release, setup.dialect, setup.platform), ((7, 1, 0), Dialect.Inno7, Platform.Win64))
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):

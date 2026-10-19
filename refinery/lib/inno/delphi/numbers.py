@@ -212,12 +212,15 @@ class Library:
     them for a platform. They compute on `unit` and write at most `digits` significant digits. They
     scale by powers of ten from a table whose powers `10 ** (32 * k)` end at `k = table_end`. `Val`
     gives an infinity when the exponent and the number of decimals add up to more than
-    `exponent_limit`.
+    `exponent_limit`, if there is a limit. The power `-2**31`, which the library cannot negate, gives
+    an infinity when `minimum_power_is_infinite` holds; otherwise the library reads a power after
+    the end of its table.
     """
     unit: FPU
     digits: int
     table_end: int
-    exponent_limit: int
+    exponent_limit: int | None
+    minimum_power_is_infinite: bool
 
 
 @dataclass(frozen=True)
@@ -540,10 +543,14 @@ def val_float(text: str, library: Library) -> tuple[Real | None, int]:
     power = -len(fraction)
     if exponent:
         exponent_value = _wrapped_exponent(exponent_sign, exponent)
-        if exponent_value + len(fraction) > library.exponent_limit:
+        limit = library.exponent_limit
+        if limit is not None and exponent_value + len(fraction) > limit:
             value = math.inf
         power = _signed32(power + exponent_value)
-    value = _power_of_ten(library, value, power)
+    if power == -0x80000000 and library.minimum_power_is_infinite:
+        value = math.inf
+    else:
+        value = _power_of_ten(library, value, power)
     return (fpu.negate(value) if sign == '-' else value), 0
 
 

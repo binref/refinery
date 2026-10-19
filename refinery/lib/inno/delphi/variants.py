@@ -208,7 +208,10 @@ def _string_to_integer(v: Variant, runtime: Runtime, bits: int, target: str) -> 
     if not error:
         return value
     if (number := ole_number(text, runtime.settings)) is not None:
-        integer = runtime.fpu.integer(_ole_double(number, v, target))
+        double = _ole_double(number, v, target, runtime)
+        if x87.is_special(double):
+            raise EVariantOverflowError(type_text(v), target)
+        integer = runtime.fpu.integer(double)
         if integer not in range(-(1 << (bits - 1)), 1 << (bits - 1)):
             raise EVariantOverflowError(type_text(v), target)
         return integer
@@ -217,13 +220,16 @@ def _string_to_integer(v: Variant, runtime: Runtime, bits: int, target: str) -> 
     raise EVariantTypeCastError(type_text(v), target)
 
 
-def _ole_double(number: Fraction, v: Variant, target: str) -> float:
+def _ole_double(number: Fraction, v: Variant, target: str, runtime: Runtime) -> Real:
     """
     The Double that Windows makes of a number it read from a string; a number beyond the range of a
-    Double overflows the conversion to the target type.
+    Double overflows the conversion to the target type. On 64-bit Windows, a number written without
+    an exponent becomes an infinity instead.
     """
     value = _NEAREST.rational(number.numerator, number.denominator, Format.Double)
     if x87.is_special(value):
+        if runtime.parses_long_digits_as_infinity and 'e' not in v.value.lower():
+            return value
         raise EVariantOverflowError(type_text(v), target)
     assert isinstance(value, float)
     return value
@@ -326,7 +332,7 @@ def to_real(v: Variant, runtime: Runtime) -> Real:
     if kind is _Kind.Currency:
         return runtime.currency_to_real(v.value)
     if kind is _Kind.String and (number := ole_number(v.value, runtime.settings)) is not None:
-        return _ole_double(number, v, 'Double')
+        return _ole_double(number, v, 'Double', runtime)
     raise EVariantTypeCastError(type_text(v), 'Double')
 
 

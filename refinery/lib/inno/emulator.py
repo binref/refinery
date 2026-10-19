@@ -47,7 +47,7 @@ from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion,
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
-from refinery.lib.inno.delphi.runtime import Runtime, Win32
+from refinery.lib.inno.delphi.runtime import Platform, Runtime, Win32, Win64
 from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.ifps import (
     TC,
@@ -884,8 +884,9 @@ class _HostSetup:
     follows, and the built-in pages that the header makes it skip. A bare script has no header; it
     is taken to run under the Setup of the configured version, or the current Setup without one,
     with every page shown and every directive that sends an event on, so that each event that the
-    script handles is sent. The script tells which Pascal Script compiled it; the version of an
-    installer or the configured version must agree.
+    script handles is sent. The script tells which Pascal Script compiled it and for which platform;
+    the version and the platform of an installer, the configured version, and the configured
+    Windows must agree.
     """
     version: InnoVersion | None
     release: tuple[int, ...] | None
@@ -901,6 +902,7 @@ class _HostSetup:
     ready_memo_disabled: bool
     skipped_pages: frozenset[int]
     dialect: Dialect
+    platform: Platform
 
     @classmethod
     def of(
@@ -911,6 +913,9 @@ class _HostSetup:
         config: IFPSEmulatorConfig,
     ) -> _HostSetup:
         dialect = ifps.dialect
+        platform = ifps.platform
+        if platform is Platform.Win64 and not config.x64:
+            raise ValueError('The script runs in a 64-bit Setup, which 32-bit Windows does not run.')
         if setup_info is None:
             release = config.setup_version
             _check_generation(release, dialect, 'The configured Setup version')
@@ -929,6 +934,7 @@ class _HostSetup:
                 ready_memo_disabled=False,
                 skipped_pages=frozenset(),
                 dialect=dialect,
+                platform=platform,
             )
         header = setup_info.Header
         flags = header.Flags
@@ -957,6 +963,9 @@ class _HostSetup:
             skipped.add(PageID.wpInfoAfter)
         release = _release(header.CompiledCodeVersion, version)
         _check_generation(release, dialect, 'The installer')
+        if header.is_64bit != (platform is Platform.Win64):
+            setup = '64-bit' if header.is_64bit else '32-bit'
+            raise ValueError(F'The installer is a {setup} Setup, but its script was compiled for {platform.name}.')
         return cls(
             version=version,
             release=release,
@@ -972,12 +981,15 @@ class _HostSetup:
             ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             skipped_pages=frozenset(skipped),
             dialect=dialect,
+            platform=platform,
         )
 
     def runtime(self, settings: numbers.FormatSettings) -> Runtime:
         """
         The run-time library of a new process of this Setup.
         """
+        if self.platform is Platform.Win64:
+            return Win64(settings)
         return Win32(settings, _control_word(self.release))
 
 
@@ -1015,8 +1027,8 @@ def _changes_pages_only(release: tuple[int, ...] | None) -> bool:
 
 def _control_word(release: tuple[int, ...] | None) -> int:
     """
-    The control word of the x87 that Setup runs the script with: Delphi 12, which builds Inno Setup
-    from 6.4.3 on, masks every exception.
+    The control word of the x87 that a 32-bit Setup runs the script with: Delphi 12, which builds
+    Inno Setup from 6.4.3 on, masks every exception.
     """
     if release is None or release >= (6, 4, 3):
         return x87.MASKED_CONTROL_WORD
@@ -2944,10 +2956,11 @@ class IFPSEmulator:
 
     @external()
     def StrToFloat(self, s: str) -> x87.Real:
-        value, error = numbers.val_float(s, self.runtime.library)
+        runtime = self.runtime
+        value, error = numbers.val_float(s, runtime.library)
         if error or value is None:
             raise IFPSException(_INVALID_FLOAT)
-        return value
+        return runtime.fpu.store(value, x87.Format.Extended)
 
     @external()
     def FloatToStr(self, e: x87.Real) -> str:

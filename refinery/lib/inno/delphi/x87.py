@@ -15,7 +15,7 @@ import enum
 import math
 
 from fractions import Fraction
-from typing import Union
+from typing import Callable, Union
 
 from refinery.lib.inno.delphi.errors import (
     EInvalidOp,
@@ -23,6 +23,7 @@ from refinery.lib.inno.delphi.errors import (
     EOverflow,
     EUnderflow,
     EZeroDivide,
+    Undefined,
 )
 
 
@@ -172,6 +173,11 @@ inexact results, and computes with 64-bit mantissas, rounding to the nearest val
 MASKED_CONTROL_WORD = 0x037F
 """
 The control word with every exception masked, which Delphi 12 sets.
+"""
+
+WIN64_CONTROL_WORD = 0x027F
+"""
+The control word that Delphi's 64-bit code sets: every exception masked, 53-bit mantissas.
 """
 
 RESERVED_BIT = 0x0040
@@ -581,6 +587,59 @@ class FPU:
         return self.rational(result.numerator, result.denominator)
 
 
+class SSE(FPU):
+    """
+    The SSE unit that Delphi's 64-bit code computes floats with: every result is a Double, rounded
+    to the nearest value, and no exception raises. An Extended is a Double. Converting to an integer
+    rounds to the nearest integer. The sine and cosine are those of Delphi's 64-bit library, which
+    are correctly rounded for operands below 2**53; their value for larger operands depends on an
+    argument reduction that is not modelled.
+    """
+    range = Format.Double
+
+    def __init__(self):
+        super().__init__(WIN64_CONTROL_WORD)
+
+    def masks(self, fault: Fault) -> bool:
+        return True
+
+    def round(self, value: Real, fmt: Format, rounding: Rounding | None = None) -> Real:
+        return super().round(value, Format.Double if fmt is Format.Extended else fmt, rounding)
+
+    def store(self, value: Real, fmt: Format) -> Real:
+        return super().store(value, Format.Double if fmt is Format.Extended else fmt)
+
+    def rational(self, numerator: int, denominator: int, fmt: Format | None = None) -> Real:
+        return super().rational(numerator, denominator, Format.Double if fmt in (None, Format.Extended) else fmt)
+
+    def integer(self, value: Real, rounding: Rounding | None = None) -> int:
+        return super().integer(value, Rounding.Nearest if rounding is None else rounding)
+
+    def pi(self) -> Real:
+        return math.pi
+
+    def sine(self, a: Real) -> Real:
+        return self._library(a, _sine)
+
+    def cosine(self, a: Real) -> Real:
+        return self._library(a, _cosine)
+
+    def _library(self, a: Real, series: Callable[[decimal.Decimal], decimal.Decimal]) -> Real:
+        if is_special(a):
+            assert isinstance(a, float)
+            return math.nan
+        if abs(exact(a)) >= _LIBRARY_LIMIT:
+            raise Undefined('The sine and cosine of 64-bit Delphi reduce an operand of 2**53 or more in a way that is not modelled.')
+        with decimal.localcontext(prec=_SERIES_DIGITS):
+            x = exact(a)
+            value = decimal.Decimal(x.numerator) / decimal.Decimal(x.denominator)
+            tau = 2 * _PI_DIGITS
+            value -= tau * (value / tau).to_integral_value(decimal.ROUND_FLOOR)
+            result = Fraction(series(value))
+        return self.rational(result.numerator, result.denominator)
+
+
+_LIBRARY_LIMIT = 1 << 53
 _SERIES_DIGITS = 80
 _PI_DIGITS = decimal.Decimal(
     '3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798')

@@ -1,7 +1,8 @@
 """
 The state that Delphi's run-time library keeps for a process, and what Delphi's compiled code does
 on the platform that it was built for. A 32-bit Setup computes floats on the x87 under the control
-word that a script can change.
+word that a script can change. A 64-bit Setup computes with SSE; it keeps the control word that a
+script sets, but nothing computes under it.
 """
 from __future__ import annotations
 
@@ -11,9 +12,16 @@ import enum
 from fractions import Fraction
 
 from refinery.lib.inno.delphi import x87
-from refinery.lib.inno.delphi.errors import EDivByZero
+from refinery.lib.inno.delphi.errors import EDivByZero, EIntOverflow, EZeroDivide
 from refinery.lib.inno.delphi.numbers import EXPONENT_LIMIT, FormatSettings, Library
-from refinery.lib.inno.delphi.x87 import FPU, Format, Real
+from refinery.lib.inno.delphi.x87 import (
+    FPU,
+    MASKED_CONTROL_WORD,
+    SSE,
+    WIN64_CONTROL_WORD,
+    Format,
+    Real,
+)
 
 
 class Platform(enum.Enum):
@@ -54,6 +62,19 @@ def truncated_division(a: int, b: int) -> tuple[int, int]:
     return quotient, a - quotient * b
 
 
+def _signed64(value: int) -> int:
+    value &= 0xFFFFFFFFFFFFFFFF
+    return value - (1 << 64) if value >> 63 else value
+
+
+def _round_half_even(value: Fraction) -> int:
+    whole = value.numerator // value.denominator
+    rest = value - whole
+    if rest > Fraction(1, 2) or rest == Fraction(1, 2) and whole & 1:
+        whole += 1
+    return whole
+
+
 _INT64 = range(-0x8000000000000000, 0x8000000000000000)
 _SMALLEST_CURRENCY = Fraction(-0x8000000000000000, 10000)
 
@@ -69,6 +90,11 @@ class Runtime(abc.ABC):
     pointer_size: int
     variant_size: int
     extended_size: int
+    parses_long_digits_as_infinity: bool
+    """
+    Whether Windows reads a number without exponent beyond the range of a Double from a string as
+    an infinity instead of failing to convert it.
+    """
     fpu: FPU
     library: Library
 
@@ -181,12 +207,19 @@ class Win32(Runtime):
     pointer_size = 4
     variant_size = 16
     extended_size = 10
+    parses_long_digits_as_infinity = False
 
     def __init__(self, settings: FormatSettings, control_word: int):
         fpu = FPU(control_word)
         super().__init__(settings, fpu)
         self.fpu = fpu
-        self.library = Library(unit=fpu, digits=18, table_end=15, exponent_limit=EXPONENT_LIMIT)
+        self.library = Library(
+            unit=fpu,
+            digits=18,
+            table_end=15,
+            exponent_limit=EXPONENT_LIMIT,
+            minimum_power_is_infinite=False,
+        )
 
     def currency_of_integer(self, value: int) -> Fraction:
         """
@@ -215,3 +248,86 @@ class Win32(Runtime):
         The run-time library divides; the smallest Int64 divided by -1 gives itself.
         """
         return truncated_division(a, b)
+
+
+class Win64(Runtime):
+    """
+    Delphi's 64-bit code: SSE computes every float as a Double. The library computes as an x87
+    with the control word of 64-bit code, whatever the script sets; its table of powers of ten ends
+    at `10 ** 256` and its `Val` has no limit on the exponent.
+    """
+    platform = Platform.Win64
+    pointer_size = 8
+    variant_size = 24
+    extended_size = 8
+    parses_long_digits_as_infinity = True
+
+    def __init__(self, settings: FormatSettings):
+        super().__init__(settings, FPU(WIN64_CONTROL_WORD))
+        self.fpu = SSE()
+        self.library = Library(
+            unit=FPU(WIN64_CONTROL_WORD),
+            digits=17,
+            table_end=8,
+            exponent_limit=None,
+            minimum_power_is_infinite=True,
+        )
+
+    def currency_of_integer(self, value: int) -> Fraction:
+        """
+        64-bit code multiplies the integer by 10000 as a 64-bit integer, which wraps around.
+        """
+        return Fraction(_signed64(value * 10000), 10000)
+
+    def variant_currency(self, value: Real) -> Fraction:
+        """
+        Windows' 64-bit conversion rounds the value times 10000 as an x87 with every exception
+        masked does: at 64 bits of mantissa, then to the nearest integer.
+        """
+        fpu = _NEAREST
+        return Fraction(fpu.integer(fpu.multiply(value, 10000.0)), 10000)
+
+    def currency_arithmetic(self, op: Operation, a: Fraction, b: Fraction | int | Real) -> Fraction:
+        """
+        Two Currency values, and a Currency and an integer that are added or subtracted, compute in
+        units as 64-bit integers: sums wrap around, a product out of range raises an overflow, and
+        a quotient by zero a division by zero. Products and quotients round half to even.
+        """
+        if not isinstance(b, Fraction) and not (isinstance(b, int) and op in (Operation.Add, Operation.Subtract)):
+            return super().currency_arithmetic(op, a, b)
+        left = units(a)
+        right = units(b) if isinstance(b, Fraction) else b * 10000
+        if op is Operation.Add:
+            return Fraction(_signed64(left + right), 10000)
+        if op is Operation.Subtract:
+            return Fraction(_signed64(left - right), 10000)
+        if op is Operation.Multiply:
+            result = _round_half_even(Fraction(left * right, 10000))
+            if result not in _INT64:
+                raise EIntOverflow
+            return Fraction(result, 10000)
+        if right == 0:
+            raise EZeroDivide
+        return Fraction(_round_half_even(Fraction(left * 10000, right)), 10000)
+
+    def real_divided_by_currency(self, a: Real, b: Fraction, fmt: Format) -> Real:
+        """
+        64-bit code divides the float by the units of the Currency and multiplies by 10000.
+        """
+        fpu = self.fpu
+        return fpu.store(fpu.multiply(fpu.divide(a, x87.real(units(b))), 10000.0), fmt)
+
+    def check_currency_divisor(self, b: Fraction):
+        if b == 0:
+            raise EZeroDivide
+
+    def int64_division(self, a: int, b: int) -> tuple[int, int]:
+        """
+        The processor divides; the smallest Int64 divided by -1 overflows.
+        """
+        if a == -0x8000000000000000 and b == -1:
+            raise EIntOverflow
+        return truncated_division(a, b)
+
+
+_NEAREST = FPU(MASKED_CONTROL_WORD)
