@@ -24,6 +24,7 @@ from refinery.lib.scripts import (
     set_child,
     set_child_list,
 )
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_function_home,
@@ -928,10 +929,16 @@ def _an_observed_copy_may_not_be_made(model: SemanticModel, generator: Node) -> 
     Whether *generator* may run as strict code, which makes no Annex B copy, and declares a function
     in a block whose copy something observes. The recovered code is read apart from the tree and
     gives such a function the copy (`_hoisted_names`), which the file may then never have made.
+
+    An ES module makes no copy in any reading, so the model holds none to ask about, and any
+    function declared in a block of the generator counts, as it does for code the text makes strict
+    (`_match_generator_cff`).
     """
-    return model.may_run_as_strict(generator) and any(
-        model.annex_b_copy_observed(function) for function in _block_functions(generator)
-    )
+    if not model.may_run_as_strict(generator):
+        return False
+    if model.file_kind is FileKind.es_module:
+        return _holds_a_block_function(generator)
+    return any(model.annex_b_copy_observed(function) for function in _block_functions(generator))
 
 
 def _did_return_reset(stmt: Statement) -> str | None:

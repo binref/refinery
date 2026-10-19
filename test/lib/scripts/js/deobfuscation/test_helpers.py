@@ -685,7 +685,11 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
             node for node in function.walk() if isinstance(node, JsObjectExpression)
         ][0]
         substituted = substitute_params(
-            literal, function.params, [make_numeric_literal(5)], Transformer())
+            literal,
+            function.params,
+            [make_numeric_literal(5)],
+            Transformer(),
+        )
         self.assertEqual(JsSynthesizer().convert(substituted), '{ a: 5 }')
 
 

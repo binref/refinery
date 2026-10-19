@@ -1474,13 +1474,12 @@ class EffectModel:
         A caller reasoning about what a call may have done reads `static_callee` answering `None` in
         two ways, and this tells them apart. Where the callee is a method, a host function, a name
         nothing here declares, or one holding what the host passed
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.supplied_from_outside`), `None`
-        means the call runs something outside this file's reckoning, which is a standing condition
-        every such caller was written under. Where it is a
-        name this file binds, `None` means the model saw the binding and would not state its value
-        - one Annex B copies into a block's enclosing scope is such a function - and what it runs
-        may be any of the ones written here, one that writes the very binding being reasoned about
-        included.
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.supplied_from_outside`), `None` means
+        the call runs something outside this file's reckoning, which is a standing condition every
+        such caller was written under. Where it is a name this file binds, `None` means the model
+        saw the binding and would not state its value - one Annex B copies into a block's enclosing
+        scope is such a function - and what it runs may be any of the ones written here, one that
+        writes the very binding being reasoned about included.
         """
         callee = strip_parens(call.callee)
         if not isinstance(callee, JsIdentifier):

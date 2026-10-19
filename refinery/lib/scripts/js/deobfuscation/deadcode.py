@@ -59,7 +59,8 @@ def _is_scoped_to_the_block_holding_it(stmt: Statement | None) -> bool:
 
 
 def _the_names_a_dropped_branch_still_declares(
-    branch: Statement | None, model: SemanticModel,
+    branch: Statement | None,
+    model: SemanticModel,
 ) -> tuple[str, ...] | None:
     """
     Every name *branch* binds outside itself, which a `var` left in its place declares, or `None`
@@ -76,8 +77,9 @@ def _the_names_a_dropped_branch_still_declares(
 
     Where the file may be an ES module, the `var` half of a function declared in a block exists in
     the CommonJS reading only, so a `var` left behind would be wrong in one reading and its absence
-    in the other. The branch then stays where anything observes that half, and its function leaves
-    no name behind where nothing does.
+    in the other. The branch then stays where anything reads, writes or otherwise observes that half
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.annex_b_copy_observed`), and its function
+    leaves no name behind where nothing does.
     """
     if branch is None:
         return ()

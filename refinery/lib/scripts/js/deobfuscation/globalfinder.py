@@ -161,7 +161,11 @@ def _is_finder(
 
 
 def _receiver_is_global(
-    function: Node, model: SemanticModel, *, called_bare: bool, lexical: bool,
+    function: Node,
+    model: SemanticModel,
+    *,
+    called_bare: bool,
+    lexical: bool,
 ) -> bool:
     """
     Whether `this` is the global object in the code of *function* when it is called. An arrow
@@ -214,7 +218,10 @@ def _is_global_valued(
                 model,
                 visiting,
                 _receiver_is_global(
-                    closure, model, called_bare=called_bare, lexical=this_is_global,
+                    closure,
+                    model,
+                    called_bare=called_bare,
+                    lexical=this_is_global,
                 ),
             )
             for closure in closures

@@ -621,9 +621,10 @@ class TestAWriteOnlyStrictCodeRefusesIsNotADeadStore(TestBase):
         )
 
 
-#: A program storing into a name the CommonJS wrapper binds, which an ES module leaves unbound,
-#: mapped to the behavior Node gives it as an ES module.
-A_STORE_INTO_A_WRAPPER_NAME_AN_ES_MODULE_LEAVES_UNBOUND = {
+#: Programs storing into a name only the CommonJS reading binds where the store stands, a name the
+#: CommonJS wrapper binds or the `var` a function declared in a block gives the function around
+#: it, mapped to the behavior Node gives each as an ES module.
+A_STORE_INTO_A_NAME_AN_ES_MODULE_LEAVES_UNBOUND = {
     'a store to exports nothing reads': Program(
         a_program("""
             try { exports = 1; } catch (e) { console.log(e.name); }
@@ -632,18 +633,64 @@ A_STORE_INTO_A_WRAPPER_NAME_AN_ES_MODULE_LEAVES_UNBOUND = {
         prints('ReferenceError', 'end'),
         Reading.ES_MODULE,
     ),
+    'a store to the var of a block function nothing reads': Program(
+        a_program("""
+            var g = 'outer';
+            function h() {
+              { function g() {} }
+              g = 'inner';
+            }
+            h();
+            console.log(g);
+            """),
+        prints('inner'),
+        Reading.ES_MODULE,
+    ),
 }
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-@one_expected_failure_per_program(A_STORE_INTO_A_WRAPPER_NAME_AN_ES_MODULE_LEAVES_UNBOUND)
+@one_expected_failure_per_program(A_STORE_INTO_A_NAME_AN_ES_MODULE_LEAVES_UNBOUND)
 class TestAStoreIntoANameAnEsModuleLeavesUnboundIsNotADeadStore(TestBase):
     """
     Under `-m` the file may be an ES module, which binds none of the names the CommonJS wrapper
-    binds and is strict code, so a store into one of them throws there. The sweep reads the store
-    as dead, as it reads a store into no binding in strict code
-    (`TestAWriteOnlyStrictCodeRefusesIsNotADeadStore`), and the throw goes with it. The store and
-    the binding it may not find have to be decided together here too.
+    binds, gives a function declared in a block no `var` outside the block, and is strict code. A
+    store into such a name lands on what the name means further out, or throws where nothing
+    binds it. The model resolves the store to the binding the CommonJS reading has
+    (`refinery.lib.scripts.js.analysis.model.Binding.may_be_absent`), and the sweep and the effect
+    analysis read it as a store into that binding alone, which nothing reads: the store goes, and
+    with it the throw or the write further out, as a store into no binding in strict code goes
+    (`TestAWriteOnlyStrictCodeRefusesIsNotADeadStore`). The store and the binding it may not find
+    have to be decided together here too.
+    """
+
+
+#: A file Node runs as an ES module because it declares a parameter of the CommonJS wrapper with
+#: `const` at its top, mapped to the behavior Node gives it.
+A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE = {
+    'a const of a wrapper name every read of which is inlined': Program(
+        a_program("""
+            const module = function (a) { return a + 1; };
+            console.log(module(1));
+            console.log((function () { return typeof this; })());
+            """),
+        prints('2', 'undefined'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE)
+class TestTheDeclarationThatMakesAFileAnEsModuleStays(TestBase):
+    """
+    A file that may be CommonJS and declares a parameter of the CommonJS wrapper with `let`,
+    `const` or `class` at its top is one Node runs as an ES module
+    (`refinery.lib.scripts.js.options.file_kind`), and the analysis reads it as one. The passes
+    that remove a declaration once nothing reads it remove this one too, and Node then runs the
+    text left behind as a CommonJS file, which is sloppy code. The declaration has to stay the way
+    an exported one does: the model has to report it as observed by the host, and every pass that
+    removes a declaration has to ask.
     """
 
 

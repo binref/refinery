@@ -1947,21 +1947,22 @@ class JsReflectionInlining(ScriptLevelTransformer):
         returns, so a persistent inlined binding differs only if a name it declares is referenced
         outside the body; it is declined where introducing it at the site would capture such a
         reference, and where it would land on a name the host binds around a CommonJS file
-        (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`). A `var` or function persists:
-        under indirect eval it becomes a global-object property, reproducible only at top-level
-        script scope and never under a module model; under direct eval it lands in the caller's
-        variable scope, but never under a strict direct eval, whose `var` stays local to the eval.
-        The `module` execution model could be a strict ES module, where the `var` is ephemeral, so
-        `_destination_may_be_strict` treats a direct eval there as possibly strict and declines the
-        inline; the sloppy CommonJS reading would leak the `var` and keep the inline, but declining
-        is sound for both. Under the `commonjs` model a site the text leaves sloppy keeps it. Such a
-        declaration hoists to the head of its variable scope, so it is inlined only when the eval
-        site strictly dominates every reference to the name already there — one that runs before it
-        or shares its statement, or reads the name through a closure, would be rebound — and only
-        where no scope from the site up to that variable scope declares the name otherwise: against
-        a `let`, `const` or `class` the evaluation throws a `SyntaxError` the site catches, and a
-        function it declares replaces one of the file only when it runs, where the same text spliced
-        in is a redeclaration the file cannot survive or a function that wins at hoisting instead.
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.declaration_may_land`). A `var` or
+        function persists: under indirect eval it becomes a global-object property, reproducible
+        only at top-level script scope and never under a module model; under direct eval it lands in
+        the caller's variable scope, but never under a strict direct eval, whose `var` stays local
+        to the eval. The `module` execution model could be a strict ES module, where the `var` is
+        ephemeral, so `_destination_may_be_strict` treats a direct eval there as possibly strict and
+        declines the inline; the sloppy CommonJS reading would leak the `var` and keep the inline,
+        but declining is sound for both. Under the `commonjs` model a site the text leaves sloppy
+        keeps it. Such a declaration hoists to the head of its variable scope, so it is inlined only
+        when the eval site strictly dominates every reference to the name already there — one that
+        runs before it or shares its statement, or reads the name through a closure, would be
+        rebound — and only where no scope from the site up to that variable scope declares the name
+        otherwise: against a `let`, `const` or `class` the evaluation throws a `SyntaxError` the
+        site catches, and a function it declares replaces one of the file only when it runs, where
+        the same text spliced in is a redeclaration the file cannot survive or a function that wins
+        at hoisting instead.
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings

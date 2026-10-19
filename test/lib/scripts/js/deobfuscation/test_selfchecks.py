@@ -243,8 +243,8 @@ A_CHECK_DECIDED_WHERE_THE_HASH_IS_OBSERVED = {
     ),
 }
 
-#: A program wrapped in the older hash guard whose hash helper starts with a check calling a name the
-#: CommonJS wrapper binds, mapped to what Node prints and to the constant compared.
+#: A program wrapped in the older hash guard whose hash helper starts with a check calling a name
+#: the CommonJS wrapper binds, mapped to what Node prints and to the constant compared.
 A_CHECK_DECIDED_OVER_A_HELPER_CALLING_WHAT_THE_HOST_PASSED = {
     wrapped(
         PROGRAM_25,

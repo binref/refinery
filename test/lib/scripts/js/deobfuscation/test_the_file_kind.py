@@ -171,7 +171,45 @@ A_FUNCTION_DECLARED_IN_A_BLOCK = {
         prints('function'),
         prints('string'),
     ),
+    'a wrapper named like a block function of the function calling it': FileProgram(
+        a_program("""
+            function wr() { wr = function () {}; }
+            function f() {
+              { function wr(x) { console.log('inner'); } }
+              wr(console.log('arg'));
+            }
+            f();
+            """),
+        prints('arg', 'inner'),
+        prints('arg'),
+    ),
 }
+
+#: Programs dropping a branch that declares a function in a block whose name the function around
+#: it only writes, each with what Node makes of it as a CommonJS file and as an ES module.
+A_DROPPED_BLOCK_FUNCTION_WHOSE_NAME_IS_ONLY_WRITTEN = {
+    'a write landing on the var half or on the variable outside': FileProgram(
+        a_program("""
+            var g = 'outer';
+            function h() {
+              if (false) { function g() {} }
+              g = 'inner';
+            }
+            h();
+            console.log(g);
+            """),
+        prints('outer'),
+        prints('inner'),
+    ),
+}
+
+#: The text of a file Node runs as an ES module because it declares a parameter of the CommonJS
+#: wrapper with `const` at its top, holding a generator dispatcher that declares a function in a
+#: block.
+A_GENERATOR_DISPATCHER_IN_A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE = (
+    'const exports = 0;\n'
+    + A_FUNCTION_DECLARED_IN_A_BLOCK['a generator dispatcher holding a block function'].text
+)
 
 #: Programs whose direct `eval` in a parameter default declares a name the function reads, each with
 #: what Node makes of it as a CommonJS file and as an ES module, where the `eval` is strict and
@@ -482,6 +520,15 @@ THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME = {
         prints('5'),
         ('', 'SyntaxError'),
     ),
+    'a read of arguments before a let of its name': FileProgram(
+        a_program("""
+            try { arguments; console.log('read'); } catch (e) { console.log(e.name); }
+            let arguments = 1;
+            console.log(arguments);
+            """),
+        prints('ReferenceError', '1'),
+        ('', 'SyntaxError'),
+    ),
 }
 
 
@@ -533,7 +580,7 @@ class TestAFunctionDeclaredInABlockKeepsItsVarHalfOnlyInSloppyCode(TestBase):
     Sloppy code gives a function declared in a block a `var` of its name in the function around the
     block, and strict code does not. A file that may be an ES module is read both ways, so neither
     a dropped branch nor a recovered dispatcher may settle whether that `var` exists where anything
-    reads it.
+    reads or writes it, and no call of its name is taken for a call of what the name means outside.
     """
 
     def test_node_prints_what_each_row_pins(self):
@@ -541,6 +588,22 @@ class TestAFunctionDeclaredInABlockKeepsItsVarHalfOnlyInSloppyCode(TestBase):
 
     def test_each_program_still_prints_what_it_prints(self):
         each_reading_still_prints(self, A_FUNCTION_DECLARED_IN_A_BLOCK, EVERY_MODULE_READING)
+
+    def test_node_prints_what_each_row_writing_the_name_pins(self):
+        node_prints_what_each_row_pins(self, A_DROPPED_BLOCK_FUNCTION_WHOSE_NAME_IS_ONLY_WRITTEN)
+
+    def test_each_program_writing_the_name_still_prints_what_it_prints_as_commonjs(self):
+        each_reading_still_prints(
+            self,
+            A_DROPPED_BLOCK_FUNCTION_WHOSE_NAME_IS_ONLY_WRITTEN,
+            (Reading.COMMONJS, Reading.MODULE),
+        )
+
+    def test_a_dispatcher_stays_where_the_file_is_an_es_module_by_declaring_a_wrapper_name(self):
+        source = A_GENERATOR_DISPATCHER_IN_A_FILE_A_LEXICAL_WRAPPER_NAME_MAKES_AN_ES_MODULE
+        for execution in (ExecutionModel.commonjs, ExecutionModel.module):
+            with self.subTest(execution.name):
+                self.assertIn('function* gen(', deobfuscate_source(source, execution=execution))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -557,7 +620,10 @@ class TestADirectEvalReachesTheTopLevelVariablesOfAModule(TestBase):
 
     def test_each_program_still_prints_what_it_prints(self):
         each_reading_still_prints(
-            self, A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES, EVERY_MODULE_READING)
+            self,
+            A_TOP_LEVEL_VARIABLE_A_DIRECT_EVAL_REACHES,
+            EVERY_MODULE_READING,
+        )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -600,7 +666,9 @@ class TestTheArgumentsOfTheWrapperAliasItsParameters(TestBase):
     The function a CommonJS host wraps around a file has an `arguments` of its own, which code at
     the top of the file reads, and in sloppy code its elements alias the wrapper's parameters in
     their order: a store to `exports` is read back as `arguments[0]`. A function declared in a
-    block under the name `arguments` gets no `var` of it, and a `var` of it keeps the object.
+    block under the name `arguments` gets no `var` of it, a `var` of it keeps the object, and a
+    `let` of it at the top means there is no object and the name is in that declaration's dead
+    zone until it runs.
     """
 
     def test_node_prints_what_each_row_pins(self):
@@ -611,7 +679,9 @@ class TestTheArgumentsOfTheWrapperAliasItsParameters(TestBase):
 
     def test_node_prints_what_each_row_declaring_its_name_pins(self):
         node_prints_what_each_row_pins(
-            self, THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME)
+            self,
+            THE_ARGUMENTS_OF_THE_WRAPPER_UNDER_A_DECLARATION_OF_ITS_NAME,
+        )
 
     def test_each_program_declaring_its_name_still_prints_what_it_prints_as_commonjs(self):
         each_reading_still_prints(

@@ -304,8 +304,8 @@ class TestDefiniteAssignment(TestBase):
         self.assertTrue(self._vouched('X = 1;\nprobe(X);', file_kind=FileKind.commonjs))
 
     def test_a_bare_write_in_strict_code_of_a_commonjs_file_does_not_vouch(self):
-        self.assertFalse(self._vouched(
-            "'use strict';\nX = 1;\nprobe(X);", file_kind=FileKind.commonjs))
+        source = "'use strict';\nX = 1;\nprobe(X);"
+        self.assertFalse(self._vouched(source, file_kind=FileKind.commonjs))
 
     def test_a_top_level_this_write_vouches_only_under_the_script_reading(self):
         source = 'this.X = 1;\nprobe(X);'

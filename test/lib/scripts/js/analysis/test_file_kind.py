@@ -3,10 +3,16 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
+from test.lib.scripts.js.ledger import wontfix
 
 from refinery.lib.scripts.js.analysis.environment import FileKind
-from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.model import (
+    BindingKind,
+    SemanticModel,
+    build_semantic_model,
+)
 from refinery.lib.scripts.js.model import (
+    JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIdentifier,
@@ -85,6 +91,22 @@ class TestTheModelAnswersForTheFileKind(TestBase):
             with self.subTest(kind.name):
                 model = _model('var v = 1;\nfunction f(c) { eval(c); }', kind)
                 self.assertTrue(model.reflection_can_reach(model.root_scope.bindings['v']))
+
+    def test_a_direct_eval_may_rebind_a_top_level_name_where_the_file_may_be_commonjs(self):
+        kinds = (FileKind.commonjs, FileKind.commonjs_or_es_module)
+        names = ('g', 'exports')
+        rebinds = {}
+        for kind in kinds:
+            model = _model('{ function g() {} } function f(c) { eval(c); }', kind)
+            call = next(node for node in model.root.walk() if isinstance(node, JsCallExpression))
+            for name in names:
+                binding = model.root_scope.bindings[name]
+                sites = model.binding_dynamic_rebind_sites(binding) or []
+                rebinds[kind, name] = (
+                    model.local_reachable_by_direct_eval(binding),
+                    any(site is call for site in sites),
+                )
+        self.assertEqual(rebinds, {(kind, name): (True, True) for kind in kinds for name in names})
 
     def test_global_code_reaches_an_implicit_global_in_every_kind(self):
         for kind in FileKind:
@@ -196,12 +218,15 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         for source in ('require("a");', 'require = 1;', 'var require;', 'eval(s);'):
             model = _model(source, FileKind.commonjs)
             held[source] = model.holds_what_the_host_passed(model.root_scope.bindings['require'])
-        self.assertEqual(held, {
-            'require("a");': True,
-            'require = 1;': False,
-            'var require;': False,
-            'eval(s);': False,
-        })
+        self.assertEqual(
+            held,
+            {
+                'require("a");': True,
+                'require = 1;': False,
+                'var require;': False,
+                'eval(s);': False,
+            },
+        )
 
     def test_a_callee_the_host_passed_is_supplied_from_outside(self):
         model = _model('require("a"); var own = function () {}; own();', FileKind.commonjs)
@@ -216,6 +241,20 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
                 model = _model(F'{{ function {name}() {{}} }}', FileKind.commonjs)
                 self.assertEqual(model.root_scope.bindings[name].declarations, [])
 
+    def test_a_lexical_declaration_of_arguments_at_the_top_binds_that_name_alone(self):
+        kinds = {}
+        for source in ('let arguments = 1;', 'const arguments = 1;', 'class arguments {}'):
+            arguments = _model(source, FileKind.commonjs).root_scope.bindings['arguments']
+            kinds[source] = (arguments.kind, arguments.supplied_by_host)
+        self.assertEqual(
+            kinds,
+            {
+                'let arguments = 1;': (BindingKind.LET, False),
+                'const arguments = 1;': (BindingKind.CONST, False),
+                'class arguments {}': (BindingKind.CLASS, False),
+            },
+        )
+
     def test_the_wrapper_arguments_aliases_the_parameters_in_their_order(self):
         model = _model('exports = 1;\nf(arguments[0], arguments[2]);', FileKind.commonjs)
         bindings = model.root_scope.bindings
@@ -225,18 +264,31 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
         }
         self.assertEqual(read, {'exports': True, 'require': False, 'module': True})
 
+    @wontfix(
+        'no program names a function it declares in a block arguments: strict code forbids the '
+        'name, and no renamer picks it'
+    )
+    def test_a_block_function_named_arguments_replaces_the_object_where_its_declaration_runs(self):
+        model = _model('exports = 1;\n{ function arguments() {} }\nf(arguments[0]);', FileKind.commonjs)
+        exports = model.root_scope.bindings['exports']
+        self.assertFalse(any(isinstance(node, JsMemberExpression) for node in exports.reads))
+
 
 class TestACopyOfABlockFunctionIsMadeInTheSloppyReadingOnly(TestBase):
 
     @staticmethod
-    def _copy(source: str, kind: FileKind):
-        model = _model(source, kind)
-        function = next(
+    def _function_g(model: SemanticModel) -> JsFunctionDeclaration:
+        return next(
             node for node in model.root.walk()
             if isinstance(node, JsFunctionDeclaration)
             and node.id is not None
             and node.id.name == 'g'
         )
+
+    @classmethod
+    def _copy(cls, source: str, kind: FileKind):
+        model = _model(source, kind)
+        function = cls._function_g(model)
         assert function.id is not None
         block = model.binding_of(function.id)
         assert block is not None
@@ -249,17 +301,36 @@ class TestACopyOfABlockFunctionIsMadeInTheSloppyReadingOnly(TestBase):
             kind: self._copy(source, kind).conditional
             for kind in (FileKind.script, FileKind.commonjs, FileKind.commonjs_or_es_module)
         }
-        self.assertEqual(conditional, {
-            FileKind.script: False,
-            FileKind.commonjs: False,
-            FileKind.commonjs_or_es_module: True,
-        })
+        self.assertEqual(
+            conditional,
+            {
+                FileKind.script: False,
+                FileKind.commonjs: False,
+                FileKind.commonjs_or_es_module: True,
+            },
+        )
 
     def test_the_var_only_a_conditional_copy_declares_may_be_absent(self):
         source = 'function f() { { function g() {} } return g; }'
         self.assertTrue(self._copy(source, FileKind.commonjs_or_es_module).var.may_be_absent)
 
     def test_the_var_another_declaration_declares_too_is_bound_in_either_reading(self):
-        copy = self._copy(
-            'function f() { var g; { function g() {} } return g; }', FileKind.commonjs_or_es_module)
+        source = 'function f() { var g; { function g() {} } return g; }'
+        copy = self._copy(source, FileKind.commonjs_or_es_module)
         self.assertFalse(copy.var.may_be_absent)
+
+    def test_a_write_to_the_var_of_a_copy_observes_whether_the_var_exists(self):
+        observed = {}
+        for source in (
+            'function f() { { function g() {} } }',
+            'function f() { { function g() {} } g = 1; }',
+        ):
+            model = _model(source, FileKind.commonjs_or_es_module)
+            observed[source] = model.annex_b_copy_observed(self._function_g(model))
+        self.assertEqual(
+            observed,
+            {
+                'function f() { { function g() {} } }': False,
+                'function f() { { function g() {} } g = 1; }': True,
+            },
+        )

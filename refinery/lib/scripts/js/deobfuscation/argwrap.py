@@ -24,6 +24,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    SemanticModel,
     enclosing_operator,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -145,6 +146,7 @@ def _a_bare_var_declarator_outside_a_loop_head(declared: Node) -> bool:
 
 
 def _the_calls_that_reach(
+    model: SemanticModel,
     binding: Binding,
     declaration: JsFunctionDeclaration,
 ) -> list[JsCallExpression] | None:
@@ -182,7 +184,11 @@ def _the_calls_that_reach(
     it is made rather than refused, is
     `test.lib.scripts.js.test_unfixed_defects.TestAWithObjectMayCarryTheNameAWrapperAnswersTo`; the
     opaque reflective surfaces are accepted for the reason
-    `test.lib.scripts.js.test_unfixed_defects.TestAnUnreadableEvalMayRebindAWrapper` states.
+    `test.lib.scripts.js.test_unfixed_defects.TestAnUnreadableEvalMayRebindAWrapper` states. A
+    dynamic reference that resolves to another binding is not such a reference: it reaches this
+    wrapper only in the reading where that binding is absent
+    (`refinery.lib.scripts.js.analysis.model.Binding.may_be_absent`) and reaches the other one in
+    the reading where it is not, so the wrapper is refused.
     """
     for name in binding.declarations:
         if name is not declaration.id and not _a_bare_var_declarator_outside_a_loop_head(name):
@@ -190,6 +196,8 @@ def _the_calls_that_reach(
     for write in (*binding.writes, *binding.indefinite_writes):
         if not isinstance(write, JsIdentifier) or not write.is_descendant_of(declaration):
             return None
+    if any(model.resolve(reference) is not None for reference in binding.dynamic_refs):
+        return None
     calls: list[JsCallExpression] = []
     for reference in (*binding.reads, *binding.dynamic_refs):
         if not isinstance(reference, JsIdentifier):
@@ -231,7 +239,7 @@ def _admitted_wrappers(cache: ModelCache, root: JsScript, options: object) -> li
             continue
         if a_host_reaches_the_binding(model, binding, options):
             continue
-        calls = _the_calls_that_reach(binding, node)
+        calls = _the_calls_that_reach(model, binding, node)
         if not calls:
             continue
         wrappers.append(_Wrapper(node, calls))

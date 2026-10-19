@@ -795,7 +795,10 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
         module = DeobfuscationOptions(execution=ExecutionModel.module)
         for count in (2, 16):
             builds, pruned = _transform_root_builds(
-                JsDeadCodeElimination, self._block_functions(count), module)
+                JsDeadCodeElimination,
+                self._block_functions(count),
+                module,
+            )
             with self.subTest(count=count):
                 self.assertEqual(builds, 1)
                 self.assertNotIn('false', pruned)
