@@ -19,6 +19,7 @@ from refinery.lib.scripts.js.analysis.cfg import ControlFlowModel, build_control
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites, build_intrinsic_writes
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
@@ -27,9 +28,9 @@ from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tam
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
 from refinery.lib.scripts.js.options import (
     eval_is_trusted,
+    file_kind,
     host_environment,
     is_host_entrypoint,
-    runs_as_module,
 )
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
@@ -43,8 +44,10 @@ class ModelCache(ModelCacheBase):
     `refinery.lib.scripts.js.analysis.liveness.LivenessModel` and
     `refinery.lib.scripts.js.analysis.dominance.DominanceModel`, the
     `refinery.lib.scripts.js.analysis.reaching.ReachingModel` layered on them, and the
-    `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel` built under the run's
-    execution model, for one root script.
+    `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel`, for one root script.
+    What the file is (`refinery.lib.scripts.js.options.file_kind`) is decided once, on the tree the
+    cache is created over, and every semantic model it builds holds that answer: an edit that
+    removes the declaration which made a file an ES module does not make it something else.
     The memoized models are dropped whenever this root's AST-mutation counter advances past the
     value they were built at, so a transform that reads the cache after an earlier mutation in the
     same pass — even one not yet announced through `refinery.lib.scripts.Transformer.changed` —
@@ -108,6 +111,7 @@ class ModelCache(ModelCacheBase):
     )
 
     root: JsScript
+    file_kind: FileKind
     _model: SemanticModel | None
     _intrinsic_writes: IntrinsicWrites | None
     _control_flow: ControlFlowModel | None
@@ -126,6 +130,7 @@ class ModelCache(ModelCacheBase):
     ):
         self.settlement = settlement
         super().__init__(root, options)
+        self.file_kind = file_kind(self.options, self.root)
 
     @property
     def model(self) -> SemanticModel:
@@ -133,6 +138,7 @@ class ModelCache(ModelCacheBase):
             self.root,
             host_environment(self.options),
             eval_is_trusted(self.options),
+            self.file_kind,
         ))
 
     @property
@@ -160,14 +166,13 @@ class ModelCache(ModelCacheBase):
     def dominance(self) -> DominanceModel:
         """
         The `refinery.lib.scripts.js.analysis.dominance.DominanceModel` for this root, built under
-        the execution model and the host entrypoints the run's options select, since a function a
-        host or an importer calls has no call-site list the file can order.
+        the host entrypoints the run's options select, since a function a host or an importer calls
+        has no call-site list the file can order.
         """
         return self._lazy('_dominance', lambda: build_dominance(
             self.model,
             self.control_flow,
             intrinsic_writes=self.intrinsic_writes,
-            module_scope=runs_as_module(self.options, self.root),
             host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 
@@ -179,14 +184,13 @@ class ModelCache(ModelCacheBase):
     def assignment(self) -> DefiniteAssignmentModel:
         """
         The `refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel` for this root,
-        built under the execution model and the host entrypoints the run's options select. It is the
-        one establishment answer for implicit-global reads: every consumer in a run reads this slot,
+        built under the host entrypoints the run's options select. It is the one establishment
+        answer for implicit-global reads: every consumer in a run reads this slot,
         so no tree is ever judged under two establishment answers at once.
         """
         return self._lazy('_assignment', lambda: build_definite_assignment(
             self.model,
             self.control_flow,
-            module_scope=runs_as_module(self.options, self.root),
             host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 

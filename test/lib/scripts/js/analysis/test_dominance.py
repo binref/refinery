@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import build_semantic_model, member_property_name
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
@@ -386,12 +387,11 @@ class TestDominance(TestBase):
         becomes a property of the global object, so the host cannot reach it by name.
         """
         source = 'function OnEvent(){ return c; } fire(); var c = 5;'
-        for module_scope, expected in ((False, False), (True, True)):
-            with self.subTest(module_scope=module_scope):
+        for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
+            with self.subTest(kind.name):
                 ast = JsParser(source).parse()
                 dom = build_dominance(
-                    build_semantic_model(ast),
-                    module_scope=module_scope,
+                    build_semantic_model(ast, file_kind=kind),
                     host_entrypoint=lambda name: name == 'OnEvent',
                 )
                 ordered = dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'OnEvent'))
@@ -521,12 +521,11 @@ class TestDominance(TestBase):
         of the global object, and no host reaches it by name.
         """
         source = 'var handlers = {}; handlers.onload = function(){ return c; }; fire(); var c = 5;'
-        for module_scope, expected in ((False, False), (True, True)):
-            with self.subTest(module_scope=module_scope):
+        for kind, expected in ((FileKind.script, False), (FileKind.commonjs, True)):
+            with self.subTest(kind.name):
                 ast = JsParser(source).parse()
                 dom = build_dominance(
-                    build_semantic_model(ast),
-                    module_scope=module_scope,
+                    build_semantic_model(ast, file_kind=kind),
                     host_entrypoint=lambda name: name == 'handlers',
                 )
                 method = self._method(ast, 'handlers', 'onload')

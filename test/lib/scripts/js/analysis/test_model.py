@@ -6,6 +6,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -606,26 +607,29 @@ class TestSemanticModel(TestBase):
         self.assertFalse(function_scope.bindings['x'].has_member_reference)
 
     def test_reaches_global_object_implicit_global(self):
-        _, model = self._model('globalThis.g = 1;')
-        g = model.root_scope.bindings['g']
-        self.assertTrue(model.reaches_global_object(g, module_scope=False))
-        self.assertTrue(model.reaches_global_object(g, module_scope=True))
+        for kind in FileKind:
+            with self.subTest(kind.name):
+                model = build_semantic_model(JsParser('globalThis.g = 1;').parse(), file_kind=kind)
+                self.assertTrue(model.reaches_global_object(model.root_scope.bindings['g']))
 
-    def test_reaches_global_object_top_level_var_depends_on_execution_model(self):
-        _, model = self._model('var v = 1;')
-        v = model.root_scope.bindings['v']
-        self.assertTrue(model.reaches_global_object(v, module_scope=False))
-        self.assertFalse(model.reaches_global_object(v, module_scope=True))
+    def test_reaches_global_object_top_level_var_only_in_a_script(self):
+        for kind in FileKind:
+            with self.subTest(kind.name):
+                model = build_semantic_model(JsParser('var v = 1;').parse(), file_kind=kind)
+                self.assertEqual(
+                    model.reaches_global_object(model.root_scope.bindings['v']),
+                    kind is FileKind.script,
+                )
 
     def test_reaches_global_object_false_for_top_level_let(self):
         _, model = self._model('let x = 1;')
         x = model.root_scope.bindings['x']
-        self.assertFalse(model.reaches_global_object(x, module_scope=False))
+        self.assertFalse(model.reaches_global_object(x))
 
     def test_reaches_global_object_false_for_nested_var(self):
         _, model = self._model('function f(){ var n = 1; return n; }')
         n = model.root_scope.children[0].bindings['n']
-        self.assertFalse(model.reaches_global_object(n, module_scope=False))
+        self.assertFalse(model.reaches_global_object(n))
 
     def test_reference_role_reads_global_alias_member_value(self):
         ast, _ = self._model('sink(globalThis.g);')

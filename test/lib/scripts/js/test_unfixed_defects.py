@@ -76,6 +76,7 @@ from test.lib.scripts.js.deobfuscation.test_selfchecks import (
     checked_by_name,
     guarded,
 )
+from test.lib.scripts.js.deobfuscation import test_the_file_kind as the_file_kind
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
 )
@@ -85,6 +86,7 @@ from test.lib.scripts.js.ledger import (
     a_program,
     a_walk_of,
     an_accessor_at,
+    as_classic_scripts,
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,
@@ -2754,26 +2756,10 @@ class TestAPromotedClosureIsStillOneObjectAcrossCalls(TestBase):
         )
 
 
-#: A program whose parameter default runs a direct `eval` declaring a name the body reads, mapped
-#: to the behavior an engine gives it.
-A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME = {
-    'a var the eval declares, read by the body': Program(
-        a_program("""
-            var v = 1;
-            function f(x = eval('var v = 2')) { return v; }
-            console.log(f());
-            """),
-        prints('2'),
-    ),
-    'a var the eval declares, read by a later default': Program(
-        a_program("""
-            var v = 1;
-            function f(a = eval('var v = 2'), b = v) { return b; }
-            console.log(f());
-            """),
-        prints('2'),
-    ),
-}
+#: The programs of the same name in the file-kind tests, read as classic scripts.
+A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME = as_classic_scripts(
+    the_file_kind.A_DIRECT_EVAL_IN_A_DEFAULT_DECLARING_A_NAME
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2785,8 +2771,10 @@ class TestADirectEvalInADefaultDeclaresWhereItRuns(TestBase):
     therefore one the body reads instead of the outer one it would otherwise have read, and the
     program prints what the `eval` put there.
 
-    The analysis resolves the body's read to the outer declaration and folds it, so the value the
-    `eval` wrote is dropped. The root is not the parameter scope but the reach of a direct `eval`:
+    The analysis resolves the body's read to the outer declaration and folds it where that is a
+    top-level variable of a classic script, so the value the `eval` wrote is dropped; a module's
+    own variables are within the reach of every direct `eval` of the file, and stay. The root is
+    not the parameter scope but the reach of a direct `eval`:
     `TestAParameterDefaultReadsPastTheBody` is about which scope a default reads from, and this one
     is about a scope whose contents no reading of the text gives.
 
@@ -2795,42 +2783,10 @@ class TestADirectEvalInADefaultDeclaresWhereItRuns(TestBase):
     """
 
 
-#: Programs running a direct `eval` in the body of a function that declares a `var` named like an
-#: outer variable the function reads after it, mapped to the behavior an engine gives them.
-A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = {
-    'a var the eval declares, read by the body': Program(
-        a_program("""
-            var v = 1;
-            function f(c) { eval(c); return v; }
-            console.log(f("var v = 2"));
-            """),
-        prints('2'),
-    ),
-    'a var the eval declares, read by a function the body declares': Program(
-        a_program("""
-            var v = 1;
-            function f(c) { eval(c); function g() { return v; } return g(); }
-            console.log(f("var v = 2"));
-            """),
-        prints('2'),
-    ),
-    'a var an eval below and declares, read by the body': Program(
-        a_program("""
-            var x = 1;
-            function f(c) { c && eval("var x = 2"); return x; }
-            console.log(f(false), f(true));
-            """),
-        prints('1 2'),
-    ),
-    'a var an eval in an arm of a conditional declares, read by the body': Program(
-        a_program("""
-            var x = 1;
-            function f(c) { c ? eval("var x = 2") : 0; return x; }
-            console.log(f(false), f(true));
-            """),
-        prints('1 2'),
-    ),
-}
+#: The programs of the same name in the file-kind tests, read as classic scripts.
+A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME = as_classic_scripts(
+    the_file_kind.A_DIRECT_EVAL_IN_A_BODY_DECLARING_A_NAME
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2842,45 +2798,18 @@ class TestADirectEvalInABodyDeclaresWhereItRuns(TestBase):
     so a read of that name after it finds what the `eval` put there, not the outer variable.
     Constant inlining resolves the read to the outer declaration and folds the value written there.
     The question it has to ask is one the model answers
-    (`refinery.lib.scripts.js.analysis.model.SemanticModel.direct_eval_declares_below`), and only an
-    outer variable of the script or the module is folded this way: a local of an enclosing function
-    is refused because a direct `eval` reaches it. A program running code it is handed is possible
-    in real input; the defect needs that code to declare a name the function also reads from
-    outside.
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.direct_eval_declares_below`), and only a
+    top-level variable of a classic script is folded this way: a local of an enclosing function and
+    a top-level variable of a module are refused because a direct `eval` reaches them. A program
+    running code it is handed is possible in real input; the defect needs that code to declare a
+    name the function also reads from outside.
     """
 
 
-#: Programs whose direct `eval` of a string no fold can read assigns a variable of the file that a
-#: function reads, called after the `eval`, mapped to the behavior an engine gives them.
-A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = {
-    'the eval at the top of the file': Program(
-        a_program("""
-            var s = "abc";
-            function f(n) { return s.slice(n); }
-            eval(Date.now() > 0 ? "s = 'xyz'" : "");
-            console.log(f(Math.random() > 2 ? 0 : 1));
-            """),
-        prints('yz'),
-    ),
-    'the eval in another function': Program(
-        a_program("""
-            var s = "abc";
-            function f(n) { return s.slice(n); }
-            function g() { eval(Date.now() > 0 ? "s = 'xyz'" : ""); }
-            g();
-            console.log(f(Math.random() > 2 ? 0 : 1));
-            """),
-        prints('yz'),
-    ),
-    'the long string of a slicing accessor': Program(
-        SLICED
-        + decoder('S_decode') + '\n'
-        + slicing('S', 'S_decode') + '\n'
-        + 'eval(Date.now() > 0 ? "strs = " + JSON.stringify("XXlrCD^") : "");\n'
-        + 'console.log(S(2, 5));\n',
-        prints('Fizz'),
-    ),
-}
+#: The programs of the same name in the file-kind tests, read as classic scripts.
+A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION = as_classic_scripts(
+    the_file_kind.A_VARIABLE_AN_UNREADABLE_EVAL_ASSIGNS_READ_BY_A_FUNCTION
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -2893,9 +2822,11 @@ class TestAVariableAnUnreadableEvalMayAssignIsNotWrittenIntoAFunctionReadingIt(T
     runs before every call of that function
     (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before_every_invocation`),
     without asking whether an `eval` runs between the two. The base91 pass then keeps the call of
-    an accessor whose long string was written into it, and the call slices the old string. A
-    program running code it is handed is possible in real input; the defect needs that code to
-    assign a variable of the file that holds one value otherwise.
+    an accessor whose long string was written into it, and the call slices the old string. Only a
+    top-level variable of a classic script is written in: a module's own variables are within the
+    reach of every direct `eval` of the file, and no value of theirs is. A program running code it
+    is handed is possible in real input; the defect needs that code to assign a variable of the
+    file that holds one value otherwise.
     """
 
 
@@ -4327,35 +4258,24 @@ class TestAnInstallerTakenByDestructuringIsSeen(TestBase):
         )
 
 
-#: A program whose namespace object loses a key to code only an `eval` can read, mapped to what Node
-#: prints for it.
-A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES = {
-    a_program("""
-        var X = {};
-        X.k = 1;
-        eval(process.argv[2] || 'delete X.k');
-        console.log('k' in X);
-        """): 'false\n',
-}
+#: The programs of the same name in the file-kind tests, read as classic scripts.
+A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES = as_classic_scripts(
+    the_file_kind.A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES
+)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES)
 class TestANamespaceAnUnreadableEvalReachesStaysWhole(TestBase):
     """
     Namespace flattening turns `X.k` into a variable `k` while a direct `eval` whose text the
     analysis cannot read still names `X`, and the `in` fold answers from the keys the text writes.
     The evaluated code deletes the key, so the input prints `false`, and the flattened output runs
-    the same text against a name that no longer exists. An `eval` beside a namespace is a shape
-    packers do emit, but one whose text reaches back into the namespace is rare.
+    the same text against a name that no longer exists. In a module of either kind the namespace is
+    within the reach of every direct `eval` of the file and stays whole; a classic script's is a
+    global, which no `eval` is taken to reach. An `eval` beside a namespace is a shape packers do
+    emit, but one whose text reaches back into the namespace is rare.
     """
-
-    @unittest.expectedFailure
-    def test_the_deleted_key_is_missing(self):
-        rows = A_NAMESPACE_AN_UNREADABLE_EVAL_CHANGES
-        self.assertEqual(
-            {source: before_and_after(source) for source in rows},
-            each_program_still_prints(rows),
-        )
 
 
 #: A script whose recursive global function is called through the global object held under a name

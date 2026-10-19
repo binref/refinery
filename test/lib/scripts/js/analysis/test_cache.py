@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlinin
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
 from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsIdentifier,
@@ -44,10 +45,15 @@ def _no_pin(self):
     yield self
 
 
-def _transform_root_builds(transform: type[Transformer], source: str) -> tuple[int, str]:
+def _transform_root_builds(
+    transform: type[Transformer],
+    source: str,
+    options: object | None = None,
+) -> tuple[int, str]:
     """
-    How many times the script's own semantic model is built during one pass of *transform*, with the
-    resulting script. Builds over freshly parsed fragments are excluded by identity of the root node.
+    How many times the script's own semantic model is built during one pass of *transform* run
+    under *options*, with the resulting script. Builds over freshly parsed fragments are excluded by
+    identity of the root node.
     """
     script = JsParser(source).parse()
     count = {'n': 0}
@@ -60,7 +66,9 @@ def _transform_root_builds(transform: type[Transformer], source: str) -> tuple[i
 
     cache_module.build_semantic_model = counting_model
     try:
-        transform().visit(script)
+        transformer = transform()
+        transformer.options = options
+        transformer.visit(script)
     finally:
         cache_module.build_semantic_model = real_model
     return count['n'], JsSynthesizer().convert(script)
@@ -764,10 +772,33 @@ class TestDeadCodeRemovalDecidesOnOneModel(TestBase):
         names = ', '.join(F'f{i}' for i in range(count))
         return F'{functions}\nSINK({names});'
 
+    @staticmethod
+    def _block_functions(count: int) -> str:
+        """
+        A script with *count* functions, each holding one branch that never runs and declares a
+        function nothing reads.
+        """
+        functions = '\n'.join(
+            F'function f{i}(a) {{ if (false) {{ function h{i}() {{}} }} return a; }}'
+            for i in range(count)
+        )
+        names = ', '.join(F'f{i}' for i in range(count))
+        return F'{functions}\nSINK({names});'
+
     @a_property_of_the_batch_itself
     def test_the_model_is_built_once_however_many_bodies_hold_a_dead_branch(self):
         self.assertEqual(1, _transform_root_builds(JsDeadCodeElimination, self._bodies(2))[0])
         self.assertEqual(1, _transform_root_builds(JsDeadCodeElimination, self._bodies(16))[0])
+
+    @a_property_of_the_batch_itself
+    def test_dead_branches_declaring_functions_in_a_module_need_one_model(self):
+        module = DeobfuscationOptions(execution=ExecutionModel.module)
+        for count in (2, 16):
+            builds, pruned = _transform_root_builds(
+                JsDeadCodeElimination, self._block_functions(count), module)
+            with self.subTest(count=count):
+                self.assertEqual(builds, 1)
+                self.assertNotIn('false', pruned)
 
     def test_deciding_before_the_first_edit_does_not_change_the_result(self):
         class Unbatched(JsDeadCodeElimination):
@@ -1119,6 +1150,15 @@ class TestObjectFoldingHoldsTheModelsForARun(TestBase):
         self.assertEqual(
             self._held(self._holding_the_parameter(2))[0],
             self._held(self._holding_the_parameter(16))[0],
+        )
+
+    @unittest.expectedFailure
+    @a_property_of_the_pin_itself
+    def test_a_value_reading_a_name_nothing_declares_needs_no_new_models(self):
+        declaration = '{a: FREE + "/INDEX", b: INDEX}'
+        self.assertEqual(
+            self._held(self._scopes(2, declaration, 'O.a + O.b'))[0],
+            self._held(self._scopes(16, declaration, 'O.a + O.b'))[0],
         )
 
     @a_property_of_the_pin_itself

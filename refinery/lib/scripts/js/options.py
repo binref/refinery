@@ -9,21 +9,15 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
-from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.analysis.environment import (
+    COMMONJS_WRAPPER_PARAMETERS,
+    FileKind,
+    HostEnvironment,
+)
+from refinery.lib.scripts.js.analysis.model import lexically_declared_names
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.model import JsScript
-
-
-COMMONJS_WRAPPER_NAMES = frozenset({'require', 'module', 'exports', '__filename', '__dirname'})
-"""
-The parameters of the function a CommonJS host wraps around a file's text. Where the file declares
-none of these names itself, a bare read of one reads the value the host passed and a bare
-assignment writes it; the global scope holds none of them. Code run by a `Function` construction,
-an indirect `eval` or a string timer is global code outside that function and does not see them.
-A `let`, `const` or `class` declaration of one at the top of the file redeclares a parameter, which
-Node refuses to compile as CommonJS; it runs such a file as an ES module.
-"""
 
 
 class ExecutionModel(enum.Enum):
@@ -38,7 +32,8 @@ class ExecutionModel(enum.Enum):
       top-level declaration without changing meaning.
     - `commonjs`: a CommonJS file, as `node file.js` runs it when no package says otherwise. Its
       text is the body of a function the host calls, which runs sloppy unless the file says
-      otherwise and binds the names in `COMMONJS_WRAPPER_NAMES`.
+      otherwise and binds the names in
+      `refinery.lib.scripts.js.analysis.environment.COMMONJS_WRAPPER_PARAMETERS`.
     - `module`: a CommonJS file or an ES module, without saying which. An ES module is strict code
       throughout, reads `await` as a reserved word and binds none of the wrapper names; a
       deobfuscation under this model must hold for both readings.
@@ -115,14 +110,6 @@ def execution_model(options: object | None) -> ExecutionModel:
     return ExecutionModel.script
 
 
-def module_execution(options: object | None) -> bool:
-    """
-    Whether *options* selects a module execution model, under which a top-level binding is scoped to
-    the module and never reaches the global object.
-    """
-    return execution_model(options) is not ExecutionModel.script
-
-
 def host_environment(options: object | None) -> HostEnvironment:
     """
     The host environment *options* pins, against which a bare global read is judged present or
@@ -157,36 +144,34 @@ def preserves_script_return(options: object | None) -> bool:
     return isinstance(options, DeobfuscationOptions) and options.preserve_script_return
 
 
-def runs_as_module(options: object | None, root: JsScript) -> bool:
+def file_kind(options: object | None, root: JsScript) -> FileKind:
     """
-    Whether the file at *root* runs as a module of either kind, where a top-level declaration is
-    scoped to the file: *options* selects the `commonjs` or the `module` execution model, or the
-    file spells module syntax, which no host loads as a script. Every reader of the model asks here,
-    so that no file is judged under the script model by one pass and under a module model by
-    another.
+    What the file at *root* is: an ES module where it spells module syntax, which no host loads any
+    other way, and otherwise what *options* select. A file that may be CommonJS and declares a
+    parameter of the CommonJS wrapper with `let`, `const` or `class` at its top is an ES module as
+    well: Node cannot compile it as CommonJS and runs it as one.
     """
-    return module_execution(options) or root.module
-
-
-def may_run_as_es_module(options: object | None, root: JsScript) -> bool:
-    """
-    Whether the file at *root* may run as an ES module: it spells module syntax, or *options*
-    selects the module model without saying which kind. Code that lands at the top level of such a
-    file is strict code and is read with the Module goal, whatever it would have been where it
-    stood.
-    """
-    return root.module or execution_model(options) is ExecutionModel.module
+    if root.module:
+        return FileKind.es_module
+    model = execution_model(options)
+    if model is ExecutionModel.script:
+        return FileKind.script
+    if not lexically_declared_names(root.body).isdisjoint(COMMONJS_WRAPPER_PARAMETERS):
+        return FileKind.es_module
+    if model is ExecutionModel.commonjs:
+        return FileKind.commonjs
+    return FileKind.commonjs_or_es_module
 
 
 def commonjs_wrapper_names(options: object | None, root: JsScript) -> frozenset[str]:
     """
-    The names the top scope of the file at *root* may bind beyond its own declarations: those of
-    `COMMONJS_WRAPPER_NAMES` where the file may run as a CommonJS file, and none where it runs as a
-    script or spells module syntax, which no host loads as CommonJS.
+    The names the top scope of the file at *root* may bind beyond its own declarations: the
+    parameters of the CommonJS wrapper where the file may run as a CommonJS file, and none where it
+    is a script or an ES module.
     """
-    if root.module or not module_execution(options):
+    if not file_kind(options, root).may_be_commonjs:
         return frozenset()
-    return COMMONJS_WRAPPER_NAMES
+    return frozenset(COMMONJS_WRAPPER_PARAMETERS)
 
 
 def is_host_entrypoint(options: object | None, name: str) -> bool:

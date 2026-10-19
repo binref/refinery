@@ -233,8 +233,8 @@ class TestJsModuleKind(TestUnitBase):
     The `-m` switch says the input runs as a module of either kind, the `-c` switch that it runs as
     a CommonJS file. Only a CommonJS file is sloppy code where it says nothing, so a payload that
     would run differently as strict code is unpacked under `-c` and kept in its string under `-m`.
-    In a classic global script the top-level declaration reaches the global object, which lets the
-    script model fold the read after it.
+    Where the unpacked assignment runs as sloppy code, in a classic global script or a CommonJS
+    file, it creates the global, which lets the read after it name that global bare.
     """
 
     SLOPPY_PAYLOAD = b'Function("leak = 5;")();\nconsole.log(globalThis.leak);'
@@ -242,13 +242,13 @@ class TestJsModuleKind(TestUnitBase):
     def test_a_commonjs_file_holds_the_payload_unpacked(self):
         self.assertEqual(
             self.SLOPPY_PAYLOAD | self.load(commonjs=True) | str,
-            'leak = 5;\nconsole.log(globalThis.leak);',
+            'leak = 5;\nconsole.log(leak);',
         )
 
     def test_both_switches_together_read_a_commonjs_file(self):
         self.assertEqual(
             self.SLOPPY_PAYLOAD | self.load(module=True, commonjs=True) | str,
-            'leak = 5;\nconsole.log(globalThis.leak);',
+            'leak = 5;\nconsole.log(leak);',
         )
 
     def test_a_module_of_either_kind_keeps_the_payload_in_its_string(self):

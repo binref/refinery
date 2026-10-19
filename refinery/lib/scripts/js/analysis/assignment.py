@@ -95,7 +95,6 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.strict import strict_mode_at
 
 _OTHER_REALM_ALIASES = GLOBAL_OBJECT_ALIASES - SAME_REALM_GLOBAL_OBJECT_ALIASES
 
@@ -113,9 +112,9 @@ class DefiniteAssignmentModel:
     """
     Build over a `refinery.lib.scripts.js.analysis.model.SemanticModel` and its
     `refinery.lib.scripts.analysis.cfg.ControlFlowModel`; query with `definitely_assigned_at`.
-    *module_scope* is the run's execution model: under a module reading a region may be strict and a
-    top-level `this` does not denote the global object, so no bare write and no `this` member write
-    establishes anything.
+    A bare write establishes a global only in code that cannot run as strict code, and a member
+    write through a top-level `this` only where the file is a script; the semantic model answers
+    both for the file it was built over.
     *host_entrypoint* names the top-level functions the analyst declared a host invokes by name;
     such a function has a call site outside the file, so the meet over its spelled call sites does
     not bound its entry facts and it gets none.
@@ -126,12 +125,10 @@ class DefiniteAssignmentModel:
         model: SemanticModel,
         control_flow: ControlFlowModel | None = None,
         *,
-        module_scope: bool = False,
         host_entrypoint: Callable[[str], bool] | None = None,
     ):
         self.model = model
         self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
-        self._module = module_scope
         self._host_entrypoint = host_entrypoint
         self._tracked: dict[int, Binding] = {}
         self._by_name: dict[str, Binding] = {}
@@ -210,7 +207,7 @@ class DefiniteAssignmentModel:
             if isinstance(target, JsMemberExpression):
                 if self._cannot_be_the_global_object(target.object):
                     continue
-                name = self.model.global_alias_member_name(target, module_scope=self._module)
+                name = self.model.global_alias_member_name(target)
                 if name is None:
                     name = member_property_name(target)
                 if name is not None:
@@ -575,7 +572,7 @@ class DefiniteAssignmentModel:
         return frozenset()
 
     def _bare_target_gen(self, target: JsIdentifier, binding: Binding) -> frozenset[Binding]:
-        if self._module or strict_mode_at(target):
+        if self.model.may_run_as_strict(target):
             return frozenset()
         return frozenset({binding})
 
@@ -625,7 +622,7 @@ class DefiniteAssignmentModel:
         base = strip_parens(target.object) if target.object is not None else None
         if isinstance(base, JsIdentifier) and base.name in _OTHER_REALM_ALIASES:
             return frozenset()
-        name = self.model.global_alias_member_name(target, module_scope=self._module)
+        name = self.model.global_alias_member_name(target)
         if name is None:
             return frozenset()
         binding = self._by_name.get(name)
@@ -669,12 +666,6 @@ def build_definite_assignment(
     model: SemanticModel,
     control_flow: ControlFlowModel | None = None,
     *,
-    module_scope: bool = False,
     host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DefiniteAssignmentModel:
-    return DefiniteAssignmentModel(
-        model,
-        control_flow,
-        module_scope=module_scope,
-        host_entrypoint=host_entrypoint,
-    )
+    return DefiniteAssignmentModel(model, control_flow, host_entrypoint=host_entrypoint)

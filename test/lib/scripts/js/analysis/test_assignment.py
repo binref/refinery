@@ -5,6 +5,7 @@ from typing import Callable
 from test import TestBase
 
 from refinery.lib.scripts.js.analysis.assignment import build_definite_assignment
+from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier
 from refinery.lib.scripts.js.parser import JsParser
@@ -22,13 +23,12 @@ class TestDefiniteAssignment(TestBase):
     def _vouched(
         source: str,
         *,
-        module_scope: bool = False,
+        file_kind: FileKind = FileKind.script,
         host_entrypoint: Callable[[str], bool] | None = None,
     ) -> bool:
         ast = JsParser(source).parse()
-        model = build_semantic_model(ast)
-        assignment = build_definite_assignment(
-            model, module_scope=module_scope, host_entrypoint=host_entrypoint)
+        model = build_semantic_model(ast, file_kind=file_kind)
+        assignment = build_definite_assignment(model, host_entrypoint=host_entrypoint)
         for node in ast.walk():
             if (
                 isinstance(node, JsCallExpression)
@@ -295,13 +295,24 @@ class TestDefiniteAssignment(TestBase):
         self.assertFalse(self._vouched(
             "function s() { 'use strict'; X = 1; }\ns();\nprobe(X);"))
 
-    def test_no_bare_write_vouches_under_the_module_reading(self):
-        self.assertFalse(self._vouched('X = 1;\nprobe(X);', module_scope=True))
+    def test_no_bare_write_vouches_where_the_file_may_be_an_es_module(self):
+        for kind in (FileKind.es_module, FileKind.commonjs_or_es_module):
+            with self.subTest(kind.name):
+                self.assertFalse(self._vouched('X = 1;\nprobe(X);', file_kind=kind))
+
+    def test_a_bare_write_vouches_in_a_commonjs_file(self):
+        self.assertTrue(self._vouched('X = 1;\nprobe(X);', file_kind=FileKind.commonjs))
+
+    def test_a_bare_write_in_strict_code_of_a_commonjs_file_does_not_vouch(self):
+        self.assertFalse(self._vouched(
+            "'use strict';\nX = 1;\nprobe(X);", file_kind=FileKind.commonjs))
 
     def test_a_top_level_this_write_vouches_only_under_the_script_reading(self):
         source = 'this.X = 1;\nprobe(X);'
         self.assertTrue(self._vouched(source))
-        self.assertFalse(self._vouched(source, module_scope=True))
+        for kind in (FileKind.commonjs, FileKind.es_module, FileKind.commonjs_or_es_module):
+            with self.subTest(kind.name):
+                self.assertFalse(self._vouched(source, file_kind=kind))
 
     def test_a_write_through_another_realms_alias_does_not_vouch(self):
         for alias in ['top', 'frames']:

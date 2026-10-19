@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Collection, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+from refinery.lib.scripts.js.analysis.environment import FileKind, HostEnvironment
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsArrayExpression,
@@ -2305,10 +2305,12 @@ class SemanticModel:
         root: JsScript,
         environment: HostEnvironment = HostEnvironment.universal,
         trust_eval: bool = False,
+        file_kind: FileKind = FileKind.script,
     ):
         self.root = root
         self.environment = environment
         self.trust_eval = trust_eval
+        self.file_kind = file_kind
         self._node_scope: dict[Node, Scope] = {}
         self._binding_of: dict[Node, Binding] = {}
         self._reflection_surface: bool | None = None
@@ -3242,6 +3244,31 @@ class SemanticModel:
         copy = _copy_made_by(own, node.parent)
         return None if copy is None else copy.var
 
+    def may_run_as_strict(self, node: Node) -> bool:
+        """
+        Whether the code at *node* may run as strict code: the file may be an ES module, which is
+        strict code throughout whatever its text says, or the text makes it strict.
+        """
+        return self.file_kind.may_be_an_es_module or strict_mode_at(node)
+
+    def annex_b_copy_observed(self, declaration: JsFunctionDeclaration) -> bool:
+        """
+        Whether anything may observe the copy Annex B makes of the function *declaration*, declared
+        in a block: the `var` the copy writes is read, named in a `with` body, exported, carried by
+        an object handed to a call, or reachable by reflection. A declaration this model was not
+        built over may be observed.
+        """
+        if declaration.id is None:
+            return False
+        block = self.binding_of(declaration.id)
+        if block is None:
+            return True
+        return any(
+            copy.observed or self.reflection_can_reach(copy.var)
+            for copy in block.copies_made
+            if copy.declaration is declaration
+        )
+
     def would_capture(
         self, names: set[str], scope: Scope, *, exclude: Collection[Binding] = (),
     ) -> bool:
@@ -3405,7 +3432,7 @@ class SemanticModel:
         volatile instead.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             if self.has_reflection_surface():
                 return None
             return self.opaque_global_write_sites()
@@ -3418,7 +3445,21 @@ class SemanticModel:
             return False
         return self.may_be_the_global_object(member.object)
 
-    def reflection_can_reach(self, binding: Binding, *, module_scope: bool = False) -> bool:
+    def _named_by_global_code(self, binding: Binding) -> bool:
+        """
+        Whether code running in the global scope, which every reflective surface but a direct `eval`
+        runs, can name *binding*: an implicit global, and where the file is a script, every binding
+        of its top scope. In a module of either kind a top-level declaration is scoped to the file.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is not ScopeKind.SCRIPT:
+            return False
+        return (
+            binding.kind is BindingKind.IMPLICIT_GLOBAL
+            or not self.file_kind.scopes_declarations_to_the_file
+        )
+
+    def reflection_can_reach(self, binding: Binding) -> bool:
         """
         Whether a runtime name lookup could read or write *binding* without a reference this model
         records. Derived over the precise dynamic-scope facts. A global is reachable through any
@@ -3434,16 +3475,26 @@ class SemanticModel:
         cannot name a local — so the local answer is exact, while the global one stays
         conservative (any surface).
 
-        Under the module execution model (*module_scope*) a declaration of the top-level scope is
-        scoped to the module: global-scope code cannot name it, so it is reached the way a
-        function-local is, from the module's own text only. An implicit global stays a global.
+        Where the file is a module of either kind a declaration of the top-level scope is scoped to
+        the file: global-scope code cannot name it, so it is reached the way a function-local is,
+        from the file's own text only (`reflection_can_reach_from_its_scope`). An implicit global
+        stays a global.
+        """
+        if self._named_by_global_code(binding):
+            return self.has_reflection_surface() or self.has_opaque_global_write()
+        return self.reflection_can_reach_from_its_scope(binding)
+
+    def reflection_can_reach_from_its_scope(self, binding: Binding) -> bool:
+        """
+        Whether code standing in the scope of *binding* that this model cannot read could name it: a
+        `with` body that names it, a direct `eval` in its function, or a span of that function this
+        model never read. The scope of an implicit global is the global scope, where every
+        reflective surface runs. Code in the global scope outside the file is not asked about, which
+        is the whole question for a binding scoped to a function or to a module and one half of it
+        for a declaration of a script's top scope (`reflection_can_reach`).
         """
         owner = binding.scope.var_scope
-        if (
-            owner is None
-            or binding.kind is BindingKind.IMPLICIT_GLOBAL
-            or (owner.kind is ScopeKind.SCRIPT and not module_scope)
-        ):
+        if owner is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
             return self.has_reflection_surface() or self.has_opaque_global_write()
         return (
             bool(binding.dynamic_refs)
@@ -3481,7 +3532,7 @@ class SemanticModel:
         as a `dynamic_references` entry a caller consults separately.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             return self.opaque_reflection_sites()
         return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node)
 
@@ -3497,7 +3548,7 @@ class SemanticModel:
         precisely as `dynamic_references`, so only the opaque `eval` case needs this per-function answer.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             return False
         return self._function_has_direct_eval(owner.node)
 
@@ -3518,7 +3569,7 @@ class SemanticModel:
         that text spells.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             return bool(self._unread_source_sites(self.root))
         return bool(self._unread_source_sites(owner.node))
 
@@ -3619,7 +3670,7 @@ class SemanticModel:
             return None
         owner = binding.scope.var_scope
         sites = list(binding.indefinite_writes)
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             sites.extend(self._unread_source_sites(self.root))
         else:
             sites.extend(self._direct_eval_sites(owner.node))
@@ -3670,7 +3721,7 @@ class SemanticModel:
         order the kill against; `None` is the volatility it cannot.
         """
         owner = binding.scope.var_scope
-        if owner is None or owner.kind is ScopeKind.SCRIPT:
+        if owner is None or self._named_by_global_code(binding):
             return self.opaque_global_write_replacement_sites(binding)
         return self.reflection_surface_sites(binding) + self.dynamic_references(binding)
 
@@ -3686,18 +3737,18 @@ class SemanticModel:
         """
         return not binding.writes and not self.binding_maybe_reassigned_dynamically(binding)
 
-    def reaches_global_object(self, binding: Binding, *, module_scope: bool) -> bool:
+    def reaches_global_object(self, binding: Binding) -> bool:
         """
         Whether *binding* is a property of the global object at runtime — the global a free name in
         global-scope reflected code (a `Function` body, an indirect `eval`, a string timer) resolves to.
-        An implicit global always is. A top-level `var`/function declaration is, but only under the
-        script execution model; under the module model (*module_scope*) it is scoped to the module and
-        never reaches the global. A top-level `let`/`const`/`class`, or any binding nested below the
-        script, is a distinct lexical binding that global-scope code cannot see.
+        An implicit global always is. A top-level `var`/function declaration is where the file is a
+        script; in a module of either kind it is scoped to the file and never reaches the global. A
+        top-level `let`/`const`/`class`, or any binding nested below the script, is a distinct
+        lexical binding that global-scope code cannot see.
         """
         if binding.kind is BindingKind.IMPLICIT_GLOBAL:
             return True
-        if module_scope:
+        if self.file_kind.scopes_declarations_to_the_file:
             return False
         return (
             binding.scope is self.root_scope
@@ -4112,9 +4163,7 @@ class SemanticModel:
             self.root_scope.bindings.setdefault(
                 node.name, Binding(node.name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
 
-    def global_alias_member_name(
-        self, member: JsMemberExpression, *, module_scope: bool = False,
-    ) -> str | None:
+    def global_alias_member_name(self, member: JsMemberExpression) -> str | None:
         """
         The name of the global that a member access on a global-object alias references
         (`globalThis.g`, `window['g']` → `g`), or `None` when *member* is not such an access. The alias
@@ -4123,16 +4172,16 @@ class SemanticModel:
         dynamic scope, where the alias could be rebound or the target could be a `with`-object property —
         in either case the model cannot claim the reference denotes a global.
 
-        *module_scope* is the one thing about the file this query cannot read off the access. A
-        `this` written where a classic script's top level holds one denotes the global object; the
-        same `this` in a module denotes nothing, and in a CommonJS file it denotes that file's
-        exports. So a caller rewriting a program for a host answers under the model it runs, and the
-        default is the script model, which is the model this class records under: recording a
-        reference the module model would not have is what keeps a declaration a reader may reach,
-        and refusing to record it is what removes one.
+        A `this` where the top level holds one denotes the global object only where the file is a
+        script (`file_kind`): in an ES module it denotes nothing, and in a CommonJS file that file's
+        exports.
         """
-        return self._global_member_name(
-            member, self._base_is_the_global_object, module_scope=module_scope)
+        if (
+            self.file_kind.scopes_declarations_to_the_file
+            and isinstance(strip_parens(member.object), JsThisExpression)
+        ):
+            return None
+        return self._global_member_name(member, self._base_is_the_global_object)
 
     def may_name_a_global(self, member: JsMemberExpression) -> str | None:
         """
@@ -4157,13 +4206,9 @@ class SemanticModel:
         self,
         member: JsMemberExpression,
         base_is_the_global_object: Callable[[Node | None], bool],
-        *,
-        module_scope: bool = False,
     ) -> str | None:
         base = strip_parens(member.object)
         if not base_is_the_global_object(base):
-            return None
-        if module_scope and isinstance(base, JsThisExpression):
             return None
         name = member_property_name(member)
         if name is None:
@@ -4284,11 +4329,9 @@ class SemanticModel:
 
         The binding minted here is one nothing reads a value out of: it carries no declaration, so
         both value queries decline for it, and all it does is give a reference somewhere to resolve
-        to instead of standing free. That is why a write through the `this` of a top level mints one
-        too, although whether such a write creates a global at all is decided by the host - a
-        CommonJS file writes its own exports there. Under the model where it creates nothing, the
-        binding this mints answers no question differently; the one rewrite that reads such a write
-        as a property having been created asks for the execution model itself.
+        to instead of standing free. A write through the `this` of a top level mints one where the
+        file is a script; in a module of either kind that `this` is not the global object
+        (`global_alias_member_name`).
         """
         if not is_member_write_target(member):
             return
@@ -5125,12 +5168,15 @@ def build_semantic_model(
     root: JsScript,
     environment: HostEnvironment = HostEnvironment.universal,
     trust_eval: bool = False,
+    file_kind: FileKind = FileKind.script,
 ) -> SemanticModel:
     """
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
     The default `universal` environment asserts only `GUARANTEED_GLOBALS`, so the model answers
     `read_may_throw` exactly as an unpinned run; a pinned host recovers the reads that host guarantees.
     *trust_eval* selects the trusting model, which assumes code supplied as data is inert; see
-    `refinery.lib.scripts.js.options.DeobfuscationOptions`.
+    `refinery.lib.scripts.js.options.DeobfuscationOptions`. *file_kind* is what the file is, which
+    `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
+    such as the payload of a `Function` construction, is a script.
     """
-    return SemanticModel(root, environment, trust_eval)
+    return SemanticModel(root, environment, trust_eval, file_kind)

@@ -900,10 +900,10 @@ def _spells_an_inherited_name_bare(
     )
 
 
-def _holds_a_block_function(root: Node) -> bool:
+def _block_functions(root: Node) -> Iterator[JsFunctionDeclaration]:
     """
-    Whether a function is declared inside a block anywhere below *root*, where sloppy code would
-    copy its name into the function around the block.
+    Every function declared inside a block anywhere below *root*, where sloppy code would copy its
+    name into the function around the block.
     """
     for node in root.walk():
         if not isinstance(node, JsFunctionDeclaration):
@@ -913,8 +913,25 @@ def _holds_a_block_function(root: Node) -> bool:
             continue
         if isinstance(holder, JsBlockStatement) and isinstance(holder.parent, FUNCTION_NODES):
             continue
-        return True
-    return False
+        yield node
+
+
+def _holds_a_block_function(root: Node) -> bool:
+    """
+    Whether a function is declared inside a block anywhere below *root* (`_block_functions`).
+    """
+    return next(_block_functions(root), None) is not None
+
+
+def _an_observed_copy_may_not_be_made(model: SemanticModel, generator: Node) -> bool:
+    """
+    Whether *generator* may run as strict code, which makes no Annex B copy, and declares a function
+    in a block whose copy something observes. The recovered code is read apart from the tree and
+    gives such a function the copy (`_hoisted_names`), which the file may then never have made.
+    """
+    return model.may_run_as_strict(generator) and any(
+        model.annex_b_copy_observed(function) for function in _block_functions(generator)
+    )
 
 
 def _did_return_reset(stmt: Statement) -> str | None:
@@ -4332,6 +4349,9 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
             if self._edited_around(parent, removed):
                 self.renew_models()
             model = models.model
+            if _an_observed_copy_may_not_be_made(model, body[match.gen_decl_index]):
+                i += 1
+                continue
             if not _scaffolding_is_private(model, body, match):
                 i += 1
                 continue

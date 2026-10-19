@@ -8,6 +8,7 @@ from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import printed
 
+from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.js.analysis.model import build_semantic_model, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     JS_NULL,
@@ -683,7 +684,8 @@ class TestTheOneGateEverySubstitutionGoesThrough(TestJsDeobfuscator):
         literal = [
             node for node in function.walk() if isinstance(node, JsObjectExpression)
         ][0]
-        substituted = substitute_params(literal, function.params, [make_numeric_literal(5)])
+        substituted = substitute_params(
+            literal, function.params, [make_numeric_literal(5)], Transformer())
         self.assertEqual(JsSynthesizer().convert(substituted), '{ a: 5 }')
 
 

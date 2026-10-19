@@ -40,7 +40,6 @@ from refinery.lib.scripts.js.options import (
     commonjs_wrapper_names,
     is_host_entrypoint,
     preserves_script_return,
-    runs_as_module,
 )
 from refinery.lib.scripts.js.strict import declares_use_strict
 
@@ -155,7 +154,7 @@ class JsSingleUseFunctionInliner(ScriptLevelTransformer):
             wrapper_names=commonjs_wrapper_names(self.options, root),
         ):
             return False
-        if not runs_as_module(self.options, root) and any(
+        if not model.file_kind.scopes_declarations_to_the_file and any(
             is_host_entrypoint(self.options, name)
             for name in wrapper_scope.bindings
         ):

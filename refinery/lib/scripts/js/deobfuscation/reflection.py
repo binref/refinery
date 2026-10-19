@@ -104,9 +104,7 @@ from refinery.lib.scripts.js.model import (
 from refinery.lib.scripts.js.numbers import TRIMMABLE_WHITESPACE
 from refinery.lib.scripts.js.options import (
     commonjs_wrapper_names,
-    may_run_as_es_module,
     preserves_script_return,
-    runs_as_module,
 )
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
@@ -630,7 +628,7 @@ def _try_unpack_function_constructor(
     node: JsCallExpression,
     *,
     free_global_name: Callable[[Expression | None], str | None],
-    module: bool = False,
+    model: SemanticModel,
 ) -> tuple[JsScript, frozenset[str], list[JsIdentifier]] | None:
     """
     Unpack an immediately-invoked `Function` constructor whose single argument is a proxy object
@@ -650,7 +648,8 @@ def _try_unpack_function_constructor(
     the site exactly as the accessor does, provided the substituted occurrence is still free where
     it lands in the body — a body binding capturing one is declined in the admission — and
     provided the packed code did not also read the name freely, in which case it stays held to
-    the global-resolution rule and is not returned.
+    the global-resolution rule and is not returned. The body is read in the mode and with the goal
+    of the site in the file *model* describes.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression):
@@ -682,8 +681,8 @@ def _try_unpack_function_constructor(
     getters, setters = mapping
     parsed = _try_parse(
         code,
-        strict=strict_mode_at(node) or module,
-        module=module,
+        strict=model.may_run_as_strict(node),
+        module=model.file_kind.may_be_an_es_module,
         context=code_context_at(node),
     )
     if parsed is None:
@@ -986,8 +985,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             model = model_cache(self, root).model
             if model.scope_of(member) is None:
                 return None
-            name = model.global_alias_member_name(
-                member, module_scope=runs_as_module(self.options, root))
+            name = model.global_alias_member_name(member)
             if name is not None and name in self._spliced_names:
                 return None
             return name
@@ -1240,7 +1238,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         pack = _try_unpack_function_constructor(
             node,
             free_global_name=self._free_global,
-            module=may_run_as_es_module(self.options, root),
+            model=model_cache(self, root).model,
         )
         if pack is not None:
             packed, site_resolved, substituted = pack
@@ -1721,9 +1719,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         Whether the destination of an inline could run the spliced text in strict mode. A
         syntactically strict site is strict, and so is every site of a file that may run as an ES
-        module (`refinery.lib.scripts.js.options.may_run_as_es_module`): the `module` execution
-        model covers a strict ES module and a sloppy CommonJS file alike, and nothing in the file
-        tells the two apart. Under the `commonjs` model the file's own text decides.
+        module (`refinery.lib.scripts.js.analysis.model.SemanticModel.may_run_as_strict`): the
+        `module` execution model covers a strict ES module and a sloppy CommonJS file alike, and
+        nothing in the file tells the two apart. Under the `commonjs` model the file's own text
+        decides.
 
         This is the one mode the reflected text must be legal and mode-invariant in, because inlining
         must be sound for the strict reading too: a sloppy-only body spliced into what turns out to be
@@ -1738,7 +1737,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         soundness runs the other way, so they must assume the sloppy CommonJS reading, not the
         strict one.
         """
-        return strict_mode_at(site) or may_run_as_es_module(self.options, root)
+        return model_cache(self, root).model.may_run_as_strict(site)
 
     def _resolve_reflected_body(
         self,
@@ -1769,7 +1768,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         parsed = _try_parse(
             code,
             strict=self._destination_may_be_strict(site, root),
-            module=may_run_as_es_module(self.options, root),
+            module=model_cache(self, root).model.file_kind.may_be_an_es_module,
             context=code_context_at(site) if destination is None else destination,
         )
         if parsed is None:
@@ -1894,7 +1893,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if crosses_dynamic_scope(site_scope):
                 return None
             if (
-                runs_as_module(self.options, root)
+                root_model.file_kind.scopes_declarations_to_the_file
                 and any(is_direct_eval_call(node) for node in parsed.walk())
             ):
                 return None
@@ -1908,9 +1907,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                     and (binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL)
                 ):
                     return None
-                if binding is not None and not root_model.reaches_global_object(
-                    binding, module_scope=runs_as_module(self.options, root),
-                ):
+                if binding is not None and not root_model.reaches_global_object(binding):
                     return None
         if declared and not self._reflected_declarations_safe(
             body_model, root_model, site_scope, site, scope, at_global_scope, exclude,
@@ -1991,7 +1988,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not hoisted:
             return True
         if scope is ReflectedScope.GLOBAL_EVAL:
-            if runs_as_module(self.options, root) or not at_global_scope:
+            if root_model.file_kind.scopes_declarations_to_the_file or not at_global_scope:
                 return False
         elif self._destination_may_be_strict(site, root) or declares_use_strict(body_model.root):
             return False

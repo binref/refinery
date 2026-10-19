@@ -66,7 +66,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
-    build_semantic_model,
     is_invocation_target,
     is_use_position,
     pattern_identifiers,
@@ -135,10 +134,7 @@ from refinery.lib.scripts.js.numbers import (
     js_string_to_number,
     to_js_number,
 )
-from refinery.lib.scripts.js.options import (
-    is_host_entrypoint,
-    runs_as_module,
-)
+from refinery.lib.scripts.js.options import is_host_entrypoint
 from refinery.lib.scripts.js.strict import (
     directive_prologue,
     is_prologue_host,
@@ -2300,7 +2296,7 @@ def substitute_params(
     expression: Node,
     params: Sequence[Node],
     arguments: Sequence[Node],
-    transformer: Transformer | None = None,
+    transformer: Transformer,
 ) -> Node:
     """
     Deep-clone *expression* and replace every reference to one of the function parameters *params* with
@@ -2310,8 +2306,8 @@ def substitute_params(
     identifiers rather than the outer parameter's. When *expression* nests no scope, no name under it
     can be rebound, so a parameter's references are exactly the use-position identifiers carrying its
     name and are substituted directly; only when it does nest a scope is a semantic model built to
-    resolve each occurrence against the binding it reads. When *transformer* is given, that model is
-    taken from its shared analysis cache; otherwise it is built standalone.
+    resolve each occurrence against the binding it reads, taken from the shared analysis cache of
+    *transformer*.
     """
     cloned = _clone_node(expression)
     mapping = {
@@ -2332,10 +2328,7 @@ def substitute_params(
     while root.parent is not None:
         root = root.parent
     assert isinstance(root, JsScript)
-    if transformer is None:
-        model = build_semantic_model(root)
-    else:
-        model = model_cache(transformer, root).model
+    model = model_cache(transformer, root).model
     bindings = {
         param.name: model.binding_of(param)
         for param in params
@@ -2722,7 +2715,7 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
         return False
     if any(a_host_reaches_the_binding(model, copy.var, options) for copy in binding.copies_made):
         return True
-    return model.reaches_global_object(binding, module_scope=runs_as_module(options, model.root))
+    return model.reaches_global_object(binding)
 
 
 def binding_constant(effects: EffectModel, binding: Binding, options: object) -> tuple[bool, Value]:
@@ -2754,7 +2747,7 @@ def binding_constant(effects: EffectModel, binding: Binding, options: object) ->
             return False, None
     if a_host_reaches_the_binding(model, binding, options):
         return False, None
-    if model.reflection_can_reach(binding, module_scope=runs_as_module(options, model.root)):
+    if model.reflection_can_reach(binding):
         return False, None
     return True, value
 

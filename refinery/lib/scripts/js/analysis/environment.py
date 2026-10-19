@@ -442,6 +442,46 @@ class _EnvironmentSpec:
         return Presence.UNKNOWN
 
 
+COMMONJS_WRAPPER_PARAMETERS = ('exports', 'require', 'module', '__filename', '__dirname')
+"""
+The parameters of the function a CommonJS host wraps around a file's text, in their order. Where the
+file declares none of these names itself, a bare read of one reads the value the host passed and a
+bare assignment writes it; the global scope holds none of them. Code run by a `Function`
+construction, an indirect `eval` or a string timer is global code outside that function and does not
+see them. A `let`, `const` or `class` declaration of one at the top of the file redeclares a
+parameter, which Node refuses to compile as CommonJS; it runs such a file as an ES module.
+"""
+
+
+class FileKind(enum.Enum):
+    """
+    What the code of one file is, decided for a run from the execution model and the file's own text
+    (`refinery.lib.scripts.js.options.file_kind`):
+
+    - `script`: a classic script, whose top-level `var` and function declarations are properties of
+      the global object.
+    - `commonjs`: the body of the function a CommonJS host wraps around the text.
+    - `es_module`: an ES module, strict code throughout.
+    - `commonjs_or_es_module`: one of the two without saying which; an answer must hold for both.
+    """
+    script = 'script'
+    commonjs = 'commonjs'
+    es_module = 'es-module'
+    commonjs_or_es_module = 'commonjs-or-es-module'
+
+    @property
+    def scopes_declarations_to_the_file(self) -> bool:
+        return self is not FileKind.script
+
+    @property
+    def may_be_an_es_module(self) -> bool:
+        return self is FileKind.es_module or self is FileKind.commonjs_or_es_module
+
+    @property
+    def may_be_commonjs(self) -> bool:
+        return self is FileKind.commonjs or self is FileKind.commonjs_or_es_module
+
+
 class HostEnvironment(enum.Enum):
     """
     The host a script is assumed to run in, selected by the `js` unit's `-e` switch. `universal` is the

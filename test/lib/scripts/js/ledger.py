@@ -328,6 +328,61 @@ class Program(NamedTuple):
         return (self.prints, self.prints)
 
 
+class FileProgram(NamedTuple):
+    """
+    A program Node runs as a file, with what it makes of it run as a CommonJS file and run as an ES
+    module. `read_as` gives the `Program` of one reading: `Reading.ES_MODULE` runs the file as an ES
+    module, and every other reading runs it as a CommonJS file.
+    """
+    text: str
+    as_commonjs: Behavior
+    as_an_es_module: Behavior
+
+    def read_as(self, reading: Reading) -> Program:
+        if reading is Reading.ES_MODULE:
+            return Program(self.text, self.as_an_es_module, reading)
+        return Program(self.text, self.as_commonjs, reading)
+
+
+def as_classic_scripts(rows: Mapping[str, FileProgram]) -> dict[str, Program]:
+    """
+    *rows* read as classic global scripts, for programs a host runs the way Node runs them as a
+    CommonJS file: sloppy code that reads no name the CommonJS wrapper binds and no top-level
+    `this`.
+    """
+    return {
+        label: Program(row.text, row.as_commonjs, Reading.SCRIPT) for label, row in rows.items()
+    }
+
+
+def node_prints_what_each_row_pins(test: unittest.TestCase, rows: Mapping[str, FileProgram]):
+    """
+    Assert that Node prints, for each of *rows* run as a CommonJS file and run as an ES module, what
+    the row pins: the anchor that makes a misstated row a failure rather than a divergence.
+    """
+    for label, row in rows.items():
+        for reading in (Reading.COMMONJS, Reading.ES_MODULE):
+            program = row.read_as(reading)
+            with test.subTest(label=label, reading=reading.name):
+                test.assertEqual(program.behaves(), program.prints)
+
+
+def each_reading_still_prints(
+    test: unittest.TestCase,
+    rows: Mapping[str, FileProgram],
+    readings: tuple[Reading, ...],
+):
+    """
+    Assert that the deobfuscation of each of *rows* under each of *readings* behaves the way the
+    program does.
+    """
+    for label, row in rows.items():
+        for reading in readings:
+            program = row.read_as(reading)
+            with test.subTest(label=label, reading=reading.name):
+                test.assertEqual(program.read(), program.required())
+
+
 def prints(*lines: str) -> Behavior:
     """
     The behavior of a program that writes *lines* and ends without an error, each line ending in the

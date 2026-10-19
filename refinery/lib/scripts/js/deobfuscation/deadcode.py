@@ -14,6 +14,7 @@ from typing import NamedTuple
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.model import (
+    SemanticModel,
     _walk_skipping_functions,
     annex_b_var_home,
     pattern_identifiers,
@@ -57,10 +58,12 @@ def _is_scoped_to_the_block_holding_it(stmt: Statement | None) -> bool:
     return isinstance(stmt, (JsClassDeclaration, JsFunctionDeclaration))
 
 
-def _the_names_a_dropped_branch_still_declares(branch: Statement | None) -> list[Statement]:
+def _the_names_a_dropped_branch_still_declares(
+    branch: Statement | None, model: SemanticModel,
+) -> tuple[str, ...] | None:
     """
-    A `var` statement declaring every name *branch* binds outside itself, or nothing where it binds
-    none.
+    Every name *branch* binds outside itself, which a `var` left in its place declares, or `None`
+    where the branch cannot go.
 
     Removing a branch removes the statements it would have run, and a declaration is more than a
     statement it runs: a `var`, and in sloppy code a function declaration Annex B gives a `var` half
@@ -70,9 +73,14 @@ def _the_names_a_dropped_branch_still_declares(branch: Statement | None) -> list
 
     What the branch binds lexically is not among them, and neither is a `var` inside a function it
     holds: the first goes with the block it was scoped to, and the second belongs to that function.
+
+    Where the file may be an ES module, the `var` half of a function declared in a block exists in
+    the CommonJS reading only, so a `var` left behind would be wrong in one reading and its absence
+    in the other. The branch then stays where anything observes that half, and its function leaves
+    no name behind where nothing does.
     """
     if branch is None:
-        return []
+        return ()
     names: list[str] = []
     seen: set[str] = set()
     for node in _walk_skipping_functions([branch]):
@@ -84,30 +92,31 @@ def _the_names_a_dropped_branch_still_declares(branch: Statement | None) -> list
                 for ident in pattern_identifiers(declarator.id)
             ]
         elif isinstance(node, JsFunctionDeclaration) and node.id is not None:
-            found = [node.id.name] if annex_b_var_home(node) is not None else []
+            if annex_b_var_home(node) is None:
+                continue
+            if model.file_kind.may_be_an_es_module:
+                if model.annex_b_copy_observed(node):
+                    return None
+                continue
+            found = [node.id.name]
         else:
             continue
         for name in found:
             if name not in seen:
                 seen.add(name)
                 names.append(name)
-    if not names:
-        return []
-    return [JsVariableDeclaration(
-        kind=JsVarKind.VAR,
-        declarations=[
-            JsVariableDeclarator(id=JsIdentifier(name=name)) for name in names
-        ],
-    )]
+    return tuple(names)
 
 
 class _Decision(NamedTuple):
     """
-    What an `if` statement's test evaluates to, and whether the test may go with the dropped branch
-    or has to stay behind as a statement.
+    What an `if` statement's test evaluates to, whether the test may go with the dropped branch or
+    has to stay behind as a statement, and the names a `var` left behind for the dropped branch
+    declares (`_the_names_a_dropped_branch_still_declares`).
     """
     test_is_truthy: bool
     test_may_go: bool
+    still_declared: tuple[str, ...]
 
 
 class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
@@ -173,9 +182,15 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
         if decision is None:
             return None
         taken = stmt.consequent if decision.test_is_truthy else stmt.alternate
-        dropped = stmt.alternate if decision.test_is_truthy else stmt.consequent
         result = self._unwrap_branch(taken)
-        result[0:0] = _the_names_a_dropped_branch_still_declares(dropped)
+        if decision.still_declared:
+            result.insert(0, JsVariableDeclaration(
+                kind=JsVarKind.VAR,
+                declarations=[
+                    JsVariableDeclarator(id=JsIdentifier(name=name))
+                    for name in decision.still_declared
+                ],
+            ))
         if not decision.test_may_go:
             result.insert(0, JsExpressionStatement(expression=stmt.test))
         return result
@@ -192,7 +207,11 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
         truthy = is_truthy(stmt.test, cache)
         if truthy is None:
             return None
-        return _Decision(truthy, self._test_is_side_effect_free(stmt.test, cache))
+        dropped = stmt.alternate if truthy else stmt.consequent
+        declared = _the_names_a_dropped_branch_still_declares(dropped, cache.model)
+        if declared is None:
+            return None
+        return _Decision(truthy, self._test_is_side_effect_free(stmt.test, cache), declared)
 
     @staticmethod
     def _test_is_side_effect_free(test: Node, cache: ModelCache) -> bool:

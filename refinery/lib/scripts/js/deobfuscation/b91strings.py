@@ -358,7 +358,7 @@ def _decoder(model: SemanticModel, held: _Held) -> _Decoder | None:
     function = held.function
     if len(function.params) != 1:
         return None
-    if any(model.reflection_can_reach(name, module_scope=True) for name in held.names.bindings):
+    if any(model.reflection_can_reach_from_its_scope(name) for name in held.names.bindings):
         return None
     alphabets = [
         node for node in walk_scope(function, include_root_body=True)
@@ -557,15 +557,15 @@ def _table_value(effects: EffectModel, table: Binding | JsStringLiteral) -> tupl
     the cache. A constant of the program is also asked whether a host or code running in the global
     scope may reach it (`refinery.lib.scripts.js.deobfuscation.helpers.binding_constant`), while
     the table is asked only about code in its own scope the model cannot read: a direct `eval`
-    there, or a span the parser could not read, which is what
-    `refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach` answers for a name
-    scoped to the file. A script the obfuscator writes stores on the global object under keys this
-    very table holds, and the wider question would refuse the table of every script.
+    there, or a span the parser could not read
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.reflection_can_reach_from_its_scope`).
+    A script the obfuscator writes stores on the global object under keys this very table holds,
+    and the wider question would refuse the table of every script.
     """
     model = effects.model
     if isinstance(table, JsStringLiteral):
         return denoted_value(table, model)
-    if model.reflection_can_reach(table, module_scope=True):
+    if model.reflection_can_reach_from_its_scope(table):
         return False, None
     return denoted_value(model.singular_value(table), model)
 
@@ -895,7 +895,7 @@ def _written_only_inside(
         return False
     if binding.reachable_through_a_handed_object:
         return False
-    if model.reflection_can_reach(binding, module_scope=True):
+    if model.reflection_can_reach_from_its_scope(binding):
         return False
     for write in binding.writes:
         if besides is not None and (write is besides or write.is_descendant_of(besides)):

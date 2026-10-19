@@ -74,7 +74,6 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.strict import strict_mode_at
 
 _CLOSURE_NODES = (JsFunctionExpression, JsArrowFunctionExpression)
 
@@ -152,7 +151,7 @@ def _is_finder(
         return False
     if not _FinderThrowFreedom(func, model, effects, dominance).certifies():
         return False
-    this_is_global = _receiver_is_global(func, called_bare=True, lexical=False)
+    this_is_global = _receiver_is_global(func, model, called_bare=True, lexical=False)
     taint = _global_taint(func, model, this_is_global)
     return all(
         ret.argument is not None
@@ -161,7 +160,9 @@ def _is_finder(
     )
 
 
-def _receiver_is_global(function: Node, *, called_bare: bool, lexical: bool) -> bool:
+def _receiver_is_global(
+    function: Node, model: SemanticModel, *, called_bare: bool, lexical: bool,
+) -> bool:
     """
     Whether `this` is the global object in the code of *function* when it is called. An arrow
     function has the `this` of the code around it, which *lexical* answers for. Any other function
@@ -171,7 +172,7 @@ def _receiver_is_global(function: Node, *, called_bare: bool, lexical: bool) -> 
     """
     if isinstance(function, JsArrowFunctionExpression):
         return lexical
-    return called_bare and not strict_mode_at(function)
+    return called_bare and not model.may_run_as_strict(function)
 
 
 def _is_global_valued(
@@ -212,7 +213,9 @@ def _is_global_valued(
                 closure,
                 model,
                 visiting,
-                _receiver_is_global(closure, called_bare=called_bare, lexical=this_is_global),
+                _receiver_is_global(
+                    closure, model, called_bare=called_bare, lexical=this_is_global,
+                ),
             )
             for closure in closures
         )

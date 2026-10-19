@@ -138,9 +138,9 @@ class DominanceModel(DominatorModel):
     execute before another with `dominates`. Build through `build_dominance`.
 
     The ordering across calls reads three facts about what lies outside the text: *intrinsic_writes*
-    says whether the program writes the prototype chain a plain object reads through, *module_scope*
-    is the run's execution model, and *host_entrypoint* names the top-level bindings the analyst
-    declared a host reaches by name: a function it invokes, or an object whose methods it calls.
+    says whether the program writes the prototype chain a plain object reads through, the semantic
+    model what the file is, and *host_entrypoint* names the top-level bindings the analyst declared
+    a host reaches by name: a function it invokes, or an object whose methods it calls.
     """
 
     def __init__(
@@ -149,7 +149,6 @@ class DominanceModel(DominatorModel):
         control_flow: ControlFlowModel | None = None,
         *,
         intrinsic_writes: IntrinsicWrites | None = None,
-        module_scope: bool = False,
         host_entrypoint: Callable[[str], bool] | None = None,
     ):
         flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
@@ -158,7 +157,6 @@ class DominanceModel(DominatorModel):
         if intrinsic_writes is None:
             intrinsic_writes = build_intrinsic_writes(model)
         self.intrinsic_writes = intrinsic_writes
-        self._module_scope = module_scope
         self._host_entrypoint = host_entrypoint
         self._reference_points_cache: dict[Node, list[Node | _HandOver] | None] = {}
         self._invocation_orders: dict[Node, dict[Node | _HandOver, bool]] = {}
@@ -641,7 +639,7 @@ class DominanceModel(DominatorModel):
         return (
             self._host_entrypoint is not None
             and self._host_entrypoint(binding.name)
-            and self.model.reaches_global_object(binding, module_scope=self._module_scope)
+            and self.model.reaches_global_object(binding)
         )
 
     @staticmethod
@@ -812,19 +810,17 @@ def build_dominance(
     control_flow: ControlFlowModel | None = None,
     *,
     intrinsic_writes: IntrinsicWrites | None = None,
-    module_scope: bool = False,
     host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DominanceModel:
     """
     Build the `DominanceModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
     reusing *control_flow* and *intrinsic_writes* when the caller has them to share, or building
-    fresh ones when they are `None`. *module_scope* and *host_entrypoint* are the run's execution
-    model and declared host entry points; the defaults describe a script no host calls into.
+    fresh ones when they are `None`. *host_entrypoint* names the run's declared host entry points;
+    the default describes a file no host calls into.
     """
     return DominanceModel(
         model,
         control_flow,
         intrinsic_writes=intrinsic_writes,
-        module_scope=module_scope,
         host_entrypoint=host_entrypoint,
     )

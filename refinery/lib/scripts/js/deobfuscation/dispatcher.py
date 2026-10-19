@@ -95,7 +95,6 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.options import runs_as_module
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.cache import ModelCache
@@ -643,18 +642,16 @@ def _reached_only_through(
     model: SemanticModel,
     binding: Binding,
     accounted: set[Node],
-    *,
-    module_scope: bool,
 ) -> bool:
     """
     Whether *binding* is not exported, every reference to it is one of *accounted*, and no lookup by
-    name at runtime can reach it under the execution model *module_scope* selects.
+    name at runtime can reach it.
     """
     if binding.exported:
         return False
     if not all(reference in accounted for reference in model.references(binding)):
         return False
-    return not model.reflection_can_reach(binding, module_scope=module_scope)
+    return not model.reflection_can_reach(binding)
 
 
 def _name_base(key: str) -> str:
@@ -909,12 +906,10 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             if dispatch is None:
                 return
             dispatches.append(dispatch)
-        module_scope = runs_as_module(self.options, self._root)
         if not _reached_only_through(
             model,
             dispatcher.binding,
             {dispatch.reference for dispatch in dispatches},
-            module_scope=module_scope,
         ):
             return
         payload_references = set(dispatcher.template_references)
@@ -928,7 +923,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             (dispatcher.payload, payload_references),
             (dispatcher.cache, dispatcher.template_references),
         ):
-            if not _reached_only_through(model, binding, references, module_scope=module_scope):
+            if not _reached_only_through(model, binding, references):
                 return
         if (body_scope := model.scope_of(scope)) is None:
             return
@@ -949,7 +944,6 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             model,
             dispatcher.helper,
             dispatcher.template_references,
-            module_scope=module_scope,
         ):
             helpers = [
                 declaration.parent for declaration in dispatcher.helper.declarations
