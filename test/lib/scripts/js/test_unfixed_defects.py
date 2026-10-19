@@ -5546,8 +5546,8 @@ class TestAStringRunByExecScriptRunsOnlyWhereTheHostDefinesIt(TestBase):
         )
 
 
-#: Programs whose fold rests on code being sloppy where its text does not make it strict, mapped
-#: to the behavior Node gives them as an ES module.
+#: A program whose fold rests on code being sloppy where its text does not make it strict, mapped
+#: to the behavior Node gives it as an ES module.
 A_FOLD_RESTING_ON_SLOPPY_CODE_IN_AN_ES_MODULE = {
     'a global finder returning this from a function called bare': Program(
         a_program("""
@@ -5555,15 +5555,6 @@ A_FOLD_RESTING_ON_SLOPPY_CODE_IN_AN_ES_MODULE = {
             console.log(g() === globalThis);
             """),
         prints('false'),
-        Reading.ES_MODULE,
-    ),
-    'a call of a block function after its block': Program(
-        a_program("""
-            try { g(); } catch (e) { console.log(e.name); }
-            { function g() { return 1; } }
-            try { console.log(g()); } catch (e) { console.log(e.name); }
-            """),
-        prints('ReferenceError', 'ReferenceError'),
         Reading.ES_MODULE,
     ),
 }
@@ -5574,8 +5565,8 @@ A_FOLD_RESTING_ON_SLOPPY_CODE_IN_AN_ES_MODULE = {
 class TestAFoldRestingOnSloppyCodeHoldsInAnEsModule(TestBase):
     """
     Under `-m` the file may be an ES module, which is strict code throughout, so a fold is sound
-    only where it holds for strict code as well. Two folds ask only whether the text makes the code
-    strict. The global finder takes `this` of a function called bare for the global object, which
-    is `undefined` in strict code. The semantic model gives a function declared in a block the
-    binding outside the block that only sloppy code gives it.
+    only where it holds for strict code as well. The global finder takes `this` of a function
+    called bare for the global object, which is `undefined` in strict code, where the value it
+    returns is `r || this` and `r` may be `undefined` on the path through the `catch`: it judges
+    the value as a whole, not each path into it.
     """

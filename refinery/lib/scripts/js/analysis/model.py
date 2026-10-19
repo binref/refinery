@@ -299,7 +299,8 @@ class Binding:
     supplied_by_host: bool = False
     #: Whether the binding exists in one way the file may run and not in another, so that a
     #: reference to it may find no binding at all: a binding the host supplies where the file may
-    #: also be an ES module, which binds none of them, unless a declaration of the file joins it.
+    #: also be an ES module, which binds none of them, unless a declaration of the file joins it,
+    #: and a `var` only conditional copies declare (`AnnexBCopy.conditional`).
     may_be_absent: bool = False
 
     def note_reference_from(self, scope: Scope | None) -> None:
@@ -427,10 +428,14 @@ class AnnexBCopy:
     read wherever something observes *var* (`observed`), so that a consumer asking whether, where or
     how the value of the block binding is used sees a use it cannot follow. *var* keeps the
     declaration among its own declarations, since that declaration is what gives it the name.
+
+    A copy is *conditional* where the file may be a CommonJS file, whose code is sloppy where it
+    says nothing, or an ES module, which is strict code throughout and makes no copy.
     """
     declaration: JsFunctionDeclaration
     block: Binding
     var: Binding
+    conditional: bool = False
 
     @property
     def observed(self) -> bool:
@@ -3187,7 +3192,7 @@ class SemanticModel:
                 and parent.id is declaration
             ):
                 copy = _copy_received_by(binding, parent)
-                if copy is None or self.copy_stores_the_function(copy):
+                if copy is None or (not copy.conditional and self.copy_stores_the_function(copy)):
                     channels.append((parent, parent))
                 else:
                     complete = False
@@ -4205,7 +4210,21 @@ class SemanticModel:
             if role is not Role.READ:
                 binding.writes.append(node)
             binding.note_reference_from(ref_scope)
+            if binding.may_be_absent:
+                self._lend_to_the_binding_outside(node, binding)
         return accesses
+
+    def _lend_to_the_binding_outside(self, node: JsIdentifier, binding: Binding):
+        """
+        Record *node*, a reference to a binding that may be absent, as a dynamic reference of what
+        its name means outside the scope of *binding*, which the reading without *binding* resolves
+        it to (`Binding.may_be_absent`).
+        """
+        if binding.scope.parent is None:
+            return
+        outside = self.lookup(node.name, binding.scope.parent, cross_dynamic=True)
+        if outside is not None:
+            outside.dynamic_refs.append(node)
 
     @staticmethod
     def _file_reflective_site(site: Node, sites_of: dict[int, list[Node]]):
@@ -4992,6 +5011,7 @@ class _ScopeBuilder:
         self._settle_absence(scope)
         for stmt in root.body:
             self._visit(stmt, scope)
+        self._settle_conditional_copies()
         return scope
 
     def _declare_host_parameters(self, scope: Scope):
@@ -5022,6 +5042,20 @@ class _ScopeBuilder:
         for binding in scope.bindings.values():
             if binding.supplied_by_host and binding.declarations:
                 binding.may_be_absent = False
+
+    def _settle_conditional_copies(self):
+        """
+        Mark as `Binding.may_be_absent` the `var` of every conditional copy
+        (`AnnexBCopy.conditional`) that nothing but such copies declares: the ES-module reading
+        makes no copy, so there the name means what it means outside the scope of the `var`.
+        """
+        for copy in self.model._annex_b_copies:
+            var = copy.var
+            if not copy.conditional or var.may_be_absent:
+                continue
+            copied = {id(received.declaration.id) for received in var.copies_received}
+            if all(id(site) in copied for site in var.declarations):
+                var.may_be_absent = True
 
     def _new_scope(self, kind: ScopeKind, node: Node, parent: Scope) -> Scope:
         scope = Scope(kind=kind, node=node, parent=parent)
@@ -5106,7 +5140,8 @@ class _ScopeBuilder:
                 binding = self._declare(scope, stmt.id.name, BindingKind.FUNCTION, stmt.id)
                 if home is None or (var := self._copy_target(scope, home, stmt.id.name)) is None:
                     continue
-                copy = AnnexBCopy(stmt, binding, var)
+                conditional = self.model.file_kind is FileKind.commonjs_or_es_module
+                copy = AnnexBCopy(stmt, binding, var, conditional)
                 binding.copies_made.append(copy)
                 var.copies_received.append(copy)
                 self.model._annex_b_copies.append(copy)

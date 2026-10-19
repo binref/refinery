@@ -6,7 +6,12 @@ from test import TestBase
 
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
-from refinery.lib.scripts.js.model import JsExpressionStatement, JsIdentifier, JsMemberExpression
+from refinery.lib.scripts.js.model import (
+    JsExpressionStatement,
+    JsFunctionDeclaration,
+    JsIdentifier,
+    JsMemberExpression,
+)
 from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel, file_kind
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -219,3 +224,42 @@ class TestTheTopOfACommonJsFileBindsTheWrapper(TestBase):
             for name in ('exports', 'require', 'module')
         }
         self.assertEqual(read, {'exports': True, 'require': False, 'module': True})
+
+
+class TestACopyOfABlockFunctionIsMadeInTheSloppyReadingOnly(TestBase):
+
+    @staticmethod
+    def _copy(source: str, kind: FileKind):
+        model = _model(source, kind)
+        function = next(
+            node for node in model.root.walk()
+            if isinstance(node, JsFunctionDeclaration)
+            and node.id is not None
+            and node.id.name == 'g'
+        )
+        assert function.id is not None
+        block = model.binding_of(function.id)
+        assert block is not None
+        copy, = block.copies_made
+        return copy
+
+    def test_a_copy_is_conditional_only_where_the_file_may_be_an_es_module(self):
+        source = 'function f() { { function g() {} } return g; }'
+        conditional = {
+            kind: self._copy(source, kind).conditional
+            for kind in (FileKind.script, FileKind.commonjs, FileKind.commonjs_or_es_module)
+        }
+        self.assertEqual(conditional, {
+            FileKind.script: False,
+            FileKind.commonjs: False,
+            FileKind.commonjs_or_es_module: True,
+        })
+
+    def test_the_var_only_a_conditional_copy_declares_may_be_absent(self):
+        source = 'function f() { { function g() {} } return g; }'
+        self.assertTrue(self._copy(source, FileKind.commonjs_or_es_module).var.may_be_absent)
+
+    def test_the_var_another_declaration_declares_too_is_bound_in_either_reading(self):
+        copy = self._copy(
+            'function f() { var g; { function g() {} } return g; }', FileKind.commonjs_or_es_module)
+        self.assertFalse(copy.var.may_be_absent)

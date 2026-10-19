@@ -150,6 +150,27 @@ A_FUNCTION_DECLARED_IN_A_BLOCK = {
         prints('function a()'),
         prints('40'),
     ),
+    'a call of a block function after its block': FileProgram(
+        a_program("""
+            try { g(); } catch (e) { console.log(e.name); }
+            { function g() { return 1; } }
+            try { console.log(g()); } catch (e) { console.log(e.name); }
+            """),
+        prints('TypeError', '1'),
+        prints('ReferenceError', 'ReferenceError'),
+    ),
+    'a block function of a nested function called after its block': FileProgram(
+        a_program("""
+            function outer() {
+              globalThis.h = 'global';
+              { function h() { return 1; } }
+              return typeof h;
+            }
+            console.log(outer());
+            """),
+        prints('function'),
+        prints('string'),
+    ),
 }
 
 #: Programs whose direct `eval` in a parameter default declares a name the function reads, each with

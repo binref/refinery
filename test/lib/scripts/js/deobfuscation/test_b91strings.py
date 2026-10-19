@@ -1386,19 +1386,19 @@ class TestStringConcealing(TestJsDeobfuscator):
                 console.log('Fizz');
                 """
             ),
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT, execution=ExecutionModel.module),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_INSIDE_IT_AND_AFTER_IT, execution=ExecutionModel.commonjs),
         )
 
     def test_an_accessor_in_a_block_called_only_after_it_is_decoded(self):
         self.assertEqual(
             'console.log(\'Fizz\');',
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, execution=ExecutionModel.module),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, execution=ExecutionModel.commonjs),
         )
 
     def test_a_decoder_in_a_block_read_after_it_decodes(self):
         self.assertEqual(
             'console.log(\'push\', \'Fizz\');',
-            deobfuscate_source(A_DECODER_IN_A_BLOCK_READ_AFTER_IT, execution=ExecutionModel.module),
+            deobfuscate_source(A_DECODER_IN_A_BLOCK_READ_AFTER_IT, execution=ExecutionModel.commonjs),
         )
 
     def test_an_accessor_in_a_block_of_a_function_is_decoded_after_it(self):
@@ -1411,11 +1411,15 @@ class TestStringConcealing(TestJsDeobfuscator):
                 console.log('Fizz');
                 """
             ),
-            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT, execution=ExecutionModel.module),
+            deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_OF_A_FUNCTION_CALLED_AFTER_IT, execution=ExecutionModel.commonjs),
         )
 
+    def test_a_call_after_the_accessors_block_stays_where_the_file_may_be_an_es_module(self):
+        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_ONLY_AFTER_IT, execution=ExecutionModel.module)
+        self.assertIn('console.log(acc(11));', result)
+
     def test_a_call_before_the_block_declaring_the_accessor_stays_a_call(self):
-        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT, execution=ExecutionModel.module)
+        result = deobfuscate_source(AN_ACCESSOR_IN_A_BLOCK_CALLED_BEFORE_IT, execution=ExecutionModel.commonjs)
         self.assertIn('console.log(acc(11));', result)
         self.assertIn('console.log(\'push\');', result)
         self.assertIn('function acc(index)', result)
