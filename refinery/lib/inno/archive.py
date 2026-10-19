@@ -2828,7 +2828,6 @@ class InnoArchive:
                 script,
                 self.script_codec,
                 version.unicode,
-                self.setup_info.Header.is_64bit,
                 2 if version >= (5, 2, 0) else None,
             )
 

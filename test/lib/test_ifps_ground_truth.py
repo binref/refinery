@@ -5,7 +5,11 @@ import tracemalloc
 from itertools import zip_longest
 from typing import Iterable
 
+from fractions import Fraction
+
 from refinery.lib.inno.archive import Flags, InnoArchive
+from refinery.lib.inno.delphi import x87
+from refinery.lib.inno.delphi.runtime import Platform
 from refinery.lib.inno.emulator import (
     EmulatorMaxArray,
     EmulatorMaxString,
@@ -15,7 +19,9 @@ from refinery.lib.inno.emulator import (
     InnoSetupEmulator,
     NewFunctionCall,
 )
-from refinery.lib.inno.ifps import Function, IFPSFile, Op, Operand, Value
+from refinery.lib.inno.ifps import TC, AOp, Dialect, Function, IFPSFile, Op, Operand, Value
+from refinery.lib.types import buf
+from refinery.lib.un7z import SzArchive
 
 from .. import TestBase, wontfix
 
@@ -891,6 +897,22 @@ _VALUE_LOG = {
 }
 
 
+_VALUE_ORACLE = '2925fbf3b9181fec5e7af99418388e386aa1991fe9b0ae895f44f2f686d1ce1c'
+"""
+A 7-Zip archive of three builds of one value oracle: for each build, the compiled script and the
+`ORACLE` lines of the log of its run. Inno Setup 6.5.0 built `inno6`, Inno Setup 7.1.0 built `x86`
+as a 32-bit Setup and `x64` as a 64-bit Setup.
+"""
+
+
+def _value_oracle_file(test: TestBase, build: str, extension: str) -> buf:
+    name = F'value-oracle-7c-{build}.{extension}'
+    for file in SzArchive(test.download_sample(_VALUE_ORACLE)).files:
+        if file.name == name:
+            return file.extractor(None)()
+    raise LookupError(name)
+
+
 _ERROR_SCRIPT = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
 _ERROR_LOG = {
     'CallerMessage'            : 'deep',
@@ -1544,6 +1566,57 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
 
     def test_two_runs_advanced_alternately_by_instruction_log_what_each_logs_alone(self):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLECOMPARISONS', 'ORACLESETS', log_opcodes=True)
+
+
+class TestTheScriptTellsWhichInnoSetupCompiledIt(TestBase):
+    """
+    The three builds of the value oracle compile the same script.
+    """
+
+    def script(self, build: str) -> IFPSFile:
+        return IFPSFile.Parse(_value_oracle_file(self, build, 'ifps'))
+
+    def function(self, build: str, name: str) -> Function:
+        return next(function for function in self.script(build).functions if function.name == name)
+
+    def test_the_types_of_a_script_tell_the_pascal_script_and_the_platform_that_compiled_it(self):
+        self.assertEqual(
+            {build: (self.script(build).dialect, self.script(build).platform) for build in ('inno6', 'x86', 'x64')},
+            {
+                'inno6' : (Dialect.Inno6, Platform.Win32),
+                'x86'   : (Dialect.Inno7, Platform.Win32),
+                'x64'   : (Dialect.Inno7, Platform.Win64),
+            },
+        )
+
+    def test_inno_setup_7_compiles_each_as_of_a_procedure_into_an_instruction(self):
+        """
+        The procedure casts with `as` three times.
+        """
+        procedure = self.function('x86', 'ORACLECLASSCASTS')
+        casts = [str(i) for i in procedure.body or () if i.opcode is Op.Calculate and i.operator is AOp.As]
+        self.assertEqual(len(casts), 3)
+        self.assertTrue(all(' as ' in cast for cast in casts))
+
+    def test_a_script_for_a_64_bit_setup_holds_its_extended_constants_as_doubles(self):
+        """
+        The last float constant of the function is `4503599627370497.5`. Inno Setup 6.5 writes the
+        Extended that holds it; the compiler of Inno Setup 7.1 computes it as a Double, which rounds
+        it to the even neighbor, and writes that Double as an Extended into the script of a 32-bit
+        Setup.
+        """
+        def constants(build: str) -> list[x87.Real]:
+            return [
+                value
+                for instruction in self.function(build, 'MATHINPUT').body or ()
+                for operand in instruction.operands
+                if isinstance(operand, Operand) and operand.value and operand.value.type.code is TC.Extended
+                if isinstance(value := operand.value.value, (float, x87.Extended))
+            ]
+        x64 = constants('x64')
+        self.assertEqual(x87.exact(constants('inno6')[-1]), Fraction(9007199254740995, 2))
+        self.assertEqual(x64[-1], 4503599627370498.0)
+        self.assertEqual(x64, constants('x86'))
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):

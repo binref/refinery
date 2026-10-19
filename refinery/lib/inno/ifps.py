@@ -23,6 +23,7 @@ from uuid import UUID
 
 from refinery.lib.inno import CaseInsensitiveDict
 from refinery.lib.inno.delphi import numbers, variants, x87
+from refinery.lib.inno.delphi.runtime import Platform
 from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents, IFPSSignature
 from refinery.lib.structures import Struct, StructReader
 
@@ -103,6 +104,15 @@ class Op(enum.IntEnum):
             return cls._INVALID
 
 
+class Dialect(enum.Enum):
+    """
+    The versions of Pascal Script whose rules for values differ, named by the Inno Setup that ships
+    them: the same rules from 5.5.3 to 6.7, and new ones from 7.0 on.
+    """
+    Inno6 = 6
+    Inno7 = 7
+
+
 class AOp(enum.IntEnum):
     """
     An enumeration of all known IFPS arithmetic opcodes.
@@ -117,8 +127,11 @@ class AOp(enum.IntEnum):
     And = 7
     BOr = 8
     Xor = 9
+    As = 10
 
     def __str__(self):
+        if self is AOp.As:
+            return 'as'
         glyph = ('+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^')[self]
         return F'{glyph}='
 
@@ -1192,17 +1205,16 @@ class IFPSFile(Struct):
         reader: StructReader[memoryview],
         codec: str = 'latin1',
         unicode: bool | None = None,
-        x64: bool = False,
         load_flags: int | None = None,
     ):
         """
         The setup that compiled the script decides whether `String` is a Unicode string and how many
         load flags a DLL import has. When the caller does not know them, they are read from the
         script: it is Unicode unless its only string type is `AnsiString`, and the load flags are
-        decided by the calls of the DLL imports.
+        decided by the calls of the DLL imports. The script's standard types tell which Pascal
+        Script compiled it and for which platform.
         """
         self.codec = codec
-        self.x64 = x64
         self.load_flags = load_flags
         self.types: list[IFPSType] = []
         self.functions: list[Function] = []
@@ -1245,6 +1257,8 @@ class IFPSFile(Struct):
             codes = {t.code for t in self.types}
             unicode = TC.UnicodeString in codes or TC.AnsiString not in codes
         self.unicode = unicode
+        self.dialect = self._dialect()
+        self.platform = self._platform()
         self._name_types()
         self._load_functions()
         self._load_variables()
@@ -1252,6 +1266,30 @@ class IFPSFile(Struct):
         del self._known_type_names
         self.strings: list[str] = list(self._strings)
         del self._strings
+
+    def _dialect(self) -> Dialect:
+        """
+        The Pascal Script that compiled the script. The compiler of Inno Setup 7 declares the type
+        `UInt64` in every script, and Pascal Script has no such type before Inno Setup 7.
+        """
+        if any(t.code is TC.U64 for t in self.types):
+            return Dialect.Inno7
+        return Dialect.Inno6
+
+    def _platform(self) -> Platform:
+        """
+        The platform of the Setup that the script was compiled for. The compiler declares its
+        standard types first, in a fixed order; from Inno Setup 7 on, `NativeUInt` follows the first
+        `Single` and is 64 bits wide in a script for a 64-bit Setup. Earlier versions only build
+        32-bit Setups.
+        """
+        if self.dialect is Dialect.Inno7:
+            for k, t in enumerate(self.types):
+                if t.code is TC.Single:
+                    if k + 1 < len(self.types) and self.types[k + 1].code is TC.U64:
+                        return Platform.Win64
+                    break
+        return Platform.Win32
 
     def _name_types(self, missing_types: set[str] | None = None):
         tbn: dict[str, IFPSType] = CaseInsensitiveDict()
@@ -1404,7 +1442,7 @@ class IFPSFile(Struct):
             TC.U64           : reader.u64,
             TC.Single        : reader.f32,
             TC.Double        : reader.f64,
-            TC.Extended      : reader.f64 if self.x64 else (lambda: extended(reader.read(10))),
+            TC.Extended      : reader.f64 if self.platform is Platform.Win64 else (lambda: extended(reader.read(10))),
             TC.AnsiString    : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.PChar         : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.WideString    : reader.read_length_prefixed_utf16,
