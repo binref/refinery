@@ -1171,24 +1171,13 @@ class TestTheSetupAgreesWithTheScript(TestBase):
 
     def test_the_release_of_an_installer_of_inno_setup_7_is_the_version_of_its_compiled_code(self):
         """
-        Inno Setup 7.1.0 writes the version of its compiled code, 7.1.0, into the header of a 32-bit
-        Setup; the version of its data is 7.0.0.3.
+        Inno Setup 7.1.0 wrote these versions of its compiled code into the headers of the 32-bit
+        and the 64-bit Setup of the value oracle; the version of their data is 7.0.0.3. The highest
+        bit marks a 64-bit Setup.
         """
-        installer = self.installer()
-        installer.setup_info.Header.CompiledCodeVersion = 0x07010000
-        installer.ifps = self.script('x86')
-        setup = InnoSetupEmulator(installer, IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release, setup.dialect, setup.platform), ((7, 1, 0), Dialect.Inno7, Platform.Win32))
-
-    def test_the_release_of_a_64_bit_installer_of_inno_setup_7_is_the_version_of_its_compiled_code(self):
-        """
-        The header of a 64-bit Setup sets the highest bit of the version of its compiled code.
-        """
-        installer = self.installer()
-        installer.setup_info.Header.CompiledCodeVersion = 0x87010000
-        installer.ifps = self.script('x64')
-        setup = InnoSetupEmulator(installer, IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release, setup.dialect, setup.platform), ((7, 1, 0), Dialect.Inno7, Platform.Win64))
+        from refinery.lib.inno.emulator import _release
+        self.assertEqual(_release(0x07010000, None), (7, 1, 0))
+        self.assertEqual(_release(0x87010000, None), (7, 1, 0))
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):

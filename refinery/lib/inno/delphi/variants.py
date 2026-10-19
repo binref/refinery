@@ -21,12 +21,13 @@ from refinery.lib.inno.delphi.errors import (
 )
 from refinery.lib.inno.delphi.numbers import (
     FormatSettings,
+    OleNumber,
     float_to_str,
     ole_number,
     val_integer,
     val_unsigned,
 )
-from refinery.lib.inno.delphi.runtime import Runtime
+from refinery.lib.inno.delphi.runtime import Runtime, units
 from refinery.lib.inno.delphi.x87 import FPU, Format, Real
 
 
@@ -220,15 +221,16 @@ def _string_to_integer(v: Variant, runtime: Runtime, bits: int, target: str) -> 
     raise EVariantTypeCastError(type_text(v), target)
 
 
-def _ole_double(number: Fraction, v: Variant, target: str, runtime: Runtime) -> Real:
+def _ole_double(number: OleNumber, v: Variant, target: str, runtime: Runtime) -> Real:
     """
     The Double that Windows makes of a number it read from a string; a number beyond the range of a
     Double overflows the conversion to the target type. On 64-bit Windows, a number written without
     an exponent becomes an infinity instead.
     """
-    value = _NEAREST.rational(number.numerator, number.denominator, Format.Double)
+    exact = number.value
+    value = _NEAREST.rational(exact.numerator, exact.denominator, Format.Double)
     if x87.is_special(value):
-        if runtime.parses_long_digits_as_infinity and 'e' not in v.value.lower():
+        if runtime.parses_long_digits_as_infinity and not number.exponent:
             return value
         raise EVariantOverflowError(type_text(v), target)
     assert isinstance(value, float)
@@ -250,7 +252,7 @@ def _integer(v: Variant, runtime: Runtime, bits: int, target: str) -> int:
     if kind is _Kind.Empty:
         return 0
     if kind is _Kind.UInt64 and bits == 64:
-        value = v.value - (1 << 64) if v.value >> 63 else v.value
+        value = _wrap(v.value, 64)
     elif kind in _INTEGERS:
         value = v.value
     elif kind is _Kind.Boolean:
@@ -317,14 +319,14 @@ def to_cardinal(v: Variant, runtime: Runtime) -> int:
 
 def to_real(v: Variant, runtime: Runtime) -> Real:
     """
-    Delphi's conversion of a Variant to a float. A string is read as Windows reads a number in the
-    regional format, as a Double.
+    Delphi's conversion of a Variant to a float. An integer is loaded as the unit loads it, and a
+    string is read as Windows reads a number in the regional format, as a Double.
     """
     kind = _kind(v)
     if kind is _Kind.Empty:
         return 0.0
     if kind in _INTEGERS:
-        return x87.real(v.value)
+        return runtime.fpu.load(v.value)
     if kind is _Kind.Boolean:
         return -1.0 if v.value else 0.0
     if kind is _Kind.Float:
@@ -354,7 +356,7 @@ def to_currency(v: Variant, runtime: Runtime) -> Fraction:
             raise EVariantOverflowError(type_text(v), 'Currency')
         return runtime.variant_currency(v.value)
     elif kind is _Kind.String and (number := ole_number(v.value, runtime.settings)) is not None:
-        value = Fraction(round(number * 10000), 10000)
+        value = Fraction(round(number.value * 10000), 10000)
     else:
         raise EVariantTypeCastError(type_text(v), 'Currency')
     if not _in_currency_range(value):
@@ -367,12 +369,12 @@ def currency_text(value: Fraction, settings: FormatSettings) -> str:
     Delphi's `CurrToStr`: all digits of a Currency without trailing zeros, with the regional
     decimal separator.
     """
-    units = value.numerator * (10000 // value.denominator)
-    whole, fraction = divmod(abs(units), 10000)
+    count = units(value)
+    whole, fraction = divmod(abs(count), 10000)
     text = str(whole)
     if decimals := F'{fraction:04d}'.rstrip('0'):
         text = F'{text}{settings.decimal_separator}{decimals}'
-    return F'-{text}' if units < 0 else text
+    return F'-{text}' if count < 0 else text
 
 
 def to_string(v: Variant, runtime: Runtime, target: str = 'OleStr') -> str:
@@ -661,7 +663,7 @@ def compare(a: Variant, b: Variant, runtime: Runtime) -> int:
     """
     Delphi's comparison of two Variants: negative, zero, or positive. Null is below every other
     value and Empty below every value but Null; strings compare by their characters; a string and
-    a Boolean compare as Booleans, a string and a number as numbers.
+    a Boolean compare as Booleans, two integers as integers, a string and a number as numbers.
     """
     ka = _kind(a)
     kb = _kind(b)
@@ -683,6 +685,8 @@ def compare(a: Variant, b: Variant, runtime: Runtime) -> int:
             x = to_currency(a, runtime)
             y = to_currency(b, runtime)
             return (x > y) - (x < y)
+    if ka in _INTEGERS and kb in _INTEGERS:
+        return (a.value > b.value) - (a.value < b.value)
     order = runtime.fpu.compare(to_real(a, runtime), to_real(b, runtime))
     return 0 if order is None else order
 

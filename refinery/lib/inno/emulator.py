@@ -1219,6 +1219,17 @@ def _without_empty_last(spans: Iterable[tuple[int, int]]) -> Iterator[tuple[int,
         yield previous
 
 
+def _failed_instruction(error: Exception, function: Function, insn: Instruction, clock: int) -> EmulatorException:
+    """
+    The error that ends an emulation whose instruction failed; a result of Delphi that the model
+    does not have ends it as undefined.
+    """
+    position = F'In {function.symbol} at 0x{insn.offset:X} (cycle {clock})'
+    if isinstance(error, Undefined):
+        return EmulatorUndefined(F'{position}: {error!s}')
+    return EmulatorException(F'{position}, emulation of {insn!r} failed: {error!s}')
+
+
 def _open_array_element(element: Variable) -> VarRec:
     """
     Converts an element of an `array of const` into the argument that Pascal Script passes for it
@@ -1946,7 +1957,7 @@ class IFPSEmulator:
                         rt, rv = gettyped(insn.op(2))
                         truth = pascal.compare(cop, lt, lv, rt, rv, machine)
                         into = getvar(insn.op(0)).deref()
-                        into.data = pascal.boolean(into.type, truth)
+                        into.data = pascal.boolean(into.type, truth, machine)
                     elif opc == Op.CallVar:
                         call = getval(insn.op(0))
                         if isinstance(call, int):
@@ -2009,9 +2020,7 @@ class IFPSEmulator:
                 except EmulatorException:
                     raise
                 except Exception as RE:
-                    raise EmulatorException(
-                        F'In {function.symbol} at 0x{insn.offset:X} (cycle {self.clock}), '
-                        F'emulation of {insn!r} failed: {RE!s}')
+                    raise _failed_instruction(RE, function, insn, self.clock) from RE
             else:
                 raise EmulatorException(F'In {function.symbol}, no instruction starts at 0x{ip:X}.')
 

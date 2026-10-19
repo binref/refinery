@@ -12,7 +12,7 @@ import re
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.errors import EConvertError, SysConst, Undefined
@@ -633,7 +633,15 @@ def _power_of_ten(library: Library, value: Real, power: int) -> Real:
     return value
 
 
-def ole_number(text: str, settings: FormatSettings) -> Fraction | None:
+class OleNumber(NamedTuple):
+    """
+    A number that Windows read from a text, and whether the text wrote it with an exponent.
+    """
+    value: Fraction
+    exponent: bool
+
+
+def ole_number(text: str, settings: FormatSettings) -> OleNumber | None:
     """
     The number that Windows reads from a text when Delphi converts a Variant that holds a string,
     with the regional settings: white space around it; `&H` before hexadecimal and `&O` before
@@ -654,9 +662,9 @@ def ole_number(text: str, settings: FormatSettings) -> Fraction | None:
             return None
         digits = digits.lstrip('0') or '0'
         if len(digits) > _OLE_DIGITS:
-            return Fraction(10) ** _OLE_EXPONENT
+            return OleNumber(Fraction(10) ** _OLE_EXPONENT, False)
         try:
-            return Fraction(int(digits, base))
+            return OleNumber(Fraction(int(digits, base)), False)
         except ValueError:
             return None
     negative = False
@@ -680,12 +688,12 @@ def ole_number(text: str, settings: FormatSettings) -> Fraction | None:
         text = text[:-1].strip(_OLE_WHITESPACE)
     if sign is not None and negative:
         return None
-    value = _ole_magnitude(text, settings)
-    if value is None:
+    number = _ole_magnitude(text, settings)
+    if number is None:
         return None
     if negative or sign == '-':
-        value = -value
-    return value
+        return OleNumber(-number.value, number.exponent)
+    return number
 
 
 _OLE_WHITESPACE = ' \t'
@@ -693,7 +701,7 @@ _OLE_DIGITS = 800
 _OLE_EXPONENT = 400
 
 
-def _ole_magnitude(text: str, settings: FormatSettings) -> Fraction | None:
+def _ole_magnitude(text: str, settings: FormatSettings) -> OleNumber | None:
     thousands = settings.thousand_separator
     point = settings.decimal_separator
     pattern = F'([0-9](?:[0-9]|{re.escape(thousands)})*)?(?:{re.escape(point)}([0-9]*))?(?:[eE]([+-]?)([0-9]*))?'
@@ -709,9 +717,10 @@ def _ole_magnitude(text: str, settings: FormatSettings) -> Fraction | None:
         return None
     if exponent is not None and not exponent:
         return None
+    written = exponent is not None
     digits = (whole + fraction).lstrip('0')
     if not digits:
-        return Fraction(0)
+        return OleNumber(Fraction(0), written)
     scale = -len(fraction)
     if exponent:
         scale += _bounded_exponent(exponent_sign, exponent, 2 * _OLE_EXPONENT + len(whole) + len(fraction))
@@ -724,10 +733,10 @@ def _ole_magnitude(text: str, settings: FormatSettings) -> Fraction | None:
             scale -= 1
     top = len(digits) + scale
     if top > _OLE_EXPONENT:
-        return Fraction(10) ** _OLE_EXPONENT
+        return OleNumber(Fraction(10) ** _OLE_EXPONENT, written)
     if top < -_OLE_EXPONENT:
-        return Fraction(1, 10 ** _OLE_EXPONENT)
-    return Fraction(int(digits)) * Fraction(10) ** scale
+        return OleNumber(Fraction(1, 10 ** _OLE_EXPONENT), written)
+    return OleNumber(Fraction(int(digits)) * Fraction(10) ** scale, written)
 
 
 def shortest(value: Real) -> str:

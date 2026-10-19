@@ -317,7 +317,7 @@ def read_real(t: IFPSType, value: Any, runtime: Runtime) -> Real:
     """
     code = t.code
     if code.integer:
-        return x87.real(value)
+        return runtime.fpu.load(value)
     if code in _FLOAT_FORMATS:
         return value
     if code is TC.Currency:
@@ -333,7 +333,7 @@ def read_currency(t: IFPSType, value: Any, runtime: Runtime) -> Fraction:
     """
     code = t.code
     if code.integer:
-        return runtime.currency_of_integer(value)
+        return _delphi(runtime.currency_of_integer, value)
     if code in _FLOAT_FORMATS:
         return _delphi(runtime.currency, value)
     if code is TC.Currency:
@@ -706,7 +706,7 @@ def _currency_read_as_double(runtime: Runtime, aop: AOp, a: Fraction, b: int) ->
     bytes of the Currency read as a Double, and stores the result as a Currency.
     """
     double, = struct.unpack('<d', struct.pack('<q', _signed(units(a), 64)))
-    return runtime.currency(runtime.real_arithmetic(_OPERATIONS[aop], double, x87.real(b)))
+    return runtime.currency(runtime.real_arithmetic(_OPERATIONS[aop], double, runtime.fpu.load(b)))
 
 
 def _integer_comparands(left: TC, a: int, right: TC, b) -> tuple:
@@ -781,7 +781,7 @@ def compare(cop: COp, left: IFPSType, a: Any, right: IFPSType, b: Any, machine: 
                 return test(a, read_integer(right, b, runtime))
             return test(a, read_cardinal(right, b, runtime))
         if lc is TC.S32 and (rc in _FLOAT_FORMATS or rc is TC.Currency and machine.dialect is Dialect.Inno7):
-            return _real_test(test, x87.real(a), read_real(right, b, runtime), runtime)
+            return _real_test(test, read_real(left, a, runtime), read_real(right, b, runtime), runtime)
         a, b = _integer_comparands(lc, a, rc, b)
         return test(a, b)
     if lc is TC.Set:
@@ -831,13 +831,13 @@ def _variant_order(a: Variant, b: Variant, runtime: Runtime) -> int:
     return _delphi(variants.compare, a, b, runtime)
 
 
-def boolean(t: IFPSType, value: bool) -> Any:
+def boolean(t: IFPSType, value: bool, machine: Machine) -> Any:
     """
     The value that a comparison writes into a destination of the given type: an integer of up to
-    32 bits holds 1 or 0, and a Variant holds a Boolean.
+    32 bits, and from Inno Setup 7 on any integer, holds 1 or 0, and a Variant holds a Boolean.
     """
     code = t.code
-    if code.integer and code.width <= 4:
+    if code.integer and (code.width <= 4 or machine.dialect is Dialect.Inno7):
         return int(value)
     if code is TC.Variant:
         return Variant(VarType.Boolean, value)

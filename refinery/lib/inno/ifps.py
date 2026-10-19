@@ -1281,15 +1281,24 @@ class IFPSFile(Struct):
         The platform of the Setup that the script was compiled for. The compiler declares its
         standard types first, in a fixed order; from Inno Setup 7 on, `NativeUInt` follows the first
         `Single` and is 64 bits wide in a script for a 64-bit Setup. Earlier versions only build
-        32-bit Setups.
+        32-bit Setups and have no 64-bit unsigned type. The standard types decide, so the types
+        read so far decide while the type table is read.
         """
-        if self.dialect is Dialect.Inno7:
-            for k, t in enumerate(self.types):
-                if t.code is TC.Single:
-                    if k + 1 < len(self.types) and self.types[k + 1].code is TC.U64:
-                        return Platform.Win64
-                    break
+        types = self.types
+        for k, t in enumerate(types):
+            if t.code is TC.Single:
+                if k + 1 < len(types) and types[k + 1].code is TC.U64:
+                    return Platform.Win64
+                break
         return Platform.Win32
+
+    def _read_extended(self, reader: StructReader) -> x87.Real:
+        """
+        An Extended constant, which is a Double in a script for a 64-bit Setup.
+        """
+        if self._platform() is Platform.Win64:
+            return reader.f64()
+        return extended(reader.read(10))
 
     def _name_types(self, missing_types: set[str] | None = None):
         tbn: dict[str, IFPSType] = CaseInsensitiveDict()
@@ -1442,7 +1451,7 @@ class IFPSFile(Struct):
             TC.U64           : reader.u64,
             TC.Single        : reader.f32,
             TC.Double        : reader.f64,
-            TC.Extended      : reader.f64 if self.platform is Platform.Win64 else (lambda: extended(reader.read(10))),
+            TC.Extended      : lambda: self._read_extended(reader),
             TC.AnsiString    : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.PChar         : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.WideString    : reader.read_length_prefixed_utf16,

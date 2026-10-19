@@ -339,6 +339,13 @@ class FPU:
         m, e = parts(value)
         return self._round(m, e, precision, self.range)
 
+    def load(self, value: int) -> Real:
+        """
+        An integer loaded into the unit to compute with floats; the x87 holds every 64-bit integer
+        exactly.
+        """
+        return real(value)
+
     def store(self, value: Real, fmt: Format) -> Real:
         """
         Rounds a value as storing it into a variable of the given format rounds it. A `Single` or a
@@ -606,6 +613,12 @@ class SSE(FPU):
     def round(self, value: Real, fmt: Format, rounding: Rounding | None = None) -> Real:
         return super().round(value, Format.Double if fmt is Format.Extended else fmt, rounding)
 
+    def load(self, value: int) -> Real:
+        """
+        An integer converted to a Double, rounded to the nearest value.
+        """
+        return super().store(real(value), Format.Double)
+
     def store(self, value: Real, fmt: Format) -> Real:
         return super().store(value, Format.Double if fmt is Format.Extended else fmt)
 
@@ -619,6 +632,8 @@ class SSE(FPU):
         return math.pi
 
     def sine(self, a: Real) -> Real:
+        if a == 0:
+            return a
         return self._library(a, _sine)
 
     def cosine(self, a: Real) -> Real:

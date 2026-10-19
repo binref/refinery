@@ -1126,6 +1126,102 @@ class TestIPFSEmulator(TestBase):
         with self.assertRaises(IFPSException):
             pascal.compare(COp.LT, TPrimitive(TC.Currency), Fraction(1), TPrimitive(TC.Double), 1e300, machine)
 
+    def test_a_64_bit_setup_reads_an_int64_operand_as_a_double_before_it_computes(self):
+        """
+        Pascal Script reads the operand with `PSGetReal`, whose Extended is a Double in 64-bit code.
+        """
+        from refinery.lib.inno import pascal
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win64
+        from refinery.lib.inno.ifps import TC, AOp, COp, Dialect, TPrimitive
+        machine = pascal.Machine(Dialect.Inno7, Win64(FormatSettings()))
+        double = TPrimitive(TC.Double)
+        int64 = TPrimitive(TC.S64)
+        # 2**53 + 1 rounds to the Double 2**53, and 2**53 + 0.5 rounds to 2**53 as well.
+        self.assertEqual(pascal.calculate(AOp.Add, double, 0.5, int64, 2 ** 53 + 1, machine), 2.0 ** 53)
+        self.assertTrue(pascal.compare(COp.EQ, double, 2.0 ** 53, int64, 2 ** 53 + 1, machine))
+
+    def test_a_64_bit_setup_converts_an_int64_variant_to_a_double_before_it_computes(self):
+        from refinery.lib.inno.delphi import variants
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win64
+        from refinery.lib.inno.delphi.variants import Variant, VarType
+        runtime = Win64(FormatSettings())
+        result = variants.operate(
+            variants.Operator.Add,
+            Variant(VarType.Double, 0.5),
+            Variant(VarType.Int64, 2 ** 53 + 1),
+            runtime,
+        )
+        # 2**53 + 1 rounds to the Double 2**53, and 2**53 + 0.5 rounds to 2**53 as well.
+        self.assertEqual(result, Variant(VarType.Double, 2.0 ** 53))
+
+    def test_a_64_bit_setup_compares_two_int64_variants_as_integers(self):
+        from refinery.lib.inno.delphi import variants
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win64
+        from refinery.lib.inno.delphi.variants import Variant, VarType
+        runtime = Win64(FormatSettings())
+        order = variants.compare(Variant(VarType.Int64, 2 ** 53), Variant(VarType.Int64, 2 ** 53 + 1), runtime)
+        self.assertEqual(order, -1)
+
+    def test_64_bit_windows_reads_digits_without_exponent_beyond_a_double_as_an_infinity_after_a_currency_string_with_an_e(self):
+        """
+        The currency string of Romanian (Romania) is `lei`; the number has no exponent.
+        """
+        import math
+        from refinery.lib.inno.delphi import variants
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win64
+        from refinery.lib.inno.delphi.variants import Variant, VarType
+        runtime = Win64(FormatSettings.of_locale(0x0418))
+        self.assertEqual(variants.to_real(Variant(VarType.OleStr, F'{"1" * 310} lei'), runtime), math.inf)
+
+    def test_a_64_bit_currency_quotient_beyond_the_range_of_a_currency_ends_the_emulation(self):
+        from fractions import Fraction
+        from refinery.lib.inno.delphi.errors import Undefined
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Operation, Win64
+        runtime = Win64(FormatSettings())
+        with self.assertRaises(Undefined):
+            runtime.currency_arithmetic(Operation.Divide, Fraction(922337203685477), Fraction(1, 10000))
+
+    def test_an_int64_beyond_the_range_of_a_currency_raises_an_invalid_operation_before_inno_setup_6_4_3(self):
+        """
+        The x87 converts the Int64 to a Currency; the control word `$1332` does not mask invalid
+        operations.
+        """
+        from refinery.lib.inno import pascal
+        from refinery.lib.inno.delphi import x87
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win32
+        from refinery.lib.inno.ifps import TC, Dialect, TPrimitive
+        machine = pascal.Machine(Dialect.Inno6, Win32(FormatSettings(), x87.DEFAULT_CONTROL_WORD))
+        with self.assertRaises(IFPSException) as raised:
+            pascal.store(TPrimitive(TC.Currency), TPrimitive(TC.S64), 10 ** 16, machine)
+        self.assertEqual(raised.exception.kind, pascal.PSError.MathError)
+
+    def test_a_comparison_writes_one_into_a_uint64_from_inno_setup_7_on(self):
+        """
+        The compiler of Inno Setup 7 casts `Ord` to a UInt64, and its Pascal Script writes the result
+        of a comparison into 64-bit integers.
+        """
+        from refinery.lib.inno import pascal
+        from refinery.lib.inno.delphi import x87
+        from refinery.lib.inno.delphi.numbers import FormatSettings
+        from refinery.lib.inno.delphi.runtime import Win32
+        from refinery.lib.inno.ifps import TC, Dialect, TPrimitive
+        runtime = Win32(FormatSettings(), x87.MASKED_CONTROL_WORD)
+        self.assertEqual(pascal.boolean(TPrimitive(TC.U64), True, pascal.Machine(Dialect.Inno7, runtime)), 1)
+        with self.assertRaises(IFPSException):
+            pascal.boolean(TPrimitive(TC.U64), True, pascal.Machine(Dialect.Inno6, runtime))
+
+    def test_the_sine_of_negative_zero_in_a_64_bit_setup_is_negative_zero(self):
+        from refinery.lib.inno.delphi import x87
+        sine = x87.SSE().sine(-0.0)
+        self.assertEqual(sine, 0.0)
+        self.assertTrue(x87.is_negative(sine))
+
     def test_a_currency_that_python_code_gives_a_variant_is_a_currency(self):
         from fractions import Fraction
         from refinery.lib.inno.delphi.variants import VarType, from_python
