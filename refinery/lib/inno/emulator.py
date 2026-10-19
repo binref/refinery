@@ -104,6 +104,18 @@ class OleObject:
 _VariantType = TPrimitive(TC.Variant)
 
 
+class _DynamicArray(list['Variable']):
+    """
+    The elements of a dynamic array of Pascal Script. Assignment shares the elements, and the
+    number of variables that hold them decides whether a change of the length is made in place.
+    """
+    __slots__ = 'holders',
+
+    def __init__(self, elements=()):
+        super().__init__(elements)
+        self.holders = 1
+
+
 class Variable(VariableBase, Generic[_T]):
     """
     This class represents a global or stack variable in the IFPS runtime.
@@ -204,7 +216,7 @@ class Variable(VariableBase, Generic[_T]):
                 t = type.type
                 return [Variable(t, spec, (*path, *sub_path, k)) for k in range(type.size)]
             if isinstance(type, TArray):
-                return []
+                return _DynamicArray()
             if sub_path:
                 return Variable(type, spec, (*path, *sub_path))
             elif type.code == TC.Pointer:
@@ -217,7 +229,8 @@ class Variable(VariableBase, Generic[_T]):
     def resize(self, n: int):
         """
         This function is only valid for container type variables. It re-sizes the data list to
-        ensure that the container stores exactly `n` sub-variables, or none if `n` is negative.
+        ensure that the container stores exactly `n` sub-variables, or none if `n` is negative. A
+        dynamic array that another variable holds too is copied before its length changes.
         """
         t = self.type
         if t.code != TC.Array:
@@ -226,10 +239,31 @@ class Variable(VariableBase, Generic[_T]):
             if n == t.size:
                 return
             raise ValueError(F'Attempt to resize {t} of size {t.size} to {n}.')
-        data = self.data
-        del data[max(n, 0):]
+        if not isinstance(t, TArray) or not isinstance(data := self.data, _DynamicArray):
+            raise TypeError
+        n = max(n, 0)
+        if len(data) == n:
+            return
+        if data.holders > 1:
+            data.holders -= 1
+            kept = data[:n]
+            self.data = data = _DynamicArray()
+            for k, element in enumerate(kept):
+                copy = Variable(t.type, self.spec, (*self.path, k))
+                copy._copy_from(element)
+                data.append(copy)
+        del data[n:]
         for k in range(len(data), n):
             data.append(Variable(t.type, self.spec, (*self.path, k)))
+
+    def _share(self, elements: _DynamicArray):
+        if not isinstance(data := self.data, _DynamicArray):
+            raise TypeError
+        if data is elements:
+            return
+        data.holders -= 1
+        elements.holders += 1
+        self.data = elements
 
     def setptr(self, var: Variable, copy: bool = False):
         """
@@ -254,7 +288,8 @@ class Variable(VariableBase, Generic[_T]):
         For container types, it can also be a sequence of those. A container variable is copied
         element by element, and a pointer element as Pascal Script copies it: A pointer to a
         variable of the script points to the same variable, and a pointer that owns its target
-        points to a copy of that target. A value of Python code is converted as
+        points to a copy of that target. A dynamic array shares the elements of the dynamic array
+        that it is assigned. A value of Python code is converted as
         `refinery.lib.inno.pascal.representation` converts it; the interpreter converts between the
         types of the script.
         """
@@ -276,6 +311,8 @@ class Variable(VariableBase, Generic[_T]):
         if self.container:
             if not isinstance(assigned, (list, tuple)):
                 raise TypeError
+            if self.type.code is TC.Array:
+                self._share(_DynamicArray())
             self.resize(len(assigned))
             for k, v in enumerate(assigned):
                 self.data[k].set(v)
@@ -285,17 +322,24 @@ class Variable(VariableBase, Generic[_T]):
     def _copy_elements(self, source: Variable):
         if (
             not isinstance(elements := source.data, list)
-            or not isinstance(destination := self.data, list)
+            or not isinstance(self.data, list)
         ):
             raise TypeError
+        if self.type.code is TC.Array:
+            if isinstance(elements, _DynamicArray):
+                return self._share(elements)
+            self._share(_DynamicArray())
         self.resize(len(elements))
-        for element, copied in zip(destination, elements):
-            if not element.pointer:
-                element.set(copied)
-            elif isinstance(target := copied.data, Variable):
-                element.setptr(target, copy=target.spec is None)
-            else:
-                raise type_mismatch()
+        for element, copied in zip(self.data, elements):
+            element._copy_from(copied)
+
+    def _copy_from(self, copied: Variable):
+        if not self.pointer:
+            self.set(copied)
+        elif isinstance(target := copied.data, Variable):
+            self.setptr(target, copy=target.spec is None)
+        else:
+            raise type_mismatch()
 
     def get(self) -> _T:
         """

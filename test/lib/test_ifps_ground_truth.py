@@ -1265,12 +1265,8 @@ class _OracleTest(TestBase):
 
     def emulator(self, **config):
         script = IFPSFile.Parse(self.download_sample(self.script))
-        return InnoSetupEmulator(script, IFPSEmulatorConfig(
-            log_calls=True,
-            lcid=0x0407,
-            setup_version=(6, 5, 0),
-            **config,
-        ))
+        config.setdefault('setup_version', (6, 5, 0))
+        return InnoSetupEmulator(script, IFPSEmulatorConfig(log_calls=True, lcid=0x0407, **config))
 
     def assertEmulatedAsLogged(self, procedure: str, *names: str, prefix: str | None = None):
         """
@@ -1456,6 +1452,15 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
 
     def test_parsing_scales_by_one_power_of_ten(self):
         self.assertEmulatedAsLogged('ORACLEPARSINGPOWERS')
+
+    def test_a_dynamic_array_assigned_to_another_variable_is_shared(self):
+        self.assertEmulatedAsLogged('ORACLESHAREDARRAYS')
+
+    @wontfix('Inno Setup 5.5.3 and 5.5.4 copy a shared dynamic array that keeps its length; the emulator follows 5.5.5 and later')
+    def test_inno_setup_5_5_4_copies_a_shared_dynamic_array_that_keeps_its_length(self):
+        emulator = self.emulator(setup_version=(5, 5, 4))
+        logged = _resolved(_logged_values(emulator.emulate_function(emulator.symbols['ORACLESHAREDARRAYS']), {}))
+        self.assertEqual(logged['share.resized_to_same_length'], 'a')
 
     def test_a_currency_computed_with_a_cardinal_or_an_int64_is_read_as_a_double(self):
         self.assertEmulatedAsLogged('ORACLECURRENCYOPERANDS')
