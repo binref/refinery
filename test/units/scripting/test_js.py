@@ -259,3 +259,22 @@ class TestJsModuleKind(TestUnitBase):
 
     def test_a_classic_global_script_holds_the_payload_unpacked(self):
         self.assertEqual(self.SLOPPY_PAYLOAD | self.load() | str, 'leak = 5;\nconsole.log(leak);')
+
+
+class TestJsLoadedByOtherFiles(TestUnitBase):
+    """
+    The `-l` switch says that code may load the input and read what it exports. Without it, a
+    CommonJS file that never reads `module` back has the store that replaces `module.exports`
+    removed, since no code reads it.
+    """
+
+    EXPORTED = b'module.exports = {a: 1};\nconsole.log(2);'
+
+    def test_a_commonjs_file_loses_the_store_that_replaces_its_exports(self):
+        self.assertEqual(self.EXPORTED | self.load(commonjs=True) | str, 'console.log(2);')
+
+    def test_the_switch_keeps_the_store(self):
+        self.assertEqual(
+            self.EXPORTED | self.load(commonjs=True, loaded=True) | str,
+            'module.exports = { a: 1 };\nconsole.log(2);',
+        )

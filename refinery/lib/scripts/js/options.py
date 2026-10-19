@@ -89,12 +89,18 @@ class DeobfuscationOptions:
     read of the intrinsic that is not the callee of a direct call — still open the world under both
     models, and so does every write the text spells. The assumption is about code that cannot be
     read, not about every way a script can reach the world.
+
+    *loaded_by_other_files* says that other files may load the input and read what it exports: a
+    CommonJS file another one requires, or a package's main file. By default no code loads it, and
+    what a CommonJS file stores in `module.exports` is read only where the file itself reads it back
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.module_exports_unread`).
     """
     execution: ExecutionModel = ExecutionModel.script
     entrypoints: tuple[str, ...] = ()
     environment: HostEnvironment = HostEnvironment.universal
     trust_eval: bool = False
     preserve_script_return: bool = False
+    loaded_by_other_files: bool = False
 
     def names_entrypoint(self, name: str) -> bool:
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
@@ -142,6 +148,15 @@ def preserves_script_return(options: object | None) -> bool:
     never an observable side effect.
     """
     return isinstance(options, DeobfuscationOptions) and options.preserve_script_return
+
+
+def exports_are_read_outside(options: object | None) -> bool:
+    """
+    Whether code outside the input may read what it exports (`DeobfuscationOptions`). Any value
+    that is not a `DeobfuscationOptions` — a transformer run standalone, or with no options
+    attached — answers `True`, so a pass run outside the pipeline keeps every export.
+    """
+    return not isinstance(options, DeobfuscationOptions) or options.loaded_by_other_files
 
 
 def file_kind(options: object | None, root: JsScript) -> FileKind:

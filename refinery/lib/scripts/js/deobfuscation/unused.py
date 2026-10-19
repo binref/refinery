@@ -1527,12 +1527,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         completion instead. *prologue_intact* is whether the statements still standing ahead of it
         are all directives, which is what its removal needs to promote the string literal behind it;
         a removed candidate does not disturb it, so the sweep hands each statement a prefix the tree
-        still has.
+        still has. A statement that stores goes only where no code observes the store
+        (`refinery.lib.scripts.js.analysis.effects.EffectModel.store_unobserved`).
         """
         if not isinstance(stmt, JsExpressionStatement):
             return False
-        if stmt.expression is None or isinstance(stmt.expression, JsAssignmentExpression):
+        if (expression := stmt.expression) is None:
             return False
+        if isinstance(expression, JsAssignmentExpression):
+            target = strip_parens(expression.left)
+            if not isinstance(target, JsMemberExpression) or not self.effects.store_unobserved(target):
+                return False
         if is_use_strict_directive(stmt):
             return False
         if not answered_behind:

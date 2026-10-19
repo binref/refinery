@@ -46,6 +46,11 @@ class js(IterativeDeobfuscator):
             'present and the reads that rely on them are resolved. The default is {default}, which '
             'assumes only the globals every host shares, so a host-conditional read such as window '
             'or global is kept. Options are: {choices}.'))] = HostEnvironment.universal,
+        loaded: Param[bool, Arg.Switch('-l', help=(
+            'Assume code may load the input and read what it exports: another file that requires it, '
+            'as with the main file of a package, or the file itself through the module registry. '
+            'Without this switch, a CommonJS file that never reads module back has the store that '
+            'replaces module.exports removed.'))] = False,
         strict: Param[bool, Arg.Switch('-s', help=(
             'Assume that unknown reflectively executed code (a direct eval, a Function construction, '
             'a string timer) can change or read anything the rest of the script does. This cleans '
@@ -57,6 +62,7 @@ class js(IterativeDeobfuscator):
             commonjs=commonjs,
             entrypoints=entrypoints,
             environment=Arg.AsOption(environment, HostEnvironment),
+            loaded=loaded,
             strict=strict,
         )
 
@@ -76,6 +82,7 @@ class js(IterativeDeobfuscator):
             entrypoints=tuple(self.args.entrypoints),
             environment=self.args.environment,
             trust_eval=not self.args.strict,
+            loaded_by_other_files=self.args.loaded,
         )
 
     def synthesize(self, ast: JsScript) -> str:

@@ -84,6 +84,7 @@ from refinery.lib.scripts.js.analysis.model import (
     enclosing_function,
     enclosing_operator,
     is_member_write_target,
+    is_plain_store_target,
     own_arguments_binding,
     reference_role,
 )
@@ -127,6 +128,7 @@ from refinery.lib.scripts.js.model import (
     object_member_access_runs_accessor,
     static_property_key,
     strip_parens,
+    value_is_discarded,
     wraps_return,
 )
 
@@ -701,6 +703,7 @@ class _SideEffectScan:
         call_established: _CallPredicate | None,
         call_pure_discarded: _CallPredicate | None,
         coercions_may_write: bool = False,
+        store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
     ):
         self.defunct = defunct
         self.call_pure = call_pure
@@ -709,6 +712,7 @@ class _SideEffectScan:
         self.call_established = call_established
         self.call_pure_discarded = call_pure_discarded
         self.coercions_may_write = coercions_may_write
+        self.store_unobserved = store_unobserved
 
     def free(self, node: Node, discarded: bool = False) -> bool:
         if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
@@ -782,6 +786,17 @@ class _SideEffectScan:
             return all(elem is None or self.free(elem) for elem in node.elements)
         if isinstance(node, JsSequenceExpression):
             return all(self.free(e, discarded) for e in node.expressions)
+        if isinstance(node, JsAssignmentExpression):
+            target = strip_parens(node.left)
+            return (
+                isinstance(target, JsMemberExpression)
+                and self.store_unobserved is not None
+                and self.store_unobserved(target)
+                and target.object is not None
+                and self.free(target.object)
+                and node.right is not None
+                and self.free(node.right)
+            )
         if isinstance(node, JsCallExpression):
             if self.defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in self.defunct:
                 # The callee is read before it is called, and a name being removed is one a read of
@@ -816,27 +831,30 @@ def side_effect_free(
     discarded: bool = False,
     call_pure_discarded: _CallPredicate | None = None,
     coercions_may_write: bool = False,
+    store_unobserved: Callable[[JsMemberExpression], bool] | None = None,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
-    observable side effect. Compositional: an expression is free when every sub-expression is. Two leaves
-    can bear an effect. The call — free only when its callee is a *defunct* identifier, or, when both
-    *call_pure* and *call_established* are supplied, when *call_pure* certifies the call (or `new`) pure,
-    *call_established* certifies its callee is in place before the call runs, and its arguments are free.
-    An inline function-expression callee is not special-cased: it is resolved like any other callee through
-    *call_pure*, which inspects its body, so a called IIFE with an effectful body is not cleared. The
-    identifier read — free unless *read_effect* rejects it,
-    which `EffectModel.is_side_effect_free` supplies as `SemanticModel.read_has_dynamic_effect` to reject
-    a bare name that resolves through a `with` body's dynamic scope (reading it may fire the `with`
-    object's getter or throw). A function expression is free without descending into its body — defining
-    it runs nothing — so a dynamic-scope read inside an un-called function does not make the value
-    effectful. A parenthesized expression is transparent, bearing exactly the effects of the expression
-    it groups. A member read is free when its base is a safe value or *member_safe* certifies it;
+    observable side effect. Compositional: an expression is free when every sub-expression is. Three
+    leaves can bear an effect. The store — free only where *store_unobserved* certifies that no code
+    observes it, with its base and its value free. The call — free only when its callee is a
+    *defunct* identifier, or, when both *call_pure* and *call_established* are supplied, when
+    *call_pure* certifies the call (or `new`) pure, *call_established* certifies its callee is in
+    place before the call runs, and its arguments are free. An inline function-expression callee is
+    not special-cased: it is resolved like any other callee through *call_pure*, which inspects its
+    body, so a called IIFE with an effectful body is not cleared. The identifier read — free unless
+    *read_effect* rejects it, which `EffectModel.is_side_effect_free` supplies as
+    `SemanticModel.read_has_dynamic_effect` to reject a bare name that resolves through a `with`
+    body's dynamic scope (reading it may fire the `with` object's getter or throw). A function
+    expression is free without descending into its body — defining it runs nothing — so a
+    dynamic-scope read inside an un-called function does not make the value effectful. A
+    parenthesized expression is transparent, bearing exactly the effects of the expression it
+    groups. A member read is free when its base is a safe value or *member_safe* certifies it;
     `EffectModel.is_side_effect_free` supplies `EffectModel._is_trusted_global_read` to clear a
-    getter-free read of a trusted global data property. It passes `EffectModel.is_pure_call` and
-    `read_has_dynamic_effect` too. A caller without a model gets the conservative behaviour. When *defunct*
-    is given its identifiers name bindings being removed, so calls to them and property reads through
-    them are treated as free.
+    getter-free read of a trusted global data property. It passes `EffectModel.is_pure_call`,
+    `read_has_dynamic_effect` and `EffectModel.store_unobserved` too. A caller without a model gets
+    the conservative behaviour. When *defunct* is given its identifiers name bindings being removed,
+    so calls to them and property reads through them are treated as free.
 
     When *discarded* is set the expression's own value is thrown away by the caller, so a top-level call
     (or `new`) leaf is cleared through *call_pure_discarded* instead of *call_pure* — admitting a call
@@ -857,8 +875,31 @@ def side_effect_free(
     """
     return _SideEffectScan(
         defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
-        coercions_may_write,
+        coercions_may_write, store_unobserved,
     ).free(node, discarded)
+
+
+def _result_goes_nowhere(node: Node) -> bool:
+    """
+    Whether the value of *node* is thrown away: it is the value of a statement, an operand of a
+    sequence but its last, or a branch of a conditional, an operand of a logical operator or the last
+    operand of a sequence whose own value is thrown away. A logical operator tests its left operand
+    for truth, which reads nothing of an object.
+    """
+    while True:
+        parent = enclosing_operator(node)
+        if isinstance(parent, JsConditionalExpression) and node is not strip_parens(parent.test):
+            node = parent
+        elif isinstance(parent, JsLogicalExpression):
+            node = parent
+        elif (
+            isinstance(parent, JsSequenceExpression)
+            and parent.expressions
+            and strip_parens(parent.expressions[-1]) is node
+        ):
+            node = parent
+        else:
+            return value_is_discarded(node)
 
 
 class _WriteClass(enum.Enum):
@@ -1195,6 +1236,7 @@ class EffectModel:
             discarded,
             self.is_pure_call_discarded,
             coercions_may_write,
+            self.store_unobserved,
         )
 
     def throwing_read_effect(
@@ -1259,11 +1301,12 @@ class EffectModel:
         A method invoked on the container (`obj.m(...)`) may mutate it — an array's `sort`/`push`/`splice`
         and so on — so by default it too counts as mutable; a caller that knows the container's methods
         cannot mutate it (an object literal with no `this`-bound property) may pass *member_calls_mutate*
-        false to permit such calls. A reference that escapes is safe in two cases: it aliases another
+        false to permit such calls. A reference that escapes is safe in three cases: it aliases another
         binding that is itself an immutable container (alias-following the textual predicates this
-        replaces could not do, and the reason a reassigned-and-aliased lookup array stays inlinable), or
-        it is passed to a statically known function as an argument whose parameter is itself an immutable
-        container (so the callee neither mutates nor further-escapes it). Any other escape — returned,
+        replaces could not do, and the reason a reassigned-and-aliased lookup array stays inlinable),
+        it is passed to a statically known function as an argument whose parameter is itself an
+        immutable container (so the callee neither mutates nor further-escapes it), or it is the value
+        of a store no code observes (`store_unobserved`). Any other escape — returned,
         stored as a property, passed to a call that cannot be resolved — is treated conservatively as
         mutable, and so is an exported binding or an alias of one: an importer holds the container
         and may change it after the module has run, which no reference in this file records. A
@@ -1361,13 +1404,22 @@ class EffectModel:
         (`var x = ref` or `x = ref`) keeps it when the aliased binding is itself an immutable container,
         and an argument passed to a statically known function (`f(ref)`) keeps it when the parameter it
         binds is itself an immutable container — interprocedural Case B, the parameter's own references
-        decide whether the callee mutates or further-escapes it. Every other escape is conservatively
-        unsafe, an assignment that is no statement of its own among them: `var x = (y = ref)` stores
-        the container in `x` as well as in `y`.
+        decide whether the callee mutates or further-escapes it. A store no code observes
+        (`store_unobserved`) hands the container to nobody, as long as the value of the assignment goes
+        nowhere either. Every other escape is conservatively unsafe, an assignment that is no statement
+        of its own among them: `var x = (y = ref)` stores the container in `x` as well as in `y`.
         """
         alias = self.model.name_holding(ref)
         if alias is not None:
             return self._immutable_container(alias, visiting, member_calls_mutate)
+        store = enclosing_operator(ref)
+        if (
+            isinstance(store, JsAssignmentExpression)
+            and strip_parens(store.right) is ref
+            and isinstance(target := strip_parens(store.left), JsMemberExpression)
+            and self.store_unobserved(target)
+        ):
+            return _result_goes_nowhere(store)
         return self._argument_keeps_container(ref, visiting)
 
     def _argument_keeps_container(self, ref: JsIdentifier, visiting: set[int]) -> bool:
@@ -1703,6 +1755,8 @@ class EffectModel:
         return cached
 
     def _classify_member_write(self, member: JsMemberExpression, func: Node) -> _WriteClass:
+        if self.store_unobserved(member):
+            return _WriteClass.UNOBSERVABLE
         base = member.object
         if isinstance(base, (JsArrayExpression, JsFunctionExpression)):
             return _WriteClass.UNOBSERVABLE
@@ -1720,6 +1774,24 @@ class EffectModel:
         if not binding.captured and self._container_non_escaping(binding):
             return _WriteClass.UNOBSERVABLE
         return _WriteClass.VIA_RESULT
+
+    def store_unobserved(self, member: JsMemberExpression) -> bool:
+        """
+        Whether the store whose target is *member* is observed by no code: it is `module.exports = v`
+        through the `module` the host passed, and nothing reads what the file stores there
+        (`SemanticModel.module_exports_unread`). The host made `exports` a data property of its own
+        on that object, so the store runs no setter and cannot fail; under the reading as an ES
+        module, where the name may be absent, the read of `module` keeps its own throw.
+        """
+        if static_property_key(member) != 'exports' or not is_plain_store_target(member):
+            return False
+        base = strip_parens(member.object)
+        if not isinstance(base, JsIdentifier) or base.name != 'module':
+            return False
+        binding = self.model.resolve(base)
+        if binding is None or binding is not self.model.root_scope.bindings.get('module'):
+            return False
+        return self.model.module_exports_unread()
 
     def _owns_binding(self, binding: Binding, func: Node) -> bool:
         """
@@ -2882,7 +2954,8 @@ class EffectModel:
         """
         Whether a property access on *node* cannot throw because *node* is known not to be nullish: a
         container literal whose access is plain, a primitive literal other than `null`, the global object, a
-        pristine intrinsic root, or a never-rebound rest parameter. A rest parameter is bound to a fresh array
+        pristine intrinsic root, a name holding what the CommonJS host passed where it passes it (none of
+        which is nullish), or a never-rebound rest parameter. A rest parameter is bound to a fresh array
         at function entry, before any body statement runs — no temporal-dead-zone or hoisted-`undefined` window
         a flow-insensitive check could miss — so a member access on it is safe wherever it appears, provided the
         name is never reassigned to a value that could be nullish. A `var`/`let`/`const` local initialized to a
@@ -2910,7 +2983,11 @@ class EffectModel:
             if isinstance(self.intrinsic_of(node), str):
                 return True
             binding = self.model.resolve(node)
-            return binding is not None and self._is_rest_param(binding) and not binding.writes
+            if binding is None:
+                return False
+            if binding.supplied_by_host and not binding.may_be_absent:
+                return self.model.holds_what_the_host_passed(binding)
+            return self._is_rest_param(binding) and not binding.writes
         return False
 
     def _base_getter_safe(self, node: Node, region: list[Node] | None = None) -> bool:

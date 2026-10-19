@@ -26,6 +26,7 @@ from test.lib.scripts.js.analysis.differential import (
 )
 
 from refinery.lib.scripts import is_well_formed
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.lexer import JsLexer
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
@@ -136,14 +137,19 @@ def printed(source: str) -> str:
     return JsSynthesizer().convert(JsParser(source).parse())
 
 
-def folded(source: str, *, module: bool = False) -> str:
+def folded(
+    source: str,
+    *,
+    module: bool = False,
+    environment: HostEnvironment = HostEnvironment.universal,
+) -> str:
     """
     The text `refinery.js` writes for *source* under the strict model, which is the one whose output
     is semantically equivalent to its input — the claim every entry reading this makes. The unit's
     own default is the trusting model, which folds more and guarantees nothing; a test of that model
-    asks for it by name.
+    asks for it by name. *environment* is the host the unit is told the script runs in.
     """
-    return source.encode('utf8') | js(module=module, strict=True) | str
+    return source.encode('utf8') | js(module=module, strict=True, environment=environment.name) | str
 
 
 def evaluated_in_a_body(receiver: str, read: str, installs: str = '') -> str:
@@ -202,10 +208,12 @@ def before_and_after(
     *,
     module: bool = False,
     execution: ExecutionModel = ExecutionModel.module,
+    environment: HostEnvironment = HostEnvironment.universal,
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
     What Node makes of *source* and what it makes of the text `refinery.js` deobfuscates it to,
-    reported together because the law is that the two agree.
+    reported together because the law is that the two agree. The deobfuscation assumes the host
+    *environment*, which Node is unless it is the browser.
 
     *module* reads the source as an ECMAScript module rather than as a script, which an entry
     pinning an `import` or `export` declaration has to ask for: no script spells one, and the answer
@@ -221,12 +229,13 @@ def before_and_after(
     """
     return (
         behavior(source, module=module),
-        behavior(deobfuscate_source(source, execution=execution), module=module),
+        behavior(deobfuscate_source(source, execution=execution, environment=environment), module=module),
     )
 
 
 def before_and_after_in_a_host(
     source: str,
+    environment: HostEnvironment = HostEnvironment.universal,
 ) -> tuple[tuple[str, str | None], tuple[str, str | None]]:
     """
     What a host running *source* as a classic global script makes of it, and what it makes of the
@@ -239,7 +248,7 @@ def before_and_after_in_a_host(
     `refinery.js` writes under `-s`, the only model whose output is equivalent to its input; the
     unit's own default is the trusting model, which folds more and guarantees nothing.
     """
-    return (host_behavior(source), host_behavior(folded(source)))
+    return (host_behavior(source), host_behavior(folded(source, environment=environment)))
 
 
 def each_program_still_prints(
@@ -280,16 +289,21 @@ class Reading(Enum):
     ES_MODULE = auto()
     SCRIPT = auto()
 
-    def read(self, source: str) -> tuple[Behavior, Behavior]:
+    def read(
+        self,
+        source: str,
+        environment: HostEnvironment = HostEnvironment.universal,
+    ) -> tuple[Behavior, Behavior]:
         """
         What an engine makes of *source* under this model and what it makes of the text
-        `refinery.js` deobfuscates it to, reported together because the law is that the two agree.
+        `refinery.js` deobfuscates it to for the host *environment*, reported together because the
+        law is that the two agree.
         """
         if self is Reading.SCRIPT:
-            return before_and_after_in_a_host(source)
+            return before_and_after_in_a_host(source, environment)
         if self is Reading.COMMONJS:
-            return before_and_after(source, execution=ExecutionModel.commonjs)
-        return before_and_after(source, module=self is Reading.ES_MODULE)
+            return before_and_after(source, execution=ExecutionModel.commonjs, environment=environment)
+        return before_and_after(source, module=self is Reading.ES_MODULE, environment=environment)
 
     def behaves(self, source: str) -> Behavior:
         """
@@ -312,14 +326,16 @@ class Program(NamedTuple):
     The behavior is the whole of what the entry has to be told, because the law every entry asserts
     is the same one: the deobfuscation of a program behaves the way the program does. Writing it
     here rather than in the prose of the test that asserts it is what keeps the two from drifting
-    apart, since only this one is executed.
+    apart, since only this one is executed. The deobfuscation is asked for under the host
+    *environment*.
     """
     text: str
     prints: Behavior
     reading: Reading = Reading.MODULE
+    environment: HostEnvironment = HostEnvironment.universal
 
     def read(self) -> tuple[Behavior, Behavior]:
-        return self.reading.read(self.text)
+        return self.reading.read(self.text, self.environment)
 
     def behaves(self) -> Behavior:
         return self.reading.behaves(self.text)
@@ -332,16 +348,18 @@ class FileProgram(NamedTuple):
     """
     A program Node runs as a file, with what it makes of it run as a CommonJS file and run as an ES
     module. `read_as` gives the `Program` of one reading: `Reading.ES_MODULE` runs the file as an ES
-    module, and every other reading runs it as a CommonJS file.
+    module, and every other reading runs it as a CommonJS file. The deobfuscation is asked for under
+    the host *environment*.
     """
     text: str
     as_commonjs: Behavior
     as_an_es_module: Behavior
+    environment: HostEnvironment = HostEnvironment.universal
 
     def read_as(self, reading: Reading) -> Program:
         if reading is Reading.ES_MODULE:
-            return Program(self.text, self.as_an_es_module, reading)
-        return Program(self.text, self.as_commonjs, reading)
+            return Program(self.text, self.as_an_es_module, reading, self.environment)
+        return Program(self.text, self.as_commonjs, reading, self.environment)
 
 
 def as_classic_scripts(rows: Mapping[str, FileProgram]) -> dict[str, Program]:
@@ -351,7 +369,7 @@ def as_classic_scripts(rows: Mapping[str, FileProgram]) -> dict[str, Program]:
     `this`.
     """
     return {
-        label: Program(row.text, row.as_commonjs, Reading.SCRIPT) for label, row in rows.items()
+        label: Program(row.text, row.as_commonjs, Reading.SCRIPT, row.environment) for label, row in rows.items()
     }
 
 

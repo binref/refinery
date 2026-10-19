@@ -107,6 +107,7 @@ def deobfuscate(
     environment: HostEnvironment = HostEnvironment.universal,
     trust_eval: bool = False,
     preserve_script_return: bool = False,
+    loaded_by_other_files: bool = False,
     observer: PipelineObserver | None = None,
 ) -> int:
     """
@@ -121,8 +122,9 @@ def deobfuscate(
     assumed present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *trust_eval*
     selects the trusting model, which assumes code supplied as data is inert and is deliberately
     unsound; the default is the suspecting model, so a caller that reads this function's output as
-    equivalent to its input keeps that claim. *observer* is called around every transformer, which
-    is how a property of the tree is attributed to the pass that moved it; see
+    equivalent to its input keeps that claim. *loaded_by_other_files* says that code may load the
+    input and read what it exports. *observer* is called around every transformer, which is how a
+    property of the tree is attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
 
     A conversion of a function that is handed on, with no evidence that the program installs a
@@ -141,6 +143,7 @@ def deobfuscate(
         environment=environment,
         trust_eval=trust_eval,
         preserve_script_return=preserve_script_return,
+        loaded_by_other_files=loaded_by_other_files,
     )
     settlement = ConversionSettlement()
     models = ModelCache(ast, options, settlement)

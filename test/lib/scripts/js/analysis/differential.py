@@ -37,6 +37,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.options import ExecutionModel
 from refinery.lib.scripts.js.parser import JsParser
@@ -80,19 +81,22 @@ def deobfuscate_source(
     execution: ExecutionModel = ExecutionModel.script,
     entrypoints: tuple[str, ...] = (),
     preserve_script_return: bool = False,
+    environment: HostEnvironment = HostEnvironment.universal,
 ) -> str:
     """
     Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *execution*
     selects the execution model (the oracle runs each snippet as a CommonJS module, so a
     scope-sensitive snippet must be deobfuscated under a module model to be comparable).
     *entrypoints* names top-level functions a host calls by name, which intra-script reachability
-    cannot see.
+    cannot see. *environment* is the host the deobfuscation assumes; the oracle is Node, so every
+    host but the browser's describes the engine the snippet runs in.
     """
     ast = JsParser(source).parse()
     deobfuscate(
         ast,
         execution=execution,
         entrypoints=entrypoints,
+        environment=environment,
         preserve_script_return=preserve_script_return,
     )
     return JsSynthesizer().convert(ast)

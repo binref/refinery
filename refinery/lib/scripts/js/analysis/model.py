@@ -736,6 +736,39 @@ def enclosing_operator(node: Node) -> Node | None:
     return parent
 
 
+def is_plain_store_target(node: Node) -> bool:
+    """
+    Whether *node* is the target of a plain assignment `node = v`, whose value is the value stored.
+    """
+    parent = enclosing_operator(node)
+    return (
+        isinstance(parent, JsAssignmentExpression)
+        and parent.operator == '='
+        and strip_parens(parent.left) is node
+    )
+
+
+def _tests_or_replaces_the_exports(reference: Node) -> bool:
+    """
+    Whether the reference *reference* to the name `module` reads nothing of the object: it is the
+    operand of `typeof`, a side of a comparison with `null`, or the object of the store
+    `module.exports = v`.
+    """
+    parent = enclosing_operator(reference)
+    if isinstance(parent, JsUnaryExpression):
+        return parent.operator == 'typeof'
+    if isinstance(parent, JsBinaryExpression):
+        if parent.operator not in ('==', '!=', '===', '!=='):
+            return False
+        return any(isinstance(strip_parens(side), JsNullLiteral) for side in (parent.left, parent.right))
+    return (
+        isinstance(parent, JsMemberExpression)
+        and strip_parens(parent.object) is reference
+        and static_property_key(parent) == 'exports'
+        and is_plain_store_target(parent)
+    )
+
+
 def _governing_target(node: Node) -> tuple[Node | None, Node]:
     """
     Climb outward from *node* through the destructuring containers and parentheses that keep it in
@@ -2362,11 +2395,14 @@ class SemanticModel:
         environment: HostEnvironment = HostEnvironment.universal,
         trust_eval: bool = False,
         file_kind: FileKind = FileKind.script,
+        exports_read_outside: bool = True,
     ):
         self.root = root
         self.environment = environment
         self.trust_eval = trust_eval
         self.file_kind = file_kind
+        self.exports_read_outside = exports_read_outside
+        self._module_exports_unread: bool | None = None
         self._node_scope: dict[Node, Scope] = {}
         self._binding_of: dict[Node, Binding] = {}
         self._reflection_surface: bool | None = None
@@ -3849,6 +3885,40 @@ class SemanticModel:
             and self.binding_dynamic_rebind_sites(binding) == []
             and not (binding.may_be_absent and self.reflection_can_reach(binding))
         )
+
+    def module_exports_unread(self) -> bool:
+        """
+        Whether nothing reads what the file stores in `module.exports`. Outside the file, only code
+        that loads it reads its exports, and the run assumes none does unless told otherwise
+        (`exports_read_outside`). Node's module registry is part of loading: a file reaching itself
+        through `require.cache`, `require.main`, `process.mainModule` or a `require` or `import()` of
+        its own path reads its exports as a loader does. Inside the file, the object the store
+        replaces is read through the `module` the host passed, which is therefore named only as the
+        target of a store `module.exports = v`, as the operand of `typeof`, or compared with `null`,
+        and through the `arguments` of the function the host wraps around the file, which the file
+        does not name, nor reaches through a function's `caller`. Memoized.
+        """
+        if self._module_exports_unread is None:
+            self._module_exports_unread = self._compute_module_exports_unread()
+        return self._module_exports_unread
+
+    def _compute_module_exports_unread(self) -> bool:
+        if self.exports_read_outside or not self.file_kind.may_be_commonjs:
+            return False
+        bindings = self.root_scope.bindings
+        module = bindings.get('module')
+        if module is None or not self.holds_what_the_host_passed(module):
+            return False
+        if self.reflection_can_reach(module) or self.local_reachable_by_direct_eval(module):
+            return False
+        if self.dynamic_references(module):
+            return False
+        if not all(_tests_or_replaces_the_exports(reference) for reference in self.references(module)):
+            return False
+        arguments = bindings.get('arguments')
+        if arguments is not None and arguments.supplied_by_host and any(True for _ in self.references(arguments)):
+            return False
+        return not self.spells_caller()
 
     def supplied_from_outside(self, binding: Binding | None) -> bool:
         """
@@ -5400,6 +5470,7 @@ def build_semantic_model(
     environment: HostEnvironment = HostEnvironment.universal,
     trust_eval: bool = False,
     file_kind: FileKind = FileKind.script,
+    exports_read_outside: bool = True,
 ) -> SemanticModel:
     """
     Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
@@ -5408,6 +5479,8 @@ def build_semantic_model(
     *trust_eval* selects the trusting model, which assumes code supplied as data is inert; see
     `refinery.lib.scripts.js.options.DeobfuscationOptions`. *file_kind* is what the file is, which
     `refinery.lib.scripts.js.options.file_kind` decides for a run; text that runs as global code,
-    such as the payload of a `Function` construction, is a script.
+    such as the payload of a `Function` construction, is a script. *exports_read_outside* says
+    whether code that loads the file may read what it exports; see
+    `SemanticModel.module_exports_unread`.
     """
-    return SemanticModel(root, environment, trust_eval, file_kind)
+    return SemanticModel(root, environment, trust_eval, file_kind, exports_read_outside)

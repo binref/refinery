@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.analysis.tampering import TamperingModel, build_tam
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
 from refinery.lib.scripts.js.options import (
     eval_is_trusted,
+    exports_are_read_outside,
     file_kind,
     host_environment,
     is_host_entrypoint,
@@ -139,6 +140,7 @@ class ModelCache(ModelCacheBase):
             host_environment(self.options),
             eval_is_trusted(self.options),
             self.file_kind,
+            exports_are_read_outside(self.options),
         ))
 
     @property
