@@ -289,6 +289,31 @@ class TestIPFSEmulator(TestBase):
         with self.assertRaises(EmulatorMaxArray):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_array_length=1)
 
+    def test_a_string_change_beyond_the_string_limit_ends_the_emulation_before_the_string_changes(self):
+        from refinery.lib.inno.emulator import EmulatorMaxString, Variable
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_string_length=10)
+        text = Variable(TPrimitive(TC.UnicodeString), data='a,b,c')
+        with self.assertRaises(EmulatorMaxString):
+            emulator.StringChangeEx(text, ',', ', and ', False)
+        self.assertEqual(text.get(), 'a,b,c')
+
+    def test_a_join_beyond_the_string_limit_ends_the_emulation(self):
+        from refinery.lib.inno.emulator import EmulatorMaxString
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_string_length=10)
+        self.assertEqual(emulator.StringJoin(', ', ['a', 'b', 'c', 'd']), 'a, b, c, d')
+        with self.assertRaises(EmulatorMaxString):
+            emulator.StringJoin(', ', ['a', 'b', 'c', 'd', 'e'])
+
+    def test_an_emulated_function_that_exhausts_the_memory_of_python_ends_the_emulation(self):
+        from refinery.lib.inno.emulator import EmulatorMemoryError
+
+        def exhaust(*_):
+            raise MemoryError
+
+        with _replaced_external('GetDateTimeString', exhaust), self.assertRaises(EmulatorMemoryError):
+            self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')
+
     def test_an_abort_ends_the_emulation_when_the_configuration_asks_for_it(self):
         from refinery.lib.inno.emulator import AbortEmulation
         with self.assertRaises(AbortEmulation):

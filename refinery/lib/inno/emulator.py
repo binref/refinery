@@ -43,7 +43,7 @@ from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, pascal
 from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion, LanguageDetection, TSetup
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
-from refinery.lib.inno.delphi.errors import DelphiException, SysConst, Undefined
+from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
 from refinery.lib.inno.delphi.runtime import Runtime
 from refinery.lib.inno.delphi.variants import Variant, VarType
@@ -82,8 +82,10 @@ _Y = TypeVar('_Y')
 
 ERROR_NO_MORE_FILES = 0x100123
 
+_OUT_OF_STRING_RANGE = 'Out of string range'
 _INVALID_FLOAT = 'Invalid float'
 _NIL_INVOKE = 'Variant is null, cannot invoke'
+_LONGEST_WIDE_STRING = (0x7FFFFFFF - 14) // 2
 
 
 class OleObject:
@@ -102,6 +104,7 @@ class OleObject:
 
 
 _VariantType = TPrimitive(TC.Variant)
+_StringType = TPrimitive(TC.UnicodeString)
 
 
 class _DynamicArray(list['Variable']):
@@ -436,7 +439,15 @@ class EmulatorMaxCalls(EmulatorException, MemoryError):
 
 class EmulatorMaxArray(EmulatorException, MemoryError):
     """
-    The script requested an array longer than the array length limit given in the configuration.
+    The script requested a variable that holds more variables than the array length limit given in
+    the configuration: an array longer than the limit, or a record or static array whose elements
+    hold more variables than that.
+    """
+
+
+class EmulatorMaxString(EmulatorException, MemoryError):
+    """
+    The script requested a string longer than the string length limit given in the configuration.
     """
 
 
@@ -445,6 +456,24 @@ class EmulatorUndefined(EmulatorException):
     The script asked for a result that depends on state that the emulator does not model, such as
     memory that Delphi reads or writes beyond the end of a buffer.
     """
+
+
+class EmulatorMemoryError(EmulatorException, MemoryError):
+    """
+    Python ran out of memory while an emulated function ran.
+    """
+
+
+def _variables_held(type: IFPSType) -> int:
+    """
+    The number of variables that a variable of the given type holds, itself included: a record or
+    a static array holds its elements, and a dynamic array holds none until it gets a length.
+    """
+    if isinstance(type, TStaticArray):
+        return 1 + type.size * _variables_held(type.type)
+    if isinstance(type, TRecord):
+        return 1 + sum(_variables_held(member) for member in type.members)
+    return 1
 
 
 class _CallState(NamedTuple):
@@ -1123,6 +1152,7 @@ class IFPSEmulatorConfig:
     sleep_scale: float = 0.0
     max_data_stack: int = 1_000_000
     max_array_length: int = 0x100000
+    max_string_length: int = 0x1000000
     max_call_stack: int = 4096
     environment: dict[str, str] = field(default_factory=dict)
     user_name: str = 'Frank'
@@ -1413,6 +1443,7 @@ class IFPSEmulator:
             ifps = archive
         self.ifps = ifps
         self._stopwatch: _Stopwatch | None = None
+        self._variables_held: dict[int, int] = {}
         self._globals: list[Variable] | None = None
         self.mutexes: set[str] = set()
         self.symbols: dict[str, Function] = CaseInsensitiveDict()
@@ -1447,8 +1478,53 @@ class IFPSEmulator:
         The global variables of the script.
         """
         if (script_globals := self._globals) is None:
+            for v in self.ifps.globals:
+                self._reserve_variables(v.type)
             script_globals = self._globals = [Variable(v.type, v.spec) for v in self.ifps.globals]
         return script_globals
+
+    def _reserve_variables(self, type: IFPSType, count: int = 1):
+        """
+        Checks before they are built that the given number of variables of the given type, and the
+        variables that they hold, stay within the array length limit.
+        """
+        if (limit := self.config.max_array_length) <= 0:
+            return
+        if not type.code.container:
+            held = 1
+        elif (held := self._variables_held.get(id(type))) is None:
+            held = self._variables_held[id(type)] = _variables_held(type)
+        if limit < (n := count * held):
+            raise EmulatorMaxArray(F'Requested {n} variables of type {type}, beyond the limit {limit}.')
+
+    def _reserve_text(self, length: int, wide: bool = True):
+        """
+        Checks a string of the given length before it is built: Delphi cannot compute the size of
+        a UTF-16 string of more than `_LONGEST_WIDE_STRING` characters and raises an integer
+        overflow, and a string beyond the configured limit ends the emulation.
+        """
+        if wide and length > _LONGEST_WIDE_STRING:
+            raise pascal.delphi_error(EIntOverflow())
+        if 0 < (limit := self.config.max_string_length) < length:
+            raise EmulatorMaxString(F'Requested string length {length} exceeds the limit {limit}.')
+
+    def _reserve_results(self, value: Any, arguments: list, result: Variable | None):
+        """
+        Checks what an emulated function returned before the script receives it: the text of its
+        result and of the strings that it wrote into its arguments, and the elements of a list that
+        becomes an array.
+        """
+        if isinstance(value, str):
+            self._reserve_text(len(value))
+        for var in arguments:
+            if isinstance(var, Variable) and isinstance(text := var.deref().data, str):
+                self._reserve_text(len(text))
+        if (
+            result is not None
+            and isinstance(value, (list, tuple))
+            and isinstance(array := result.deref().type, TArray)
+        ):
+            self._reserve_variables(array.type, len(value))
 
     def unimplemented(self, function: Function, arguments: list[Variable], result: Variable | None):
         """
@@ -1568,17 +1644,23 @@ class IFPSEmulator:
         ip: int = 0
         sp: int = len(stack) - 1
         raised: IFPSException | None = None
+        failed_call = False
         unwind = False
         jump = False
 
         while True:
             if raised is not None:
                 run.throw(raised)
+                failed_call = raised.failed_call
                 raised = None
                 unwind = True
             if unwind:
                 unwind = False
                 function, ip, sp = run.unwind()
+                if failed_call and run.in_flight.error is None:
+                    raised = IFPSException(kind=PSError.CouldNotCallProc)
+                    continue
+                failed_call = False
             if 0 < _cfg_max_call_stack < depth + len(frames):
                 raise EmulatorMaxCalls
 
@@ -1630,14 +1712,17 @@ class IFPSEmulator:
                         return_value = handler.call(*args, **keywords)
                         if inspect.isgenerator(return_value):
                             return_value = yield from return_value
+                        self._reserve_results(return_value, args, None if void else stack[-1])
                     except EmulatorException:
                         raise
                     except RecursionError as RE:
                         raise EmulatorMaxCalls(F'Calling {name} exceeded the recursion limit of Python.') from RE
+                    except MemoryError as ME:
+                        raise EmulatorMemoryError(F'Calling {name} exhausted the memory of Python.') from ME
                     except Undefined as UE:
                         raise EmulatorUndefined(F'Calling {name}: {UE}') from UE
                     except IFPSException as error:
-                        raised = IFPSException(error.message, error.kind, name)
+                        raised = IFPSException(error.message, error.kind, name, error.failed_call)
                     except DelphiException as error:
                         raised = IFPSException(str(error), called=name)
                     except Exception as error:
@@ -1691,7 +1776,12 @@ class IFPSEmulator:
                             raise TypeError(F'Operator for {opc} was of type {aop.__class__.__name__} rather than AOp.')
                         target = getvar(insn.op(0)).deref()
                         st, sv = gettyped(insn.op(1))
-                        target.data = pascal.calculate(aop, target.type, target.data, st, sv, runtime)
+                        result = pascal.calculate(aop, target.type, target.data, st, sv, runtime)
+                        if isinstance(result, str):
+                            self._reserve_text(len(result))
+                        elif isinstance(result, Variant) and isinstance(result.value, str):
+                            self._reserve_text(len(result.value))
+                        target.data = result
                     elif opc == Op.Push:
                         # TODO: I do not actually know how this works
                         stack.append(getval(insn.op(0)))
@@ -1728,6 +1818,7 @@ class IFPSEmulator:
                     elif opc == Op.StackType:
                         raise OpCodeNotImplemented(str(opc))
                     elif opc == Op.PushType:
+                        self._reserve_variables(insn.operands[0])
                         stack.append(Variable(
                             insn.operands[0],
                             VariableSpec(len(stack) - sp, VariableType.Local)
@@ -2001,15 +2092,17 @@ class IFPSEmulator:
 
     @external(alias='StrGet')
     def WStrGet(self, string: Variable[str], index: int) -> str:
-        if index <= 0:
-            raise ValueError
-        return string[index - 1:index]
+        text = string.get()
+        if not 1 <= index <= len(text):
+            raise IFPSException(_OUT_OF_STRING_RANGE, PSError.CustomError, failed_call=True)
+        return text[index - 1]
 
     @external(alias='StrSet')
     def WStrSet(self, char: str, index: int, dst: Variable[str]):
         old = dst.get()
-        halt = index - 1
-        dst.set(old[:halt] + char + old[index:])
+        if not 1 <= index <= len(old):
+            raise IFPSException(_OUT_OF_STRING_RANGE, PSError.CustomError)
+        dst.set(old[:index - 1] + char + old[index:])
 
     @external()
     def GetEnv(self, name: str) -> str:
@@ -2327,7 +2420,7 @@ class IFPSEmulator:
     def Format(self, fmt: str, args: Variable[list]) -> str:
         elements = args.deref()
         arguments = [_open_array_element(elements.at(k)) for k in range(len(elements))]
-        return formatting.format(fmt, arguments, self.runtime)
+        return formatting.format(fmt, arguments, self.runtime, self._reserve_text)
 
     @external()
     def SetupMessage(self, id: int) -> str:
@@ -2382,9 +2475,12 @@ class IFPSEmulator:
 
     @external()
     def SetArrayLength(self, array: Variable, n: int):
+        array = array.deref()
         if 0 < (limit := self.config.max_array_length) < n:
             raise EmulatorMaxArray(F'Requested array length {n} exceeds the limit {limit}.')
-        array.deref().resize(n)
+        if isinstance(t := array.type, TArray):
+            self._reserve_variables(t.type, n)
+        array.resize(n)
 
     @external()
     def WizardForm(self) -> object:
@@ -2613,6 +2709,7 @@ class IFPSEmulator:
 
     @external(alias='Replicate')
     def StringOfChar(self, c: str, count: int) -> str:
+        self._reserve_text(count, wide=False)
         return c * count
 
     @external()
@@ -2635,6 +2732,7 @@ class IFPSEmulator:
     def StringChangeEx(self, string: Variable[str], old: str, new: str, _: bool) -> int:
         haystack = string.get()
         count = haystack.count(old)
+        self._reserve_text(len(haystack) + count * (len(new) - len(old)))
         string.set(haystack.replace(old, new))
         return count
 
@@ -2698,34 +2796,37 @@ class IFPSEmulator:
 
     @external()
     def StringJoin(self, sep: str, values: list[str]) -> str:
+        self._reserve_text(sum(map(len, values)) + len(sep) * max(len(values) - 1, 0))
         return sep.join(values)
 
     @external()
     def StringSplitEx(self, string: str, separators: list[str], quote: str, how: TSplitType) -> list[str]:
-        if not quote:
-            parts = [string]
-        else:
-            quote = re.escape(quote)
-            parts = re.split(F'({quote}.*?{quote})', string)
-        sep = '|'.join(re.escape(s) for s in separators)
-        out = []
-        if how == TSplitType.stExcludeEmpty:
-            sep = F'(?:{sep})+'
-        for k in range(0, len(parts)):
-            if k & 1 == 1:
-                out.append(parts[k])
+        separators = [s for s in separators if s]
+        self._reserve_variables(_StringType, 1 + sum(string.count(s) for s in separators))
+        parts = []
+        start = position = 0
+        quoted = False
+        while position < len(string):
+            if quote and string[position] == quote:
+                quoted = not quoted
+                position += 1
                 continue
-            out.extend(re.split(sep, string))
-        if how == TSplitType.stExcludeLastEmpty:
-            for k in reversed(range(len(out))):
-                if not out[k]:
-                    out.pop(k)
-                    break
-        return out
+            if not quoted and (separator := next((s for s in separators if string.startswith(s, position)), None)):
+                parts.append(string[start:position])
+                position += len(separator)
+                start = position
+                continue
+            position += 1
+        parts.append(string[start:])
+        if how == TSplitType.stExcludeEmpty:
+            parts = [part for part in parts if part]
+        elif how == TSplitType.stExcludeLastEmpty and parts and not parts[-1]:
+            parts.pop()
+        return parts
 
     @external()
     def StringSplit(self, string: str, separators: list[str], how: TSplitType) -> list[str]:
-        return self.StringSplitEx(string, separators, None, how)
+        return self.StringSplitEx(string, separators, '', how)
 
     @external()
     def StrToInt(self, s: str) -> int:
@@ -2762,14 +2863,17 @@ class IFPSEmulator:
 
     @external()
     def PadL(self, s: str, n: int) -> str:
+        self._reserve_text(n)
         return s.rjust(n)
 
     @external()
     def PadR(self, s: str, n: int) -> str:
+        self._reserve_text(n)
         return s.ljust(n)
 
     @external()
     def PadZ(self, s: str, n: int) -> str:
+        self._reserve_text(n)
         return s.rjust(n, '0')
 
     @external()
@@ -2852,6 +2956,7 @@ class IFPSEmulator:
             self.SetArrayLength(target, size)
             return
         size = max(size, 0)
+        self._reserve_text(size, wide=target.type.code not in (TC.AnsiString, TC.PChar))
         old = target.get()
         old = old.ljust(size, '\0')
         target.set(old[:size])

@@ -6,10 +6,10 @@ from __future__ import annotations
 import enum
 import re
 
-from typing import NamedTuple, Sequence
+from typing import Callable, NamedTuple, Sequence
 
 from refinery.lib.inno.delphi import variants
-from refinery.lib.inno.delphi.errors import EConvertError
+from refinery.lib.inno.delphi.errors import EConvertError, Undefined
 from refinery.lib.inno.delphi.numbers import FloatFormat, float_to_text
 from refinery.lib.inno.delphi.runtime import Runtime
 
@@ -85,7 +85,16 @@ def _number(fmt: str, cursor: int) -> tuple[str, int]:
     end = cursor
     while end < len(fmt) and fmt[end] in _DIGITS:
         end += 1
+    if end - cursor > _LONGEST_NUMBER:
+        raise Undefined(F'Delphi overruns its buffer for a number of {end - cursor} digits in a format.')
     return fmt[cursor:end], end
+
+
+_LONGEST_NUMBER = 40
+"""
+The most digits of an index, width, or precision that Delphi's `Format` is known to read safely;
+5000 digits crash the Setup.
+"""
 
 
 def _integer(number: str) -> int:
@@ -99,7 +108,12 @@ def _integer(number: str) -> int:
     return -1
 
 
-def format(fmt: str, args: Sequence[VarRec], runtime: Runtime) -> str:
+def format(
+    fmt: str,
+    args: Sequence[VarRec],
+    runtime: Runtime,
+    reserve: Callable[[int], None] | None = None,
+) -> str:
     """
     Delphi's `Format` function as Delphi 12 implements it: Each format specifier has the form
 
@@ -118,8 +132,15 @@ def format(fmt: str, args: Sequence[VarRec], runtime: Runtime) -> str:
     settings of the runtime: `e` and `g` with 15 significant digits by default and at least three
     exponent digits, `f` and `n` with two decimals by default, and `m` with the currency decimals
     of the settings, at most 18 digits. A Variant is accepted only by `s`, and Null is empty.
+    Before the text grows, `reserve` is called with the length that it would reach.
     """
     output: list[str] = []
+    length = 0
+
+    def grow(text: str):
+        nonlocal length
+        length += len(text)
+        output.append(text)
     cursor = 0
     index = -1
 
@@ -145,10 +166,10 @@ def format(fmt: str, args: Sequence[VarRec], runtime: Runtime) -> str:
         raise error(_INVALID_FORMAT)
 
     while (percent := fmt.find('%', cursor)) >= 0:
-        output.append(fmt[cursor:percent])
+        grow(fmt[cursor:percent])
         cursor = percent + 1
         if fmt.startswith('%', cursor):
-            output.append('%')
+            grow('%')
             cursor += 1
             continue
         index += 1
@@ -190,11 +211,15 @@ def format(fmt: str, args: Sequence[VarRec], runtime: Runtime) -> str:
                 width = -width & 0x7FFFFFFF
         if star_precision:
             precision = asterisk()
+        if reserve is not None:
+            reserve(length + max(width, precision if letter in 'dDuUxX' else 0))
         kind, value = argument()
         if (text := _convert(letter, kind, value, precision, runtime)) is None:
             raise error(_INVALID_FORMAT)
-        output.append(text.ljust(width) if left else text.rjust(width))
-    output.append(fmt[cursor:])
+        if reserve is not None:
+            reserve(length + max(width, len(text)))
+        grow(text.ljust(width) if left else text.rjust(width))
+    grow(fmt[cursor:])
     return ''.join(output)
 
 

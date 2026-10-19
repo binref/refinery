@@ -1,11 +1,14 @@
 import pytest
 import re
+import tracemalloc
 
 from itertools import zip_longest
 from typing import Iterable
 
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.emulator import (
+    EmulatorMaxArray,
+    EmulatorMaxString,
     EmulatorUndefined,
     IFPSEmulatorConfig,
     IFPSException,
@@ -1464,6 +1467,61 @@ class TestTheEmulatorLogsWhatInnoSetupLogged(_OracleTest):
 
     def test_a_currency_computed_with_a_cardinal_or_an_int64_is_read_as_a_double(self):
         self.assertEmulatedAsLogged('ORACLECURRENCYOPERANDS')
+
+    def test_a_string_index_outside_of_the_string_raises_an_error(self):
+        self.assertEmulatedAsLogged('ORACLESTRINGINDEX')
+
+    def test_a_split_keeps_the_separators_between_quote_characters(self):
+        self.assertEmulatedAsLogged('ORACLESPLIT')
+
+    def test_a_split_into_more_parts_than_the_array_limit_ends_the_emulation(self):
+        emulator = self.emulator(max_array_length=3)
+        logged = {}
+        with self.assertRaises(EmulatorMaxArray):
+            _logged_values(emulator.emulate_function(emulator.symbols['ORACLESPLIT']), logged)
+        self.assertEqual(logged, {})
+
+    def test_long_strings_raise_the_errors_of_delphi_before_they_are_built(self):
+        """
+        The last probe asks for a string of 2,000,000,000 characters, for which Setup raised `Out of
+        memory`; the emulation ends there, as the string exceeds the limit of the configuration.
+        Every other probe that Setup refused is refused before the emulator builds its string.
+        """
+        emulator = self.emulator(max_string_length=40_000_000)
+        logged = {}
+        tracemalloc.start()
+        try:
+            with self.assertRaises(EmulatorMaxString):
+                _logged_values(emulator.emulate_function(emulator.symbols['ORACLELONGSTRINGS']), logged)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 200_000_000)
+        log = _resolved(self.log)
+        logged = _resolved(logged)
+        self.assertEqual(logged.pop('strings.step'), '4')
+        self.assertEqual(logged, {name: log[name] for name in logged})
+        self.assertEqual(logged.keys() | {'strings.step', 'strings.char_2g'}, {n for n in log if n.startswith('strings.')})
+
+    def test_a_format_number_of_more_than_40_digits_ends_the_emulation(self):
+        """
+        The loop of the procedure that writes widths of 11 to 40 digits into a format is changed to
+        go on to 41 digits. Setup raised an error for every width of 11 to 40 digits and crashed
+        for one of 5000 digits.
+        """
+        emulator = self.emulator(max_string_length=40_000_000)
+        procedure = emulator.symbols['ORACLELONGSTRINGS']
+        replaced = 0
+        for instruction in procedure.body or ():
+            for k, operand in enumerate(instruction.operands):
+                if isinstance(operand, Operand) and (constant := operand.value) and constant.value == 40:
+                    instruction.operands[k] = operand._replace(value=Value(constant.type, 41))
+                    replaced += 1
+        self.assertEqual(replaced, 1)
+        logged = {}
+        with self.assertRaises(EmulatorUndefined):
+            _logged_values(emulator.emulate_function(procedure), logged)
+        self.assertEqual(logged['strings.step'], 'width 41')
 
     def test_an_exponent_that_reaches_beyond_the_table_of_powers_of_ten_ends_the_emulation(self):
         """

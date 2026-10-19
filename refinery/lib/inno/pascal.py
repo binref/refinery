@@ -40,8 +40,10 @@ class PSError(enum.IntEnum):
     TypeMismatch = 12
     DivideByZero = 15
     MathError = 16
+    CouldNotCallProc = 17
     OutOfRecordRange = 18
     Exception = 20
+    CustomError = 24
 
     @property
     def text(self) -> str:
@@ -58,8 +60,10 @@ _PS_ERROR_TEXT = {
     PSError.TypeMismatch     : 'Type Mismatch',
     PSError.DivideByZero     : 'divide by Zero',
     PSError.MathError        : 'Math error',
+    PSError.CouldNotCallProc : 'Could not call proc',
     PSError.OutOfRecordRange : 'Out of Record Fields Range',
     PSError.Exception        : 'Exception: ',
+    PSError.CustomError      : '',
 }
 
 
@@ -69,13 +73,16 @@ class IFPSException(RuntimeError):
     of every error, and the exception of Delphi that raised it, if any. The script reads the
     `message` of that exception with `GetExceptionMessage`, or the text of the kind when there is
     no exception. An error that escapes from a call of an emulated function names the `called`
-    function in its report.
+    function in its report. An emulated function that both raises the error and reports that it
+    could not be called sets `failed_call`: when an except block takes the error, Pascal Script
+    raises `Could not call proc` at the start of that block.
     """
     def __init__(
         self,
         message: str | None = None,
         kind: PSError = PSError.Exception,
         called: str | None = None,
+        failed_call: bool = False,
     ):
         message = kind.text if message is None else str(message)
         report = message if called is None else F'Error calling {called}: {message}'
@@ -83,6 +90,7 @@ class IFPSException(RuntimeError):
         self.kind = kind
         self.message = message
         self.called = called
+        self.failed_call = failed_call
 
 
 def type_mismatch() -> IFPSException:
