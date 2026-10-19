@@ -1537,10 +1537,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         if not isinstance(stmt, JsExpressionStatement):
             return False
-        if (expression := stmt.expression) is None:
+        if stmt.expression is None:
             return False
-        if isinstance(expression, JsAssignmentExpression):
-            target = strip_parens(expression.left)
+        if isinstance(stmt.expression, JsAssignmentExpression):
+            target = strip_parens(stmt.expression.left)
             if not isinstance(target, JsMemberExpression) or not self.effects.store_unobserved(target):
                 return False
         if is_use_strict_directive(stmt):

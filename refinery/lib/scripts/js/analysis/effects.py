@@ -1316,35 +1316,35 @@ class EffectModel:
         direct_eval_ordered: bool = False,
     ) -> bool:
         """
-        Whether *binding* holds a container — an object or array — whose element and property values are
-        stable after construction, so that an access into it may be soundly inlined at its read sites.
-        Every reference must read through the container (`obj.k`, `obj[i]`) or plainly rebind the name
-        (`obj = ...`, whose value the caller resolves by domination); a write through the container
-        (`obj.k = v`, `obj[i]++`, `delete obj[i]`, a `for-of` or destructuring target) makes it mutable.
-        A method invoked on the container (`obj.m(...)`) may mutate it — an array's `sort`/`push`/`splice`
-        and so on — so by default it too counts as mutable; a caller that knows some of the container's
-        own methods cannot mutate it (an object literal with no `this`-bound property) names their keys
-        in *inert_methods*: a call of one of those on the container is permitted, and so is a call on a
-        value it holds (`obj.k.split(...)`), which such a caller vouches for. A method the container
-        inherits is never one of them: `obj.valueOf()` hands the container back and
-        `obj.__defineGetter__(k, g)` replaces a property. A reference that escapes is safe in three
-        cases: it aliases another
-        binding that is itself an immutable container (alias-following the textual predicates this
-        replaces could not do, and the reason a reassigned-and-aliased lookup array stays inlinable),
-        it is passed to a statically known function as an argument whose parameter is itself an
-        immutable container (so the callee neither mutates nor further-escapes it), or it is the value
-        of a store no code observes (`store_unobserved`). Any other escape — returned,
-        stored as a property, passed to a call that cannot be resolved — is treated conservatively as
-        mutable, and so is an exported binding or an alias of one: an importer holds the container
-        and may change it after the module has run, which no reference in this file records. A
-        mutation through a dynamic scope is modelled: a `with` body that names the container —
-        a member write, method call, reassignment, or escape — is attributed to it as a dynamic reference
-        and judged by the same role logic, so a `with` that never names it keeps it foldable, and a direct
-        `eval` in a local container's own function makes it mutable. The one residual is a script-scope
-        container reached by an opaque global surface — a direct `eval`, `Function`, timer, or dynamic
-        global write whose code cannot be read — which cannot be frozen without also freezing the lookup
-        arrays real samples fold, so it is left to the caller's reflection reasoning, the trust an
-        unresolved external call already receives.
+        Whether *binding* holds a container — an object or array — whose element and property values
+        are stable after construction, so that an access into it may be soundly inlined at its read
+        sites. Every reference must read through the container (`obj.k`, `obj[i]`) or plainly rebind
+        the name (`obj = ...`, whose value the caller resolves by domination); a write through the
+        container (`obj.k = v`, `obj[i]++`, `delete obj[i]`, a `for-of` or destructuring target)
+        makes it mutable. A method invoked on the container (`obj.m(...)`) may mutate it — an
+        array's `sort`/`push`/`splice` and so on — so by default it too counts as mutable; a caller
+        that knows some of the container's own methods cannot mutate it (an object literal with no
+        `this`-bound property) names their keys in *inert_methods*: a call of one of those on the
+        container is permitted, and so is a call on a value it holds (`obj.k.split(...)`), which
+        such a caller vouches for. A method the container inherits is never one of them:
+        `obj.valueOf()` hands the container back and `obj.__defineGetter__(k, g)` replaces a
+        property. A reference that escapes is safe in three cases: it aliases another binding that
+        is itself an immutable container (alias-following the textual predicates this replaces could
+        not do, and the reason a reassigned-and-aliased lookup array stays inlinable), it is passed
+        to a statically known function as an argument whose parameter is itself an immutable
+        container (so the callee neither mutates nor further-escapes it), or it is the value of a
+        store no code observes (`store_unobserved`). Any other escape — returned, stored as a
+        property, passed to a call that cannot be resolved — is treated conservatively as mutable,
+        and so is an exported binding or an alias of one: an importer holds the container and may
+        change it after the module has run, which no reference in this file records. A mutation
+        through a dynamic scope is modelled: a `with` body that names the container — a member
+        write, method call, reassignment, or escape — is attributed to it as a dynamic reference and
+        judged by the same role logic, so a `with` that never names it keeps it foldable, and a
+        direct `eval` in a local container's own function makes it mutable. The one residual is a
+        script-scope container reached by an opaque global surface — a direct `eval`, `Function`,
+        timer, or dynamic global write whose code cannot be read — which cannot be frozen without
+        also freezing the lookup arrays real samples fold, so it is left to the caller's reflection
+        reasoning, the trust an unresolved external call already receives.
 
         The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
         alias chains, callee parameters, and nested functions, so a capturing closure that mutates
