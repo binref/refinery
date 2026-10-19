@@ -498,7 +498,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
                 continue
             if not cache.effects.is_side_effect_free(init, {name.name}):
                 continue
-            if not cache.effects.binding_is_immutable_container(binding, member_calls_mutate=False):
+            if not cache.effects.binding_is_immutable_container(binding, inert_methods=frozenset(prop_map)):
                 continue
             if self._self_referential(model, binding, init):
                 continue
@@ -583,7 +583,7 @@ class JsObjectFold(PinnedTransformer, ScopeProcessingTransformer):
             binding = model.resolve(node)
             if binding is None or binding.declared_within(value):
                 continue
-            if not effects.binding_is_immutable_container(binding, member_calls_mutate=True, exclude=value):
+            if not effects.binding_is_immutable_container(binding, exclude=value):
                 return True
         return False
 

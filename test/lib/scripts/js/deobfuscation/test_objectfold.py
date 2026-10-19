@@ -4,14 +4,22 @@ import inspect
 import time
 import unittest
 
-from test import a_property_of_the_pin_itself
+from test import TestBase, a_property_of_the_pin_itself
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
+    FileProgram,
+    Reading,
+    a_program,
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,
+    each_reading_still_prints,
+    node_prints_what_each_row_pins,
+    prints,
 )
+
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 
 
 class TestObjectFold(TestJsDeobfuscator):
@@ -1665,3 +1673,101 @@ class TestObjectFoldingCostsWhatAConcatenationIsLong(TestJsDeobfuscator):
         folded = self._objectfold(F'function f() {{ var O = {{{pieces}}}; return {chain}; }} f();')
         self.assertLess(time.perf_counter() - start, 1.0)
         self.assertNotIn('O.', folded)
+
+#: Programs that call a method on an object literal, one the object owns or one every object
+#: inherits, each with what Node makes of it as a CommonJS file and as an ES module. An inherited
+#: method can hand the object back to be written or replace one of its properties.
+A_METHOD_CALLED_ON_AN_OBJECT_LITERAL = {
+    'an object handed back by valueOf and written': FileProgram(
+        a_program("""
+            var o = { a: 1, f: function () { return 2; } }; o.valueOf().a = 5; console.log(o.a, o.f());
+            """),
+        prints('5 2'),
+        prints('5 2'),
+        HostEnvironment.node,
+    ),
+    'an own method called on the object': FileProgram(
+        a_program("""
+            var o = { a: 1, f: function (x) { return x + 1; } }; console.log(o.f(o.a));
+            """),
+        prints('2'),
+        prints('2'),
+        HostEnvironment.node,
+    ),
+    'a getter defined through an inherited method': FileProgram(
+        a_program("""
+            var o = { a: 1 }; o.__defineGetter__("a", function () { return 9; }); console.log(o.a);
+            """),
+        prints('9'),
+        prints('9'),
+        HostEnvironment.node,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAMethodCalledOnAnObjectLiteralStillPrintsWhatItPrints(TestBase):
+
+    def testnode_prints_what_each_row_pins(self):
+        node_prints_what_each_row_pins(self, A_METHOD_CALLED_ON_AN_OBJECT_LITERAL)
+
+    def test_each_program_still_prints_what_it_prints(self):
+        each_reading_still_prints(self, A_METHOD_CALLED_ON_AN_OBJECT_LITERAL, (Reading.COMMONJS, Reading.MODULE))
+
+
+#: An accessor installed on a locally-declared empty object the file reaches only in member position,
+#: mapped to what Node prints for each. The installing call is a member access itself, and the key it
+#: installs is what the program reads or writes afterwards: a getter whose read the program prints,
+#: a setter whose write runs program code, and a getter installed under a key held in a binding the
+#: read resolves.
+AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT = {
+    'var o = {};\n'
+    'o.__defineGetter__("x", function () { return 9; });\n'
+    'console.log(o.x);\n': '9\n',
+
+    'var p = {};\n'
+    'p.__defineSetter__("y", function (v) { console.log("set", v); });\n'
+    'p.y = 5;\n': 'set 5\n',
+
+    'var q = {};\n'
+    'var k = "z";\n'
+    'q.__defineGetter__(k, function () { return 3; });\n'
+    'console.log(q[k]);\n': '3\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnAccessorInstalledOnANamespaceObjectIsStillRead(TestBase):
+    """
+    An accessor installed on an object literal through a method every plain object inherits
+    (`__defineGetter__`, `__defineSetter__`) changes what a read or a write of its key does. The
+    object fold takes a call on the object as leaving it unchanged only where the call names one of
+    the object's own methods, so the install keeps the reads and writes of the key on the object.
+    The `Object.defineProperty(o, "x", {...})` spelling hands the object to a call as a bare
+    identifier, which no fold takes as leaving it unchanged.
+    """
+
+    def test_the_read_and_write_an_accessor_installed_on_the_namespace_answers(self):
+        """
+        Node prints `9`, `set 5` and `3` for the three programs of
+        `AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT`.
+        """
+        rows = AN_ACCESSOR_INSTALLED_ON_A_NAMESPACE_OBJECT
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            each_program_still_prints(rows),
+        )
+
+    def test_a_receiver_handed_to_the_install_is_left_standing(self):
+        """
+        Node prints `7` for the program, and the deobfuscation prints the same, coming back with
+        the object and its read in place: the receiver is handed to `Object.defineProperty` as a bare
+        identifier, which the flattener's safety check refuses, so the install and the read it feeds
+        survive together.
+        """
+        source = (
+            'var p = {};\n'
+            'Object.defineProperty(p, "y", { get: function () { return 7; } });\n'
+            'console.log(p.y);\n'
+        )
+        self.assertEqual(before_and_after(source), (prints('7'), prints('7')))

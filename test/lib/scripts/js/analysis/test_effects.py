@@ -1244,7 +1244,7 @@ class TestEffectModel(TestBase):
                     effects.is_side_effect_free(node, discarded=True, reads_may_throw=True))
 
     @staticmethod
-    def _container(source: str, name: str = 'a', *, member_calls_mutate: bool = True) -> bool:
+    def _container(source: str, name: str = 'a', *, inert_methods: frozenset[str] | None = None) -> bool:
         ast = JsParser(F'function W(){{ {source} }}').parse()
         model = build_semantic_model(ast)
         effects = build_effects(model)
@@ -1255,7 +1255,7 @@ class TestEffectModel(TestBase):
                 if binding is not None:
                     break
         assert binding is not None
-        return effects.binding_is_immutable_container(binding, member_calls_mutate=member_calls_mutate)
+        return effects.binding_is_immutable_container(binding, inert_methods=inert_methods)
 
     def test_read_only_array_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2, 3]; SINK(a[0]);'))
@@ -1352,7 +1352,7 @@ class TestEffectModel(TestBase):
     def test_escape_into_callee_invoking_nested_method_is_mutable_with_trusted_methods(self):
         self.assertFalse(self._container(
             'function f(x){ x.a.unshift(9); } var o = { a: [1, 2] }; f(o); SINK(o.a[0]);',
-            'o', member_calls_mutate=False))
+            'o', inert_methods=frozenset({'a'})))
 
     def test_escape_as_argument_after_spread_is_mutable(self):
         self.assertFalse(self._container(
@@ -1429,9 +1429,23 @@ class TestEffectModel(TestBase):
     def test_aliased_method_call_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; var b = a; b.push(3); SINK(a[0]);'))
 
-    def test_method_call_permitted_when_calls_do_not_mutate(self):
+    def test_own_method_call_permitted_when_its_methods_do_not_mutate(self):
         self.assertTrue(self._container(
-            'var o = {f: 1}; o.toString(); SINK(o.f);', 'o', member_calls_mutate=False))
+            'var o = {f: 1, g: function () { return 2; }}; o.g(); SINK(o.f);',
+            'o',
+            inert_methods=frozenset({'f', 'g'}),
+        ))
+
+    def test_object_handed_back_by_an_inherited_method_and_written_is_mutable(self):
+        self.assertFalse(self._container(
+            'var o = {f: 1}; o.valueOf().f = 2; SINK(o.f);', 'o', inert_methods=frozenset({'f'})))
+
+    def test_property_redefined_through_an_inherited_method_is_mutable(self):
+        self.assertFalse(self._container(
+            'var o = {f: 1}; o.__defineGetter__("f", function () { return 2; }); SINK(o.f);',
+            'o',
+            inert_methods=frozenset({'f'}),
+        ))
 
     def test_for_of_member_target_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; for (a[0] of xs) {} SINK(a[1]);'))

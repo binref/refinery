@@ -880,6 +880,24 @@ def side_effect_free(
     ).free(node, discarded)
 
 
+def _method_call_is_inert(reference: Node, methods: frozenset[str] | None) -> bool:
+    """
+    Whether the method call *reference* begins leaves the container it holds unchanged, by the
+    promise of a caller that names its inert own *methods*: a call on the container itself,
+    `reference.m(...)`, for an `m` among them, and a call on a value the container holds,
+    `reference.k.m(...)`, which the caller vouches for. No call is inert where *methods* is `None`.
+    """
+    if methods is None:
+        return False
+    member = enclosing_operator(reference)
+    if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not reference:
+        return False
+    call = enclosing_operator(member)
+    if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not member:
+        return True
+    return static_property_key(member) in methods
+
+
 def _result_goes_nowhere(node: Node) -> bool:
     """
     Whether the value of *node* is thrown away: it is the value of a statement, an operand of a
@@ -987,7 +1005,7 @@ class EffectModel:
         self._globals_written = intrinsic_writes.names
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
-        self._immutable_cache: dict[tuple[int, bool], bool] = {}
+        self._immutable_cache: dict[tuple[int, frozenset[str] | None, bool], bool] = {}
         self._member_write_cache: dict[int, _WriteClass] = {}
         self._uses_arguments_cache: dict[int, bool] = {}
         self._mutators_escape_cache: dict[int, bool] = {}
@@ -1290,7 +1308,11 @@ class EffectModel:
         )
 
     def binding_is_immutable_container(
-        self, binding: Binding, *, member_calls_mutate: bool = True, exclude: Node | None = None,
+        self,
+        binding: Binding,
+        *,
+        inert_methods: frozenset[str] | None = None,
+        exclude: Node | None = None,
         direct_eval_ordered: bool = False,
     ) -> bool:
         """
@@ -1300,9 +1322,13 @@ class EffectModel:
         (`obj = ...`, whose value the caller resolves by domination); a write through the container
         (`obj.k = v`, `obj[i]++`, `delete obj[i]`, a `for-of` or destructuring target) makes it mutable.
         A method invoked on the container (`obj.m(...)`) may mutate it — an array's `sort`/`push`/`splice`
-        and so on — so by default it too counts as mutable; a caller that knows the container's methods
-        cannot mutate it (an object literal with no `this`-bound property) may pass *member_calls_mutate*
-        false to permit such calls. A reference that escapes is safe in three cases: it aliases another
+        and so on — so by default it too counts as mutable; a caller that knows some of the container's
+        own methods cannot mutate it (an object literal with no `this`-bound property) names their keys
+        in *inert_methods*: a call of one of those on the container is permitted, and so is a call on a
+        value it holds (`obj.k.split(...)`), which such a caller vouches for. A method the container
+        inherits is never one of them: `obj.valueOf()` hands the container back and
+        `obj.__defineGetter__(k, g)` replaces a property. A reference that escapes is safe in three
+        cases: it aliases another
         binding that is itself an immutable container (alias-following the textual predicates this
         replaces could not do, and the reason a reassigned-and-aliased lookup array stays inlinable),
         it is passed to a statically known function as an argument whose parameter is itself an
@@ -1324,7 +1350,7 @@ class EffectModel:
         alias chains, callee parameters, and nested functions, so a capturing closure that mutates
         the container is caught. The answer is fixed for the model's lifetime — a binding's
         reference set does not change — so it is memoized per
-        `(binding, member_calls_mutate, direct_eval_ordered)`. A caller may pass *exclude* to
+        `(binding, inert_methods, direct_eval_ordered)`. A caller may pass *exclude* to
         disregard references within that subtree — asking whether the container is stable across
         the rest of the program, ignoring a read site about to be relocated into it; such a query is
         not memoized, since the answer depends on the excluded region.
@@ -1338,18 +1364,22 @@ class EffectModel:
         """
         if exclude is not None:
             return self._immutable_container(
-                binding, set(), member_calls_mutate, exclude, direct_eval_ordered)
-        key = (id(binding), member_calls_mutate, direct_eval_ordered)
+                binding, set(), inert_methods, exclude, direct_eval_ordered)
+        key = (id(binding), inert_methods, direct_eval_ordered)
         cached = self._immutable_cache.get(key)
         if cached is None:
             cached = self._immutable_container(
-                binding, set(), member_calls_mutate, None, direct_eval_ordered)
+                binding, set(), inert_methods, None, direct_eval_ordered)
             self._immutable_cache[key] = cached
         return cached
 
     def _immutable_container(
-        self, binding: Binding, visiting: set[int], member_calls_mutate: bool,
-        exclude: Node | None = None, direct_eval_ordered: bool = False,
+        self,
+        binding: Binding,
+        visiting: set[int],
+        inert_methods: frozenset[str] | None,
+        exclude: Node | None = None,
+        direct_eval_ordered: bool = False,
     ) -> bool:
         key = id(binding)
         if key in visiting:
@@ -1357,23 +1387,26 @@ class EffectModel:
         if binding.exported:
             return False
         visiting = visiting | {key}
-        if self._dynamic_scope_mutates(binding, member_calls_mutate, exclude, direct_eval_ordered):
+        if self._dynamic_scope_mutates(binding, inert_methods, exclude, direct_eval_ordered):
             return False
         for ref in self.model.references(binding, exclude=exclude):
             role = container_reference_role(ref)
             if role is ContainerRole.MEMBER_WRITE:
                 return False
-            if role is ContainerRole.MEMBER_CALL and member_calls_mutate:
+            if role is ContainerRole.MEMBER_CALL and not _method_call_is_inert(ref, inert_methods):
                 return False
             if role is ContainerRole.ESCAPE:
-                if not isinstance(ref, JsIdentifier) or not self._escape_keeps_container(
-                    ref, visiting, member_calls_mutate,
-                ):
+                if not isinstance(ref, JsIdentifier):
+                    return False
+                if not self._escape_keeps_container(ref, visiting, inert_methods):
                     return False
         return True
 
     def _dynamic_scope_mutates(
-        self, binding: Binding, member_calls_mutate: bool, exclude: Node | None,
+        self,
+        binding: Binding,
+        inert_methods: frozenset[str] | None,
+        exclude: Node | None,
         direct_eval_ordered: bool = False,
     ) -> bool:
         """
@@ -1394,12 +1427,17 @@ class EffectModel:
             role = container_reference_role(ref)
             if role is ContainerRole.MEMBER_READ:
                 continue
-            if role is ContainerRole.MEMBER_CALL and not member_calls_mutate:
+            if role is ContainerRole.MEMBER_CALL and _method_call_is_inert(ref, inert_methods):
                 continue
             return True
         return False
 
-    def _escape_keeps_container(self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool) -> bool:
+    def _escape_keeps_container(
+        self,
+        ref: JsIdentifier,
+        visiting: set[int],
+        inert_methods: frozenset[str] | None,
+    ) -> bool:
         """
         Whether an escaping reference leaves the container unmutated. Two escapes are precise: an alias
         (`var x = ref` or `x = ref`) keeps it when the aliased binding is itself an immutable container,
@@ -1412,7 +1450,7 @@ class EffectModel:
         """
         alias = self.model.name_holding(ref)
         if alias is not None:
-            return self._immutable_container(alias, visiting, member_calls_mutate)
+            return self._immutable_container(alias, visiting, inert_methods)
         store = enclosing_operator(ref)
         if (
             isinstance(store, JsAssignmentExpression)
@@ -1425,22 +1463,22 @@ class EffectModel:
 
     def _argument_keeps_container(self, ref: JsIdentifier, visiting: set[int]) -> bool:
         """
-        Case B: whether an argument *ref* passed to a statically known function leaves the container it
-        holds unmutated — true when the parameter it binds is itself an immutable container, judged
-        recursively from that parameter's own references, so the callee neither member-writes the
-        argument nor lets it escape mutably. The parameter is judged under the conservative
-        `member_calls_mutate=True`: a relaxed `member_calls_mutate=False` is the *caller*'s promise that
-        the container's own methods cannot mutate it at the original site, and does not carry to a method
-        the callee invokes on the argument or on one of its nested containers (`x.a.push(...)`), which
-        may mutate it. False, conservatively, when the call cannot be analysed: the callee is not a
-        single known function, it can reach the argument through its own `arguments` object, the argument
-        is spread, a spread precedes it (so its runtime position shifts past the textual index and the
-        parameter it binds cannot be pinned down), the slot it lands in is a rest or destructuring
-        parameter, or the parameter is reachable through a `with` or direct `eval` in the callee that
-        resolves a name at runtime (an unrecorded write the parameter's reference set cannot rule out).
-        An argument with no parameter to bind — passed beyond the declared parameters of a function with
-        no rest collector and no `arguments` reach, textual or reflective — is safe, since the callee
-        cannot name it.
+        Case B: whether an argument *ref* passed to a statically known function leaves the container
+        it holds unmutated — true when the parameter it binds is itself an immutable container,
+        judged recursively from that parameter's own references, so the callee neither member-writes
+        the argument nor lets it escape mutably. The parameter is judged with no inert method: the
+        caller's *inert_methods* is its promise that the container's own methods cannot mutate it at
+        the original site, and does not carry to a method the callee invokes on the argument or on
+        one of its nested containers (`x.a.push(...)`), which may mutate it. False, conservatively,
+        when the call cannot be analysed: the callee is not a single known function, it can reach
+        the argument through its own `arguments` object, the argument is spread, a spread precedes
+        it (so its runtime position shifts past the textual index and the parameter it binds cannot
+        be pinned down), the slot it lands in is a rest or destructuring parameter, or the parameter
+        is reachable through a `with` or direct `eval` in the callee that resolves a name at runtime
+        (an unrecorded write the parameter's reference set cannot rule out). An argument with no
+        parameter to bind — passed beyond the declared parameters of a function with no rest
+        collector and no `arguments` reach, textual or reflective — is safe, since the callee cannot
+        name it.
         """
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
@@ -1466,7 +1504,7 @@ class EffectModel:
             return False
         if self.model.reflection_can_reach(binding):
             return False
-        return self._immutable_container(binding, visiting, True)
+        return self._immutable_container(binding, visiting, None)
 
     def _callee_uses_arguments(self, func: Node) -> bool:
         """
