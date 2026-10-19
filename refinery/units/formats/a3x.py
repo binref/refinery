@@ -785,12 +785,23 @@ class A3xRecord(Struct):
             for line in codecs.decode(self.data, 'utf16').splitlines():
                 yield line.encode(a3x.codec)
             return
-        if self.type == A3xType.SCRIPT:
+        if self.holds_bytecode:
             a3x.log_info('decompiler:', self.path)
             for indent, line in a3x_decompile(self.data):
                 yield F'{indent * 4 * " "}{line}'.encode(a3x.codec)
             return
+        if self.type == A3xType.SCRIPT:
+            yield from self.data.splitlines()
+            return
         yield self.data
+
+    @property
+    def holds_bytecode(self) -> bool:
+        """
+        Whether the record holds compiled bytecode: an `AUTOIT SCRIPT` record of the current
+        format does, while the older format stores the script source there as ANSI text.
+        """
+        return self.type == A3xType.SCRIPT and self.encryption_type.is_current
 
     def is_script(self):
         return self.type in (
