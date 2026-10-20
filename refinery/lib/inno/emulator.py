@@ -1518,7 +1518,7 @@ class IFPSEmulator:
 
                 if decl:
                     void = decl.void
-                    argc = decl.argc
+                    argc = decl.argc + decl.method
                 elif handler:
                     void = handler.void
                     argc = handler.argc

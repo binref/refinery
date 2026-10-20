@@ -70,7 +70,7 @@ def _replaced_external(name: str, call: Callable, namespace: str = '', **changes
 def _failing_method(classname: str, name: str, argc: int):
     """
     Emulates the method of the given class and name, which the emulator does not implement, as one
-    that raises an error.
+    that raises an error. The method takes `argc` values, its object first.
     """
     from refinery.lib.inno.emulator import IFPSEmulatedFunction, IFPSEmulator
 
@@ -616,7 +616,7 @@ class TestIPFSEmulator(TestBase):
             return fmt
 
         emulator = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD)
-        with _failing_method('TDownloadWizardPage', 'Download', 0), _replaced_external('Format', record, spec=[False, True]):
+        with _failing_method('TDownloadWizardPage', 'Download', 1), _replaced_external('Format', record, spec=[False, True]):
             list(emulator.emulate_function(emulator.symbols['DOWNLOADFILE'], 'url', 'path'))
         self.assertEqual(received, [
             [TC.UnicodeString, TC.UnicodeString],
@@ -1025,7 +1025,7 @@ class TestIPFSEmulator(TestBase):
         from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD, log_calls=True)
         with (
-            _failing_method('TDownloadWizardPage', 'Download', 0),
+            _failing_method('TDownloadWizardPage', 'Download', 1),
             _replaced_external('GetLastError', lambda _: error_code, namespace='kernel32'),
         ):
             call = emulator.emulate_function(emulator.symbols['DOWNLOADFILE'], 'url', 'path')

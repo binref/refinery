@@ -600,6 +600,11 @@ class DeclSpec:
     return_type: IFPSType | None = None
     module: str | None = None
     classname: str | None = None
+    method: bool = False
+    """
+    True for a method of a class, which Pascal Script calls with its object before the parameters
+    that the declaration lists.
+    """
     delay_load: bool = False
     vtable_index: int | None = None
     load_with_altered_search_path: bool = False
@@ -712,7 +717,7 @@ class DeclSpec:
                     parameters.extend(DeclSpecParam(True) for _ in range(argc))
                     name = F'Set{name}' if write else F'Get{name}'
                 else:
-                    properties.update(calling_convention=cc())
+                    properties.update(calling_convention=cc(), method=True)
                     read_parameters()
         elif reader.readif(b'intf:.'):
             name = 'CoInterface'

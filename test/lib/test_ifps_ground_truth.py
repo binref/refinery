@@ -11,10 +11,11 @@ from fractions import Fraction
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.runtime import Platform
-from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
 from refinery.lib.inno.emulation import EmulatorMaxArray, EmulatorMaxString, EmulatorUndefined, NewFunctionCall
-from refinery.lib.inno.pascal import IFPSException
+from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
 from refinery.lib.inno.ifps import TC, AOp, Dialect, Function, IFPSFile, Op, Operand, Value
+from refinery.lib.inno.pascal import IFPSException
+from refinery.lib.inno.wizard import PageID
 from refinery.lib.types import buf
 from refinery.lib.un7z import SzArchive
 
@@ -30,12 +31,15 @@ as a 32-bit Setup and `x64` as a 64-bit Setup.
 """
 
 
-def _value_oracle_file(test: TestBase, build: str, extension: str) -> buf:
-    name = F'value-oracle-7c-{build}.{extension}'
-    for file in SzArchive(test.download_sample(_VALUE_ORACLE)).files:
+def _archived_file(test: TestBase, archive: str, name: str) -> buf:
+    for file in SzArchive(test.download_sample(archive)).files:
         if file.name == name:
             return file.extractor(None)()
     raise LookupError(name)
+
+
+def _value_oracle_file(test: TestBase, build: str, extension: str) -> buf:
+    return _archived_file(test, _VALUE_ORACLE, F'value-oracle-7c-{build}.{extension}')
 
 
 _ERROR_SCRIPT = '9e3618e159e10f5344b35e9cbdabf9d234c46aa4c33ab65905b18cf2e9d3f451'
@@ -99,6 +103,14 @@ _ERROR_LOG = {
 }
 
 _HOST_INSTALLER = '6b237b785ae7f7d5fae8d87d7b3015a2fdf296d1b74286a85c1906c141edae22'
+_HOST_ORACLE = 'ab60f5c9f89f80fa692d1e2627c02d2644676435ba2fd1f8c1a32446657b0a27'
+"""
+A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-5.exe`, whose script logs
+the events that Setup sends, the values that Setup gives the script, and the calls of the script
+that Setup makes for its entries; with the `ORACLE` lines of the logs of two runs on 64-bit
+Windows, installing for the current user: `host-oracle-5-normal.log` clicked Next on every page of
+the wizard, `host-oracle-5-silent.log` ran silently.
+"""
 _HOST_LOG_OF_INITIALIZE_SETUP = {
     'Event001'               : 'InitializeSetup',
     'ConstLoneBrace'         : '[a}b]',
@@ -1365,6 +1377,20 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
                 R'C:\Program Files (x86)\Common Files\Microsoft Shared\DAO',
             ],
         )
+
+    def test_a_method_of_a_class_receives_its_object_and_every_value(self):
+        """
+        On the tasks page, the script of the installer calls a method of the task list as
+        `TasksList.CheckItem(I, coUncheck)`, first for the index 0; `coUncheck` is 0.
+        """
+        archive = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+        emulator = self.emulator(archive)
+        calls = [
+            event.args for event in emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpSelectTasks)
+            if isinstance(event, NewFunctionCall) and event.name == 'TNewCheckListBox.CheckItem'
+        ]
+        self.assertEqual(len(calls[0]), 3)
+        self.assertEqual(calls[0][1:], (0, 0))
 
     @wontfix('the progress of an installation counts the bytes that Setup installs, and the emulator installs none')
     def test_an_installation_reports_its_progress(self):
