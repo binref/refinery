@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
     Scope,
     SemanticModel,
+    pattern_identifiers,
     references_own_arguments,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
@@ -37,7 +38,6 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionNode,
     JsIdentifier,
-    JsRestElement,
     JsScript,
     JsSequenceExpression,
     JsSwitchCase,
@@ -55,14 +55,12 @@ class _Copy(NamedTuple):
 
 def _parameters(function: JsFunctionNode) -> dict[int, JsIdentifier]:
     """
-    The plain and rest parameters of *function*, by the id of the identifier each one declares.
+    The names the parameter list of *function* binds, by the id of the identifier declaring each.
     """
     params: dict[int, JsIdentifier] = {}
     for param in function.params:
-        if isinstance(param, JsRestElement):
-            param = param.argument
-        if isinstance(param, JsIdentifier):
-            params[id(param)] = param
+        for name in pattern_identifiers(param):
+            params[id(name)] = name
     return params
 
 

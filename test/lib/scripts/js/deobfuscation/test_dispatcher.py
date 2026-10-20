@@ -1630,20 +1630,30 @@ class TestTheRouterIsReachedOnlyThroughWhatThePassReads(TestBase):
         )
 
 
+#: An entry whose unpacking holds a default, as the obfuscation writes it for `function (a, b = 1)`.
+DEFAULTED = '"k1": function () { var [a, b = 1] = p; return a + b; }'
+
 #: Reads of what the router hands out where the program uses a function as a value, mapped to what
-#: Node prints for each: the stand-in's text, and its length where the obfuscation records lengths.
+#: Node prints for each: the stand-in's text, its length where the obfuscation records lengths and
+#: where it does not, the length of it bound, and the length of an entry whose unpacking holds a
+#: default, with its length recorded and without, beside a call of it.
 WHAT_A_VALUE_FORM_IS_ASKED = {
     a_dispatcher(BOTH, ['console.log(d("k1", "createF").length);'], lengths='{ "k1": 2 }'): '2\n',
     a_dispatcher(BOTH, ['console.log(String(d("k1", "createF")).length > 0);']): 'true\n',
+    a_dispatcher(BOTH, ['console.log(d("k1", "createF").length);']): '0\n',
+    a_dispatcher(BOTH, ['console.log(d("k1", "createF").bind(null, 1).length);']): '0\n',
+    a_dispatcher(
+        [DEFAULTED],
+        ['var f = d("k1", "createF");', 'console.log(f.length, f(2));'],
+        lengths='{ "k1": 1 }',
+    ): '1 3\n',
+    a_dispatcher([DEFAULTED], ['var f = d("k1", "createF");', 'console.log(f.length, f(2));']): '0 3\n',
 }
 
 #: The same, where the stand-in and the recovered function answer differently, mapped to what Node
-#: prints for each: its name, its length without recorded lengths, the length of it bound, and its
-#: name through `new`.
+#: prints for each: its name, and its name through `new`.
 WHAT_ONLY_THE_STAND_IN_ANSWERS = {
     a_dispatcher(BOTH, ['console.log(d("k1", "createF").name);']): 'fn\n',
-    a_dispatcher(BOTH, ['console.log(d("k1", "createF").length);']): '0\n',
-    a_dispatcher(BOTH, ['console.log(d("k1", "createF").bind(null, 1).length);']): '0\n',
     a_dispatcher(BOTH, ['console.log(new d("k1", "createF", "wrapF")["wk"].name);']): 'fn\n',
 }
 
@@ -1653,7 +1663,8 @@ class TestAValueFormIsTheFunctionItStandsFor(TestBase):
     """
     Where the program uses one of its functions as a value, the router hands out a stand-in that
     forwards to the entry, and the unwrap puts the recovered function there instead. The two answer
-    a call alike, and differ in their name and, without recorded lengths, in their length.
+    a call alike and have the same length, which the parameter list of the recovered function keeps,
+    and differ in their name.
     """
 
     def test_what_a_value_form_is_asked_still_prints(self):

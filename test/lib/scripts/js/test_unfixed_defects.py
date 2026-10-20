@@ -5658,3 +5658,65 @@ class TestALoadedFileReplacingABuiltinHoldsTheFoldBack(TestBase):
     it. Closing it means the program-wide questions asking the loads ordered against their point,
     which every consumer of them would have to supply.
     """
+
+
+#: Programs reading the `length` of a function whose rest parameter a pass gives the parameters it
+#: reads, mapped to the behavior Node gives each as a CommonJS file: the rest array the masking
+#: writes, and the arguments the control-flow recovery finds stored into its scope object.
+A_LENGTH_AN_UNPACKED_REST_PARAMETER_CHANGES = {
+    'a rest array the masking writes': Program(
+        a_program("""
+            function add(...s) { s.length = 2; return s[0] + s[1]; }
+            console.log(add.length, add(1, 2));
+            """),
+        prints('0 3'),
+        Reading.COMMONJS,
+    ),
+    'a function the control-flow recovery gives its parameters': Program(
+        a_program("""
+            function outer() {
+              function* gen(a, b, scope = {NS: {}}, args) {
+                while (a + b !== 100) {
+                  with (scope.RV || scope) {
+                    switch (a + b) {
+                      case 10:
+                        NS.count = function(...rest) {
+                          return gen(20, 30, {NS: scope.NS, Loc: {}}, rest)["next"]()["value"];
+                        };
+                        return done = true, NS.count;
+                        break;
+                      case 50:
+                        [Loc.first, ...Loc.others] = args;
+                        scope.RV = scope.Loc;
+                        a = 70, b = 0;
+                        break;
+                      case 70:
+                        return done = true, first + ":" + others.length;
+                        break;
+                    }
+                  }
+                }
+              }
+              var done;
+              var result = gen(5, 5)["next"]()["value"];
+              if (done) { return result; }
+            }
+            console.log(outer().length, outer()(1, 2, 3));
+            """),
+        prints('0 1:2'),
+        Reading.COMMONJS,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_LENGTH_AN_UNPACKED_REST_PARAMETER_CHANGES)
+class TestAnUnpackedRestParameterKeepsTheLengthOfTheFunction(TestBase):
+    """
+    `refinery.lib.scripts.js.deobfuscation.restunpack` and the control-flow recovery of
+    `refinery.lib.scripts.js.deobfuscation.cff.statemachine` give a function `(...s)` the parameters
+    it reads out of `s` as plain names, which turns its `length` of 0 into their count. A correct
+    pass writes `(...[a, b])`, which keeps the length 0, wherever the `length` of the function is
+    read (`refinery.lib.scripts.js.deobfuscation.parameters.function_length_unobserved`), and the
+    plain names elsewhere.
+    """

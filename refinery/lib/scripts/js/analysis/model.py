@@ -3121,6 +3121,13 @@ class SemanticModel:
             names.append(None if own is None else (own, own.reads))
         return names
 
+    def reached_only_by_shown_calls(self, function: JsFunctionNode) -> bool:
+        """
+        Whether every way to *function* is a call the text shows, a test of its names or an
+        `extends` clause (`SemanticModel._calls_shown`), so that nothing reads a property of it.
+        """
+        return self._calls_shown(function)[1]
+
     def _calls_shown(self, function: JsFunctionNode) -> tuple[list[JsCallExpression | JsNewExpression], bool]:
         """
         The calls of *function* the text shows, in the sense of `values_through_calls`, and whether

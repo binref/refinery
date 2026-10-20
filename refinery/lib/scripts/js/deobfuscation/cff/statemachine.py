@@ -53,6 +53,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     substitute_use_position,
     walk_scope,
 )
+from refinery.lib.scripts.js.deobfuscation.parameters import parameter_list
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     LOOP_NODES,
@@ -3538,7 +3539,8 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     parameter is one array per call. The wrapper's `length` counts the new parameters, as the
     function the obfuscator flattened counted them, and the destructuring's array iterator is
     trusted the way the recovery trusts the rest of the obfuscator's scaffolding. A body that reads
-    its own `arguments`, whose elements a simple parameter list aliases, is left alone.
+    its own `arguments`, whose elements a simple parameter list aliases, is left alone, and the list
+    is the one `refinery.lib.scripts.js.deobfuscation.parameters.parameter_list` writes.
     """
     params = function.params
     if (
@@ -3577,14 +3579,20 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
     for index in range(max(len(elements) for _, elements, _ in stores)):
         slot = next(elements[index] for _, elements, _ in stores if index < len(elements))
         names.append(fresh(slot))
-    remainder_name: str | None = None
+    remainders = [remainder for _, _, remainder in stores if remainder is not None]
+    remainder_name = fresh(remainders[0]) if remainders else None
+    new_params: list[Expression] = [JsIdentifier(name=name) for name in names]
+    if remainder_name is not None:
+        new_params.append(JsRestElement(argument=JsIdentifier(name=remainder_name)))
+    parameters = parameter_list(new_params, function, None)
+    if parameters is None:
+        return
     for store, elements, remainder in stores:
         assignments: list[Expression] = [
             JsAssignmentExpression(operator='=', left=element, right=JsIdentifier(name=name))
             for element, name in zip(elements, names)
         ]
-        if remainder is not None:
-            remainder_name = fresh(remainder)
+        if remainder is not None and remainder_name is not None:
             assignments.append(JsAssignmentExpression(
                 operator='=', left=remainder, right=JsIdentifier(name=remainder_name)))
         if not assignments:
@@ -3595,10 +3603,7 @@ def _unpack_argument_stores(function: JsFunctionExpression, activation: _Activat
             _replace_in_parent(store, assignments[0])
         else:
             _replace_in_parent(store, JsSequenceExpression(expressions=assignments))
-    new_params: list[Expression] = [JsIdentifier(name=name) for name in names]
-    if remainder_name is not None:
-        new_params.append(JsRestElement(argument=JsIdentifier(name=remainder_name)))
-    set_child_list(function, 'params', new_params)
+    set_child_list(function, 'params', parameters.build())
 
 
 def _walk_all(stmts: list[Statement]):

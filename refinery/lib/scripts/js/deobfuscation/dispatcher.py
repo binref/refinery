@@ -56,7 +56,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     property_key,
     references_receiver_this,
     remove_declarator,
-    walk_scope,
+)
+from refinery.lib.scripts.js.deobfuscation.parameters import (
+    ParameterList,
+    parameter_list,
+    unpacking_moves_into_parameters,
 )
 from refinery.lib.scripts.js.model import (
     Expression,
@@ -78,7 +82,6 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
-    JsObjectPattern,
     JsProperty,
     JsPropertyKind,
     JsRestElement,
@@ -219,8 +222,9 @@ def _is_data_property(prop: JsProperty) -> bool:
 class _Dispatcher:
     """
     A router read as the template: its declaration and binding, its table entries by key, the two
-    flags of the second parameter, the flag of the third and the key it wraps the result under, and
-    the three bindings outside it the template uses, with the template's own references to them.
+    flags of the second parameter, the flag of the third and the key it wraps the result under, the
+    three bindings outside it the template uses, with the template's own references to them, and
+    the lengths the default of its fourth parameter records by key.
     """
     declaration: JsFunctionDeclaration
     binding: Binding
@@ -233,6 +237,14 @@ class _Dispatcher:
     cache: Binding
     helper: Binding
     template_references: set[Node]
+    lengths: dict[str, int]
+
+    def stand_in_length(self, key: str) -> int:
+        """
+        The `length` of the stand-in the router hands out for *key*: the length recorded for it,
+        which the length helper gives the stand-in, and 0 where none is, which the stand-in has.
+        """
+        return self.lengths.get(key, 0)
 
 
 class _TemplateReader:
@@ -248,6 +260,7 @@ class _TemplateReader:
         self.declared: dict[_Role, JsIdentifier] = {}
         self.referenced: dict[_Role, list[JsIdentifier]] = defaultdict(list)
         self.entries: dict[str, JsFunctionExpression] = {}
+        self.lengths: dict[str, int] = {}
         body = _plain_body(function)
         self._read_parameters()
         _require(len(body) == 5)
@@ -286,7 +299,10 @@ class _TemplateReader:
         self._declare(_Role.LENGTHS, lengths.left)
         for prop in _as(lengths.right, JsObjectExpression).properties:
             prop = _as(prop, JsProperty)
-            _require(_is_data_property(prop) and isinstance(prop.value, JsNumericLiteral))
+            _require(_is_data_property(prop))
+            length = _as(prop.value, JsNumericLiteral).value
+            _require(length.is_integer())
+            self.lengths[_present(property_key(prop))] = int(length)
 
     def _read_table(self, declarator: JsVariableDeclarator) -> None:
         self._declare(_Role.TABLE, declarator.id)
@@ -414,42 +430,8 @@ class _TemplateReader:
             template_references={
                 reference for role in _OUTER_ROLES for reference in self.referenced[role]
             },
+            lengths=self.lengths,
         )
-
-
-def _parameter_names(pattern: Node | None, names: list[str]) -> bool:
-    """
-    Collect into *names* the names *pattern* binds, and answer whether it binds them as a parameter
-    pattern would: through names, holes, rest elements and nested patterns, with no default or
-    computed key, which a parameter list evaluates in a scope of its own.
-    """
-    if isinstance(pattern, JsIdentifier):
-        names.append(pattern.name)
-        return True
-    if isinstance(pattern, JsArrayPattern):
-        last = len(pattern.elements) - 1
-        for index, element in enumerate(pattern.elements):
-            if element is None:
-                continue
-            if isinstance(element, JsRestElement):
-                if index != last or not _parameter_names(element.argument, names):
-                    return False
-            elif not _parameter_names(element, names):
-                return False
-        return True
-    if isinstance(pattern, JsObjectPattern):
-        last = len(pattern.properties) - 1
-        for index, prop in enumerate(pattern.properties):
-            if isinstance(prop, JsRestElement):
-                if index != last or not isinstance(prop.argument, JsIdentifier):
-                    return False
-                names.append(prop.argument.name)
-            elif not isinstance(prop, JsProperty) or prop.computed or prop.method:
-                return False
-            elif not _parameter_names(prop.value, names):
-                return False
-        return True
-    return False
 
 
 class _Unpacking(NamedTuple):
@@ -469,19 +451,24 @@ class _Entry:
     function: JsFunctionExpression
     unpacking: _Unpacking | None
 
-    def recovered(self, name: str) -> JsFunctionDeclaration:
+    def parameters(self, length: int | None) -> ParameterList | None:
+        """
+        The parameter list of the recovered function with the `length` *length*, any where it is
+        `None`, or `None` where no list of that length binds what the unpacking binds.
+        """
+        if self.unpacking is None:
+            return None if length else ParameterList([], [])
+        return parameter_list(self.unpacking.pattern.elements, self.function, length)
+
+    def recovered(self, name: str, parameters: ParameterList) -> JsFunctionDeclaration:
         body = self.function.body
         assert body is not None
         statements = list(body.body)
-        parameters: list[Expression] = []
         if self.unpacking is not None:
             statements = statements[1:]
-            parameters = [
-                element for element in self.unpacking.pattern.elements if element is not None
-            ]
         return JsFunctionDeclaration(
             id=JsIdentifier(name=name),
-            params=parameters,
+            params=parameters.build(),
             body=JsBlockStatement(body=statements),
             generator=is_generator_function(self.function),
             is_async=is_async_function(self.function),
@@ -522,33 +509,15 @@ def _read_entry(
     could change what it computes. An entry that moves keeps its body but is called by its own
     name, outside the router, with its unpacking as parameters, so it must not tell any of that:
     it reads no `this`, no own `arguments`, no `new.target`, no direct `eval`, and no name the
-    router declares. Its unpacking means what a parameter list means and skips no position, which
-    a parameter list cannot spell, and none of its function declarations is named like a
-    parameter, since a parameter is bound before function declarations are hoisted and the
-    unpacking after. A generator runs its unpacking at its first step and binds a parameter list at
-    the call, so a generator with an unpacking stays.
+    router declares. Its unpacking means what a parameter list means
+    (`refinery.lib.scripts.js.deobfuscation.parameters.unpacking_moves_into_parameters`).
     """
     body = function.body
     if function.id is not None or not isinstance(body, JsBlockStatement):
         return None
     unpacking = _read_unpacking(body.body, dispatcher.payload, model)
-    names: list[str] = []
-    if unpacking is not None:
-        if function.generator:
-            return None
-        if (
-            None in unpacking.pattern.elements
-            or not _parameter_names(unpacking.pattern, names)
-            or len(set(names)) != len(names)
-        ):
-            return None
-        if any(
-            isinstance(node, JsFunctionDeclaration)
-            and isinstance(node.id, JsIdentifier)
-            and node.id.name in names
-            for node in walk_scope(function, include_root_body=True)
-        ):
-            return None
+    if unpacking is not None and not unpacking_moves_into_parameters(model, unpacking.pattern, function):
+        return None
     if (
         references_receiver_this(function)
         or references_own_arguments(function)
@@ -933,6 +902,13 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
             for dispatch in dispatches
         ):
             return
+        handed_out = {dispatch.key for dispatch in dispatches if dispatch.arguments is None}
+        parameters: dict[str, ParameterList] = {}
+        for key, entry in entries.items():
+            length = dispatcher.stand_in_length(key) if key in handed_out else None
+            if (decided := entry.parameters(length)) is None:
+                return
+            parameters[key] = decided
         names = _choose_names(model, body_scope, dispatcher, dispatches)
         removals = _removable_declarators(cache, dispatcher.payload)
         removals.extend(_removable_declarators(
@@ -957,7 +933,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         edit = BodyEdit(scope, 'body')
         edit.splice(
             dispatcher.declaration,
-            [entry.recovered(names[key]) for key, entry in entries.items()],
+            [entry.recovered(names[key], parameters[key]) for key, entry in entries.items()],
         )
         edit.apply()
         for declarator in removals:

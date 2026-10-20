@@ -428,30 +428,68 @@ class TestStackKeysThatOnlyLookLikeIndices(TestJsDeobfuscator):
 
 
 #: A sloppy program whose single rest parameter would become a list of plain names, mapped to the
-#: program that rewrite would produce and to what Node prints for each of the two. A rest parameter
-#: is not a simple parameter list, so the `arguments` object such a function has holds a copy of the
-#: call's arguments; a list of plain names makes its elements alias the parameters instead, and the
-#: write each program makes is then read back under the other name. No pair here agrees, which is
-#: what the refusal is worth.
-_A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE: dict[str, tuple[str, str, str]] = {
+#: program that rewrite would produce, to the rest pattern the pass writes instead, and to what Node
+#: prints for the program and for the plain names. A rest parameter is not a simple parameter list,
+#: so the `arguments` object such a function has holds a copy of the call's arguments; a list of
+#: plain names makes its elements alias the parameters instead, and the write each program makes is
+#: then read back under the other name. No pair here agrees, which is why the names stay inside a
+#: rest pattern, which is not a simple list either.
+_A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE: dict[str, tuple[str, str, str, str]] = {
     'function f(...s) { s.length = 1; s[0] = 9; return arguments[0]; } console.log(f(3));': (
         'function f(p0) { p0 = 9; return arguments[0]; } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function f(...[p0]) {
+              p0 = 9;
+              return arguments[0];
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
     'function f(...s) { s.length = 1; arguments[0] = 9; return s[0]; } console.log(f(3));': (
         'function f(p0) { arguments[0] = 9; return p0; } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function f(...[p0]) {
+              arguments[0] = 9;
+              return p0;
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
     'function f(...s) { s.length = 2; s[1] = 9; return arguments[1]; } console.log(f(3, 4));': (
         'function f(p0, p1) { p1 = 9; return arguments[1]; } console.log(f(3, 4));',
+        inspect.cleandoc(
+            """
+            function f(...[p0, p1]) {
+              p1 = 9;
+              return arguments[1];
+            }
+            console.log(f(3, 4));
+            """
+        ),
         '4\n',
         '9\n',
     ),
     'function f(...s) { s.length = 1; var b = arguments; s[0] = 9; return b[0]; }'
     ' console.log(f(3));': (
         'function f(p0) { var b = arguments; p0 = 9; return b[0]; } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function f(...[p0]) {
+              var b = arguments;
+              p0 = 9;
+              return b[0];
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
@@ -459,17 +497,47 @@ _A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE: dict[str, tuple[str, str, str]] =
     ' function f(...s) { s.length = 1; s[0] = 9; return g(arguments); } console.log(f(3));': (
         'function g(x) { return x[0]; }'
         ' function f(p0) { p0 = 9; return g(arguments); } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function g(x) {
+              return x[0];
+            }
+            function f(...[p0]) {
+              p0 = 9;
+              return g(arguments);
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
     'function f(...s) { s.length = 1; s[0] = 9; return [...arguments][0]; } console.log(f(3));': (
         'function f(p0) { p0 = 9; return [...arguments][0]; } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function f(...[p0]) {
+              p0 = 9;
+              return [...arguments][0];
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
     'function f(...s) { s.length = 1; s[0] = 9; return (() => arguments[0])(); }'
     ' console.log(f(3));': (
         'function f(p0) { p0 = 9; return (() => arguments[0])(); } console.log(f(3));',
+        inspect.cleandoc(
+            """
+            function f(...[p0]) {
+              p0 = 9;
+              return (() => arguments[0])();
+            }
+            console.log(f(3));
+            """
+        ),
         '3\n',
         '9\n',
     ),
@@ -602,24 +670,24 @@ class TestARestParameterTheArgumentsObjectWouldObserve(TestJsDeobfuscator):
     def _demask(self, source: str) -> str:
         return self._run_transformer(source, JsRestArrayUnpacking)
 
-    def test_the_pass_hands_each_program_back_as_the_printer_writes_it(self):
+    def test_the_pass_keeps_the_names_inside_a_rest_pattern(self):
         rows = _A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE
         self.assertEqual(
             {source: self._demask(source) for source in rows},
-            {source: self._run_transformers(source) for source in rows},
+            {source: written for source, (_, written, _, _) in rows.items()},
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    def test_node_reads_the_two_spellings_of_each_program_differently(self):
+    def test_node_reads_the_plain_names_differently_and_the_rest_pattern_alike(self):
         rows = _A_REWRITE_THE_ARGUMENTS_OBJECT_WOULD_OBSERVE
         self.assertEqual(
             {
-                source: (behavior(source), behavior(unpacked))
-                for source, (unpacked, _, _) in rows.items()
+                source: (behavior(source), behavior(plain), behavior(self._demask(source)))
+                for source, (plain, _, _, _) in rows.items()
             },
             {
-                source: ((kept, None), (changed, None))
-                for source, (_, kept, changed) in rows.items()
+                source: ((kept, None), (changed, None), (kept, None))
+                for source, (_, _, kept, changed) in rows.items()
             },
         )
 
