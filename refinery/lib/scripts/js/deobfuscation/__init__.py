@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.deobfuscation.flatfunctions import JsFunctionUnflattening
 from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
 from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
 from refinery.lib.scripts.js.deobfuscation.lzstrings import JsLZStringDecoder
@@ -66,6 +67,7 @@ _pipeline = DeobfuscationPipeline(
             JsNamespaceFlattening,
             JsCallWrapperInliner,
             JsDispatcherUnwrapper,
+            JsFunctionUnflattening,
             JsIIFEAccessorPromoter,
             JsFunctionEvaluator,
             JsObjectFold,
