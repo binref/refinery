@@ -33,6 +33,7 @@ from typing import (
     Generic,
     Iterable,
     Iterator,
+    Mapping,
     NamedTuple,
     Sequence,
     TypeVar,
@@ -48,6 +49,7 @@ from refinery.lib.inno.archive import (
     InnoArchive,
     InnoVersion,
     LanguageDetection,
+    SetupDirective,
     TSetup,
     YesNoDirective,
 )
@@ -97,13 +99,20 @@ from refinery.lib.inno.ifps import (
     VariableSpec,
     VariableType,
 )
-from refinery.lib.inno.installation import CurrentFile, Installation
+from refinery.lib.inno.installation import (
+    CODE_CONSTANT,
+    ArgumentKind,
+    CurrentFile,
+    Installation,
+    InstalledPaths,
+    SetupCall,
+    SetupEntries,
+)
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
     PageEvent,
-    PageID,
     PageStyle,
     PasswordBox,
     WizardForm,
@@ -748,31 +757,69 @@ def _incompatible_call(handler: IFPSEmulatedFunction, argc: int, void: bool) -> 
 class HostSetup:
     """
     What the Setup that runs the script decides on its own, read once from the setup header and the
-    configuration: its version, the active language, the directives that the walk of the wizard
-    follows, the built-in pages that the header makes it skip, and its install mode. A bare script
-    has no header; it is taken to run under the Setup of the configured version, or the current
-    Setup without one, with every page shown and every directive that sends an event on, so that
-    each event that the script handles is sent, and in the install mode that its Setup has without
-    the directive. The script tells which Pascal Script compiled it and for which platform;
-    the version and the platform of an installer, the configured version, and the configured
-    Windows must agree.
+    configuration: its version, the active language, the directives that the installation
+    follows, the pages that the header makes it skip, its install mode, and how its release behaves
+    where releases differ. A bare script has no header; it is taken to run under the Setup of the
+    configured version, or the current Setup without one, with every page shown and every directive
+    that sends an event on, so that each event that the script handles is sent, and in the install
+    mode that its Setup has without the directive. The script tells which Pascal Script compiled
+    it and for which platform; the version and the platform of an installer, the configured
+    version, and the configured Windows must agree.
     """
     version: InnoVersion | None
     release: tuple[int, ...] | None
     language: int | None
     language_name: str
-    page_changes_only: bool
-    restart_manager: bool
-    uninstallable: bool
-    uninstall_key: bool
-    always_restart: bool
-    header_password: bool
-    finished_page_disabled: bool
-    ready_memo_disabled: bool
-    skipped_pages: frozenset[int]
     dialect: Dialect
     platform: Platform
     install_mode: InstallMode
+    restart_manager: bool
+    uninstallable: SetupDirective
+    uninstall_key: SetupDirective
+    changes_environment: SetupDirective
+    changes_associations: SetupDirective
+    always_restart: bool
+    header_password: bool
+    welcome_page_disabled: bool
+    license_text: bool
+    info_before_text: bool
+    user_info_page: bool
+    dir_page_disabled: bool
+    group_page_disabled: bool
+    ready_page_disabled: bool
+    ready_memo_disabled: bool
+    info_after_text: bool
+    finished_page_disabled: bool
+    page_changes_only: bool
+    """
+    Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
+    """
+    prepares_with_selection: bool
+    """
+    The preparing page passes the selected components and tasks to its scans; 5.5.0 passes lists
+    that are still empty.
+    """
+    registers_close_applications_resources: bool
+    """
+    The restart manager's scan calls `RegisterExtraCloseApplicationsResources`, from 5.5.2 on.
+    """
+    evaluates_change_directives: bool
+    """
+    The directives `ChangesEnvironment` and `ChangesAssociations` may be expressions, from 6.0.0 on.
+    """
+    downloads_archives: bool
+    """
+    The preparing page downloads the archives to extract, from 6.5.0 on.
+    """
+    download_tests_components_as_tasks: bool
+    """
+    The download of archives tests the components of an entry as its tasks, in 6.5.0 and 6.5.1.
+    """
+    run_working_dir_always: bool
+    """
+    A run entry expands its working directory before it tests whether its file exists, from 7.0.0
+    on; earlier Setups expand it only to start the program.
+    """
 
     @classmethod
     def of(
@@ -794,44 +841,32 @@ class HostSetup:
                 release=release,
                 language=None,
                 language_name=config.language,
-                page_changes_only=_changes_pages_only(release),
-                restart_manager=True,
-                uninstallable=True,
-                uninstall_key=True,
-                always_restart=False,
-                header_password=True,
-                finished_page_disabled=False,
-                ready_memo_disabled=False,
-                skipped_pages=frozenset(),
                 dialect=dialect,
                 platform=platform,
                 install_mode=InstallMode(platform is Platform.Win64 and config.x64),
+                restart_manager=True,
+                uninstallable=SetupDirective(True),
+                uninstall_key=SetupDirective(True),
+                changes_environment=SetupDirective(False),
+                changes_associations=SetupDirective(False),
+                always_restart=False,
+                header_password=True,
+                welcome_page_disabled=False,
+                license_text=True,
+                info_before_text=True,
+                user_info_page=True,
+                dir_page_disabled=False,
+                group_page_disabled=False,
+                ready_page_disabled=False,
+                ready_memo_disabled=False,
+                info_after_text=True,
+                finished_page_disabled=False,
+                **_release_behavior(release),
             )
         header = setup_info.Header
         flags = header.Flags
         language = _active_language(setup_info, config)
         texts = setup_info.wizard_texts(language)
-        skipped = set()
-        if flags & Flags.DisableWelcomePage:
-            skipped.add(PageID.wpWelcome)
-        if not texts.license:
-            skipped.add(PageID.wpLicense)
-        if not texts.info_before:
-            skipped.add(PageID.wpInfoBefore)
-        if not flags & Flags.UserInfoPage:
-            skipped.add(PageID.wpUserInfo)
-        if header.DisableDirPage == AutoBool.Yes or not flags & Flags.CreateAppDir:
-            skipped.add(PageID.wpSelectDir)
-        if not setup_info.Components:
-            skipped.add(PageID.wpSelectComponents)
-        if header.DisableProgramGroupPage == AutoBool.Yes or not setup_info.Icons:
-            skipped.add(PageID.wpSelectProgramGroup)
-        if not setup_info.Tasks:
-            skipped.add(PageID.wpSelectTasks)
-        if flags & Flags.DisableReadyPage:
-            skipped.add(PageID.wpReady)
-        if not texts.info_after:
-            skipped.add(PageID.wpInfoAfter)
         release = _release(header.CompiledCodeVersion, version)
         _check_generation(release, dialect, 'The installer')
         if header.is_64bit != (platform is Platform.Win64):
@@ -842,18 +877,27 @@ class HostSetup:
             release=release,
             language=language,
             language_name=setup_info.Languages[language].Name if language is not None else config.language,
-            page_changes_only=_changes_pages_only(release),
-            restart_manager=bool(flags & Flags.CloseApplications) and config.windows_os_version >= (6, 0),
-            uninstallable=header.directive(YesNoDirective.Uninstallable).answer is not False,
-            uninstall_key=header.directive(YesNoDirective.CreateUninstallRegKey).answer is not False,
-            always_restart=bool(flags & Flags.AlwaysRestart),
-            header_password=bool(flags & Flags.Password),
-            finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
-            ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
-            skipped_pages=frozenset(skipped),
             dialect=dialect,
             platform=platform,
             install_mode=_install_mode(header.ArchitecturesInstallIn64BitMode, config.x64),
+            restart_manager=bool(flags & Flags.CloseApplications) and config.windows_os_version >= (6, 0),
+            uninstallable=header.directive(YesNoDirective.Uninstallable),
+            uninstall_key=header.directive(YesNoDirective.CreateUninstallRegKey),
+            changes_environment=header.directive(YesNoDirective.ChangesEnvironment),
+            changes_associations=header.directive(YesNoDirective.ChangesAssociations),
+            always_restart=bool(flags & Flags.AlwaysRestart),
+            header_password=bool(flags & Flags.Password),
+            welcome_page_disabled=bool(flags & Flags.DisableWelcomePage),
+            license_text=bool(texts.license),
+            info_before_text=bool(texts.info_before),
+            user_info_page=bool(flags & Flags.UserInfoPage),
+            dir_page_disabled=header.DisableDirPage == AutoBool.Yes or not flags & Flags.CreateAppDir,
+            group_page_disabled=header.DisableProgramGroupPage == AutoBool.Yes,
+            ready_page_disabled=bool(flags & Flags.DisableReadyPage),
+            ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
+            info_after_text=bool(texts.info_after),
+            finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
+            **_release_behavior(release),
         )
 
     def runtime(self, settings: numbers.FormatSettings) -> Runtime:
@@ -863,6 +907,24 @@ class HostSetup:
         if self.platform is Platform.Win64:
             return Win64(settings)
         return Win32(settings, _control_word(self.release))
+
+
+def _release_behavior(release: tuple[int, ...] | None) -> dict[str, bool]:
+    """
+    How the given release of Setup behaves where releases differ; a bare script without a configured
+    version runs under the current Setup.
+    """
+    def since(*version: int) -> bool:
+        return release is None or release >= version
+    return dict(
+        page_changes_only=release is not None and (6, 5, 0) <= release < (6, 6, 0),
+        prepares_with_selection=since(5, 5, 1),
+        registers_close_applications_resources=since(5, 5, 2),
+        evaluates_change_directives=since(6, 0, 0),
+        downloads_archives=since(6, 5, 0),
+        download_tests_components_as_tasks=release is not None and (6, 5, 0) <= release < (6, 5, 2),
+        run_working_dir_always=since(7, 0, 0),
+    )
 
 
 class InstallMode(NamedTuple):
@@ -977,13 +1039,6 @@ def _check_generation(release: tuple[int, ...] | None, dialect: Dialect, source:
     raise ValueError(F'{source} names Inno Setup {version}, but the script was compiled by {compiler}.')
 
 
-def _changes_pages_only(release: tuple[int, ...] | None) -> bool:
-    """
-    Whether Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
-    """
-    return release is not None and (6, 5, 0) <= release < (6, 6, 0)
-
-
 def _control_word(release: tuple[int, ...] | None) -> int:
     """
     The control word of the x87 that a 32-bit Setup runs the script with: Delphi 12, which builds
@@ -1045,7 +1100,7 @@ class _EmulatedConstants:
         return '' if has_default else F'%{name}%'
 
     def registry(self, root: str, view: int | None, key: str) -> bool:
-        return False
+        return self.emulator.registry_key_exists(key)
 
     def registry_value(self, root: str, view: int | None, key: str, value: str, default: str) -> str:
         return default
@@ -1067,9 +1122,7 @@ class _EmulatedConstants:
 
     def run_code(self, function: str, argument: str):
         emulator = self.emulator
-        if (code := emulator.symbols.get(function)) is None or code.body is None:
-            raise DelphiException('Script error: Could not call proc')
-        value = yield from emulator._execute(_ScriptRun(emulator.setup.dialect, self.caller), code, [argument])
+        value = yield from emulator.call_by_name(function, [argument], CODE_CONSTANT, self.caller)
         return str(value)
 
 
@@ -1392,7 +1445,9 @@ class IFPSEmulator:
         self.runtime = self.setup.runtime(numbers.FormatSettings.of_locale(self.config.lcid))
         self.machine = pascal.Machine(self.setup.dialect, self.runtime)
         self.mutexes.clear()
-        self.wizard_form = WizardForm()
+        self.wizard_form = wizard = WizardForm()
+        wizard.uninstaller_named = self.setup.uninstallable.answer is not False
+        self.installed = InstalledPaths()
         self.current_file: CurrentFile | None = None
         self._globals = None
         self._win32api_last_error = 0
@@ -2074,7 +2129,11 @@ class IFPSEmulator:
 
     @external()
     def DirExists(self, path: str) -> bool:
-        return False
+        return self.installed.directory_exists(path)
+
+    @external()
+    def FileOrDirExists(self, path: str) -> bool:
+        return self.installed.exists(path)
 
     @external()
     def ForceDirectories(self, path: str) -> bool:
@@ -2197,9 +2256,9 @@ class IFPSEmulator:
         ):
             raise constants.ConstantError(F'Failed to expand shell folder constant "{original}"')
         if name == 'uninstallexe':
-            if not wizard.uninstaller_named or not self.setup.uninstallable:
+            if not wizard.uninstaller_named:
                 return ''
-            return RF'{cfg.install_to}\unins000.exe'
+            return self.uninstaller_path
         if name == 'language':
             return self.setup.language_name
         if (value := self._mode_constant(name)) is not None:
@@ -2254,11 +2313,12 @@ class IFPSEmulator:
 
     @external()
     def DeleteFile(self, path: str) -> bool:
+        self.installed.remove(path)
         return True
 
     @external()
     def FileExists(self, file_name: str) -> bool:
-        return False
+        return self.installed.file_exists(file_name)
 
     @external()
     def Log(self, log: str):
@@ -3054,7 +3114,7 @@ class IFPSEmulator:
         return setup_type.Description if descriptions else setup_type.Name
 
     def _expand_field(self, entry: object, field: EntryField, text: str) -> Generator[Any, Any, str]:
-        return constants.expand_constants(text, _EmulatedConstants(self, None))
+        return self.expand(text)
 
     @external()
     def WizardSelectedComponents(self, descriptions: bool) -> Generator[Any, Any, str]:
@@ -3145,11 +3205,96 @@ class IFPSEmulator:
             raise DelphiException(F'Internal error: {_outside_file_entry("CurrentSourceFilename")} with flag "external"')
         return file.source
 
-    def call_from_setup(self, function: Function, arguments: Sequence) -> Generator[Any, Any, Any]:
+    def expand(self, text: str, custom: Mapping[str, str] | None = None) -> Generator[Any, Any, str]:
         """
-        Calls a function of the script as Setup does.
+        Expands the constants in a text of the setup where Setup expands it, with the custom
+        constants that Setup passes for it; each code constant runs in a new run of the script.
         """
-        return (yield from self._execute(_ScriptRun(self.setup.dialect), function, arguments))
+        return constants.expand_constants(text, _EmulatedConstants(self, None), custom)
+
+    def registry_key_exists(self, key: str) -> bool:
+        """
+        Whether a key of the emulated registry exists; the emulated registry has no keys.
+        """
+        return False
+
+    @property
+    def uninstaller_path(self) -> str:
+        """
+        Where Setup installs its uninstaller.
+        """
+        return F'{self.config.install_to}\\unins000.exe'
+
+    @property
+    def temporary_directory(self) -> str:
+        """
+        The temporary directory of Setup, the value of `{tmp}`.
+        """
+        return self.constant_map['tmp']
+
+    def check_time(self):
+        """
+        Ends the emulation when its time is up.
+        """
+        if (watch := self._stopwatch) is not None and watch.expired():
+            raise EmulatorTimeout
+
+    def _fits(self, function: Function, call: SetupCall) -> bool:
+        """
+        Whether the declaration of a function of the script takes the call that Setup makes: the
+        same number of parameters, each passed the same way and of the type that Setup passes, and
+        a result of the type that Setup takes. A parameter whose type the script does not record
+        is taken to fit.
+        """
+        if (decl := function.decl) is None or len(decl.parameters) != len(call.parameters):
+            return False
+        string = TC.UnicodeString if self.ifps.unicode else TC.AnsiString
+        codes = {
+            ArgumentKind.String  : string,
+            ArgumentKind.Integer : TC.S32,
+            ArgumentKind.Boolean : TC.U08,
+            ArgumentKind.Step    : TC.U08,
+            ArgumentKind.Page    : TC.Class,
+        }
+        for parameter, (kind, by_value) in zip(decl.parameters, call.parameters):
+            if parameter.const != by_value:
+                return False
+            if parameter.type is not None and parameter.type.code != codes[kind]:
+                return False
+        if call.result is None:
+            return decl.void
+        return not decl.void and decl.return_type is not None and decl.return_type.code == codes[call.result]
+
+    def call_from_setup(
+        self,
+        function: Function,
+        arguments: Sequence,
+        call: SetupCall,
+        caller: _ScriptRun | None = None,
+    ) -> Generator[Any, Any, Any]:
+        """
+        Calls a function of the script as Setup does: Pascal Script runs a function whose
+        declaration does not take the call on a stack that does not fit it, and the emulation ends
+        there.
+        """
+        if not self._fits(function, call):
+            raise EmulatorUndefined(F'Setup calls {function.name} as {call}, which its declaration does not take.')
+        return (yield from self._execute(_ScriptRun(self.setup.dialect, caller), function, arguments))
+
+    def call_by_name(
+        self,
+        name: str,
+        arguments: list,
+        call: SetupCall,
+        caller: _ScriptRun | None = None,
+    ) -> Generator[Any, Any, Any]:
+        """
+        Calls a function of the script by name as Setup's `CodeRunner` finds it: a function of the
+        script or a support function that the script imports.
+        """
+        if (function := self.symbols.get(name)) is None:
+            raise DelphiException('Script error: Could not call proc')
+        return (yield from self.call_from_setup(function, arguments, call, caller))
 
     @external()
     def Low(self, var: Variable) -> int:
@@ -3255,6 +3400,9 @@ class InnoSetupEmulator(IFPSEmulator):
         **more,
     ):
         super().__init__(archive, options, **more)
+        cfg = self.config
+        self.entries = None if (info := self.setup_info) is None else SetupEntries.of(
+            info, cfg.windows_os_version, cfg.windows_sp_version)
 
     def emulate_installation(
         self,
@@ -3266,7 +3414,7 @@ class InnoSetupEmulator(IFPSEmulator):
         Emulates the calls into the script that Setup makes during an installation in which the user
         clicks Next on every page until Setup finishes; a silent installation when the configuration
         says so. Each installation starts the script over. The given password is typed into the box
-        on the password page. An event that ends with a script error is reported as a
+        on the password page. An event or entry that ends with a script error is reported as a
         `refinery.lib.inno.emulation.NewScriptError` and the installation goes on, as described
         for `refinery.lib.inno.installation.Installation`. Any other exception ends the emulation.
         A call of an emulated function that fails is reported as a
@@ -3276,9 +3424,9 @@ class InnoSetupEmulator(IFPSEmulator):
         script; the caller can give that test as `password_test`, without it the test fails.
         """
         self.reset()
-        self.wizard_form = wizard = WizardForm(walked=True, entries_known=False)
+        self.wizard_form = wizard = WizardForm(walked=True, entries_known=self.entries is not None)
         wizard.needs_restart = self.setup.always_restart
-        installation = Installation(self, password, password_test)
+        installation = Installation(self, self.entries, password, password_test)
         return (yield from self._timed(installation.run(), max_seconds))
 
     def unimplemented(self, function: Function, arguments: list[Variable], result: Variable | None):

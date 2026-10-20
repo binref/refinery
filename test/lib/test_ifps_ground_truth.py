@@ -11,17 +11,31 @@ from fractions import Fraction
 
 from refinery.lib.inno.archive import (
     Architecture,
+    AutoBool,
     Flags,
     InnoArchive,
     SetupDirective,
+    SetupFileFlags,
     SetupFileType,
+    SetupRunFlags,
     YesNoDirective,
 )
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.runtime import Platform
-from refinery.lib.inno.emulation import EmulatorMaxArray, EmulatorMaxString, EmulatorUndefined, NewFunctionCall
+from refinery.lib.inno.emulation import (
+    EmulatorMaxArray,
+    EmulatorMaxCalls,
+    EmulatorMaxString,
+    EmulatorUndefined,
+    EntryField,
+    EntryLocation,
+    EntrySection,
+    NewEmulationError,
+    NewFunctionCall,
+    NewScriptError,
+)
 from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
-from refinery.lib.inno.ifps import TC, AOp, Dialect, Function, IFPSFile, Op, Operand, Value
+from refinery.lib.inno.ifps import TC, AOp, DeclSpecParam, Dialect, Function, IFPSFile, Op, Operand, Value
 from refinery.lib.inno.pascal import IFPSException
 from refinery.lib.inno.wizard import PageID
 from refinery.lib.types import buf
@@ -110,7 +124,6 @@ _ERROR_LOG = {
     'DeinitializeSetup'        : 'entered',
 }
 
-_HOST_INSTALLER = '6b237b785ae7f7d5fae8d87d7b3015a2fdf296d1b74286a85c1906c141edae22'
 _HOST_ORACLE = 'ab60f5c9f89f80fa692d1e2627c02d2644676435ba2fd1f8c1a32446657b0a27'
 """
 A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-5.exe`, whose script logs
@@ -119,269 +132,28 @@ that Setup makes for its entries; with the `ORACLE` lines of the logs of two run
 Windows, installing for the current user: `host-oracle-5-normal.log` clicked Next on every page of
 the wizard, `host-oracle-5-silent.log` ran silently.
 """
-_HOST_LOG_OF_INITIALIZE_SETUP = {
-    'Event001'               : 'InitializeSetup',
-    'ConstLoneBrace'         : '[a}b]',
-    'ConstEscapedBrace'      : '[{tmp}]',
-    'ConstBackslash'         : R'[\x]',
-    'ConstBackslashTwice'    : R'[\\x]',
-    'ConstNested'            : R'[\]',
-    'ConstCodeNested'        : '[z]',
-    'ConstPercent'           : '[a}b]',
-    'ConstPercentBrace'      : R'[\]',
-    'ConstPercentBad'        : 'raised: Internal error: Failed to parse "code" constant',
-    'ConstDoubleInside'      : '[a{b]',
-    'ConstUnknown'           : 'raised: Internal error: Unknown constant "nosuchconstant"',
-    'ConstEmpty'             : 'raised: Internal error: Unknown constant ""',
-    'ConstUnclosed'          : 'raised: Internal error: Unclosed constant',
-    'ConstLastBrace'         : 'raised: Internal error: Unclosed constant',
-    'ConstCase'              : 'raised: Internal error: Unknown constant "Tmp"',
-    'ConstMissingCode'       : 'raised: Script error: Could not call proc',
-    'ConstCustomMessage'     : '[Hello a and b,c]',
-    'ConstEnvDefault'        : '[dflt]',
-    'ConstEnvMissing'        : '[]',
-    'ConstRegBadRoot'        : 'raised: Internal error: Failed to parse "reg" constant',
-    'ConstRegDefault'        : '[dflt]',
-    'ConstIniDefault'        : '[dflt]',
-    'ConstParamDefault'      : '[dflt]',
-    'ConstDrive'             : '[C:]',
-    'ConstCustom'            : R'[value\x]',
-    'ConstCustomBuiltin'     : R'[\]',
-    'ConstRenamed'           : 'equal',
-    'ConstHwnd'              : 'raised: Internal error: Unknown constant "hwnd"',
-    'ConstUserFavorites'     : 'expands',
-    'ConstCommonFavorites'   : 'equal',
-    'ConstAutoFavorites'     : 'equal',
-    'ConstUserPf'            : 'expands',
-    'ConstUserFonts'         : 'expands',
-    'ConstUserFavourites'    : 'raised: Internal error: Unknown constant "userfavourites"',
-    'ConstAppEarly'          : 'raised: Internal error: An attempt was made to expand the "app" constant before it was initialized',
-    'ConstGroupEarly'        : 'raised: Internal error: An attempt was made to expand the "group" constant before it was initialized',
-    'ConstUninstallExeEarly' : '[]',
-    'ConstCmUnknown'         : 'raised: Internal error: Unknown custom message name "NoSuchMessage" in "cm" constant',
-    'ConstCmCase'            : '[Hello x and y]',
-    'CustomMessageUnknown'   : 'raised: Internal error: Unknown custom message name "NoSuchMessage"',
-    'ActiveLanguage'         : 'default',
-    'ConstLanguage'          : '[default]',
-    'ConstEnvLazy'           : 'expands',
-    'LazyAfterEnv'           : '0',
-    'ConstEnvEmpty'          : '[dflt]',
-    'ConstRegLazy'           : '[dflt]',
-    'Event002'               : 'Lazy(default)',
-    'Event003'               : 'Lazy(key)',
-    'ConstRegOrder'          : '[default]',
-    'Event004'               : R'Lazy(C:\nosuch\oracle.ini)',
-    'Event005'               : 'Lazy(section)',
-    'Event006'               : 'Lazy(key)',
-    'Event007'               : 'Lazy(default)',
-    'ConstIniOrder'          : '[default]',
-    'Event008'               : 'Lazy(nosuchparam)',
-    'Event009'               : 'Lazy(default)',
-    'ConstParamOrder'        : '[default]',
-    'LazyCount'              : '8',
-}
-
-_HOST_LOG_OF_INITIALIZE_WIZARD = {
-    'Event010'         : 'InitializeWizard:first',
-    'Event011'         : 'InitializeWizard:second',
-    'Event012'         : 'InitializeWizard:main',
-    'ProgressID'       : '100',
-    'Page1ID'          : '101',
-    'Page2ID'          : '102',
-    'PageAfterMissing' : 'raised: Internal error: Could not find page with ID 9999',
-    'Page3ID'          : '103',
-}
-_HOST_LOG_OF_AN_INSTALLATION_WITH_THE_WIZARD = {
-    **_HOST_LOG_OF_INITIALIZE_SETUP,
-    **_HOST_LOG_OF_INITIALIZE_WIZARD,
-    'Event013'                      : 'CurPageChanged(1)',
-    'Event014'                      : 'ShouldSkipPage:first(1)',
-    'Event015'                      : 'ShouldSkipPage(1)',
-    'Event016'                      : 'NextButtonClick:first(1)',
-    'Event017'                      : 'NextButtonClick(1)',
-    'Event018'                      : 'OnShouldSkipPage(102)',
-    'Event019'                      : 'OnShouldSkipPage(101)',
-    'Event020'                      : 'ShouldSkipPage:first(101)',
-    'Event021'                      : 'ShouldSkipPage(101)',
-    'Event022'                      : 'OnShouldSkipPage(102)',
-    'Event023'                      : 'ShouldSkipPage:first(1)',
-    'Event024'                      : 'ShouldSkipPage(1)',
-    'Event025'                      : 'OnActivate(101)',
-    'Event026'                      : 'CurPageChanged(101)',
-    'Event027'                      : 'OnNextButtonClick(101)',
-    'Event028'                      : 'NextButtonClick:first(101)',
-    'Event029'                      : 'NextButtonClick(101)',
-    'Event030'                      : 'ShouldSkipPage:first(3)',
-    'Event031'                      : 'ShouldSkipPage(3)',
-    'Event032'                      : 'OnShouldSkipPage(101)',
-    'Event033'                      : 'ShouldSkipPage:first(101)',
-    'Event034'                      : 'ShouldSkipPage(101)',
-    'Event035'                      : 'CurPageChanged(3)',
-    'Event036'                      : 'CheckPassword(Wrong)',
-    'Event037'                      : 'NextButtonClick:first(3)',
-    'Event038'                      : 'NextButtonClick(3)',
-    'ConstAppOnPasswordNext'        : 'raised: Internal error: An attempt was made to expand the "app" constant before it was initialized',
-    'Event039'                      : 'ShouldSkipPage:first(5)',
-    'Event040'                      : 'ShouldSkipPage(5)',
-    'Event041'                      : 'OnShouldSkipPage(101)',
-    'Event042'                      : 'ShouldSkipPage:first(101)',
-    'Event043'                      : 'ShouldSkipPage(101)',
-    'Event044'                      : 'CheckSerial()',
-    'Event045'                      : 'CurPageChanged(5)',
-    'Event046'                      : 'NextButtonClick:first(5)',
-    'Event047'                      : 'NextButtonClick(5)',
-    'Event048'                      : 'ShouldSkipPage:first(6)',
-    'Event049'                      : 'ShouldSkipPage(6)',
-    'Event050'                      : 'ShouldSkipPage:first(5)',
-    'Event051'                      : 'ShouldSkipPage(5)',
-    'Event052'                      : 'CurPageChanged(6)',
-    'Event053'                      : 'NextButtonClick:first(6)',
-    'Event054'                      : 'NextButtonClick(6)',
-    'ConstAppOnDirNext'             : 'expands',
-    'Event055'                      : 'ShouldSkipPage:first(103)',
-    'Event056'                      : 'ShouldSkipPage(103)',
-    'Event057'                      : 'ShouldSkipPage:first(6)',
-    'Event058'                      : 'ShouldSkipPage(6)',
-    'Event059'                      : 'CurPageChanged(103)',
-    'Event060'                      : 'NextButtonClick:first(103)',
-    'Event061'                      : 'NextButtonClick(103)',
-    'Event062'                      : 'ShouldSkipPage:first(9)',
-    'Event063'                      : 'ShouldSkipPage(9)',
-    'Event064'                      : 'ShouldSkipPage:first(103)',
-    'Event065'                      : 'ShouldSkipPage(103)',
-    'Event066'                      : 'CurPageChanged(9)',
-    'Event067'                      : 'NextButtonClick:first(9)',
-    'Event068'                      : 'NextButtonClick(9)',
-    'Event069'                      : 'UpdateReadyMemo',
-    'Event070'                      : 'ShouldSkipPage:first(10)',
-    'Event071'                      : 'ShouldSkipPage(10)',
-    'Event072'                      : 'ShouldSkipPage:first(9)',
-    'Event073'                      : 'ShouldSkipPage(9)',
-    'Event074'                      : 'CurPageChanged(10)',
-    'Event075'                      : 'NextButtonClick:first(10)',
-    'Event076'                      : 'NextButtonClick(10)',
-    'ConstGroupOnReadyNext'         : 'expands',
-    'Event077'                      : 'ShouldSkipPage:first(10)',
-    'Event078'                      : 'ShouldSkipPage(10)',
-    'Event079'                      : 'CurPageChanged(11)',
-    'Event080'                      : 'PrepareToInstall',
-    'Event081'                      : 'ShouldSkipPage:first(10)',
-    'Event082'                      : 'ShouldSkipPage(10)',
-    'Event083'                      : 'ShouldSkipPage:first(10)',
-    'Event084'                      : 'ShouldSkipPage(10)',
-    'Event085'                      : 'ShouldSkipPage:first(10)',
-    'Event086'                      : 'ShouldSkipPage(10)',
-    'Event087'                      : 'CurPageChanged(12)',
-    'Event088'                      : 'CurStepChanged(1)',
-    'ConstUninstallExeOnInstall'    : '[]',
-    'Event089'                      : 'NeedRestart',
-    'Event090'                      : 'RegisterPreviousData',
-    'Event091'                      : 'CurStepChanged(2)',
-    'ConstUninstallExeAfterInstall' : 'expands',
-    'Event092'                      : 'ShouldSkipPage:first(14)',
-    'Event093'                      : 'ShouldSkipPage(14)',
-    'Event094'                      : 'CurPageChanged(14)',
-    'Event095'                      : 'NextButtonClick:first(14)',
-    'Event096'                      : 'NextButtonClick(14)',
-    'Event097'                      : 'CurStepChanged(3)',
-    'Event098'                      : 'GetCustomSetupExitCode',
-    'Event099'                      : 'DeinitializeSetup',
-    'ProgressCalls'                 : '227',
-    'ProgressLast'                  : '894/894',
-}
-_HOST_LOG_OF_A_SILENT_INSTALLATION = {
-    **_HOST_LOG_OF_INITIALIZE_SETUP,
-    **_HOST_LOG_OF_INITIALIZE_WIZARD,
-    'Event013'                      : 'CurPageChanged(1)',
-    'Event014'                      : 'NextButtonClick:first(1)',
-    'Event015'                      : 'NextButtonClick(1)',
-    'Event016'                      : 'OnShouldSkipPage(102)',
-    'Event017'                      : 'OnShouldSkipPage(101)',
-    'Event018'                      : 'ShouldSkipPage:first(101)',
-    'Event019'                      : 'ShouldSkipPage(101)',
-    'Event020'                      : 'OnShouldSkipPage(102)',
-    'Event021'                      : 'ShouldSkipPage:first(1)',
-    'Event022'                      : 'ShouldSkipPage(1)',
-    'Event023'                      : 'OnActivate(101)',
-    'Event024'                      : 'CurPageChanged(101)',
-    'Event025'                      : 'OnNextButtonClick(101)',
-    'Event026'                      : 'NextButtonClick:first(101)',
-    'Event027'                      : 'NextButtonClick(101)',
-    'Event028'                      : 'ShouldSkipPage:first(3)',
-    'Event029'                      : 'ShouldSkipPage(3)',
-    'Event030'                      : 'OnShouldSkipPage(101)',
-    'Event031'                      : 'ShouldSkipPage:first(101)',
-    'Event032'                      : 'ShouldSkipPage(101)',
-    'Event033'                      : 'CurPageChanged(3)',
-    'Event034'                      : 'CheckPassword(Wrong)',
-    'Event035'                      : 'NextButtonClick:first(3)',
-    'Event036'                      : 'NextButtonClick(3)',
-    'ConstAppOnPasswordNext'        : 'raised: Internal error: An attempt was made to expand the "app" constant before it was initialized',
-    'Event037'                      : 'ShouldSkipPage:first(5)',
-    'Event038'                      : 'ShouldSkipPage(5)',
-    'Event039'                      : 'OnShouldSkipPage(101)',
-    'Event040'                      : 'ShouldSkipPage:first(101)',
-    'Event041'                      : 'ShouldSkipPage(101)',
-    'Event042'                      : 'CheckSerial()',
-    'Event043'                      : 'CurPageChanged(5)',
-    'Event044'                      : 'NextButtonClick:first(5)',
-    'Event045'                      : 'NextButtonClick(5)',
-    'Event046'                      : 'ShouldSkipPage:first(6)',
-    'Event047'                      : 'ShouldSkipPage(6)',
-    'Event048'                      : 'ShouldSkipPage:first(5)',
-    'Event049'                      : 'ShouldSkipPage(5)',
-    'Event050'                      : 'CurPageChanged(6)',
-    'Event051'                      : 'NextButtonClick:first(6)',
-    'Event052'                      : 'NextButtonClick(6)',
-    'ConstAppOnDirNext'             : 'expands',
-    'Event053'                      : 'ShouldSkipPage:first(103)',
-    'Event054'                      : 'ShouldSkipPage(103)',
-    'Event055'                      : 'ShouldSkipPage:first(6)',
-    'Event056'                      : 'ShouldSkipPage(6)',
-    'Event057'                      : 'CurPageChanged(103)',
-    'Event058'                      : 'NextButtonClick:first(103)',
-    'Event059'                      : 'NextButtonClick(103)',
-    'Event060'                      : 'ShouldSkipPage:first(9)',
-    'Event061'                      : 'ShouldSkipPage(9)',
-    'Event062'                      : 'ShouldSkipPage:first(103)',
-    'Event063'                      : 'ShouldSkipPage(103)',
-    'Event064'                      : 'CurPageChanged(9)',
-    'Event065'                      : 'NextButtonClick:first(9)',
-    'Event066'                      : 'NextButtonClick(9)',
-    'Event067'                      : 'UpdateReadyMemo',
-    'Event068'                      : 'ShouldSkipPage:first(9)',
-    'Event069'                      : 'ShouldSkipPage(9)',
-    'Event070'                      : 'CurPageChanged(10)',
-    'Event071'                      : 'NextButtonClick:first(10)',
-    'Event072'                      : 'NextButtonClick(10)',
-    'ConstGroupOnReadyNext'         : 'expands',
-    'Event073'                      : 'CurPageChanged(11)',
-    'Event074'                      : 'PrepareToInstall',
-    'Event075'                      : 'ShouldSkipPage:first(10)',
-    'Event076'                      : 'ShouldSkipPage(10)',
-    'Event077'                      : 'ShouldSkipPage:first(10)',
-    'Event078'                      : 'ShouldSkipPage(10)',
-    'Event079'                      : 'ShouldSkipPage:first(10)',
-    'Event080'                      : 'ShouldSkipPage(10)',
-    'Event081'                      : 'CurPageChanged(12)',
-    'Event082'                      : 'CurStepChanged(1)',
-    'ConstUninstallExeOnInstall'    : '[]',
-    'Event083'                      : 'NeedRestart',
-    'Event084'                      : 'RegisterPreviousData',
-    'Event085'                      : 'CurStepChanged(2)',
-    'ConstUninstallExeAfterInstall' : 'expands',
-    'Event086'                      : 'ShouldSkipPage:first(14)',
-    'Event087'                      : 'ShouldSkipPage(14)',
-    'Event088'                      : 'CurPageChanged(14)',
-    'Event089'                      : 'NextButtonClick:first(14)',
-    'Event090'                      : 'NextButtonClick(14)',
-    'Event091'                      : 'CurStepChanged(3)',
-    'Event092'                      : 'GetCustomSetupExitCode',
-    'Event093'                      : 'DeinitializeSetup',
-    'ProgressCalls'                 : '227',
-    'ProgressLast'                  : '894/894',
-}
-_HOST_VALUES_THAT_ARE_NOT_EMULATED = ('ConstEnvMissing', 'ProgressCalls', 'ProgressLast')
+_HOST_EVENT = re.compile(r'Event\d+')
+_HOST_VALUES_THAT_ARE_NOT_EMULATED = frozenset({
+    'ConstEnvMissing',
+    'ConstSys',
+    'ConstSysNative',
+    'ConstSysWow64',
+    'ProgressCalls',
+    'ProgressLast',
+})
+"""
+The values that the host oracle logged of the machine that it ran on, which the emulated machine
+does not share: a variable that its environment did not have, the spelling of its system folders,
+and the progress of the installation, which counts the bytes that Setup installed.
+"""
+_HOST_VALUES_LEFT_OUT_OF_THE_LOGS = frozenset({
+    'ConstAutoCf',
+    'ConstAutoPf',
+})
+"""
+The values that the stored logs of the host oracle leave out because they hold the name of the
+account that ran it.
+"""
 _HOST_VALUES_OF_THE_INSTALL_MODE = (
     'Is64BitInstallMode',
     'IsWin64',
@@ -406,20 +178,37 @@ was built without `ArchitecturesInstallIn64BitMode` and ran on 64-bit Windows.
 """
 
 
+def _host_oracle_lines(test: TestBase, run: str) -> list[tuple[str, str]]:
+    """
+    The names and values that a run of the host oracle logged, in order.
+    """
+    log = codecs.decode(_archived_file(test, _HOST_ORACLE, F'host-oracle-5-{run}.log'), 'utf8')
+    return [(match[1], match[2]) for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line))]
+
+
 def _host_oracle_log(test: TestBase, run: str) -> dict[str, str]:
     """
     The values that a run of the host oracle logged, by their names.
     """
-    values = {}
-    for line in codecs.decode(_archived_file(test, _HOST_ORACLE, F'host-oracle-5-{run}.log'), 'utf8').splitlines():
-        if match := _ORACLE_LINE.fullmatch(line):
-            values[match[1]] = match[2]
-    return values
+    return dict(_host_oracle_lines(test, run))
+
+
+def _logged_lines(events: Iterable[object]) -> list[tuple[str, str]]:
+    """
+    The names and values of the oracle lines that the events log, in order.
+    """
+    return [
+        (match[1], match[2]) for event in events
+        if isinstance(event, NewFunctionCall)
+        and event.name == 'Log'
+        and (match := _ORACLE_LINE.fullmatch(event.args[0]))
+    ]
 
 
 def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str, str]:
     """
-    Adds the name and value of each oracle line that the events log to the given values.
+    Adds the name and value of each oracle line that the events log to the given values, as the
+    events come, so that the values logged before an error are kept.
     """
     for event in events:
         if (
@@ -429,6 +218,40 @@ def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str
         ):
             values[match[1]] = match[2]
     return values
+
+
+def _a_text_of_setup(name: str, value: str) -> bool:
+    """
+    Whether an oracle line logs a text that Setup builds and the emulator does not build yet: a code
+    constant in a directive of `[Setup]`, a text of the ready memo, or the serial number that
+    `CheckSerial` receives from the page for user information.
+    """
+    if name.startswith('ReadyMemo'):
+        return True
+    return bool(_HOST_EVENT.fullmatch(name) and re.fullmatch(r'code:[A-Za-z]+|CheckSerial\(.*\)', value))
+
+
+def _a_key_of_windows(name: str, value: str) -> bool:
+    """
+    Whether an oracle line depends on a key that the registry of every Windows has or lacks: the
+    emulated registry has no keys, but the emulated `RegKeyExists` finds every key.
+    """
+    return name == 'RegKeyExistsMissing' or value == 'code:registry.d.valuedata'
+
+
+def _comparable(lines: Iterable[tuple[str, str]]) -> list[str]:
+    """
+    The oracle lines that the emulator reproduces, as `name = value`, each event under the name
+    `Event`.
+    """
+    return [
+        F'{"Event" if _HOST_EVENT.fullmatch(name) else name} = {value}'
+        for name, value in lines
+        if name not in _HOST_VALUES_THAT_ARE_NOT_EMULATED
+        and name not in _HOST_VALUES_LEFT_OUT_OF_THE_LOGS
+        and not _a_text_of_setup(name, value)
+        and not _a_key_of_windows(name, value)
+    ]
 
 
 def _resolved(values: dict[str, str]) -> dict[str, str]:
@@ -1169,9 +992,9 @@ class TestTheEmulatorLogsWhatA64BitSetupOfInnoSetup7Logged(_EveryBuild, _AnInnoS
 
 class TestTheParserReadsWhatTheCompilerWrote(TestBase):
     """
-    The parser reads the records of an installer as Setup reads them. The script of the stored oracle
-    installer sets the yes-or-no directives `Uninstallable`, `CreateUninstallRegKey`,
-    `ChangesEnvironment` and `ChangesAssociations` to calls of its function `Directive`, and
+    The parser reads the records of an installer as Setup reads them. The script of the host oracle
+    sets the yes-or-no directives `Uninstallable`, `CreateUninstallRegKey`, `ChangesEnvironment`
+    and `ChangesAssociations` to calls of its function `Directive`, and
     `ArchitecturesInstallIn64BitMode` to `x64compatible`.
     """
 
@@ -1258,15 +1081,15 @@ class TestTheParserReadsWhatTheCompilerWrote(TestBase):
 class TestTheSetupAgreesWithTheScript(TestBase):
     """
     A script of Inno Setup 7 runs only under a Setup of Inno Setup 7, and an earlier script only
-    under an earlier Setup. The stored installer was built by Inno Setup 6.5.0; its script is
-    replaced by one of the value oracle and its header changed as Inno Setup 7 writes it.
+    under an earlier Setup. The host oracle was built by Inno Setup 6.5.0; its script is replaced
+    by one of the value oracle and its header changed as Inno Setup 7 writes it.
     """
 
     def script(self, build: str) -> IFPSFile:
         return IFPSFile.Parse(_value_oracle_file(self, build, 'ifps'))
 
     def installer(self) -> InnoArchive:
-        return InnoArchive(self.download_sample(_HOST_INSTALLER))
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
 
     def test_a_setup_version_before_7_refuses_a_script_of_inno_setup_7(self):
         with self.assertRaises(ValueError):
@@ -1415,16 +1238,21 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
 
 
-class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
+class _HostOracleTest(TestBase):
     """
-    Inno Setup 6.5.0 built an installer whose script logs the events that Setup sends and how Setup
-    expands constants. The installer ran on Windows with a log file, installing for the current
-    user. The emulated machine has `WINDIR` set, as every Windows has.
+    Inno Setup 6.5.0 built the host oracle, an installer whose script logs the events that Setup
+    sends, how Setup expands constants, and the calls of the script that Setup makes for its
+    entries. It ran on 64-bit Windows with a log file, installing for the current user, once with
+    the wizard and once silently; a check and a `BeforeInstall` function of its directories raise
+    an error on purpose. The emulated machine has `WINDIR` set, as every Windows has.
     """
 
-    def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config):
+    def host_oracle(self) -> InnoArchive:
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+
+    def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config) -> InnoSetupEmulator:
         if archive is None:
-            archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
+            archive = self.host_oracle()
         return InnoSetupEmulator(archive, IFPSEmulatorConfig(
             log_calls=True,
             admin=False,
@@ -1432,45 +1260,108 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
             **config,
         ))
 
+    def installation(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
+        return list(self.emulator(archive, wizard_silent=silent).emulate_installation())
+
+    def events(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[str]:
+        """
+        The events that the script logs in an emulated installation, in order.
+        """
+        return [value for name, value in _logged_lines(self.installation(archive, silent)) if _HOST_EVENT.fullmatch(name)]
+
+    def errors(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
+        return [event for event in self.installation(archive, silent) if isinstance(event, (NewScriptError, NewEmulationError))]
+
+
+class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
+
     def test_initialize_setup_expands_constants_as_setup_did(self):
         """
-        The values of `{app}`, `{group}` and `{uninstallexe}` depend on how far the installation
-        got, which a run of `InitializeSetup` alone does not show.
+        Right after `InitializeSetup`, Setup expands the code constant of the directive `AppName`;
+        the lines before it are those of `InitializeSetup`. The values of `{app}`, `{group}` and
+        `{uninstallexe}`, and whether the wizard exists, depend on how far the installation got,
+        which a run of `InitializeSetup` alone does not show.
         """
+        log = _host_oracle_lines(self, 'normal')
+        end = log.index(('Event010', 'code:AppName'))
+        logged = dict(log[:end])
         emulator = self.emulator()
         emulated = _logged_values(emulator.emulate_function(emulator.symbols['INITIALIZESETUP']), {})
-        compared = _HOST_LOG_OF_INITIALIZE_SETUP.keys() - {
+        compared = logged.keys() - {
             'ConstAppEarly',
             'ConstGroupEarly',
             'ConstUninstallExeEarly',
+            'WizardSetupTypeBeforeWizard',
+            'RegKeyExistsMissing',
             *_HOST_VALUES_THAT_ARE_NOT_EMULATED,
         }
-        self.assertEqual(emulated.keys(), _HOST_LOG_OF_INITIALIZE_SETUP.keys())
-        self.assertEqual(
-            {name: emulated[name] for name in compared},
-            {name: _HOST_LOG_OF_INITIALIZE_SETUP[name] for name in compared},
-        )
-
-    def assertInstallationLogsAsSetupDid(self, log: dict[str, str], **config):
-        emulated = _logged_values(self.emulator(**config).emulate_installation(), {})
-        compared = log.keys() - set(_HOST_VALUES_THAT_ARE_NOT_EMULATED)
-        self.assertEqual(emulated.keys(), log.keys())
-        self.assertEqual({name: emulated[name] for name in compared}, {name: log[name] for name in compared})
+        self.assertEqual(emulated.keys() - _HOST_VALUES_LEFT_OUT_OF_THE_LOGS, logged.keys())
+        self.assertEqual({name: emulated[name] for name in compared}, {name: logged[name] for name in compared})
 
     def test_an_installation_with_the_wizard_runs_the_script_as_setup_did(self):
-        self.assertInstallationLogsAsSetupDid(_HOST_LOG_OF_AN_INSTALLATION_WITH_THE_WIZARD, wizard_silent=False)
+        emulated = _comparable(_logged_lines(self.installation(silent=False)))
+        self.assertEqual(emulated, _comparable(_host_oracle_lines(self, 'normal')))
 
     def test_a_silent_installation_runs_the_script_as_setup_did(self):
-        self.assertInstallationLogsAsSetupDid(_HOST_LOG_OF_A_SILENT_INSTALLATION, wizard_silent=True)
+        """
+        The silent run followed the run with the wizard, which left `file.a.txt` in the folder of
+        the application. In its scan for the restart manager, Setup found that file as the source
+        of the external file `file.copy` and expanded its destination; the emulated machine starts
+        without it.
+        """
+        emulated = _comparable(_logged_lines(self.installation(silent=True)))
+        logged = _comparable(_host_oracle_lines(self, 'silent'))
+        logged.remove('Event = code:file.copy.destdir')
+        self.assertEqual(emulated, logged)
+
+    def test_each_installation_reports_the_two_script_errors_that_setup_showed(self):
+        for silent in (False, True):
+            with self.subTest(silent=silent):
+                self.assertEqual([str(error) for error in self.errors(silent=silent)], [
+                    'script error in Check of [Dirs] entry 10: Error calling RaiseException: oracle check error dir.k',
+                    'script error in BeforeInstall of [Dirs] entry 11: Error calling RaiseException: oracle install error dir.l',
+                ])
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the code constants in the directives of [Setup] are not expanded')
+    def test_setup_expands_the_code_constants_of_its_directives_as_setup_did(self):
+        def code_constants(lines: Iterable[tuple[str, str]]):
+            return [value for name, value in lines if _a_text_of_setup(name, value) and value.startswith('code:')]
+        self.assertEqual(
+            code_constants(_logged_lines(self.installation())),
+            code_constants(_host_oracle_lines(self, 'normal')),
+        )
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the texts of the ready memo are not built')
+    def test_setup_passes_the_texts_of_the_ready_memo_as_setup_did(self):
+        def memo(values: dict[str, str]):
+            return {name: value for name, value in values.items() if name.startswith('ReadyMemo')}
+        self.assertEqual(memo(_logged_values(self.installation(), {})), memo(_host_oracle_log(self, 'normal')))
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the default user information is not expanded')
+    def test_check_serial_receives_the_default_serial_number(self):
+        self.assertIn('CheckSerial(1)', self.events())
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the emulated RegKeyExists finds every key')
+    def test_a_key_that_windows_does_not_have_does_not_exist(self):
+        emulated = _logged_values(self.installation(), {})
+        self.assertEqual(emulated['RegKeyExistsMissing'], _host_oracle_log(self, 'normal')['RegKeyExistsMissing'])
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the emulated registry has none of the keys that every Windows has')
+    def test_a_registry_value_that_does_not_create_its_key_is_written_into_a_key_that_windows_has(self):
+        """
+        The entry writes a value under `HKCU\\Software` with the flag `dontcreatekey`; Setup
+        expands its data only when the key exists.
+        """
+        self.assertIn('code:registry.d.valuedata', self.events())
 
     def test_setup_does_not_ask_the_script_for_the_ready_memo_when_the_header_disables_the_memo(self):
         """
         The parsed header of the installer is changed as the directive `DisableReadyMemo` changes
         it.
         """
-        archive = InnoArchive(self.download_sample(_HOST_INSTALLER))
+        archive = self.host_oracle()
         archive.setup_info.Header.Flags |= Flags.DisableReadyMemo
-        events = _logged_values(self.emulator(archive, wizard_silent=False).emulate_installation(), {}).values()
+        events = self.events(archive)
         self.assertIn('CurPageChanged(10)', events)
         self.assertNotIn('UpdateReadyMemo', events)
 
@@ -1479,16 +1370,36 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
         Without its installer, the script runs as if every page were shown; a silent Setup still
         skips the license page on its own.
         """
-        script = InnoArchive(self.download_sample(_HOST_INSTALLER)).ifps
+        script = self.host_oracle().ifps
         assert script is not None
-        silent = _logged_values(self.emulator(script, wizard_silent=True).emulate_installation(), {}).values()
-        normal = _logged_values(self.emulator(script, wizard_silent=False).emulate_installation(), {}).values()
+        normal = self.events(script, silent=False)
+        silent = self.events(script, silent=True)
         self.assertIn('ShouldSkipPage(2)', normal)
         self.assertNotIn('ShouldSkipPage(2)', silent)
         self.assertNotIn('CurPageChanged(2)', silent)
 
-    def host_oracle(self) -> InnoArchive:
-        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+    def test_each_release_of_setup_behaves_as_its_source_says(self):
+        """
+        The behavior of Setup that changed between releases, by the release that changed it.
+        """
+        changes = {
+            'prepares_with_selection'                : ((5, 5, 1), None),
+            'registers_close_applications_resources' : ((5, 5, 2), None),
+            'evaluates_change_directives'            : ((6, 0, 0), None),
+            'downloads_archives'                     : ((6, 5, 0), None),
+            'page_changes_only'                      : ((6, 5, 0), (6, 6, 0)),
+            'download_tests_components_as_tasks'     : ((6, 5, 0), (6, 5, 2)),
+            'run_working_dir_always'                 : ((7, 0, 0), None),
+        }
+        for release in ((5, 5, 0), (5, 5, 1), (5, 5, 2), (6, 0, 0), (6, 5, 0), (6, 5, 1), (6, 5, 2), (6, 6, 0), (7, 0, 0)):
+            build = 'x86' if release >= (7, 0, 0) else 'inno6'
+            script = IFPSFile.Parse(_value_oracle_file(self, build, 'ifps'))
+            setup = InnoSetupEmulator(script, IFPSEmulatorConfig(setup_version=release)).setup
+            with self.subTest(release=release):
+                self.assertEqual(
+                    {name: getattr(setup, name) for name in changes},
+                    {name: first <= release and (last is None or release < last) for name, (first, last) in changes.items()},
+                )
 
     def install_mode_values(self, archive: InnoArchive) -> dict[str, str]:
         emulator = self.emulator(archive)
@@ -1559,8 +1470,7 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
         On the tasks page, the script of the installer calls a method of the task list as
         `TasksList.CheckItem(I, coUncheck)`, first for the index 0; `coUncheck` is 0.
         """
-        archive = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
-        emulator = self.emulator(archive)
+        emulator = self.emulator()
         calls = [
             event.args for event in emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpSelectTasks)
             if isinstance(event, NewFunctionCall) and event.name == 'TNewCheckListBox.CheckItem'
@@ -1570,21 +1480,24 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
 
     def test_a_function_of_the_wizard_fails_before_setup_creates_the_wizard(self):
         """
-        Setup sends `InitializeSetup` before it creates the wizard.
+        Setup sends `InitializeSetup` and runs the checks of the components before it creates the
+        wizard.
         """
-        emulated = _logged_values(self.emulator(self.host_oracle()).emulate_installation(), {})
+        emulated = _logged_values(self.installation(), {})
         log = _host_oracle_log(self, 'normal')
-        self.assertEqual(emulated['WizardSetupTypeBeforeWizard'], log['WizardSetupTypeBeforeWizard'])
+        for name in ('WizardSetupTypeBeforeWizard', 'WizardInComponentCheck'):
+            with self.subTest(name=name):
+                self.assertEqual(emulated[name], log[name])
 
     def test_the_current_file_is_known_only_in_a_function_of_a_file_entry(self):
-        emulated = _logged_values(self.emulator(self.host_oracle()).emulate_installation(), {})
+        emulated = _logged_values(self.installation(), {})
         log = _host_oracle_log(self, 'normal')
         self.assertEqual(emulated['CurrentFilenameInEvent'], log['CurrentFilenameInEvent'])
 
     @wontfix('the progress of an installation counts the bytes that Setup installs, and the emulator installs none')
     def test_an_installation_reports_its_progress(self):
-        emulated = _logged_values(self.emulator(wizard_silent=False).emulate_installation(), {})
-        log = _HOST_LOG_OF_AN_INSTALLATION_WITH_THE_WIZARD
+        emulated = _logged_values(self.installation(), {})
+        log = _host_oracle_log(self, 'normal')
         self.assertEqual(
             (emulated['ProgressCalls'], emulated['ProgressLast']),
             (log['ProgressCalls'], log['ProgressLast']),
@@ -1593,4 +1506,181 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
     @wontfix('the emulator does not know the environment of the machine; a variable that the configuration does not name stays %NAME%')
     def test_an_environment_variable_that_is_not_set_expands_to_an_empty_text(self):
         expanded = self.emulator().expand_constant('{%NOSUCHORACLEVARIABLE}')
-        self.assertEqual(F'[{expanded}]', _HOST_LOG_OF_INITIALIZE_SETUP['ConstEnvMissing'])
+        self.assertEqual(F'[{expanded}]', _host_oracle_log(self, 'normal')['ConstEnvMissing'])
+
+
+class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):
+    """
+    The entries of the host oracle name the functions of its script as their checks and as their
+    `BeforeInstall` and `AfterInstall` functions, and have code constants in their fields; each of
+    these functions logs its name, the name of the entry and, for a file, the names of the current
+    file. A check fails when the name of the entry starts with a minus. The tests compare what
+    the run with the wizard logged, or change the installer in memory for what no run shows.
+    """
+
+    def assertLinesAsLogged(self, *names: str):
+        emulated = _logged_values(self.installation(), {})
+        log = _host_oracle_log(self, 'normal')
+        self.assertEqual({name: emulated.get(name) for name in names}, {name: log[name] for name in names})
+
+    def assertEventsAsLogged(self, *entries: str):
+        def events(lines: Iterable[tuple[str, str]]):
+            return [value for name, value in lines if _HOST_EVENT.fullmatch(name) and any(entry in value for entry in entries)]
+        self.assertEqual(events(_logged_lines(self.installation())), events(_host_oracle_lines(self, 'normal')))
+
+    def test_a_component_or_task_for_another_windows_hides_the_entries_below_it(self):
+        """
+        The component `older` and the task `oldtask` are only for Windows before 6.0, their children
+        are for every Windows.
+        """
+        self.assertLinesAsLogged('WizardComponents', 'TasksPageTasks')
+        self.assertEventsAsLogged('older', 'oldtask')
+
+    def test_a_component_that_repeats_the_name_of_the_one_before_it_lets_the_children_of_that_one_follow(self):
+        """
+        The second component `dup` fails its check; the child `dup\\child` follows the first one.
+        """
+        self.assertLinesAsLogged('WizardComponents')
+        self.assertEventsAsLogged('component.dup')
+
+    def test_the_lists_of_the_wizard_hold_the_choices_that_setup_made_and_change_as_in_setup(self):
+        self.assertLinesAsLogged(
+            'ComponentsList',
+            'ComponentsListOutOfRange',
+            'TasksList',
+            'TasksListCheckItem0',
+            'TasksListCheckItem3',
+            'TasksListCheckItem6',
+            'TasksListCheckItem9',
+            'TasksListCheckItem12',
+            'TasksListChanged',
+            'TasksListChangedTasks',
+            'RunList',
+            'RunListChanged',
+        )
+
+    def test_a_list_of_tasks_ends_at_its_first_nul_character(self):
+        self.assertLinesAsLogged('AfterSelectTasksWithNulTasks')
+
+    def test_the_scan_of_the_preparing_page_keeps_the_selection_from_before_prepare_to_install(self):
+        """
+        `PrepareToInstall` unchecks the task `unchecked`, which the file `file.d` is for: the scan
+        of the restart manager runs its check, the installation does not.
+        """
+        self.assertLinesAsLogged('PrepareTasks', 'InstallTasks')
+        self.assertEventsAsLogged('(file.d)')
+
+    def test_a_download_expands_its_source_destination_and_credentials_around_its_functions(self):
+        self.assertEventsAsLogged('file.dl')
+
+    def test_an_external_file_whose_source_the_installation_created_expands_its_destination(self):
+        self.assertEventsAsLogged('file.copy')
+
+    def test_an_icon_or_a_run_entry_that_needs_its_file_expands_its_fields_only_when_the_file_exists(self):
+        self.assertEventsAsLogged('icon.c', 'icon.d', 'run.c', 'run.d')
+
+    def test_a_break_in_a_registry_value_of_several_strings_is_a_constant(self):
+        self.assertEventsAsLogged('registry.c')
+
+    def test_a_downloaded_archive_expands_its_source_when_setup_prepares_and_its_password_when_it_installs(self):
+        """
+        The download of the installer is changed in memory into a download of an archive whose check
+        passes and whose password is a code constant. Setup downloads the archive when it prepares;
+        the restart manager's scan and the installation then find the archive in the temporary
+        folder and expand its folder and its password.
+        """
+        archive = self.host_oracle()
+        entry = archive.setup_info.Files[7]
+        entry.Condition.Check = "Chk('file.download')"
+        entry.Flags |= SetupFileFlags.ExtractArchive
+        entry.ExtractArchivePassword = '{code:Code|file.download.archivepassword}'
+        events = [event for event in self.events(archive) if event.startswith('code:file.download')]
+        self.assertEqual(events, [
+            'code:file.download.source',
+            'code:file.download.destdir',
+            'code:file.download.archivepassword',
+            'code:file.download.destdir',
+            'code:file.download.archivepassword',
+        ])
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the emulator does not show the page on which Setup downloads archives')
+    def test_setup_shows_its_download_page_when_it_downloads_an_archive(self):
+        """
+        Setup adds its download page after the four pages that the script creates.
+        """
+        archive = self.host_oracle()
+        entry = archive.setup_info.Files[7]
+        entry.Condition.Check = "Chk('file.download')"
+        entry.Flags |= SetupFileFlags.ExtractArchive
+        self.assertIn('CurPageChanged(104)', self.events(archive))
+
+    def test_a_run_entry_of_a_setup_before_5_1_13_runs_without_a_verb(self):
+        """
+        Setup before 5.1.13 has no verb for its run entries; the parsed entries are changed in
+        memory as the parser reads such an entry.
+        """
+        archive = self.host_oracle()
+        for entry in archive.setup_info.RunEntries:
+            entry.Verb = None
+            entry.Flags |= SetupRunFlags.ShellExec
+        self.assertEqual(self.events(archive)[-3:], ['CurStepChanged(3)', 'GetCustomSetupExitCode', 'DeinitializeSetup'])
+
+    def test_an_error_in_a_field_of_a_component_or_a_task_names_its_entry(self):
+        """
+        The descriptions of the component `optional` and of the task `radio2` are changed in memory
+        to call a function that the script does not have.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Components[6].Description = '{code:NoSuchOracleFunction}'
+        archive.setup_info.Tasks[7].Description = '{code:NoSuchOracleFunction}'
+        lists = (EntrySection.Components, EntrySection.Tasks)
+        located = {
+            error.entry for error in self.errors(archive)
+            if isinstance(error, NewScriptError) and error.entry is not None and error.entry.section in lists
+        }
+        self.assertEqual(located, {
+            EntryLocation(EntrySection.Components, 6, EntryField.Description),
+            EntryLocation(EntrySection.Tasks, 7, EntryField.Description),
+        })
+
+    def test_setup_skips_the_page_of_the_program_group_without_an_icon_for_the_emulated_windows(self):
+        """
+        The page is changed in memory to be shown; then each icon is changed to be only for Windows
+        before 6.0, as the component `old` is.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.DisableProgramGroupPage = AutoBool.No
+        self.assertIn('ShouldSkipPage(8)', self.events(archive))
+        old = archive.setup_info.Components[8]
+        for icon in archive.setup_info.Icons:
+            icon.WindowsVersion = old.WindowsVersion
+        self.assertNotIn('ShouldSkipPage(8)', self.events(archive))
+
+    def test_a_call_from_setup_that_the_function_of_the_script_cannot_take_ends_the_emulation(self):
+        """
+        The check of the directory `dir.i` is changed in memory to calls that the declarations of
+        the functions of the script do not take, and the function `NeedRestart` gets a parameter
+        that the event does not pass.
+        """
+        for check in (
+            "ChkArgs('dir.i', 'abc', true, 'x')",
+            "ChkArgs(42, 42, true, 'x')",
+            'PrepareToInstall(true)',
+            "Code('dir.i')",
+        ):
+            archive = self.host_oracle()
+            archive.setup_info.Directories[8].Condition.Check = check
+            with self.subTest(check=check), self.assertRaises(EmulatorUndefined):
+                self.installation(archive)
+        emulator = self.emulator()
+        decl = emulator.symbols['NeedRestart'].decl
+        assert decl is not None
+        decl.parameters.append(DeclSpecParam(True, None, 'Extra'))
+        with self.assertRaises(EmulatorUndefined):
+            list(emulator.emulate_installation())
+
+    def test_a_check_that_nests_deeper_than_python_follows_ends_the_emulation(self):
+        archive = self.host_oracle()
+        archive.setup_info.Directories[8].Condition.Check = F"{'not ' * sys.getrecursionlimit()}Chk('dir.i')"
+        with self.assertRaises(EmulatorMaxCalls):
+            self.installation(archive)
