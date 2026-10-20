@@ -11,6 +11,8 @@ import enum
 import ntpath
 import re
 
+from dataclasses import dataclass
+
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -67,6 +69,7 @@ from refinery.lib.inno.emulation import (
     SetupEvent,
 )
 from refinery.lib.inno.pascal import IFPSException
+from refinery.lib.inno.pathfunc import full_path_name
 from refinery.lib.inno.symbols import IFPSEvents, IFPSSignature, parse_function
 from refinery.lib.inno.wizard import (
     PageEvent,
@@ -203,19 +206,29 @@ class CurrentFile(NamedTuple):
     source: str
 
 
+@dataclass
+class CurrentFolder:
+    """
+    The current folder of the emulated Setup process, a full path.
+    """
+    path: str
+
+
 class InstalledPaths:
     """
     The files and directories that the emulated installation created. The emulated machine has no
     others: a path exists when the installation created it or a directory below it. Paths are
-    compared as Windows compares them, without case and with either slash.
+    compared as Windows compares them: by their full path in the current folder, without case.
     """
-    def __init__(self):
+    def __init__(self, folder: CurrentFolder):
+        self._folder = folder
         self._files: set[str] = set()
         self._directories: set[str] = set()
 
-    @staticmethod
-    def _key(path: str) -> str:
-        return ntpath.normcase(ntpath.normpath(path)).rstrip('\\')
+    def _key(self, path: str) -> str:
+        if (full := full_path_name(path, self._folder.path)) is None:
+            full = path
+        return ntpath.normcase(full).rstrip('\\')
 
     def add_file(self, path: str):
         key = self._key(path)

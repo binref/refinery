@@ -1,6 +1,6 @@
 from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.emulation import EmulatorEndless
-from refinery.lib.inno.installation import InstalledPaths
+from refinery.lib.inno.installation import CurrentFolder, InstalledPaths
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
@@ -144,14 +144,14 @@ class TestTheFilesThatTheInstallationCreates(TestBase):
     """
 
     def test_brackets_in_the_name_of_a_source_stand_for_themselves(self):
-        paths = InstalledPaths()
+        paths = InstalledPaths(CurrentFolder('C:\\'))
         paths.add_file('C:\\app\\data[1].bin')
         paths.add_file('C:\\app\\data1.bin')
         matches = paths.files_matching('C:\\app\\data[1].bin')
         self.assertEqual([match.lower() for match in matches], ['c:\\app\\data[1].bin'])
 
     def test_a_question_mark_and_a_star_are_wildcards(self):
-        paths = InstalledPaths()
+        paths = InstalledPaths(CurrentFolder('C:\\'))
         paths.add_file('C:\\app\\data[1].bin')
         paths.add_file('C:\\app\\data1.bin')
         matches = paths.files_matching('C:\\app\\data?.bin')

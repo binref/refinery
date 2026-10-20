@@ -134,6 +134,16 @@ that Setup makes for its entries; with the `ORACLE` lines of the logs of two run
 Windows, installing for the current user: `host-oracle-5-normal.log` clicked Next on every page of
 the wizard, `host-oracle-5-silent.log` ran silently.
 """
+_HOST_ORACLE_6 = '4f43e9adcaa9885af020444b74f9ed9bb32f207d60ae7e1192af422e1b3a9e9a'
+"""
+A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-6.exe`: the host oracle
+above with probes of Setup's texts, paths and wizard; with the `ORACLE` lines of the logs of two runs
+from a folder on the drive `W:` of 64-bit Windows, installing for the current user:
+`host-oracle-6-normal.log` clicked Next on every page of the wizard, `host-oracle-6-silent.log` ran
+silently. `host-oracle-6-run2.ifps` is the compiled script of a second build whose `CheckSerial`
+also raises an error while the script writes the serial and which changes the `CharCase` of a box;
+`host-oracle-6-run2-normal.log` is the log of its run with the wizard.
+"""
 _HOST_EVENT = re.compile(r'Event\d+')
 _HOST_VALUES_THAT_ARE_NOT_EMULATED = frozenset({
     'ConstEnvMissing',
@@ -1268,6 +1278,34 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
         with mock.patch.dict(registry, {'ExpandConstant': registry['ExpandConstant']._replace(call=read_descriptions)}):
             logged = _logged_values(emulator.emulate_function(emulator.symbols['ORACLECODEMESSAGE']), {})
         self.assertEqual(logged['CodeSeesMessage'], comma_text([self.log['CodeSeesMessage']]))
+
+
+class TestTheEmulatorComputesPathsAsInnoSetupDid(TestBase):
+    """
+    The procedures `OraclePaths`, `OracleSiblings` and `OracleCurrentDir` of the sixth host oracle
+    pass paths to the path functions of Setup and log the results.
+    """
+
+    def assertEmulatedAsLogged(self, procedure: str, *arguments: str):
+        archive = InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+        emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(
+            log_calls=True,
+            executable=R'W:\HostOracle6\host-oracle-6.exe',
+        ))
+        emulated = _logged_values(emulator.emulate_function(emulator.symbols[procedure], *arguments), {})
+        log = codecs.decode(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6-normal.log'), 'utf8')
+        logged = dict(match.groups() for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line)))
+        self.assertTrue(emulated)
+        self.assertEqual(emulated, {name: logged[name] for name in emulated})
+
+    def test_full_paths_follow_windows(self):
+        self.assertEmulatedAsLogged('ORACLEPATHS')
+
+    def test_the_support_functions_for_paths_follow_the_path_functions_of_inno_setup(self):
+        self.assertEmulatedAsLogged('ORACLESIBLINGS')
+
+    def test_the_current_folder_of_setup_is_the_folder_that_it_started_from(self):
+        self.assertEmulatedAsLogged('ORACLECURRENTDIR', 'Setup')
 
 
 class _HostOracleTest(TestBase):

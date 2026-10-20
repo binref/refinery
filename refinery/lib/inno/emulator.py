@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
 from functools import cached_property, wraps
-from pathlib import Path
 from time import process_time
 from typing import (
     TYPE_CHECKING,
@@ -103,12 +102,14 @@ from refinery.lib.inno.installation import (
     CODE_CONSTANT,
     ArgumentKind,
     CurrentFile,
+    CurrentFolder,
     Installation,
     InstalledPaths,
     SetupCall,
     SetupEntries,
 )
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
+from refinery.lib.inno.pathfunc import PathFunc, PathFuncError, expand_file_name
 from refinery.lib.inno.release import SetupRelease
 from refinery.lib.inno.wizard import (
     CheckList,
@@ -716,32 +717,6 @@ def _outside_file_entry(name: str, condition: str = '') -> DelphiException:
     )
 
 
-def _path_drive(name: str) -> str:
-    """
-    The drive of a path as Inno Setup's `PathExtractDrive` reads it: `x:` or a server and share
-    after two slashes, else an empty string. Both kinds of slash separate.
-    """
-    slashes = '\\/'
-    if len(name) >= 2 and name[0] in slashes and name[1] in slashes:
-        cursor = 2
-        separators = 0
-        while cursor < len(name):
-            if name[cursor] not in slashes:
-                cursor += 1
-                continue
-            separators += 1
-            if separators >= 2:
-                break
-            while cursor < len(name) and name[cursor] in slashes:
-                cursor += 1
-        return name[:cursor]
-    if not name or name[0] in slashes:
-        return ''
-    if name[1:2] == ':':
-        return name[:2]
-    return ''
-
-
 def _selected(names: list[str] | None, expression: str) -> bool:
     """
     Setup's test of the selected components or tasks in `WizardIsComponentSelected` and
@@ -808,6 +783,13 @@ class HostSetup:
     ready_memo_disabled: bool
     info_after_text: bool
     finished_page_disabled: bool
+
+    @property
+    def path_func(self) -> PathFunc:
+        """
+        Setup's path functions.
+        """
+        return PathFunc.of(self.release)
 
     @property
     def page_changes_only(self) -> bool:
@@ -1128,7 +1110,7 @@ class _EmulatedConstants:
         return self.emulator.FmtMessage(message, arguments)
 
     def drive(self, path: str) -> str:
-        return _path_drive(path)
+        return self.emulator.setup.path_func.extract_drive(path)
 
     def run_code(self, function: str, argument: str):
         emulator = self.emulator
@@ -1317,10 +1299,6 @@ class IFPSEmulatorConfig:
     lcid: int = 0x0409
     setup_version: tuple[int, int, int] | None = None
 
-    @property
-    def cwd(self):
-        return Path(self.executable).parent
-
 
 class TSplitType(int, Enum):
     """
@@ -1457,7 +1435,8 @@ class IFPSEmulator:
         self.mutexes.clear()
         self.wizard_form = wizard = WizardForm()
         wizard.uninstaller_named = self.setup.uninstallable.answer is not False
-        self.installed = InstalledPaths()
+        self.current_folder = CurrentFolder(self.setup.path_func.extract_dir(self.config.executable))
+        self.installed = InstalledPaths(self.current_folder)
         self.current_file: CurrentFile | None = None
         self._globals = None
         self._win32api_last_error = 0
@@ -2189,7 +2168,7 @@ class IFPSEmulator:
             'app'               : cfg.install_to,
             'win'               : R'C:\Windows',
             'sys'               : R'C:\Windows\System32',
-            'src'               : str(Path(cfg.executable).parent),
+            'src'               : self.setup.path_func.extract_dir(cfg.executable),
             'sd'                : R'C:',
             'tmp'               : tmp,
             'commonfonts'       : R'C:\Windows\Fonts',
@@ -2955,9 +2934,7 @@ class IFPSEmulator:
 
     @external()
     def AddBackslash(self, string: str) -> str:
-        if string and string[~0] != '\\':
-            string = F'{string}\\'
-        return string
+        return self.setup.path_func.add_backslash(string)
 
     @external()
     def AddPeriod(self, string: str) -> str:
@@ -2967,49 +2944,54 @@ class IFPSEmulator:
 
     @external()
     def RemoveBackslashUnlessRoot(self, string: str) -> str:
-        path = Path(string)
-        if len(path.parts) == 1:
-            return str(path)
-        return self.RemoveBackslash(string)
+        return self.setup.path_func.remove_backslash_unless_root(string)
 
     @external()
     def RemoveBackslash(self, string: str) -> str:
-        return string.rstrip('\\/')
+        return self.setup.path_func.remove_backslash(string)
 
     @external()
     def ChangeFileExt(self, name: str, ext: str) -> str:
-        if not ext.startswith('.'):
-            ext = F'.{ext}'
-        return str(Path(name).with_suffix(ext))
+        return self.setup.path_func.change_ext(name, ext)
 
     @external()
     def ExtractFileExt(self, name: str) -> str:
-        return Path(name).suffix
+        return self.setup.path_func.extract_ext(name)
 
-    @external(alias='ExtractFilePath')
+    @external()
     def ExtractFileDir(self, name: str) -> str:
-        dirname = str(Path(name).parent)
-        return '' if dirname == '.' else dirname
+        return self.setup.path_func.extract_dir(name)
+
+    @external()
+    def ExtractFilePath(self, name: str) -> str:
+        return self.setup.path_func.extract_path(name)
 
     @external()
     def ExtractFileName(self, name: str) -> str:
-        if name:
-            name = Path(name).parts[-1]
-        return name
+        return self.setup.path_func.extract_name(name)
 
     @external()
     def ExtractFileDrive(self, name: str) -> str:
-        return _path_drive(name)
+        return self.setup.path_func.extract_drive(name)
 
     @external()
     def ExtractRelativePath(self, base: str, dst: str) -> str:
-        return str(Path(dst).relative_to(base))
+        return self.setup.path_func.extract_relative_path(base, dst)
 
-    @external(alias='ExpandUNCFileName')
+    @external()
     def ExpandFileName(self, name: str) -> str:
-        if self.ExtractFileDrive(name):
-            return name
-        return str(self.config.cwd / name)
+        try:
+            return self.setup.path_func.expand(name, self.current_folder.path)
+        except PathFuncError as error:
+            raise DelphiException(str(error)) from error
+
+    @external()
+    def ExpandUNCFileName(self, name: str) -> str:
+        return expand_file_name(name, self.current_folder.path)
+
+    @external()
+    def GetCurrentDir(self) -> str:
+        return self.current_folder.path
 
     @external()
     def SetLength(self, target: Variable, size: int):
