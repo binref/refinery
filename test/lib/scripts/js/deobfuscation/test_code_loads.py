@@ -10,7 +10,11 @@ import inspect
 import unittest
 
 from test import TestBase
-from test.lib.scripts.js.analysis.differential import deobfuscate_source, node_executable
+from test.lib.scripts.js.analysis.differential import (
+    deobfuscate_source,
+    module_graph_behavior,
+    node_executable,
+)
 from test.lib.scripts.js.ledger import (
     FileProgram,
     Reading,
@@ -174,6 +178,30 @@ A_PROGRAM_THAT_LOADS_CODE = {
         ('', 'ReferenceError'),
         HostEnvironment.node,
     ),
+    'a typeof in a loop before a file is required': FileProgram(
+        a_program("""
+            require("fs").writeFileSync(require("path").join(__dirname, "win.js"), "global.window = 1;"); for (var i = 0; i < 2; i++) { console.log(typeof window); require("./win.js"); }
+            """),
+        prints('undefined', 'number'),
+        ('', 'ReferenceError'),
+        HostEnvironment.node,
+    ),
+    'a typeof in a function called twice before a file is required': FileProgram(
+        a_program("""
+            require("fs").writeFileSync(require("path").join(__dirname, "win.js"), "global.window = 1;"); function f() { console.log(typeof window); require("./win.js"); } f(); f();
+            """),
+        prints('undefined', 'number'),
+        ('', 'ReferenceError'),
+        HostEnvironment.node,
+    ),
+    'window created by a file module.require loads': FileProgram(
+        a_program("""
+            require("fs").writeFileSync(require("path").join(__dirname, "win.js"), "global.window = 1;"); module.require("./win.js"); console.log(typeof window);
+            """),
+        prints('number'),
+        ('', 'ReferenceError'),
+        HostEnvironment.node,
+    ),
     'a typeof joined into a string before a file is required': FileProgram(
         a_program("""
             require("fs").writeFileSync(require("path").join(__dirname, "win.js"), "global.window = 1;");console.log([typeof window].join("")); require("./win.js"); console.log([typeof window].join(""));
@@ -236,6 +264,25 @@ class TestTheCallsThatLoadCode(TestBase):
 
     def test_a_require_held_under_another_name_is_not_followed(self):
         self.assertCountEqual(self._loaded('var r = require; r("./setup.js");'), [])
+
+    def test_the_require_of_the_module_object_loads_code(self):
+        self.assertCountEqual(self._loaded('module.require("./setup.js"); module.require("fs");'), ['./setup.js'])
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnImportRunsTheFileItNamesBeforeTheModule(TestBase):
+
+    def test_a_typeof_after_an_import_of_a_file_that_creates_the_name_still_prints_what_it_prints(self):
+        loader = 'globalThis.window = 1;\n'
+        source = 'import "./win.mjs";\nconsole.log(typeof window);\n'
+        rewritten = deobfuscate_source(source, execution=ExecutionModel.module, environment=HostEnvironment.node)
+        self.assertEqual(
+            (
+                module_graph_behavior({'win.mjs': loader, 'main.mjs': source}, 'main.mjs'),
+                module_graph_behavior({'win.mjs': loader, 'main.mjs': rewritten}, 'main.mjs'),
+            ),
+            (prints('number'), prints('number')),
+        )
 
 
 class TestATypeofFoldsOnlyBeforeEveryLoad(TestBase):

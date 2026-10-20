@@ -536,6 +536,22 @@ A_FILE_READING_ITS_OWN_EXPORTS_THROUGH_THE_REGISTRY = {
         ('', 'ReferenceError'),
         HostEnvironment.node,
     ),
+    'require.main': FileProgram(
+        a_program("""
+            module.exports = { a: 1 }; console.log(require.main.exports.a);
+            """),
+        prints('1'),
+        ('', 'ReferenceError'),
+        HostEnvironment.node,
+    ),
+    'require.cache': FileProgram(
+        a_program("""
+            module.exports = { a: 1 }; console.log(require.cache[__filename].exports.a);
+            """),
+        prints('1'),
+        ('', 'ReferenceError'),
+        HostEnvironment.node,
+    ),
 }
 
 

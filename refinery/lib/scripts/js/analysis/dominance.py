@@ -207,13 +207,6 @@ class DominanceModel(DominatorModel):
         """
         return self._completes_before_exit(self.model.root, definition)
 
-    def _completes_on_every_return(self, function: Node, definition: Node) -> bool:
-        """
-        Whether the statement evaluating *definition* has completed on every run of *function* that
-        returns rather than throws: `_completes_before_exit` of the function's graph.
-        """
-        return self._completes_before_exit(function, definition)
-
     def _completes_before_exit(self, activation: Node, definition: Node) -> bool:
         """
         Whether the statement evaluating *definition* has completed on every run of *activation*
@@ -258,10 +251,11 @@ class DominanceModel(DominatorModel):
         operand evaluated before it — is not accepted, since statement-granularity dominance is
         reflexive and cannot order within one statement. A reference's function is its nearest
         enclosing function (its `_activation_of`), so a use in a function's parameter defaults is
-        attributed to that function's invocation, not to the statement that declares it. Functions that reach each
-        other's invocations — a recursive function, mutually recursive ones — are answered together
-        (`_solve_invocation_orders`). This is the interprocedural counterpart of `dominates`, and
-        the sound replacement for ordering a cross-function inline by statement position.
+        attributed to that function's invocation, not to the statement that declares it. Functions
+        that reach each other's invocations — a recursive function, mutually recursive ones — are
+        answered together (`_solve_invocation_orders`). This is the interprocedural counterpart of
+        `dominates`, and the sound replacement for ordering a cross-function inline by statement
+        position.
 
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named
         binding is reassigned or redeclared (its references no longer pin one function), code
@@ -332,14 +326,6 @@ class DominanceModel(DominatorModel):
         if element is None or not evaluated_with(anchor, element):
             return False
         return self._runs_after(anchor, reference)
-
-    def code_load_may_precede(self, anchor: Node) -> bool:
-        """
-        Whether code the text does not hold may have been loaded before *anchor* runs: a site of
-        `refinery.lib.scripts.js.analysis.model.SemanticModel.code_load_sites` that `cannot_precede`
-        cannot place after it.
-        """
-        return not all(self.cannot_precede(site, anchor) for site in self.model.code_load_sites())
 
     def callee_established_before(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
@@ -832,7 +818,7 @@ class DominanceModel(DominatorModel):
         *definition* with its activation, followed by every call it lifts to: where a function
         expression the program calls where it writes it holds the site so far, and every run of the
         function that returns rather than throws has evaluated the site
-        (`_completes_on_every_return`), the call has returned only after the site ran, so the call,
+        (`_completes_before_exit`), the call has returned only after the site ran, so the call,
         in its own activation, orders the site for every point there. A generator or an `async`
         function returns before its body has run, and holds no such site; the statement evaluating
         the call must evaluate it whenever it completes (`_runs_with_its_node`). Memoized.
@@ -848,7 +834,7 @@ class DominanceModel(DominatorModel):
             and not is_async_function(owner)
             and isinstance(call := enclosing_operator(owner), JsCallExpression)
             and strip_parens(call.callee) is owner
-            and self._completes_on_every_return(owner, site)
+            and self._completes_before_exit(owner, site)
             and self._runs_with_its_node(call)
         ):
             site = call

@@ -226,14 +226,9 @@ class ModelCache(ModelCacheBase):
         """
         The trust questions of a fold at *anchor*:
         `refinery.lib.scripts.js.analysis.tampering.TamperingModel.trust_at` on the run's tampering
-        model, the one place the oracle and the per-name arms are composed. The tampering model is
-        built only where a question needs the oracle.
+        model, the one place the oracle and the per-name arms are composed.
         """
-        return AnchoredTrust(
-            self.effects,
-            lambda: self.builtins_intact_at(anchor),
-            lambda: self.dominance.code_load_may_precede(anchor),
-        )
+        return self.tampering.trust_at(anchor)
 
     def call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
         """

@@ -415,8 +415,27 @@ class TamperingModel:
         return AnchoredTrust(
             self.effects,
             lambda: self.builtins_intact_at(anchor),
-            lambda: self.dominance.code_load_may_precede(anchor),
+            lambda: self.code_load_may_precede(anchor),
         )
+
+    def code_load_may_precede(self, anchor: Node) -> bool:
+        """
+        Whether code the text does not hold may have been loaded before *anchor* runs: the file
+        imports such code, which the host runs before its body
+        (`refinery.lib.scripts.js.analysis.model.SemanticModel.imports_code`), or a site of
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.code_load_sites` may come first. A
+        site comes first unless the anchor executes at most once (`at_most_once`) and
+        `refinery.lib.scripts.js.analysis.dominance.DominanceModel.cannot_precede` places the site
+        after it: a second run of the anchor follows a load the first run preceded.
+        """
+        if self.model.imports_code():
+            return True
+        sites = self.model.code_load_sites()
+        if not sites:
+            return False
+        if not self.at_most_once(anchor):
+            return True
+        return not all(self.dominance.cannot_precede(site, anchor) for site in sites)
 
     def _compute_intact(self, anchor: Node) -> bool:
         if not self._program_is_clear():

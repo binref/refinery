@@ -1440,6 +1440,10 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._container(
             'var o = {f: 1}; o.valueOf().f = 2; SINK(o.f);', 'o', inert_methods=frozenset({'f'})))
 
+    def test_object_handed_back_by_an_inherited_method_used_as_a_tag_and_written_is_mutable(self):
+        self.assertFalse(self._container(
+            'var o = {f: 1}; o.valueOf``.f = 2; SINK(o.f);', 'o', inert_methods=frozenset({'f'})))
+
     def test_property_redefined_through_an_inherited_method_is_mutable(self):
         self.assertFalse(self._container(
             'var o = {f: 1}; o.__defineGetter__("f", function () { return 2; }); SINK(o.f);',

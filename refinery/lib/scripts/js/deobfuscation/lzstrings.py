@@ -27,7 +27,7 @@ from weakref import WeakKeyDictionary
 from refinery.lib.lzstring import decompress_from_utf16
 from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
-from refinery.lib.scripts.js.analysis.model import SemanticModel, enclosing_function
+from refinery.lib.scripts.js.analysis.model import enclosing_function
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
@@ -129,13 +129,14 @@ pass (`JsLZStringDecoder.read_input`). The nodes are held, so an identity stays 
 """
 
 
-def _library_builds(model: SemanticModel) -> dict[int, Node]:
+def _library_builds(cache: ModelCache) -> dict[int, Node]:
     """
-    The functions of the tree *model* is built over that have the normal form of the library's
-    build, by identity.
+    The functions of the tree *cache* is created over that have the normal form of the library's
+    build, by identity. The semantic model the normal form needs is asked for only where a function
+    holds a property named as the library's.
     """
     builds: dict[int, Node] = {}
-    for node in model.root.walk():
+    for node in cache.root.walk():
         if not isinstance(node, JsProperty) or node.computed:
             continue
         key = node.key
@@ -145,7 +146,7 @@ def _library_builds(model: SemanticModel) -> dict[int, Node]:
         if (
             isinstance(function, (JsFunctionExpression, JsArrowFunctionExpression))
             and id(function) not in builds
-            and matches(model, function, _TEMPLATES, {})
+            and matches(cache.model, function, _TEMPLATES, {})
         ):
             builds[id(function)] = function
     return builds
@@ -224,7 +225,7 @@ class JsLZStringDecoder(ScriptLevelTransformer):
         first pass changes them.
         """
         if models not in _WRITTEN:
-            _WRITTEN[models] = _library_builds(models.model)
+            _WRITTEN[models] = _library_builds(models)
 
     def _process_script(self, node: JsScript):
         cache = model_cache(self, node)

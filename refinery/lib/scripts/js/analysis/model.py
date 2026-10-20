@@ -3893,8 +3893,8 @@ class SemanticModel:
         Whether nothing reads what the file stores in `module.exports`. Outside the file, only code
         that loads it reads its exports, and the run assumes none does unless told otherwise
         (`exports_read_outside`). Node's module registry is part of loading: a file reaching itself
-        through `require.cache`, `require.main`, `process.mainModule` or a `require` or `import()` of
-        its own path reads its exports as a loader does. Inside the file, the object the store
+        through `require.cache`, `require.main`, `process.mainModule` or a `require` or `import()`
+        of its own path reads its exports as a loader does. Inside the file, the object the store
         replaces is read through the `module` the host passed, which is therefore named only as the
         target of a store `module.exports = v`, as the operand of `typeof`, or compared with `null`,
         and through the `arguments` of the function the host wraps around the file, which the file
@@ -4040,44 +4040,87 @@ class SemanticModel:
         `window` for code written for a page or an AMD `define`. A question that orders a point
         against code the text does not hold takes these as sites
         (`refinery.lib.scripts.js.analysis.tampering.TamperingModel`, and the `typeof` of a global
-        name through `refinery.lib.scripts.js.analysis.cache.ModelCache.code_load_may_precede`).
-        They are no reflection surface: that would withdraw every trust the whole program is asked
-        for from a file that holds one in a function it never calls. Memoized.
+        name through
+        `refinery.lib.scripts.js.analysis.tampering.TamperingModel.code_load_may_precede`). They
+        are no reflection surface: that would withdraw every trust the whole program is asked for
+        from a file that holds one in a function it never calls. Memoized.
         """
         if self._code_load_sites is None:
             self._code_load_sites = [
                 site for node in self.root.walk()
-                if isinstance(node, JsIdentifier) and (site := self._loads_code_from_outside(node)) is not None
+                if isinstance(node, (JsIdentifier, JsMemberExpression))
+                and (site := self._loads_code_from_outside(node)) is not None
             ]
         return self._code_load_sites
 
-    def _loads_code_from_outside(self, node: JsIdentifier) -> Node | None:
+    def imports_code(self) -> bool:
+        """
+        Whether the file has the host load code its text does not hold before its body runs: an
+        `import` or an `export … from` declaration (`_lets_another_module_run`) naming a module
+        that is not a built-in one running no code (`_specifier_loads_code`). The host links and
+        evaluates every such module before the first statement of the file, wherever the
+        declaration stands, so no point of the file is ordered before the load.
+        """
+        for statement in self.root.body:
+            if not isinstance(statement, (JsImportDeclaration, JsExportAllDeclaration, JsExportNamedDeclaration)):
+                continue
+            if not _lets_another_module_run(statement):
+                continue
+            source = statement.source
+            if self._specifier_loads_code(None if source is None else source.value):
+                return True
+        return False
+
+    def _loads_code_from_outside(self, node: JsIdentifier | JsMemberExpression) -> Node | None:
         """
         The call `require(m)` *node* is the callee of, where it calls the host's `require` and may
         load code the text does not hold: *m* is not a string naming a built-in module that runs no
-        code (`node_require_runs_no_code`). The name is the host's where it resolves to no binding,
-        or to the one the host passed that the file does not declare or assign. `None` where *node*
-        is no such callee, and where the trusting model assumes the code inert: a call of `vm`,
-        which runs only code the program hands it as data. A `require` read for anything but a call
+        code (`_specifier_loads_code`). The callee is the host's `require` where it is the name
+        `require` resolving to no binding or to the one the host passed that the file does not
+        declare or assign, or the member `module.require` of such a `module`, which is the same
+        function. `None` where *node* is no such callee. A `require` read for anything but a call
         is not followed: real programs hold it under another name (`global.r = require`) and call
         it with built-in names, and a site at every such read would order nothing after it.
         """
-        if node.name != 'require' or not self.is_reference(node):
+        if isinstance(node, JsMemberExpression):
+            base = strip_parens(node.object)
+            if (
+                not isinstance(base, JsIdentifier)
+                or base.name != 'module'
+                or static_property_key(node) != 'require'
+                or not self._may_hold_what_the_host_passed(base)
+            ):
+                return None
+        elif node.name != 'require' or not self.is_reference(node) or not self._may_hold_what_the_host_passed(node):
             return None
         call = enclosing_operator(node)
         if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not node:
             return None
-        binding = self.resolve(node)
-        if binding is not None and (not binding.supplied_by_host or binding.declarations or binding.writes):
-            return None
         arguments = call.arguments
         if len(arguments) == 1 and isinstance(module := strip_parens(arguments[0]), JsStringLiteral):
-            name = module.value
-            if name is not None and node_require_runs_no_code(name):
-                return None
-            if self.trust_eval and name in ('vm', 'node:vm'):
+            if not self._specifier_loads_code(module.value):
                 return None
         return call
+
+    def _may_hold_what_the_host_passed(self, name: JsIdentifier) -> bool:
+        """
+        Whether the name *name* may read what the CommonJS host passed under it: it resolves to no
+        binding, or to the one the host passed that the file does not declare or assign.
+        """
+        binding = self.resolve(name)
+        return binding is None or (binding.supplied_by_host and not binding.declarations and not binding.writes)
+
+    def _specifier_loads_code(self, specifier: str | None) -> bool:
+        """
+        Whether loading the module *specifier* names runs code the file's text does not hold: it is
+        not a built-in module that runs none (`node_require_runs_no_code`), nor `vm` under the
+        trusting model, which assumes the code it runs inert since the program hands it as data.
+        """
+        if specifier is None:
+            return True
+        if node_require_runs_no_code(specifier):
+            return False
+        return not (self.trust_eval and specifier in ('vm', 'node:vm'))
 
     def _computed_read_aliases_a_global(self, member: JsMemberExpression) -> bool:
         """

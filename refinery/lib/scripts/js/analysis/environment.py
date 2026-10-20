@@ -367,12 +367,13 @@ _NODE_ABSENT = frozenset({
     'angular',
 })
 """
-Well-known browser globals a bare read of which is certain to throw under Node, read out of Node v24 as
-`typeof` `'undefined'`, and two a page gets from a library it loads: the `define` of an AMD loader and
-AngularJS's `angular`, which code built to run anywhere probes before it hands itself to them.
-`navigator` is deliberately absent from this set: Node exposes it, so it is a present name, not an
-absent one — the trap a `typeof` fold must not fall into. The set is used only to fold `typeof <name>`
-to `'undefined'` under `-e node`; a name neither provided nor listed here stays unknown.
+Well-known browser globals a bare read of which is certain to throw under Node, read out of Node
+v24 as `typeof` `'undefined'`, and two a page gets from a library it loads: the `define` of an AMD
+loader and AngularJS's `angular`, which code built to run anywhere probes before it hands itself to
+them. `navigator` is deliberately absent from this set: Node exposes it, so it is a present name,
+not an absent one — the trap a `typeof` fold must not fall into. The set is used only to fold
+`typeof <name>` to `'undefined'` under `-e node`; a name neither provided nor listed here stays
+unknown.
 """
 
 NODE_BUILTIN_MODULES = frozenset({

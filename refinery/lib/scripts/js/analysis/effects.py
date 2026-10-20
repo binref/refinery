@@ -84,6 +84,7 @@ from refinery.lib.scripts.js.analysis.model import (
     element_positions,
     enclosing_function,
     enclosing_operator,
+    is_invocation_target,
     is_member_write_target,
     is_plain_store_target,
     own_arguments_binding,
@@ -884,16 +885,16 @@ def _method_call_is_inert(reference: Node, methods: frozenset[str] | None) -> bo
     """
     Whether the method call *reference* begins leaves the container it holds unchanged, by the
     promise of a caller that names its inert own *methods*: a call on the container itself,
-    `reference.m(...)`, for an `m` among them, and a call on a value the container holds,
-    `reference.k.m(...)`, which the caller vouches for. No call is inert where *methods* is `None`.
+    `reference.m(...)` or the tag `` reference.m`...` ``, for an `m` among them, and a call on a
+    value the container holds, `reference.k.m(...)`, which the caller vouches for. No call is inert
+    where *methods* is `None`.
     """
     if methods is None:
         return False
     member = enclosing_operator(reference)
     if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not reference:
         return False
-    call = enclosing_operator(member)
-    if not isinstance(call, JsCallExpression) or strip_parens(call.callee) is not member:
+    if not is_invocation_target(member):
         return True
     return static_property_key(member) in methods
 
@@ -901,9 +902,9 @@ def _method_call_is_inert(reference: Node, methods: frozenset[str] | None) -> bo
 def _result_goes_nowhere(node: Node) -> bool:
     """
     Whether the value of *node* is thrown away: it is the value of a statement, an operand of a
-    sequence but its last, or a branch of a conditional, an operand of a logical operator or the last
-    operand of a sequence whose own value is thrown away. A logical operator tests its left operand
-    for truth, which reads nothing of an object.
+    sequence but its last, or a branch of a conditional, an operand of a logical operator or the
+    last operand of a sequence whose own value is thrown away. A logical operator tests its left
+    operand for truth, which reads nothing of an object.
     """
     while True:
         parent = enclosing_operator(node)
@@ -1439,14 +1440,15 @@ class EffectModel:
         inert_methods: frozenset[str] | None,
     ) -> bool:
         """
-        Whether an escaping reference leaves the container unmutated. Two escapes are precise: an alias
-        (`var x = ref` or `x = ref`) keeps it when the aliased binding is itself an immutable container,
-        and an argument passed to a statically known function (`f(ref)`) keeps it when the parameter it
-        binds is itself an immutable container — interprocedural Case B, the parameter's own references
-        decide whether the callee mutates or further-escapes it. A store no code observes
-        (`store_unobserved`) hands the container to nobody, as long as the value of the assignment goes
-        nowhere either. Every other escape is conservatively unsafe, an assignment that is no statement
-        of its own among them: `var x = (y = ref)` stores the container in `x` as well as in `y`.
+        Whether an escaping reference leaves the container unmutated. Two escapes are precise: an
+        alias (`var x = ref` or `x = ref`) keeps it when the aliased binding is itself an immutable
+        container, and an argument passed to a statically known function (`f(ref)`) keeps it when
+        the parameter it binds is itself an immutable container — interprocedural Case B, the
+        parameter's own references decide whether the callee mutates or further-escapes it. A store
+        no code observes (`store_unobserved`) hands the container to nobody, as long as the value of
+        the assignment goes nowhere either. Every other escape is conservatively unsafe, an
+        assignment that is no statement of its own among them: `var x = (y = ref)` stores the
+        container in `x` as well as in `y`.
         """
         alias = self.model.name_holding(ref)
         if alias is not None:
@@ -1816,11 +1818,12 @@ class EffectModel:
 
     def store_unobserved(self, member: JsMemberExpression) -> bool:
         """
-        Whether the store whose target is *member* is observed by no code: it is `module.exports = v`
-        through the `module` the host passed, and nothing reads what the file stores there
-        (`SemanticModel.module_exports_unread`). The host made `exports` a data property of its own
-        on that object, so the store runs no setter and cannot fail; under the reading as an ES
-        module, where the name may be absent, the read of `module` keeps its own throw.
+        Whether the store whose target is *member* is observed by no code: it is the store
+        `module.exports = v` through the `module` the host passed, and nothing reads what the file
+        stores there (`SemanticModel.module_exports_unread`). The host made `exports` a data
+        property of its own on that object, so the store runs no setter and cannot fail; under the
+        reading as an ES module, where the name may be absent, the read of `module` keeps its own
+        throw.
         """
         if static_property_key(member) != 'exports' or not is_plain_store_target(member):
             return False
@@ -2224,7 +2227,8 @@ class EffectModel:
         The trust questions of a fold no point is given for, each answered for the whole program:
         the oracle vouches for no anchor, and a load of code anywhere may precede the fold.
         """
-        return AnchoredTrust(self, lambda: False, lambda: bool(self.model.code_load_sites()))
+        model = self.model
+        return AnchoredTrust(self, lambda: False, lambda: model.imports_code() or bool(model.code_load_sites()))
 
     def trusted_intrinsic_name(self, name: str) -> bool:
         """

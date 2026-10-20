@@ -5627,3 +5627,34 @@ class TestAnAccessorBuiltOverValuesItClosesOverIsPromotedOnlyWhereThatHolds(Test
     new one each call, and the declaration is hoisted above reads that saw `undefined`. The rewrite
     holds only for values no call writes, hands out, or is read before the build.
     """
+
+
+#: A program that has `require` load a file replacing a built-in method before a call of that method
+#: on a literal, mapped to the behavior Node gives it as a CommonJS file.
+A_LOADED_FILE_REPLACING_A_BUILTIN = {
+    'a required file replaces the split of strings': Program(
+        a_program("""
+            require("fs").writeFileSync(require("path").join(__dirname, "patch.js"), "String.prototype.split = function () { return [1]; };");
+            require("./patch.js");
+            console.log("a|b".split("|").length);
+            """),
+        prints('1'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+@one_expected_failure_per_program(A_LOADED_FILE_REPLACING_A_BUILTIN)
+class TestALoadedFileReplacingABuiltinHoldsTheFoldBack(TestBase):
+    """
+    A file the program has `require` load is a site of the tampering oracle
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.code_load_sites`), but the oracle is
+    asked only where a program-wide trust question refuses, and those questions know nothing of
+    loads: a load is no reflection surface, since dead code holds `require` calls in functions
+    nothing calls, and a surface there would withdraw every program-wide trust. So a method a loaded
+    file replaces is folded as the language's own wherever the program writes nothing that disturbs
+    it. Closing it means the program-wide questions asking the loads ordered against their point,
+    which every consumer of them would have to supply.
+    """

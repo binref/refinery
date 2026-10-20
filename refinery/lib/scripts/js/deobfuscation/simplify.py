@@ -995,11 +995,12 @@ class JsSimplifications(Transformer):
         abstains under the default `universal` host. This is what lets a `typeof globalThis !== 'undefined'`
         guard fold to `true`, so `refinery.lib.scripts.js.deobfuscation.deadcode.JsDeadCodeElimination`
         can prune the arm it protects and a global-object finder reduce to `return globalThis`, and what
-        lets `-e node` fold a `typeof Buffer` guard the same way. The question is asked at the `typeof`
-        (`refinery.lib.scripts.js.analysis.effects.AnchoredTrust.global_typeof`), which refuses a name
-        the program binds or writes anywhere, one a reflection surface could reach before the `typeof`
-        runs, and one a module the program loads before it may set up. The interpreter's `typeof` fold
-        asks the same question, so a fold made here and one made there cannot disagree.
+        lets `-e node` fold a `typeof Buffer` guard the same way. The question is asked at the
+        `typeof` (`refinery.lib.scripts.js.analysis.effects.AnchoredTrust.global_typeof`), which
+        refuses a name the program binds or writes anywhere, one a reflection surface could reach
+        before the `typeof` runs, and one a module the program loads before it may set up. The
+        interpreter's `typeof` fold asks the same question, so a fold made here and one made there
+        cannot disagree.
         """
         node = strip_parens(operand)
         if not isinstance(node, JsIdentifier):

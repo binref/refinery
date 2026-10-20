@@ -440,10 +440,11 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         function node to run with arguments: the call *is* the expression, so it goes to
         `eval_expression` and the result replaces it.
 
-        Walking outermost-first means the longest chain is attempted before any of its links, so a whole
-        decoder collapses in one step and the inner links are gone before they are reached. Admission is
-        the shared gate's decision alone, asked at the call (`ModelCache.trust_at`); this adds no question
-        of its own, because every one it would ask — is the prototype intact, does a callback write outside
+        Walking outermost-first means the longest chain is attempted before any of its links, so a
+        whole decoder collapses in one step and the inner links are gone before they are reached.
+        Admission is the shared gate's decision alone, asked at the call
+        (`refinery.lib.scripts.js.analysis.cache.ModelCache.trust_at`); this adds no question of its
+        own, because every one it would ask — is the prototype intact, does a callback write outside
         itself, is an argument effectful — the gate already asks.
         """
         effects = self._effects
