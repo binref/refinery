@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple
 from refinery.lib.decompression import decompress_pieces, inflate_pieces, parse_lzma_properties
 from refinery.lib.dt import filetime
 from refinery.lib.inno.ifps import IFPSFile
+from refinery.lib.inno.release import ReleaseRange, SetupRelease, next_release
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import Struct, StructReader, StructReaderBits
@@ -314,6 +315,15 @@ _IS_AMBIGUOUS = {
 }
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
+
+_SETUP_PROGRAM_RELEASE = [
+    re.compile(BR'Inno Setup version (\d+)\.(\d+)\.(\d+)'),
+    re.compile(BR'I\0n\0n\0o\0 \0S\0e\0t\0u\0p\0 \0v\0e\0r\0s\0i\0o\0n\0 \0((?:\d\0)+)\.\0((?:\d\0)+)\.\0((?:\d\0)+)'),
+]
+"""
+The text in which the setup program of an installer names its release, in ANSI and in Unicode
+builds.
+"""
 
 
 class InnoStruct(Struct):
@@ -2644,6 +2654,43 @@ class InnoStreams(NamedTuple):
     Uninstaller: InnoStream
 
 
+def _setup_program_release(view: memoryview, offset: int, version: InnoVersion) -> tuple[int, int, int] | None:
+    """
+    The release that the setup program at the given offset of an installer names in its text
+    `Inno Setup version`; `None` when the program cannot be read or names no single release.
+    """
+    if version < (4, 1, 6):
+        return None
+    try:
+        reader = StructReader(view[offset:])
+        stream = InnoStream(StreamHeader(reader, version))
+        to_read = stream.header.StoredSize
+        while to_read > 4:
+            block = CrcCompressedBlock(reader, min(to_read - 4, 0x1000))
+            stream.blocks.append(block)
+            to_read -= len(block)
+        program = InnoArchive.read_stream(stream)
+    except Exception:
+        return None
+    releases = {
+        (int(major.replace(B'\0', B'')), int(minor.replace(B'\0', B'')), int(patch.replace(B'\0', B'')))
+        for pattern in _SETUP_PROGRAM_RELEASE
+        for major, minor, patch in pattern.findall(program)
+    }
+    if len(releases) != 1:
+        return None
+    return releases.pop()
+
+
+def _setup_program_releases(view: memoryview, offset: int, version: InnoVersion) -> ReleaseRange | None:
+    """
+    The release that the setup program names, as a range of releases for `SetupRelease`.
+    """
+    if (release := _setup_program_release(view, offset, version)) is None:
+        return None
+    return release, next_release(release)
+
+
 class InnoArchive:
     """
     This class represents an InnoSetup archive. Optionally, a `refinery.units.Unit` can be
@@ -2837,6 +2884,29 @@ class InnoArchive:
         ))
 
     @cached_property
+    def release(self) -> SetupRelease:
+        """
+        The release of Inno Setup that built the installer: the one that Inno Setup 7 writes into
+        the header, else the releases from the version of the installer's data up to the next
+        version of the data, among which the setup program decides.
+        """
+        if code := self.setup_info.Header.CompiledCodeVersion:
+            return SetupRelease.of_compiled_code(code)
+        lowest = self.version.semver[:3]
+        below = next((v.semver[:3] for v in _VERSIONS if v.semver[:3] > lowest), None)
+        return SetupRelease(lowest, below, functools.partial(
+            _setup_program_releases, self.view, self.meta.exe_offset, self.version))
+
+    @property
+    def setup_program_release(self) -> tuple[int, int, int] | None:
+        """
+        The release that the setup program of the installer names in its text `Inno Setup version`,
+        which Setup writes into its log; `None` when the program cannot be read or names no single
+        release.
+        """
+        return _setup_program_release(self.view, self.meta.exe_offset, self.version)
+
+    @cached_property
     def ifps(self):
         """
         An `refinery.lib.inno.ifps.IFPSFile` representing the embedded IFPS script, if it exists.
@@ -3027,7 +3097,8 @@ class InnoArchive:
             encryption,
         )
 
-    def read_stream(self, stream: InnoStream):
+    @staticmethod
+    def read_stream(stream: InnoStream):
         """
         Decompress and read the input stream.
         """

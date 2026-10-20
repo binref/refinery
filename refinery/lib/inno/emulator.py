@@ -109,6 +109,7 @@ from refinery.lib.inno.installation import (
     SetupEntries,
 )
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
+from refinery.lib.inno.release import SetupRelease
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
@@ -784,7 +785,7 @@ class HostSetup:
     version, and the configured Windows must agree.
     """
     version: InnoVersion | None
-    release: tuple[int, ...] | None
+    release: SetupRelease
     language: int | None
     language_name: str
     dialect: Dialect
@@ -807,42 +808,64 @@ class HostSetup:
     ready_memo_disabled: bool
     info_after_text: bool
     finished_page_disabled: bool
-    page_changes_only: bool
-    """
-    Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
-    """
-    prepares_with_selection: bool
-    """
-    The preparing page passes the selected components and tasks to its scans; 5.5.0 passes lists
-    that are still empty.
-    """
-    registers_close_applications_resources: bool
-    """
-    The restart manager's scan calls `RegisterExtraCloseApplicationsResources`, from 5.5.2 on.
-    """
-    evaluates_change_directives: bool
-    """
-    The directives `ChangesEnvironment` and `ChangesAssociations` may be expressions, from 6.0.0 on.
-    """
-    downloads_archives: bool
-    """
-    The preparing page downloads the archives to extract, from 6.5.0 on.
-    """
-    download_tests_components_as_tasks: bool
-    """
-    The download of archives tests the components of an entry as its tasks, in 6.5.0 and 6.5.1.
-    """
-    run_working_dir_always: bool
-    """
-    A run entry expands its working directory before it tests whether its file exists, from 7.0.0
-    on; earlier Setups expand it only to start the program.
-    """
+
+    @property
+    def page_changes_only(self) -> bool:
+        """
+        Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
+        """
+        return self.release.since((6, 5, 0)) and not self.release.since((6, 6, 0))
+
+    @property
+    def prepares_with_selection(self) -> bool:
+        """
+        The preparing page passes the selected components and tasks to its scans; 5.5.0 passes
+        lists that are still empty.
+        """
+        return self.release.since((5, 5, 1))
+
+    @property
+    def registers_close_applications_resources(self) -> bool:
+        """
+        The restart manager's scan calls `RegisterExtraCloseApplicationsResources`, from 5.5.2 on.
+        """
+        return self.release.since((5, 5, 2))
+
+    @property
+    def evaluates_change_directives(self) -> bool:
+        """
+        The directives `ChangesEnvironment` and `ChangesAssociations` may be expressions, from
+        6.0.0 on.
+        """
+        return self.release.since((6, 0, 0))
+
+    @property
+    def downloads_archives(self) -> bool:
+        """
+        The preparing page downloads the archives to extract, from 6.5.0 on.
+        """
+        return self.release.since((6, 5, 0))
+
+    @property
+    def download_tests_components_as_tasks(self) -> bool:
+        """
+        The download of archives tests the components of an entry as its tasks, in 6.5.0 and
+        6.5.1.
+        """
+        return self.release.since((6, 5, 0)) and not self.release.since((6, 5, 2))
+
+    @property
+    def run_working_dir_always(self) -> bool:
+        """
+        A run entry expands its working directory before it tests whether its file exists, from
+        7.0.0 on; earlier Setups expand it only to start the program.
+        """
+        return self.release.since((7, 0, 0))
 
     @classmethod
     def of(
         cls,
-        setup_info: TSetup | None,
-        version: InnoVersion | None,
+        archive: InnoArchive | None,
         ifps: IFPSFile,
         config: IFPSEmulatorConfig,
     ) -> HostSetup:
@@ -850,8 +873,11 @@ class HostSetup:
         platform = ifps.platform
         if platform is Platform.Win64 and not config.x64:
             raise ValueError('The script runs in a 64-bit Setup, which 32-bit Windows does not run.')
-        if setup_info is None:
-            release = config.setup_version
+        if archive is None:
+            if (configured := config.setup_version) is None:
+                release = SetupRelease.current()
+            else:
+                release = SetupRelease.exactly(configured)
             _check_generation(release, dialect, 'The configured Setup version')
             return cls(
                 version=None,
@@ -878,13 +904,14 @@ class HostSetup:
                 ready_memo_disabled=False,
                 info_after_text=True,
                 finished_page_disabled=False,
-                **_release_behavior(release),
             )
+        setup_info = archive.setup_info
+        version = archive.version
         header = setup_info.Header
         flags = header.Flags
         language = _active_language(setup_info, config)
         texts = setup_info.wizard_texts(language)
-        release = _release(header.CompiledCodeVersion, version)
+        release = archive.release
         _check_generation(release, dialect, 'The installer')
         if header.is_64bit != (platform is Platform.Win64):
             setup = '64-bit' if header.is_64bit else '32-bit'
@@ -914,7 +941,6 @@ class HostSetup:
             ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
             info_after_text=bool(texts.info_after),
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
-            **_release_behavior(release),
         )
 
     def runtime(self, settings: numbers.FormatSettings) -> Runtime:
@@ -924,24 +950,6 @@ class HostSetup:
         if self.platform is Platform.Win64:
             return Win64(settings)
         return Win32(settings, _control_word(self.release))
-
-
-def _release_behavior(release: tuple[int, ...] | None) -> dict[str, bool]:
-    """
-    How the given release of Setup behaves where releases differ; a bare script without a configured
-    version runs under the current Setup.
-    """
-    def since(*version: int) -> bool:
-        return release is None or release >= version
-    return dict(
-        page_changes_only=release is not None and (6, 5, 0) <= release < (6, 6, 0),
-        prepares_with_selection=since(5, 5, 1),
-        registers_close_applications_resources=since(5, 5, 2),
-        evaluates_change_directives=since(6, 0, 0),
-        downloads_archives=since(6, 5, 0),
-        download_tests_components_as_tasks=release is not None and (6, 5, 0) <= release < (6, 5, 2),
-        run_working_dir_always=since(7, 0, 0),
-    )
 
 
 class InstallMode(NamedTuple):
@@ -1031,37 +1039,22 @@ def _install_mode(directive: str | Architecture, x64: bool) -> InstallMode:
     return InstallMode(x64 and holds)
 
 
-def _release(compiled_code_version: int, version: InnoVersion | None) -> tuple[int, ...] | None:
-    """
-    The release of Inno Setup that built an installer: the version of its compiled code, which
-    installers write from Inno Setup 7 on, else the version of its data.
-    """
-    if compiled_code_version:
-        return (
-            compiled_code_version >> 24 & 0x7F,
-            compiled_code_version >> 16 & 0xFF,
-            compiled_code_version >> 8 & 0xFF,
-        )
-    return version.semver if version else None
-
-
-def _check_generation(release: tuple[int, ...] | None, dialect: Dialect, source: str):
+def _check_generation(release: SetupRelease, dialect: Dialect, source: str):
     """
     Refuses a release that contradicts the Pascal Script that compiled the script.
     """
-    if release is None or (release >= (7,)) == (dialect is Dialect.Inno7):
+    if release.is_current or release.since((7, 0, 0)) == (dialect is Dialect.Inno7):
         return
     compiler = 'Inno Setup 7 or later' if dialect is Dialect.Inno7 else 'a version of Inno Setup before 7'
-    version = '.'.join(map(str, release))
-    raise ValueError(F'{source} names Inno Setup {version}, but the script was compiled by {compiler}.')
+    raise ValueError(F'{source} names Inno Setup {release}, but the script was compiled by {compiler}.')
 
 
-def _control_word(release: tuple[int, ...] | None) -> int:
+def _control_word(release: SetupRelease) -> int:
     """
     The control word of the x87 that a 32-bit Setup runs the script with: Delphi 12, which builds
     Inno Setup from 6.4.3 on, masks every exception.
     """
-    if release is None or release >= (6, 4, 3):
+    if release.since((6, 4, 3)):
         return x87.MASKED_CONTROL_WORD
     return x87.DEFAULT_CONTROL_WORD
 
@@ -1104,7 +1097,7 @@ class _EmulatedConstants:
         self.emulator = emulator
         self.caller = caller
         setup = emulator.setup
-        self.version = setup.release
+        self.release = setup.release
         self.admin = emulator.config.admin
         self.win64 = emulator.config.x64
 
@@ -1434,11 +1427,11 @@ class IFPSEmulator:
             ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
-            self.setup = HostSetup.of(archive.setup_info, archive.version, ifps, config)
+            self.setup = HostSetup.of(archive, ifps, config)
         else:
             self.setup_info = None
             ifps = archive
-            self.setup = HostSetup.of(None, None, ifps, config)
+            self.setup = HostSetup.of(None, ifps, config)
         self.ifps = ifps
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
@@ -2375,8 +2368,7 @@ class IFPSEmulator:
 
     @external()
     def Round(self, x: x87.Real) -> int:
-        release = self.setup.release
-        if release is None or release >= (6, 6, 0):
+        if self.setup.release.since((6, 6, 0)):
             return self.runtime.fpu.integer(x, x87.Rounding.Nearest)
         return self.runtime.fpu.integer(x)
 

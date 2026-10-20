@@ -1114,7 +1114,7 @@ class TestTheSetupAgreesWithTheScript(TestBase):
 
     def test_an_installer_of_inno_setup_6_5_runs_its_script_by_the_rules_of_pascal_script_6(self):
         setup = InnoSetupEmulator(self.installer(), IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release, setup.dialect, setup.platform), ((6, 5, 0, 0), Dialect.Inno6, Platform.Win32))
+        self.assertEqual((setup.release.exact, setup.dialect, setup.platform), ((6, 5, 0), Dialect.Inno6, Platform.Win32))
 
     def test_32_bit_windows_refuses_a_script_of_a_64_bit_setup(self):
         with self.assertRaises(ValueError):
@@ -1140,9 +1140,9 @@ class TestTheSetupAgreesWithTheScript(TestBase):
         and the 64-bit Setup of the value oracle; the version of their data is 7.0.0.3. The highest
         bit marks a 64-bit Setup.
         """
-        from refinery.lib.inno.emulator import _release
-        self.assertEqual(_release(0x07010000, None), (7, 1, 0))
-        self.assertEqual(_release(0x87010000, None), (7, 1, 0))
+        from refinery.lib.inno.release import SetupRelease
+        self.assertEqual(SetupRelease.of_compiled_code(0x07010000).exact, (7, 1, 0))
+        self.assertEqual(SetupRelease.of_compiled_code(0x87010000).exact, (7, 1, 0))
 
 
 class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):

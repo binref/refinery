@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any, Generator, Mapping, NamedTuple, Protocol
 
 from refinery.lib.inno.delphi.errors import DelphiException
+from refinery.lib.inno.release import SetupRelease
 
 _HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 
@@ -129,9 +130,9 @@ class ConstantHost(Protocol):
     a value that Setup cannot give on this machine, and any other exception for a value that the
     host does not know.
     """
-    version: _Version | None
+    release: SetupRelease
     """
-    The version of Setup, or `None` for the current one.
+    The release of Setup.
     """
     admin: bool
     """
@@ -212,29 +213,27 @@ def _read_as(constant: str, host: ConstantHost) -> str:
     it as the new name, and since 6.0.0 it reads `auto` as `common` when it installs for all users
     and as `user` otherwise.
     """
-    version = host.version
-    if (old := _OLD_NAMES.get(constant)) is not None and (version is None or version >= old.renamed):
+    release = host.release
+    if (old := _OLD_NAMES.get(constant)) is not None and release.since(old.renamed):
         return old.name
-    if constant.startswith('auto') and (version is None or version >= _AUTO_SINCE):
+    if constant.startswith('auto') and release.since(_AUTO_SINCE):
         constant = constant.replace('auto', 'common' if host.admin else 'user')
         if constant in ('userpf32', 'userpf64', 'usercf32', 'usercf64'):
             constant = constant[:-2]
     return constant
 
 
-def _value_name(name: str, version: _Version | None) -> str | None:
+def _value_name(name: str, release: SetupRelease) -> str | None:
     """
     The name whose value a constant has when Setup knows it as a constant without parameters, or
     `None`. An old name that Setup has not renamed yet has the value of its new name.
     """
     if (entry := _NAMES.get(name)) is not None:
-        if version is None:
-            return name if entry.until is None else None
-        if entry.since <= version and (entry.until is None or version < entry.until):
+        if release.since(entry.since) and (entry.until is None or not release.since(entry.until)):
             return name
         return None
-    if (old := _OLD_NAMES.get(name)) is not None and version is not None and version < old.renamed:
-        if old.until is None or version < old.until:
+    if (old := _OLD_NAMES.get(name)) is not None and not release.since(old.renamed):
+        if old.until is None or not release.since(old.until):
             return old.name
     return None
 
@@ -375,7 +374,7 @@ def _expand_constant(
     original = constant
     if (constant := _read_as(constant, host)) == '\\':
         return '\\'
-    if (name := _value_name(constant, host.version)) is not None:
+    if (name := _value_name(constant, host.release)) is not None:
         return host.constant(name, original)
     if constant.startswith('%'):
         variable, default = split_constant_parameter(constant[1:], '|')
