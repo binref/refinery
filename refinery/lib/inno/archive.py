@@ -316,6 +316,36 @@ _IS_AMBIGUOUS = {
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
 
+_TEXT_DIRECTIVE_FIELDS = {
+    'AppName'               : 'AppName',
+    'AppVerName'            : 'AppVersionedName',
+    'AppVersion'            : 'AppVersion',
+    'AppCopyright'          : 'AppCopyright',
+    'AppMutex'              : 'AppMutex',
+    'SetupMutex'            : 'SetupMutex',
+    'AppId'                 : 'AppId',
+    'DefaultUserInfoName'   : 'DefaultUsername',
+    'DefaultUserInfoOrg'    : 'DefaultOrganisation',
+    'DefaultUserInfoSerial' : 'DefaultSerial',
+    'DefaultDirName'        : 'DefaultDirName',
+    'DefaultGroupName'      : 'DefaultGroupName',
+    'UninstallFilesDir'     : 'UninstallFilesDir',
+    'UninstallDisplayName'  : 'UninstallName',
+    'UninstallDisplayIcon'  : 'UninstallIcon',
+    'AppPublisher'          : 'AppPublisher',
+    'AppPublisherURL'       : 'AppPublisherUrl',
+    'AppSupportPhone'       : 'AppSupportPhone',
+    'AppSupportURL'         : 'AppSupportUrl',
+    'AppUpdatesURL'         : 'AppUpdatesUrl',
+    'AppReadmeFile'         : 'AppReadmeFile',
+    'AppContact'            : 'AppContact',
+    'AppComments'           : 'AppComment',
+    'AppModifyPath'         : 'AppModifyPath',
+}
+"""
+The fields of the setup header that hold the texts of `TextDirective`, by directive.
+"""
+
 _SETUP_PROGRAM_RELEASE = [
     re.compile(BR'Inno Setup version (\d+)\.(\d+)\.(\d+)'),
     re.compile(BR'I\0n\0n\0o\0 \0S\0e\0t\0u\0p\0 \0v\0e\0r\0s\0i\0o\0n\0 \0((?:\d\0)+)\.\0((?:\d\0)+)\.\0((?:\d\0)+)'),
@@ -843,6 +873,12 @@ class SetupHeader(InnoStruct):
             # skip uncompressed size
             reader.u32()
 
+        self.AppId = self.AppPublisher = self.AppPublisherUrl = self.AppSupportPhone = None
+        self.AppSupportUrl = self.AppUpdatesUrl = self.AppVersion = self.UninstallFilesDir = None
+        self.UninstallName = self.UninstallIcon = self.AppMutex = self.DefaultUsername = None
+        self.DefaultOrganisation = self.DefaultSerial = self.AppReadmeFile = self.AppContact = None
+        self.AppComment = self.AppModifyPath = self.SetupMutex = None
+
         if True:
             self.AppName = read_string()
             self.AppVersionedName = read_string()
@@ -1304,6 +1340,13 @@ class SetupHeader(InnoStruct):
     def get_license(self):
         return self._license
 
+    def text(self, directive: TextDirective) -> str | None:
+        """
+        The text of a directive that Setup expands, `None` when the version of the installer does
+        not have the directive.
+        """
+        return getattr(self, _TEXT_DIRECTIVE_FIELDS[directive])
+
     def directive(self, name: YesNoDirective) -> SetupDirective:
         """
         A yes-or-no directive as Setup reads it: the text of the directive, or the flag that older
@@ -1428,7 +1471,7 @@ class SetupLanguage(InnoStruct):
         self.TitleFont = read_string() if version < (6, 6, 0) else None
         self.WelcomeFont = read_string()
         self.CopyrightFont = read_string() if version < (6, 6, 0) else None
-        self._data = reader.read_length_prefixed()
+        self._compiled_messages = reader.read_length_prefixed()
 
         if version >= (4, 0, 1):
             self.LicenseText = reader.read_length_prefixed_ascii()
@@ -1633,7 +1676,7 @@ class SetupISSignature(InnoStruct):
         self.RuntimeID = read_string()
 
 
-class SetupMessage(InnoStruct):
+class SetupCustomMessage(InnoStruct):
 
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
@@ -2348,6 +2391,128 @@ class SetupRunEntry(InnoStruct):
         reader.byte_align()
 
 
+class TextDirective(enum.StrEnum):
+    """
+    The directives of the setup header whose texts Setup expands, by their names in the script of
+    the installer.
+    """
+    AppName = 'AppName'
+    AppVerName = 'AppVerName'
+    AppVersion = 'AppVersion'
+    AppCopyright = 'AppCopyright'
+    AppMutex = 'AppMutex'
+    SetupMutex = 'SetupMutex'
+    AppId = 'AppId'
+    DefaultUserInfoName = 'DefaultUserInfoName'
+    DefaultUserInfoOrg = 'DefaultUserInfoOrg'
+    DefaultUserInfoSerial = 'DefaultUserInfoSerial'
+    DefaultDirName = 'DefaultDirName'
+    DefaultGroupName = 'DefaultGroupName'
+    UninstallFilesDir = 'UninstallFilesDir'
+    UninstallDisplayName = 'UninstallDisplayName'
+    UninstallDisplayIcon = 'UninstallDisplayIcon'
+    AppPublisher = 'AppPublisher'
+    AppPublisherURL = 'AppPublisherURL'
+    AppSupportPhone = 'AppSupportPhone'
+    AppSupportURL = 'AppSupportURL'
+    AppUpdatesURL = 'AppUpdatesURL'
+    AppReadmeFile = 'AppReadmeFile'
+    AppContact = 'AppContact'
+    AppComments = 'AppComments'
+    AppModifyPath = 'AppModifyPath'
+
+
+class SetupMessageName(enum.StrEnum):
+    """
+    The messages that Setup uses by name where the emulator follows it.
+    """
+    ButtonBack = 'ButtonBack'
+    ButtonNext = 'ButtonNext'
+    FullInstallation = 'FullInstallation'
+    CompactInstallation = 'CompactInstallation'
+    CustomInstallation = 'CustomInstallation'
+    ReadyMemoComponents = 'ReadyMemoComponents'
+    ReadyMemoDir = 'ReadyMemoDir'
+    ReadyMemoGroup = 'ReadyMemoGroup'
+    ReadyMemoTasks = 'ReadyMemoTasks'
+    ReadyMemoType = 'ReadyMemoType'
+    ReadyMemoUserInfo = 'ReadyMemoUserInfo'
+    ErrorInternal2 = 'ErrorInternal2'
+
+
+class _MessageList(NamedTuple):
+    lowest: tuple[int, int, int]
+    below: tuple[int, int, int] | None
+    positions: tuple[int, ...]
+
+
+_MESSAGE_LISTS: dict[tuple[tuple[int, ...], int], _MessageList] = {
+    ((5, 1, 11), 207) : _MessageList((5, 1, 11), (5, 5, 0), (10, 16, 83, 27, 35, 124, 125, 126, 127, 128, 129, 54)),
+    ((5, 5, 0), 220)  : _MessageList((5, 5, 0), (5, 5, 3), (12, 18, 89, 32, 40, 131, 132, 133, 134, 135, 136, 60)),
+    ((5, 5, 3), 221)  : _MessageList((5, 5, 3), (6, 0, 0), (12, 18, 90, 32, 40, 132, 133, 134, 135, 136, 137, 61)),
+    ((6, 0, 0), 240)  : _MessageList((6, 0, 0), (6, 0, 3), (16, 22, 95, 36, 44, 145, 146, 147, 148, 149, 150, 64)),
+    ((6, 0, 0), 243)  : _MessageList((6, 0, 3), (6, 1, 0), (16, 22, 97, 36, 45, 148, 149, 150, 151, 152, 153, 66)),
+    ((6, 0, 0), 261)  : _MessageList((6, 1, 0), (6, 4, 0), (16, 22, 114, 37, 46, 165, 166, 167, 168, 169, 170, 74)),
+    ((6, 4, 0), 266)  : _MessageList((6, 4, 0), (6, 5, 0), (16, 22, 118, 38, 47, 169, 170, 171, 172, 173, 174, 77)),
+    ((6, 5, 0), 281)  : _MessageList((6, 5, 0), None, (19, 25, 121, 41, 50, 172, 173, 174, 175, 176, 177, 80)),
+}
+"""
+The lists of Setup's messages, by the version in their identifier and their count: the releases of
+Inno Setup that use the list, and the positions of the messages of `SetupMessageName` in it, in the
+order of that enumeration. The identifier alone does not tell a list: 6.0.0 names three.
+"""
+
+
+class SetupMessages:
+    """
+    The compiled messages of one language as Setup's `AssignSetupMessages` checks and reads them: a
+    64-byte identifier `Inno Setup Messages (X.Y.Z)`, followed by ` (u)` in Unicode builds, the
+    count of the messages, their total size and its complement, the CRC-32 of the strings, and the
+    strings, each ended by a NUL character. The strings are UTF-16 in Unicode builds and decoded
+    with the codec of the script's strings otherwise, so that a message and a literal of the script
+    that Setup holds as the same bytes are equal. A block that fails a check raises `ValueError`.
+    """
+    def __init__(self, data: buf, unicode: bool, codec: str):
+        view = memoryview(data)
+        if len(view) <= 80:
+            raise ValueError('The messages are cut short.')
+        identifier = codecs.decode(bytes(view[:64]).partition(B'\0')[0], 'latin1')
+        match = re.fullmatch(r'Inno Setup Messages \((\d+)\.(\d+)\.(\d+)\)( \(u\))?', identifier)
+        if match is None or bool(match[4]) != unicode:
+            raise ValueError(F'The messages have the identifier {identifier!r}, which this Setup does not read.')
+        count, total, inverse, crc = struct.unpack_from('<IIIi', view, 64)
+        if total != ~inverse & 0xFFFFFFFF or total != len(view):
+            raise ValueError('The size of the messages does not match.')
+        strings = view[80:]
+        width = 2 if unicode else 1
+        if zlib.crc32(strings) != crc & 0xFFFFFFFF or len(strings) < width or any(strings[-width:]):
+            raise ValueError('The messages fail their CRC check.')
+        try:
+            texts = codecs.decode(strings, 'utf-16le' if unicode else codec).split('\0')
+        except (LookupError, UnicodeDecodeError) as error:
+            raise ValueError(F'The messages cannot be decoded: {error}') from error
+        if len(texts) - 1 < count:
+            raise ValueError('The messages are fewer than their count.')
+        self.identifier = identifier
+        self.version = (int(match[1]), int(match[2]), int(match[3]))
+        self.texts = texts[:count]
+        self.list = _MESSAGE_LISTS.get((self.version, count))
+
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, index: int) -> str:
+        return self.texts[index]
+
+    def named(self, name: SetupMessageName) -> str | None:
+        """
+        The message with the given name, `None` when the list of these messages is not known.
+        """
+        if (known := self.list) is None:
+            return None
+        return self.texts[known.positions[list(SetupMessageName).index(name)]]
+
+
 class YesNoDirective(enum.StrEnum):
     """
     The directives of the setup header that are yes or no, or an expression of functions of the
@@ -2404,6 +2569,8 @@ class TSetup(InnoStruct):
             return [parser.Parse(reader, version, self) for _ in range(count)]
 
         self.Languages = _array(h.LanguageCount, SetupLanguage)
+        self._unicode = version.unicode
+        self._messages: dict[int, SetupMessages | str] = {}
         _default_codec = 'cp1252'
 
         if version.unicode:
@@ -2426,7 +2593,7 @@ class TSetup(InnoStruct):
         if version < (4, 0, 0):
             self._load_wizard_and_decompressor(reader, version)
 
-        self.Messages               = _array(h.MessageCount,         SetupMessage)       # noqa
+        self.CustomMessages         = _array(h.MessageCount,         SetupCustomMessage) # noqa
         self.Permissions            = _array(h.PermissionCount,      SetupPermission)    # noqa
         self.Types                  = _array(h.TypeCount,            SetupType)          # noqa
         self.Components             = _array(h.ComponentCount,       SetupComponent)     # noqa
@@ -2467,6 +2634,24 @@ class TSetup(InnoStruct):
 
     def get_wizard_images_small(self):
         return self._WizardImagesSmall
+
+    def messages(self, language: int) -> SetupMessages:
+        """
+        The compiled messages of the language with the given index, read when first asked for; a
+        block that fails Setup's checks raises `ValueError` with the reason, every time it is asked
+        for.
+        """
+        if isinstance(known := self._messages.get(language), SetupMessages):
+            return known
+        if known is not None:
+            raise ValueError(known)
+        try:
+            messages = SetupMessages(self.Languages[language]._compiled_messages, self._unicode, self.Codec)
+        except ValueError as error:
+            self._messages[language] = str(error)
+            raise
+        self._messages[language] = messages
+        return messages
 
     def get_decompress_dll(self):
         return self._DecompressDLL
@@ -2682,6 +2867,21 @@ def _setup_program_release(view: memoryview, offset: int, version: InnoVersion) 
     return releases.pop()
 
 
+def _message_list_releases(setup_info: TSetup) -> ReleaseRange | None:
+    """
+    The releases of Inno Setup that use the list of messages of the first language.
+    """
+    if not setup_info.Languages:
+        return None
+    try:
+        known = setup_info.messages(0).list
+    except ValueError:
+        return None
+    if known is None:
+        return None
+    return known.lowest, known.below
+
+
 def _setup_program_releases(view: memoryview, offset: int, version: InnoVersion) -> ReleaseRange | None:
     """
     The release that the setup program names, as a range of releases for `SetupRelease`.
@@ -2888,14 +3088,19 @@ class InnoArchive:
         """
         The release of Inno Setup that built the installer: the one that Inno Setup 7 writes into
         the header, else the releases from the version of the installer's data up to the next
-        version of the data, among which the setup program decides.
+        version of the data, which the list of Setup's messages and then the setup program narrow
+        when asked.
         """
         if code := self.setup_info.Header.CompiledCodeVersion:
             return SetupRelease.of_compiled_code(code)
         lowest = self.version.semver[:3]
         below = next((v.semver[:3] for v in _VERSIONS if v.semver[:3] > lowest), None)
-        return SetupRelease(lowest, below, functools.partial(
-            _setup_program_releases, self.view, self.meta.exe_offset, self.version))
+        return SetupRelease(
+            lowest,
+            below,
+            functools.partial(_message_list_releases, self.setup_info),
+            functools.partial(_setup_program_releases, self.view, self.meta.exe_offset, self.version),
+        )
 
     @property
     def setup_program_release(self) -> tuple[int, int, int] | None:

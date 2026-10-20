@@ -2284,7 +2284,7 @@ class IFPSEmulator:
             return F'{{cm:{name}}}'
         value = None
         folded = name.casefold()
-        for message in setup_info.Messages:
+        for message in setup_info.CustomMessages:
             if message.EncodedName.casefold() != folded:
                 continue
             if (index := message.get_language_index()) == -1 or index == self.setup.language:
@@ -2462,7 +2462,7 @@ class IFPSEmulator:
     def SetupMessage(self, id: int) -> str:
         try:
             if (setup_info := self.setup_info) is not None:
-                return setup_info.Messages[id].Value
+                return setup_info.CustomMessages[id].Value
         except IndexError:
             pass
         return ''

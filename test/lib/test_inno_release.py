@@ -78,6 +78,15 @@ class TestTheReleaseThatBuiltAnInstaller(TestBase):
         with self.assertRaises(NotImplementedError):
             release.since((5, 5, 2))
 
+    def test_the_messages_narrow_the_release_without_the_setup_program(self):
+        """
+        The data of aeac18c4 has the version 5.5.0, which the releases from 5.5.0 up to 5.5.5
+        write; its messages are those of the releases from 5.5.3 on.
+        """
+        release = self.installer(_RELEASE_5_5_3, readable=False).release
+        self.assertTrue(release.since((5, 5, 3)))
+        self.assertFalse(release.since((5, 5, 6)))
+
     def test_an_installer_whose_data_decides_every_rule_runs_without_its_setup_program(self):
         """
         The data of eeafd3fe has the version 6.3.0, which the releases from 6.3.0 up to 6.3.3

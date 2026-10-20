@@ -1,5 +1,6 @@
 # flake8: noqa
 import hashlib
+import json
 
 from unittest import mock
 
@@ -245,3 +246,10 @@ class TestInnoExtractor(TestUnitBase):
             paths = [chunk['path'] for chunk in data | self.load('meta/*.json') | []]
         self.assertEqual(paths, ['meta/setup.json', 'meta/files.json'])
         emulator.assert_not_called()
+
+    def test_the_metadata_lists_the_custom_messages_of_the_installer(self):
+        data = self.download_sample('0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c')
+        setup = json.loads(data | self.load('meta/setup.json') | bytes)
+        messages = {message['EncodedName']: message['Value'] for message in setup['CustomMessages']}
+        self.assertEqual(messages['NameAndVersion'], '%1 version %2')
+        self.assertNotIn('Messages', setup)
