@@ -15,6 +15,7 @@ from refinery.lib.inno.archive import (
     AutoBool,
     Flags,
     InnoArchive,
+    PrivilegesRequired,
     SetupDirective,
     SetupFileFlags,
     SetupFileType,
@@ -1123,8 +1124,9 @@ class TestTheSetupAgreesWithTheScript(TestBase):
             InnoSetupEmulator(installer, IFPSEmulatorConfig())
 
     def test_an_installer_of_inno_setup_6_5_runs_its_script_by_the_rules_of_pascal_script_6(self):
-        setup = InnoSetupEmulator(self.installer(), IFPSEmulatorConfig()).setup
-        self.assertEqual((setup.release.exact, setup.dialect, setup.platform), ((6, 5, 0), Dialect.Inno6, Platform.Win32))
+        emulator = InnoSetupEmulator(self.installer(), IFPSEmulatorConfig())
+        setup = emulator.setup
+        self.assertEqual((setup.release.exact, emulator.dialect, setup.platform), ((6, 5, 0), Dialect.Inno6, Platform.Win32))
 
     def test_32_bit_windows_refuses_a_script_of_a_64_bit_setup(self):
         with self.assertRaises(ValueError):
@@ -1306,6 +1308,50 @@ class TestTheEmulatorComputesPathsAsInnoSetupDid(TestBase):
 
     def test_the_current_folder_of_setup_is_the_folder_that_it_started_from(self):
         self.assertEmulatedAsLogged('ORACLECURRENTDIR', 'Setup')
+
+
+class TestSetupInstallsForAllUsersAsItsSourceSays(TestBase):
+    """
+    Setup installs for all users when the user is an administrator and the installer does not ask
+    for the lowest privileges; the privileges that an installer asks for are changed in memory.
+    """
+
+    def test_the_folder_of_programs_of_inno_setup_6_is_that_of_all_users_or_that_of_the_user(self):
+        for privileges in PrivilegesRequired:
+            for admin in (False, True):
+                archive = InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+                archive.setup_info.Header.PrivilegesRequired = privileges
+                emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(admin=admin))
+                for_all_users = admin and privileges is not PrivilegesRequired.Lowest
+                with self.subTest(privileges=privileges.name, admin=admin):
+                    self.assertEqual(emulator.setup.admin_install_mode, for_all_users)
+                    self.assertEqual(
+                        emulator.expand_constant('{autopf}'),
+                        R'C:\Program Files' if for_all_users else R'C:\Users\Frank\AppData\Local\Programs',
+                    )
+
+    def test_inno_setup_5_takes_the_shell_folders_of_the_user_unless_it_installs_for_all_users(self):
+        """
+        The common folders of application data and of documents stay; cdbc92e0 is an installer of
+        Inno Setup 5.5.3.
+        """
+        common = R'C:\Users\Public\Desktop|C:\ProgramData\Microsoft\Windows\Start Menu\Programs'
+        personal = R'C:\Users\Frank\Desktop|C:\Users\Frank\Start Menu\Programs'
+        for privileges in (PrivilegesRequired.Admin, PrivilegesRequired.Lowest):
+            for admin in (False, True):
+                archive = InnoArchive(self.download_sample('cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'))
+                archive.setup_info.Header.PrivilegesRequired = privileges
+                emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(admin=admin))
+                for_all_users = admin and privileges is not PrivilegesRequired.Lowest
+                with self.subTest(privileges=privileges.name, admin=admin):
+                    self.assertEqual(
+                        emulator.expand_constant('{commondesktop}|{commonprograms}'),
+                        common if for_all_users else personal,
+                    )
+                    self.assertEqual(
+                        emulator.expand_constant('{commonappdata}|{commondocs}'),
+                        R'C:\ProgramData|C:\Users\Public\Documents',
+                    )
 
 
 class _HostOracleTest(TestBase):

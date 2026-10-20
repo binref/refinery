@@ -253,3 +253,25 @@ class TestInnoExtractor(TestUnitBase):
         messages = {message['EncodedName']: message['Value'] for message in setup['CustomMessages']}
         self.assertEqual(messages['NameAndVersion'], '%1 version %2')
         self.assertNotIn('Messages', setup)
+
+    def test_an_installer_without_a_script_names_its_files_under_data(self):
+        data = self.download_sample('0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c')
+        self.assertTrue(data | self.load('data/{app}/abc.py') | bytes)
+
+    def test_the_metadata_of_an_installer_without_a_script_has_its_constants_expanded(self):
+        """
+        The installer's folder is `{autopf}\\InnoZipSample`; the archive assumes an administrator
+        on 64-bit Windows, and the installer installs in 32-bit mode.
+        """
+        data = self.download_sample('0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c')
+        setup = json.loads(data | self.load('meta/setup.json') | bytes)
+        self.assertEqual(setup['Header']['DefaultDirName'], 'C:\\Program Files (x86)\\InnoZipSample')
+
+    def test_an_installer_whose_script_cannot_be_emulated_names_its_files_as_if_it_could(self):
+        def paths():
+            data = self.download_sample('eeafd3fe2280e065aac87ca8b210be5873be5fe1f51ca4156d12bcf4f0d1eb1e')
+            return [file.path for file in InnoArchive(data).files]
+        named = paths()
+        with mock.patch('refinery.lib.inno.emulator.InnoSetupEmulator', side_effect=ValueError):
+            self.assertEqual(paths(), named)
+        self.assertIn('data/{app}/ext/manifest.json', named)

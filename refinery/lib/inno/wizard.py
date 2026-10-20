@@ -593,7 +593,7 @@ class WizardForm:
     choices are not known. The emulator does not know the choices of a script without its
     installer either. A script can keep the form and pass it to the methods of its controls.
     """
-    def __init__(self, walked: bool = False, entries_known: bool = True):
+    def __init__(self, walked: bool = False, entries_known: bool = True, uninstallable: bool = True):
         self.walked = walked
         self.created = not walked
         self.pages: list[int] = list(PageID)
@@ -605,7 +605,7 @@ class WizardForm:
         self.password_box = PasswordBox()
         self.dir_chosen = not walked
         self.group_chosen = not walked
-        self.uninstaller_named = not walked
+        self.uninstaller_named = not walked and uninstallable
         self.needs_restart = False
         self.types: list[SetupType] = []
         self.type_index = -1

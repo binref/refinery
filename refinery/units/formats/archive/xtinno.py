@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from refinery.lib import json
 from refinery.lib.inno.archive import (
     InnoArchive,
@@ -13,9 +11,6 @@ from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.structures import struct_to_json
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
-
-if TYPE_CHECKING:
-    from refinery.lib.inno.emulator import InnoSetupEmulator
 
 
 class _ps:
@@ -33,20 +28,18 @@ class _ps:
     """
 
 
-def _expand_constants(emulator: InnoSetupEmulator | None, doc):
+def _expand_constants(inno: InnoArchive, doc):
     """
     Expands the Inno Setup constants in every string of the given JSON document.
     """
-    if emulator is None:
-        return doc
     if isinstance(doc, dict):
-        return {key: _expand_constants(emulator, val) for key, val in doc.items()}
+        return {key: _expand_constants(inno, val) for key, val in doc.items()}
     if isinstance(doc, list):
-        return [_expand_constants(emulator, entry) for entry in doc]
+        return [_expand_constants(inno, entry) for entry in doc]
     if not isinstance(doc, str):
         return doc
     try:
-        return emulator.reset().expand_constant(doc)
+        return inno.expand_constants(doc)
     except Exception:
         return doc
 
@@ -58,12 +51,6 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
     def unpack(self, data: bytearray):
         inno = InnoArchive(data, self)
 
-        try:
-            emulator = inno.emulator
-        except Exception as error:
-            self.log_info('constants are not expanded because the script cannot be emulated:', error)
-            emulator = None
-
         _pwd: bytes = self.args.pwd
         password = _pwd.decode(self.codec) if _pwd else None
 
@@ -74,14 +61,14 @@ class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
             yield self._pack('meta/setup.bin', None, t_setup)
             doc = struct_to_json(inno.setup_info)
             yield self._pack('meta/setup.template', None, json.dumps(doc, tojson=json.bytes_as_array))
-            doc = _expand_constants(emulator, doc)
+            doc = _expand_constants(inno, doc)
             yield self._pack('meta/setup.json', None, json.dumps(doc, tojson=json.bytes_as_array))
 
         if t_data := inno.streams.TData.data:
             yield self._pack('meta/files.bin', None, t_data)
             doc = struct_to_json(inno.setup_data)
             yield self._pack('meta/files.template', None, json.dumps(doc, tojson=json.bytes_as_array))
-            doc = _expand_constants(emulator, doc)
+            doc = _expand_constants(inno, doc)
             yield self._pack('meta/files.json', None, json.dumps(doc, tojson=json.bytes_as_array))
 
         def _uninstaller(i=inno):

@@ -5,7 +5,9 @@ values come from a `ConstantHost`, which stands for the machine and the Setup th
 """
 from __future__ import annotations
 
-from typing import Any, Generator, Mapping, NamedTuple, Protocol
+import re
+
+from typing import Any, Callable, Generator, Mapping, NamedTuple, Protocol
 
 from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.release import SetupRelease
@@ -13,6 +15,12 @@ from refinery.lib.inno.release import SetupRelease
 _HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
 
 _Version = tuple[int, ...]
+
+CodeRunner = Callable[[str, str], Generator[Any, Any, str]]
+"""
+Runs the function of the script with the given name and argument for a code constant and returns
+its text; the run of the script that asks for an expansion gives it.
+"""
 
 
 class _Name(NamedTuple):
@@ -200,12 +208,6 @@ class ConstantHost(Protocol):
         """
         ...
 
-    def run_code(self, function: str, argument: str) -> Generator[Any, Any, str]:
-        """
-        Runs the function of the script with the given name and argument and returns its text.
-        """
-        ...
-
 
 def _read_as(constant: str, host: ConstantHost) -> str:
     """
@@ -330,15 +332,32 @@ def _decoded(kind: str, *parameters: str) -> list[str]:
     return decoded
 
 
+def fmt_message(message: str, arguments: list[str]) -> str:
+    """
+    Setup's `FmtMessage`: `%1` to `%9` stand for the arguments and `%%` for a percent sign; a
+    placeholder without its argument stays.
+    """
+    def substitute(match: re.Match[str]):
+        if (spec := match[1]) == '%':
+            return '%'
+        if (k := int(spec) - 1) < len(arguments):
+            return arguments[k]
+        return match[0]
+    return re.sub('%([1-9%])', substitute, message)
+
+
 def expand_constants(
     string: str,
     host: ConstantHost,
     custom: Mapping[str, str] | None = None,
+    run_code: CodeRunner | None = None,
 ) -> Generator[Any, Any, str]:
     """
     Expands the constants in the given string as Setup's `ExpandConstEx2` does, with the custom
-    constants that Setup passes for the text, by their names. The value of a constant is not
-    scanned again, and a backslash right after a value that ends in one is dropped.
+    constants that Setup passes for the text, by their names, and the runner of code constants
+    of the script that asks for the expansion. The value of a constant is not scanned again, and a
+    backslash right after a value that ends in one is dropped. Without a runner, a code constant
+    fails as a value that the emulator does not have.
     """
     output: list[str] = []
     cursor = 0
@@ -354,7 +373,7 @@ def expand_constants(
             continue
         if (after := skip_past_constant(string, brace)) is None:
             raise ConstantError('Unclosed constant')
-        value = yield from _expand_constant(string[brace + 1:after - 1], host, custom)
+        value = yield from _expand_constant(string[brace + 1:after - 1], host, custom, run_code)
         output.append(value)
         cursor = after
         if value.endswith('\\') and string.startswith('\\', cursor):
@@ -366,6 +385,7 @@ def _expand_constant(
     constant: str,
     host: ConstantHost,
     custom: Mapping[str, str] | None,
+    run_code: CodeRunner | None,
 ) -> Generator[Any, Any, str]:
     """
     The value of one constant, given without its braces, as Setup's `ExpandIndividualConst`
@@ -383,30 +403,32 @@ def _expand_constant(
         default = decode_percent_escapes(default or '')
         if variable is None or default is None:
             return ''
-        value = host.environment((yield from expand_constants(variable, host, custom)), has_default)
+        value = host.environment((yield from expand_constants(variable, host, custom, run_code)), has_default)
         if not value:
-            value = yield from expand_constants(default, host, custom)
+            value = yield from expand_constants(default, host, custom, run_code)
         return value
     if constant.startswith('reg:'):
-        return (yield from _expand_registry_constant(constant[4:], host, custom))
+        return (yield from _expand_registry_constant(constant[4:], host, custom, run_code))
     if constant.startswith('ini:'):
-        return (yield from _expand_ini_constant(constant[4:], host, custom))
+        return (yield from _expand_ini_constant(constant[4:], host, custom, run_code))
     if constant.startswith('param:'):
         name, default = split_constant_parameter(constant[6:], '|')
         name, default = _decoded('param', name, default or '')
-        name = yield from expand_constants(name, host, custom)
-        default = yield from expand_constants(default, host, custom)
+        name = yield from expand_constants(name, host, custom, run_code)
+        default = yield from expand_constants(default, host, custom, run_code)
         return host.parameter(name, default)
     if constant.startswith('code:'):
         function, default = split_constant_parameter(constant[5:], '|')
         function, default = _decoded('code', function, default or '')
-        default = yield from expand_constants(default, host, custom)
-        return (yield from host.run_code(function, default))
+        default = yield from expand_constants(default, host, custom, run_code)
+        if run_code is None:
+            raise NotImplementedError(F'The emulator cannot run the function {function} of a code constant without the script.')
+        return (yield from run_code(function, default))
     if constant.startswith('drive:'):
         path, = _decoded('drive', constant[6:])
-        return host.drive((yield from expand_constants(path, host, custom)))
+        return host.drive((yield from expand_constants(path, host, custom, run_code)))
     if constant.startswith('cm:'):
-        return (yield from _expand_message_constant(constant[3:], host, custom))
+        return (yield from _expand_message_constant(constant[3:], host, custom, run_code))
     if custom is not None and constant and (value := custom.get(constant)) is not None:
         return value
     raise ConstantError(F'Unknown constant "{original}"')
@@ -416,6 +438,7 @@ def _expand_registry_constant(
     parameter: str,
     host: ConstantHost,
     custom: Mapping[str, str] | None,
+    run_code: CodeRunner | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `reg:HKxx\\Key,Value|Default`. The root may end in 32 or 64 for a registry view.
@@ -438,11 +461,11 @@ def _expand_registry_constant(
     if value is None:
         raise ConstantError('Failed to parse "reg" constant')
     key, value, default = _decoded('reg', key, value, default or '')
-    default = yield from expand_constants(default, host, custom)
-    key = yield from expand_constants(key, host, custom)
+    default = yield from expand_constants(default, host, custom, run_code)
+    key = yield from expand_constants(key, host, custom, run_code)
     if not host.registry(root, view, key):
         return default
-    value = yield from expand_constants(value, host, custom)
+    value = yield from expand_constants(value, host, custom, run_code)
     return host.registry_value(root, view, key, value, default)
 
 
@@ -450,6 +473,7 @@ def _expand_ini_constant(
     parameter: str,
     host: ConstantHost,
     custom: Mapping[str, str] | None,
+    run_code: CodeRunner | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `ini:File,Section,Key|Default`; Setup expands all four parts in this order.
@@ -463,7 +487,7 @@ def _expand_ini_constant(
         raise ConstantError('Failed to parse "ini" constant')
     parts = []
     for part in _decoded('ini', file, section, key, default or ''):
-        parts.append((yield from expand_constants(part, host, custom)))
+        parts.append((yield from expand_constants(part, host, custom, run_code)))
     file, section, key, default = parts
     return host.ini_value(file, section, key, default)
 
@@ -472,6 +496,7 @@ def _expand_message_constant(
     parameter: str,
     host: ConstantHost,
     custom: Mapping[str, str] | None,
+    run_code: CodeRunner | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `cm:Name,Argument,...`: the name is taken as written, each of up to nine arguments is
@@ -482,7 +507,7 @@ def _expand_message_constant(
     while rest is not None and len(arguments) < 9:
         argument, rest = split_constant_parameter(rest, ',')
         argument, = _decoded('cm', argument)
-        arguments.append((yield from expand_constants(argument, host, custom)))
+        arguments.append((yield from expand_constants(argument, host, custom, run_code)))
     if (message := host.custom_message(name)) is None:
         raise ConstantError(F'Unknown custom message name "{name}" in "cm" constant')
     return host.format_message(message, arguments)

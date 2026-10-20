@@ -2839,6 +2839,25 @@ class InnoStreams(NamedTuple):
     Uninstaller: InnoStream
 
 
+def _archive_config():
+    """
+    The configuration of the machine that an archive assumes when it names its files: the folders
+    and names are the constants that stand for them.
+    """
+    from refinery.lib.inno.emulator import IFPSEmulatorConfig
+    return IFPSEmulatorConfig(
+        temp_path='{tmp}',
+        user_name='{user}',
+        host_name='{host}',
+        inno_name='{name}',
+        executable='{exe}',
+        install_to='{app}',
+        log_mutexes=False,
+        log_opcodes=False,
+        log_passwords=True,
+    )
+
+
 def _setup_program_release(view: memoryview, offset: int, version: InnoVersion) -> tuple[int, int, int] | None:
     """
     The release that the setup program at the given offset of an installer names in its text
@@ -3043,22 +3062,48 @@ class InnoArchive:
         self.streams = InnoStreams(*result.streams)
         self.script_codec = 'latin1' if version.unicode else codec
 
+        for file in self.files:
+            try:
+                path = self.expand_constants(file.path)
+            except Exception as error:
+                self._log_warning(F'keeping the constants of {file.path}: {exception_to_string(error)}')
+                path = file.path
+            path = path.replace('\\', '/')
+            drive, colon, path = path.rpartition(':/')
+            if colon and len(drive) == 1:
+                path = F'{drive}/{path}'
+            file.path = F'data/{path}'
+
+    def expand_constants(self, text: str) -> str:
+        """
+        Expands the constants in a text of the installer as Setup would on the machine that the
+        archive assumes, whose folders and names are the constants that stand for them. A code
+        constant runs the script when the emulator can run it and fails otherwise.
+        """
+        if (emulator := self._script_emulator) is not None:
+            return emulator.reset().expand_constant(text)
+        expansion = self._constants_without_script.expand(text)
         try:
-            emulator = self.emulator
-        except Exception:
-            emulator = None
-        if emulator is not None:
-            for file in self.files:
-                try:
-                    path = emulator.reset().expand_constant(file.path)
-                except Exception as error:
-                    self._log_warning(F'keeping the constants of {file.path}: {exception_to_string(error)}')
-                    path = file.path
-                path = path.replace('\\', '/')
-                drive, colon, path = path.rpartition(':/')
-                if colon and len(drive) == 1:
-                    path = F'{drive}/{path}'
-                file.path = F'data/{path}'
+            while True:
+                next(expansion)
+        except StopIteration as done:
+            return done.value
+
+    @cached_property
+    def _script_emulator(self):
+        try:
+            return self.emulator
+        except Exception as error:
+            self._log_comment(F'the script cannot be emulated: {exception_to_string(error)}')
+            return None
+
+    @cached_property
+    def _constants_without_script(self):
+        from refinery.lib.inno.host import HostSetup, SetupConstants
+        from refinery.lib.inno.wizard import WizardForm
+        config = _archive_config()
+        setup = HostSetup.of_installer(self, config)
+        return SetupConstants(setup, config, WizardForm(uninstallable=setup.uninstallable.answer is not False))
 
     @cached_property
     def emulator(self):
@@ -3067,21 +3112,8 @@ class InnoArchive:
         """
         if self.ifps is None:
             return None
-        from refinery.lib.inno.emulator import (
-            IFPSEmulatorConfig,
-            InnoSetupEmulator,
-        )
-        return InnoSetupEmulator(self, IFPSEmulatorConfig(
-            temp_path='{tmp}',
-            user_name='{user}',
-            host_name='{host}',
-            inno_name='{name}',
-            executable='{exe}',
-            install_to='{app}',
-            log_mutexes=False,
-            log_opcodes=False,
-            log_passwords=True,
-        ))
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        return InnoSetupEmulator(self, _archive_config())
 
     @cached_property
     def release(self) -> SetupRelease:

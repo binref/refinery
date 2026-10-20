@@ -12,7 +12,6 @@ import ntpath
 import re
 
 from dataclasses import dataclass
-
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -83,7 +82,8 @@ from refinery.lib.inno.wizard import (
 from refinery.lib.tools import exception_to_string
 
 if TYPE_CHECKING:
-    from refinery.lib.inno.emulator import HostSetup, IFPSEmulatorConfig
+    from refinery.lib.inno.emulator import IFPSEmulatorConfig
+    from refinery.lib.inno.host import HostSetup
     from refinery.lib.inno.ifps import Function, IFPSFile
 
 _E = TypeVar('_E')

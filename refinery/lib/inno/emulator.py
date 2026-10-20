@@ -41,21 +41,11 @@ from typing import (
 
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, expressions, pascal
-from refinery.lib.inno.archive import (
-    Architecture,
-    AutoBool,
-    Flags,
-    InnoArchive,
-    InnoVersion,
-    LanguageDetection,
-    SetupDirective,
-    TSetup,
-    YesNoDirective,
-)
+from refinery.lib.inno.archive import InnoArchive
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
-from refinery.lib.inno.delphi.runtime import Platform, Runtime, Win32, Win64
+from refinery.lib.inno.delphi.runtime import Platform
 from refinery.lib.inno.delphi.variants import Variant, VarType
 from refinery.lib.inno.emulation import (
     AbortEmulation,
@@ -76,6 +66,13 @@ from refinery.lib.inno.emulation import (
     NewMutex,
     NewPassword,
     OpCodeNotImplemented,
+)
+from refinery.lib.inno.host import (
+    HostSetup,
+    SetupConstants,
+    architecture,
+    machine_folders,
+    processor,
 )
 from refinery.lib.inno.ifps import (
     TC,
@@ -109,8 +106,7 @@ from refinery.lib.inno.installation import (
     SetupEntries,
 )
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
-from refinery.lib.inno.pathfunc import PathFunc, PathFuncError, expand_file_name
-from refinery.lib.inno.release import SetupRelease
+from refinery.lib.inno.pathfunc import PathFuncError, expand_file_name
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
@@ -123,7 +119,6 @@ from refinery.lib.inno.wizard import (
     comma_strings,
     comma_text,
     list_contains,
-    same_text,
 )
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
@@ -746,376 +741,23 @@ def _incompatible_call(handler: IFPSEmulatedFunction, argc: int, void: bool) -> 
     return F'the emulation takes {shape(handler.argc, handler.void)}, the call passes {shape(argc, void)}'
 
 
-@dataclass(frozen=True)
-class HostSetup:
+def _check_agreement(setup: HostSetup, ifps: IFPSFile, config: IFPSEmulatorConfig, source: str):
     """
-    What the Setup that runs the script decides on its own, read once from the setup header and the
-    configuration: its version, the active language, the directives that the installation
-    follows, the pages that the header makes it skip, its install mode, and how its release behaves
-    where releases differ. A bare script has no header; it is taken to run under the Setup of the
-    configured version, or the current Setup without one, with every page shown and every directive
-    that sends an event on, so that each event that the script handles is sent, and in the install
-    mode that its Setup has without the directive. The script tells which Pascal Script compiled
-    it and for which platform; the version and the platform of an installer, the configured
-    version, and the configured Windows must agree.
+    Refuses a script that its Setup cannot run: a script of a 64-bit Setup on 32-bit Windows, a
+    release that contradicts the Pascal Script that compiled the script, and an installer whose
+    platform is not the script's.
     """
-    version: InnoVersion | None
-    release: SetupRelease
-    language: int | None
-    language_name: str
-    dialect: Dialect
-    platform: Platform
-    install_mode: InstallMode
-    restart_manager: bool
-    uninstallable: SetupDirective
-    uninstall_key: SetupDirective
-    changes_environment: SetupDirective
-    changes_associations: SetupDirective
-    always_restart: bool
-    header_password: bool
-    welcome_page_disabled: bool
-    license_text: bool
-    info_before_text: bool
-    user_info_page: bool
-    dir_page_disabled: bool
-    group_page_disabled: bool
-    ready_page_disabled: bool
-    ready_memo_disabled: bool
-    info_after_text: bool
-    finished_page_disabled: bool
-
-    @property
-    def path_func(self) -> PathFunc:
-        """
-        Setup's path functions.
-        """
-        return PathFunc.of(self.release)
-
-    @property
-    def page_changes_only(self) -> bool:
-        """
-        Setup calls `CurPageChanged` only when the page changes, as Inno Setup 6.5 does.
-        """
-        return self.release.since((6, 5, 0)) and not self.release.since((6, 6, 0))
-
-    @property
-    def prepares_with_selection(self) -> bool:
-        """
-        The preparing page passes the selected components and tasks to its scans; 5.5.0 passes
-        lists that are still empty.
-        """
-        return self.release.since((5, 5, 1))
-
-    @property
-    def registers_close_applications_resources(self) -> bool:
-        """
-        The restart manager's scan calls `RegisterExtraCloseApplicationsResources`, from 5.5.2 on.
-        """
-        return self.release.since((5, 5, 2))
-
-    @property
-    def evaluates_change_directives(self) -> bool:
-        """
-        The directives `ChangesEnvironment` and `ChangesAssociations` may be expressions, from
-        6.0.0 on.
-        """
-        return self.release.since((6, 0, 0))
-
-    @property
-    def downloads_archives(self) -> bool:
-        """
-        The preparing page downloads the archives to extract, from 6.5.0 on.
-        """
-        return self.release.since((6, 5, 0))
-
-    @property
-    def download_tests_components_as_tasks(self) -> bool:
-        """
-        The download of archives tests the components of an entry as its tasks, in 6.5.0 and
-        6.5.1.
-        """
-        return self.release.since((6, 5, 0)) and not self.release.since((6, 5, 2))
-
-    @property
-    def run_working_dir_always(self) -> bool:
-        """
-        A run entry expands its working directory before it tests whether its file exists, from
-        7.0.0 on; earlier Setups expand it only to start the program.
-        """
-        return self.release.since((7, 0, 0))
-
-    @classmethod
-    def of(
-        cls,
-        archive: InnoArchive | None,
-        ifps: IFPSFile,
-        config: IFPSEmulatorConfig,
-    ) -> HostSetup:
-        dialect = ifps.dialect
-        platform = ifps.platform
-        if platform is Platform.Win64 and not config.x64:
-            raise ValueError('The script runs in a 64-bit Setup, which 32-bit Windows does not run.')
-        if archive is None:
-            if (configured := config.setup_version) is None:
-                release = SetupRelease.current()
-            else:
-                release = SetupRelease.exactly(configured)
-            _check_generation(release, dialect, 'The configured Setup version')
-            return cls(
-                version=None,
-                release=release,
-                language=None,
-                language_name=config.language,
-                dialect=dialect,
-                platform=platform,
-                install_mode=InstallMode(platform is Platform.Win64 and config.x64),
-                restart_manager=True,
-                uninstallable=SetupDirective(True),
-                uninstall_key=SetupDirective(True),
-                changes_environment=SetupDirective(False),
-                changes_associations=SetupDirective(False),
-                always_restart=False,
-                header_password=True,
-                welcome_page_disabled=False,
-                license_text=True,
-                info_before_text=True,
-                user_info_page=True,
-                dir_page_disabled=False,
-                group_page_disabled=False,
-                ready_page_disabled=False,
-                ready_memo_disabled=False,
-                info_after_text=True,
-                finished_page_disabled=False,
-            )
-        setup_info = archive.setup_info
-        version = archive.version
-        header = setup_info.Header
-        flags = header.Flags
-        language = _active_language(setup_info, config)
-        texts = setup_info.wizard_texts(language)
-        release = archive.release
-        _check_generation(release, dialect, 'The installer')
-        if header.is_64bit != (platform is Platform.Win64):
-            setup = '64-bit' if header.is_64bit else '32-bit'
-            raise ValueError(F'The installer is a {setup} Setup, but its script was compiled for {platform.name}.')
-        return cls(
-            version=version,
-            release=release,
-            language=language,
-            language_name=setup_info.Languages[language].Name if language is not None else config.language,
-            dialect=dialect,
-            platform=platform,
-            install_mode=_install_mode(header.ArchitecturesInstallIn64BitMode, config.x64),
-            restart_manager=bool(flags & Flags.CloseApplications) and config.windows_os_version >= (6, 0),
-            uninstallable=header.directive(YesNoDirective.Uninstallable),
-            uninstall_key=header.directive(YesNoDirective.CreateUninstallRegKey),
-            changes_environment=header.directive(YesNoDirective.ChangesEnvironment),
-            changes_associations=header.directive(YesNoDirective.ChangesAssociations),
-            always_restart=bool(flags & Flags.AlwaysRestart),
-            header_password=bool(flags & Flags.Password),
-            welcome_page_disabled=bool(flags & Flags.DisableWelcomePage),
-            license_text=bool(texts.license),
-            info_before_text=bool(texts.info_before),
-            user_info_page=bool(flags & Flags.UserInfoPage),
-            dir_page_disabled=header.DisableDirPage == AutoBool.Yes or not flags & Flags.CreateAppDir,
-            group_page_disabled=header.DisableProgramGroupPage == AutoBool.Yes,
-            ready_page_disabled=bool(flags & Flags.DisableReadyPage),
-            ready_memo_disabled=bool(flags & Flags.DisableReadyMemo),
-            info_after_text=bool(texts.info_after),
-            finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
-        )
-
-    def runtime(self, settings: numbers.FormatSettings) -> Runtime:
-        """
-        The run-time library of a new process of this Setup.
-        """
-        if self.platform is Platform.Win64:
-            return Win64(settings)
-        return Win32(settings, _control_word(self.release))
-
-
-class InstallMode(NamedTuple):
-    """
-    Whether Setup installs in 64-bit mode; the registry view and the folders of the .NET Framework
-    that Setup reads follow it. When the emulator cannot decide the mode, `bits64` is `None` and
-    `reason` says why; every value that depends on the mode then fails as a value that the emulator
-    does not have.
-    """
-    bits64: bool | None
-    reason: str = ''
-
-    def decided(self) -> bool:
-        if (bits64 := self.bits64) is None:
-            raise NotImplementedError(F'The emulator cannot decide the install mode: {self.reason}')
-        return bits64
-
-
-class TSetupProcessorArchitecture(int, Enum):
-    """
-    An IFPS enumeration that classifies different processor architectures.
-    """
-    paUnknown = 0
-    paX86 = auto()
-    paX64 = auto()
-    paArm32 = auto()
-    paArm64 = auto()
-
-
-_ARCHITECTURES: dict[str, tuple[TSetupProcessorArchitecture, bool]] = {
-    'arm32compatible' : (TSetupProcessorArchitecture.paArm32, True),
-    'arm64'           : (TSetupProcessorArchitecture.paArm64, False),
-    'x64'             : (TSetupProcessorArchitecture.paX64, False),
-    'x64os'           : (TSetupProcessorArchitecture.paX64, False),
-    'x64compatible'   : (TSetupProcessorArchitecture.paX64, True),
-    'x86'             : (TSetupProcessorArchitecture.paX86, False),
-    'x86os'           : (TSetupProcessorArchitecture.paX86, False),
-    'x86compatible'   : (TSetupProcessorArchitecture.paX86, True),
-}
-"""
-Setup's architecture identifiers: the architecture each one names, and whether it asks for a
-machine that runs code of that architecture rather than for a processor of it.
-"""
-
-
-def _processor(x64: bool) -> TSetupProcessorArchitecture:
-    """
-    The processor of the emulated machine.
-    """
-    return TSetupProcessorArchitecture.paX64 if x64 else TSetupProcessorArchitecture.paX86
-
-
-def _architecture(name: str, x64: bool) -> bool:
-    """
-    Setup's `EvalArchitectureIdentifier` on the emulated machine: `win64` is 64-bit Windows, a
-    compatible identifier holds when the machine runs code of the architecture, any other one when
-    the processor is of the architecture.
-    """
-    if name == 'win64':
-        return x64
-    try:
-        architecture, compatible = _ARCHITECTURES[name]
-    except KeyError:
-        raise expressions.ExpressionError(F'Unknown architecture \'{name}\'') from None
-    if compatible:
-        return architecture is TSetupProcessorArchitecture.paX86 or architecture is _processor(x64)
-    return architecture is _processor(x64)
-
-
-def _install_mode(directive: str | Architecture, x64: bool) -> InstallMode:
-    """
-    The install mode of Setup on the emulated machine: from 6.3.0 on, 64-bit when the expression of
-    architecture identifiers holds; earlier, when the processor is in the set. Setup evaluates the
-    expression on every machine and ends when it holds on 32-bit Windows; the emulator then goes
-    on in 32-bit mode.
-    """
-    if isinstance(directive, Architecture):
-        return InstallMode(x64 and Architecture.X64 in directive)
-    if not directive:
-        return InstallMode(False)
-    try:
-        holds = expressions.decide(directive, lambda name: _architecture(name, x64))
-    except expressions.ExpressionError as error:
-        return InstallMode(None, str(error))
-    except RecursionError:
-        return InstallMode(None, 'the expression nests deeper than Python can follow')
-    return InstallMode(x64 and holds)
-
-
-def _check_generation(release: SetupRelease, dialect: Dialect, source: str):
-    """
-    Refuses a release that contradicts the Pascal Script that compiled the script.
-    """
-    if release.is_current or release.since((7, 0, 0)) == (dialect is Dialect.Inno7):
-        return
-    compiler = 'Inno Setup 7 or later' if dialect is Dialect.Inno7 else 'a version of Inno Setup before 7'
-    raise ValueError(F'{source} names Inno Setup {release}, but the script was compiled by {compiler}.')
-
-
-def _control_word(release: SetupRelease) -> int:
-    """
-    The control word of the x87 that a 32-bit Setup runs the script with: Delphi 12, which builds
-    Inno Setup from 6.4.3 on, masks every exception.
-    """
-    if release.since((6, 4, 3)):
-        return x87.MASKED_CONTROL_WORD
-    return x87.DEFAULT_CONTROL_WORD
-
-
-def _active_language(setup_info: TSetup, config: IFPSEmulatorConfig) -> int | None:
-    """
-    The index of the language that Setup activates when the user accepts its choice, as Setup's
-    `DetermineDefaultLanguage` finds it: the language with the configured name, which stands for
-    the `/LANG=` parameter of Setup and is compared without case; else the language whose ID is
-    the user's language, else the first whose primary language matches, else the first one. The
-    configured language ID stands for both the language of the user interface and the locale.
-    """
-    if not (languages := setup_info.Languages):
-        return None
-    chosen = config.language
-    for index, language in enumerate(languages):
-        if same_text(language.Name, chosen):
-            return index
-    if setup_info.Header.LanguageDetection == LanguageDetection.Nothing:
-        return 0
-    wanted = config.lcid
-    for index, language in enumerate(languages):
-        if language.LanguageId.Value == wanted:
-            return index
-    for index, language in enumerate(languages):
-        lcid = language.LanguageId.Value
-        if lcid & 0x3FF != wanted & 0x3FF:
-            continue
-        if wanted & 0x3FF != 0x04 or (lcid in (0x0804, 0x1004)) == (wanted in (0x0804, 0x1004)):
-            return index
-    return 0
-
-
-class _EmulatedConstants:
-    """
-    The `refinery.lib.inno.constants.ConstantHost` that the emulator stands for when it expands
-    constants for a run of the script, or for no run.
-    """
-    def __init__(self, emulator: IFPSEmulator, caller: _ScriptRun | None):
-        self.emulator = emulator
-        self.caller = caller
-        setup = emulator.setup
-        self.release = setup.release
-        self.admin = emulator.config.admin
-        self.win64 = emulator.config.x64
-
-    def constant(self, name: str, original: str) -> str:
-        return self.emulator.constant_value(name, original)
-
-    def environment(self, name: str, has_default: bool) -> str:
-        if (value := self.emulator.config.environment.get(name)) is not None:
-            return value
-        return '' if has_default else F'%{name}%'
-
-    def registry(self, root: str, view: int | None, key: str) -> bool:
-        return self.emulator.registry_key_exists(key)
-
-    def registry_value(self, root: str, view: int | None, key: str, value: str, default: str) -> str:
-        return default
-
-    def ini_value(self, file: str, section: str, key: str, default: str) -> str:
-        return default
-
-    def parameter(self, name: str, default: str) -> str:
-        return default
-
-    def custom_message(self, name: str) -> str | None:
-        return self.emulator.custom_message(name)
-
-    def format_message(self, message: str, arguments: list[str]) -> str:
-        return self.emulator.FmtMessage(message, arguments)
-
-    def drive(self, path: str) -> str:
-        return self.emulator.setup.path_func.extract_drive(path)
-
-    def run_code(self, function: str, argument: str):
-        emulator = self.emulator
-        value = yield from emulator.call_by_name(function, [argument], CODE_CONSTANT, self.caller)
-        return str(value)
+    platform = ifps.platform
+    if platform is Platform.Win64 and not config.x64:
+        raise ValueError('The script runs in a 64-bit Setup, which 32-bit Windows does not run.')
+    release = setup.release
+    dialect = ifps.dialect
+    if not release.is_current and release.since((7, 0, 0)) != (dialect is Dialect.Inno7):
+        compiler = 'Inno Setup 7 or later' if dialect is Dialect.Inno7 else 'a version of Inno Setup before 7'
+        raise ValueError(F'{source} names Inno Setup {release}, but the script was compiled by {compiler}.')
+    if setup.platform is not platform:
+        kind = '64-bit' if setup.platform is Platform.Win64 else '32-bit'
+        raise ValueError(F'The installer is a {kind} Setup, but its script was compiled for {platform.name}.')
 
 
 class IFPSEmulatedFunction(NamedTuple):
@@ -1405,11 +1047,15 @@ class IFPSEmulator:
             ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
-            self.setup = HostSetup.of(archive, ifps, config)
+            self.setup = HostSetup.of_installer(archive, config)
+            source = 'The installer'
         else:
             self.setup_info = None
             ifps = archive
-            self.setup = HostSetup.of(None, ifps, config)
+            self.setup = HostSetup.of_bare_script(ifps.platform, config)
+            source = 'The configured Setup version'
+        _check_agreement(self.setup, ifps, config, source)
+        self.dialect = ifps.dialect
         self.ifps = ifps
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
@@ -1423,18 +1069,23 @@ class IFPSEmulator:
     def __repr__(self):
         return self.__class__.__name__
 
-    def reset(self):
+    def reset(self, walked: bool = False):
         """
         Reset the emulator timing, the state of the Delphi run-time library, and mutexes. The
-        script starts over with new global variables that hold their default values.
+        script starts over with new global variables that hold their default values, in a new Setup
+        process with a new wizard form, which Setup walks through when `walked` is set.
         """
         self.seconds_slept = 0.0
         self.clock = 0
         self.runtime = self.setup.runtime(numbers.FormatSettings.of_locale(self.config.lcid))
-        self.machine = pascal.Machine(self.setup.dialect, self.runtime)
+        self.machine = pascal.Machine(self.dialect, self.runtime)
         self.mutexes.clear()
-        self.wizard_form = wizard = WizardForm()
-        wizard.uninstaller_named = self.setup.uninstallable.answer is not False
+        self.wizard_form = wizard = WizardForm(
+            walked=walked,
+            entries_known=self.setup_info is not None,
+            uninstallable=self.setup.uninstallable.answer is not False,
+        )
+        self.constants = SetupConstants(self.setup, self.config, wizard, self.machine_folders)
         self.current_folder = CurrentFolder(self.setup.path_func.extract_dir(self.config.executable))
         self.installed = InstalledPaths(self.current_folder)
         self.current_file: CurrentFile | None = None
@@ -1512,7 +1163,7 @@ class IFPSEmulator:
         Emulate a function call to the given function, passing the given arguments. The method
         returns the return value of the emulated function call if it is not a procedure.
         """
-        return (yield from self._timed(self._execute(_ScriptRun(self.setup.dialect), function, args)))
+        return (yield from self._timed(self._execute(_ScriptRun(self.dialect), function, args)))
 
     def _timed(self, emulation: Generator[Any, Any, _T], max_seconds: float | None = None) -> Generator[Any, Any, _T]:
         """
@@ -2048,35 +1699,35 @@ class IFPSEmulator:
 
     @external()
     def IsArm32Compatible(self) -> bool:
-        return _architecture('arm32compatible', self.config.x64)
+        return architecture('arm32compatible', self.config.x64)
 
     @external()
     def IsArm64(self) -> bool:
-        return _architecture('arm64', self.config.x64)
+        return architecture('arm64', self.config.x64)
 
     @external()
     def IsX64(self) -> bool:
-        return _architecture('x64', self.config.x64)
+        return architecture('x64', self.config.x64)
 
     @external()
     def IsX64OS(self) -> bool:
-        return _architecture('x64os', self.config.x64)
+        return architecture('x64os', self.config.x64)
 
     @external()
     def IsX64Compatible(self) -> bool:
-        return _architecture('x64compatible', self.config.x64)
+        return architecture('x64compatible', self.config.x64)
 
     @external()
     def IsX86(self) -> bool:
-        return _architecture('x86', self.config.x64)
+        return architecture('x86', self.config.x64)
 
     @external()
     def IsX86OS(self) -> bool:
-        return _architecture('x86os', self.config.x64)
+        return architecture('x86os', self.config.x64)
 
     @external()
     def IsX86Compatible(self) -> bool:
-        return _architecture('x86compatible', self.config.x64)
+        return architecture('x86compatible', self.config.x64)
 
     @external(alias=[
         'Debugging',
@@ -2106,7 +1757,7 @@ class IFPSEmulator:
             raise IFPSException(
                 _OUT_OF_STRING_RANGE,
                 PSError.CustomError,
-                failed_call=self.setup.dialect is Dialect.Inno6,
+                failed_call=self.dialect is Dialect.Inno6,
             )
         return text[index - 1]
 
@@ -2152,148 +1803,25 @@ class IFPSEmulator:
         return True
 
     @cached_property
-    def constant_map(self) -> dict[str, str]:
+    def machine_folders(self) -> dict[str, str]:
         """
-        The values of the constants without parameters on the emulated machine, by the names that
-        Setup reads them as. Names whose value depends on the version of Windows, on the setup or on
-        the progress of the installation are decided by `constant_value`.
+        The folders of the emulated machine, which every Setup process of this emulator shares.
         """
-        cfg = self.config
-        tmp = cfg.temp_path
-        if not tmp:
-            tmp = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=5))
-            tmp = RF'C:\Windows\Temp\IS-{tmp}'
-        user = RF'C:\Users\{cfg.user_name}'
-        map = {
-            'app'               : cfg.install_to,
-            'win'               : R'C:\Windows',
-            'sys'               : R'C:\Windows\System32',
-            'src'               : self.setup.path_func.extract_dir(cfg.executable),
-            'sd'                : R'C:',
-            'tmp'               : tmp,
-            'commonfonts'       : R'C:\Windows\Fonts',
-            'dotnet11'          : R'C:\Windows\Microsoft.NET\Framework\v1.1.4322',
-            'dotnet2032'        : R'C:\Windows\Microsoft.NET\Framework\v2.0.50727',
-            'dotnet4032'        : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
-            'group'             : RF'{user}\Start Menu\Programs\{cfg.inno_name}',
-            'localappdata'      : RF'{user}\AppData\Local',
-            'userappdata'       : RF'{user}\AppData\Roaming',
-            'userdesktop'       : RF'{user}\Desktop',
-            'userdocs'          : RF'{user}\Documents',
-            'userfavorites'     : RF'{user}\Favorites',
-            'commonfavorites'   : RF'{user}\Favorites',
-            'usersavedgames'    : RF'{user}\Saved Games',
-            'usersendto'        : RF'{user}\SendTo',
-            'userstartmenu'     : RF'{user}\Start Menu',
-            'userprograms'      : RF'{user}\Start Menu\Programs',
-            'userstartup'       : RF'{user}\Start Menu\Programs\Startup',
-            'usertemplates'     : RF'{user}\Templates',
-            'userpf'            : RF'{user}\AppData\Local\Programs',
-            'usercf'            : RF'{user}\AppData\Local\Programs\Common',
-            'userfonts'         : RF'{user}\AppData\Local\Microsoft\Windows\Fonts',
-            'commonappdata'     : R'C:\ProgramData',
-            'commondesktop'     : R'C:\ProgramData\Microsoft\Windows\Desktop',
-            'commondocs'        : R'C:\ProgramData\Microsoft\Windows\Documents',
-            'commonstartmenu'   : R'C:\ProgramData\Microsoft\Windows\Start Menu',
-            'commonprograms'    : R'C:\ProgramData\Microsoft\Windows\Start Menu\Programs',
-            'commonstartup'     : R'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup',
-            'commontemplates'   : R'C:\ProgramData\Microsoft\Windows\Templates',
-            'cmd'               : R'C:\Windows\System32\cmd.exe',
-            'computername'      : cfg.host_name,
-            'groupname'         : cfg.inno_name,
-            'hwnd'              : '0',
-            'wizardhwnd'        : '0',
-            'srcexe'            : cfg.executable,
-            'sysuserinfoname'   : '{sysuserinfoname}',
-            'sysuserinfoorg'    : '{sysuserinfoorg}',
-            'userinfoname'      : '{userinfoname}',
-            'userinfoorg'       : '{userinfoorg}',
-            'userinfoserial'    : '{userinfoserial}',
-            'username'          : cfg.user_name,
-            'log'               : '',
-        }
-        if cfg.x64:
-            map['sysnative'] = R'C:\Windows\Sysnative'
-            map['syswow64'] = R'C:\Windows\SysWOW64'
-            map['commonpf32'] = R'C:\Program Files (x86)'
-            map['commoncf32'] = R'C:\Program Files (x86)\Common Files'
-            map['commonpf64'] = R'C:\Program Files'
-            map['commoncf64'] = R'C:\Program Files\Common Files'
-            map['dotnet2064'] = R'C:\Windows\Microsoft.NET\Framework64\v2.0.50727'
-            map['dotnet4064'] = R'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
-        else:
-            map['sysnative'] = R'C:\Windows\System32'
-            map['syswow64'] = R'C:\Windows\System32'
-            map['commonpf32'] = R'C:\Program Files'
-            map['commoncf32'] = R'C:\Program Files\Common Files'
-        return map
+        return machine_folders(self.setup, self.config)
 
-    def _mode_constant(self, name: str) -> str | None:
+    def code_runner(self, caller: _ScriptRun | None) -> constants.CodeRunner:
         """
-        The value of a constant that follows the install mode: the folders of programs and of shared
-        files, and the folders of the .NET Framework that Setup reads through the registry view of
-        the mode.
+        Runs the function of a code constant inside the run of the caller, or in a new run of the
+        script without one.
         """
-        if name not in ('commonpf', 'commoncf', 'dao', 'dotnet20', 'dotnet40'):
-            return None
-        bits = '64' if self.setup.install_mode.decided() else '32'
-        map = self.constant_map
-        if name == 'dao':
-            shared = map[F'commoncf{bits}']
-            return RF'{shared}\Microsoft Shared\DAO'
-        return map[F'{name}{bits}']
-
-    def constant_value(self, name: str, original: str) -> str:
-        """
-        The value of a constant without parameters, given by the name that Setup reads it as and the
-        name that the script wrote, as Setup's `ExpandIndividualConst` gives it on the emulated
-        machine at the current point of the installation.
-        """
-        wizard = self.wizard_form
-        cfg = self.config
-        if name == 'app' and not wizard.dir_chosen or name in ('group', 'groupname') and not wizard.group_chosen:
-            raise constants.ConstantError(F'An attempt was made to expand the "{original}" constant before it was initialized')
-        if name in ('commonpf64', 'commoncf64', 'dotnet2064', 'dotnet4064') and not cfg.x64:
-            raise constants.ConstantError(F'Cannot expand "{original}" constant on this version of Windows')
-        if (
-            name in ('userpf', 'usercf') and cfg.windows_os_version < (6, 1)
-            or name == 'usersavedgames' and cfg.windows_os_version < (6, 0)
-        ):
-            raise constants.ConstantError(F'Failed to expand shell folder constant "{original}"')
-        if name == 'uninstallexe':
-            if not wizard.uninstaller_named:
-                return ''
-            return self.uninstaller_path
-        if name == 'language':
-            return self.setup.language_name
-        if (value := self._mode_constant(name)) is not None:
-            return value
-        try:
-            return self.constant_map[name]
-        except KeyError:
-            raise NotImplementedError(F'The emulator has no value for the constant {original}.') from None
-
-    def custom_message(self, name: str) -> str | None:
-        """
-        The custom message with the given name, compared without case, as Setup's
-        `GetCustomMessageValue` finds it: the last one that is for all languages or for the active
-        language. The emulator does not know the messages of a bare script; the message is then the
-        constant that names it, as other values that the emulator does not know.
-        """
-        if (setup_info := self.setup_info) is None:
-            return F'{{cm:{name}}}'
-        value = None
-        folded = name.casefold()
-        for message in setup_info.CustomMessages:
-            if message.EncodedName.casefold() != folded:
-                continue
-            if (index := message.get_language_index()) == -1 or index == self.setup.language:
-                value = message.Value
-        return value
+        def run_code(function: str, argument: str) -> Generator[Any, Any, str]:
+            value = yield from self.call_by_name(function, [argument], CODE_CONSTANT, caller)
+            return str(value)
+        return run_code
 
     @external(caller=True)
     def ExpandConstant(self, string: str, caller: _ScriptRun | None = None) -> Generator[Any, Any, str]:
-        return constants.expand_constants(string, _EmulatedConstants(self, caller))
+        return self.constants.expand(string, self.code_runner(caller))
 
     @external(caller=True)
     def ExpandConstantEx(
@@ -2303,7 +1831,7 @@ class IFPSEmulator:
         custom_val: str,
         caller: _ScriptRun | None = None,
     ) -> Generator[Any, Any, str]:
-        return constants.expand_constants(string, _EmulatedConstants(self, caller), {custom_var: custom_val})
+        return self.constants.expand(string, self.code_runner(caller), {custom_var: custom_val})
 
     def expand_constant(self, string: str, custom_var: str | None = None, custom_val: str = '') -> str:
         """
@@ -2311,7 +1839,7 @@ class IFPSEmulator:
         constant. A code constant runs a function of the script; its calls are not reported.
         """
         custom = None if custom_var is None else {custom_var: custom_val}
-        expansion = EventCall(self._timed(constants.expand_constants(string, _EmulatedConstants(self, None), custom)))
+        expansion = EventCall(self._timed(self.constants.expand(string, self.code_runner(None), custom)))
         value = expansion.value
         assert value is not None
         return value
@@ -2438,19 +1966,13 @@ class IFPSEmulator:
 
     @external()
     def CustomMessage(self, msg_name: str) -> str:
-        if (message := self.custom_message(msg_name)) is None:
+        if (message := self.setup.custom_message(msg_name)) is None:
             raise DelphiException(F'Internal error: Unknown custom message name "{msg_name}"')
         return message
 
     @external()
     def FmtMessage(self, fmt: str, args: list[str]) -> str:
-        def substitute(match: re.Match[str]):
-            if (spec := match[1]) == '%':
-                return '%'
-            if (k := int(spec) - 1) < len(args):
-                return args[k]
-            return match[0]
-        return re.sub('%([1-9%])', substitute, fmt)
+        return constants.fmt_message(fmt, args)
 
     @external()
     def Format(self, fmt: str, args: Variable[list]) -> str:
@@ -2487,7 +2009,7 @@ class IFPSEmulator:
 
     @external()
     def ProcessorArchitecture(self) -> int:
-        return _processor(self.config.x64).value
+        return processor(self.config.x64).value
 
     @external()
     def GetUserNameString(self) -> str:
@@ -2882,7 +2404,7 @@ class IFPSEmulator:
 
     @external()
     def FloatToStr(self, e: x87.Real) -> str:
-        if self.setup.dialect is Dialect.Inno6:
+        if self.dialect is Dialect.Inno6:
             return numbers.str_fixed(e, 12, self.runtime.library)
         return numbers.float_to_str(e, self.runtime)
 
@@ -3126,7 +2648,7 @@ class IFPSEmulator:
         script calls: a code constant runs inside the run of the caller, as in `ExpandConstant`.
         """
         def expand(entry: object, field: EntryField, text: str) -> Generator[Any, Any, str]:
-            return constants.expand_constants(text, _EmulatedConstants(self, caller))
+            return self.constants.expand(text, self.code_runner(caller))
         return expand
 
     @external(caller=True)
@@ -3221,27 +2743,27 @@ class IFPSEmulator:
         Expands the constants in a text of the setup where Setup expands it, with the custom
         constants that Setup passes for it; each code constant runs in a new run of the script.
         """
-        return constants.expand_constants(text, _EmulatedConstants(self, None), custom)
+        return self.constants.expand(text, self.code_runner(None), custom)
 
     def registry_key_exists(self, key: str) -> bool:
         """
-        Whether a key of the emulated registry exists; the emulated registry has no keys.
+        Whether a key of the emulated registry exists.
         """
-        return False
+        return self.constants.registry('', None, key)
 
     @property
     def uninstaller_path(self) -> str:
         """
         Where Setup installs its uninstaller.
         """
-        return F'{self.config.install_to}\\unins000.exe'
+        return self.constants.uninstaller_path
 
     @property
     def temporary_directory(self) -> str:
         """
         The temporary directory of Setup, the value of `{tmp}`.
         """
-        return self.constant_map['tmp']
+        return self.constants.temporary_directory
 
     def check_time(self):
         """
@@ -3303,7 +2825,7 @@ class IFPSEmulator:
         codes = self._setup_codes()
         types = [TPrimitive(codes[kind]) for kind, _ in call.parameters]
         result = None if call.result is None else TPrimitive(codes[call.result])
-        run = _ScriptRun(self.setup.dialect, caller)
+        run = _ScriptRun(self.dialect, caller)
         return (yield from self._execute(run, function, arguments, types, result))
 
     def call_by_name(
@@ -3449,9 +2971,8 @@ class InnoSetupEmulator(IFPSEmulator):
         one of the configuration. Setup tests a password against its own before it asks the
         script; the caller can give that test as `password_test`, without it the test fails.
         """
-        self.reset()
-        self.wizard_form = wizard = WizardForm(walked=True, entries_known=self.entries is not None)
-        wizard.needs_restart = self.setup.always_restart
+        self.reset(walked=True)
+        self.wizard_form.needs_restart = self.setup.always_restart
         installation = Installation(self, self.entries, password, password_test)
         return (yield from self._timed(installation.run(), max_seconds))
 
