@@ -3443,12 +3443,17 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
     """
     A packed body writes a program's `+=`, `++` or `||=` on a global through the global's key, whose
     getter and setter both name the global: the access reads through the one and writes through the
-    other, in the order the same operator on the name reads and writes it. Where getter and setter
-    name different variables, or where the access is a `delete`, which removes the proxy object's
-    own property, or a `for-in` head, the body stays packed.
+    other, in the order the same operator on the name reads and writes it. A `for-in` or `for-of`
+    head writes through the setter alone, as a plain assignment does. Where getter and setter name
+    different variables, or where the access is a `delete`, which removes the proxy object's own
+    property, the body stays packed.
     """
 
     ACCESSORS = '({ get k() { return counter; }, set k(v) { return counter = v; } })'
+    LOOP_HEADS = (
+        'Function("p", "for (p.k in {a: 1}); console.log(p.k); for (p.k of [2]); console.log(p.k);")'
+        F'{ACCESSORS};'
+    )
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(
@@ -3488,12 +3493,29 @@ class TestAPackedCompoundWriteBecomesTheSameOperatorOnTheName(TestJsDeobfuscator
         )
         self.assertEqual(self._reflect(source), source)
 
-    def test_a_for_in_head_through_the_accessor_object_stays_packed(self):
-        source = (
-            'Function("p", "for (p.k in {a: 1}); console.log(p.k);")'
-            '({ get k() {\n  return counter;\n}, set k(v) {\n  return counter = v;\n} });'
+    def test_a_for_in_and_a_for_of_head_through_the_accessor_object_become_heads_on_the_name(self):
+        self.assertEqual(
+            self._reflect(self.LOOP_HEADS),
+            inspect.cleandoc(
+                """
+                for (counter in { a: 1 }) {
+                  ;
+                }
+                console.log(counter);
+                for (counter of [2]) {
+                  ;
+                }
+                console.log(counter);
+                """
+            ),
         )
-        self.assertEqual(self._reflect(source), source)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_node_prints_the_same_for_the_loop_heads_on_the_name(self):
+        self.assertEqual(
+            [behavior(self.LOOP_HEADS), behavior(self._reflect(self.LOOP_HEADS))],
+            [('a\n2\n', None), ('a\n2\n', None)],
+        )
 
     def test_a_write_to_a_target_the_language_refuses_stays_packed(self):
         rows = [

@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import enum
 
-from typing import Callable, Collection, NamedTuple
+from typing import Callable, Collection
 
 from refinery.lib.scripts import (
     Expression,
     Node,
-    _clone_node,
     _replace_in_parent,
     set_body,
     spells_its_source,
@@ -33,14 +32,10 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
-    enclosing_operator,
     is_direct_eval_call,
-    is_invocation_target,
-    is_simple_assignment_target,
     name_uses_in_scope,
     reference_role,
     references_new_target,
-    tolerates_unresolvable,
 )
 from refinery.lib.scripts.js.analysis.tampering import (
     denotes_function_intrinsic,
@@ -49,7 +44,6 @@ from refinery.lib.scripts.js.analysis.tampering import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     a_host_reaches_the_binding,
-    access_key,
     body_returns_undefined,
     extract_literal_value,
     get_body,
@@ -59,7 +53,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     names_this_realms_global_object,
     nothing_still_names,
     preserve_script_end_value,
-    property_key,
     reaches_script_completion,
     references_receiver_this,
     remove_declarator,
@@ -70,11 +63,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     string_value,
     walk_scope,
 )
+from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy, Reading
 from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
 from refinery.lib.scripts.js.model import (
     SCRIPT_CONTEXT,
     CodeContext,
-    JsAssignmentExpression,
     JsAwaitExpression,
     JsBlockStatement,
     JsCallExpression,
@@ -85,14 +78,10 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsObjectExpression,
-    JsProperty,
-    JsPropertyKind,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
-    JsUnaryExpression,
-    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     Statement,
@@ -439,129 +428,21 @@ def _parse_construction_function(ctor_call: Node, code: str) -> tuple[JsScript, 
     return parsed, function
 
 
-def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression | None:
-    """
-    Extract the value returned by a getter. Expected patterns:
-    - `{ return <identifier>; }` -> returns the identifier name as `str`
-    - a `typeof` expression -> returns a `refinery.lib.scripts.js.model.JsUnaryExpression` clone
-    """
-    if not isinstance(func, JsFunctionExpression):
-        return None
-    if func.body is None or not isinstance(func.body, JsBlockStatement):
-        return None
-    body = func.body.body
-    if len(body) != 1:
-        return None
-    stmt = body[0]
-    if not isinstance(stmt, JsReturnStatement) or stmt.argument is None:
-        return None
-    arg = stmt.argument
-    if isinstance(arg, JsIdentifier):
-        return arg.name
-    if (
-        isinstance(arg, JsUnaryExpression)
-        and arg.operator == 'typeof'
-        and isinstance(arg.operand, JsIdentifier)
-    ):
-        return arg
-    return None
-
-
-def _extract_setter_target(func: Expression | None) -> str | None:
-    """
-    Extract the global assigned in a setter. Expected pattern:
-
-        { return <global> = <param>; }
-
-    where the function has exactly one parameter. A setter assigning its own parameter names
-    nothing outside the setter, so it yields no target.
-    """
-    if not isinstance(func, JsFunctionExpression):
-        return None
-    if len(func.params) != 1 or not isinstance(func.params[0], JsIdentifier):
-        return None
-    param_name = func.params[0].name
-    if func.body is None or not isinstance(func.body, JsBlockStatement):
-        return None
-    body = func.body.body
-    if len(body) != 1:
-        return None
-    stmt = body[0]
-    if isinstance(stmt, JsReturnStatement):
-        expr = stmt.argument
-    elif isinstance(stmt, JsExpressionStatement):
-        expr = stmt.expression
-    else:
-        return None
-    if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
-        return None
-    if not isinstance(expr.left, JsIdentifier) or expr.left.name == param_name:
-        return None
-    if not isinstance(expr.right, JsIdentifier) or expr.right.name != param_name:
-        return None
-    return expr.left.name
-
-
-class _ProxyMapping(NamedTuple):
-    getters: dict[str, str | JsUnaryExpression]
-    setters: dict[str, str]
-
-
-def _build_proxy_mapping(
-    obj: JsObjectExpression,
-) -> _ProxyMapping | None:
-    """
-    Build getter and setter mappings from a pack proxy object. Returns `(getters, setters)` or
-    `None` if any property is malformed.
-    """
-    getters: dict[str, str | JsUnaryExpression] = {}
-    setters: dict[str, str] = {}
-    for prop in obj.properties:
-        if not isinstance(prop, JsProperty):
-            return None
-        key = property_key(prop)
-        if key is None:
-            return None
-        if prop.kind == JsPropertyKind.GET:
-            target = _extract_getter_target(prop.value)
-            if target is None:
-                return None
-            getters[key] = target
-        elif prop.kind == JsPropertyKind.SET:
-            target = _extract_setter_target(prop.value)
-            if target is None:
-                return None
-            setters[key] = target
-        else:
-            return None
-    return _ProxyMapping(getters, setters)
-
-
 def _substitute_proxy_accesses(
     parsed: JsScript,
     body_model: SemanticModel,
     param_name: str,
-    getters: dict[str, str | JsUnaryExpression],
-    setters: dict[str, str],
+    proxy: NameProxy,
 ) -> list[JsIdentifier] | None:
     """
-    Replace every free `param[key]` access in the parsed code with the name the proxy mapping
-    resolves it to, returning the replacement identifiers (a `typeof` target's operand for that
-    getter form) or `None` where resolution fails. Only a reference the body leaves free is the
-    constructed function's parameter: one a nested function binds is that function's own and is
-    left alone, while a top-level binding of the name aliases the parameter itself, which no script
-    splice reproduces, so it fails resolution — as does a free use that is not a member access,
-    since it uses the proxy object as a value. A plain read resolves to the getter target and a
-    simple `key = v` write to the setter target. A compound assignment or an update reads through
-    the getter and writes through the setter, in the order the same operator on a name reads and
-    writes it, so it resolves to the name where getter and setter both name it, which is how the
-    packer writes a program's `+=` or `++` on a global; any other such access fails, as does a
-    `delete`, which removes the proxy object's own property and leaves the name alone, a
-    `for-in`/`for-of` head, and a target the language refuses, an optional chain or a member
-    inside a literal. So does a read under `typeof` through a getter returning a name: the getter
-    reads the name and throws where nothing binds it, which `typeof` of the bare name does not
-    (`refinery.lib.scripts.js.analysis.model.tolerates_unresolvable`). A call through a getter
-    returning `eval` is an indirect `eval`, which the bare name would make direct.
+    Replace every free `param[key]` access in the parsed code with what `NameProxy.stand_in` writes
+    it as on the names, returning the identifiers written, or `None` where an access has none. Only
+    a reference the body leaves free is the constructed function's parameter: one a nested function
+    binds is that function's own and is left alone, while a top-level binding of the name aliases
+    the parameter itself, which no script splice reproduces, so it fails, as does a free use that
+    is not a member access, since it uses the proxy object as a value. A call through a method
+    reads the name after its arguments, where the call on the bare name reads it before them, and
+    fails too.
     """
     bound = body_model.root_scope.bindings.get(param_name)
     if bound is not None and bound.kind is not BindingKind.IMPLICIT_GLOBAL:
@@ -578,45 +459,11 @@ def _substitute_proxy_accesses(
         member = node.parent
         if not isinstance(member, JsMemberExpression) or member.object is not node:
             return None
-        key = access_key(member)
-        if key is None:
+        stand_in = proxy.stand_in(member)
+        if stand_in is None or stand_in.late:
             return None
-        role = reference_role(member)
-        if role is Role.READ:
-            target = getters.get(key)
-            if target is None:
-                return None
-            if isinstance(target, str):
-                if tolerates_unresolvable(member):
-                    return None
-                if target == 'eval' and is_invocation_target(member):
-                    return None
-                replacement: JsIdentifier | JsUnaryExpression = JsIdentifier(name=target)
-            else:
-                replacement = _clone_node(target)
-        elif member.optional:
-            return None
-        elif role is Role.WRITE:
-            if not is_simple_assignment_target(member) or key not in setters:
-                return None
-            replacement = JsIdentifier(name=setters[key])
-        else:
-            name = setters.get(key)
-            operator = enclosing_operator(member)
-            if (
-                not isinstance(operator, (JsAssignmentExpression, JsUpdateExpression))
-                or name is None
-                or getters.get(key) != name
-            ):
-                return None
-            replacement = JsIdentifier(name=name)
-        _replace_in_parent(member, replacement)
-        if isinstance(replacement, JsIdentifier):
-            replaced.append(replacement)
-        elif isinstance(replacement.operand, JsIdentifier):
-            replaced.append(replacement.operand)
-        else:
-            return None
+        _replace_in_parent(member, stand_in.node)
+        replaced.extend(written for written, _ in stand_in.names)
     return replaced
 
 
@@ -637,15 +484,17 @@ def _try_unpack_function_constructor(
     Parses the code string and resolves all free `p.key` accesses through the proxy mapping back to
     their original identifiers. Returns the substituted body, the names whose site resolution the
     substitution has already settled, and the identifiers the substitution introduced, or `None` if
-    the node does not match — including when the inner callee is not the free global `Function` —
-    or if any proxy access cannot be resolved. The caller must still admit the body the way every
-    reflected body is admitted; this function earns only the one exemption it returns. A getter or
-    setter target is spelled inside an accessor defined at the call site itself, so it resolves at
-    the site exactly as the accessor does, provided the substituted occurrence is still free where
-    it lands in the body — a body binding capturing one is declined in the admission — and
-    provided the packed code did not also read the name freely, in which case it stays held to
-    the global-resolution rule and is not returned. The body is read in the mode and with the goal
-    of the site in the file *model* describes.
+    the node does not match — including when the inner callee is not the free global `Function` — or
+    if any proxy access cannot be resolved. A getter answering with a literal declines the object
+    before the code is parsed: the packer writes none, and the folds write one only into an object
+    whose pack was declined already, which would otherwise be parsed again in every round. The
+    caller must still admit the body the way every reflected body is admitted; this function earns
+    only the one exemption it returns. A getter or setter target is spelled inside an accessor
+    defined at the call site itself, so it resolves at the site exactly as the accessor does,
+    provided the substituted occurrence is still free where it lands in the body — a body binding
+    capturing one is declined in the admission — and provided the packed code did not also read the
+    name freely, in which case it stays held to the global-resolution rule and is not returned. The
+    body is read in the mode and with the goal of the site in the file *model* describes.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression):
@@ -671,10 +520,9 @@ def _try_unpack_function_constructor(
         return None
     if code is None:
         return None
-    mapping = _build_proxy_mapping(proxy_obj)
-    if mapping is None:
+    proxy = NameProxy.read(proxy_obj, model)
+    if proxy is None or any(member.reading is Reading.LITERAL for member in proxy.members.values()):
         return None
-    getters, setters = mapping
     parsed = _try_parse(
         code,
         strict=model.may_run_as_strict(node),
@@ -687,7 +535,7 @@ def _try_unpack_function_constructor(
         return parsed, frozenset(), []
     body_model = build_semantic_model(parsed)
     originally_free = _body_free_names(body_model, parsed)
-    replaced = _substitute_proxy_accesses(parsed, body_model, param_name, getters, setters)
+    replaced = _substitute_proxy_accesses(parsed, body_model, param_name, proxy)
     if replaced is None:
         return None
     introduced = {ident.name for ident in replaced}
