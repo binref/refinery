@@ -224,17 +224,14 @@ class SzArchive:
                     file_idx += 1
                 if file_idx < len(files):
                     entry = files[file_idx]
-                    if substreams and (stream_offset + si) < len(substreams.unpack_sizes):
-                        entry.size = substreams.unpack_sizes[stream_offset + si]
+                    stream = stream_offset + si
+                    if substreams and stream < len(substreams.unpack_sizes):
+                        entry.size = substreams.unpack_sizes[stream]
                     elif ns == 1:
                         entry.size = folder.main_unpack_size
-                    if substreams and substreams.crcs:
-                        crc_idx = stream_offset + si
-                        if crc_idx < len(substreams.crcs) and substreams.crcs[crc_idx] is not None:
-                            entry.crc = substreams.crcs[crc_idx]
-                        elif ns == 1 and folder.crc is not None:
-                            entry.crc = folder.crc
-                    elif ns == 1 and folder.crc is not None:
+                    if substreams and stream < len(substreams.crcs):
+                        entry.crc = substreams.crcs[stream]
+                    elif ns == 1:
                         entry.crc = folder.crc
                     self._files.append(SzFile(entry, self, fi, si, position))
                     position += entry.size

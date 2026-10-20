@@ -350,6 +350,24 @@ class Test7zipFileExtractor(TestUnitBase):
             '7-zip32.dll': 'ebb037cb88bccc3ae22f46f3dbd5c9b308c31dc36002305cb4e05f56964e917b',
         })
 
+    def test_a_checksum_stored_with_its_block_does_not_shift_the_checksums_of_later_files(self):
+        """
+        7-Zip stores the checksum of a file with its block only when it updates an archive that
+        already does so. 7-Zip 26.03 wrote this archive while it updated such an archive.
+        """
+        data = base64.b64decode(
+            'N3q8ryccAAT0Rn71XwAAAAAAAACiAAAAAAAAANXDyoMBAA50aGUgZmlyc3QgZmlsZQoAAQAgdGhlIHNlY29uZCBmaWxlLCBhIGxp'
+            'dHRsZSBsb25nZXIKAAEAInRoZSB0aGlyZCBmaWxlLCBhZGRlZCBieSBhbiB1cGRhdGUKAAEEBgADCRMlJwAHCwMAASEhAQABISEB'
+            'AAEhIQEADA8hIwoAgLEexnAACAoB54tTLgscbIEAAAUDGQMAAAARNQBvAG4AZQAuAHQAeAB0AAAAdAB3AG8ALgB0AHgAdAAAAHQA'
+            'aAByAGUAZQAuAHQAeAB0AAAAFBoBAH6YG36MYN0Bfpgbfoxg3QEJxht+jGDdARUOAQAgAAAAIAAAACAAAAAAAA=='
+        )
+        files = {chunk['path']: hashlib.sha256(chunk).hexdigest() for chunk in data | self.load() | [...]}
+        self.assertEqual(files, {
+            'one.txt': '95a2c91d3a8dea036c1306b1722816367e3c5889f87219981b5ee01c7c32ae2e',
+            'two.txt': '3ff04c96b1304784d6a8d3021819360e77f42ceaba3690b2da14378473cec2d3',
+            'three.txt': 'a274dca46d517c43e9853727938953a7a7276865ae707feb7dfeda78e7a412be',
+        })
+
     def test_a_folder_whose_coder_reads_its_own_output_is_corrupt(self):
         copy = Coder(codec_id=CODEC_COPY, num_in_streams=1, num_out_streams=1, properties=b'')
         folder = Folder(

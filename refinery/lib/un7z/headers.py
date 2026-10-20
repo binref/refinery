@@ -396,8 +396,8 @@ def _parse_substreams_info(
     folders: list[Folder],
 ) -> SubstreamsInfo:
     num_unpack_streams = [1] * len(folders)
-    unpack_sizes: list[int] = []
-    crcs: list[int | None] = []
+    unpack_sizes: list[int] | None = None
+    crcs: list[int | None] | None = None
     while True:
         prop_id = reader.u8()
         if prop_id == PropertyID.END:
@@ -406,8 +406,10 @@ def _parse_substreams_info(
             for i in range(len(folders)):
                 num_unpack_streams[i] = read_7z_uint64(reader)
         elif prop_id == PropertyID.SIZE:
-            for i, folder in enumerate(folders):
-                ns = num_unpack_streams[i]
+            unpack_sizes = []
+            for ns, folder in zip(num_unpack_streams, folders):
+                if ns == 0:
+                    continue
                 subtotal = 0
                 for _ in range(ns - 1):
                     s = read_7z_uint64(reader)
@@ -415,29 +417,46 @@ def _parse_substreams_info(
                     subtotal += s
                 unpack_sizes.append(folder.main_unpack_size - subtotal)
         elif prop_id == PropertyID.CRC:
-            num_crc_streams = 0
-            for i, folder in enumerate(folders):
-                ns = num_unpack_streams[i]
-                if ns == 1 and folder.crc is not None:
-                    continue
-                num_crc_streams += ns
-            crcs = read_crcs(reader, num_crc_streams)
+            num_digests = sum(
+                ns for ns, folder in zip(num_unpack_streams, folders) if ns != 1 or folder.crc is None
+            )
+            crcs = _crcs_of_streams(folders, num_unpack_streams, read_crcs(reader, num_digests))
         else:
             skip = read_7z_uint64(reader)
             reader.seekrel(skip)
-    if not unpack_sizes:
-        for i, folder in enumerate(folders):
-            ns = num_unpack_streams[i]
+    if unpack_sizes is None:
+        unpack_sizes = []
+        for ns, folder in zip(num_unpack_streams, folders):
             if ns == 1:
                 unpack_sizes.append(folder.main_unpack_size)
             else:
-                for _ in range(ns):
-                    unpack_sizes.append(0)
+                unpack_sizes.extend([0] * ns)
+    if crcs is None:
+        crcs = _crcs_of_streams(folders, num_unpack_streams, [])
     return SubstreamsInfo(
         num_unpack_streams=num_unpack_streams,
         unpack_sizes=unpack_sizes,
         crcs=crcs,
     )
+
+
+def _crcs_of_streams(
+    folders: list[Folder],
+    num_unpack_streams: list[int],
+    digests: list[int | None],
+) -> list[int | None]:
+    """
+    One checksum for each unpack stream. A folder with a single unpack stream and a checksum of its
+    own has no entry among the digests; its stream takes the checksum of the folder.
+    """
+    remaining = iter(digests)
+    crcs: list[int | None] = []
+    for ns, folder in zip(num_unpack_streams, folders):
+        if ns == 1 and folder.crc is not None:
+            crcs.append(folder.crc)
+        else:
+            crcs.extend(next(remaining, None) for _ in range(ns))
+    return crcs
 
 
 def _parse_files_info(reader: StructReader, num_files: int) -> list[FileEntry]:
