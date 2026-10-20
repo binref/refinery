@@ -4,12 +4,19 @@ import re
 import zlib
 
 from struct import unpack
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Generator, NamedTuple
 
 from refinery.units import Unit
 
 if TYPE_CHECKING:
     from refinery.lib.ole.crypto import OleFile
+    from refinery.lib.un7z.headers import Folder
+
+
+class _SzHashcatMethod(NamedTuple):
+    data_type: int
+    coder_attributes: bytes
+    aes_properties: bytes
 
 
 class meow(Unit):
@@ -195,8 +202,10 @@ class meow(Unit):
             folder = enc.folders[0]
             pack_offset = SIGNATURE_HEADER_SIZE + enc.pack_info.pack_pos
             if any(c.codec_id == CODEC_AES256SHA256 for c in folder.coders):
+                if (method := self._hashcat_7z_method(folder)) is None:
+                    raise ValueError('7z header is encrypted with coders that hashcat cannot verify')
                 packed = bytes(view[pack_offset:pack_offset + enc.pack_info.sizes[0]])
-                return self._hash_7z_folder(folder, packed)
+                return self._hash_7z_folder(folder, method, packed)
             packed_streams: list[memoryview] = []
             offset = pack_offset
             for size in enc.pack_info.sizes:
@@ -221,48 +230,46 @@ class meow(Unit):
         for size in header.pack_info.sizes:
             pack_starts.append(offset)
             offset += size
+        substreams = header.substreams
+        encrypted = False
+        first_packed_stream = 0
+        first_stream = 0
         for fi, folder in enumerate(header.folders):
-            if any(c.codec_id == CODEC_AES256SHA256 for c in folder.coders):
-                pi = sum(
-                    len(header.folders[k].packed_indices)
-                    for k in range(fi)
-                )
-                packed = bytes(view[pack_starts[pi]:pack_starts[pi] + header.pack_info.sizes[pi]])
-                crc: int | None = folder.crc
-                crc_len: int | None = None
-                if crc is None and header.substreams and header.substreams.crcs:
-                    for sc in header.substreams.crcs:
-                        if sc is not None:
-                            crc = sc
-                            break
-                    if header.substreams.unpack_sizes:
-                        crc_len = header.substreams.unpack_sizes[0]
-                return self._hash_7z_folder(folder, packed, crc, crc_len)
+            pi = first_packed_stream
+            si = first_stream
+            first_packed_stream += len(folder.packed_indices)
+            first_stream += substreams.num_unpack_streams[fi] if substreams else 1
+            if not any(c.codec_id == CODEC_AES256SHA256 for c in folder.coders):
+                continue
+            encrypted = True
+            if (method := self._hashcat_7z_method(folder)) is None:
+                continue
+            packed = bytes(view[pack_starts[pi]:pack_starts[pi] + header.pack_info.sizes[pi]])
+            crc: int | None = folder.crc
+            crc_len: int | None = None
+            if crc is None and substreams and si < len(substreams.crcs):
+                crc = substreams.crcs[si]
+                crc_len = substreams.unpack_sizes[si]
+            return self._hash_7z_folder(folder, method, packed, crc, crc_len)
 
+        if encrypted:
+            raise ValueError('7z archive encrypts only folders whose coders hashcat cannot verify')
         raise ValueError('7z archive does not appear to be encrypted')
 
-    def _hash_7z_folder(
-        self,
-        folder,
-        packed_data: bytes,
-        override_crc: int | None = None,
-        override_crc_len: int | None = None,
-    ) -> bytes:
+    def _hashcat_7z_method(self, folder: Folder) -> _SzHashcatMethod | None:
+        """
+        Describe an encrypted folder as hashcat expects it, or return `None` if the hash cannot
+        describe it. The hash holds a single packed stream, which must be the input of the AES
+        coder, and names at most one compression method. Hashcat does not accept a filter.
+        """
         from refinery.lib.un7z.coders import (
             CODEC_AES256SHA256,
-            CODEC_ARM,
-            CODEC_ARMT,
-            CODEC_BCJ_X86,
             CODEC_BZIP2,
             CODEC_COPY,
             CODEC_DEFLATE,
-            CODEC_DELTA,
-            CODEC_IA64,
             CODEC_LZMA,
             CODEC_LZMA2,
-            CODEC_PPC,
             CODEC_PPMD,
-            CODEC_SPARC,
         )
         compressor_type = {
             CODEC_COPY    : 0,
@@ -272,29 +279,45 @@ class meow(Unit):
             CODEC_BZIP2   : 6,
             CODEC_DEFLATE : 7,
         }
-        filter_type = {
-            CODEC_BCJ_X86 : 1,
-            CODEC_PPC     : 3,
-            CODEC_IA64    : 4,
-            CODEC_ARM     : 5,
-            CODEC_ARMT    : 6,
-            CODEC_SPARC   : 7,
-            CODEC_DELTA   : 9,
-        }
 
-        aes_props: bytes = b''
-        data_type = 0
-        coder_attrs = bytearray()
+        if len(folder.packed_indices) != 1:
+            return None
 
-        for coder in folder.coders:
-            if coder.codec_id == CODEC_AES256SHA256:
+        aes_props: bytes | None = None
+        compressor: int | None = None
+        coder_attrs = b''
+
+        for index, coder in enumerate(folder.coders):
+            cid = coder.codec_id
+            if coder.num_in_streams != 1 or coder.num_out_streams != 1:
+                return None
+            if cid == CODEC_AES256SHA256:
+                if (
+                    aes_props is not None
+                    or folder.packed_indices[0] not in folder.in_streams_of(index)
+                ):
+                    return None
                 aes_props = coder.properties
-            elif coder.codec_id in compressor_type:
-                data_type |= compressor_type[coder.codec_id]
-                coder_attrs.extend(coder.properties)
-            elif coder.codec_id in filter_type:
-                data_type |= filter_type[coder.codec_id] << 4
-                coder_attrs.extend(coder.properties)
+            elif cid in compressor_type and compressor is None:
+                compressor = compressor_type[cid]
+                coder_attrs = coder.properties
+            else:
+                return None
+
+        if aes_props is None:
+            return None
+        return _SzHashcatMethod(compressor or 0, coder_attrs, aes_props)
+
+    def _hash_7z_folder(
+        self,
+        folder: Folder,
+        method: _SzHashcatMethod,
+        packed_data: bytes,
+        override_crc: int | None = None,
+        override_crc_len: int | None = None,
+    ) -> bytes:
+        aes_props = method.aes_properties
+        data_type = method.data_type
 
         if len(aes_props) < 2:
             raise ValueError('7z AES coder has no properties')
@@ -332,7 +355,7 @@ class meow(Unit):
         result = '$'.join(parts)
         if data_type > 0:
             crc_len = override_crc_len if override_crc_len is not None else unpack_size
-            result += F'${crc_len}${coder_attrs.hex()}'
+            result += F'${crc_len}${method.coder_attributes.hex()}'
         return result.encode(self.codec)
 
     def _hash_zip(self, data: bytearray) -> Generator[bytes, None, None]:

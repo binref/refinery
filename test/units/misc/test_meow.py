@@ -85,6 +85,12 @@ TEST_7Z_ARCHIVES = {
         '0R#pB0SPbw2MYlJ0wf0U2LTdO4+M}!cv1iSeb1~c3}AyC4Iv=`0096DEGPg73ITmzHQ@jN1pyfW01+1ea{y%kV*qjhWdL*lE&y}@'
         'cmQ+&000>T000006bb<V?%zOSG}_z&6$SwSAOHXW000'
     ),
+    'plain_then_encrypted_lzma2': base64.b85decode(
+        'H+sCUCma9-mk?u;(*OVf00000A^-pY00000e`Y%%0RSd+XlZjGW@&6?AZc?Tb98TVWn>_CX>@3Bb#x$MAaG%Gb9ZlYWC{TCY+jvM'
+        'RMVAIiRftH^aPm><c>0x_E{YIbi>CZzx;^+0D&_Ht}&YBr!gK*EEq{n+3w5zgF-Zb92?cagex8D?PZV=RgZWODBKx3fMk;k`tb>D'
+        ')#q^AT7dufXE}6w=8yz@mpx(bj2}>&pT0h<e3=;@y9-^u!|TjrM>wAyjr|j>FlMVJ68_kP)+6+{uUl26ggdK`U77e$@X)>T*<ucw'
+        '%z^+H21@}6fQSGG3jqKDBLe{e1zi9T000bto(ci;Znv8N00'
+    ),
 }
 
 
@@ -153,6 +159,17 @@ class TestMeow7z(TestUnitBase):
             '$7z$2$19$0$$16$0490457851fffc7dcfac2c0c60831c0d$3778371453$48$40$7c31744d1d77dc63b8ec13f9ea5e0b7691d'
             'ad1c997ca341a3c59b507f53fda418c75eb0df6405279145bd18d9e2629d7$40$00'
         ))
+
+    def test_a_file_encrypted_after_a_plain_file_is_checked_against_its_own_checksum(self):
+        self.assertEqual(self._hash('plain_then_encrypted_lzma2'), (
+            '$7z$2$19$0$$16$ca225b143393bc6065faba9817ce663a$2377073583$32$23$f26c5e9d5854d3955489e868e0f404990ee'
+            '48e3295f6591cfa74c3c723bffc89$23$00'
+        ))
+
+    def test_no_hash_when_hashcat_can_verify_no_encrypted_block(self):
+        data = self.download_sample('3abad1b4cdaf646abdfc0aa799fc768eec9860031d94aa6bddba4f5a7774994a')
+        with self.assertRaisesRegex(ValueError, 'hashcat cannot verify'):
+            bytes(data | self.load())
 
 
 class TestMeowPDF(TestUnitBase):
