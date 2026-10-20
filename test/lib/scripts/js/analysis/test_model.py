@@ -328,6 +328,21 @@ class TestSemanticModel(TestBase):
         self.assertIs(model.resolve(i_idents[-2]), binding)
         self.assertIsNone(model.resolve(i_idents[-1]))
 
+    def test_the_head_of_a_for_of_and_a_for_in_reads_the_names_their_let_and_const_bind(self):
+        for source in (
+            'var V = [1]; for (let V of V) {}',
+            'var V = {}; for (const V in V) {}',
+        ):
+            with self.subTest(source):
+                ast, model = self._model(source)
+                _, declared, read = self._idents(ast, 'V')
+                self.assertIs(model.resolve(read), model.binding_of(declared))
+
+    def test_the_extends_clause_of_a_class_expression_reads_its_own_name(self):
+        ast, model = self._model('var V = class {}; var K = class V extends V {};')
+        _, declared, read = self._idents(ast, 'V')
+        self.assertIs(model.resolve(read), model.binding_of(declared))
+
     def test_function_declaration_hoisted_and_visible_before_definition(self):
         ast, model = self._model('f(); function f(){}')
         f_use, f_decl = self._idents(ast, 'f')

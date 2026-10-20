@@ -17,20 +17,24 @@ arguments and with an object whose members stand for every name the body read, w
     }
 
 A newer form passes the object first, `flat(O, args)`, and in strict code the flat function has no
-parameters and unpacks `var [[value], O] = arguments` instead. The pass reads the wrapper, the
-object and the flat function together, writes every access through the object as the access on the
-name its member stands for (`refinery.lib.scripts.js.deobfuscation.nameproxy`), and puts the body
-back into the wrapper, with the parameters the flat function unpacked:
+parameters and unpacks its `arguments` instead:
+
+    var [[value], O] = arguments;
+
+The pass reads the wrapper, the object and the flat function together, writes every access through
+the object as the access on the name its member stands for
+(`refinery.lib.scripts.js.deobfuscation.nameproxy`), and puts the body back into the wrapper, with
+the parameters the flat function unpacked:
 
     function add(...[value]) {
       total += value;
       return twice(value);
     }
 
-The wrapper keeps its `length` of 0; where nothing reads it, the rest pattern becomes `(value)`
-(`refinery.lib.scripts.js.deobfuscation.parameters.JsRestPatternParameters`). An async function
-keeps a function of its own, whose promise settles when it did, and the flat function moves into
-the wrapper without the object instead:
+The wrapper keeps its `length` of 0 where something may read it; where nothing can
+(`refinery.lib.scripts.js.deobfuscation.parameters.function_length_unobserved`), the parameters
+are written `(value)` right away. An async function keeps a function of its own, whose promise
+settles when it did, and the flat function moves into the wrapper without the object instead:
 
     async function delayed(...args) {
       async function flat([value]) { await null; return twice(value); }
@@ -68,6 +72,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.nameproxy import NameProxy
 from refinery.lib.scripts.js.deobfuscation.parameters import (
     ParameterList,
+    function_length_unobserved,
     parameter_list,
     unpacking_moves_into_parameters,
 )
@@ -129,6 +134,10 @@ class _Plan:
     substitutions: list[tuple[JsMemberExpression, Expression]]
 
     def apply(self) -> None:
+        """
+        Make the edit. The flat function stays in the body of the program until every plan of the
+        pass is made, which then removes all of them at once.
+        """
         for member, stand_in in self.substitutions:
             _replace_in_parent(member, stand_in)
         self._move()
@@ -150,7 +159,6 @@ class _Merge(_Plan):
         assert body is not None
         set_child_list(reading.wrapper, 'params', self.parameters.build())
         set_child_list(body, 'body', reading.statements)
-        _remove_from_parent(reading.flat)
 
 
 @dataclass
@@ -170,7 +178,6 @@ class _Nest(_Plan):
             set_child_list(reading.pair, 'elements', [reading.pattern])
         else:
             set_child_list(reading.flat, 'params', [reading.pattern])
-        _remove_from_parent(reading.flat)
         _remove_from_parent(reading.declaration)
         set_child_list(body, 'body', [reading.flat, *body.body])
 
@@ -397,15 +404,16 @@ def _plan(
     merged with the wrapper reads no `this` and no `new.target`, which the call of the wrapper gives
     it, where a nested flat function is called as it was. Every name the flat function reads that
     it does not declare finds from inside the wrapper the binding it finds where it stands, and none
-    is the name of a nested flat function. The object parameter is declared once, and
-    every use of it is an access through the object that `NameProxy.stand_in` writes on a name that
+    is the name of a nested flat function. The object parameter is declared once, and every use of
+    it is an access through the object that
+    `refinery.lib.scripts.js.deobfuscation.nameproxy.NameProxy.stand_in` writes on a name that
     lands where the member's name is (`_lands`), with no call through a getter, which would pass
     the object as `this`, and with a call through a method only where the order of the name and
     the arguments does not matter (`_call_order_holds`). Where the call passes the arguments first,
     the pattern binds them before the object exists, and an access in the pattern stays. For a
     merge, the unpacking of the strict form has to mean what the parameter list means
     (`refinery.lib.scripts.js.deobfuscation.parameters.unpacking_moves_into_parameters`), and the
-    parameter list keeps the `length` of 0 the wrapper has.
+    parameter list keeps the `length` of 0 the wrapper has wherever something may read it.
     """
     model = cache.model
     reading = _read(wrapper, root, model, options)
@@ -464,11 +472,9 @@ def _plan(
         stand_in = proxy.stand_in(member)
         if stand_in is None or stand_in.receiver:
             return None
-        if stand_in.late:
-            call = member.parent
-            assert isinstance(call, JsCallExpression)
-            if not _call_order_holds(stand_in.names[0][1], call, cache):
-                return None
+        late = stand_in.late
+        if late is not None and not _call_order_holds(stand_in.names[0][1], late, cache):
+            return None
         if not all(
             _lands(written.name, accessor, member, reading, model)
             for written, accessor in stand_in.names
@@ -482,7 +488,8 @@ def _plan(
         and not unpacking_moves_into_parameters(model, reading.pattern, flat, [parameter])
     ):
         return None
-    parameters = parameter_list(reading.pattern.elements, wrapper, 0)
+    length = None if function_length_unobserved(model, wrapper, options) else 0
+    parameters = parameter_list(reading.pattern.elements, wrapper, length)
     if parameters is None:
         return None
     return _Merge(reading, substitutions, parameters)
@@ -503,7 +510,11 @@ class JsFunctionUnflattening(ScriptLevelTransformer):
                 if (plan := _plan(function, node, cache, self.options)) is not None:
                     plans.append(plan)
         taken = _apart(plans)
+        if not taken:
+            return
         for plan in taken:
             plan.apply()
-        if taken:
-            self.mark_changed()
+        moved = {id(plan.reading.flat) for plan in taken}
+        kept = [statement for statement in node.body if id(statement) not in moved]
+        set_child_list(node, 'body', kept)
+        self.mark_changed()

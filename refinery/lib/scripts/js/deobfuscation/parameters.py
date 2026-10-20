@@ -105,15 +105,15 @@ def parameter_list(
     The parameter list of *function* that binds what an unpacking of its arguments into an array
     pattern with *elements* binds, and gives it the `length` *length*; where *length* is `None`, the
     list may give it any. The answer is `None` where no list does: a pattern binding a name twice,
-    binding `arguments` or `eval`, or holding source the parser could not read; a *length* greater
-    than the elements count; and a list that is not plain names in a function whose own body says
-    `'use strict'`, which the language refuses.
+    binding `arguments` or `eval`, or holding source the parser could not read; a negative *length*
+    or one greater than the elements count; and a list that is not plain names in a function whose
+    own body says `'use strict'`, which the language refuses.
 
     The elements are parameters of their own as far as that keeps *length*, and the rest of them
     are the elements of one rest pattern after those: `(a, ...[b])` has length 1. A list of plain
     names in a sloppy function reading its own `arguments` would have the object alias the names,
     which the unpacking did not, so the list keeps a rest pattern there, with length 0 where any
-    length will do.
+    length will do, and is refused where *length* counts every name.
     """
     elements = list(elements)
     names = [name for element in elements for name in pattern_identifiers(element)]
@@ -125,14 +125,20 @@ def parameter_list(
     ):
         return None
     counted = _counted_length(elements)
-    aliasing = _arguments_may_alias(elements, function)
     plain = all(isinstance(element, JsIdentifier) for element in elements)
+    keeps_rest = (
+        plain
+        and (length is None or length == counted)
+        and _arguments_may_alias(elements, function)
+    )
     if length is None:
-        length = 0 if aliasing and plain else counted
-    if length > counted:
+        length = 0 if keeps_rest else counted
+    if not 0 <= length <= counted:
+        return None
+    if keeps_rest and length == counted:
         return None
     named = length
-    if length == counted and None not in elements and not (aliasing and plain):
+    if length == counted and None not in elements and not keeps_rest:
         named = len(elements)
     head: list[Expression] = []
     for element in elements[:named]:
@@ -244,15 +250,14 @@ def function_length_unobserved(
     """
     Whether nothing can read the `length` of *function*: every way to it is a call the text shows
     (`refinery.lib.scripts.js.analysis.model.SemanticModel.reached_only_by_shown_calls`), and no
-    name it is held in is one a host reaches.
+    name it is reached through, which is the name of its class for a constructor
+    (`refinery.lib.scripts.js.analysis.model.SemanticModel.names_reaching`), is one a host reaches.
     """
     if not model.reached_only_by_shown_calls(function):
         return False
-    names = model.function_names(function)
-    if names is None:
-        return True
     return not any(
-        a_host_reaches_the_binding(model, binding, options) for binding in names.bindings
+        a_host_reaches_the_binding(model, binding, options)
+        for binding in model.names_reaching(function)
     )
 
 

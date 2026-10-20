@@ -1651,10 +1651,16 @@ WHAT_A_VALUE_FORM_IS_ASKED = {
 }
 
 #: The same, where the stand-in and the recovered function answer differently, mapped to what Node
-#: prints for each: its name, and its name through `new`.
+#: prints for each: its name, its name through `new`, and whether the length the obfuscation
+#: records for it can be defined again, which its length helper forbids.
 WHAT_ONLY_THE_STAND_IN_ANSWERS = {
     a_dispatcher(BOTH, ['console.log(d("k1", "createF").name);']): 'fn\n',
     a_dispatcher(BOTH, ['console.log(new d("k1", "createF", "wrapF")["wk"].name);']): 'fn\n',
+    a_dispatcher(
+        BOTH,
+        ['console.log(Object.getOwnPropertyDescriptor(d("k1", "createF"), "length").configurable);'],
+        lengths='{ "k1": 2 }',
+    ): 'false\n',
 }
 
 
@@ -1664,7 +1670,7 @@ class TestAValueFormIsTheFunctionItStandsFor(TestBase):
     Where the program uses one of its functions as a value, the router hands out a stand-in that
     forwards to the entry, and the unwrap puts the recovered function there instead. The two answer
     a call alike and have the same length, which the parameter list of the recovered function keeps,
-    and differ in their name.
+    and differ in their name and in whether that length can be defined again.
     """
 
     def test_what_a_value_form_is_asked_still_prints(self):

@@ -33,11 +33,13 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBlockStatement,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionNode,
     JsIdentifier,
+    JsProperty,
     JsScript,
     JsSequenceExpression,
     JsSwitchCase,
@@ -55,13 +57,28 @@ class _Copy(NamedTuple):
 
 def _parameters(function: JsFunctionNode) -> dict[int, JsIdentifier]:
     """
-    The names the parameter list of *function* binds, by the id of the identifier declaring each.
+    The names the parameter list of *function* binds and a rename of their identifier alone gives
+    another name, by the id of the identifier declaring each. A name a shorthand property binds
+    (`_spelled_by_a_shorthand`) is left out.
     """
     params: dict[int, JsIdentifier] = {}
     for param in function.params:
         for name in pattern_identifiers(param):
-            params[id(name)] = name
+            if not _spelled_by_a_shorthand(name):
+                params[id(name)] = name
     return params
+
+
+def _spelled_by_a_shorthand(name: JsIdentifier) -> bool:
+    """
+    Whether the binding identifier *name* is written by a shorthand property of a pattern, alone or
+    with a default, as in `{ a }` or `{ a = 1 }`: the identifier is also the key the pattern reads,
+    so a parameter of another name has to read the same key.
+    """
+    holder = name.parent
+    if isinstance(holder, JsAssignmentPattern) and holder.left is name:
+        holder = holder.parent
+    return isinstance(holder, JsProperty) and holder.shorthand
 
 
 def _entry_copies(function: JsFunctionNode, model: SemanticModel) -> list[JsAssignmentExpression]:
@@ -181,12 +198,12 @@ def _declared_in_a_statement(declaration: Node) -> bool:
 def _coalescible(function: JsFunctionNode, model: SemanticModel) -> list[_Copy]:
     """
     The entry copies of *function* whose parameter can take the local's place. The parameter is a
-    plain or rest one of *function*'s own, declared by nothing else, and read by the copy and by
-    nothing else. The local holds the copied value and no other (`SemanticModel.singular_value`),
-    is declared only by declarators `remove_declarator` can take out, and its name is spelled
-    nowhere in the parameter list (`_names_in_the_parameter_list`). A sloppy body that reads its own
-    `arguments` sees the parameters through it, and moving an argument from one name to another
-    would change what a write through either one reaches.
+    name of *function*'s own parameter list (`_parameters`), declared by nothing else, and read by
+    the copy and by nothing else. The local holds the copied value and no other
+    (`SemanticModel.singular_value`), is declared only by declarators `remove_declarator` can take
+    out, and its name is spelled nowhere in the parameter list (`_names_in_the_parameter_list`). A
+    sloppy body that reads its own `arguments` sees the parameters through it, and moving an
+    argument from one name to another would change what a write through either one reaches.
     """
     if not strict_mode_at(function) and references_own_arguments(function):
         return []

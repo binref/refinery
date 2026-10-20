@@ -50,6 +50,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
     fresh_name,
+    integer_literal,
     is_valid_identifier,
     make_string_literal,
     make_undefined_expression,
@@ -80,7 +81,6 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsNullLiteral,
-    JsNumericLiteral,
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
@@ -300,9 +300,7 @@ class _TemplateReader:
         for prop in _as(lengths.right, JsObjectExpression).properties:
             prop = _as(prop, JsProperty)
             _require(_is_data_property(prop))
-            length = _as(prop.value, JsNumericLiteral).value
-            _require(length.is_integer())
-            self.lengths[_present(property_key(prop))] = int(length)
+            self.lengths[_present(property_key(prop))] = _present(integer_literal(prop.value))
 
     def _read_table(self, declarator: JsVariableDeclarator) -> None:
         self._declare(_Role.TABLE, declarator.id)
@@ -456,9 +454,8 @@ class _Entry:
         The parameter list of the recovered function with the `length` *length*, any where it is
         `None`, or `None` where no list of that length binds what the unpacking binds.
         """
-        if self.unpacking is None:
-            return None if length else ParameterList([], [])
-        return parameter_list(self.unpacking.pattern.elements, self.function, length)
+        elements = [] if self.unpacking is None else self.unpacking.pattern.elements
+        return parameter_list(elements, self.function, length)
 
     def recovered(self, name: str, parameters: ParameterList) -> JsFunctionDeclaration:
         body = self.function.body

@@ -3123,10 +3123,32 @@ class SemanticModel:
 
     def reached_only_by_shown_calls(self, function: JsFunctionNode) -> bool:
         """
-        Whether every way to *function* is a call the text shows, a test of its names or an
-        `extends` clause (`SemanticModel._calls_shown`), so that nothing reads a property of it.
+        Whether every way to *function* is a call the text shows or a test of its names
+        (`SemanticModel._calls_shown`), and no class extends it, so that nothing reads a property
+        of it: the static code of a class extending it reads its properties through `super`.
         """
-        return self._calls_shown(function)[1]
+        if not self._calls_shown(function)[1]:
+            return False
+        return not any(
+            _extended_by(read) is not None
+            for _, reads in self._shown_names(function)
+            for read in reads
+        )
+
+    def names_reaching(self, function: JsFunctionNode) -> list[Binding]:
+        """
+        The names `reached_only_by_shown_calls` follows to *function*: those of the class it
+        constructs where it is a constructor, and its own otherwise.
+        """
+        return [binding for binding, _ in self._shown_names(function)]
+
+    def _shown_names(self, function: JsFunctionNode) -> list[tuple[Binding, list[ReferenceNode]]]:
+        """
+        The names `_calls_shown` follows to *function* or to the class it constructs, each with its
+        reads.
+        """
+        held = constructed_class(function) or function
+        return [named for named in self._names_calling(held) if named is not None]
 
     def _calls_shown(self, function: JsFunctionNode) -> tuple[list[JsCallExpression | JsNewExpression], bool]:
         """
@@ -5493,6 +5515,11 @@ class _ScopeBuilder:
                 self._visit(part, scope)
 
     def _visit_for_in_of(self, node: JsForInStatement | JsForOfStatement, enclosing: Scope):
+        """
+        The loop's own `let` or `const` names are bound before its head is evaluated and hold no
+        value yet (ForIn/OfHeadEvaluation), so the object or iterable is read in the scope of the
+        loop: a name the declaration binds is read there in its dead zone, not from outside.
+        """
         left = node.left
         if isinstance(left, JsVariableDeclaration) and left.kind in (JsVarKind.LET, JsVarKind.CONST):
             scope = self._new_scope(ScopeKind.BLOCK, node, enclosing)
@@ -5500,7 +5527,7 @@ class _ScopeBuilder:
         else:
             scope = enclosing
         if node.right is not None:
-            self._visit(node.right, enclosing)
+            self._visit(node.right, scope)
         if left is not None:
             self._visit(left, scope)
         if node.body is not None:
@@ -5540,14 +5567,19 @@ class _ScopeBuilder:
             self._visit(node.body, wscope)
 
     def _visit_class(self, node: JsClassDeclaration | JsClassExpression, enclosing: Scope):
+        """
+        The `extends` clause is evaluated in the scope of the class, where the own name of a class
+        expression is bound and holds no value yet (ClassDefinitionEvaluation), so a read of that
+        name there is one in its dead zone.
+        """
         for decorator in node.decorators:
             self._visit(decorator, enclosing)
-        if node.super_class is not None:
-            self._visit(node.super_class, enclosing)
         cscope = self._new_scope(ScopeKind.CLASS, node, enclosing)
         if isinstance(node, JsClassExpression) and node.id is not None:
             self._declare(cscope, node.id.name, BindingKind.CLASS, node.id)
             self.model._node_scope[node.id] = cscope
+        if node.super_class is not None:
+            self._visit(node.super_class, cscope)
         if isinstance(node, JsClassDeclaration) and node.id is not None:
             self.model._node_scope[node.id] = enclosing
         body = node.body

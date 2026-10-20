@@ -435,14 +435,14 @@ def _substitute_proxy_accesses(
     proxy: NameProxy,
 ) -> list[JsIdentifier] | None:
     """
-    Replace every free `param[key]` access in the parsed code with what `NameProxy.stand_in` writes
-    it as on the names, returning the identifiers written, or `None` where an access has none. Only
-    a reference the body leaves free is the constructed function's parameter: one a nested function
-    binds is that function's own and is left alone, while a top-level binding of the name aliases
-    the parameter itself, which no script splice reproduces, so it fails, as does a free use that
-    is not a member access, since it uses the proxy object as a value. A call through a method
-    reads the name after its arguments, where the call on the bare name reads it before them, and
-    fails too.
+    Replace every free `param[key]` access in the parsed code with what
+    `refinery.lib.scripts.js.deobfuscation.nameproxy.NameProxy.stand_in` writes it as on the names,
+    returning the identifiers written, or `None` where an access has none. Only a reference the
+    body leaves free is the constructed function's parameter: one a nested function binds is that
+    function's own and is left alone, while a top-level binding of the name aliases the parameter
+    itself, which no script splice reproduces, so it fails, as does a free use that is not a member
+    access, since it uses the proxy object as a value. A call through a method reads the name after
+    its arguments, where the call on the bare name reads it before them, and fails too.
     """
     bound = body_model.root_scope.bindings.get(param_name)
     if bound is not None and bound.kind is not BindingKind.IMPLICIT_GLOBAL:
@@ -460,7 +460,7 @@ def _substitute_proxy_accesses(
         if not isinstance(member, JsMemberExpression) or member.object is not node:
             return None
         stand_in = proxy.stand_in(member)
-        if stand_in is None or stand_in.late:
+        if stand_in is None or stand_in.late is not None:
             return None
         _replace_in_parent(member, stand_in.node)
         replaced.extend(written for written, _ in stand_in.names)

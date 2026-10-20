@@ -3,16 +3,26 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import printed
 
-from refinery.lib.scripts.js.deobfuscation.parameters import JsRestPatternParameters
+from refinery.lib.scripts import Expression
+from refinery.lib.scripts.js.deobfuscation.parameters import JsRestPatternParameters, parameter_list
+from refinery.lib.scripts.js.model import (
+    JsArrayPattern,
+    JsFunctionDeclaration,
+    JsFunctionNode,
+    JsVariableDeclaration,
+)
+from refinery.lib.scripts.js.options import DeobfuscationOptions, ExecutionModel
+from refinery.lib.scripts.js.parser import JsParser
 
 #: Functions whose parameter list ends in a rest pattern and whose `length` nothing reads, mapped to
-#: the list the pass writes for each and to what Node prints for the program either way: the pattern
-#: alone, after a parameter, holding a default, a hole and a rest element, in strict code reading its
-#: own `arguments`, and in an arrow function.
+#: the list the pass writes for each and to what Node prints for the program either way: the
+#: pattern alone, after a parameter, holding a default, a hole and a rest element, in strict code
+#: reading its own `arguments`, and in an arrow function.
 A_REST_PATTERN_WRITTEN_AS_PARAMETERS: dict[str, tuple[str, str]] = {
     'function f(...[a, b]) { return a + b; } console.log(f(1, 2));': (
         inspect.cleandoc(
@@ -69,10 +79,10 @@ A_REST_PATTERN_WRITTEN_AS_PARAMETERS: dict[str, tuple[str, str]] = {
         ),
         '3\n',
     ),
-    "'use strict'; function f(...[a, b]) { a = 9; return arguments[0] + b; } console.log(f(1, 2));": (
+    '"use strict"; function f(...[a, b]) { a = 9; return arguments[0] + b; } console.log(f(1, 2));': (
         inspect.cleandoc(
             """
-            'use strict';
+            "use strict";
             function f(a, b) {
               a = 9;
               return arguments[0] + b;
@@ -95,13 +105,15 @@ A_REST_PATTERN_WRITTEN_AS_PARAMETERS: dict[str, tuple[str, str]] = {
 
 #: Functions whose parameter list ends in a rest pattern that the pass leaves, mapped to what Node
 #: prints for each: the `length` is read, the function is handed to a caller the text does not
-#: show, a sloppy body reads its own `arguments`, which plain names would alias, and the pattern is
-#: empty.
+#: show, a sloppy body reads its own `arguments`, which plain names would alias, the pattern is
+#: empty, and a class extending the function reads its `length` through `super`.
 A_REST_PATTERN_LEFT_AS_IT_IS: dict[str, str] = {
     'function f(...[a, b]) { return a + b; } console.log(f.length, f(1, 2));': '0 3\n',
     'function f(...[a, b]) { return a + b; } console.log([1].map(f).join());': '1\n',
     'function f(...[a, b]) { a = 9; return arguments[0] + b; } console.log(f(1, 2));': '3\n',
     'function f(...[]) { return 1; } console.log(f());': '1\n',
+    'function f(...[a, b]) { return a + b; } class B extends f { static { console.log(super.length); } }'
+    ' console.log(f(1, 2));': '0\n3\n',
 }
 
 
@@ -133,4 +145,36 @@ class TestARestPatternBecomesParameters(TestJsDeobfuscator):
         self.assertEqual(
             {source: (behavior(source), behavior(self._write(source))) for source in rows},
             {source: ((prints, None), (prints, None)) for source, prints in rows.items()},
+        )
+
+    def test_a_constructor_keeps_its_rest_pattern_where_a_host_reaches_its_class(self):
+        source = 'var C = class { constructor(...[a, b]) { this.s = a + b; } }; console.log(new C(1, 2).s);'
+        options = DeobfuscationOptions(execution=ExecutionModel.script, entrypoints=('C',))
+        self.assertEqual(
+            self._run_transformer(source, JsRestPatternParameters, options),
+            printed(source),
+        )
+
+
+class TestAParameterListHasTheLengthItIsAsked(TestBase):
+
+    @staticmethod
+    def _unpacking(source: str) -> tuple[JsFunctionNode, list[Expression | None]]:
+        function = JsParser(source).parse().body[0]
+        assert isinstance(function, JsFunctionDeclaration) and function.body is not None
+        unpacking = function.body.body[0]
+        assert isinstance(unpacking, JsVariableDeclaration)
+        pattern = unpacking.declarations[0].id
+        assert isinstance(pattern, JsArrayPattern)
+        return function, pattern.elements
+
+    def test_no_list_has_a_negative_length(self):
+        function, elements = self._unpacking('function f() { var [a, b] = p; return a + b; }')
+        self.assertIsNone(parameter_list(elements, function, -1))
+
+    def test_a_length_counting_every_name_is_refused_where_arguments_would_alias_the_names(self):
+        function, elements = self._unpacking('function f() { var [a, b] = p; arguments[0] = 9; return a; }')
+        self.assertEqual(
+            [parameter_list(elements, function, length) is None for length in (0, 1, 2)],
+            [False, False, True],
         )

@@ -76,13 +76,13 @@ class StandIn:
     identifier in it paired with the identifier inside the member it stands for. Where the name
     is found from the access must be where it is found from the member, which the caller asks;
     so are two differences the expression keeps. A call through a method reads the name after the
-    arguments, where the call on the name reads it before them (`late`), and a call through a
-    getter runs the function with the object as `this`, where the call on the name runs it with
-    none (`receiver`).
+    arguments, where the call on the name reads it before them (`late` holds that call), and a
+    call through a getter runs the function with the object as `this`, where the call on the name
+    runs it with none (`receiver`).
     """
     node: Expression
     names: list[tuple[JsIdentifier, JsIdentifier]] = field(default_factory=list)
-    late: bool = False
+    late: JsCallExpression | None = None
     receiver: bool = False
 
 
@@ -167,7 +167,8 @@ def _setter(function: JsFunctionExpression, model: SemanticModel) -> JsIdentifie
 
 def _method(function: JsFunctionExpression, model: SemanticModel) -> JsIdentifier | None:
     """
-    The name the method *function* calls with its own arguments: `(...a) { return F(...a); }`.
+    The name the method *function* calls with its own arguments, which it takes as one rest
+    parameter `a` and spreads into the call `F(...a)` it returns.
     """
     if len(function.params) != 1 or not isinstance(rest := function.params[0], JsRestElement):
         return None
@@ -200,8 +201,7 @@ class NameProxy:
     An object literal whose members stand for names, read by `NameProxy.read`.
     """
 
-    def __init__(self, literal: JsObjectExpression, members: dict[str, NameMember]):
-        self.literal = literal
+    def __init__(self, members: dict[str, NameMember]):
         self.members = members
 
     @classmethod
@@ -241,7 +241,7 @@ class NameProxy:
                 and member.stored is not None
                 and _same_name(model, member.read, member.stored)
             )
-        return cls(literal, members)
+        return cls(members)
 
     def stand_in(self, member: JsMemberExpression) -> StandIn | None:
         """
@@ -294,7 +294,7 @@ class NameProxy:
             ):
                 return None
             written = JsIdentifier(name=entry.called.name)
-            return StandIn(written, [(written, entry.called)], late=True)
+            return StandIn(written, [(written, entry.called)], late=operator)
         read = entry.read
         if read is None:
             return None

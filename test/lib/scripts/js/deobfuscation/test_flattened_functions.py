@@ -24,8 +24,8 @@ def deobfuscated(source: str) -> str:
     return deobfuscate_source(source, execution=ExecutionModel.commonjs, environment=HostEnvironment.node)
 
 
-#: Programs holding functions in the shape function flattening writes, mapped to what Node prints for
-#: each run as a CommonJS file.
+#: Programs holding functions in the shape function flattening writes, mapped to what Node prints
+#: for each run as a CommonJS file.
 FLATTENED: dict[str, Program] = {
     'setters of every write form': Program(
         a_program("""
@@ -92,6 +92,28 @@ FLATTENED: dict[str, Program] = {
             console.log(show());
             """),
         prints('outerinner'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a loop of the flat function binds the outer name it iterates with const': Program(
+        a_program("""
+            function a([], a) { var b = 0; for (const c of a["k"]) b += c; return b; }
+            function b(...b) { var d = { get "k"() { return c; } }; return a(b, d); }
+            var c = [1, 2, 3];
+            console.log(b());
+            """),
+        prints('6'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a class expression of the flat function is named like the outer name it extends': Program(
+        a_program("""
+            var V = class { tag() { return 'base'; } };
+            function F([], O) { var K = class V extends O.k {}; return new K().tag(); }
+            function W(...A) { var O = { get k() { return V; } }; return F(A, O); }
+            console.log(W());
+            """),
+        prints('base'),
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
@@ -179,6 +201,17 @@ FLATTENED: dict[str, Program] = {
             const helper = function () { return 1; };
             """),
         prints('arg', 'ReferenceError'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a call member in parentheses behind an optional access': Program(
+        a_program("""
+            function twice(x) { return x * 2; }
+            function F([v], O) { return (O?.c)(v); }
+            function run(...A) { var O = { c(...args) { return twice(...args); } }; return F(A, O); }
+            console.log(run(4));
+            """),
+        prints('8'),
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
@@ -818,7 +851,8 @@ FLATTENED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
-    'a sloppy block function in the flat body named like a member name, read after the block, its values unknown to the deobfuscation': Program(
+    'a sloppy block function in the flat body named like a member name, read after the block,'
+    ' its values unknown to the deobfuscation': Program(
         a_program("""
             var V = process.argv.length > 100 ? 1 : 'outer';
             function F([], O) { { function V() {} } return typeof O.k; }
@@ -829,7 +863,8 @@ FLATTENED: dict[str, Program] = {
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
-    'a sloppy block function in the flat body named like a member name, read before the block, its values unknown to the deobfuscation': Program(
+    'a sloppy block function in the flat body named like a member name, read before the block,'
+    ' its values unknown to the deobfuscation': Program(
         a_program("""
             var V = process.argv.length > 100 ? 1 : 'outer';
             function F([], O) { var r = typeof O.k; { function V() {} } return r; }
@@ -1179,8 +1214,8 @@ FLATTENED: dict[str, Program] = {
     ),
 }
 
-#: The rows of `FLATTENED` whose deobfuscation puts a flat body back into its wrapper or moves a flat
-#: function into it, mapped to the text it writes.
+#: The rows of `FLATTENED` whose deobfuscation puts a flat body back into its wrapper or moves a
+#: flat function into it, mapped to the text it writes.
 PUT_BACK: dict[str, str] = {
     'setters of every write form': inspect.cleandoc(
         """
@@ -1656,7 +1691,8 @@ PUT_BACK: dict[str, str] = {
             let late = 'late';
         """
     ),
-    'a getter reads a name a sloppy function body of the flat function declares by var under the same name as the wrapper': inspect.cleandoc(
+    'a getter reads a name a sloppy function body of the flat function declares by var under the'
+    ' same name as the wrapper': inspect.cleandoc(
         """
             var log = process.argv.length > 100 ? null : function(s) {
               return 'outer ' + s;
@@ -1706,8 +1742,8 @@ PUT_BACK: dict[str, str] = {
 }
 
 
-#: A file the obfuscation wrote for one program with function flattening alone, passing the arguments
-#: first, and its deobfuscation.
+#: A file the obfuscation wrote for one program with function flattening alone, passing the
+#: arguments first, and its deobfuscation.
 ARGUMENTS_FIRST = inspect.cleandoc(
     """
     async function __p_AbCC_flat_delayed([value], __p_cdXZ_flat_object) {
@@ -2302,9 +2338,10 @@ class TestAFlattenedFunctionIsPutBackTogether(TestBase):
 
 
 #: Programs whose deobfuscation behaves differently only through a shape made up for it, mapped to
-#: what Node prints for each run as a CommonJS file: a program replacing the iterator of every array,
-#: which the parameter list `(a, b)` does not run where the unpacking did, and a flat function
-#: reading the name of a class directly, whose name inside the class is a binding of its own.
+#: what Node prints for each run as a CommonJS file: a program replacing the iterator of every
+#: array, which the parameter list `(a, b)` does not run where the unpacking did, and a flat
+#: function reading the name of a class directly, whose name inside the class is a binding of its
+#: own.
 A_SHAPE_MADE_UP_FOR_THE_DEFECT = {
     'a program replacing the array iterator': Program(
         a_program("""
