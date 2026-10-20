@@ -321,15 +321,19 @@ class InnoStruct(Struct):
         if version.unicode:
             self._read_string = functools.partial(
                 reader.read_length_prefixed_utf16, bytecount=True)
+            self._decode = functools.partial(codecs.decode, encoding='utf-16le', errors='replace')
         else:
-            def _read():
-                data = reader.read_length_prefixed()
+            def _decode(data: bytes | bytearray | memoryview) -> str:
                 try:
                     return codecs.decode(data, codec)
                 except (LookupError, UnicodeDecodeError):
                     # TODO
                     return codecs.decode(data, 'latin1')
+
+            def _read():
+                return _decode(reader.read_length_prefixed())
             self._read_string = _read
+            self._decode = _decode
 
 
 class CheckSumType(enum.IntEnum):
@@ -507,12 +511,16 @@ class CompressionMethod(enum.IntEnum):
 
 
 class Architecture(enum.IntFlag):
-    Unknown = 0b00000 # noqa
-    X86     = 0b00001 # noqa
-    AMD64   = 0b00010 # noqa
-    IA64    = 0b00100 # noqa
-    ARM64   = 0b01000 # noqa
-    All     = 0b01111 # noqa
+    """
+    A set of processor architectures as Setup stores the architecture directives before 6.3.0:
+    Delphi's `set of TSetupProcessorArchitecture`, where bit k stands for the architecture with
+    ordinal k of `(paUnknown, paX86, paX64, paIA64, paARM64)`.
+    """
+    Unknown = 0b00001 # noqa
+    X86     = 0b00010 # noqa
+    X64     = 0b00100 # noqa
+    IA64    = 0b01000 # noqa
+    ARM64   = 0b10000 # noqa
 
 
 class SetupEntryBitness(enum.IntEnum):
@@ -871,14 +879,8 @@ class SetupHeader(InnoStruct):
             self.AppContact = read_string()
             self.AppComment = read_string()
             self.AppModifyPath = read_string()
-        if version >= (5, 3, 8):
-            self.CreateUninstallRegistryKey = read_string()
-        else:
-            self.CreateUninstallRegistryKey = B''
-        if version >= (5, 3, 10):
-            self.Uninstallable = read_string()
-        else:
-            self.Uninstallable = B''
+        self.CreateUninstallRegistryKey = read_string() if version >= (5, 3, 8) else None
+        self.Uninstallable = read_string() if version >= (5, 3, 10) else None
         if version >= (5, 5, 0):
             self.CloseApplicationsFilter = read_string()
         if version >= (5, 5, 6):
@@ -886,9 +888,12 @@ class SetupHeader(InnoStruct):
         if version >= (5, 6, 1):
             self.ChangesEnvironment = read_string()
             self.ChangesAssociations = read_string()
+        else:
+            self.ChangesEnvironment = None
+            self.ChangesAssociations = None
         if version >= (6, 3, 0):
-            self.ArchitecturesAllowed32 = read_string()
-            self.ArchitecturesAllowed64 = read_string()
+            self.ArchitecturesAllowed = self._read_string()
+            self.ArchitecturesInstallIn64BitMode = self._read_string()
         if version >= (6, 4, 2):
             self.CloseApplicationsFilterExcludes = read_string()
         if version >= (6, 5, 0):
@@ -1095,15 +1100,12 @@ class SetupHeader(InnoStruct):
                 method = method.legacy_conversion_pre_5_3_9()
             self.CompressionMethod = method
 
-        if version >= (6, 3, 0):
-            self.ArchitecturesAllowed = Architecture.Unknown
-            self.ArchitecturesInstalled64 = Architecture.Unknown
-        elif version >= (5, 1, 0):
+        if (5, 1, 0) <= version < (6, 3, 0):
             self.ArchitecturesAllowed = Architecture(reader.u8())
-            self.ArchitecturesInstalled64 = Architecture(reader.u8())
-        else:
-            self.ArchitecturesAllowed = Architecture.All
-            self.ArchitecturesInstalled64 = Architecture.All
+            self.ArchitecturesInstallIn64BitMode = Architecture(reader.u8())
+        elif version < (5, 1, 0):
+            self.ArchitecturesAllowed = Architecture(0)
+            self.ArchitecturesInstallIn64BitMode = Architecture(0)
 
         if (5, 2, 1) <= version < (5, 3, 10):
             self.UninstallerOriginalSize = reader.u32()
@@ -1292,25 +1294,20 @@ class SetupHeader(InnoStruct):
     def get_license(self):
         return self._license
 
-    def uninstallable(self) -> bool | str:
+    def directive(self, name: YesNoDirective) -> SetupDirective:
         """
-        Whether the setup is uninstallable, as Setup reads the `Uninstallable` directive; see
-        `setup_directive`.
+        A yes-or-no directive as Setup reads it: the text of the directive, or the flag that older
+        versions keep instead of a text.
         """
-        text = self.Uninstallable
+        text, flag = {
+            YesNoDirective.Uninstallable         : (self.Uninstallable, Flags.Uninstallable),
+            YesNoDirective.CreateUninstallRegKey : (self.CreateUninstallRegistryKey, Flags.CreateUninstallRegKey),
+            YesNoDirective.ChangesEnvironment    : (self.ChangesEnvironment, Flags.ChangesEnvironment),
+            YesNoDirective.ChangesAssociations   : (self.ChangesAssociations, Flags.ChangesAssociations),
+        }[name]
         if TYPE_CHECKING:
-            assert isinstance(text, str)
-        return setup_directive(text, bool(self.Flags & Flags.Uninstallable))
-
-    def creates_uninstall_key(self) -> bool | str:
-        """
-        Whether the setup creates its key in the list of installed programs, as Setup reads the
-        `CreateUninstallRegistryKey` directive; see `setup_directive`.
-        """
-        text = self.CreateUninstallRegistryKey
-        if TYPE_CHECKING:
-            assert isinstance(text, str)
-        return setup_directive(text, bool(self.Flags & Flags.CreateUninstallRegKey))
+            assert isinstance(text, str | None)
+        return SetupDirective.read(text, bool(self.Flags & flag))
 
     def get_script(self):
         return self._CompiledCode
@@ -1357,8 +1354,10 @@ class SetupHeader(InnoStruct):
             'UninstallName',
         ]:
             try:
-                value: bytes = getattr(self, coded_string_attribute)
+                value: bytes | None = getattr(self, coded_string_attribute)
             except AttributeError:
+                continue
+            if value is None:
                 continue
             if not isinstance(value, (bytes, bytearray, memoryview)):
                 raise RuntimeError(F'Attempting to decode {coded_string_attribute} which was already decoded.')
@@ -1661,10 +1660,8 @@ class SetupType(InnoStruct):
         read_string = self._read_string
         self.Name = read_string()
         self.Description = read_string()
-        if version >= (4, 0, 1):
-            self.Languages = read_string()
-        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
-            self.Check = read_string()
+        self.Languages = read_string() if version >= (4, 0, 1) else None
+        self.Check = read_string() if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24) else None
         self.WindowsVersion = WinVerRange(reader, version)
         self.CustsomTypeCode = reader.u8()
         if version >= (4, 0, 3):
@@ -1685,12 +1682,9 @@ class SetupComponent(InnoStruct):
         self.Name = read_string()
         self.Description = read_string()
         self.Types = read_string()
-        if version >= (4, 0, 1):
-            self.Languages = read_string()
-        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
-            self.Check = read_string()
-        if version >= (4, 0, 0):
-            self.ExtraDiskSpace = reader.u64()
+        self.Languages = read_string() if version >= (4, 0, 1) else None
+        self.Check = read_string() if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24) else None
+        self.ExtraDiskSpace = reader.u64() if version >= (4, 0, 0) else None
         if version >= (6, 7, 0):
             self.Level = reader.u8()
         elif version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
@@ -1708,6 +1702,8 @@ class SetupComponent(InnoStruct):
             self.Size = reader.u64()
         elif version >= (2, 0, 0) or version.isx and version >= (1, 3, 24):
             self.Size = reader.u32()
+        else:
+            self.Size = None
 
 
 class SetupTaskFlags(enum.IntFlag):
@@ -1729,11 +1725,8 @@ class SetupTask(InnoStruct):
         self.Description = read_string()
         self.GroupDescription = read_string()
         self.Components = read_string()
-
-        if version >= (4, 0, 1):
-            self.Languages = read_string()
-        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
-            self.Check = read_string()
+        self.Languages = read_string() if version >= (4, 0, 1) else None
+        self.Check = read_string() if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24) else None
         if version >= (6, 7, 0):
             self.Level = reader.u8()
         elif version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
@@ -1770,19 +1763,16 @@ class SetupCondition(InnoStruct):
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion, parent: TSetup):
         super().__init__(reader, version, parent.Codec)
         read_string = self._read_string
-        if version >= (2, 0, 0) or version.isx and version >= (1, 3, 8):
-            self.Components = read_string()
-        if version >= (2, 0, 0) or version.isx and version >= (1, 3, 17):
-            self.Tasks = read_string()
-        if version >= (4, 0, 1):
-            self.Languages = read_string()
-        if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
-            self.Check = read_string()
-        else:
-            self.Check = None
+        self.Components = read_string() if version >= (2, 0, 0) or version.isx and version >= (1, 3, 8) else None
+        self.Tasks = read_string() if version >= (2, 0, 0) or version.isx and version >= (1, 3, 17) else None
+        self.Languages = read_string() if version >= (4, 0, 1) else None
+        self.Check = read_string() if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24) else None
         if version >= (4, 1, 0):
             self.AfterInstall = read_string()
             self.BeforeInstall = read_string()
+        else:
+            self.AfterInstall = None
+            self.BeforeInstall = None
 
 
 class SetupDirectoryFlags(enum.IntFlag):
@@ -1900,6 +1890,12 @@ class SetupFileVerification(InnoStruct):
         self.ISSigAllowedKeys = reader.read_length_prefixed_ascii()
         self.Hash = reader.read_exactly(32)
         self.Type = _enum(SetupFileVerificationType, reader.u8(), SetupFileVerificationType.Nothing)
+
+
+_EXTERNAL_LOCATION = 0xFFFFFFFF
+"""
+The location of a file entry that is not in the installer.
+"""
 
 
 class SetupFile(InnoStruct):
@@ -2042,6 +2038,15 @@ class SetupFile(InnoStruct):
 
         self.Type = SetupFileType(reader.u8())
 
+    @property
+    def external(self) -> bool:
+        """
+        Whether the data of the file is not in the installer: Setup takes it from its source on the
+        machine or downloads it. The entry of the uninstaller, which Setup writes from itself, is
+        external too.
+        """
+        return self.Location == _EXTERNAL_LOCATION
+
 
 class SetupIconCloseSetting(enum.IntEnum):
     NoSetting       = 0           # noqa
@@ -2078,10 +2083,8 @@ class SetupIcon(InnoStruct):
 
         self.Condition = SetupCondition(reader, version, parent)
 
-        if version >= (5, 3, 5):
-            self.AppUserModelId = self._read_string()
-        if version >= (6, 1, 0):
-            self.AppUserModelToastActivatorCLSID = str(reader.read_guid())
+        self.AppUserModelId = self._read_string() if version >= (5, 3, 5) else None
+        self.AppUserModelToastActivatorCLSID = str(reader.read_guid()) if version >= (6, 1, 0) else None
 
         self.WindowsVersion = WinVerRange(reader, version)
         self.IconIndex = reader.i32()
@@ -2144,7 +2147,7 @@ class SetupIniEntry(InnoStruct):
 
         self.Section = self._read_string()
         self.Key = self._read_string()
-        self.Codepage = self._read_string()
+        self.Value = self._read_string()
         self.Condition = SetupCondition(reader, version, parent)
         self.WindowsVersion = WinVerRange(reader, version)
         self.Flags = SetupIniFlags(reader.u8())
@@ -2186,8 +2189,7 @@ class SetupRegistryEntry(InnoStruct):
 
         if True:
             self.Key = self._read_string()
-        if version.bits > 16:
-            self.Name = self._read_string()
+        self.Name = self._read_string() if version.bits > 16 else None
         if True:
             self.Value = reader.read_length_prefixed()
             self.Condition = SetupCondition(reader, version, parent)
@@ -2198,6 +2200,10 @@ class SetupRegistryEntry(InnoStruct):
         self.Hive = reader.u32() & 0x7FFFFFFF if version.bits > 16 else None
         self.Permissions = reader.u16() if version >= (4, 1, 0) else None
         self.Type = SetupRegistryType(reader.u8())
+        if self.Type in (SetupRegistryType.Unset, SetupRegistryType.Binary):
+            self.ValueText = None
+        else:
+            self.ValueText = self._decode(self.Value)
 
         if version >= (7, 0, 0, 3):
             self.Bitness = SetupEntryBitness(reader.u8())
@@ -2282,14 +2288,10 @@ class SetupRunEntry(InnoStruct):
         self.Parameters = self._read_string()
         self.WorkingDir = self._read_string()
 
-        if version >= (1, 3, 9):
-            self.RunOnceId = self._read_string()
-        if version >= (2, 0, 2):
-            self.StatusMessage = self._read_string()
-        if version >= (5, 1, 13):
-            self.Verb = self._read_string()
-        if version >= (2, 0, 0) or version.isx:
-            self.Description = self._read_string()
+        self.RunOnceId = self._read_string() if version >= (1, 3, 9) else None
+        self.StatusMessage = self._read_string() if version >= (2, 0, 2) else None
+        self.Verb = self._read_string() if version >= (5, 1, 13) else None
+        self.Description = self._read_string() if version >= (2, 0, 0) or version.isx else None
 
         self.Condition = SetupCondition(reader, version, parent)
 
@@ -2336,21 +2338,40 @@ class SetupRunEntry(InnoStruct):
         reader.byte_align()
 
 
-def setup_directive(text: str, flag: bool) -> bool | str:
+class YesNoDirective(enum.StrEnum):
     """
-    Reads a yes-or-no directive of the setup header as Setup does. Older versions keep it as the
-    given flag and write no text. A text is yes or no, spelled `yes`, `true` or `1` and `no`,
-    `false` or `0` in any case; any other text is an expression of functions of the script that
-    Setup evaluates when it needs the value, and it is returned as it is.
+    The directives of the setup header that are yes or no, or an expression of functions of the
+    script.
     """
-    if not text:
-        return flag
-    folded = text.lower() if text.isascii() else text
-    if folded in ('0', 'no', 'false'):
-        return False
-    if folded in ('1', 'yes', 'true'):
-        return True
-    return text
+    Uninstallable = 'Uninstallable'
+    CreateUninstallRegKey = 'CreateUninstallRegKey'
+    ChangesEnvironment = 'ChangesEnvironment'
+    ChangesAssociations = 'ChangesAssociations'
+
+
+class SetupDirective(NamedTuple):
+    """
+    A yes-or-no directive of the setup header: its answer when the directive is yes or no, else the
+    expression of functions of the script that Setup evaluates when it needs the value.
+    """
+    answer: bool | None
+    expression: str = ''
+
+    @classmethod
+    def read(cls, text: str | None, flag: bool) -> SetupDirective:
+        """
+        Reads a directive as Setup does. Older versions keep it as the given flag and write no text.
+        A text is yes or no, spelled `yes`, `true` or `1` and `no`, `false` or `0` in any case; any
+        other text is an expression.
+        """
+        if not text:
+            return cls(flag)
+        folded = text.lower() if text.isascii() else text
+        if folded in ('1', 'yes', 'true'):
+            return cls(True)
+        if folded in ('0', 'no', 'false'):
+            return cls(False)
+        return cls(None, text)
 
 
 class WizardTexts(NamedTuple):
@@ -2389,7 +2410,7 @@ class TSetup(InnoStruct):
         else:
             h.recode_strings('utf-16le')
 
-        if h.uninstallable() is True:
+        if h.directive(YesNoDirective.Uninstallable).answer is True:
             h.Flags |= Flags.Uninstallable
 
         if version < (4, 0, 0):
@@ -2924,7 +2945,7 @@ class InnoArchive:
         for sf in stream0.Files:
             sf: SetupFile
             location = sf.Location
-            if location == 0xFFFFFFFF or sf.Type != SetupFileType.UserFile or sf.Source:
+            if sf.external or sf.Type != SetupFileType.UserFile or sf.Source:
                 msg = F'skipping file: offset=0x{location:08X} type={sf.Type.name}'
                 if sf.Source:
                     msg = F'{msg} src={sf.Source}'

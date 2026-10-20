@@ -48,6 +48,7 @@ from refinery.lib.inno.archive import (
     InnoVersion,
     LanguageDetection,
     TSetup,
+    YesNoDirective,
 )
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
@@ -825,8 +826,8 @@ class HostSetup:
             language_name=setup_info.Languages[language].Name if language is not None else config.language,
             page_changes_only=_changes_pages_only(release),
             restart_manager=bool(flags & Flags.CloseApplications) and config.windows_os_version >= (6, 0),
-            uninstallable=header.uninstallable() is not False,
-            uninstall_key=header.creates_uninstall_key() is not False,
+            uninstallable=header.directive(YesNoDirective.Uninstallable).answer is not False,
+            uninstall_key=header.directive(YesNoDirective.CreateUninstallRegKey).answer is not False,
             always_restart=bool(flags & Flags.AlwaysRestart),
             header_password=bool(flags & Flags.Password),
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),

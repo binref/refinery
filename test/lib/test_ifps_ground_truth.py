@@ -8,7 +8,14 @@ from typing import Iterable
 
 from fractions import Fraction
 
-from refinery.lib.inno.archive import Flags, InnoArchive
+from refinery.lib.inno.archive import (
+    Architecture,
+    Flags,
+    InnoArchive,
+    SetupDirective,
+    SetupFileType,
+    YesNoDirective,
+)
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.runtime import Platform
 from refinery.lib.inno.emulation import EmulatorMaxArray, EmulatorMaxString, EmulatorUndefined, NewFunctionCall
@@ -1124,6 +1131,94 @@ class TestTheEmulatorLogsWhatA64BitSetupOfInnoSetup7Logged(_EveryBuild, _AnInnoS
     )
     def test_a_variant_string_of_309_digits_converted_to_a_double(self):
         self.assertCellsEmulatedAsLogged('ORACLEOLE7', ('ole7.double', 6))
+
+
+class TestTheParserReadsWhatTheCompilerWrote(TestBase):
+    """
+    The parser reads the records of an installer as Setup reads them. The script of the stored oracle
+    installer sets the yes-or-no directives `Uninstallable`, `CreateUninstallRegKey`,
+    `ChangesEnvironment` and `ChangesAssociations` to calls of its function `Directive`, and
+    `ArchitecturesInstallIn64BitMode` to `x64compatible`.
+    """
+
+    def oracle(self) -> InnoArchive:
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+
+    def test_installers_of_inno_setup_5_5_install_in_64_bit_mode_on_x64_processors(self):
+        """
+        Before 6.3.0, Setup stores the directive as a set of processor architectures; these
+        installers check `IsWin64` in their scripts and install 64-bit files.
+        """
+        for sample in (
+            'aeac18c433de1a62b6b9106a9424028d4c2731d3f7b378088e7b305213432a42',
+            'c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73',
+        ):
+            with self.subTest(sample=sample):
+                header = InnoArchive(self.download_sample(sample)).setup_info.Header
+                self.assertEqual(header.ArchitecturesInstallIn64BitMode, Architecture.X64)
+
+    def test_an_installer_of_inno_setup_6_5_reads_its_architecture_directives_as_text(self):
+        header = self.oracle().setup_info.Header
+        self.assertEqual(header.ArchitecturesInstallIn64BitMode, 'x64compatible')
+        self.assertEqual(header.ArchitecturesAllowed, '')
+
+    def test_a_yes_or_no_directive_written_as_an_expression_is_read_as_its_text(self):
+        header = self.oracle().setup_info.Header
+        self.assertEqual(
+            [header.directive(name) for name in YesNoDirective],
+            [
+                SetupDirective(None, "Directive('Uninstallable', True)"),
+                SetupDirective(None, "Directive('CreateUninstallRegKey', True)"),
+                SetupDirective(None, "Directive('ChangesEnvironment', False)"),
+                SetupDirective(None, "Directive('ChangesAssociations', False)"),
+            ],
+        )
+
+    def test_an_installer_of_inno_setup_5_2_has_no_texts_for_its_directives_but_flags(self):
+        """
+        Inno Setup 5.2.1 writes no text for these directives and fields; the header keeps the
+        directives as flags.
+        """
+        info = InnoArchive(self.download_sample('0c9ffd51196d71bba19a708bb64224be87c8fceb0b22b71262080c1055b5a642')).setup_info
+        header = info.Header
+        self.assertEqual(
+            [header.Uninstallable, header.CreateUninstallRegistryKey, header.ChangesEnvironment, header.ChangesAssociations],
+            [None, None, None, None],
+        )
+        self.assertEqual(
+            [header.directive(name).answer for name in YesNoDirective],
+            [
+                bool(header.Flags & Flags.Uninstallable),
+                bool(header.Flags & Flags.CreateUninstallRegKey),
+                bool(header.Flags & Flags.ChangesEnvironment),
+                bool(header.Flags & Flags.ChangesAssociations),
+            ],
+        )
+        self.assertTrue(info.Icons)
+        self.assertEqual({(icon.AppUserModelId, icon.AppUserModelToastActivatorCLSID) for icon in info.Icons}, {(None, None)})
+
+    def test_the_value_of_an_ini_entry_and_the_text_of_registry_values(self):
+        info = self.oracle().setup_info
+        self.assertEqual([entry.Value for entry in info.IniEntries], ['v{code:Code|ini.a.string}', 'v'])
+        self.assertEqual([entry.ValueText for entry in info.RegistryEntries], [
+            'd{code:Code|registry.a.valuedata}',
+            'd',
+            'first{break}second{code:Code|registry.c.valuedata}',
+            'd{code:Code|registry.d.valuedata}',
+            'd{code:Code|registry.e.valuedata}',
+        ])
+
+    def test_a_file_entry_is_external_when_setup_does_not_take_its_data_from_the_installer(self):
+        """
+        The script installs five files of the installer, one that it never copies, two downloads,
+        and three external files; the first entry is the uninstaller, which Setup writes from
+        itself.
+        """
+        files = self.oracle().setup_info.Files
+        self.assertEqual(
+            [(file.Type, file.external) for file in files],
+            [(SetupFileType.UninstExe, True)] + [(SetupFileType.UserFile, False)] * 6 + [(SetupFileType.UserFile, True)] * 5,
+        )
 
 
 class TestTheSetupAgreesWithTheScript(TestBase):
