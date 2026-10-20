@@ -1568,6 +1568,19 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
         self.assertEqual(len(calls[0]), 3)
         self.assertEqual(calls[0][1:], (0, 0))
 
+    def test_a_function_of_the_wizard_fails_before_setup_creates_the_wizard(self):
+        """
+        Setup sends `InitializeSetup` before it creates the wizard.
+        """
+        emulated = _logged_values(self.emulator(self.host_oracle()).emulate_installation(), {})
+        log = _host_oracle_log(self, 'normal')
+        self.assertEqual(emulated['WizardSetupTypeBeforeWizard'], log['WizardSetupTypeBeforeWizard'])
+
+    def test_the_current_file_is_known_only_in_a_function_of_a_file_entry(self):
+        emulated = _logged_values(self.emulator(self.host_oracle()).emulate_installation(), {})
+        log = _host_oracle_log(self, 'normal')
+        self.assertEqual(emulated['CurrentFilenameInEvent'], log['CurrentFilenameInEvent'])
+
     @wontfix('the progress of an installation counts the bytes that Setup installs, and the emulator installs none')
     def test_an_installation_reports_its_progress(self):
         emulated = _logged_values(self.emulator(wizard_silent=False).emulate_installation(), {})

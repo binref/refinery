@@ -135,8 +135,10 @@ class IFPSAPI:
     function WizardSetupType(const Description: Boolean): String;
     function WizardSelectedComponents(const Descriptions: Boolean): String;
     function WizardIsComponentSelected(const Components: String): Boolean;
+    function IsComponentSelected(const Components: String): Boolean;
     function WizardSelectedTasks(const Descriptions: Boolean): String;
     function WizardIsTaskSelected(const Tasks: String): Boolean;
+    function IsTaskSelected(const Tasks: String): Boolean;
     function WizardSilent: Boolean;
     function IsUninstaller: Boolean;
     function UninstallSilent: Boolean;

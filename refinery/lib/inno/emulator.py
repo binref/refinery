@@ -67,6 +67,7 @@ from refinery.lib.inno.emulation import (
     EmulatorMemoryError,
     EmulatorTimeout,
     EmulatorUndefined,
+    EntryField,
     NeedSymbol,
     NewEmulationError,
     NewFunctionCall,
@@ -96,15 +97,21 @@ from refinery.lib.inno.ifps import (
     VariableSpec,
     VariableType,
 )
-from refinery.lib.inno.installation import Installation
+from refinery.lib.inno.installation import CurrentFile, Installation
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
 from refinery.lib.inno.wizard import (
+    CheckList,
+    CheckOperation,
     PageEvent,
     PageID,
     PageStyle,
     PasswordBox,
     WizardForm,
     WizardPage,
+    comma_strings,
+    comma_text,
+    list_contains,
+    same_text,
 )
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
@@ -687,6 +694,13 @@ class _ScriptRun:
         return eh.handler_end
 
 
+def _outside_file_entry(name: str) -> str:
+    return (
+        F'An attempt was made to call the "{name}" function from outside a "Check", "BeforeInstall" or '
+        F'"AfterInstall" event function belonging to a "[Files]" entry'
+    )
+
+
 def _path_drive(name: str) -> str:
     """
     The drive of a path as Inno Setup's `PathExtractDrive` reads it: `x:` or a server and share
@@ -980,17 +994,6 @@ def _control_word(release: tuple[int, ...] | None) -> int:
     return x87.DEFAULT_CONTROL_WORD
 
 
-_ASCII_LOWER_CASE = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
-
-
-def _same_text(a: str, b: str) -> bool:
-    """
-    Compares two texts as Delphi's `CompareText` does: letters from A to Z without case, any other
-    character as it is.
-    """
-    return a.translate(_ASCII_LOWER_CASE) == b.translate(_ASCII_LOWER_CASE)
-
-
 def _active_language(setup_info: TSetup, config: IFPSEmulatorConfig) -> int | None:
     """
     The index of the language that Setup activates when the user accepts its choice, as Setup's
@@ -1003,7 +1006,7 @@ def _active_language(setup_info: TSetup, config: IFPSEmulatorConfig) -> int | No
         return None
     chosen = config.language
     for index, language in enumerate(languages):
-        if _same_text(language.Name, chosen):
+        if same_text(language.Name, chosen):
             return index
     if setup_info.Header.LanguageDetection == LanguageDetection.Nothing:
         return 0
@@ -1390,6 +1393,7 @@ class IFPSEmulator:
         self.machine = pascal.Machine(self.setup.dialect, self.runtime)
         self.mutexes.clear()
         self.wizard_form = WizardForm()
+        self.current_file: CurrentFile | None = None
         self._globals = None
         self._win32api_last_error = 0
         self._win32api_sorted_process_ids = sorted(self.config.processes)
@@ -2447,15 +2451,23 @@ class IFPSEmulator:
 
     @external()
     def WizardForm(self) -> object:
-        return self.wizard_form
+        return self._form()
+
+    def _form(self) -> WizardForm:
+        """
+        The wizard form, for a function that Setup runs through `GetWizardForm`.
+        """
+        form = self.wizard_form
+        form.require()
+        return form
 
     @external()
     def CreateCustomPage(self, after: int, caption: str, description: str) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateInputQueryPage(self, after: int, caption: str, description: str, subcaption: str) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateInputOptionPage(
@@ -2467,7 +2479,7 @@ class IFPSEmulator:
         exclusive: bool,
         listbox: bool,
     ) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateInputDirPage(
@@ -2479,15 +2491,15 @@ class IFPSEmulator:
         append: bool,
         folder: str,
     ) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateInputFilePage(self, after: int, caption: str, description: str, subcaption: str) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateOutputMsgPage(self, after: int, caption: str, description: str, message: str) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external()
     def CreateOutputMsgMemoPage(
@@ -2498,15 +2510,15 @@ class IFPSEmulator:
         subcaption: str,
         message: str,
     ) -> object:
-        return self.wizard_form.add_page(after)
+        return self._form().add_page(after)
 
     @external(alias='CreateOutputMarqueeProgressPage')
     def CreateOutputProgressPage(self, caption: str, description: str) -> object:
-        return self.wizard_form.add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
+        return self._form().add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
 
     @external(alias='CreateExtractionPage')
     def CreateDownloadPage(self, caption: str, description: str, progress: object) -> object:
-        return self.wizard_form.add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
+        return self._form().add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
 
     @external()
     def TWizardPage__GetID(self, this: object) -> int:
@@ -3031,6 +3043,108 @@ class IFPSEmulator:
     def WizardSilent(self) -> bool:
         return self.config.wizard_silent
 
+    @external()
+    def WizardNoIcons(self) -> bool:
+        return self._form().icons_off
+
+    @external()
+    def WizardSetupType(self, descriptions: bool) -> str:
+        if (setup_type := self._form().setup_type) is None:
+            return ''
+        return setup_type.Description if descriptions else setup_type.Name
+
+    def _expand_field(self, entry: object, field: EntryField, text: str) -> Generator[Any, Any, str]:
+        return constants.expand_constants(text, _EmulatedConstants(self, None))
+
+    @external()
+    def WizardSelectedComponents(self, descriptions: bool) -> Generator[Any, Any, str]:
+        return comma_text((yield from self._form().selected_components(descriptions, False, self._expand_field)))
+
+    @external()
+    def WizardSelectedTasks(self, descriptions: bool) -> Generator[Any, Any, str]:
+        return comma_text((yield from self._form().selected_tasks(descriptions, False, False, self._expand_field)))
+
+    @external(alias=['IsComponentSelected'])
+    def WizardIsComponentSelected(self, components: str) -> bool:
+        if (names := self._form().selection().components) is None:
+            return True
+        return expressions.decide(components.replace('/', '\\'), lambda name: list_contains(names, name))
+
+    @external(alias=['IsTaskSelected'])
+    def WizardIsTaskSelected(self, tasks: str) -> bool:
+        if (names := self._form().selection().tasks) is None:
+            return True
+        return expressions.decide(tasks.replace('/', '\\'), lambda name: list_contains(names, name))
+
+    @external()
+    def WizardSelectComponents(self, components: str):
+        self._form().select_components(comma_strings(components.replace('/', '\\')))
+
+    @external()
+    def WizardSelectTasks(self, tasks: str):
+        self._form().select_tasks(comma_strings(tasks.replace('/', '\\')))
+
+    @external()
+    def TWizardForm__GetComponentsList(self, this: object) -> object:
+        return self.wizard_form.components
+
+    @external()
+    def TWizardForm__GetTasksList(self, this: object) -> object:
+        return self.wizard_form.tasks
+
+    @external()
+    def TWizardForm__GetRunList(self, this: object) -> object:
+        return self.wizard_form.run_list
+
+    @external()
+    def TWizardForm__GetTypesCombo(self, this: object) -> object:
+        return self.wizard_form.types_combo
+
+    @external()
+    def TWizardForm__GetNoIconsCheck(self, this: object) -> object:
+        return self.wizard_form.no_icons_check
+
+    @external()
+    def TNewCheckListBox__GetChecked(self, this: object, index: int) -> bool:
+        if isinstance(this, CheckList):
+            return this.checked(index)
+        return True
+
+    @external()
+    def TNewCheckListBox__SetChecked(self, this: object, index: int, checked: bool):
+        if isinstance(this, CheckList):
+            this.set_checked(index, checked)
+
+    @external()
+    def TNewCheckListBox__GetState(self, this: object, index: int) -> int:
+        if isinstance(this, CheckList):
+            return this.state(index)
+        return 1
+
+    @external()
+    def TNewCheckListBox__GetItemEnabled(self, this: object, index: int) -> bool:
+        if isinstance(this, CheckList):
+            return this.enabled(index)
+        return True
+
+    @external()
+    def TNewCheckListBox__CheckItem(self, this: object, index: int, operation: int) -> bool:
+        if isinstance(this, CheckList):
+            return this.check(index, CheckOperation(operation))
+        return True
+
+    @external()
+    def CurrentFilename(self) -> str:
+        if (file := self.current_file) is None or not file.destination:
+            raise DelphiException(F'Internal error: {_outside_file_entry("CurrentFilename")}')
+        return file.destination
+
+    @external()
+    def CurrentSourceFilename(self) -> str:
+        if (file := self.current_file) is None or not file.source:
+            raise DelphiException(F'Internal error: {_outside_file_entry("CurrentSourceFilename")} with flag "external"')
+        return file.source
+
     def call_from_setup(self, function: Function, arguments: Sequence) -> Generator[Any, Any, Any]:
         """
         Calls a function of the script as Setup does.
@@ -3064,6 +3178,68 @@ class IFPSEmulator:
         return pascal.size_of(var.type, self.runtime)
 
     del external
+
+
+_LAYOUT_CLASSES = frozenset({
+    'TObject',
+    'TPersistent',
+    'TComponent',
+    'TControl',
+    'TWinControl',
+    'TCustomControl',
+    'TGraphicControl',
+})
+"""
+The classes whose members every control of the wizard has, such as its position and visibility.
+"""
+
+_APPEARANCE = frozenset({
+    'anchors',
+    'borderstyle',
+    'color',
+    'ctl3d',
+    'cursor',
+    'flat',
+    'font',
+    'hint',
+    'itemcaption',
+    'itemfontstyle',
+    'itemlevel',
+    'itemsubitem',
+    'minitemheight',
+    'offset',
+    'parentcolor',
+    'parentfont',
+    'showhint',
+    'showlines',
+    'subitemfontstyle',
+    'taborder',
+    'tabstop',
+    'wanttabs',
+})
+"""
+The properties of the lists, combo boxes and check boxes of the wizard that only change how they
+look.
+"""
+
+
+def _changes_choices(function: Function) -> bool:
+    """
+    Whether a member of a control of the wizard that the emulator does not model may change the
+    choices that the control holds: any member but those of every control and those that only
+    change how it looks.
+    """
+    classname = function.decl.classname if function.decl is not None else None
+    name = function.name
+    if not classname:
+        classname, dot, name = name.partition('.')
+        if not dot:
+            return False
+    if classname in _LAYOUT_CLASSES:
+        return False
+    if name[:3].lower() in ('get', 'set') and name[3:].lower() in _APPEARANCE:
+        return False
+    return True
 
 
 class InnoSetupEmulator(IFPSEmulator):
@@ -3100,7 +3276,7 @@ class InnoSetupEmulator(IFPSEmulator):
         script; the caller can give that test as `password_test`, without it the test fails.
         """
         self.reset()
-        self.wizard_form = wizard = WizardForm(walked=True)
+        self.wizard_form = wizard = WizardForm(walked=True, entries_known=False)
         wizard.needs_restart = self.setup.always_restart
         installation = Installation(self, password, password_test)
         return (yield from self._timed(installation.run(), max_seconds))
@@ -3109,8 +3285,14 @@ class InnoSetupEmulator(IFPSEmulator):
         """
         Any unimplemented function is essentially skipped. Any arguments passed by reference and
         all return values that are of type integer are set to `1` in an attempt to indicate success
-        wherever possible.
+        wherever possible. When the function is a member of a control of the wizard that holds
+        choices of the installation, the emulator no longer knows those choices, unless the member
+        belongs to every control, such as its position, or only changes how the control looks.
         """
+        if _changes_choices(function):
+            for argument in arguments:
+                if self.wizard_form.touched(argument.deref().data):
+                    break
         if result is not None and not result.container and _holds_integer(result.type):
             result.set(1)
         for ptr in arguments:

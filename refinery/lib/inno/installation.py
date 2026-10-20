@@ -7,7 +7,7 @@ from __future__ import annotations
 import enum
 import operator
 
-from typing import TYPE_CHECKING, Any, Callable, Generator, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Generator, NamedTuple, Protocol, Sequence
 
 from refinery.lib.inno.emulation import NewScriptError, SetupEvent
 from refinery.lib.inno.pascal import IFPSException
@@ -43,6 +43,15 @@ _EVENT_RULES: dict[SetupEvent, tuple[Callable[[Any], bool] | None, Any]] = {
 For each setup event that returns a value, the result that stops Setup from calling more of its
 functions, and the result when the script does not handle it.
 """
+
+
+class CurrentFile(NamedTuple):
+    """
+    The names that `CurrentFilename` and `CurrentSourceFilename` give in a function of a file
+    entry: the destination and the source as the entry holds them, without expanding them.
+    """
+    destination: str
+    source: str
 
 
 class ScriptHost(Protocol):
@@ -86,6 +95,7 @@ class Installation:
     def run(self) -> Generator[Any, Any, None]:
         wizard = self.wizard
         yield from self.event(SetupEvent.InitializeSetup)
+        wizard.created = True
         yield from self.event(SetupEvent.InitializeWizard)
         yield from self._set_page(PageID.wpWelcome)
         if not self.config.wizard_silent:

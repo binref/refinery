@@ -698,6 +698,38 @@ class TestIPFSEmulator(TestBase):
             with self.subTest(x64=x64):
                 self.assertEqual([getattr(emulator, name)() for name in names], answers)
 
+    def test_without_its_installer_a_script_finds_every_component_and_task_selected(self):
+        """
+        The emulator does not know the components and tasks of a script without its installer, so
+        it does not test their names, as Setup does not test names without a list of them. A list
+        of the selected names holds the names that the emulator knows, which are none.
+        """
+        from refinery.lib.inno.emulator import EventCall
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        self.assertTrue(emulator.WizardIsComponentSelected('a and not a'))
+        self.assertTrue(emulator.WizardIsTaskSelected('a and not a'))
+        self.assertEqual(EventCall(emulator.WizardSelectedComponents(False)).value, '')
+        self.assertEqual(emulator.WizardSetupType(False), '')
+
+    def test_a_member_that_only_places_or_draws_a_list_of_the_wizard_keeps_its_choices(self):
+        """
+        The script calls these members, which the emulator does not model, on lists of its own.
+        Called on the list of components of a wizard whose choices the emulator knows, those that
+        place the list or change how it looks keep the choices known; any other one does not.
+        """
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        from refinery.lib.inno.wizard import WizardForm
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        form = emulator.wizard_form = WizardForm(walked=True)
+        members = {str(function): function for function in emulator.ifps.functions if function.body is None}
+        components = Variable(TPrimitive(TC.Class), data=form.components)
+        for name in ('TControl.SetTop', 'TControl.SetHeight', 'TNewCheckListBox.SetBorderStyle', 'TNewCheckListBox.SetAnchors'):
+            emulator.unimplemented(members[name], [components, Variable(TPrimitive(TC.S32), data=1)], None)
+        self.assertTrue(form.components.known)
+        emulator.unimplemented(members['TCustomListBox.GetItems'], [components], None)
+        self.assertFalse(form.components.known)
+
     def test_a_second_installation_runs_the_script_as_the_first(self):
         from refinery.lib.inno.emulation import NewFunctionCall, NewPassword
         emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True)
