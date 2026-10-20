@@ -28,12 +28,19 @@ back into the wrapper, with the parameters the flat function unpacked:
     }
 
 The wrapper keeps its `length` of 0; where nothing reads it, the rest pattern becomes `(value)`
-(`refinery.lib.scripts.js.deobfuscation.parameters.JsRestPatternParameters`).
+(`refinery.lib.scripts.js.deobfuscation.parameters.JsRestPatternParameters`). An async function
+keeps a function of its own, whose promise settles when it did, and the flat function moves into
+the wrapper without the object instead:
+
+    async function delayed(...args) {
+      async function flat([value]) { await null; return twice(value); }
+      return flat(args);
+    }
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, NamedTuple
+from typing import Iterator
 
 from refinery.lib.scripts import (
     Expression,
@@ -86,16 +93,20 @@ from refinery.lib.scripts.js.strict import directive_prologue, strict_mode_at
 @dataclass
 class _Flattened:
     """
-    A wrapper read with its flat function: the call between the two, the object literal and whether
-    the call passes it first, the array pattern the flat function binds the arguments to and its
-    parameter for the object, the unpacking of `arguments` that stands for the two in strict code
-    together with its read of `arguments`, the statements of the flat body after that unpacking,
-    the scope of the wrapper, and the bindings of that scope the merge removes: the rest parameter,
-    the object and the wrapper's own `arguments`.
+    A wrapper read with its flat function and that function's name: the call between the two, the
+    declaration of the object literal, the literal and whether the call passes it first, the array
+    pattern the flat function binds the arguments to and its parameter for the object, the
+    unpacking of `arguments` that stands for the two in strict code together with its read of
+    `arguments`, the statements of the flat body after that unpacking, the scope of the wrapper,
+    whether the flat function is nested into the wrapper rather than merged with it, and the
+    bindings of the wrapper's scope the flat body does not see there: the object, and where it is
+    merged, the rest parameter and the wrapper's own `arguments`.
     """
     wrapper: JsFunctionDeclaration | JsFunctionExpression
     flat: JsFunctionDeclaration
+    flat_name: str
     call: JsCallExpression
+    declaration: JsVariableDeclaration
     literal: JsObjectExpression
     object_first: bool
     pattern: JsArrayPattern
@@ -104,27 +115,64 @@ class _Flattened:
     source: JsIdentifier | None
     statements: list[Statement]
     wrapper_scope: Scope
+    nested: bool
     removed: list[Binding]
 
 
-class _Plan(NamedTuple):
+@dataclass
+class _Plan:
     """
     The edit decided for one wrapper: each access through the object with the expression that
-    takes its place, and the parameter list the wrapper gets.
+    takes its place, and how the flat body moves.
     """
     reading: _Flattened
     substitutions: list[tuple[JsMemberExpression, Expression]]
-    parameters: ParameterList
 
     def apply(self) -> None:
+        for member, stand_in in self.substitutions:
+            _replace_in_parent(member, stand_in)
+        self._move()
+
+    def _move(self) -> None:
+        raise NotImplementedError
+
+
+@dataclass
+class _Merge(_Plan):
+    """
+    The flat body becomes the body of the wrapper, whose parameter list becomes *parameters*.
+    """
+    parameters: ParameterList
+
+    def _move(self) -> None:
         reading = self.reading
         body = reading.wrapper.body
         assert body is not None
-        for member, stand_in in self.substitutions:
-            _replace_in_parent(member, stand_in)
         set_child_list(reading.wrapper, 'params', self.parameters.build())
         set_child_list(body, 'body', reading.statements)
         _remove_from_parent(reading.flat)
+
+
+@dataclass
+class _Nest(_Plan):
+    """
+    The flat function moves into the wrapper in place of the object, and neither it nor the call
+    passes the object any more.
+    """
+
+    def _move(self) -> None:
+        reading = self.reading
+        body = reading.wrapper.body
+        assert body is not None
+        call = reading.call
+        set_child_list(call, 'arguments', [call.arguments[1 if reading.object_first else 0]])
+        if reading.pair is not None:
+            set_child_list(reading.pair, 'elements', [reading.pattern])
+        else:
+            set_child_list(reading.flat, 'params', [reading.pattern])
+        _remove_from_parent(reading.flat)
+        _remove_from_parent(reading.declaration)
+        set_child_list(body, 'body', [reading.flat, *body.body])
 
 
 def _ancestry(node: Node | None) -> Iterator[Node]:
@@ -166,13 +214,12 @@ def _read(
     takes one rest parameter, and its body declares the object and returns the call of the flat
     function with the two, which is the only use of each; the flat function is declared once, at
     the top of the program, and that call is the only way to it. Neither is a generator, and
-    neither is async.
+    both are async or neither is.
     """
     params = wrapper.params
     body = wrapper.body
     if (
         wrapper.generator
-        or wrapper.is_async
         or len(params) != 1
         or not isinstance(rest := params[0], JsRestElement)
         or not isinstance(rest_name := rest.argument, JsIdentifier)
@@ -222,7 +269,7 @@ def _read(
         or flat.id is not flat_name
         or flat.parent is not root
         or flat.generator
-        or flat.is_async
+        or flat.is_async != wrapper.is_async
         or flat.body is None
     ):
         return None
@@ -262,13 +309,18 @@ def _read(
         return None
     if (wrapper_scope := model.function_scope(wrapper)) is None:
         return None
-    removed = [rest_binding, object_binding]
-    if (own_arguments := wrapper_scope.bindings.get('arguments')) is not None:
-        removed.append(own_arguments)
+    nested = flat.is_async
+    removed = [object_binding]
+    if not nested:
+        removed.append(rest_binding)
+        if (own_arguments := wrapper_scope.bindings.get('arguments')) is not None:
+            removed.append(own_arguments)
     return _Flattened(
         wrapper=wrapper,
         flat=flat,
+        flat_name=flat_name.name,
         call=call,
+        declaration=declaration,
         literal=literal,
         object_first=object_first,
         pattern=pattern,
@@ -277,6 +329,7 @@ def _read(
         source=source,
         statements=flat_statements,
         wrapper_scope=wrapper_scope,
+        nested=nested,
         removed=removed,
     )
 
@@ -290,11 +343,14 @@ def _lands(
 ) -> bool:
     """
     Whether the name *name*, written in place of the access *member*, means what the identifier
-    *accessor* in the member of the object means: no binding of the flat function takes it, and
-    from inside the wrapper it finds the binding the member finds.
+    *accessor* in the member of the object means: no binding of the flat function takes it, it is
+    not the name of a flat function nested into the wrapper, and from inside the wrapper it finds
+    the binding the member finds.
     """
     landed = model.lookup(name, model.scope_of(member))
     if landed is not None and landed.declared_within(reading.flat):
+        return False
+    if reading.nested and name == reading.flat_name:
         return False
     found = model.lookup(name, reading.wrapper_scope, exclude=reading.removed)
     return found is model.resolve(accessor)
@@ -336,16 +392,18 @@ def _plan(
     """
     The edit that puts the flat function of *wrapper* back into it, or `None` where the body would
     not compute in the wrapper what it computes where it stands. The flat function runs in the mode
-    of the wrapper; it reads no `this`, no `new.target`, no `arguments` but the unpacking of the
-    strict form, and holds no `with` and no direct `eval`; no `with` and no direct `eval` reach the
-    wrapper either. Every name the flat function reads that it does not declare finds from inside
-    the wrapper the binding it finds where it stands. The object parameter is declared once, and
+    of the wrapper; it reads no `arguments` but the unpacking of the strict form, and holds no
+    `with` and no direct `eval`; no `with` and no direct `eval` reach the wrapper either. A body
+    merged with the wrapper reads no `this` and no `new.target`, which the call of the wrapper gives
+    it, where a nested flat function is called as it was. Every name the flat function reads that
+    it does not declare finds from inside the wrapper the binding it finds where it stands, and none
+    is the name of a nested flat function. The object parameter is declared once, and
     every use of it is an access through the object that `NameProxy.stand_in` writes on a name that
     lands where the member's name is (`_lands`), with no call through a getter, which would pass
     the object as `this`, and with a call through a method only where the order of the name and
     the arguments does not matter (`_call_order_holds`). Where the call passes the arguments first,
-    the pattern binds them before the object exists, and an access in the pattern stays. The
-    unpacking of the strict form has to mean what the parameter list means
+    the pattern binds them before the object exists, and an access in the pattern stays. For a
+    merge, the unpacking of the strict form has to mean what the parameter list means
     (`refinery.lib.scripts.js.deobfuscation.parameters.unpacking_moves_into_parameters`), and the
     parameter list keeps the `length` of 0 the wrapper has.
     """
@@ -362,7 +420,7 @@ def _plan(
         return None
     if strict_mode_at(flat_body) != strict_mode_at(wrapper_body):
         return None
-    if references_receiver_this(flat) or references_new_target(flat):
+    if not reading.nested and (references_receiver_this(flat) or references_new_target(flat)):
         return None
     for node in walk_receiver_scope(flat):
         if (
@@ -392,6 +450,8 @@ def _plan(
         found = model.resolve(node)
         if found is parameter or found is not None and found.declared_within(flat):
             continue
+        if reading.nested and node.name == reading.flat_name:
+            return None
         if model.lookup(node.name, reading.wrapper_scope, exclude=reading.removed) is not found:
             return None
     substitutions: list[tuple[JsMemberExpression, Expression]] = []
@@ -415,6 +475,8 @@ def _plan(
         ):
             return None
         substitutions.append((member, stand_in.node))
+    if reading.nested:
+        return _Nest(reading, substitutions)
     if (
         reading.pair is not None
         and not unpacking_moves_into_parameters(model, reading.pattern, flat, [parameter])
@@ -423,7 +485,7 @@ def _plan(
     parameters = parameter_list(reading.pattern.elements, wrapper, 0)
     if parameters is None:
         return None
-    return _Plan(reading, substitutions, parameters)
+    return _Merge(reading, substitutions, parameters)
 
 
 class JsFunctionUnflattening(ScriptLevelTransformer):

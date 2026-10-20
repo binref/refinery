@@ -4,7 +4,8 @@ leaves the function a wrapper that calls it with its arguments and with an objec
 setters and methods standing for the names the body used. Each program below holds functions in
 that shape, written by hand after what the obfuscation writes, and each row says what Node prints
 for it run as a CommonJS file; the deobfuscation prints the same. Where the deobfuscation puts the
-body back into its wrapper, the text it writes is pinned as well.
+body back into its wrapper, or moves the flat function of an async function into it, the text it
+writes is pinned as well.
 """
 from __future__ import annotations
 
@@ -1178,8 +1179,8 @@ FLATTENED: dict[str, Program] = {
     ),
 }
 
-#: The rows of `FLATTENED` whose deobfuscation puts a flat function back into its wrapper, mapped to
-#: the text it writes.
+#: The rows of `FLATTENED` whose deobfuscation puts a flat body back into its wrapper or moves a flat
+#: function into it, mapped to the text it writes.
 PUT_BACK: dict[str, str] = {
     'setters of every write form': inspect.cleandoc(
         """
@@ -1257,6 +1258,21 @@ PUT_BACK: dict[str, str] = {
               return a + b;
             }
             console.log(add.length, add(1, 2), Object.getOwnPropertyDescriptor(add, 'length').configurable);
+        """
+    ),
+    'an async function racing a promise chain': inspect.cleandoc(
+        """
+            async function a(...A) {
+              async function F([]) {
+                console.log('a');
+              }
+              return F(A);
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
         """
     ),
     'the strict form (arguments first)': inspect.cleandoc(
@@ -1367,6 +1383,61 @@ PUT_BACK: dict[str, str] = {
             console.log(new Make(3).v, new Make(3) instanceof Make);
         """
     ),
+    'an async wrapper whose object stands for a local of an enclosing function': inspect.cleandoc(
+        """
+            function outer() {
+              async function W(...A) {
+                async function F([]) {
+                  return 'local';
+                }
+                return F(A);
+              }
+              return W();
+            }
+            outer().then(console.log);
+        """
+    ),
+    'an async function in the strict form (object first)': inspect.cleandoc(
+        """
+            'use strict';
+            var total = 1;
+            async function add(...A) {
+              async function F() {
+                'use strict';
+                var [[a]] = arguments;
+                total = total + a;
+                return total;
+              }
+              return F(A);
+            }
+            add(2).then(console.log);
+        """
+    ),
+    'an async flat function with this in an arrow': inspect.cleandoc(
+        """
+            (async function(...A) {
+              async function F([]) {
+                return (() => this === undefined || this === globalThis)();
+              }
+              return F(A);
+            }().then(console.log));
+        """
+    ),
+    'an async function racing, its flat body reading an outer name': inspect.cleandoc(
+        """
+            async function a(...A) {
+              async function F([]) {
+                console.log('a');
+              }
+              return F(A);
+            }
+            (async () => {
+              await a();
+              console.log('after a');
+            })();
+            Promise.resolve().then(() => console.log(1)).then(() => console.log(2)).then(() => console.log(3));
+        """
+    ),
     'a default reads a name the flat body also declares': inspect.cleandoc(
         """
             function outer() {
@@ -1474,6 +1545,45 @@ PUT_BACK: dict[str, str] = {
             console.log('outer');
         """
     ),
+    'async: a static field initializer calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...A) {
+                async function F() {
+                  'use strict';
+                  var [[v]] = arguments;
+                  return new C(v);
+                }
+                return F(A);
+              }
+              static ready = C.create(1);
+              constructor(v) {
+                this.v = v;
+              }
+            }
+            C.ready.then(c => console.log(c.v), e => console.log(e.name));
+        """
+    ),
+    'async: a static block calls an async static method whose flat body names the class': inspect.cleandoc(
+        """
+            class C {
+              static async create(...A) {
+                async function F() {
+                  'use strict';
+                  var [[v]] = arguments;
+                  return new C(v);
+                }
+                return F(A);
+              }
+              static {
+                C.create(2).then(c => console.log(c.v), e => console.log(e.name));
+              }
+              constructor(v) {
+                this.v = v;
+              }
+            }
+        """
+    ),
     'a static field initializer calls a static method whose flat body names the class': inspect.cleandoc(
         """
             class C {
@@ -1514,6 +1624,36 @@ PUT_BACK: dict[str, str] = {
               return a + 'body';
             }
             console.log(W(), V);
+        """
+    ),
+    'async: a getter in a class method reads the class name while the class is being defined': inspect.cleandoc(
+        """
+            class C {
+              static async create(...A) {
+                async function F() {
+                  'use strict';
+                  var [[v]] = arguments;
+                  return new C(v);
+                }
+                return F(A);
+              }
+              static ready = C.create(1);
+              constructor(v) {
+                this.v = v;
+              }
+            }
+            C.ready.then(c => console.log(c.v), e => console.log(e.name));
+        """
+    ),
+    'async: a getter in an object method reads a top-level let in its dead zone': inspect.cleandoc(
+        """
+            (async function(...A) {
+              async function F([]) {
+                return late;
+              }
+              return F(A);
+            }().then(console.log, e => console.log(e.name)));
+            let late = 'late';
         """
     ),
     'a getter reads a name a sloppy function body of the flat function declares by var under the same name as the wrapper': inspect.cleandoc(
@@ -1765,10 +1905,6 @@ ARGUMENTS_FIRST = inspect.cleandoc(
 
 ARGUMENTS_FIRST_DEOBFUSCATED = inspect.cleandoc(
     """
-    async function __p_AbCC_flat_delayed([value], __p_cdXZ_flat_object) {
-      await null;
-      return __p_cdXZ_flat_object.c_f_U_X(value);
-    }
     function __p_fmHs_flat_holder([], __p_tVkl_flat_object) {
       return [1, 2].map(item => {
         return item + this.length;
@@ -1848,10 +1984,11 @@ ARGUMENTS_FIRST_DEOBFUSCATED = inspect.cleandoc(
       return left + right + counter;
     } };
     async function delayed(...__p_ubGd_args) {
-      var __p_cdXZ_flat_object = { "c_f_U_X"(...args) {
-        return twice(...args);
-      } };
-      return __p_AbCC_flat_delayed(__p_ubGd_args, __p_cdXZ_flat_object);
+      async function __p_AbCC_flat_delayed([value]) {
+        await null;
+        return twice(value);
+      }
+      return __p_AbCC_flat_delayed(__p_ubGd_args);
     }
     console.log(bump(2), label, describe(1), scale(2, 1), lockLimit());
     console.log(outer(10), strictZone(5), tools.sum(1, 2), Point.origin(7).x, twice.length);
@@ -2054,10 +2191,6 @@ OBJECT_FIRST = inspect.cleandoc(
 
 OBJECT_FIRST_DEOBFUSCATED = inspect.cleandoc(
     """
-    async function __p_JIiq_flat_delayed(__p_18XH_flat_object, [value]) {
-      await null;
-      return __p_18XH_flat_object.vhNkvHJ(value);
-    }
     function __p_hQcw_flat_lockLimit(__p_gnYa_flat_object, []) {
       try {
         __p_gnYa_flat_object.gxpP7h = 4;
@@ -2120,10 +2253,11 @@ OBJECT_FIRST_DEOBFUSCATED = inspect.cleandoc(
       return left + right + counter;
     } };
     async function delayed(...__p_fFEl_args) {
-      var __p_18XH_flat_object = { "vhNkvHJ"(...args) {
-        return twice(...args);
-      } };
-      return __p_JIiq_flat_delayed(__p_18XH_flat_object, __p_fFEl_args);
+      async function __p_JIiq_flat_delayed([value]) {
+        await null;
+        return twice(value);
+      }
+      return __p_JIiq_flat_delayed(__p_fFEl_args);
     }
     console.log(bump(2), label, describe(1), scale(2, 1), lockLimit());
     console.log(outer(10), strictZone(5), tools.sum(1, 2), Point.origin(7).x, twice.length);
