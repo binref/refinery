@@ -202,8 +202,7 @@ class meow(Unit):
             for size in enc.pack_info.sizes:
                 packed_streams.append(view[offset:offset + size])
                 offset += size
-            header_data = decompress_folder(
-                folder, packed_streams, folder.main_unpack_size)
+            header_data = decompress_folder(folder, packed_streams)
             inner_reader = StructReader(memoryview(header_data))
             inner_prop = inner_reader.u8()
             if inner_prop != PropertyID.HEADER:

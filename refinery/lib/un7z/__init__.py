@@ -191,8 +191,7 @@ class SzArchive:
             packed_streams.append(self._view[offset:offset + size])
             offset += size
         folder = enc_header.folders[0]
-        unpack_size = folder.main_unpack_size
-        header_data = decompress_folder(folder, packed_streams, unpack_size, self._password)
+        header_data = decompress_folder(folder, packed_streams, self._password)
         inner_reader = StructReader(memoryview(header_data))
         inner_prop = inner_reader.u8()
         if inner_prop == PropertyID.HEADER:
@@ -294,9 +293,8 @@ class SzArchive:
         if password is None and self._folder_encrypted(folder_index):
             raise SzPasswordRequired('Password required for encrypted archive.')
         packed_streams = self._packed_streams(folder_index)
-        unpack_size = folder.main_unpack_size
         try:
-            raw = decompress_folder(folder, packed_streams, unpack_size, password)
+            raw = decompress_folder(folder, packed_streams, password)
         except SzPasswordRequired:
             raise
         except SzException:

@@ -1,5 +1,6 @@
 import base64
 import codecs
+import hashlib
 import struct
 import zlib
 
@@ -11,7 +12,8 @@ from ... import TestUnitBase
 
 
 from refinery.lib.un7z import SIGNATURE_HEADER_SIZE, SzArchive, SzCorruptArchive, SzPasswordRequired
-from refinery.lib.un7z.headers import parse_signature_header, SIGNATURE
+from refinery.lib.un7z.coders import CODEC_COPY, decompress_folder
+from refinery.lib.un7z.headers import BindPair, Coder, Folder, parse_signature_header, SIGNATURE
 
 
 class Test7zipFileExtractor(TestUnitBase):
@@ -339,6 +341,26 @@ class Test7zipFileExtractor(TestUnitBase):
             str(data | self.load('testfile.txt')),
             self.TESTFILE1_CONTENT,
         )
+
+    def test_every_file_of_a_bcj2_archive_made_by_7zip_matches_its_original(self):
+        data = self.download_sample('4a5ef525037ce7059e124876c9d31153b495fd0fdcc7ac06484fe1668f90f314')
+        files = {chunk['path']: hashlib.sha256(chunk).hexdigest() for chunk in data | self.load() | [...]}
+        self.assertEqual(files, {
+            'License.txt': '519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d',
+            '7-zip32.dll': 'ebb037cb88bccc3ae22f46f3dbd5c9b308c31dc36002305cb4e05f56964e917b',
+        })
+
+    def test_a_folder_whose_coder_reads_its_own_output_is_corrupt(self):
+        copy = Coder(codec_id=CODEC_COPY, num_in_streams=1, num_out_streams=1, properties=b'')
+        folder = Folder(
+            coders=[copy, copy],
+            # the main output comes from coder 0, which reads coder 1, which reads itself
+            bind_pairs=[BindPair(in_index=0, out_index=1), BindPair(in_index=1, out_index=1)],
+            packed_indices=[],
+            unpack_sizes=[1, 1],
+        )
+        with self.assertRaises(SzCorruptArchive):
+            decompress_folder(folder, [])
 
     def test_a_damaged_first_file_of_an_archive_without_encryption_fails_alone(self):
         data = bytearray(self.download_sample('4950524235e3e594afe8b60ec3a7dc7ca9431b27e5c4bb728d166f403ef83131'))

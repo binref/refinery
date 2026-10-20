@@ -129,15 +129,48 @@ class Folder:
 
     @property
     def main_unpack_size(self) -> int:
-        main_index = self._find_main_out_stream()
-        return self.unpack_sizes[main_index]
+        return self.unpack_sizes[self.main_out_stream]
 
-    def _find_main_out_stream(self) -> int:
+    @property
+    def main_out_stream(self) -> int:
         bound_out = {bp.out_index for bp in self.bind_pairs}
         for i in range(self.total_out_streams):
             if i not in bound_out:
                 return i
         return 0
+
+    def coder_of_out_stream(self, out_index: int) -> int:
+        end = 0
+        for coder_index, coder in enumerate(self.coders):
+            end += coder.num_out_streams
+            if out_index < end:
+                return coder_index
+        raise SzCorruptArchive(F'Output stream {out_index} does not exist.')
+
+    def in_streams_of(self, coder_index: int) -> range:
+        start = sum(coder.num_in_streams for coder in self.coders[:coder_index])
+        return range(start, start + self.coders[coder_index].num_in_streams)
+
+    def bound_out_stream(self, in_index: int) -> int | None:
+        """
+        The output stream that the given input stream is bound to, or `None` if the input stream
+        is fed by a packed stream.
+        """
+        for bp in self.bind_pairs:
+            if bp.in_index == in_index:
+                return bp.out_index
+        return None
+
+    def packed_stream(self, in_index: int) -> int:
+        """
+        The position, among the packed streams of this folder, of the packed stream that feeds the
+        given input stream. The k-th packed stream of the folder feeds input stream number
+        `packed_indices[k]`.
+        """
+        try:
+            return self.packed_indices.index(in_index)
+        except ValueError:
+            raise SzCorruptArchive(F'Input stream {in_index} is neither bound nor packed.') from None
 
 
 @dataclasses.dataclass

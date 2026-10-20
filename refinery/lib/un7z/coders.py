@@ -18,7 +18,8 @@ from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.un7z.bcj2 import decode_bcj2
 
 if TYPE_CHECKING:
-    from refinery.lib.un7z.headers import BindPair, Folder
+    from refinery.lib.types import buf
+    from refinery.lib.un7z.headers import Folder
 
 from refinery.lib.un7z.headers import (
     SzCorruptArchive,
@@ -484,180 +485,70 @@ SIMPLE_FILTERS = {
 def decompress_folder(
     folder: Folder,
     packed_streams: list[memoryview],
-    unpack_size: int,
     password: str | bytes | None = None,
-) -> bytes | bytearray:
-    if _is_bcj2_folder(folder):
-        return _decompress_bcj2_folder(folder, packed_streams, unpack_size, password)
-    return _decompress_simple_folder(folder, packed_streams, unpack_size, password)
+) -> buf:
+    """
+    Decode the main output stream of the folder. The list `packed_streams` holds the packed streams
+    of the folder in the order of the archive, which is the order of `Folder.packed_indices`.
+    """
+    return _FolderDecoder(folder, packed_streams, password).out_stream(folder.main_out_stream)
 
 
-def _is_bcj2_folder(folder: Folder) -> bool:
-    for coder in folder.coders:
-        if coder.codec_id == CODEC_BCJ2:
-            return True
-    return False
+class _FolderDecoder:
+    """
+    Decodes the output streams of one folder by following its bonds back to its packed streams.
+    Every output stream is decoded at most once, so that coders bound in a cycle cannot loop.
+    """
+    def __init__(
+        self,
+        folder: Folder,
+        packed_streams: list[memoryview],
+        password: str | bytes | None,
+    ):
+        self.folder = folder
+        self.packed_streams = packed_streams
+        self.password = password
+        self.decoded: set[int] = set()
 
-
-def _resolve_coder_chain(folder: Folder) -> list[int]:
-    bound_out = {bp.out_index for bp in folder.bind_pairs}
-    main_out = -1
-    for i in range(folder.total_out_streams):
-        if i not in bound_out:
-            main_out = i
-            break
-    chain: list[int] = []
-    current_out = main_out
-    while True:
-        coder_idx = _out_stream_to_coder(folder, current_out)
-        chain.append(coder_idx)
-        coder = folder.coders[coder_idx]
-        if coder.num_in_streams != 1:
-            break
-        in_stream = _coder_first_stream(folder, coder_idx, output=False)
-        bp = _find_bind_pair(folder, in_stream, by_input=True)
-        if bp is None:
-            break
-        current_out = bp.out_index
-    chain.reverse()
-    return chain
-
-
-def _out_stream_to_coder(folder: Folder, out_stream: int) -> int:
-    idx = 0
-    for i, coder in enumerate(folder.coders):
-        if out_stream < idx + coder.num_out_streams:
-            return i
-        idx += coder.num_out_streams
-    raise SzCorruptArchive(F'Out stream {out_stream} not found.')
-
-
-def _coder_first_stream(folder: Folder, coder_idx: int, *, output: bool) -> int:
-    idx = 0
-    attr = 'num_out_streams' if output else 'num_in_streams'
-    for i, coder in enumerate(folder.coders):
-        if i == coder_idx:
-            return idx
-        idx += getattr(coder, attr)
-    raise SzCorruptArchive(F'Coder {coder_idx} not found.')
-
-
-def _find_bind_pair(folder: Folder, stream: int, *, by_input: bool) -> BindPair | None:
-    attr = 'in_index' if by_input else 'out_index'
-    for bp in folder.bind_pairs:
-        if getattr(bp, attr) == stream:
-            return bp
-    return None
-
-
-def _get_packed_stream_for_coder(folder: Folder, coder_idx: int) -> int:
-    in_stream = _coder_first_stream(folder, coder_idx, output=False)
-    bound_in = {bp.in_index for bp in folder.bind_pairs}
-    pack_idx = 0
-    for s in range(folder.total_in_streams):
-        if s not in bound_in:
-            if s == in_stream:
-                return pack_idx
-            pack_idx += 1
-    return 0
-
-
-def _decompress_simple_folder(
-    folder: Folder,
-    packed_streams: list[memoryview],
-    unpack_size: int,
-    password: str | bytes | None = None,
-) -> bytes | bytearray:
-    chain = _resolve_coder_chain(folder)
-    pack_idx = _get_packed_stream_for_coder(folder, chain[0])
-    current_data: bytes | bytearray | memoryview = packed_streams[pack_idx]
-    for coder_idx in chain:
-        coder = folder.coders[coder_idx]
+    def out_stream(self, out_index: int) -> buf:
+        if out_index in self.decoded:
+            raise SzCorruptArchive(F'Output stream {out_index} is read more than once.')
+        self.decoded.add(out_index)
+        folder = self.folder
+        coder_index = folder.coder_of_out_stream(out_index)
+        coder = folder.coders[coder_index]
         cid = coder.codec_id
-        out_idx = _coder_first_stream(folder, coder_idx, output=True)
-        coder_unpack_size = folder.unpack_sizes[out_idx] if out_idx < len(folder.unpack_sizes) else unpack_size
-        if cid == CODEC_AES256SHA256:
-            if password is None:
+        size = folder.unpack_sizes[out_index]
+        output: buf
+        if coder.num_out_streams != 1:
+            raise SzUnsupportedMethod(F'Codec {cid.hex()} has {coder.num_out_streams} output streams.')
+        if cid == CODEC_BCJ2:
+            main, call, jump, rc = self.in_streams(coder_index, 4)
+            output = decode_bcj2(main, call, jump, rc, size)
+        elif cid == CODEC_AES256SHA256:
+            if (password := self.password) is None:
                 raise SzPasswordRequired('Password required for AES-encrypted archive.')
-            current_data = _decrypt_aes256sha256(current_data, coder.properties, password)
-        elif cid in SIMPLE_DECOMPRESSORS:
-            current_data = SIMPLE_DECOMPRESSORS[cid](current_data, coder.properties, coder_unpack_size)
-        elif cid in SIMPLE_FILTERS:
-            current_data = SIMPLE_FILTERS[cid](current_data, coder.properties)
+            data, = self.in_streams(coder_index, 1)
+            output = _decrypt_aes256sha256(data, coder.properties, password)
+        elif decompress := SIMPLE_DECOMPRESSORS.get(cid):
+            data, = self.in_streams(coder_index, 1)
+            output = decompress(data, coder.properties, size)
+        elif apply_filter := SIMPLE_FILTERS.get(cid):
+            data, = self.in_streams(coder_index, 1)
+            output = apply_filter(data, coder.properties)
         else:
             raise SzUnsupportedMethod(F'Unsupported codec: {cid.hex()}')
-    if len(current_data) > unpack_size:
-        current_data = current_data[:unpack_size]
-    return current_data
+        if len(output) > size:
+            output = memoryview(output)[:size]
+        return output
 
+    def in_streams(self, coder_index: int, count: int) -> list[buf]:
+        in_streams = self.folder.in_streams_of(coder_index)
+        if len(in_streams) != count:
+            raise SzCorruptArchive(F'Coder {coder_index} has {len(in_streams)} input streams, expected {count}.')
+        return [self.in_stream(in_index) for in_index in in_streams]
 
-def _resolve_stream(
-    folder: Folder,
-    global_in: int,
-    packed_streams: list[memoryview],
-    password: str | bytes | None,
-) -> bytes | bytearray | memoryview:
-    bp = _find_bind_pair(folder, global_in, by_input=True)
-    if bp is None:
-        bound_in = {bp2.in_index for bp2 in folder.bind_pairs}
-        pack_idx = 0
-        for s in range(folder.total_in_streams):
-            if s not in bound_in:
-                if s == global_in:
-                    return packed_streams[pack_idx]
-                pack_idx += 1
-        return b''
-    source_coder_idx = _out_stream_to_coder(folder, bp.out_index)
-    source_coder = folder.coders[source_coder_idx]
-    source_in = _coder_first_stream(folder, source_coder_idx, output=False)
-    source_data = _resolve_stream(folder, source_in, packed_streams, password)
-    out_idx = _coder_first_stream(folder, source_coder_idx, output=True)
-    unpack = folder.unpack_sizes[out_idx] if out_idx < len(folder.unpack_sizes) else len(source_data)
-    cid = source_coder.codec_id
-    if cid == CODEC_AES256SHA256:
-        if password is None:
-            raise SzPasswordRequired('Password required.')
-        source_data = _decrypt_aes256sha256(source_data, source_coder.properties, password)
-    if cid in SIMPLE_DECOMPRESSORS:
-        source_data = SIMPLE_DECOMPRESSORS[cid](source_data, source_coder.properties, unpack)
-    elif cid in SIMPLE_FILTERS:
-        source_data = SIMPLE_FILTERS[cid](source_data, source_coder.properties)
-    return source_data
-
-
-def _decompress_bcj2_folder(
-    folder: Folder,
-    packed_streams: list[memoryview],
-    unpack_size: int,
-    password: str | bytes | None = None,
-) -> bytes | bytearray:
-    bcj2_coder_idx = -1
-    for i, coder in enumerate(folder.coders):
-        if coder.codec_id == CODEC_BCJ2:
-            bcj2_coder_idx = i
-            break
-    if bcj2_coder_idx < 0:
-        raise SzCorruptArchive('BCJ2 coder not found in folder.')
-    bcj2_coder = folder.coders[bcj2_coder_idx]
-    bcj2_first_in = _coder_first_stream(folder, bcj2_coder_idx, output=False)
-    bcj2_in_streams: list[bytes | bytearray | memoryview] = []
-    for s in range(bcj2_coder.num_in_streams):
-        global_in = bcj2_first_in + s
-        bcj2_in_streams.append(_resolve_stream(folder, global_in, packed_streams, password))
-    if len(bcj2_in_streams) < 4:
-        raise SzCorruptArchive(F'BCJ2 requires 4 input streams, got {len(bcj2_in_streams)}.')
-    result = decode_bcj2(
-        bcj2_in_streams[0],
-        bcj2_in_streams[1],
-        bcj2_in_streams[2],
-        bcj2_in_streams[3],
-        unpack_size,
-    )
-    bcj2_out = _coder_first_stream(folder, bcj2_coder_idx, output=True)
-    bp = _find_bind_pair(folder, bcj2_out, by_input=False)
-    if bp is not None:
-        post_coder_idx = _out_stream_to_coder(folder, bp.in_index)
-        post_coder = folder.coders[post_coder_idx]
-        if post_coder.codec_id in SIMPLE_FILTERS:
-            result = SIMPLE_FILTERS[post_coder.codec_id](result, post_coder.properties)
-    return result[:unpack_size]
+    def in_stream(self, in_index: int) -> buf:
+        if (out_index := self.folder.bound_out_stream(in_index)) is not None:
+            return self.out_stream(out_index)
+        return self.packed_streams[self.folder.packed_stream(in_index)]
