@@ -40,8 +40,9 @@ from typing import (
 )
 
 from refinery.lib import json
-from refinery.lib.inno import CaseInsensitiveDict, constants, pascal
+from refinery.lib.inno import CaseInsensitiveDict, constants, expressions, pascal
 from refinery.lib.inno.archive import (
+    Architecture,
     AutoBool,
     Flags,
     InnoArchive,
@@ -734,10 +735,11 @@ class HostSetup:
     """
     What the Setup that runs the script decides on its own, read once from the setup header and the
     configuration: its version, the active language, the directives that the walk of the wizard
-    follows, and the built-in pages that the header makes it skip. A bare script has no header; it
-    is taken to run under the Setup of the configured version, or the current Setup without one,
-    with every page shown and every directive that sends an event on, so that each event that the
-    script handles is sent. The script tells which Pascal Script compiled it and for which platform;
+    follows, the built-in pages that the header makes it skip, and its install mode. A bare script
+    has no header; it is taken to run under the Setup of the configured version, or the current
+    Setup without one, with every page shown and every directive that sends an event on, so that
+    each event that the script handles is sent, and in the install mode that its Setup has without
+    the directive. The script tells which Pascal Script compiled it and for which platform;
     the version and the platform of an installer, the configured version, and the configured
     Windows must agree.
     """
@@ -756,6 +758,7 @@ class HostSetup:
     skipped_pages: frozenset[int]
     dialect: Dialect
     platform: Platform
+    install_mode: InstallMode
 
     @classmethod
     def of(
@@ -788,6 +791,7 @@ class HostSetup:
                 skipped_pages=frozenset(),
                 dialect=dialect,
                 platform=platform,
+                install_mode=InstallMode(platform is Platform.Win64 and config.x64),
             )
         header = setup_info.Header
         flags = header.Flags
@@ -835,6 +839,7 @@ class HostSetup:
             skipped_pages=frozenset(skipped),
             dialect=dialect,
             platform=platform,
+            install_mode=_install_mode(header.ArchitecturesInstallIn64BitMode, config.x64),
         )
 
     def runtime(self, settings: numbers.FormatSettings) -> Runtime:
@@ -844,6 +849,93 @@ class HostSetup:
         if self.platform is Platform.Win64:
             return Win64(settings)
         return Win32(settings, _control_word(self.release))
+
+
+class InstallMode(NamedTuple):
+    """
+    Whether Setup installs in 64-bit mode; the registry view and the folders of the .NET Framework
+    that Setup reads follow it. When the emulator cannot decide the mode, `bits64` is `None` and
+    `reason` says why; every value that depends on the mode then fails as a value that the emulator
+    does not have.
+    """
+    bits64: bool | None
+    reason: str = ''
+
+    def decided(self) -> bool:
+        if (bits64 := self.bits64) is None:
+            raise NotImplementedError(F'The emulator cannot decide the install mode: {self.reason}')
+        return bits64
+
+
+class TSetupProcessorArchitecture(int, Enum):
+    """
+    An IFPS enumeration that classifies different processor architectures.
+    """
+    paUnknown = 0
+    paX86 = auto()
+    paX64 = auto()
+    paArm32 = auto()
+    paArm64 = auto()
+
+
+_ARCHITECTURES: dict[str, tuple[TSetupProcessorArchitecture, bool]] = {
+    'arm32compatible' : (TSetupProcessorArchitecture.paArm32, True),
+    'arm64'           : (TSetupProcessorArchitecture.paArm64, False),
+    'x64'             : (TSetupProcessorArchitecture.paX64, False),
+    'x64os'           : (TSetupProcessorArchitecture.paX64, False),
+    'x64compatible'   : (TSetupProcessorArchitecture.paX64, True),
+    'x86'             : (TSetupProcessorArchitecture.paX86, False),
+    'x86os'           : (TSetupProcessorArchitecture.paX86, False),
+    'x86compatible'   : (TSetupProcessorArchitecture.paX86, True),
+}
+"""
+Setup's architecture identifiers: the architecture each one names, and whether it asks for a
+machine that runs code of that architecture rather than for a processor of it.
+"""
+
+
+def _processor(x64: bool) -> TSetupProcessorArchitecture:
+    """
+    The processor of the emulated machine.
+    """
+    return TSetupProcessorArchitecture.paX64 if x64 else TSetupProcessorArchitecture.paX86
+
+
+def _architecture(name: str, x64: bool) -> bool:
+    """
+    Setup's `EvalArchitectureIdentifier` on the emulated machine: `win64` is 64-bit Windows, a
+    compatible identifier holds when the machine runs code of the architecture, any other one when
+    the processor is of the architecture.
+    """
+    if name == 'win64':
+        return x64
+    try:
+        architecture, compatible = _ARCHITECTURES[name]
+    except KeyError:
+        raise expressions.ExpressionError(F"Unknown architecture '{name}'") from None
+    if compatible:
+        return architecture is TSetupProcessorArchitecture.paX86 or architecture is _processor(x64)
+    return architecture is _processor(x64)
+
+
+def _install_mode(directive: str | Architecture, x64: bool) -> InstallMode:
+    """
+    The install mode of Setup on the emulated machine: from 6.3.0 on, 64-bit when the expression of
+    architecture identifiers holds; earlier, when the processor is in the set. Setup evaluates the
+    expression on every machine and ends when it holds on 32-bit Windows; the emulator then goes
+    on in 32-bit mode.
+    """
+    if isinstance(directive, Architecture):
+        return InstallMode(x64 and Architecture.X64 in directive)
+    if not directive:
+        return InstallMode(False)
+    try:
+        holds = expressions.decide(directive, lambda name: _architecture(name, x64))
+    except expressions.ExpressionError as error:
+        return InstallMode(None, str(error))
+    except RecursionError:
+        return InstallMode(None, 'the expression nests deeper than Python can follow')
+    return InstallMode(x64 and holds)
 
 
 def _release(compiled_code_version: int, version: InnoVersion | None) -> tuple[int, ...] | None:
@@ -1181,17 +1273,6 @@ class TUninstallStep(int, Enum):
     usUninstall = auto()
     usPostUninstall = auto()
     usDone = auto()
-
-
-class TSetupProcessorArchitecture(int, Enum):
-    """
-    An IFPS enumeration that classifies different processor architectures.
-    """
-    paUnknown = 0
-    paX86 = auto()
-    paX64 = auto()
-    paArm32 = auto()
-    paArm64 = auto()
 
 
 class EventCall(Generic[_Y, _T]):
@@ -1903,12 +1984,38 @@ class IFPSEmulator:
         return 0
 
     @external()
+    def IsArm32Compatible(self) -> bool:
+        return _architecture('arm32compatible', self.config.x64)
+
+    @external()
+    def IsArm64(self) -> bool:
+        return _architecture('arm64', self.config.x64)
+
+    @external()
+    def IsX64(self) -> bool:
+        return _architecture('x64', self.config.x64)
+
+    @external()
+    def IsX64OS(self) -> bool:
+        return _architecture('x64os', self.config.x64)
+
+    @external()
+    def IsX64Compatible(self) -> bool:
+        return _architecture('x64compatible', self.config.x64)
+
+    @external()
+    def IsX86(self) -> bool:
+        return _architecture('x86', self.config.x64)
+
+    @external()
+    def IsX86OS(self) -> bool:
+        return _architecture('x86os', self.config.x64)
+
+    @external()
     def IsX86Compatible(self) -> bool:
-        return True
+        return _architecture('x86compatible', self.config.x64)
 
     @external(alias=[
-        'IsArm64',
-        'IsArm32Compatible',
         'Debugging',
         'IsUninstaller',
     ])
@@ -1996,15 +2103,10 @@ class IFPSEmulator:
             'sys'               : R'C:\Windows\System32',
             'src'               : str(Path(cfg.executable).parent),
             'sd'                : R'C:',
-            'commonpf'          : R'C:\Program Files',
-            'commoncf'          : R'C:\Program Files\Common Files',
             'tmp'               : tmp,
             'commonfonts'       : R'C:\Windows\Fonts',
-            'dao'               : R'C:\Program Files\Common Files\Microsoft Shared\DAO',
             'dotnet11'          : R'C:\Windows\Microsoft.NET\Framework\v1.1.4322',
-            'dotnet20'          : R'C:\Windows\Microsoft.NET\Framework\v3.0',
-            'dotnet2032'        : R'C:\Windows\Microsoft.NET\Framework\v3.0',
-            'dotnet40'          : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
+            'dotnet2032'        : R'C:\Windows\Microsoft.NET\Framework\v2.0.50727',
             'dotnet4032'        : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
             'group'             : RF'{user}\Start Menu\Programs\{cfg.inno_name}',
             'localappdata'      : RF'{user}\AppData\Local',
@@ -2050,7 +2152,7 @@ class IFPSEmulator:
             map['commoncf32'] = R'C:\Program Files (x86)\Common Files'
             map['commonpf64'] = R'C:\Program Files'
             map['commoncf64'] = R'C:\Program Files\Common Files'
-            map['dotnet2064'] = R'C:\Windows\Microsoft.NET\Framework64\v3.0'
+            map['dotnet2064'] = R'C:\Windows\Microsoft.NET\Framework64\v2.0.50727'
             map['dotnet4064'] = R'C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
         else:
             map['sysnative'] = R'C:\Windows\System32'
@@ -2058,6 +2160,20 @@ class IFPSEmulator:
             map['commonpf32'] = R'C:\Program Files'
             map['commoncf32'] = R'C:\Program Files\Common Files'
         return map
+
+    def _mode_constant(self, name: str) -> str | None:
+        """
+        The value of a constant that follows the install mode: the folders of programs and of shared
+        files, and the folders of the .NET Framework that Setup reads through the registry view of
+        the mode.
+        """
+        if name not in ('commonpf', 'commoncf', 'dao', 'dotnet20', 'dotnet40'):
+            return None
+        bits = '64' if self.setup.install_mode.decided() else '32'
+        map = self.constant_map
+        if name == 'dao':
+            return RF'{map[F"commoncf{bits}"]}\Microsoft Shared\DAO'
+        return map[F'{name}{bits}']
 
     def constant_value(self, name: str, original: str) -> str:
         """
@@ -2082,6 +2198,8 @@ class IFPSEmulator:
             return RF'{cfg.install_to}\unins000.exe'
         if name == 'language':
             return self.setup.language_name
+        if (value := self._mode_constant(name)) is not None:
+            return value
         try:
             return self.constant_map[name]
         except KeyError:
@@ -2117,14 +2235,14 @@ class IFPSEmulator:
         custom_val: str,
         caller: _ScriptRun | None = None,
     ) -> Generator[Any, Any, str]:
-        return constants.expand_constants(string, _EmulatedConstants(self, caller), (custom_var, custom_val))
+        return constants.expand_constants(string, _EmulatedConstants(self, caller), {custom_var: custom_val})
 
     def expand_constant(self, string: str, custom_var: str | None = None, custom_val: str = '') -> str:
         """
         Expands the constants in the given string as Setup expands them, with one optional custom
         constant. A code constant runs a function of the script; its calls are not reported.
         """
-        custom = None if custom_var is None else (custom_var, custom_val)
+        custom = None if custom_var is None else {custom_var: custom_val}
         expansion = EventCall(self._timed(constants.expand_constants(string, _EmulatedConstants(self, None), custom)))
         value = expansion.value
         assert value is not None
@@ -2281,13 +2399,13 @@ class IFPSEmulator:
             pass
         return ''
 
-    @external(alias=['Is64BitInstallMode', 'IsX64Compatible', 'IsX64OS'])
+    @external()
     def IsWin64(self) -> bool:
         return self.config.x64
 
     @external()
-    def IsX86OS(self) -> bool:
-        return not self.config.x64
+    def Is64BitInstallMode(self) -> bool:
+        return self.setup.install_mode.decided()
 
     @external()
     def RaiseException(self, msg: str):
@@ -2301,10 +2419,7 @@ class IFPSEmulator:
 
     @external()
     def ProcessorArchitecture(self) -> int:
-        if self.config.x64:
-            return TSetupProcessorArchitecture.paX64.value
-        else:
-            return TSetupProcessorArchitecture.paX86.value
+        return _processor(self.config.x64).value
 
     @external()
     def GetUserNameString(self) -> str:

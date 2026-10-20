@@ -682,6 +682,22 @@ class TestIPFSEmulator(TestBase):
         # names only: two clean runs differ in time stamps and random numbers, never in the calls
         self.assertEqual(completed, clean)
 
+    def test_each_architecture_function_answers_for_the_processor_of_the_emulated_machine(self):
+        """
+        Setup answers each of these functions as the architecture identifier of its name: an
+        identifier that ends in `compatible` holds when Windows runs code of the architecture, any
+        other one when the processor is of the architecture. The emulated machine has an x64
+        processor with 64-bit Windows, or an x86 processor with 32-bit Windows.
+        """
+        names = ['IsArm32Compatible', 'IsArm64', 'IsX64', 'IsX64OS', 'IsX64Compatible', 'IsX86', 'IsX86OS', 'IsX86Compatible']
+        for x64, answers in (
+            (True, [False, False, True, True, True, False, False, True]),
+            (False, [False, False, False, False, False, True, True, True]),
+        ):
+            emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, x64=x64)
+            with self.subTest(x64=x64):
+                self.assertEqual([getattr(emulator, name)() for name in names], answers)
+
     def test_a_second_installation_runs_the_script_as_the_first(self):
         from refinery.lib.inno.emulation import NewFunctionCall, NewPassword
         emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True)

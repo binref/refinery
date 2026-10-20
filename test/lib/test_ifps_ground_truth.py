@@ -1,6 +1,7 @@
 import codecs
 import pytest
 import re
+import sys
 import tracemalloc
 
 from itertools import zip_longest
@@ -381,6 +382,39 @@ _HOST_LOG_OF_A_SILENT_INSTALLATION = {
     'ProgressLast'                  : '894/894',
 }
 _HOST_VALUES_THAT_ARE_NOT_EMULATED = ('ConstEnvMissing', 'ProgressCalls', 'ProgressLast')
+_HOST_VALUES_OF_THE_INSTALL_MODE = (
+    'Is64BitInstallMode',
+    'IsWin64',
+    'ConstCommonPf',
+    'ConstCommonCf',
+    'ConstDao',
+    'ConstCommonPf32',
+    'ConstCommonPf64',
+)
+_HOST_LOG_OF_A_32_BIT_INSTALL_MODE = {
+    'Is64BitInstallMode' : '0',
+    'IsWin64'            : '1',
+    'ConstCommonPf'      : R'[C:\Program Files (x86)]',
+    'ConstCommonCf'      : R'[C:\Program Files (x86)\Common Files]',
+    'ConstDao'           : R'[C:\Program Files (x86)\Common Files\Microsoft Shared\DAO]',
+    'ConstCommonPf32'    : R'[C:\Program Files (x86)]',
+    'ConstCommonPf64'    : R'[C:\Program Files]',
+}
+"""
+What `InitializeSetup` of an earlier version of the host oracle logged for the install mode when it
+was built without `ArchitecturesInstallIn64BitMode` and ran on 64-bit Windows.
+"""
+
+
+def _host_oracle_log(test: TestBase, run: str) -> dict[str, str]:
+    """
+    The values that a run of the host oracle logged, by their names.
+    """
+    values = {}
+    for line in codecs.decode(_archived_file(test, _HOST_ORACLE, F'host-oracle-5-{run}.log'), 'utf8').splitlines():
+        if match := _ORACLE_LINE.fullmatch(line):
+            values[match[1]] = match[2]
+    return values
 
 
 def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str, str]:
@@ -1453,25 +1487,72 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(TestBase):
         self.assertNotIn('ShouldSkipPage(2)', silent)
         self.assertNotIn('CurPageChanged(2)', silent)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='the program files folders do not follow the 32-bit install mode of the setup',
-    )
-    def test_a_setup_in_32_bit_install_mode_puts_the_program_files_folders_under_program_files_x86(self):
-        """
-        The installer sets no `ArchitecturesInstallIn64BitMode`, so it installs in 32-bit mode;
-        the emulated Windows is 64-bit.
-        """
-        emulator = self.emulator(x64=True)
+    def host_oracle(self) -> InnoArchive:
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+
+    def install_mode_values(self, archive: InnoArchive) -> dict[str, str]:
+        emulator = self.emulator(archive)
+        logged = _logged_values(emulator.emulate_function(emulator.symbols['INITIALIZESETUP']), {})
+        return {name: logged[name] for name in _HOST_VALUES_OF_THE_INSTALL_MODE}
+
+    def test_a_setup_in_64_bit_install_mode_gives_the_values_that_setup_gave(self):
+        log = _host_oracle_log(self, 'normal')
         self.assertEqual(
-            [emulator.expand_constant(constant) for constant in ('{commonpf}', '{commoncf}', '{dao}')],
-            [
-                R'C:\Program Files (x86)',
-                R'C:\Program Files (x86)\Common Files',
-                R'C:\Program Files (x86)\Common Files\Microsoft Shared\DAO',
-            ],
+            self.install_mode_values(self.host_oracle()),
+            {name: log[name] for name in _HOST_VALUES_OF_THE_INSTALL_MODE},
         )
+
+    def test_a_setup_in_64_bit_install_mode_reads_the_folder_of_the_64_bit_dotnet_framework(self):
+        emulator = self.emulator(self.host_oracle())
+        logged = _logged_values(emulator.emulate_function(emulator.symbols['INITIALIZESETUP']), {})
+        self.assertEqual(logged['ConstDotNet40Mode'], _host_oracle_log(self, 'normal')['ConstDotNet40Mode'])
+
+    def test_a_setup_in_32_bit_install_mode_gives_the_values_that_setup_gave(self):
+        """
+        The parsed header of the installer is changed as a script without the directive
+        `ArchitecturesInstallIn64BitMode` changes it.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.ArchitecturesInstallIn64BitMode = ''
+        self.assertEqual(self.install_mode_values(archive), _HOST_LOG_OF_A_32_BIT_INSTALL_MODE)
+
+    def test_a_script_of_a_64_bit_setup_installs_in_64_bit_mode_without_its_installer(self):
+        """
+        A 64-bit Setup installs in 64-bit mode unless its directive says otherwise.
+        """
+        script = IFPSFile.Parse(_value_oracle_file(self, 'x64', 'ifps'))
+        emulator = InnoSetupEmulator(script, IFPSEmulatorConfig(setup_version=(7, 1, 0)))
+        self.assertEqual(emulator.expand_constant('{commonpf}'), R'C:\Program Files')
+
+    def test_a_script_of_a_32_bit_setup_installs_in_32_bit_mode_without_its_installer(self):
+        """
+        A 32-bit Setup installs in 32-bit mode unless its directive says otherwise.
+        """
+        script = IFPSFile.Parse(_value_oracle_file(self, 'inno6', 'ifps'))
+        emulator = InnoSetupEmulator(script, IFPSEmulatorConfig(setup_version=(6, 5, 0)))
+        self.assertEqual(emulator.expand_constant('{commonpf}'), R'C:\Program Files (x86)')
+
+    def test_an_architecture_that_the_emulator_does_not_know_leaves_the_install_mode_undecided(self):
+        """
+        The parsed header of the installer is changed as a directive with an identifier of a later
+        Setup would change it. Only the values that follow the install mode fail.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.ArchitecturesInstallIn64BitMode = 'nosucharchitecture or x64compatible'
+        emulator = self.emulator(archive)
+        self.assertEqual(emulator.setup.install_mode.reason, "Unknown architecture 'nosucharchitecture'")
+        with self.assertRaises(NotImplementedError):
+            emulator.expand_constant('{commonpf}')
+        self.assertEqual(emulator.expand_constant('{commonpf32}'), R'C:\Program Files (x86)')
+
+    def test_an_architecture_directive_that_nests_deeper_than_python_follows_leaves_the_install_mode_undecided(self):
+        depth = sys.getrecursionlimit()
+        archive = self.host_oracle()
+        archive.setup_info.Header.ArchitecturesInstallIn64BitMode = F'{"(" * depth}x64compatible{")" * depth}'
+        emulator = self.emulator(archive)
+        self.assertIsNone(emulator.setup.install_mode.bits64)
+        with self.assertRaises(NotImplementedError):
+            emulator.expand_constant('{commonpf}')
 
     def test_a_method_of_a_class_receives_its_object_and_every_value(self):
         """

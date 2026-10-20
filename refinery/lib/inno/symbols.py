@@ -162,8 +162,10 @@ class IFPSAPI:
     function ProcessorArchitecture: TSetupProcessorArchitecture;
     function IsArm32Compatible: Boolean;
     function IsArm64: Boolean;
+    function IsX64: Boolean;
     function IsX64Compatible: Boolean;
     function IsX64OS: Boolean;
+    function IsX86: Boolean;
     function IsX86Compatible: Boolean;
     function IsX86OS: Boolean;
     function InstallOnThisVersion(const MinVersion, OnlyBelowVersion: String): Boolean;

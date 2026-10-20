@@ -5,7 +5,7 @@ values come from a `ConstantHost`, which stands for the machine and the Setup th
 """
 from __future__ import annotations
 
-from typing import Any, Generator, NamedTuple, Protocol
+from typing import Any, Generator, Mapping, NamedTuple, Protocol
 
 from refinery.lib.inno.delphi.errors import DelphiException
 
@@ -334,12 +334,12 @@ def _decoded(kind: str, *parameters: str) -> list[str]:
 def expand_constants(
     string: str,
     host: ConstantHost,
-    custom: tuple[str, str] | None = None,
+    custom: Mapping[str, str] | None = None,
 ) -> Generator[Any, Any, str]:
     """
-    Expands the constants in the given string as Setup's `ExpandConstEx2` does, with one optional
-    custom constant given as its name and value. The value of a constant is not scanned again, and
-    a backslash right after a value that ends in one is dropped.
+    Expands the constants in the given string as Setup's `ExpandConstEx2` does, with the custom
+    constants that Setup passes for the text, by their names. The value of a constant is not
+    scanned again, and a backslash right after a value that ends in one is dropped.
     """
     output: list[str] = []
     cursor = 0
@@ -366,7 +366,7 @@ def expand_constants(
 def _expand_constant(
     constant: str,
     host: ConstantHost,
-    custom: tuple[str, str] | None,
+    custom: Mapping[str, str] | None,
 ) -> Generator[Any, Any, str]:
     """
     The value of one constant, given without its braces, as Setup's `ExpandIndividualConst`
@@ -408,15 +408,15 @@ def _expand_constant(
         return host.drive((yield from expand_constants(path, host, custom)))
     if constant.startswith('cm:'):
         return (yield from _expand_message_constant(constant[3:], host, custom))
-    if custom is not None and constant and constant == custom[0]:
-        return custom[1]
+    if custom is not None and constant and (value := custom.get(constant)) is not None:
+        return value
     raise ConstantError(F'Unknown constant "{original}"')
 
 
 def _expand_registry_constant(
     parameter: str,
     host: ConstantHost,
-    custom: tuple[str, str] | None,
+    custom: Mapping[str, str] | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `reg:HKxx\\Key,Value|Default`. The root may end in 32 or 64 for a registry view.
@@ -450,7 +450,7 @@ def _expand_registry_constant(
 def _expand_ini_constant(
     parameter: str,
     host: ConstantHost,
-    custom: tuple[str, str] | None,
+    custom: Mapping[str, str] | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `ini:File,Section,Key|Default`; Setup expands all four parts in this order.
@@ -472,7 +472,7 @@ def _expand_ini_constant(
 def _expand_message_constant(
     parameter: str,
     host: ConstantHost,
-    custom: tuple[str, str] | None,
+    custom: Mapping[str, str] | None,
 ) -> Generator[Any, Any, str]:
     """
     Expands `cm:Name,Argument,...`: the name is taken as written, each of up to nine arguments is
