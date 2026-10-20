@@ -3,9 +3,7 @@ from __future__ import annotations
 import functools
 
 from refinery.lib.inno.archive import InnoArchive, is_inno_setup
-from refinery.lib.inno.emulator import (
-    IFPSEmulatorConfig,
-    InnoSetupEmulator,
+from refinery.lib.inno.emulation import (
     NewEmulationError,
     NewFunctionCall,
     NewInstruction,
@@ -13,6 +11,7 @@ from refinery.lib.inno.emulator import (
     NewPassword,
     NewScriptError,
 )
+from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
 from refinery.lib.inno.ifps import IFPSFile
 from refinery.units import Unit
 

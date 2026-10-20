@@ -107,7 +107,8 @@ class TestInnoExtractor(TestUnitBase):
         self.assertEqual(inno.version, tried[1])
 
     def test_a_file_path_whose_constants_fail_to_expand_does_not_keep_the_archive_from_opening(self):
-        from refinery.lib.inno.emulator import IFPSEmulator, IFPSException
+        from refinery.lib.inno.emulator import IFPSEmulator
+        from refinery.lib.inno.pascal import IFPSException
         data = self.download_sample('c6bb166294257e53d0d4b9ef6fe362c8cbacef5ec2bd26f98c6d7043284dec73')
         expand = IFPSEmulator.expand_constant
 

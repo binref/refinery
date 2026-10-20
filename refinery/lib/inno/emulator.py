@@ -13,7 +13,6 @@ import fnmatch
 import hashlib
 import inspect
 import ntpath
-import operator
 import random
 import re
 import shlex
@@ -21,8 +20,7 @@ import struct
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from enum import Enum, IntFlag, StrEnum, auto
-from fractions import Fraction
+from enum import Enum, auto
 from functools import cached_property, wraps
 from pathlib import Path
 from time import process_time
@@ -43,12 +41,38 @@ from typing import (
 
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, pascal
-from refinery.lib.inno.archive import AutoBool, Flags, InnoArchive, InnoVersion, LanguageDetection, TSetup
+from refinery.lib.inno.archive import (
+    AutoBool,
+    Flags,
+    InnoArchive,
+    InnoVersion,
+    LanguageDetection,
+    TSetup,
+)
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
 from refinery.lib.inno.delphi.runtime import Platform, Runtime, Win32, Win64
 from refinery.lib.inno.delphi.variants import Variant, VarType
+from refinery.lib.inno.emulation import (
+    AbortEmulation,
+    EmulatorException,
+    EmulatorExecutionLimit,
+    EmulatorMaxArray,
+    EmulatorMaxCalls,
+    EmulatorMaxStack,
+    EmulatorMaxString,
+    EmulatorMemoryError,
+    EmulatorTimeout,
+    EmulatorUndefined,
+    NeedSymbol,
+    NewEmulationError,
+    NewFunctionCall,
+    NewInstruction,
+    NewMutex,
+    NewPassword,
+    OpCodeNotImplemented,
+)
 from refinery.lib.inno.ifps import (
     TC,
     AOp,
@@ -70,7 +94,16 @@ from refinery.lib.inno.ifps import (
     VariableSpec,
     VariableType,
 )
+from refinery.lib.inno.installation import Installation
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
+from refinery.lib.inno.wizard import (
+    PageEvent,
+    PageID,
+    PageStyle,
+    PasswordBox,
+    WizardForm,
+    WizardPage,
+)
 from refinery.lib.patterns import formats
 from refinery.lib.resources import datapath
 from refinery.lib.tools import copy_exception, exception_to_string
@@ -400,85 +433,6 @@ class Variable(VariableBase, Generic[_T]):
         return F'{rep} = {val}'
 
 
-class NeedSymbol(NotImplementedError):
-    """
-    An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if the runtime calls out to
-    an external symbol that is not implemented.
-    """
-
-
-class OpCodeNotImplemented(NotImplementedError):
-    """
-    An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if an unsupported opcode is
-    encountered during emulation.
-    """
-
-
-class EmulatorException(RuntimeError):
-    """
-    A generic exception representing any error that occurs during emulation. It ends the emulation;
-    the emulated script cannot handle it.
-    """
-
-
-class AbortEmulation(EmulatorException):
-    """
-    This exception can be raised by an external function handler to signal the emulator that script
-    execution should be aborted.
-    """
-
-
-class EmulatorTimeout(EmulatorException, TimeoutError):
-    """
-    The emulation timed out based on the given time limit in the configuration.
-    """
-
-
-class EmulatorExecutionLimit(EmulatorException, TimeoutError):
-    """
-    The emulation timed out based on the given execution limit in the configuration.
-    """
-
-
-class EmulatorMaxStack(EmulatorException, MemoryError):
-    """
-    The emulation was aborted because the stack limit given in the configuration was exceeded.
-    """
-
-
-class EmulatorMaxCalls(EmulatorException, MemoryError):
-    """
-    The emulation was aborted because the call stack limit given in the configuration was exceeded.
-    """
-
-
-class EmulatorMaxArray(EmulatorException, MemoryError):
-    """
-    The script requested a variable that holds more variables than the array length limit given in
-    the configuration: an array longer than the limit, or a record or static array whose elements
-    hold more variables than that.
-    """
-
-
-class EmulatorMaxString(EmulatorException, MemoryError):
-    """
-    The script requested a string longer than the string length limit given in the configuration.
-    """
-
-
-class EmulatorUndefined(EmulatorException):
-    """
-    The script asked for a result that depends on state that the emulator does not model, such as
-    memory that Delphi reads or writes beyond the end of a buffer.
-    """
-
-
-class EmulatorMemoryError(EmulatorException, MemoryError):
-    """
-    Python ran out of memory while an emulated function ran.
-    """
-
-
 def _variables_held(type: IFPSType) -> int:
     """
     The number of variables that a variable of the given type holds, itself included: a record or
@@ -757,11 +711,11 @@ def _path_drive(name: str) -> str:
     return ''
 
 
-def _wizard_page(page: object) -> _WizardPage:
+def _wizard_page(page: object) -> WizardPage:
     """
     The page that the script passes; the emulator only models the pages that the script creates.
     """
-    if not isinstance(page, _WizardPage):
+    if not isinstance(page, WizardPage):
         raise TypeError(F'The emulator does not model the wizard page {page!r}.')
     return page
 
@@ -774,110 +728,8 @@ def _incompatible_call(handler: IFPSEmulatedFunction, argc: int, void: bool) -> 
     return F'the emulation takes {shape(handler.argc, handler.void)}, the call passes {shape(argc, void)}'
 
 
-class PageEvent(StrEnum):
-    """
-    The events of a page that the script creates, named as the properties of the page that hold the
-    functions of the script that handle them.
-    """
-    OnActivate = 'OnActivate'
-    OnShouldSkipPage = 'OnShouldSkipPage'
-    OnNextButtonClick = 'OnNextButtonClick'
-    OnBackButtonClick = 'OnBackButtonClick'
-    OnCancelButtonClick = 'OnCancelButtonClick'
-
-
-class _PageStyle(IntFlag):
-    """
-    The style of a wizard page: Setup always skips a page with `AlwaysSkip`, and shows no buttons on
-    a page with `NoButtons`, so that it does not ask which page Back would show.
-    """
-    Normal = 0
-    AlwaysSkip = 1
-    NoButtons = 2
-
-
-class _WizardPage:
-    """
-    A page of the wizard that the script creates: its ID, its style, and the functions of the
-    script that handle its events.
-    """
-    def __init__(self, id: int, style: _PageStyle):
-        self.id = id
-        self.style = style
-        self.handlers: dict[PageEvent, Function] = {}
-
-    def __repr__(self):
-        return F'WizardPage({self.id})'
-
-
-class _PasswordBox:
-    """
-    Stands in for the box on the password page of the wizard and holds its text.
-    """
-    def __init__(self):
-        self.text = ''
-
-    def __repr__(self):
-        return 'PasswordEdit'
-
-
-class _WizardForm:
-    """
-    Stands in for the wizard form of a setup: the order of its pages, with the pages that the script
-    creates at their place, the page that is shown, whether the wizard is visible, and how far the
-    installation got. A wizard that the emulator does not walk stands for the time when Setup
-    installs the files: the directory and the program group are chosen and the uninstaller has its
-    name. A script can keep the form and pass it to the methods of its controls, which do not read
-    it.
-    """
-    def __init__(self, walked: bool = False):
-        self.pages: list[int] = list(PageID)
-        self.custom: dict[int, _WizardPage] = {}
-        self.current = 0
-        self.visible = False
-        self.done = False
-        self.password_entered = False
-        self.password_box = _PasswordBox()
-        self.dir_chosen = not walked
-        self.group_chosen = not walked
-        self.uninstaller_named = not walked
-        self.needs_restart = False
-        self._last_id = 99
-
-    def __repr__(self):
-        return 'WizardForm'
-
-    def add_page(self, after: int, style: _PageStyle = _PageStyle.Normal) -> _WizardPage:
-        """
-        Adds a page that the script creates right after the page with the given ID, or at the end
-        for -1, as Setup's `TWizardForm.AddPage` does. Setup raises an internal error for an ID that
-        no page has, before the new page takes an ID.
-        """
-        if after == -1:
-            index = len(self.pages)
-        elif after in self.pages:
-            index = self.pages.index(after) + 1
-        else:
-            raise DelphiException(F'Internal error: Could not find page with ID {after}')
-        self._last_id += 1
-        page = _WizardPage(self._last_id, style)
-        self.pages.insert(index, page.id)
-        self.custom[page.id] = page
-        return page
-
-    def leave(self, page: int):
-        """
-        Notes what Setup records when Next leaves the given page or passes it: the chosen directory
-        and program group.
-        """
-        if page == PageID.wpSelectDir:
-            self.dir_chosen = True
-        elif page == PageID.wpSelectProgramGroup:
-            self.group_chosen = True
-
-
 @dataclass(frozen=True)
-class _HostSetup:
+class HostSetup:
     """
     What the Setup that runs the script decides on its own, read once from the setup header and the
     configuration: its version, the active language, the directives that the walk of the wizard
@@ -911,7 +763,7 @@ class _HostSetup:
         version: InnoVersion | None,
         ifps: IFPSFile,
         config: IFPSEmulatorConfig,
-    ) -> _HostSetup:
+    ) -> HostSetup:
         dialect = ifps.dialect
         platform = ifps.platform
         if platform is Platform.Win64 and not config.x64:
@@ -1311,16 +1163,6 @@ class IFPSEmulatorConfig:
         return Path(self.executable).parent
 
 
-class TSetupStep(int, Enum):
-    """
-    An IFPS enumeration that classifies different setup steps.
-    """
-    ssPreInstall = 0
-    ssInstall = auto()
-    ssPostInstall = auto()
-    ssDone = auto()
-
-
 class TSplitType(int, Enum):
     """
     An IFPS enumeration that classifies different strategies for splitting strings.
@@ -1349,131 +1191,6 @@ class TSetupProcessorArchitecture(int, Enum):
     paX64 = auto()
     paArm32 = auto()
     paArm64 = auto()
-
-
-class PageID(int, Enum):
-    """
-    An IFPS enumeration that classifies the different installer pages.
-    """
-    wpWelcome = 1
-    wpLicense = auto()
-    wpPassword = auto()
-    wpInfoBefore = auto()
-    wpUserInfo = auto()
-    wpSelectDir = auto()
-    wpSelectComponents = auto()
-    wpSelectProgramGroup = auto()
-    wpSelectTasks = auto()
-    wpReady = auto()
-    wpPreparing = auto()
-    wpInstalling = auto()
-    wpInfoAfter = auto()
-    wpFinished = auto()
-
-
-class SetupEvent(StrEnum):
-    """
-    The setup events that `InnoSetupEmulator.emulate_installation` sends to the script. The value of
-    each event is the name of the function of the script that handles it.
-    """
-    InitializeSetup = 'InitializeSetup'
-    InitializeWizard = 'InitializeWizard'
-    CurStepChanged = 'CurStepChanged'
-    ShouldSkipPage = 'ShouldSkipPage'
-    CurPageChanged = 'CurPageChanged'
-    PrepareToInstall = 'PrepareToInstall'
-    CheckPassword = 'CheckPassword'
-    CheckSerial = 'CheckSerial'
-    NextButtonClick = 'NextButtonClick'
-    UpdateReadyMemo = 'UpdateReadyMemo'
-    RegisterExtraCloseApplicationsResources = 'RegisterExtraCloseApplicationsResources'
-    NeedRestart = 'NeedRestart'
-    RegisterPreviousData = 'RegisterPreviousData'
-    GetCustomSetupExitCode = 'GetCustomSetupExitCode'
-    DeinitializeSetup = 'DeinitializeSetup'
-
-
-class NewFunctionCall(NamedTuple):
-    """
-    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` which
-    represents a call to the function with the given name and arguments. Its text shows a float as
-    a Python float and a Variant as the value it holds.
-    """
-    name: str
-    args: tuple
-
-    def __str__(self):
-        return F'{self.name}({", ".join(_display(a) for a in self.args)})'
-
-
-def _display(value: Any) -> str:
-    if isinstance(value, Variant):
-        if value.type == VarType.Empty:
-            return 'Unassigned'
-        if value.type == VarType.Null:
-            return 'Null'
-        value = value.value
-    if isinstance(value, x87.Extended):
-        return numbers.shortest(value)
-    if isinstance(value, Fraction):
-        return variants.currency_text(value, numbers.FormatSettings())
-    if isinstance(value, list):
-        return F'[{", ".join(_display(v) for v in value)}]'
-    if value is None:
-        return 'nil'
-    return repr(value)
-
-
-class NewPassword(str):
-    """
-    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
-    password that is entered by the emulated setup script to a password edit control.
-    """
-
-
-class NewMutex(str):
-    """
-    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
-    mutex registered by the script.
-    """
-
-
-class NewScriptError(NamedTuple):
-    """
-    An event generated by `InnoSetupEmulator.emulate_installation` for each setup event that ends
-    with a script error which the script does not handle. It holds the event, the arguments of its
-    function and the message of the error.
-    """
-    name: SetupEvent | PageEvent
-    args: tuple
-    message: str
-
-    def __str__(self):
-        return F'script error in {self.name}{self.args!r}: {self.message}'
-
-
-class NewEmulationError(NamedTuple):
-    """
-    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each call
-    of an emulated function that fails with an error of the emulator rather than one of the
-    script. The script sees the failure as an error that it can handle. It holds the name of the
-    function and the message of the failure.
-    """
-    name: str
-    message: str
-
-    def __str__(self):
-        return F'emulation of {self.name} failed: {self.message}'
-
-
-class NewInstruction(NamedTuple):
-    """
-    An event generated by `refinery.lib.inno.emulator.IFPSEmulator.emulate_function` for each
-    executed instruction.
-    """
-    function: Function
-    instruction: Instruction
-    offset: int
 
 
 class EventCall(Generic[_Y, _T]):
@@ -1562,11 +1279,11 @@ class IFPSEmulator:
             ifps = archive.ifps
             if ifps is None:
                 raise ValueError('The input archive does not contain a script.')
-            self.setup = _HostSetup.of(archive.setup_info, archive.version, ifps, config)
+            self.setup = HostSetup.of(archive.setup_info, archive.version, ifps, config)
         else:
             self.setup_info = None
             ifps = archive
-            self.setup = _HostSetup.of(None, None, ifps, config)
+            self.setup = HostSetup.of(None, None, ifps, config)
         self.ifps = ifps
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
@@ -1590,7 +1307,7 @@ class IFPSEmulator:
         self.runtime = self.setup.runtime(numbers.FormatSettings.of_locale(self.config.lcid))
         self.machine = pascal.Machine(self.setup.dialect, self.runtime)
         self.mutexes.clear()
-        self._wizard_form = _WizardForm()
+        self.wizard_form = WizardForm()
         self._globals = None
         self._win32api_last_error = 0
         self._win32api_sorted_process_ids = sorted(self.config.processes)
@@ -2079,11 +1796,11 @@ class IFPSEmulator:
 
     @external()
     def TWizardForm__GetPasswordEdit(self, this: object) -> object:
-        return self._wizard_form.password_box
+        return self.wizard_form.password_box
 
     @external()
     def TPasswordEdit__SetText(self, this: object, value: str):
-        if isinstance(this, _PasswordBox):
+        if isinstance(this, PasswordBox):
             this.text = value
         if value:
             yield NewPassword(value)
@@ -2347,7 +2064,7 @@ class IFPSEmulator:
         name that the script wrote, as Setup's `ExpandIndividualConst` gives it on the emulated
         machine at the current point of the installation.
         """
-        wizard = self._wizard_form
+        wizard = self.wizard_form
         cfg = self.config
         if name == 'app' and not wizard.dir_chosen or name in ('group', 'groupname') and not wizard.group_chosen:
             raise constants.ConstantError(F'An attempt was made to expand the "{original}" constant before it was initialized')
@@ -2614,15 +2331,15 @@ class IFPSEmulator:
 
     @external()
     def WizardForm(self) -> object:
-        return self._wizard_form
+        return self.wizard_form
 
     @external()
     def CreateCustomPage(self, after: int, caption: str, description: str) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateInputQueryPage(self, after: int, caption: str, description: str, subcaption: str) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateInputOptionPage(
@@ -2634,7 +2351,7 @@ class IFPSEmulator:
         exclusive: bool,
         listbox: bool,
     ) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateInputDirPage(
@@ -2646,15 +2363,15 @@ class IFPSEmulator:
         append: bool,
         folder: str,
     ) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateInputFilePage(self, after: int, caption: str, description: str, subcaption: str) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateOutputMsgPage(self, after: int, caption: str, description: str, message: str) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external()
     def CreateOutputMsgMemoPage(
@@ -2665,15 +2382,15 @@ class IFPSEmulator:
         subcaption: str,
         message: str,
     ) -> object:
-        return self._wizard_form.add_page(after)
+        return self.wizard_form.add_page(after)
 
     @external(alias='CreateOutputMarqueeProgressPage')
     def CreateOutputProgressPage(self, caption: str, description: str) -> object:
-        return self._wizard_form.add_page(-1, _PageStyle.AlwaysSkip | _PageStyle.NoButtons)
+        return self.wizard_form.add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
 
     @external(alias='CreateExtractionPage')
     def CreateDownloadPage(self, caption: str, description: str, progress: object) -> object:
-        return self._wizard_form.add_page(-1, _PageStyle.AlwaysSkip | _PageStyle.NoButtons)
+        return self.wizard_form.add_page(-1, PageStyle.AlwaysSkip | PageStyle.NoButtons)
 
     @external()
     def TWizardPage__GetID(self, this: object) -> int:
@@ -2681,7 +2398,7 @@ class IFPSEmulator:
 
     @external()
     def TWizardForm__GetCurPageID(self, this: object) -> int:
-        return self._wizard_form.current
+        return self.wizard_form.current
 
     def _set_page_handler(self, this: object, event: PageEvent, handler: object):
         page = _wizard_page(this)
@@ -3198,6 +2915,12 @@ class IFPSEmulator:
     def WizardSilent(self) -> bool:
         return self.config.wizard_silent
 
+    def call_from_setup(self, function: Function, arguments: Sequence) -> Generator[Any, Any, Any]:
+        """
+        Calls a function of the script as Setup does.
+        """
+        return (yield from self._execute(_ScriptRun(self.setup.dialect), function, arguments))
+
     @external()
     def Low(self, var: Variable) -> int:
         return self._bound(var.deref(), False)
@@ -3227,23 +2950,6 @@ class IFPSEmulator:
     del external
 
 
-_EVENT_RULES: dict[SetupEvent, tuple[Callable[[Any], bool] | None, Any]] = {
-    SetupEvent.InitializeSetup        : (operator.not_, True),
-    SetupEvent.NextButtonClick        : (operator.not_, True),
-    SetupEvent.ShouldSkipPage         : (bool, False),
-    SetupEvent.CheckPassword          : (bool, False),
-    SetupEvent.CheckSerial            : (bool, False),
-    SetupEvent.NeedRestart            : (bool, False),
-    SetupEvent.GetCustomSetupExitCode : (bool, 0),
-    SetupEvent.PrepareToInstall       : (bool, ''),
-    SetupEvent.UpdateReadyMemo        : (bool, ''),
-}
-"""
-For each setup event that returns a value, the result that stops Setup from calling more of its
-functions, and the result when the script does not handle it.
-"""
-
-
 class InnoSetupEmulator(IFPSEmulator):
     """
     A specialized `IFPSEmulator` that can emulate the InnoSetup installation with a focus on
@@ -3257,7 +2963,6 @@ class InnoSetupEmulator(IFPSEmulator):
         **more,
     ):
         super().__init__(archive, options, **more)
-        self._event_implementations: dict[SetupEvent, list[Function]] = {}
 
     def emulate_installation(
         self,
@@ -3270,271 +2975,19 @@ class InnoSetupEmulator(IFPSEmulator):
         clicks Next on every page until Setup finishes; a silent installation when the configuration
         says so. Each installation starts the script over. The given password is typed into the box
         on the password page. An event that ends with a script error is reported as a
-        `NewScriptError` and the installation goes on. Setup would instead end or stay on the
-        current page after an error in some events, but the emulator goes on, just as it ignores a
-        `False` returned by `InitializeSetup` or `NextButtonClick`, a text returned by
-        `PrepareToInstall`, and a wrong password: such an error is often a gap of the emulator rather
-        than an error that the script would raise when it runs on Windows. Any other exception ends
-        the emulation. A call of an emulated function that fails is reported as a
-        `NewEmulationError`, also when the script handles its error. The time limit counts for the
-        whole installation; the given number of seconds replaces the one of the configuration.
-        Setup tests a password against its own before it asks the script; the caller can give that
-        test as `password_test`, without it the test fails.
+        `refinery.lib.inno.emulation.NewScriptError` and the installation goes on, as described
+        for `refinery.lib.inno.installation.Installation`. Any other exception ends the emulation.
+        A call of an emulated function that fails is reported as a
+        `refinery.lib.inno.emulation.NewEmulationError`, also when the script handles its error.
+        The time limit counts for the whole installation; the given number of seconds replaces the
+        one of the configuration. Setup tests a password against its own before it asks the
+        script; the caller can give that test as `password_test`, without it the test fails.
         """
         self.reset()
-        self._wizard_form = wizard = _WizardForm(walked=True)
+        self.wizard_form = wizard = WizardForm(walked=True)
         wizard.needs_restart = self.setup.always_restart
-        return (yield from self._timed(self._installation(password, password_test), max_seconds))
-
-    def _installation(self, password: str, password_test: Callable[[str], bool] | None):
-        wizard = self._wizard_form
-        yield from self._event(SetupEvent.InitializeSetup)
-        yield from self._event(SetupEvent.InitializeWizard)
-        yield from self._set_page(PageID.wpWelcome)
-        if not self.config.wizard_silent:
-            while not wizard.done and (yield from self._should_skip(wizard.current)):
-                yield from self._click_next(password, password_test)
-            wizard.visible = True
-        while not wizard.done:
-            yield from self._click_next(password, password_test)
-        yield from self._event(SetupEvent.GetCustomSetupExitCode)
-        yield from self._event(SetupEvent.DeinitializeSetup)
-
-    def _click_next(self, password: str, password_test: Callable[[str], bool] | None):
-        """
-        Clicks Next on the current page as Setup's `TWizardForm.NextButtonClick` handles it: the
-        check of the page, the events of the click, then the following pages until one is not
-        skipped; reaching the preparing page prepares, reaching the installing page installs, and
-        leaving the finished page finishes.
-        """
-        wizard = self._wizard_form
-        page = wizard.current
-        if page == PageID.wpPassword:
-            yield from self._check_password(password, password_test)
-        wizard.leave(page)
-        yield from self._page_event(page, PageEvent.OnNextButtonClick)
-        yield from self._event(SetupEvent.NextButtonClick, page)
-        index = wizard.pages.index(page)
-        while True:
-            wizard.leave(page)
-            if page == PageID.wpFinished:
-                yield from self._event(SetupEvent.CurStepChanged, TSetupStep.ssDone)
-                wizard.done = True
-                return
-            index += 1
-            if index >= len(wizard.pages):
-                wizard.done = True
-                return
-            page = wizard.pages[index]
-            if page == PageID.wpReady:
-                if not self.setup.ready_memo_disabled:
-                    yield from self._event(SetupEvent.UpdateReadyMemo, '      ', '\r\n', '', '', '', '', '', '')
-            elif page == PageID.wpPreparing:
-                yield from self._prepare_to_install()
-                if self.setup.restart_manager:
-                    yield from self._set_page(page)
-                    wizard.visible = True
-                    yield from self._event(SetupEvent.RegisterExtraCloseApplicationsResources)
-                    yield from self._previous_page()
-            elif page == PageID.wpInstalling:
-                yield from self._set_page(page)
-                yield from self._install()
-                continue
-            if not (yield from self._should_skip(page)):
-                break
-        yield from self._set_page(page)
-
-    def _check_password(self, password: str, password_test: Callable[[str], bool] | None):
-        """
-        Checks the password on the password page as Setup does when Next is clicked there: the user
-        types the given password into the box unless it is empty, Setup tests the text of the box
-        against its own password when it has one, and the script's `CheckPassword` receives the
-        text when that test fails. The page is passed in any case.
-        """
-        wizard = self._wizard_form
-        box = wizard.password_box
-        if password:
-            box.text = password
-        text = box.text
-        accepted = self.setup.header_password and password_test is not None and bool(text) and password_test(text)
-        if not accepted:
-            yield from self._event(SetupEvent.CheckPassword, text)
-        box.text = ''
-        wizard.password_entered = True
-
-    def _set_page(self, page: int):
-        """
-        Shows the given page as Setup's `TWizardForm.SetCurPage` does: unless the page shows no
-        buttons, the earlier pages are asked whether they are skipped to decide whether Back is
-        shown; the serial is checked on the page for user information, then the page is activated
-        and the script is told about the change.
-        """
-        wizard = self._wizard_form
-        previous = wizard.current
-        wizard.current = page
-        if page != PageID.wpInstalling and not self._page_style(page) & _PageStyle.NoButtons:
-            yield from self._previous_page()
-        if page == PageID.wpUserInfo:
-            yield from self._event(SetupEvent.CheckSerial, '')
-        yield from self._page_event(page, PageEvent.OnActivate)
-        if page != previous or not self.setup.page_changes_only:
-            yield from self._event(SetupEvent.CurPageChanged, page)
-
-    def _page_style(self, page: int) -> _PageStyle:
-        if (custom := self._wizard_form.custom.get(page)) is None:
-            return _PageStyle.Normal
-        return custom.style
-
-    def _previous_page(self):
-        """
-        Finds the page that Back would show as Setup's `TWizardForm.GetPreviousPageID` does: the
-        pages before the current one are asked in turn whether they are skipped, back to the first
-        that is shown, stopping at the installing page.
-        """
-        wizard = self._wizard_form
-        for page in reversed(wizard.pages[:wizard.pages.index(wizard.current)]):
-            if page == PageID.wpInstalling:
-                return
-            if not (yield from self._should_skip(page)):
-                return
-
-    def _should_skip(self, page: int):
-        """
-        Whether the given page is skipped, as Setup's `TWizardForm.ShouldSkipPage` decides: the
-        ready page is shown while the wizard is not visible, then Setup's own rules, then the event
-        of a page that the script created, then the script's `ShouldSkipPage`.
-        """
-        if page == PageID.wpReady and not self._wizard_form.visible:
-            return False
-        if self._setup_skips(page):
-            return True
-        if (yield from self._page_event(page, PageEvent.OnShouldSkipPage)):
-            return True
-        return bool((yield from self._event(SetupEvent.ShouldSkipPage, page)))
-
-    def _setup_skips(self, page: int) -> bool:
-        """
-        Whether Setup skips the given page on its own: a page whose style says so, the preparing
-        page, the license page of a silent installation, the password page when no password is
-        needed or one was entered, the finished page when the header disables it and no restart is
-        needed, and the pages that the header makes Setup skip.
-        """
-        wizard = self._wizard_form
-        setup = self.setup
-        if self._page_style(page) & _PageStyle.AlwaysSkip:
-            return True
-        if page == PageID.wpPreparing:
-            return True
-        if page == PageID.wpLicense and self.config.wizard_silent:
-            return True
-        if page == PageID.wpPassword:
-            needed = setup.header_password or bool(self._implementations(SetupEvent.CheckPassword))
-            return not needed or wizard.password_entered
-        if page == PageID.wpFinished:
-            return setup.finished_page_disabled and not wizard.needs_restart
-        return page in setup.skipped_pages
-
-    def _prepare_to_install(self):
-        """
-        Prepares the installation as Setup's `TWizardForm.PrepareToInstall` does when the script has
-        `PrepareToInstall`: the preparing page is shown, the event runs, and the buttons are
-        updated, which asks the earlier pages again whether they are skipped. Showing the preparing
-        page makes the wizard visible, also in a silent installation.
-        """
-        if not self._implementations(SetupEvent.PrepareToInstall):
-            return
-        yield from self._set_page(PageID.wpPreparing)
-        self._wizard_form.visible = True
-        yield from self._event(SetupEvent.PrepareToInstall, False)
-        yield from self._previous_page()
-
-    def _install(self):
-        """
-        The events of the installation itself, as Setup's `TMainForm.Install` sends them: the step
-        of the installation, then the uninstaller gets its name, `NeedRestart` is asked when no
-        restart is needed yet, the uninstallable setup with a key in the list of installed programs
-        registers its data, and the step after the installation. The progress of the installation
-        is not reported: it counts the bytes that Setup installs.
-        """
-        wizard = self._wizard_form
-        setup = self.setup
-        wizard.visible = True
-        yield from self._event(SetupEvent.CurStepChanged, TSetupStep.ssInstall)
-        wizard.uninstaller_named = True
-        if not wizard.needs_restart and (yield from self._event(SetupEvent.NeedRestart)):
-            wizard.needs_restart = True
-        if setup.uninstallable and setup.uninstall_key:
-            yield from self._event(SetupEvent.RegisterPreviousData, 0)
-        yield from self._event(SetupEvent.CurStepChanged, TSetupStep.ssPostInstall)
-
-    def _implementations(self, event: SetupEvent) -> list[Function]:
-        """
-        The functions of the script that handle the given event, in the order in which Setup calls
-        them: those with an event attribute naming it, in the order of the script, then the one
-        named like the event.
-        """
-        cache = self._event_implementations
-        try:
-            return cache[event]
-        except KeyError:
-            pass
-        name = event.value.casefold()
-        functions = []
-        for function in self.ifps.functions:
-            if function.body is None:
-                continue
-            for attribute in function.attributes or ():
-                if attribute.name.casefold() != 'event' or len(attribute.fields) != 1:
-                    continue
-                if str(attribute.fields[0].value).casefold() == name:
-                    functions.append(function)
-                    break
-        if (main := self.symbols.get(event)) is not None and main.body is not None and main not in functions:
-            functions.append(main)
-        cache[event] = functions
-        return functions
-
-    def _event(self, event: SetupEvent, *args):
-        """
-        Runs the functions of the script that handle the given setup event and combines their
-        results as Setup does: a Boolean event stops at the first result that decides it, an
-        integer event at the first one that is not zero, a text event at the first one that is not
-        empty. When the script does not handle the event, the result is Setup's default. A function
-        that ends with a script error stops the event; the error is reported as a `NewScriptError`
-        and the result is the default.
-        """
-        stop, default = _EVENT_RULES.get(event, (None, None))
-        result = default
-        for function in self._implementations(event):
-            try:
-                value = yield from self._execute(_ScriptRun(self.setup.dialect), function, args)
-            except IFPSException as error:
-                message = str(error)
-            else:
-                result = value
-                if stop is not None and stop(value):
-                    break
-                continue
-            yield NewScriptError(event, args, message)
-            return default
-        return result
-
-    def _page_event(self, page: int, event: PageEvent):
-        """
-        Runs the function of the script that handles the given event of a page that the script
-        created, passing the page. The result is `None` when the page has no such function; a
-        script error is reported as a `NewScriptError` and also gives `None`.
-        """
-        if (custom := self._wizard_form.custom.get(page)) is None:
-            return None
-        if (function := custom.handlers.get(event)) is None:
-            return None
-        try:
-            return (yield from self._execute(_ScriptRun(self.setup.dialect), function, (custom,)))
-        except IFPSException as error:
-            message = str(error)
-        yield NewScriptError(event, (custom,), message)
-        return None
+        installation = Installation(self, password, password_test)
+        return (yield from self._timed(installation.run(), max_seconds))
 
     def unimplemented(self, function: Function, arguments: list[Variable], result: Variable | None):
         """

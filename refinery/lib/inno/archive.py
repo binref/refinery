@@ -2839,7 +2839,7 @@ class InnoArchive:
             return self._password is not None
         self._password_guessed = True
         if file := self.get_encrypted_sample():
-            from refinery.lib.inno.emulator import NewEmulationError, NewPassword, NewScriptError
+            from refinery.lib.inno.emulation import NewEmulationError, NewPassword, NewScriptError
             self._log_verbose('attempting to automatically determine password from the embedded script')
             try:
                 if (emulator := self.emulator) is None:

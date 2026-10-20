@@ -11,15 +11,9 @@ from fractions import Fraction
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.delphi import x87
 from refinery.lib.inno.delphi.runtime import Platform
-from refinery.lib.inno.emulator import (
-    EmulatorMaxArray,
-    EmulatorMaxString,
-    EmulatorUndefined,
-    IFPSEmulatorConfig,
-    IFPSException,
-    InnoSetupEmulator,
-    NewFunctionCall,
-)
+from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+from refinery.lib.inno.emulation import EmulatorMaxArray, EmulatorMaxString, EmulatorUndefined, NewFunctionCall
+from refinery.lib.inno.pascal import IFPSException
 from refinery.lib.inno.ifps import TC, AOp, Dialect, Function, IFPSFile, Op, Operand, Value
 from refinery.lib.types import buf
 from refinery.lib.un7z import SzArchive

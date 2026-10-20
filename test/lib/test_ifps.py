@@ -6,7 +6,8 @@ import time
 from typing import Callable
 from unittest import mock
 
-from refinery.lib.inno.emulator import EmulatorException, IFPSException
+from refinery.lib.inno.emulation import EmulatorException
+from refinery.lib.inno.pascal import IFPSException
 
 from .. import TestBase, wontfix
 
@@ -125,7 +126,8 @@ class TestIPFSEmulator(TestBase):
 
     def _emulate_with_an_argument_that_is_not_a_number(self, data: bytearray, name: str):
         from refinery.lib.inno.archive import InnoArchive
-        from refinery.lib.inno.emulator import IFPSEmulator, IFPSException
+        from refinery.lib.inno.emulator import IFPSEmulator
+        from refinery.lib.inno.pascal import IFPSException
         ifps = InnoArchive(bytearray(data)).ifps
         assert ifps is not None
         function = next(f for f in ifps.functions if f.name.lower() == name)
@@ -154,7 +156,8 @@ class TestIPFSEmulator(TestBase):
         self.assertCollectorFreesLessThan(0x40000, lambda: self._emulate_the_installation(data))
 
     def _stop_in_the_except_block_of_an_index_outside_of_an_array(self, data: bytearray):
-        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.emulation import NewFunctionCall
         from refinery.lib.inno.ifps import IFPSFile
         emulator = InnoSetupEmulator(IFPSFile.Parse(bytearray(data)), IFPSEmulatorConfig(log_calls=True))
         for event in emulator.emulate_function(emulator.symbols['ORACLERUNTIMEERRORS']):
@@ -172,7 +175,7 @@ class TestIPFSEmulator(TestBase):
         )
 
     def test_an_exception_handler_of_a_script_runs_on_the_stack_of_its_try_block(self):
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, log_calls=True)
         with _failing_external('SetLength'):
             call = emulator.emulate_function(emulator.symbols['GETADSERVERRESPONSE'])
@@ -199,12 +202,12 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(temp, F'{windows}\\temp')
 
     def test_an_exception_in_a_catch_block_leaves_the_function(self):
-        from refinery.lib.inno.emulator import IFPSException
+        from refinery.lib.inno.pascal import IFPSException
         with _failing_external('Log'), self.assertRaises(IFPSException):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_seconds=2)
 
     def test_an_exception_in_a_try_block_leaves_the_function_after_its_finally_block(self):
-        from refinery.lib.inno.emulator import IFPSException
+        from refinery.lib.inno.pascal import IFPSException
         with _failing_external('GetDateTimeString'), self.assertRaises(IFPSException):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')
 
@@ -272,7 +275,7 @@ class TestIPFSEmulator(TestBase):
         return InnoSetupEmulator(InnoArchive(data), IFPSEmulatorConfig(**config))
 
     def test_setlength_resizes_a_list(self):
-        from refinery.lib.inno.emulator import PageID
+        from refinery.lib.inno.wizard import PageID
         emulator = self._installer_emulator()
         byte_list = emulator.globals[60]
         self.assertEqual(len(byte_list), 0)
@@ -280,19 +283,21 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(len(byte_list), 256)
 
     def test_a_list_longer_than_the_configured_limit_ends_the_emulation(self):
-        from refinery.lib.inno.emulator import EmulatorMaxArray, PageID
+        from refinery.lib.inno.emulation import EmulatorMaxArray
+        from refinery.lib.inno.wizard import PageID
         emulator = self._installer_emulator(max_array_length=255)
         with self.assertRaises(EmulatorMaxArray):
             list(emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpWelcome))
         self.assertEqual(len(emulator.globals[60]), 0)
 
     def test_a_script_cannot_handle_a_list_longer_than_the_configured_limit(self):
-        from refinery.lib.inno.emulator import EmulatorMaxArray
+        from refinery.lib.inno.emulation import EmulatorMaxArray
         with self.assertRaises(EmulatorMaxArray):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETADSERVERRESPONSE', max_array_length=1)
 
     def test_a_string_change_beyond_the_string_limit_ends_the_emulation_before_the_string_changes(self):
-        from refinery.lib.inno.emulator import EmulatorMaxString, Variable
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.emulation import EmulatorMaxString
         from refinery.lib.inno.ifps import TC, TPrimitive
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_string_length=10)
         text = Variable(TPrimitive(TC.UnicodeString), data='a,b,c')
@@ -301,14 +306,14 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(text.get(), 'a,b,c')
 
     def test_a_join_beyond_the_string_limit_ends_the_emulation(self):
-        from refinery.lib.inno.emulator import EmulatorMaxString
+        from refinery.lib.inno.emulation import EmulatorMaxString
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, max_string_length=10)
         self.assertEqual(emulator.StringJoin(', ', ['a', 'b', 'c', 'd']), 'a, b, c, d')
         with self.assertRaises(EmulatorMaxString):
             emulator.StringJoin(', ', ['a', 'b', 'c', 'd', 'e'])
 
     def test_an_emulated_function_that_exhausts_the_memory_of_python_ends_the_emulation(self):
-        from refinery.lib.inno.emulator import EmulatorMemoryError
+        from refinery.lib.inno.emulation import EmulatorMemoryError
 
         def exhaust(*_):
             raise MemoryError
@@ -317,7 +322,7 @@ class TestIPFSEmulator(TestBase):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'GETSESSIONID')
 
     def test_an_abort_ends_the_emulation_when_the_configuration_asks_for_it(self):
-        from refinery.lib.inno.emulator import AbortEmulation
+        from refinery.lib.inno.emulation import AbortEmulation
         with self.assertRaises(AbortEmulation):
             self._emulated_value(_SCRIPT_WITH_TRY_FINALLY, 'EXITNOCONFIG', throw_abort=True)
 
@@ -363,14 +368,14 @@ class TestIPFSEmulator(TestBase):
                 self.assertEqual(pointer.get(), values)
 
     def test_an_array_of_constants_holds_the_constants_it_was_built_from(self):
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, log_calls=True)
         report = emulator.emulate_function(emulator.symbols['SENDREPORT'], '', '', '', '', [])
         formatted = [event.args for event in report if isinstance(event, NewFunctionCall) and event.name == 'Format']
         self.assertIn(('%s.%s.%s.%s', ['1', '34', '2', '8157']), formatted)
 
     def test_a_reset_restores_the_globals_that_a_script_changed(self):
-        from refinery.lib.inno.emulator import PageID
+        from refinery.lib.inno.wizard import PageID
         emulator = self._installer_emulator()
         fresh = [variable.get() for variable in emulator.globals]
         list(emulator.emulate_function(emulator.symbols['CurPageChanged'], PageID.wpWelcome))
@@ -487,7 +492,8 @@ class TestIPFSEmulator(TestBase):
         Windows is 64-bit, which here takes more than a quarter of the limit each time: the
         expansion alone stays within the limit, but not together with the run that it is part of.
         """
-        from refinery.lib.inno.emulator import EmulatorTimeout, IFPSEmulator
+        from refinery.lib.inno.emulator import IFPSEmulator
+        from refinery.lib.inno.emulation import EmulatorTimeout
         is_win64 = IFPSEmulator.external_symbols['']['IsWin64'].call
         expanded = []
 
@@ -574,7 +580,8 @@ class TestIPFSEmulator(TestBase):
         emulated `Log` is not.
         """
         import struct
-        from refinery.lib.inno.emulator import InnoSetupEmulator, NewEmulationError
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        from refinery.lib.inno.emulation import NewEmulationError
         from refinery.lib.inno.ifps import IFPSFile
         data = self.download_sample(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS)
         procedure_of_one_argument = bytes([3]) + b'LOG' + struct.pack('<I', 2) + bytes(2)
@@ -646,14 +653,9 @@ class TestIPFSEmulator(TestBase):
         Setup asks whether the page is skipped when Next reaches it, and again when the next page
         decides whether it shows the Back button.
         """
-        from refinery.lib.inno.emulator import (
-            IFPSEmulatorConfig,
-            InnoSetupEmulator,
-            NewFunctionCall,
-            NewScriptError,
-            PageID,
-            SetupEvent,
-        )
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.emulation import NewFunctionCall, NewScriptError, SetupEvent
+        from refinery.lib.inno.wizard import PageID
         from refinery.lib.inno.ifps import IFPSFile
 
         script = IFPSFile.Parse(self.download_sample(_SCRIPT_THAT_EXTRACTS_A_DIRECTORY_TO_SKIP_A_PAGE))
@@ -681,7 +683,7 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(completed, clean)
 
     def test_a_second_installation_runs_the_script_as_the_first(self):
-        from refinery.lib.inno.emulator import NewFunctionCall, NewPassword
+        from refinery.lib.inno.emulation import NewFunctionCall, NewPassword
         emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True)
 
         def calls_and_passwords():
@@ -700,7 +702,8 @@ class TestIPFSEmulator(TestBase):
         `CheckPassword` writes another text into the box.
         """
         from refinery.lib.inno.archive import InnoArchive
-        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator, NewFunctionCall
+        from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+        from refinery.lib.inno.emulation import NewFunctionCall
         archive = InnoArchive(self.download_sample(_INSTALLER_THAT_WRITES_ITS_PASSWORD_INTO_THE_PASSWORD_BOX))
         for accepted in (False, True):
             with self.subTest(accepted=accepted):
@@ -732,7 +735,7 @@ class TestIPFSEmulator(TestBase):
         The pages that are shown also have a function for their activation and one for the Next
         button.
         """
-        from refinery.lib.inno.emulator import NewFunctionCall, NewInstruction
+        from refinery.lib.inno.emulation import NewFunctionCall, NewInstruction
         emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN, log_calls=True, log_opcodes=True)
         assigned: dict[str, tuple[object, str]] = {}
         handled: list[tuple[object, str]] = []
@@ -753,7 +756,7 @@ class TestIPFSEmulator(TestBase):
             self.assertEqual(handled[k + 1], (page, 'OnNextButtonClick'))
 
     def test_an_installation_ends_at_its_time_limit(self):
-        from refinery.lib.inno.emulator import EmulatorTimeout
+        from refinery.lib.inno.emulation import EmulatorTimeout
         emulator = self._script_emulator(_SCRIPT_WITH_PAGES_OF_ITS_OWN)
         started = time.process_time()
         with self.assertRaises(EmulatorTimeout):
@@ -783,7 +786,8 @@ class TestIPFSEmulator(TestBase):
 
     def test_a_reported_script_error_keeps_no_exception_alive_while_it_is_handled(self):
         import gc
-        from refinery.lib.inno.emulator import IFPSException, NewScriptError
+        from refinery.lib.inno.pascal import IFPSException
+        from refinery.lib.inno.emulation import NewScriptError
 
         def exceptions_alive():
             gc.collect()
@@ -801,7 +805,7 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(during, before)
 
     def test_each_setup_event_is_named_as_inno_setup_declares_it(self):
-        from refinery.lib.inno.emulator import SetupEvent
+        from refinery.lib.inno.emulation import SetupEvent
         from refinery.lib.inno.symbols import IFPSEvents
         self.assertEqual([IFPSEvents[event].name for event in SetupEvent], [event.value for event in SetupEvent])
 
@@ -812,7 +816,8 @@ class TestIPFSEmulator(TestBase):
         not end the installation and only shows up here.
         """
         from refinery.lib.inno.archive import InnoArchive
-        from refinery.lib.inno.emulator import InnoSetupEmulator, NewEmulationError, NewScriptError
+        from refinery.lib.inno.emulator import InnoSetupEmulator
+        from refinery.lib.inno.emulation import NewEmulationError, NewScriptError
         from refinery.lib.inno.ifps import IFPSFile
         for sample in _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR:
             with self.subTest(sample=sample):
@@ -823,7 +828,7 @@ class TestIPFSEmulator(TestBase):
                 self.assertEqual(errors, [])
 
     def test_a_failing_emulated_function_is_reported_when_the_script_handles_its_error(self):
-        from refinery.lib.inno.emulator import NewEmulationError, NewFunctionCall
+        from refinery.lib.inno.emulation import NewEmulationError, NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS, log_calls=True)
         with _failing_external('RaiseException'):
             events = list(emulator.emulate_function(emulator.symbols['ORACLECALLERHANDLER']))
@@ -836,7 +841,7 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(failures, [NewEmulationError('RaiseException', 'RaiseException failed')])
 
     def test_a_failing_emulated_function_without_a_message_is_reported_by_its_error_type(self):
-        from refinery.lib.inno.emulator import NewEmulationError
+        from refinery.lib.inno.emulation import NewEmulationError
 
         def fail_without_a_message(*_):
             raise RuntimeError
@@ -857,7 +862,7 @@ class TestIPFSEmulator(TestBase):
         The emulated `GetWindowsVersionEx` fills the eight fields of the record it receives; this
         replacement also writes a ninth.
         """
-        from refinery.lib.inno.emulator import NewEmulationError
+        from refinery.lib.inno.emulation import NewEmulationError
 
         def write_beyond_the_record(_, version):
             version[8] = 0
@@ -868,7 +873,7 @@ class TestIPFSEmulator(TestBase):
         self.assertIn('GetWindowsVersionEx', failures)
 
     def test_an_emulated_function_that_exhausts_the_recursion_of_python_ends_the_emulation(self):
-        from refinery.lib.inno.emulator import EmulatorMaxCalls
+        from refinery.lib.inno.emulation import EmulatorMaxCalls
 
         def recurse(*arguments):
             return recurse(*arguments)
@@ -904,7 +909,7 @@ class TestIPFSEmulator(TestBase):
             emulator.emulate_function(function, 'Some', False).value
 
     def test_a_code_constant_that_expands_itself_ends_the_emulation(self):
-        from refinery.lib.inno.emulator import EmulatorMaxCalls
+        from refinery.lib.inno.emulation import EmulatorMaxCalls
         for config in ({'max_call_stack': 5}, {}):
             emulator = self._script_emulator(_SCRIPT_THAT_LOGS_HOW_PASCAL_SCRIPT_HANDLES_ERRORS, **config)
             with self.subTest(**config), self.assertRaises(EmulatorMaxCalls):
@@ -1017,7 +1022,7 @@ class TestIPFSEmulator(TestBase):
             self.assertFalse(emulator.emulate_function(emulator.symbols['IPR'], 'explorer.exe').value)
 
     def _messages_of_a_failed_download(self, error_code: int) -> list[str]:
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_THAT_LOGS_A_FAILED_DOWNLOAD, log_calls=True)
         with (
             _failing_method('TDownloadWizardPage', 'Download', 0),
@@ -1036,7 +1041,7 @@ class TestIPFSEmulator(TestBase):
         self.assertTrue(message.endswith(description))
 
     def test_a_script_for_an_older_inno_setup_calls_string_change_without_a_result(self):
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_FOR_AN_OLDER_INNO_SETUP, log_calls=True)
         changes = [
             event.args[1:] for event in emulator.emulate_installation()
@@ -1049,7 +1054,7 @@ class TestIPFSEmulator(TestBase):
         The script reads the `Status` and `StatusText` of an emulated HTTP request, which answer
         Unassigned; Delphi converts Unassigned to 0 and to the empty string.
         """
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY, log_calls=True)
         call = emulator.emulate_function(emulator.symbols['GETADSERVERRESPONSE'])
         logged = [event.args for event in call if isinstance(event, NewFunctionCall) and event.name == 'Log']
@@ -1061,7 +1066,7 @@ class TestIPFSEmulator(TestBase):
         The emulated WMI locator answers its `ConnectServer` call with Unassigned, so the script
         sends each query to a nil service object, which raises an error that the script handles.
         """
-        from refinery.lib.inno.emulator import NewFunctionCall
+        from refinery.lib.inno.emulation import NewFunctionCall
         emulator = self._script_emulator(_SCRIPT_THAT_LISTS_PROCESSES_IN_A_TRY_BLOCK, log_calls=True)
         calls = [
             event.args for event in emulator.emulate_installation()
