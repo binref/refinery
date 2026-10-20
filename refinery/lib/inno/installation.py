@@ -8,8 +8,8 @@ is reported and the installation goes on.
 from __future__ import annotations
 
 import enum
-import fnmatch
 import ntpath
+import re
 
 from typing import (
     TYPE_CHECKING,
@@ -39,6 +39,7 @@ from refinery.lib.inno.archive import (
     SetupIcon,
     SetupIconFlags,
     SetupIniEntry,
+    SetupIniFlags,
     SetupRegistryEntry,
     SetupRegistryFlags,
     SetupRegistryType,
@@ -155,7 +156,7 @@ class SetupCall(NamedTuple):
         return cls(tuple(kinds), result)
 
     def __str__(self):
-        parameters = ', '.join(F'{"" if by_value else "var "}{kind.name}' for kind, by_value in self.parameters)
+        parameters = ', '.join(('' if by_value else 'var ') + kind.name for kind, by_value in self.parameters)
         result = F': {self.result.name}' if self.result else ''
         return F'({parameters}){result}'
 
@@ -247,10 +248,11 @@ class InstalledPaths:
     def files_matching(self, pattern: str) -> list[str]:
         """
         The files in the directory of the pattern whose names match its last part, with `*` and `?`
-        as wildcards.
+        as wildcards, as `FindFirstFile` matches them; every other character stands for itself.
         """
         directory, name = ntpath.split(self._key(pattern))
-        return sorted(f for f in self._files if ntpath.dirname(f) == directory and fnmatch.fnmatchcase(ntpath.basename(f), name))
+        wildcard = re.compile(''.join('.*' if c == '*' else '.' if c == '?' else re.escape(c) for c in name), re.DOTALL)
+        return sorted(f for f in self._files if ntpath.dirname(f) == directory and wildcard.fullmatch(ntpath.basename(f)))
 
 
 class Loaded(NamedTuple, Generic[_E]):
@@ -363,6 +365,35 @@ class ScriptHost(Protocol):
     @property
     def uninstaller_path(self) -> str:
         ...
+
+
+def _within_python(call: Generator[Any, Any, _E]) -> Generator[Any, Any, _E]:
+    """
+    Runs a call of the script; an expression that nests deeper than Python follows ends the
+    emulation.
+    """
+    try:
+        return (yield from call)
+    except RecursionError as RE:
+        raise EmulatorMaxCalls('An expression nests deeper than Python can follow.') from RE
+
+
+_SCHEME_LETTERS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')
+_SCHEME_CHARACTERS = _SCHEME_LETTERS | frozenset('0123456789+-.')
+
+
+def _a_url(path: str) -> bool:
+    """
+    Setup's `IsPathURL`: whether the path starts with a scheme of two characters or more and a
+    colon.
+    """
+    scheme, colon, _ = path.partition(':')
+    return (
+        bool(colon)
+        and len(scheme) >= 2
+        and scheme[0] in _SCHEME_LETTERS
+        and all(character in _SCHEME_CHARACTERS for character in scheme[1:])
+    )
 
 
 _REGISTRY_TEXT_TYPES = (
@@ -653,14 +684,7 @@ class Installation:
             for loaded in entries.icons:
                 yield from self._create_icon(loaded)
             for number, entry in entries.ini:
-                yield from self._process(
-                    EntryLocation(EntrySection.INI, number),
-                    entry,
-                    Field(EntryField.Section, entry.Section),
-                    Field(EntryField.Key, entry.Key),
-                    Field(EntryField.String, entry.Value),
-                    Field(EntryField.Filename, entry.IniFile),
-                )
+                yield from self._create_ini_entry(EntryLocation(EntrySection.INI, number), entry)
             for number, entry in entries.registry:
                 yield from self._create_registry_entry(EntryLocation(EntrySection.Registry, number), entry)
         if not wizard.needs_restart and (yield from self.event(SetupEvent.NeedRestart)):
@@ -772,6 +796,30 @@ class Installation:
         else:
             yield from self.fields(where, Field(EntryField.WorkingDir, entry.WorkingDir))
 
+    def _create_ini_entry(self, where: EntryLocation, entry: SetupIniEntry):
+        """
+        Setup's processing of an INI entry: the section, the key, the value and the file, which
+        Setup writes when the entry has a key and a value; the emulated machine has no INI file
+        with a key that the entry would only create.
+        """
+        condition = entry.Condition
+        if not (yield from self._should_process_entry(where, condition)):
+            return
+        yield from self._notify(EntryParameter.BeforeInstall, where, condition.BeforeInstall)
+        texts = yield from self.fields(
+            where,
+            Field(EntryField.Section, entry.Section),
+            Field(EntryField.Key, entry.Key),
+            Field(EntryField.String, entry.Value),
+            Field(EntryField.Filename, entry.IniFile),
+        )
+        if texts is None:
+            return
+        _, key, _, filename = texts
+        if key and entry.Flags & SetupIniFlags.HasValue:
+            self.host.installed.add_file(filename)
+        yield from self._notify(EntryParameter.AfterInstall, where, condition.AfterInstall)
+
     def _create_registry_entry(self, where: EntryLocation, entry: SetupRegistryEntry):
         """
         Setup's processing of a registry entry: the key and the value name, then the data of a value
@@ -825,12 +873,15 @@ class Installation:
         """
         The source, the destination and the flags of a file entry as Setup holds them: once an
         archive was downloaded, the entry names the archive in the temporary directory, its
-        destination is a folder, and it is no longer a download.
+        destination is a folder that ends in a backslash, as `PathExtractPath` gives it, and it is
+        no longer a download.
         """
         number, entry = loaded
         if (archive := self.downloaded.get(number)) is not None:
             flags = entry.Flags & ~(SetupFileFlags.Download | SetupFileFlags.CustomDestName)
-            return archive, ntpath.dirname(entry.Destination), flags
+            destination = entry.Destination
+            folder = destination[:len(destination) - len(ntpath.basename(destination))]
+            return archive, folder, flags
         return entry.Source, entry.Destination, entry.Flags
 
     def _current(self, loaded: Loaded[SetupFile]) -> CurrentFile:
@@ -921,7 +972,8 @@ class Installation:
         """
         Setup's `CreateIcons` for one entry. Setup creates the icon only when its file exists if the
         entry says so; the 32-bit Setup evaluates the arguments that go on the stack first, the
-        64-bit Setup from left to right. An error ends the entry without AfterInstall.
+        64-bit Setup from left to right. The icon is a shortcut file named after the entry, or an
+        internet shortcut for a URL. An error ends the entry without AfterInstall.
         """
         number, entry = loaded
         where = EntryLocation(EntrySection.Icons, number)
@@ -937,7 +989,8 @@ class Installation:
         yield from self._notify(EntryParameter.BeforeInstall, where, condition.BeforeInstall)
         if (texts := (yield from self.fields(where, Field(EntryField.Filename, entry.FileName)))) is None:
             return
-        if not entry.Flags & SetupIconFlags.CreateOnlyIfFileExists or self.host.installed.file_exists(texts[0]):
+        target = texts[0]
+        if not entry.Flags & SetupIconFlags.CreateOnlyIfFileExists or self.host.installed.file_exists(target):
             arguments = [
                 Field(EntryField.Parameters, entry.Parameters),
                 Field(EntryField.WorkingDir, entry.WorkingDir),
@@ -950,8 +1003,10 @@ class Installation:
             else:
                 fields = [*arguments, comment]
             fields.append(Field(EntryField.Name, entry.Name))
-            if (yield from self.fields(where, *fields)) is None:
+            if (texts := (yield from self.fields(where, *fields))) is None:
                 return
+            extension = '.url' if _a_url(target) else '.lnk'
+            self.host.installed.add_file(F'{texts[-1]}{extension}')
         yield from self._notify(EntryParameter.AfterInstall, where, condition.AfterInstall)
 
     def _process(self, where: EntryLocation, entry: Any, *fields: Field) -> Generator[Any, Any, list[str] | None]:
@@ -988,28 +1043,26 @@ class Installation:
 
     def _guarded(
         self,
-        parameter: EntryParameter,
-        where: EntryLocation | Callable[[], EntryLocation],
+        parameter: EntryParameter | YesNoDirective,
+        where: EntryLocation | Callable[[], EntryLocation] | None,
         call: Generator[Any, Any, _E],
     ) -> Generator[Any, Any, _E | None]:
         """
-        Runs one call of the script for an entry. A script error is reported as a `NewScriptError`,
-        a failure of the emulator as a `NewEmulationError`, and the result is then `None`; an error
-        that ends the emulation is passed on. The location may be a function when the entry is
-        known only once the call failed.
+        Runs one call of the script for an entry or a directive. A script error is reported as a
+        `NewScriptError`, a failure of the emulator as a `NewEmulationError`, and the result is then
+        `None`; an error that ends the emulation is passed on. The location of an entry may be a
+        function when the entry is known only once the call failed; a directive has none.
         """
         try:
-            return (yield from call)
+            return (yield from _within_python(call))
         except EmulatorException:
             raise
-        except RecursionError as RE:
-            raise EmulatorMaxCalls('An expression nests deeper than Python can follow.') from RE
         except (IFPSException, DelphiException) as error:
-            location = where if isinstance(where, EntryLocation) else where()
+            location = where if where is None or isinstance(where, EntryLocation) else where()
             yield NewScriptError(parameter, (), str(error), location)
         except Exception as error:
-            location = where if isinstance(where, EntryLocation) else where()
-            yield NewEmulationError(str(location), exception_to_string(error))
+            location = where if where is None or isinstance(where, EntryLocation) else where()
+            yield NewEmulationError(parameter if location is None else str(location), exception_to_string(error))
         return None
 
     def _read(self, section: EntrySection, reader: Callable[[Any], Generator[Any, Any, list[str]]]):
@@ -1035,11 +1088,9 @@ class Installation:
         passed on.
         """
         try:
-            return (yield from call)
+            return (yield from _within_python(call))
         except EmulatorException:
             raise
-        except RecursionError as RE:
-            raise EmulatorMaxCalls('An expression nests deeper than Python can follow.') from RE
         except Exception:
             return None
 
@@ -1053,9 +1104,9 @@ class Installation:
             return
         host = self.host
         host.current_file = current
+        evaluation = expressions.evaluate(text, self._install_function, expressions.INSTALL, host.expand)
         try:
-            yield from self._guarded(parameter, where, expressions.evaluate(
-                text, self._install_function, expressions.INSTALL, host.expand))
+            yield from self._guarded(parameter, where, evaluation)
         finally:
             host.current_file = None
 
@@ -1082,18 +1133,8 @@ class Installation:
         """
         if (answer := directive.answer) is not None:
             return answer
-        try:
-            evaluation = expressions.evaluate(directive.expression, self._check_function, expressions.CHECK, self.host.expand)
-            return bool((yield from evaluation))
-        except EmulatorException:
-            raise
-        except RecursionError as RE:
-            raise EmulatorMaxCalls(F'{name}: the expression nests deeper than Python can follow.') from RE
-        except (IFPSException, DelphiException) as error:
-            yield NewScriptError(name, (), str(error))
-        except Exception as error:
-            yield NewEmulationError(name, exception_to_string(error))
-        return False
+        evaluation = expressions.evaluate(directive.expression, self._check_function, expressions.CHECK, self.host.expand)
+        return bool((yield from self._guarded(name, None, evaluation)))
 
     def _should_process_entry(
         self,
@@ -1123,27 +1164,31 @@ class Installation:
         selection: Selection,
     ) -> Generator[Any, Any, bool]:
         """
-        Setup's `ShouldProcessEntry`: the components, tasks and languages of the entry by name, then
-        its check when all three hold. Without a list of names, Setup does not test them; the
-        emulator does not know the names when the script changed the lists in a way that it does
-        not model.
+        Setup's `ShouldProcessEntry`: the components, tasks and languages of the entry by name, each
+        tested in full, then its check when all three hold. Without a list of names, Setup does not
+        test them; the emulator does not know the names when the script changed the lists in a way
+        that it does not model. An error in a test ends the tests: Setup ends the installation
+        there, the emulator reports the error and does not process the entry.
         """
         if not (components or tasks or languages or check):
             return True
+        language = self.setup.language_name
+        tests: list[tuple[EntryParameter, str, Callable[[str], bool]]] = []
         for parameter, expression, names in (
             (EntryParameter.Components, components, selection.components),
             (EntryParameter.Tasks, tasks, selection.tasks),
         ):
-            if not expression or names is None:
-                continue
-            if not (yield from self._decide(parameter, where, expression, lambda name, names=names: list_contains(names, name))):
-                return False
+            if expression and names is not None:
+                tests.append((parameter, expression, lambda name, names=names: list_contains(names, name)))
         if languages:
-            language = self.setup.language_name
-            if not (yield from self._decide(EntryParameter.Languages, where, languages, lambda name: same_text(language, name))):
+            tests.append((EntryParameter.Languages, languages, lambda name: same_text(language, name)))
+        processed = True
+        for parameter, expression, identifier in tests:
+            if (decided := (yield from self._decide(parameter, where, expression, identifier))) is None:
                 return False
-        if not check:
-            return True
+            processed = processed and decided
+        if not processed or not check:
+            return processed
         return (yield from self._check(where, check))
 
     def _decide(
@@ -1152,17 +1197,16 @@ class Installation:
         where: EntryLocation,
         expression: str,
         identifier: Callable[[str], bool],
-    ) -> Generator[Any, Any, bool]:
+    ) -> Generator[Any, Any, bool | None]:
         """
-        Evaluates an expression of names; a broken one is reported and counts as false.
+        Evaluates an expression of names as Setup's `EvalExpression` does; an error is reported, and
+        the result is then `None`.
         """
-        try:
+        def decision() -> Generator[Any, Any, bool]:
             return expressions.decide(expression, identifier)
-        except RecursionError as RE:
-            raise EmulatorMaxCalls('An expression nests deeper than Python can follow.') from RE
-        except DelphiException as error:
-            yield NewScriptError(parameter, (), str(error), where)
-            return False
+            yield
+
+        return (yield from self._guarded(parameter, where, decision()))
 
     def _should_process_file(self, loaded: Loaded[SetupFile], selection: Selection | None = None) -> Generator[Any, Any, bool]:
         """
@@ -1287,7 +1331,13 @@ class Installation:
                     components.add_radio_button(entry.Level, False, enabled, entry)
                 else:
                     components.add_check_box(
-                        entry.Level, False, enabled, entry.Used, not entry.Flags & SetupFlags.DontInheritCheck, entry)
+                        entry.Level,
+                        False,
+                        enabled,
+                        entry.Used,
+                        not entry.Flags & SetupFlags.DontInheritCheck,
+                        entry,
+                    )
             except DelphiException as error:
                 raise AbortEmulation(F'Setup cannot create its wizard: {error}') from error
         if wizard.types:
@@ -1386,15 +1436,17 @@ class Installation:
     def _download_archives(self):
         """
         Setup's `DownloadArchivesToExtract`: each file to download and extract, with its check and
-        the fields of its download; 6.5.0 and 6.5.1 test the components as the tasks. An error ends
-        the downloads. The emulated download succeeds: the archive is then a file in the temporary
-        directory, and the entry takes it as its source. The download page is not modelled.
+        the fields of its download; 6.5.0 and 6.5.1 test the components as the tasks. Setup expands
+        the fields of every archive before it downloads any, so an error downloads none. The
+        emulated download succeeds: the archive is then a file in the temporary directory, and the
+        entry takes it as its source. The download page is not modelled.
         """
         if (entries := self.entries) is None:
             return
         selection = self.selection
         if self.setup.download_tests_components_as_tasks:
             selection = Selection(selection.components, selection.components)
+        downloads: list[Loaded[SetupFile]] = []
         for loaded in entries.files:
             number, entry = loaded
             flags = entry.Flags
@@ -1412,6 +1464,8 @@ class Installation:
                 fields.append(Field(EntryField.DownloadISSigSource, entry.DownloadISSigSource))
             if (yield from self.fields(where, *fields)) is None:
                 return
+            downloads.append(loaded)
+        for number, entry in downloads:
             archive = F'{self.host.temporary_directory}\\_isetup{number}.tmp\\{ntpath.basename(entry.Destination)}'
             self.downloaded[number] = archive
             self.host.installed.add_file(archive)

@@ -711,6 +711,34 @@ class TestIPFSEmulator(TestBase):
         self.assertEqual(EventCall(emulator.WizardSelectedComponents(False)).value, '')
         self.assertEqual(emulator.WizardSetupType(False), '')
 
+    def test_an_empty_test_of_the_selection_holds_as_in_setup(self):
+        """
+        Setup's `ShouldProcessEntry` tests no names for an empty expression, also when the wizard
+        knows the selection; this wizard selects nothing.
+        """
+        from refinery.lib.inno.wizard import WizardForm
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        form = emulator.wizard_form = WizardForm(walked=True)
+        form.created = True
+        self.assertTrue(emulator.WizardIsComponentSelected(''))
+        self.assertTrue(emulator.WizardIsTaskSelected(''))
+        self.assertFalse(emulator.WizardIsTaskSelected('a'))
+
+    def test_a_broken_test_of_the_selection_fails_with_the_internal_error_of_setup(self):
+        """
+        Setup's `EvalExpression` raises an error of the expression as `InternalError` with the text
+        `Expression error '%s'`, which Setup's message `ErrorInternal2` writes as
+        `Internal error: %1`.
+        """
+        from refinery.lib.inno.delphi.errors import DelphiException
+        from refinery.lib.inno.wizard import WizardForm
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        form = emulator.wizard_form = WizardForm(walked=True)
+        form.created = True
+        with self.assertRaises(DelphiException) as raised:
+            emulator.WizardIsComponentSelected('a)')
+        self.assertEqual(str(raised.exception), 'Internal error: Expression error \'Invalid token \')\' found\'')
+
     def test_a_member_that_only_places_or_draws_a_list_of_the_wizard_keeps_its_choices(self):
         """
         The script calls these members, which the emulator does not model, on lists of its own.
@@ -727,8 +755,91 @@ class TestIPFSEmulator(TestBase):
         for name in ('TControl.SetTop', 'TControl.SetHeight', 'TNewCheckListBox.SetBorderStyle', 'TNewCheckListBox.SetAnchors'):
             emulator.unimplemented(members[name], [components, Variable(TPrimitive(TC.S32), data=1)], None)
         self.assertTrue(form.components.known)
-        emulator.unimplemented(members['TCustomListBox.GetItems'], [components], None)
+        emulator.unimplemented(members['TNewCheckListBox.SetItemEnabled'], [components, Variable(TPrimitive(TC.S32), data=0)], None)
         self.assertFalse(form.components.known)
+
+    def test_a_member_of_another_object_that_takes_a_list_of_the_wizard_keeps_its_choices(self):
+        """
+        `TWizardForm.IncTopDecHeight` moves and resizes the control that it is given, and the cast
+        `SetNil` of Pascal Script, which the script imports, empties a variable that may hold a
+        list; neither changes the choices of the list of components of a wizard whose choices the
+        emulator knows.
+        """
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC, DeclSpec, DeclSpecParam, Function, TPrimitive
+        from refinery.lib.inno.wizard import WizardForm
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        form = emulator.wizard_form = WizardForm(walked=True)
+        components = Variable(TPrimitive(TC.Class), data=form.components)
+        resize = Function('IncTopDecHeight', DeclSpec(
+            True,
+            [DeclSpecParam(True), DeclSpecParam(True)],
+            name='IncTopDecHeight',
+            classname='TWizardForm',
+            method=True,
+        ))
+        amount = Variable(TPrimitive(TC.S32), data=-20)
+        emulator.unimplemented(resize, [Variable(TPrimitive(TC.Class), data=form), components, amount], None)
+        self.assertTrue(form.components.known)
+        cast = next(function for function in emulator.ifps.functions if str(function) == 'Class.SetNil')
+        emulator.unimplemented(cast, [components], None)
+        self.assertTrue(form.components.known)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='the items of a list are not modelled, so reading them gives up its choices',
+    )
+    def test_reading_the_items_of_a_list_of_the_wizard_keeps_its_choices(self):
+        from refinery.lib.inno.emulator import Variable
+        from refinery.lib.inno.ifps import TC, TPrimitive
+        from refinery.lib.inno.wizard import WizardForm
+        emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
+        form = emulator.wizard_form = WizardForm(walked=True)
+        members = {str(function): function for function in emulator.ifps.functions if function.body is None}
+        emulator.unimplemented(members['TCustomListBox.GetItems'], [Variable(TPrimitive(TC.Class), data=form.components)], None)
+        self.assertTrue(form.components.known)
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='these functions are not emulated and answer before Setup creates the wizard',
+    )
+    def test_every_support_function_that_setup_runs_through_its_wizard_is_emulated(self):
+        """
+        Setup runs these support functions through `GetWizardForm`, which fails before Setup has
+        created its wizard; a function that the emulator does not emulate answers anyway.
+        """
+        from refinery.lib.inno.emulator import IFPSEmulator
+        names = [
+            'CreateCustomPage',
+            'CreateDownloadPage',
+            'CreateExtractionPage',
+            'CreateInputDirPage',
+            'CreateInputFilePage',
+            'CreateInputOptionPage',
+            'CreateInputQueryPage',
+            'CreateOutputMarqueeProgressPage',
+            'CreateOutputMsgMemoPage',
+            'CreateOutputMsgPage',
+            'CreateOutputProgressPage',
+            'GetWizardForm',
+            'IsComponentSelected',
+            'IsTaskSelected',
+            'PageFromID',
+            'PageIndexFromID',
+            'WizardDirValue',
+            'WizardGroupValue',
+            'WizardIsComponentSelected',
+            'WizardIsTaskSelected',
+            'WizardNoIcons',
+            'WizardSelectComponents',
+            'WizardSelectTasks',
+            'WizardSelectedComponents',
+            'WizardSelectedTasks',
+            'WizardSetupType',
+        ]
+        self.assertEqual([name for name in names if name not in IFPSEmulator.external_symbols['']], [])
 
     def test_a_second_installation_runs_the_script_as_the_first(self):
         from refinery.lib.inno.emulation import NewFunctionCall, NewPassword

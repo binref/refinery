@@ -1,5 +1,6 @@
 from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.emulation import EmulatorEndless
+from refinery.lib.inno.installation import InstalledPaths
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
@@ -134,3 +135,25 @@ class TestTheListsOfNames(TestBase):
     def test_a_name_is_found_without_case_of_the_letters_a_to_z_only(self):
         self.assertTrue(list_contains(['Main'], 'MAIN'))
         self.assertFalse(list_contains(['\u00C4'], '\u00E4'))
+
+
+class TestTheFilesThatTheInstallationCreates(TestBase):
+    """
+    Setup finds the sources of an external file with `FindFirstFile`, whose only wildcards are `*`
+    and `?`; brackets are valid in the name of a file on Windows.
+    """
+
+    def test_brackets_in_the_name_of_a_source_stand_for_themselves(self):
+        paths = InstalledPaths()
+        paths.add_file('C:\\app\\data[1].bin')
+        paths.add_file('C:\\app\\data1.bin')
+        matches = paths.files_matching('C:\\app\\data[1].bin')
+        self.assertEqual([match.lower() for match in matches], ['c:\\app\\data[1].bin'])
+
+    def test_a_question_mark_and_a_star_are_wildcards(self):
+        paths = InstalledPaths()
+        paths.add_file('C:\\app\\data[1].bin')
+        paths.add_file('C:\\app\\data1.bin')
+        matches = paths.files_matching('C:\\app\\data?.bin')
+        self.assertEqual([match.lower() for match in matches], ['c:\\app\\data1.bin'])
+        self.assertEqual(len(paths.files_matching('C:\\app\\*.bin')), 2)

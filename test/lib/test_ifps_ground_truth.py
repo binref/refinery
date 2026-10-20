@@ -6,6 +6,7 @@ import tracemalloc
 
 from itertools import zip_longest
 from typing import Iterable
+from unittest import mock
 
 from fractions import Fraction
 
@@ -29,6 +30,7 @@ from refinery.lib.inno.emulation import (
     EmulatorUndefined,
     EntryField,
     EntryLocation,
+    EntryParameter,
     EntrySection,
     NewEmulationError,
     NewFunctionCall,
@@ -244,14 +246,19 @@ def _comparable(lines: Iterable[tuple[str, str]]) -> list[str]:
     The oracle lines that the emulator reproduces, as `name = value`, each event under the name
     `Event`.
     """
-    return [
-        F'{"Event" if _HOST_EVENT.fullmatch(name) else name} = {value}'
-        for name, value in lines
-        if name not in _HOST_VALUES_THAT_ARE_NOT_EMULATED
-        and name not in _HOST_VALUES_LEFT_OUT_OF_THE_LOGS
-        and not _a_text_of_setup(name, value)
-        and not _a_key_of_windows(name, value)
-    ]
+    comparable = []
+    for name, value in lines:
+        if (
+            name in _HOST_VALUES_THAT_ARE_NOT_EMULATED
+            or name in _HOST_VALUES_LEFT_OUT_OF_THE_LOGS
+            or _a_text_of_setup(name, value)
+            or _a_key_of_windows(name, value)
+        ):
+            continue
+        if _HOST_EVENT.fullmatch(name):
+            name = 'Event'
+        comparable.append(F'{name} = {value}')
+    return comparable
 
 
 def _resolved(values: dict[str, str]) -> dict[str, str]:
@@ -1024,10 +1031,10 @@ class TestTheParserReadsWhatTheCompilerWrote(TestBase):
         self.assertEqual(
             [header.directive(name) for name in YesNoDirective],
             [
-                SetupDirective(None, "Directive('Uninstallable', True)"),
-                SetupDirective(None, "Directive('CreateUninstallRegKey', True)"),
-                SetupDirective(None, "Directive('ChangesEnvironment', False)"),
-                SetupDirective(None, "Directive('ChangesAssociations', False)"),
+                SetupDirective(None, 'Directive(\'Uninstallable\', True)'),
+                SetupDirective(None, 'Directive(\'CreateUninstallRegKey\', True)'),
+                SetupDirective(None, 'Directive(\'ChangesEnvironment\', False)'),
+                SetupDirective(None, 'Directive(\'ChangesAssociations\', False)'),
             ],
         )
 
@@ -1236,6 +1243,31 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
 
     def test_two_runs_advanced_alternately_log_what_each_logs_alone(self):
         self.assertRunsAdvancedAlternatelyLogWhatEachLogsAlone('ORACLEMESSAGES', 'ORACLECALLERHANDLER')
+
+    def test_a_code_constant_in_a_description_that_the_script_reads_sees_the_error_of_the_reader(self):
+        """
+        Setup expands the descriptions of the selected components as `ExpandConstant` expands its
+        text. Here `ExpandConstant` is replaced by a read of these descriptions; the wizard selects
+        one component, whose description is the code constant that the procedure expands, and the
+        read writes it as a list of names.
+        """
+        from refinery.lib.inno.emulator import IFPSEmulator
+        from refinery.lib.inno.wizard import WizardForm, comma_text
+        emulator = self.emulator()
+        form = emulator.wizard_form = WizardForm(walked=True)
+        form.created = True
+        component = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe')).setup_info.Components[0]
+        component.Description = '{code:CodeMessage|m}'
+        form.components.add_check_box(0, True, True, False, True, component)
+        registry = IFPSEmulator.external_symbols['']
+        read = registry['WizardSelectedComponents']
+
+        def read_descriptions(emulator: IFPSEmulator, text: str, caller=None):
+            return read.call(emulator, True, caller=caller)
+
+        with mock.patch.dict(registry, {'ExpandConstant': registry['ExpandConstant']._replace(call=read_descriptions)}):
+            logged = _logged_values(emulator.emulate_function(emulator.symbols['ORACLECODEMESSAGE']), {})
+        self.assertEqual(logged['CodeSeesMessage'], comma_text([self.log['CodeSeesMessage']]))
 
 
 class _HostOracleTest(TestBase):
@@ -1451,7 +1483,10 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
         archive = self.host_oracle()
         archive.setup_info.Header.ArchitecturesInstallIn64BitMode = 'nosucharchitecture or x64compatible'
         emulator = self.emulator(archive)
-        self.assertEqual(emulator.setup.install_mode.reason, "Unknown architecture 'nosucharchitecture'")
+        self.assertEqual(
+            emulator.setup.install_mode.reason,
+            'Internal error: Expression error \'Unknown architecture \'nosucharchitecture\'\'',
+        )
         with self.assertRaises(NotImplementedError):
             emulator.expand_constant('{commonpf}')
         self.assertEqual(emulator.expand_constant('{commonpf32}'), R'C:\Program Files (x86)')
@@ -1459,7 +1494,9 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
     def test_an_architecture_directive_that_nests_deeper_than_python_follows_leaves_the_install_mode_undecided(self):
         depth = sys.getrecursionlimit()
         archive = self.host_oracle()
-        archive.setup_info.Header.ArchitecturesInstallIn64BitMode = F'{"(" * depth}x64compatible{")" * depth}'
+        opening = '(' * depth
+        closing = ')' * depth
+        archive.setup_info.Header.ArchitecturesInstallIn64BitMode = F'{opening}x64compatible{closing}'
         emulator = self.emulator(archive)
         self.assertIsNone(emulator.setup.install_mode.bits64)
         with self.assertRaises(NotImplementedError):
@@ -1591,7 +1628,7 @@ class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):
         """
         archive = self.host_oracle()
         entry = archive.setup_info.Files[7]
-        entry.Condition.Check = "Chk('file.download')"
+        entry.Condition.Check = 'Chk(\'file.download\')'
         entry.Flags |= SetupFileFlags.ExtractArchive
         entry.ExtractArchivePassword = '{code:Code|file.download.archivepassword}'
         events = [event for event in self.events(archive) if event.startswith('code:file.download')]
@@ -1610,7 +1647,7 @@ class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):
         """
         archive = self.host_oracle()
         entry = archive.setup_info.Files[7]
-        entry.Condition.Check = "Chk('file.download')"
+        entry.Condition.Check = 'Chk(\'file.download\')'
         entry.Flags |= SetupFileFlags.ExtractArchive
         self.assertIn('CurPageChanged(104)', self.events(archive))
 
@@ -1663,10 +1700,10 @@ class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):
         that the event does not pass.
         """
         for check in (
-            "ChkArgs('dir.i', 'abc', true, 'x')",
-            "ChkArgs(42, 42, true, 'x')",
+            'ChkArgs(\'dir.i\', \'abc\', true, \'x\')',
+            'ChkArgs(42, 42, true, \'x\')',
             'PrepareToInstall(true)',
-            "Code('dir.i')",
+            'Code(\'dir.i\')',
         ):
             archive = self.host_oracle()
             archive.setup_info.Directories[8].Condition.Check = check
@@ -1681,6 +1718,99 @@ class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):
 
     def test_a_check_that_nests_deeper_than_python_follows_ends_the_emulation(self):
         archive = self.host_oracle()
-        archive.setup_info.Directories[8].Condition.Check = F"{'not ' * sys.getrecursionlimit()}Chk('dir.i')"
+        negations = 'not ' * sys.getrecursionlimit()
+        archive.setup_info.Directories[8].Condition.Check = F'{negations}Chk(\'dir.i\')'
         with self.assertRaises(EmulatorMaxCalls):
             self.installation(archive)
+
+    def test_a_check_that_names_a_support_function_without_a_recorded_result_runs_it(self):
+        """
+        Pascal Script records no result type for some imported functions, such as the DLL imports
+        and `FileCopy` of the stored scripts; Setup takes the result of a check as a Boolean of its
+        own. The check of the directory `dir.i` is changed in memory to `IsWin64`, whose recorded
+        result type is removed; the emulated Windows is 64-bit.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Directories[8].Condition.Check = 'IsWin64'
+        emulator = self.emulator(archive)
+        decl = emulator.symbols['IsWin64'].decl
+        assert decl is not None
+        decl.return_type = None
+        list(emulator.emulate_installation())
+        self.assertTrue(emulator.DirExists(emulator.expand_constant('{app}\\dir.i')))
+
+    def test_a_downloaded_archive_names_its_folder_with_a_backslash_at_the_end(self):
+        """
+        Setup sets the destination of a downloaded archive to `PathExtractPath` of its file name,
+        which keeps the backslash at the end. The download of the installer is changed in memory
+        into a download of an archive whose check passes.
+        """
+        archive = self.host_oracle()
+        entry = archive.setup_info.Files[7]
+        entry.Condition.Check = 'Chk(\'file.download\')'
+        entry.Flags |= SetupFileFlags.ExtractArchive
+        names = {
+            event.partition(' source=')[0] for event in self.events(archive)
+            if event.startswith('BeforeInstall(file.download)')
+        }
+        self.assertEqual(names, {'BeforeInstall(file.download) name=[{app}{code:Code|file.download.destdir}\\]'})
+
+    def test_an_error_in_the_fields_of_one_archive_to_download_downloads_no_archive(self):
+        """
+        Setup expands the fields of every archive to download before it downloads any. The download
+        of the installer and the download `file.dl` are changed in memory into downloads of archives
+        whose checks pass; the password of the second one calls a function that the script does not
+        have.
+        """
+        archive = self.host_oracle()
+        for number, name in ((7, 'file.download'), (10, 'file.dl')):
+            entry = archive.setup_info.Files[number]
+            entry.Condition.Check = F'Chk(\'{name}\')'
+            entry.Flags |= SetupFileFlags.ExtractArchive
+        archive.setup_info.Files[10].DownloadPassword = '{code:NoSuchOracleFunction}'
+        sources = [event for event in self.events(archive) if '_isetup' in event]
+        self.assertEqual(sources, [])
+
+    def test_the_installation_creates_the_files_of_its_ini_entries_and_its_shortcuts(self):
+        """
+        The installer writes `oracle.ini` into the folder of the application and two shortcuts into
+        the program group, `Oracle` and `Oracle C`; the shortcut `Oracle D` is only created when
+        its file exists, and it does not.
+        """
+        emulator = self.emulator()
+        list(emulator.emulate_installation())
+        created = {
+            name: emulator.FileExists(emulator.expand_constant(name)) for name in (
+                '{app}\\oracle.ini',
+                '{group}\\Oracle.lnk',
+                '{group}\\Oracle C.lnk',
+                '{group}\\Oracle D.lnk',
+            )
+        }
+        self.assertEqual(created, {
+            '{app}\\oracle.ini': True,
+            '{group}\\Oracle.lnk': True,
+            '{group}\\Oracle C.lnk': True,
+            '{group}\\Oracle D.lnk': False,
+        })
+
+    def test_an_error_in_the_tasks_of_an_entry_is_reported_when_its_components_are_not_selected(self):
+        """
+        Setup tests the components, the tasks and the languages of an entry each in full. The
+        directory `dir.d` is changed in memory to be for a component that does not exist and for a
+        broken expression of tasks.
+        """
+        archive = self.host_oracle()
+        condition = archive.setup_info.Directories[3].Condition
+        condition.Components = 'nosuchcomponent'
+        condition.Tasks = 'a)'
+        errors = [
+            error for error in self.errors(archive)
+            if isinstance(error, NewScriptError) and error.entry == EntryLocation(EntrySection.Dirs, 3)
+        ]
+        self.assertEqual(errors, [NewScriptError(
+            EntryParameter.Tasks,
+            (),
+            'Internal error: Expression error \'Invalid token \')\' found\'',
+            EntryLocation(EntrySection.Dirs, 3),
+        )])

@@ -125,7 +125,7 @@ class _Reader:
             self.value = text[start:cursor]
             self.token = _Token.Integer
             return
-        if character == "'":
+        if character == '\'':
             output = []
             while True:
                 cursor += 1
@@ -134,19 +134,19 @@ class _Reader:
                 character = text[cursor]
                 if character in '\n\r':
                     raise ExpressionError('Unterminated string')
-                if character == "'":
+                if character == '\'':
                     cursor += 1
-                    if cursor >= end or text[cursor] != "'":
+                    if cursor >= end or text[cursor] != '\'':
                         break
                 output.append(character)
             self.cursor = cursor
             self.value = ''.join(output)
             self.token = _Token.String
             return
-        raise ExpressionError(F"Invalid symbol '{character}' found")
+        raise ExpressionError(F'Invalid symbol \'{character}\' found')
 
     def invalid(self, message: str | None = None) -> ExpressionError:
-        return ExpressionError(message or F"Invalid token '{self.value}' found")
+        return ExpressionError(message or F'Invalid token \'{self.value}\' found')
 
     def parameters(self) -> Generator[Any, Any, list[Parameter]]:
         parameters: list[Parameter] = []
@@ -238,7 +238,7 @@ def _integer(digits: str) -> int:
     """
     value = int(digits)
     if value > 0x7FFFFFFF:
-        raise ExpressionError(F"'{digits}' is not a valid integer value")
+        raise ExpressionError(F'\'{digits}\' is not a valid integer value')
     return value
 
 
@@ -268,7 +268,9 @@ def evaluate(
 
 def decide(text: str, identifier: Callable[[str], bool], rules: Rules = NAMES) -> bool:
     """
-    Evaluates an expression whose identifiers run no script, such as the architecture directives.
+    Setup's `EvalExpression`: evaluates an expression whose identifiers run no script, such as the
+    architecture directives and the names of components and tasks. Setup raises an error of the
+    expression or of an identifier as an internal error.
     """
     def ask(name: str, parameters: list[Parameter]) -> Generator[Any, Any, bool]:
         return identifier(name)
@@ -279,5 +281,7 @@ def decide(text: str, identifier: Callable[[str], bool], rules: Rules = NAMES) -
         next(evaluation)
     except StopIteration as stop:
         return stop.value
+    except ExpressionError as error:
+        raise ExpressionError(F'Internal error: Expression error \'{error}\'') from error
     raise RuntimeError(F'The expression {text!r} asked for more than a value.')
 

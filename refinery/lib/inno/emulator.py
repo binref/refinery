@@ -112,6 +112,7 @@ from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mism
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
+    Expander,
     PageEvent,
     PageStyle,
     PasswordBox,
@@ -703,10 +704,14 @@ class _ScriptRun:
         return eh.handler_end
 
 
-def _outside_file_entry(name: str) -> str:
-    return (
-        F'An attempt was made to call the "{name}" function from outside a "Check", "BeforeInstall" or '
-        F'"AfterInstall" event function belonging to a "[Files]" entry'
+def _outside_file_entry(name: str, condition: str = '') -> DelphiException:
+    """
+    Setup's error for a function of the current file called outside a function of a file entry
+    that meets the given condition.
+    """
+    return DelphiException(
+        F'Internal error: An attempt was made to call the "{name}" function from outside a "Check", '
+        F'"BeforeInstall" or "AfterInstall" event function belonging to a "[Files]" entry{condition}'
     )
 
 
@@ -734,6 +739,18 @@ def _path_drive(name: str) -> str:
     if name[1:2] == ':':
         return name[:2]
     return ''
+
+
+def _selected(names: list[str] | None, expression: str) -> bool:
+    """
+    Setup's test of the selected components or tasks in `WizardIsComponentSelected` and
+    `WizardIsTaskSelected`: as `ShouldProcessEntry`, it tests no names without a list of them or
+    for an empty expression.
+    """
+    expression = expression.replace('/', '\\')
+    if names is None or not expression:
+        return True
+    return expressions.decide(expression, lambda name: list_contains(names, name))
 
 
 def _wizard_page(page: object) -> WizardPage:
@@ -988,7 +1005,7 @@ def _architecture(name: str, x64: bool) -> bool:
     try:
         architecture, compatible = _ARCHITECTURES[name]
     except KeyError:
-        raise expressions.ExpressionError(F"Unknown architecture '{name}'") from None
+        raise expressions.ExpressionError(F'Unknown architecture \'{name}\'') from None
     if compatible:
         return architecture is TSetupProcessorArchitecture.paX86 or architecture is _processor(x64)
     return architecture is _processor(x64)
@@ -1550,7 +1567,19 @@ class IFPSEmulator:
         finally:
             emulation.close()
 
-    def _execute(self, run: _ScriptRun, function: Function, args: Sequence):
+    def _execute(
+        self,
+        run: _ScriptRun,
+        function: Function,
+        args: Sequence,
+        types: Sequence[IFPSType] | None = None,
+        result_type: IFPSType | None = None,
+    ):
+        """
+        Runs the function with the given values. The caller that creates the variables it passes,
+        as Setup does, gives their types and the type of the result for a declaration that does
+        not record them.
+        """
         decl = function.decl
         if decl is None:
             raise NotImplementedError(F'Do not know how to call {function!s}.')
@@ -1559,12 +1588,15 @@ class IFPSEmulator:
                 F'Function {function!s} expects {n} arguments, only {m} were given.')
         stack = run.stack
         for index, (argument, parameter) in enumerate(zip(args, decl.parameters), 1):
-            variable = Variable(parameter.type, VariableSpec(index, VariableType.Local))
+            kind = parameter.type
+            if kind is None and types is not None:
+                kind = types[index - 1]
+            variable = Variable(kind, VariableSpec(index, VariableType.Local))
             variable.set(argument)
             stack.append(variable)
         stack.reverse()
         if not decl.void:
-            result = Variable(decl.return_type, VariableSpec(0, VariableType.Argument))
+            result = Variable(decl.return_type or result_type, VariableSpec(0, VariableType.Argument))
             stack.append(result)
         yield from self._interpret(run, function)
         if not decl.void:
@@ -2235,7 +2267,8 @@ class IFPSEmulator:
         bits = '64' if self.setup.install_mode.decided() else '32'
         map = self.constant_map
         if name == 'dao':
-            return RF'{map[F"commoncf{bits}"]}\Microsoft Shared\DAO'
+            shared = map[F'commoncf{bits}']
+            return RF'{shared}\Microsoft Shared\DAO'
         return map[F'{name}{bits}']
 
     def constant_value(self, name: str, original: str) -> str:
@@ -3113,28 +3146,32 @@ class IFPSEmulator:
             return ''
         return setup_type.Description if descriptions else setup_type.Name
 
-    def _expand_field(self, entry: object, field: EntryField, text: str) -> Generator[Any, Any, str]:
-        return self.expand(text)
+    def _field_expander(self, caller: _ScriptRun | None) -> Expander:
+        """
+        Expands the fields of the entries in the lists of the wizard for a support function that the
+        script calls: a code constant runs inside the run of the caller, as in `ExpandConstant`.
+        """
+        def expand(entry: object, field: EntryField, text: str) -> Generator[Any, Any, str]:
+            return constants.expand_constants(text, _EmulatedConstants(self, caller))
+        return expand
 
-    @external()
-    def WizardSelectedComponents(self, descriptions: bool) -> Generator[Any, Any, str]:
-        return comma_text((yield from self._form().selected_components(descriptions, False, self._expand_field)))
+    @external(caller=True)
+    def WizardSelectedComponents(self, descriptions: bool, caller: _ScriptRun | None = None) -> Generator[Any, Any, str]:
+        expand = self._field_expander(caller)
+        return comma_text((yield from self._form().selected_components(descriptions, False, expand)))
 
-    @external()
-    def WizardSelectedTasks(self, descriptions: bool) -> Generator[Any, Any, str]:
-        return comma_text((yield from self._form().selected_tasks(descriptions, False, False, self._expand_field)))
+    @external(caller=True)
+    def WizardSelectedTasks(self, descriptions: bool, caller: _ScriptRun | None = None) -> Generator[Any, Any, str]:
+        expand = self._field_expander(caller)
+        return comma_text((yield from self._form().selected_tasks(descriptions, False, False, expand)))
 
     @external(alias=['IsComponentSelected'])
     def WizardIsComponentSelected(self, components: str) -> bool:
-        if (names := self._form().selection().components) is None:
-            return True
-        return expressions.decide(components.replace('/', '\\'), lambda name: list_contains(names, name))
+        return _selected(self._form().selection().components, components)
 
     @external(alias=['IsTaskSelected'])
     def WizardIsTaskSelected(self, tasks: str) -> bool:
-        if (names := self._form().selection().tasks) is None:
-            return True
-        return expressions.decide(tasks.replace('/', '\\'), lambda name: list_contains(names, name))
+        return _selected(self._form().selection().tasks, tasks)
 
     @external()
     def WizardSelectComponents(self, components: str):
@@ -3196,13 +3233,13 @@ class IFPSEmulator:
     @external()
     def CurrentFilename(self) -> str:
         if (file := self.current_file) is None or not file.destination:
-            raise DelphiException(F'Internal error: {_outside_file_entry("CurrentFilename")}')
+            raise _outside_file_entry('CurrentFilename')
         return file.destination
 
     @external()
     def CurrentSourceFilename(self) -> str:
         if (file := self.current_file) is None or not file.source:
-            raise DelphiException(F'Internal error: {_outside_file_entry("CurrentSourceFilename")} with flag "external"')
+            raise _outside_file_entry('CurrentSourceFilename', ' with flag "external"')
         return file.source
 
     def expand(self, text: str, custom: Mapping[str, str] | None = None) -> Generator[Any, Any, str]:
@@ -3239,23 +3276,30 @@ class IFPSEmulator:
         if (watch := self._stopwatch) is not None and watch.expired():
             raise EmulatorTimeout
 
-    def _fits(self, function: Function, call: SetupCall) -> bool:
+    def _setup_codes(self) -> dict[ArgumentKind, TC]:
         """
-        Whether the declaration of a function of the script takes the call that Setup makes: the
-        same number of parameters, each passed the same way and of the type that Setup passes, and
-        a result of the type that Setup takes. A parameter whose type the script does not record
-        is taken to fit.
+        The type codes of the variables that Setup creates for the values that it passes to the
+        functions of the script and for the results that it takes from them.
         """
-        if (decl := function.decl) is None or len(decl.parameters) != len(call.parameters):
-            return False
-        string = TC.UnicodeString if self.ifps.unicode else TC.AnsiString
-        codes = {
-            ArgumentKind.String  : string,
+        return {
+            ArgumentKind.String  : TC.UnicodeString if self.ifps.unicode else TC.AnsiString,
             ArgumentKind.Integer : TC.S32,
             ArgumentKind.Boolean : TC.U08,
             ArgumentKind.Step    : TC.U08,
             ArgumentKind.Page    : TC.Class,
         }
+
+    def _fits(self, function: Function, call: SetupCall) -> bool:
+        """
+        Whether the declaration of a function of the script takes the call that Setup makes: the
+        same number of parameters, each passed the same way and of the type that Setup passes, and
+        a result of the type that Setup takes. A parameter or a result whose type the script does
+        not record is taken to fit, as Pascal Script records none for a support function that Inno
+        Setup does not document, such as `UsingWinNT`.
+        """
+        if (decl := function.decl) is None or len(decl.parameters) != len(call.parameters):
+            return False
+        codes = self._setup_codes()
         for parameter, (kind, by_value) in zip(decl.parameters, call.parameters):
             if parameter.const != by_value:
                 return False
@@ -3263,7 +3307,9 @@ class IFPSEmulator:
                 return False
         if call.result is None:
             return decl.void
-        return not decl.void and decl.return_type is not None and decl.return_type.code == codes[call.result]
+        if decl.void:
+            return False
+        return (result := decl.return_type) is None or result.code == codes[call.result]
 
     def call_from_setup(
         self,
@@ -3275,11 +3321,16 @@ class IFPSEmulator:
         """
         Calls a function of the script as Setup does: Pascal Script runs a function whose
         declaration does not take the call on a stack that does not fit it, and the emulation ends
-        there.
+        there. Setup creates the variables of the values that it passes and of the result that it
+        takes.
         """
         if not self._fits(function, call):
             raise EmulatorUndefined(F'Setup calls {function.name} as {call}, which its declaration does not take.')
-        return (yield from self._execute(_ScriptRun(self.setup.dialect, caller), function, arguments))
+        codes = self._setup_codes()
+        types = [TPrimitive(codes[kind]) for kind, _ in call.parameters]
+        result = None if call.result is None else TPrimitive(codes[call.result])
+        run = _ScriptRun(self.setup.dialect, caller)
+        return (yield from self._execute(run, function, arguments, types, result))
 
     def call_by_name(
         self,
@@ -3371,8 +3422,8 @@ look.
 def _changes_choices(function: Function) -> bool:
     """
     Whether a member of a control of the wizard that the emulator does not model may change the
-    choices that the control holds: any member but those of every control and those that only
-    change how it looks.
+    choices that the control holds: any member but those of every control, those that only change
+    how it looks, and the casts of Pascal Script, whose class is `Class`.
     """
     classname = function.decl.classname if function.decl is not None else None
     name = function.name
@@ -3380,7 +3431,7 @@ def _changes_choices(function: Function) -> bool:
         classname, dot, name = name.partition('.')
         if not dot:
             return False
-    if classname in _LAYOUT_CLASSES:
+    if classname == 'Class' or classname in _LAYOUT_CLASSES:
         return False
     if name[:3].lower() in ('get', 'set') and name[3:].lower() in _APPEARANCE:
         return False
@@ -3401,8 +3452,9 @@ class InnoSetupEmulator(IFPSEmulator):
     ):
         super().__init__(archive, options, **more)
         cfg = self.config
-        self.entries = None if (info := self.setup_info) is None else SetupEntries.of(
-            info, cfg.windows_os_version, cfg.windows_sp_version)
+        self.entries: SetupEntries | None = None
+        if (info := self.setup_info) is not None:
+            self.entries = SetupEntries.of(info, cfg.windows_os_version, cfg.windows_sp_version)
 
     def emulate_installation(
         self,
@@ -3434,13 +3486,12 @@ class InnoSetupEmulator(IFPSEmulator):
         Any unimplemented function is essentially skipped. Any arguments passed by reference and
         all return values that are of type integer are set to `1` in an attempt to indicate success
         wherever possible. When the function is a member of a control of the wizard that holds
-        choices of the installation, the emulator no longer knows those choices, unless the member
-        belongs to every control, such as its position, or only changes how the control looks.
+        choices of the installation, called on that control, the emulator no longer knows those
+        choices, unless the member belongs to every control, such as its position, or only changes
+        how the control looks.
         """
-        if _changes_choices(function):
-            for argument in arguments:
-                if self.wizard_form.touched(argument.deref().data):
-                    break
+        if arguments and _changes_choices(function):
+            self.wizard_form.touched(arguments[0].deref().data)
         if result is not None and not result.container and _holds_integer(result.type):
             result.set(1)
         for ptr in arguments:
