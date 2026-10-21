@@ -28,6 +28,7 @@ from typing import (
 
 from refinery.lib.inno import expressions
 from refinery.lib.inno.archive import (
+    Flags,
     SetupComponent,
     SetupDeleteEntry,
     SetupDirective,
@@ -48,7 +49,10 @@ from refinery.lib.inno.archive import (
     SetupRunFlags,
     SetupTask,
     SetupTaskFlags,
+    SetupMessageName,
     SetupType,
+    SetupTypeEnum,
+    TextDirective,
     TSetup,
     WinVerRange,
     YesNoDirective,
@@ -68,14 +72,16 @@ from refinery.lib.inno.emulation import (
     SetupEvent,
 )
 from refinery.lib.inno.pascal import IFPSException
-from refinery.lib.inno.pathfunc import full_path_name
+from refinery.lib.inno.pathfunc import full_path_name, trim, valid_dir_name, valid_group_name
 from refinery.lib.inno.symbols import IFPSEvents, IFPSSignature, parse_function
 from refinery.lib.inno.wizard import (
+    ControlEvent,
     MainForm,
     PageEvent,
     PageID,
     PageStyle,
     Selection,
+    SetupHandler,
     TextBox,
     WizardForm,
     list_contains,
@@ -182,6 +188,15 @@ _PAGE_CALLS = {
     PageEvent.OnCancelButtonClick : SetupCall.of(parse_function(
         'procedure OnCancelButtonClick(Sender: TWizardPage; var ACancel, AConfirm: Boolean)')),
 }
+
+_DEFAULT_TYPE_MESSAGES = {
+    SetupTypeEnum.DefaultFull    : SetupMessageName.FullInstallation,
+    SetupTypeEnum.DefaultCompact : SetupMessageName.CompactInstallation,
+    SetupTypeEnum.DefaultCustom  : SetupMessageName.CustomInstallation,
+}
+"""
+The messages that give the default types their descriptions.
+"""
 
 _EVENT_RULES: dict[SetupEvent, tuple[Callable[[Any], bool] | None, Any]] = {
     SetupEvent.InitializeSetup        : (lambda value: not value, True),
@@ -388,6 +403,95 @@ class ScriptHost(Protocol):
         ...
 
 
+def implementations(host: ScriptHost, event: SetupEvent) -> list[Function]:
+    """
+    The functions of the script that handle the given event, in the order in which Setup calls
+    them: those with an event attribute naming it, in the order of the script, then the one named
+    like the event.
+    """
+    name = event.value.casefold()
+    functions = []
+    for function in host.ifps.functions:
+        if function.body is None:
+            continue
+        for attribute in function.attributes or ():
+            if attribute.name.casefold() != 'event' or len(attribute.fields) != 1:
+                continue
+            if str(attribute.fields[0].value).casefold() == name:
+                functions.append(function)
+                break
+    if (main := host.symbols.get(event)) is not None and main.body is not None and main not in functions:
+        functions.append(main)
+    return functions
+
+
+def run_event(
+    host: ScriptHost,
+    functions: list[Function],
+    event: SetupEvent,
+    *args,
+    raises: bool = False,
+) -> Generator[Any, Any, Any]:
+    """
+    Runs the given functions of the script that handle a setup event and combines their results
+    as Setup does: a Boolean event stops at the first result that decides it, an integer event at
+    the first one that is not zero, a text event at the first one that is not empty. When the
+    script does not handle the event, the result is Setup's default. A function that ends with a
+    script error stops the event; the error is reported as a `NewScriptError` and the result is the
+    default, or it is passed on with `raises`.
+    """
+    stop, default = _EVENT_RULES.get(event, (None, None))
+    call = _EVENT_CALLS[event]
+    result = default
+    for function in functions:
+        try:
+            value = yield from host.call_from_setup(function, args, call)
+        except IFPSException as error:
+            if raises:
+                raise
+            message = str(error)
+        else:
+            result = value
+            if stop is not None and stop(value):
+                break
+            continue
+        yield NewScriptError(event, args, message)
+        return default
+    return result
+
+
+def check_serial_ok(
+    host: ScriptHost,
+    functions: list[Function] | None = None,
+    raises: bool = False,
+) -> Generator[Any, Any, None]:
+    """
+    Setup's `CheckSerialOk` when the script has `CheckSerial`: the values of the user information,
+    then `CheckSerial` with the text of the serial box, whose result enables Next. An error of
+    `CheckSerial` disables Next; with `raises`, it is passed on, else reported.
+    """
+    if functions is None:
+        functions = implementations(host, SetupEvent.CheckSerial)
+    if not functions:
+        return
+    wizard = host.wizard_form
+    wizard.take_user_info()
+    wizard.serial_accepted = False
+    serial = wizard.user_info_serial_edit.text
+    accepted = yield from run_event(host, functions, SetupEvent.CheckSerial, serial, raises=raises)
+    wizard.serial_accepted = bool(accepted)
+
+
+def user_info_edit_change(host: ScriptHost, box: TextBox) -> Generator[Any, Any, None]:
+    """
+    Setup's `UserInfoEditChange`, the handler of the boxes of the user information: while the page
+    of the user information is shown, `CheckSerialOk`, whose error reaches the code that changed the
+    text.
+    """
+    if host.wizard_form.current == PageID.wpUserInfo:
+        yield from check_serial_ok(host, raises=True)
+
+
 def _within_python(call: Generator[Any, Any, _E]) -> Generator[Any, Any, _E]:
     """
     Runs a call of the script; an expression that nests deeper than Python follows ends the
@@ -470,10 +574,13 @@ class Installation:
             self._numbers[EntrySection.Components] = {id(e): k for k, e in entries.components}
             self._numbers[EntrySection.Tasks] = {id(e): k for k, e in entries.tasks}
         self._implementations: dict[SetupEvent, list[Function]] = {}
+        for box in self.wizard.user_info_boxes:
+            box.on_change = SetupHandler.UserInfoEditChange
 
     def run(self) -> Generator[Any, Any, None]:
         wizard = self.wizard
         yield from self.event(SetupEvent.InitializeSetup)
+        yield from self._startup_texts()
         wizard.main = MainForm()
         yield from self._load_types_and_components()
         yield from self._measure_external_files()
@@ -501,7 +608,7 @@ class Installation:
         page = wizard.current
         if page == PageID.wpPassword:
             yield from self._check_password()
-        self._leave(page)
+        yield from self._check_page(page)
         yield from self.page_event(page, PageEvent.OnNextButtonClick)
         yield from self.event(SetupEvent.NextButtonClick, page)
         index = wizard.pages.index(page)
@@ -533,6 +640,7 @@ class Installation:
                     yield from self._previous_page()
             elif page == PageID.wpInstalling:
                 yield from self._set_page(page)
+                yield from self._take_install_values()
                 yield from self._install()
                 continue
             if not (yield from self._should_skip(page)):
@@ -571,7 +679,7 @@ class Installation:
         if page != PageID.wpInstalling and not self._page_style(page) & PageStyle.NoButtons:
             yield from self._previous_page()
         if page == PageID.wpUserInfo:
-            yield from self.event(SetupEvent.CheckSerial, '')
+            yield from self._check_serial_ok()
         yield from self.page_event(page, PageEvent.OnActivate)
         if page != previous or not self.setup.page_changes_only:
             yield from self.event(SetupEvent.CurPageChanged, page)
@@ -581,12 +689,68 @@ class Installation:
             return PageStyle.Normal
         return known.style
 
+    def _check_serial_ok(self) -> Generator[Any, Any, None]:
+        return check_serial_ok(self.host, self.implementations(SetupEvent.CheckSerial))
+
     def _write(self, box: TextBox, text: str) -> Generator[Any, Any, None]:
         """
-        Setup writes the text of a box; its handler runs when the text changes.
+        Setup writes the text of a box; its handler runs when the text changes. An error of the
+        handler ends what Setup was doing; the emulator reports it and goes on.
         """
         if box.set_text(text):
-            yield from self.host.text_changed(box)
+            try:
+                yield from self.host.text_changed(box)
+            except IFPSException as error:
+                yield NewScriptError(ControlEvent.OnChange, (box,), str(error))
+
+    def _check_page(self, page: int) -> Generator[Any, Any, None]:
+        """
+        Setup's check of the page that Next leaves: the user information is trimmed and taken, the
+        folder and the group are tidied and taken. Setup refuses an empty name, an invalid folder
+        and a refused serial; the emulated user then enters one that Setup accepts, which the
+        emulator does not know.
+        """
+        wizard = self.wizard
+        if page == PageID.wpUserInfo:
+            name = wizard.user_info_name_edit
+            organization = wizard.user_info_org_edit
+            yield from self._write(name, trim(name.text))
+            yield from self._write(organization, trim(organization.text))
+            if not name.text and not self.config.wizard_silent:
+                name.touched()
+            if not wizard.serial_accepted:
+                wizard.user_info_serial_edit.touched()
+            wizard.take_user_info()
+        elif page == PageID.wpSelectDir:
+            yield from self._validate_dir()
+        elif page == PageID.wpSelectProgramGroup:
+            yield from self._validate_group()
+
+    def _validate_dir(self) -> Generator[Any, Any, None]:
+        """
+        Setup's `ValidateDirEdit`: the folder box is tidied and checked, then taken; a folder that
+        Setup refuses becomes the stand-in.
+        """
+        wizard = self.wizard
+        setup = self.setup
+        box = wizard.dir_edit
+        yield from self._write(box, setup.path_func.tidy_up_dir_name(box.text))
+        if not valid_dir_name(box.text, setup.allow_unc_path, setup.allow_root_directory):
+            box.touched()
+        wizard.folder = box.text
+
+    def _validate_group(self) -> Generator[Any, Any, None]:
+        """
+        Setup's `ValidateGroupEdit` unless the program group is turned off: the group box is tidied
+        and checked, then taken; a group that Setup refuses becomes the stand-in.
+        """
+        wizard = self.wizard
+        box = wizard.group_edit
+        if not wizard.icons_off:
+            yield from self._write(box, self.setup.path_func.tidy_up_group_name(box.text))
+            if not valid_group_name(box.text):
+                box.touched()
+        wizard.group = box.text
 
     def _leave(self, page: int):
         """
@@ -601,6 +765,41 @@ class Installation:
             wizard.folder = path_func.remove_backslash_unless_root(wizard.dir_edit.text)
         elif page == PageID.wpSelectProgramGroup:
             wizard.group = path_func.remove_backslash_unless_root(wizard.group_edit.text)
+
+    def _take_install_values(self) -> Generator[Any, Any, None]:
+        """
+        Setup's `TMainForm.Install` before the installation: the folder and the group are tidied
+        and taken.
+        """
+        yield from self._validate_dir()
+        yield from self._validate_group()
+
+    def _text(self, directive: TextDirective) -> Generator[Any, Any, str | None]:
+        """
+        Expands the text of a directive as Setup does; an error is reported and gives `None`. A
+        script without its installer has no directives.
+        """
+        if (info := self.setup.setup_info) is None:
+            return None
+        if (text := info.Header.text(directive)) is None:
+            return None
+        return (yield from self._guarded(directive, None, self.host.expand(text)))
+
+    def _startup_texts(self) -> Generator[Any, Any, None]:
+        """
+        The texts that Setup expands right after `InitializeSetup`; the version of the application
+        stands in for its versioned name when that is empty.
+        """
+        if (info := self.setup.setup_info) is None:
+            return
+        yield from self._text(TextDirective.AppName)
+        if info.Header.text(TextDirective.AppVerName):
+            yield from self._text(TextDirective.AppVerName)
+        else:
+            yield from self._text(TextDirective.AppVersion)
+        yield from self._text(TextDirective.AppCopyright)
+        yield from self._text(TextDirective.AppMutex)
+        yield from self._text(TextDirective.SetupMutex)
 
     def _previous_page(self):
         """
@@ -708,9 +907,11 @@ class Installation:
         if setup.evaluates_change_directives:
             yield from self.directive(YesNoDirective.ChangesEnvironment, setup.changes_environment)
             yield from self.directive(YesNoDirective.ChangesAssociations, setup.changes_associations)
+        self.host.current_folder.path = self.host.machine_folders['sys']
         if entries is not None:
             for loaded in entries.files:
                 yield from self._should_process_file(loaded)
+        yield from self._text(TextDirective.AppId)
         uninstallable = yield from self.directive(YesNoDirective.Uninstallable, setup.uninstallable)
         if entries is not None:
             for number, entry in entries.install_delete:
@@ -721,7 +922,7 @@ class Installation:
                 yield from self._process(where, entry, Field(EntryField.Name, entry.Name))
             yield from self._create_directories(entries)
         if uninstallable:
-            wizard.uninstaller = F'{self.setup.path_func.add_backslash(wizard.folder)}unins000.exe'
+            yield from self._name_uninstaller()
         if entries is not None:
             for loaded in entries.files:
                 yield from self._copy_file(loaded, uninstallable)
@@ -735,6 +936,7 @@ class Installation:
             wizard.needs_restart = True
         if uninstallable:
             if (yield from self.directive(YesNoDirective.CreateUninstallRegKey, setup.uninstall_key)):
+                yield from self._register_uninstall_info()
                 yield from self.event(SetupEvent.RegisterPreviousData, 0)
             if entries is not None:
                 for number, entry in reversed(entries.uninstall_run):
@@ -760,6 +962,43 @@ class Installation:
         yield from self.event(SetupEvent.CurStepChanged, TSetupStep.ssPostInstall)
         if not wizard.needs_restart:
             yield from self._update_run_list()
+
+    def _name_uninstaller(self) -> Generator[Any, Any, None]:
+        """
+        Setup's `GenerateUninstallInfoFilename`: the folder of the uninstaller and its name.
+        """
+        path_func = self.setup.path_func
+        folder = '' if (info := self.setup.setup_info) is None else info.Header.text(TextDirective.UninstallFilesDir) or ''
+        expanded = yield from self._guarded(TextDirective.UninstallFilesDir, None, self.host.expand(folder))
+        if expanded is None:
+            return
+        folder = path_func.expand(expanded, self.host.current_folder.path)
+        self.wizard.uninstaller = F'{path_func.add_backslash(folder)}unins000.exe'
+
+    def _register_uninstall_info(self) -> Generator[Any, Any, None]:
+        """
+        The texts of Setup's `RegisterUninstallInfo`, in its order.
+        """
+        if (info := self.setup.setup_info) is None:
+            return
+        if info.Header.text(TextDirective.UninstallDisplayName):
+            yield from self._text(TextDirective.UninstallDisplayName)
+        for directive in (
+            TextDirective.UninstallDisplayIcon,
+            TextDirective.AppVersion,
+            TextDirective.AppPublisher,
+            TextDirective.AppPublisherURL,
+            TextDirective.AppSupportPhone,
+            TextDirective.AppSupportURL,
+            TextDirective.AppUpdatesURL,
+            TextDirective.AppReadmeFile,
+            TextDirective.AppContact,
+            TextDirective.AppComments,
+            TextDirective.AppModifyPath,
+            TextDirective.AppVersion,
+        ):
+            if info.Header.text(directive):
+                yield from self._text(directive)
 
     def _create_directories(self, entries: SetupEntries):
         """
@@ -1087,7 +1326,7 @@ class Installation:
 
     def _guarded(
         self,
-        parameter: EntryParameter | YesNoDirective,
+        parameter: EntryParameter | YesNoDirective | TextDirective,
         where: EntryLocation | Callable[[], EntryLocation] | None,
         call: Generator[Any, Any, _E],
     ) -> Generator[Any, Any, _E | None]:
@@ -1103,7 +1342,7 @@ class Installation:
             raise
         except (IFPSException, DelphiException) as error:
             location = where if where is None or isinstance(where, EntryLocation) else where()
-            yield NewScriptError(parameter, (), str(error), location)
+            yield NewScriptError(parameter, (), self.setup.error_text(error), location)
         except Exception as error:
             location = where if where is None or isinstance(where, EntryLocation) else where()
             yield NewEmulationError(parameter if location is None else str(location), exception_to_string(error))
@@ -1355,21 +1594,39 @@ class Installation:
 
     def _create_wizard(self):
         """
-        The part of creating the wizard that reads the entries: the descriptions of the types and
-        components, the components in their list, and the components of the first type. The boxes
-        of the folder and the group hold their stand-ins, and those of the user information are
-        unknown. The form exists afterwards.
+        Setup's creation of the wizard: the texts of `AppId`, of the boxes of the user information,
+        the folder and the group, which Setup proposes, the descriptions of the types and
+        components, the components in their list, and the components of the first type. A script
+        without its installer gets the stand-ins of the folder and the group and the user
+        information of the system. The form exists afterwards.
         """
         wizard = self.wizard
-        wizard.dir_edit.set_text(wizard.stand_ins.folder)
-        wizard.group_edit.set_text(wizard.stand_ins.group)
-        for box in wizard.user_info_boxes:
-            box.touched()
-        if self.entries is None:
+        setup = self.setup
+        if self.entries is None or (info := setup.setup_info) is None:
+            wizard.dir_edit.set_text(wizard.stand_ins.folder)
+            wizard.group_edit.set_text(wizard.stand_ins.group)
+            wizard.user_info_name_edit.set_text('{sysuserinfoname}')
+            wizard.user_info_org_edit.set_text('{sysuserinfoorg}')
             wizard.created = True
             return
+        header = info.Header
+        yield from self._text(TextDirective.AppId)
+        if setup.user_info_page:
+            for box, directive in zip(wizard.user_info_boxes, (
+                TextDirective.DefaultUserInfoName,
+                TextDirective.DefaultUserInfoOrg,
+                TextDirective.DefaultUserInfoSerial,
+            )):
+                if (text := (yield from self._text(directive))) is not None:
+                    box.set_text(text)
+        if header.Flags & Flags.CreateAppDir:
+            if (folder := (yield from self._text(TextDirective.DefaultDirName))) is not None:
+                path_func = setup.path_func
+                wizard.dir_edit.set_text(path_func.remove_backslash_unless_root(path_func.expand(folder, self.host.current_folder.path)))
+        else:
+            wizard.dir_edit.set_text(self.host.machine_folders['win'])
         for number, entry in self._loaded_types:
-            yield from self.fields(EntryLocation(EntrySection.Types, number), Field(EntryField.Description, entry.Description))
+            yield from self._describe_type(number, entry)
         wizard.type_index = 0 if wizard.types else -1
         components = wizard.components
         for number, entry in self._loaded_components:
@@ -1388,10 +1645,23 @@ class Installation:
                         entry,
                     )
             except DelphiException as error:
-                raise AbortEmulation(F'Setup cannot create its wizard: {error}') from error
+                raise AbortEmulation(F'Setup cannot create its wizard: {self.setup.error_text(error)}') from error
         if wizard.types:
             wizard.select_components_from_type(wizard.types[0].Name, False)
+        if (group := (yield from self._text(TextDirective.DefaultGroupName))) is not None:
+            wizard.group_edit.set_text(group)
         wizard.created = True
+
+    def _describe_type(self, number: int, entry: SetupType) -> Generator[Any, Any, None]:
+        """
+        The description of a type as Setup gives it when it creates the wizard: a default type
+        takes the message of the active language, any other one its expanded description.
+        """
+        description = entry.Description
+        if (default := _DEFAULT_TYPE_MESSAGES.get(entry.SetupType)) is not None:
+            description = self.setup.named_message(default)
+        self.wizard.type_descriptions[id(entry)] = description
+        yield from self.fields(EntryLocation(EntrySection.Types, number), Field(EntryField.Description, description))
 
     def _create_task_list(self):
         """
@@ -1435,20 +1705,61 @@ class Installation:
 
     def _update_ready_page(self):
         """
-        The part of Setup's `UpdateReadyPage` that runs code of the script: the description of the
-        selected type and the selected components when the installer has components, the selected
-        tasks with their groups, then `UpdateReadyMemo`. Each reader of the selection ends at its
-        first error. The texts of the memo are not built.
+        Setup's `UpdateReadyPage`: the texts of the ready memo in the active language, for the user
+        information, the folder, the type, the components, the program group and the tasks, each
+        where Setup shows it, then `UpdateReadyMemo`. The description of the type and the readers
+        of the selected components and tasks run code of the script; each reader ends at its first
+        error.
         """
         wizard = self.wizard
+        setup = self.setup
+        space = '      '
+        line = '\r\n'
+
+        def memo(name: SetupMessageName, *items: str) -> str:
+            return line.join((setup.named_message(name), *(F'{space}{item}' for item in items)))
+
+        user = folder = description = components = group = tasks = ''
+        if setup.user_info_page:
+            if organization := wizard.user_info_org_edit.text:
+                user = memo(SetupMessageName.ReadyMemoUserInfo, wizard.user_info_name_edit.text, organization)
+            else:
+                user = memo(SetupMessageName.ReadyMemoUserInfo, wizard.user_info_name_edit.text)
+        if setup.always_show_dir_on_ready_page or not setup.dir_page_disabled:
+            folder = memo(SetupMessageName.ReadyMemoDir, wizard.dir_edit.text)
         if self.entries is not None and self._loaded_components:
+            text = ''
             if (setup_type := wizard.setup_type) is not None:
                 number = self._loaded_types[wizard.type_index].number
                 where = EntryLocation(EntrySection.Types, number, EntryField.Description)
-                yield from self._guarded(EntryParameter.Field, where, self.host.expand(setup_type.Description))
-            yield from self._read(EntrySection.Components, lambda expand: wizard.selected_components(True, True, expand))
-        yield from self._read(EntrySection.Tasks, lambda expand: wizard.selected_tasks(True, True, True, expand))
-        yield from self.event(SetupEvent.UpdateReadyMemo, '      ', '\r\n', '', '', '', '', '', '')
+                expansion = self.host.expand(wizard.type_description(setup_type))
+                text = (yield from self._guarded(EntryParameter.Field, where, expansion)) or ''
+            description = memo(SetupMessageName.ReadyMemoType, text)
+            selected = yield from self._read(
+                EntrySection.Components, lambda expand: wizard.selected_components(True, True, expand))
+            if selected:
+                components = memo(SetupMessageName.ReadyMemoComponents, *selected)
+        if (
+            (self.entries is None or bool(self.entries.icons))
+            and not wizard.icons_off
+            and (setup.always_show_group_on_ready_page or not setup.group_page_disabled)
+        ):
+            group = memo(SetupMessageName.ReadyMemoGroup, wizard.group_edit.text)
+        selected = yield from self._read(
+            EntrySection.Tasks, lambda expand: wizard.selected_tasks(True, True, True, expand))
+        if selected:
+            tasks = memo(SetupMessageName.ReadyMemoTasks, *selected)
+        yield from self.event(
+            SetupEvent.UpdateReadyMemo,
+            space,
+            line,
+            user,
+            folder,
+            description,
+            components,
+            group,
+            tasks,
+        )
 
     def _scan_files(self):
         """
@@ -1529,22 +1840,8 @@ class Installation:
         try:
             return cache[event]
         except KeyError:
-            pass
-        name = event.value.casefold()
-        functions = []
-        for function in self.host.ifps.functions:
-            if function.body is None:
-                continue
-            for attribute in function.attributes or ():
-                if attribute.name.casefold() != 'event' or len(attribute.fields) != 1:
-                    continue
-                if str(attribute.fields[0].value).casefold() == name:
-                    functions.append(function)
-                    break
-        if (main := self.host.symbols.get(event)) is not None and main.body is not None and main not in functions:
-            functions.append(main)
-        cache[event] = functions
-        return functions
+            functions = cache[event] = implementations(self.host, event)
+            return functions
 
     def event(self, event: SetupEvent, *args):
         """
@@ -1555,22 +1852,7 @@ class Installation:
         that ends with a script error stops the event; the error is reported as a `NewScriptError`
         and the result is the default.
         """
-        stop, default = _EVENT_RULES.get(event, (None, None))
-        call = _EVENT_CALLS[event]
-        result = default
-        for function in self.implementations(event):
-            try:
-                value = yield from self.host.call_from_setup(function, args, call)
-            except IFPSException as error:
-                message = str(error)
-            else:
-                result = value
-                if stop is not None and stop(value):
-                    break
-                continue
-            yield NewScriptError(event, args, message)
-            return default
-        return result
+        return run_event(self.host, self.implementations(event), event, *args)
 
     def page_event(self, page: int, event: PageEvent):
         """

@@ -10,12 +10,13 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from refinery.lib.inno.delphi import numbers, variants, x87
+from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.delphi.variants import Variant, VarType
 
 if TYPE_CHECKING:
-    from refinery.lib.inno.archive import YesNoDirective
+    from refinery.lib.inno.archive import TextDirective, YesNoDirective
     from refinery.lib.inno.ifps import Function, Instruction
-    from refinery.lib.inno.wizard import PageEvent
+    from refinery.lib.inno.wizard import ControlEvent, PageEvent
 
 
 class NeedSymbol(NotImplementedError):
@@ -30,6 +31,17 @@ class OpCodeNotImplemented(NotImplementedError):
     An exception raised by `refinery.lib.inno.emulator.IFPSEmulator` if an unsupported opcode is
     encountered during emulation.
     """
+
+
+class InternalError(DelphiException):
+    """
+    Setup's internal error: Setup frames its reason with its message `ErrorInternal2` in the
+    active language. The text of the exception has the English frame, `Internal error: %1`; the
+    host gives it in the active language's frame.
+    """
+    def __init__(self, reason: str):
+        super().__init__(F'Internal error: {reason}')
+        self.reason = reason
 
 
 class EmulatorException(RuntimeError):
@@ -257,7 +269,7 @@ class NewScriptError(NamedTuple):
     handle. It holds the event, the parameter of the entry or the directive that Setup evaluated,
     the arguments of an event, the message of the error, and for an entry where it is.
     """
-    name: SetupEvent | PageEvent | EntryParameter | YesNoDirective
+    name: SetupEvent | PageEvent | ControlEvent | EntryParameter | YesNoDirective | TextDirective
     args: tuple
     message: str
     entry: EntryLocation | None = None

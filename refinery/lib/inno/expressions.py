@@ -12,6 +12,7 @@ import enum
 from typing import Any, Callable, Generator, NamedTuple
 
 from refinery.lib.inno.delphi.errors import DelphiException
+from refinery.lib.inno.emulation import InternalError
 
 Parameter = str | int | bool
 
@@ -282,6 +283,6 @@ def decide(text: str, identifier: Callable[[str], bool], rules: Rules = NAMES) -
     except StopIteration as stop:
         return stop.value
     except ExpressionError as error:
-        raise ExpressionError(F'Internal error: Expression error \'{error}\'') from error
+        raise InternalError(F'Expression error \'{error}\'') from error
     raise RuntimeError(F'The expression {text!r} asked for more than a value.')
 

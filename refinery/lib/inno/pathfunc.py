@@ -365,6 +365,57 @@ class PathFunc:
                 return path
 
 
+def _components_end_in_spaces(path: str) -> bool:
+    return any(part.endswith(' ') for part in path.split('\\'))
+
+
+def _components_are_dots(path: str) -> bool:
+    return any(part.strip(' ') and not part.strip(' ').strip('.') for part in path.split('\\'))
+
+
+def _has_control_characters(path: str) -> bool:
+    return any(c <= '\x1F' for c in path)
+
+
+_BAD_CHARACTERS = frozenset('/:*?"<>|')
+
+
+def valid_dir_name(path: str, allow_unc: bool, allow_root: bool) -> bool:
+    """
+    The checks of the wizard's `ValidateCustomDirEdit` on a tidied folder, but for the drive, which
+    the emulated machine is taken to have: at most 240 characters; a UNC path only when allowed and
+    with a backslash after the server; else a drive letter, a colon and a backslash, and more than
+    the root unless allowed; no control character, no part that ends in a space or is only dots;
+    none of the characters `/:*?"<>|` after the first two.
+    """
+    if len(path) > 240:
+        return False
+    if path[:2] == '\\\\':
+        if not allow_unc or path.find('\\', 2) <= 2:
+            return False
+    elif (
+        len(path) < (3 if allow_root else 4)
+        or not 'A' <= path[0].upper() <= 'Z'
+        or path[1] != ':'
+        or path[2] != '\\'
+    ):
+        return False
+    if _has_control_characters(path) or _components_end_in_spaces(path) or _components_are_dots(path):
+        return False
+    return not any(c in _BAD_CHARACTERS for c in path[2:])
+
+
+def valid_group_name(name: str) -> bool:
+    """
+    The checks of the wizard's `ValidateGroupEdit` on a tidied group: at most 120 characters, no
+    control character, no part that ends in a space, not empty, none of the characters
+    `/:*?"<>|`.
+    """
+    if len(name) > 120 or _has_control_characters(name) or _components_end_in_spaces(name):
+        return False
+    return bool(name) and not any(c in _BAD_CHARACTERS for c in name)
+
+
 class _Cursor:
     """
     Walks the parts of a path between backslashes as `NewExtractRelativePath` does.

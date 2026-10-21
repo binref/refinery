@@ -59,6 +59,7 @@ from refinery.lib.inno.emulation import (
     EmulatorTimeout,
     EmulatorUndefined,
     EntryField,
+    InternalError,
     NeedSymbol,
     NewEmulationError,
     NewFunctionCall,
@@ -104,6 +105,7 @@ from refinery.lib.inno.installation import (
     InstalledPaths,
     SetupCall,
     SetupEntries,
+    user_info_edit_change,
 )
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
 from refinery.lib.inno.pathfunc import PathFuncError, expand_file_name
@@ -114,6 +116,7 @@ from refinery.lib.inno.wizard import (
     Expander,
     PageEvent,
     PageStyle,
+    SetupHandler,
     StandIns,
     TextBox,
     WizardForm,
@@ -703,13 +706,13 @@ class _ScriptRun:
         return eh.handler_end
 
 
-def _outside_file_entry(name: str, condition: str = '') -> DelphiException:
+def _outside_file_entry(name: str, condition: str = '') -> InternalError:
     """
     Setup's error for a function of the current file called outside a function of a file entry
     that meets the given condition.
     """
-    return DelphiException(
-        F'Internal error: An attempt was made to call the "{name}" function from outside a "Check", '
+    return InternalError(
+        F'An attempt was made to call the "{name}" function from outside a "Check", '
         F'"BeforeInstall" or "AfterInstall" event function belonging to a "[Files]" entry{condition}'
     )
 
@@ -1393,7 +1396,7 @@ class IFPSEmulator:
                     except IFPSException as error:
                         raised = IFPSException(error.message, error.kind, name, error.failed_call)
                     except DelphiException as error:
-                        raised = IFPSException(str(error), called=name)
+                        raised = IFPSException(self.setup.error_text(error), called=name)
                     except Exception as error:
                         failure = exception_to_string(error)
                         raised = IFPSException(failure, called=name)
@@ -1652,10 +1655,13 @@ class IFPSEmulator:
     def text_changed(self, box: TextBox) -> Generator[Any, Any, None]:
         """
         Runs the handler of a text box whose text changed, as the box's `OnChange` runs: a function
-        of the script. An error reaches the code that changed the text.
+        of the script, or Setup's own handler. An error reaches the code that changed the text.
         """
-        if isinstance(handler := box.on_change, Function):
+        handler = box.on_change
+        if isinstance(handler, Function):
             yield from self.call_from_setup(handler, (box,), _NOTIFY_CALL)
+        elif handler is SetupHandler.UserInfoEditChange:
+            yield from user_info_edit_change(self, box)
 
     def _box_text(self, this: object) -> str:
         return this.text if isinstance(this, TextBox) else ''
@@ -2109,7 +2115,7 @@ class IFPSEmulator:
     @external()
     def CustomMessage(self, msg_name: str) -> str:
         if (message := self.setup.custom_message(msg_name)) is None:
-            raise DelphiException(F'Internal error: Unknown custom message name "{msg_name}"')
+            raise InternalError(F'Unknown custom message name "{msg_name}"')
         return message
 
     @external()

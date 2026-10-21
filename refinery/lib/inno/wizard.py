@@ -26,7 +26,7 @@ from refinery.lib.inno.archive import (
     SetupType,
 )
 from refinery.lib.inno.delphi.errors import DelphiException
-from refinery.lib.inno.emulation import EmulatorEndless, EntryField
+from refinery.lib.inno.emulation import EmulatorEndless, EntryField, InternalError
 from refinery.lib.inno.pathfunc import PathFunc
 
 if TYPE_CHECKING:
@@ -76,6 +76,14 @@ class PageEvent(StrEnum):
     OnCancelButtonClick = 'OnCancelButtonClick'
 
 
+class ControlEvent(StrEnum):
+    """
+    The events of a control of the wizard, named as the properties of the control that hold their
+    handlers.
+    """
+    OnChange = 'OnChange'
+
+
 class PageStyle(IntFlag):
     """
     The style of a wizard page: Setup always skips a page with `AlwaysSkip`, and shows no buttons on
@@ -84,6 +92,13 @@ class PageStyle(IntFlag):
     Normal = 0
     AlwaysSkip = 1
     NoButtons = 2
+
+
+class SetupHandler(Enum):
+    """
+    A handler of Setup's own that a control of the wizard holds.
+    """
+    UserInfoEditChange = auto()
 
 
 class WizardPage:
@@ -123,7 +138,7 @@ class TextBox:
         self._text = text
         self.selection_start = 0
         self.selection_length = 0
-        self.on_change: object = None
+        self.on_change: Function | SetupHandler | None = None
 
     def __repr__(self):
         return self.name
@@ -782,7 +797,7 @@ class WizardForm:
         if (page := self.page_objects.get(id)) is not None:
             return page
         if id not in self.pages:
-            raise DelphiException(F'Internal error: Could not find page with ID {id}')
+            raise InternalError(F'Could not find page with ID {id}')
         page = self.page_objects[id] = WizardPage(id, PageStyle.Normal)
         return page
 
@@ -793,14 +808,14 @@ class WizardForm:
         try:
             return self.pages.index(id)
         except ValueError:
-            raise DelphiException(F'Internal error: Could not find page with ID {id}') from None
+            raise InternalError(F'Could not find page with ID {id}') from None
 
     def require(self):
         """
         Raises Setup's error for a function that reaches the form before Setup created it.
         """
         if not self.created:
-            raise DelphiException('Internal error: An attempt was made to access WizardForm before it has been created')
+            raise InternalError('An attempt was made to access WizardForm before it has been created')
 
     def touched(self, control: object) -> bool:
         """
@@ -834,7 +849,7 @@ class WizardForm:
         elif after in self.pages:
             index = self.pages.index(after) + 1
         else:
-            raise DelphiException(F'Internal error: Could not find page with ID {after}')
+            raise InternalError(F'Could not find page with ID {after}')
         self._last_id += 1
         page = WizardPage(self._last_id, style)
         self.pages.insert(index, page.id)

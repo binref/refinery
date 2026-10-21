@@ -19,7 +19,10 @@ from refinery.lib.inno.archive import (
     SetupDirective,
     SetupFileFlags,
     SetupFileType,
+    SetupMessageName,
     SetupRunFlags,
+    SetupTypeEnum,
+    TextDirective,
     YesNoDirective,
 )
 from refinery.lib.inno.delphi import x87
@@ -127,23 +130,17 @@ _ERROR_LOG = {
     'DeinitializeSetup'        : 'entered',
 }
 
-_HOST_ORACLE = 'ab60f5c9f89f80fa692d1e2627c02d2644676435ba2fd1f8c1a32446657b0a27'
+_HOST_ORACLE = '4f43e9adcaa9885af020444b74f9ed9bb32f207d60ae7e1192af422e1b3a9e9a'
 """
-A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-5.exe`, whose script logs
-the events that Setup sends, the values that Setup gives the script, and the calls of the script
-that Setup makes for its entries; with the `ORACLE` lines of the logs of two runs on 64-bit
-Windows, installing for the current user: `host-oracle-5-normal.log` clicked Next on every page of
-the wizard, `host-oracle-5-silent.log` ran silently.
-"""
-_HOST_ORACLE_6 = '4f43e9adcaa9885af020444b74f9ed9bb32f207d60ae7e1192af422e1b3a9e9a'
-"""
-A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-6.exe`: the host oracle
-above with probes of Setup's texts, paths and wizard; with the `ORACLE` lines of the logs of two runs
-from a folder on the drive `W:` of 64-bit Windows, installing for the current user:
-`host-oracle-6-normal.log` clicked Next on every page of the wizard, `host-oracle-6-silent.log` ran
-silently. `host-oracle-6-run2.ifps` is the compiled script of a second build whose `CheckSerial`
-also raises an error while the script writes the serial and which changes the `CharCase` of a box;
-`host-oracle-6-run2-normal.log` is the log of its run with the wizard.
+A 7-Zip archive of an installer that Inno Setup 6.5.0 built, `host-oracle-6.exe`, whose script logs
+the events that Setup sends, the values that Setup gives the script, the calls of the script that
+Setup makes for its entries, and Setup's texts, paths and wizard; with the `ORACLE` lines of the
+logs of two runs from a folder on the drive `W:` of 64-bit Windows, installing for the current
+user: `host-oracle-6-normal.log` clicked Next on every page of the wizard,
+`host-oracle-6-silent.log` ran silently. `host-oracle-6-run2.ifps` is the compiled script of a
+second build whose `CheckSerial` also raises an error while the script writes the serial and which
+changes the `CharCase` of a box; `host-oracle-6-run2-normal.log` is the log of its run with the
+wizard.
 """
 _HOST_EVENT = re.compile(r'Event\d+')
 _HOST_VALUES_THAT_ARE_NOT_EMULATED = frozenset({
@@ -195,7 +192,7 @@ def _host_oracle_lines(test: TestBase, run: str) -> list[tuple[str, str]]:
     """
     The names and values that a run of the host oracle logged, in order.
     """
-    log = codecs.decode(_archived_file(test, _HOST_ORACLE, F'host-oracle-5-{run}.log'), 'utf8')
+    log = codecs.decode(_archived_file(test, _HOST_ORACLE, F'host-oracle-6-{run}.log'), 'utf8')
     return [(match[1], match[2]) for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line))]
 
 
@@ -233,23 +230,21 @@ def _logged_values(events: Iterable[object], values: dict[str, str]) -> dict[str
     return values
 
 
-def _a_text_of_setup(name: str, value: str) -> bool:
-    """
-    Whether an oracle line logs a text that Setup builds and the emulator does not build yet: a code
-    constant in a directive of `[Setup]`, a text of the ready memo, or the serial number that
-    `CheckSerial` receives from the page for user information.
-    """
-    if name.startswith('ReadyMemo'):
-        return True
-    return bool(_HOST_EVENT.fullmatch(name) and re.fullmatch(r'code:[A-Za-z]+|CheckSerial\(.*\)', value))
-
-
 def _a_key_of_windows(name: str, value: str) -> bool:
     """
     Whether an oracle line depends on a key that the registry of every Windows has or lacks: the
     emulated registry has no keys, but the emulated `RegKeyExists` finds every key.
     """
     return name == 'RegKeyExistsMissing' or value == 'code:registry.d.valuedata'
+
+
+def _a_member_of_the_empty_wizard_form_that_it_inherits(name: str) -> bool:
+    """
+    Whether an oracle line logs a member that the wizard form inherits, called on the empty variable
+    of the form: the emulator gives nil for every object that it does not model, so it cannot tell
+    the empty variable from such an object.
+    """
+    return name in ('NilFormMethod', 'NilFormMethodInner')
 
 
 def _comparable(lines: Iterable[tuple[str, str]]) -> list[str]:
@@ -262,8 +257,8 @@ def _comparable(lines: Iterable[tuple[str, str]]) -> list[str]:
         if (
             name in _HOST_VALUES_THAT_ARE_NOT_EMULATED
             or name in _HOST_VALUES_LEFT_OUT_OF_THE_LOGS
-            or _a_text_of_setup(name, value)
             or _a_key_of_windows(name, value)
+            or _a_member_of_the_empty_wizard_form_that_it_inherits(name)
         ):
             continue
         if _HOST_EVENT.fullmatch(name):
@@ -1017,7 +1012,7 @@ class TestTheParserReadsWhatTheCompilerWrote(TestBase):
     """
 
     def oracle(self) -> InnoArchive:
-        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe'))
 
     def test_installers_of_inno_setup_5_5_install_in_64_bit_mode_on_x64_processors(self):
         """
@@ -1107,7 +1102,7 @@ class TestTheSetupAgreesWithTheScript(TestBase):
         return IFPSFile.Parse(_value_oracle_file(self, build, 'ifps'))
 
     def installer(self) -> InnoArchive:
-        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe'))
 
     def test_a_setup_version_before_7_refuses_a_script_of_inno_setup_7(self):
         with self.assertRaises(ValueError):
@@ -1268,7 +1263,7 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
         emulator = self.emulator()
         form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         form.created = True
-        component = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe')).setup_info.Components[0]
+        component = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe')).setup_info.Components[0]
         component.Description = '{code:CodeMessage|m}'
         form.components.add_check_box(0, True, True, False, True, component)
         registry = IFPSEmulator.external_symbols['']
@@ -1289,13 +1284,13 @@ class TestTheEmulatorComputesPathsAsInnoSetupDid(TestBase):
     """
 
     def assertEmulatedAsLogged(self, procedure: str, *arguments: str):
-        archive = InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+        archive = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe'))
         emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(
             log_calls=True,
             executable=R'W:\HostOracle6\host-oracle-6.exe',
         ))
         emulated = _logged_values(emulator.emulate_function(emulator.symbols[procedure], *arguments), {})
-        log = codecs.decode(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6-normal.log'), 'utf8')
+        log = codecs.decode(_archived_file(self, _HOST_ORACLE, 'host-oracle-6-normal.log'), 'utf8')
         logged = dict(match.groups() for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line)))
         self.assertTrue(emulated)
         self.assertEqual(emulated, {name: logged[name] for name in emulated})
@@ -1319,7 +1314,7 @@ class TestSetupInstallsForAllUsersAsItsSourceSays(TestBase):
     def test_the_folder_of_programs_of_inno_setup_6_is_that_of_all_users_or_that_of_the_user(self):
         for privileges in PrivilegesRequired:
             for admin in (False, True):
-                archive = InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+                archive = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe'))
                 archive.setup_info.Header.PrivilegesRequired = privileges
                 emulator = InnoSetupEmulator(archive, IFPSEmulatorConfig(admin=admin))
                 for_all_users = admin and privileges is not PrivilegesRequired.Lowest
@@ -1354,15 +1349,19 @@ class TestSetupInstallsForAllUsersAsItsSourceSays(TestBase):
                     )
 
 
-class _HostOracle6Test(TestBase):
+class _HostOracleTest(TestBase):
     """
-    The sixth host oracle ran from a folder on the drive `W:` of 64-bit Windows, installing for the
-    current user; the emulated machine has the variables `WINDIR` and `USERPROFILE` set, as every
-    Windows has, and Setup starts from the drive `W:`.
+    Inno Setup 6.5.0 built the host oracle, an installer whose script logs the events that Setup
+    sends, how Setup expands constants, the calls of the script that Setup makes for its entries,
+    and Setup's texts, paths and wizard. It ran from a folder on the drive `W:` of 64-bit Windows
+    with a log file, installing for the current user, once with the wizard and once silently; a
+    check and a `BeforeInstall` function of its directories raise an error on purpose. The emulated
+    machine has the variables `WINDIR` and `USERPROFILE` set, as every Windows has, and Setup starts
+    from the drive `W:`.
     """
 
     def host_oracle(self) -> InnoArchive:
-        return InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-6.exe'))
 
     def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config) -> InnoSetupEmulator:
         if archive is None:
@@ -1378,12 +1377,14 @@ class _HostOracle6Test(TestBase):
     def installation(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
         return list(self.emulator(archive, wizard_silent=silent).emulate_installation())
 
-    def logged(self, run: str = 'normal') -> list[tuple[str, str]]:
+    def events(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[str]:
         """
-        The names and values that a run of the oracle logged, in order.
+        The events that the script logs in an emulated installation, in order.
         """
-        log = codecs.decode(_archived_file(self, _HOST_ORACLE_6, F'host-oracle-6-{run}.log'), 'utf8')
-        return [(match[1], match[2]) for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line))]
+        return [value for name, value in _logged_lines(self.installation(archive, silent)) if _HOST_EVENT.fullmatch(name)]
+
+    def errors(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
+        return [event for event in self.installation(archive, silent) if isinstance(event, (NewScriptError, NewEmulationError))]
 
     def assertLinesAsLogged(self, *names: str):
         """
@@ -1392,12 +1393,12 @@ class _HostOracle6Test(TestBase):
         """
         def selected(lines: Iterable[tuple[str, str]]):
             return [line for line in lines if line[0] in names]
-        logged = selected(self.logged())
+        logged = selected(_host_oracle_lines(self, 'normal'))
         self.assertTrue(logged)
         self.assertEqual(selected(_logged_lines(self.installation())), logged)
 
 
-class TestTheEmulatorGivesTheScriptTheWizardAsInnoSetupDid(_HostOracle6Test):
+class TestTheEmulatorGivesTheScriptTheWizardAsInnoSetupDid(_HostOracleTest):
 
     def test_the_variables_of_setups_forms_stay_empty_until_setup_creates_each_form(self):
         """
@@ -1476,64 +1477,40 @@ class TestTheEmulatorGivesTheScriptTheWizardAsInnoSetupDid(_HostOracle6Test):
         self.assertLinesAsLogged('PrevAppDir', 'PreviousData')
 
 
-class _HostOracleTest(TestBase):
-    """
-    Inno Setup 6.5.0 built the host oracle, an installer whose script logs the events that Setup
-    sends, how Setup expands constants, and the calls of the script that Setup makes for its
-    entries. It ran on 64-bit Windows with a log file, installing for the current user, once with
-    the wizard and once silently; a check and a `BeforeInstall` function of its directories raise
-    an error on purpose. The emulated machine has `WINDIR` set, as every Windows has.
-    """
-
-    def host_oracle(self) -> InnoArchive:
-        return InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe'))
-
-    def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config) -> InnoSetupEmulator:
-        if archive is None:
-            archive = self.host_oracle()
-        return InnoSetupEmulator(archive, IFPSEmulatorConfig(
-            log_calls=True,
-            admin=False,
-            environment={'WINDIR': R'C:\WINDOWS'},
-            **config,
-        ))
-
-    def installation(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
-        return list(self.emulator(archive, wizard_silent=silent).emulate_installation())
-
-    def events(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[str]:
-        """
-        The events that the script logs in an emulated installation, in order.
-        """
-        return [value for name, value in _logged_lines(self.installation(archive, silent)) if _HOST_EVENT.fullmatch(name)]
-
-    def errors(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
-        return [event for event in self.installation(archive, silent) if isinstance(event, (NewScriptError, NewEmulationError))]
-
-
 class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
 
     def test_initialize_setup_expands_constants_as_setup_did(self):
         """
         Right after `InitializeSetup`, Setup expands the code constant of the directive `AppName`;
-        the lines before it are those of `InitializeSetup`. The values of `{app}`, `{group}` and
-        `{uninstallexe}`, and whether the wizard exists, depend on how far the installation got,
-        which a run of `InitializeSetup` alone does not show.
+        the lines before it are those of `InitializeSetup`. The values of `{app}`, `{group}`,
+        `{uninstallexe}` and of the user information, and whether the wizard exists, depend on how
+        far the installation got, which a run of `InitializeSetup` alone does not show; with the
+        wizard, the probes of the empty wizard form also log the lines of their inner blocks.
         """
         log = _host_oracle_lines(self, 'normal')
-        end = log.index(('Event010', 'code:AppName'))
+        end = log.index(next(line for line in log if line[1] == 'code:AppName'))
         logged = dict(log[:end])
         emulator = self.emulator()
         emulated = _logged_values(emulator.emulate_function(emulator.symbols['INITIALIZESETUP']), {})
-        compared = logged.keys() - {
+        progress = {
             'ConstAppEarly',
             'ConstGroupEarly',
             'ConstUninstallExeEarly',
             'WizardSetupTypeBeforeWizard',
-            'RegKeyExistsMissing',
-            *_HOST_VALUES_THAT_ARE_NOT_EMULATED,
+            'SetupWizardFormVariable',
+            'SetupGetWizardForm',
+            'SetupWizardDirValue',
+            'SetupWizardGroupValue',
+            'SetupPageIndexFromID',
+            'SetupPageFromID',
+            'SetupUserInfo',
+            'SetupGroupName',
+            'NilFormProperty',
+            'NilFormMethod',
         }
-        self.assertEqual(emulated.keys() - _HOST_VALUES_LEFT_OUT_OF_THE_LOGS, logged.keys())
+        compared = logged.keys() - progress - {'RegKeyExistsMissing', *_HOST_VALUES_THAT_ARE_NOT_EMULATED}
+        inner = {'NilFormPropertyInner', 'NilFormMethodInner'}
+        self.assertEqual(emulated.keys() - _HOST_VALUES_LEFT_OUT_OF_THE_LOGS - inner, logged.keys())
         self.assertEqual({name: emulated[name] for name in compared}, {name: logged[name] for name in compared})
 
     def test_an_installation_with_the_wizard_runs_the_script_as_setup_did(self):
@@ -1560,22 +1537,22 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
                     'script error in BeforeInstall of [Dirs] entry 11: Error calling RaiseException: oracle install error dir.l',
                 ])
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the code constants in the directives of [Setup] are not expanded')
     def test_setup_expands_the_code_constants_of_its_directives_as_setup_did(self):
+        """
+        The code constants of the directives of `[Setup]` pass the name of the directive.
+        """
         def code_constants(lines: Iterable[tuple[str, str]]):
-            return [value for name, value in lines if _a_text_of_setup(name, value) and value.startswith('code:')]
+            return [value for name, value in lines if _HOST_EVENT.fullmatch(name) and re.fullmatch(r'code:[A-Za-z]+', value)]
         self.assertEqual(
             code_constants(_logged_lines(self.installation())),
             code_constants(_host_oracle_lines(self, 'normal')),
         )
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the texts of the ready memo are not built')
     def test_setup_passes_the_texts_of_the_ready_memo_as_setup_did(self):
         def memo(values: dict[str, str]):
             return {name: value for name, value in values.items() if name.startswith('ReadyMemo')}
         self.assertEqual(memo(_logged_values(self.installation(), {})), memo(_host_oracle_log(self, 'normal')))
 
-    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='the default user information is not expanded')
     def test_check_serial_receives_the_default_serial_number(self):
         self.assertIn('CheckSerial(1)', self.events())
 
@@ -1750,6 +1727,178 @@ class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
     def test_an_environment_variable_that_is_not_set_expands_to_an_empty_text(self):
         expanded = self.emulator().expand_constant('{%NOSUCHORACLEVARIABLE}')
         self.assertEqual(F'[{expanded}]', _host_oracle_log(self, 'normal')['ConstEnvMissing'])
+
+
+class TestTheEmulatorGivesSetupsTextsAsInnoSetupDid(_HostOracleTest):
+    """
+    The texts that Setup proposes, tidies and takes: the directives of `[Setup]`, the boxes of the
+    wizard, the user information, the folder, the program group, the uninstaller and the memo of
+    the ready page. Where a test changes the installer in memory, it says how.
+    """
+
+    def test_the_boxes_of_the_wizard_hold_setups_texts_wherever_the_script_reads_them(self):
+        names = {
+            name for name, _ in _host_oracle_lines(self, 'normal')
+            if name.endswith(('Edit', 'WizardDirValue', 'WizardGroupValue'))
+        }
+        self.assertLinesAsLogged(*names)
+
+    def test_check_serial_runs_whenever_a_box_of_the_user_information_changes_on_its_page(self):
+        """
+        The script writes the serial twice, then the name with spaces around it, and replaces the
+        handler of the box of the organization with one of its own; Next trims the name.
+        """
+        def serial_checks(lines: Iterable[tuple[str, str]]):
+            return [
+                value for name, value in lines
+                if _HOST_EVENT.fullmatch(name) and value.startswith('CheckSerial')
+                or name in ('CheckSerialUserInfo', 'UserInfoAfterChanges', 'UserInfoOnNext')
+            ]
+        self.assertEqual(serial_checks(_logged_lines(self.installation())), serial_checks(_host_oracle_lines(self, 'normal')))
+
+    def test_setup_tidies_the_folder_and_the_group_where_it_takes_them(self):
+        """
+        On the page of the folder, the script puts spaces and slashes around the folder and the
+        group.
+        """
+        self.assertLinesAsLogged(
+            'ConstAppInWizard',
+            'ConstAppOnPasswordNext',
+            'ConstAppOnDirNext',
+            'GroupNameOnTasksPage',
+            'GroupOnTasksPage',
+            'ConstGroupOnReadyNext',
+            'ConstGroupNameOnReadyNext',
+            'ConstAppOnInstall',
+            'ConstGroupOnInstall',
+            'ConstGroupNameOnInstall',
+        )
+
+    def test_the_current_folder_becomes_the_system_folder_when_setup_installs(self):
+        self.assertLinesAsLogged(*(
+            F'{when}{what}'
+            for when in ('Setup', 'Install', 'PostInstall')
+            for what in ('CurrentDirIsSrc', 'CurrentDirIsSys', 'RelativeExpand')
+        ))
+
+    def test_the_uninstaller_is_named_in_the_folder_of_the_uninstall_files(self):
+        self.assertLinesAsLogged('ConstUninstallExeEarly', 'ConstUninstallExeOnInstall', 'ConstUninstallExeAfterInstall')
+
+    def test_the_installation_creates_the_folder_of_the_application_and_no_stand_in(self):
+        emulator = self.emulator()
+        list(emulator.emulate_installation())
+        self.assertEqual(emulator.expand_constant('{app}'), R'C:\Users\Frank\AppData\Roaming\HostOracle6\sub\x')
+        self.assertTrue(emulator.DirExists(emulator.expand_constant('{app}')))
+        self.assertFalse(emulator.DirExists('I:\\'))
+
+    def test_a_default_type_takes_its_description_from_the_messages(self):
+        """
+        The first type of the installer is changed in memory to the default type of a full
+        installation, whose description Setup takes from its message `FullInstallation`.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Types[0].SetupType = SetupTypeEnum.DefaultFull
+        emulated = _logged_values(self.installation(archive), {})
+        self.assertEqual(emulated['InstallSetupTypeDescription'], 'Full installation')
+        self.assertEqual(emulated['ReadyMemoType'], 'Setup type:|      Full installation')
+
+    def test_an_error_in_the_default_folder_is_reported_and_setup_refuses_the_empty_folder(self):
+        """
+        The default folder of the installer is changed in memory to call a function that the script
+        does not have, and the installer to refuse a folder on a network share. The box of the
+        folder stays empty; the script then puts spaces and slashes around it, which makes it the
+        path of a share, and Setup refuses it.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.DefaultDirName = '{code:NoSuchOracleFunction}'
+        archive.setup_info.Header.Flags &= ~Flags.AllowUNCPath
+        installation = self.installation(archive)
+        errors = [error.name for error in installation if isinstance(error, NewScriptError)]
+        self.assertIn(TextDirective.DefaultDirName, errors)
+        emulated = _logged_values(installation, {})
+        self.assertEqual(emulated['WizardDirEdit'], '[]')
+        self.assertEqual(emulated['ConstAppOnInstall'], R'[I:\]')
+
+    def test_a_check_of_the_serial_that_fails_while_setup_trims_the_name_is_reported_and_refuses_the_serial(self):
+        """
+        The default name of the installer is changed in memory to have spaces around it, and the
+        function `ChkRaises`, which raises an error, is made the script's `CheckSerial`. Setup
+        disables Next when the check fails; the emulated user enters a serial that the emulator
+        does not know.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.DefaultUsername = ' Oracle '
+        emulator = self.emulator(archive)
+        emulator.symbols['CheckSerial'] = emulator.symbols['CHKRAISES']
+        installation = list(emulator.emulate_installation())
+        errors = [str(error) for error in installation if isinstance(error, NewScriptError)]
+        self.assertIn('script error in OnChange(UserInfoNameEdit,): Error calling RaiseException: oracle check error 2', errors)
+        self.assertEqual(emulator.expand_constant('{userinfoname}|{userinfoserial}'), 'Oracle|{userinfoserial}')
+
+    def test_setup_keeps_the_arrows_of_back_and_next_before_inno_setup_6_1_1(self):
+        """
+        Inno Setup 6.1.1 removed them; cdbc92e0 is an installer of Inno Setup 5.5.3.
+        """
+        archive = InnoArchive(self.download_sample('cdbc92e0d280e54a66c347b0178d0b34a9ee8fc6c241ebfeb48bdcb31ddd774c'))
+        setup = InnoSetupEmulator(archive, IFPSEmulatorConfig()).setup
+        self.assertEqual(setup.named_message(SetupMessageName.ButtonBack), '< &Back')
+        self.assertEqual(setup.named_message(SetupMessageName.ButtonNext), '&Next >')
+
+    def test_an_internal_error_of_setup_has_the_frame_of_the_active_language(self):
+        """
+        The installer has a Dutch language, whose message `ErrorInternal2` is `Interne fout: %1`.
+        """
+        frame = 'raised: Internal error: '
+        logged = {name: value for name, value in _host_oracle_lines(self, 'normal') if value.startswith(frame)}
+        dutch = _logged_values(list(self.emulator(language='nl').emulate_installation()), {})
+        self.assertTrue(logged)
+        self.assertEqual(
+            {name: dutch.get(name) for name in logged},
+            {name: value.replace(frame, 'raised: Interne fout: ') for name, value in logged.items()},
+        )
+
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='an error of a check is reported as the error of the script')
+    def test_setup_reports_an_error_of_a_check_as_an_internal_error_of_its_expression(self):
+        """
+        Setup's `EvalCheck` raises every error of a check as an internal error of the expression,
+        and an error of the script has the place in the script where it happened.
+        """
+        errors = [error for error in self.installation() if isinstance(error, NewScriptError) and error.name == EntryParameter.Check]
+        self.assertTrue(errors)
+        for error in errors:
+            self.assertTrue(error.message.startswith('Internal error: Expression error \'Runtime error (at '))
+
+
+class TestTheSecondBuildOfTheHostOracleFailedAsInnoSetupDid(_HostOracleTest):
+    """
+    The second build of the host oracle has the same `[Setup]` as the first one; its compiled script
+    is put into the installer in memory. Its `CheckSerial` raises an error for the serial `3`, which
+    the script writes while the page of the user information is shown, inside a try block; it also
+    changes the `CharCase` of the box of the organization. After the error, Pascal Script failed in
+    the next event with an unrelated error, and Setup could not go on; the run ended there.
+    """
+
+    def installer(self) -> InnoArchive:
+        archive = self.host_oracle()
+        archive.ifps = IFPSFile.Parse(_archived_file(self, _HOST_ORACLE, 'host-oracle-6-run2.ifps'))
+        return archive
+
+    def logged(self) -> list[tuple[str, str]]:
+        log = codecs.decode(_archived_file(self, _HOST_ORACLE, 'host-oracle-6-run2-normal.log'), 'utf8')
+        return [(match[1], match[2]) for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line))]
+
+    def test_an_error_of_check_serial_reaches_the_script_that_wrote_the_serial(self):
+        logged = self.logged()
+        end = logged.index(next(line for line in logged if line[0] == 'UserInfoAfterChanges')) + 1
+        expected = _comparable(logged[:end])
+        emulated = _comparable(_logged_lines(self.installation(self.installer())))
+        self.assertEqual(emulated[:len(expected)], expected)
+
+    @wontfix('a script that raises an error in its own check of the serial while it writes the serial is made up for the oracle')
+    def test_pascal_script_fails_after_an_error_of_check_serial_inside_a_change_of_the_serial(self):
+        logged = _comparable(self.logged())
+        emulated = _comparable(_logged_lines(self.installation(self.installer())))
+        self.assertEqual(emulated, logged)
 
 
 class TestTheEmulatorRunsTheEntriesAsInnoSetupDid(_HostOracleTest):

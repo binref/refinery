@@ -29,6 +29,7 @@ from refinery.lib.inno.archive import (
 )
 from refinery.lib.inno.delphi import numbers, x87
 from refinery.lib.inno.delphi.runtime import Platform, Runtime, Win32, Win64
+from refinery.lib.inno.emulation import InternalError
 from refinery.lib.inno.pathfunc import PathFunc
 from refinery.lib.inno.release import SetupRelease
 from refinery.lib.inno.wizard import WizardForm, same_text
@@ -78,6 +79,10 @@ class HostSetup:
     the lowest privileges.
     """
     always_use_personal_group: bool
+    always_show_dir_on_ready_page: bool
+    always_show_group_on_ready_page: bool
+    allow_unc_path: bool
+    allow_root_directory: bool
     setup_info: TSetup | None
 
     @property
@@ -92,6 +97,17 @@ class HostSetup:
             return setup_info.messages(language)
         except ValueError:
             return None
+
+    def error_text(self, error: BaseException) -> str:
+        """
+        The text of an error as Setup gives it: an internal error has the frame of the message
+        `ErrorInternal2` in the active language, or the English frame when the emulator does not
+        have the language's messages.
+        """
+        if isinstance(error, InternalError) and (messages := self.messages) is not None:
+            if (frame := messages.named(SetupMessageName.ErrorInternal2)) is not None:
+                return constants.fmt_message(frame, [error.reason])
+        return str(error)
 
     def custom_message(self, name: str) -> str | None:
         """
@@ -239,6 +255,10 @@ class HostSetup:
             finished_page_disabled=False,
             admin_install_mode=config.admin,
             always_use_personal_group=False,
+            always_show_dir_on_ready_page=False,
+            always_show_group_on_ready_page=False,
+            allow_unc_path=False,
+            allow_root_directory=False,
             setup_info=None,
         )
 
@@ -279,6 +299,10 @@ class HostSetup:
             finished_page_disabled=bool(flags & Flags.DisableFinishedPage),
             admin_install_mode=config.admin and header.PrivilegesRequired != PrivilegesRequired.Lowest,
             always_use_personal_group=bool(flags & Flags.AlwaysUsePersonalGroup),
+            always_show_dir_on_ready_page=bool(flags & Flags.AlwaysShowDirOnReadyPage),
+            always_show_group_on_ready_page=bool(flags & Flags.AlwaysShowGroupOnReadyPage),
+            allow_unc_path=bool(flags & Flags.AllowUNCPath),
+            allow_root_directory=bool(flags & Flags.AllowRootDirectory),
             setup_info=setup_info,
         )
 
@@ -371,7 +395,7 @@ def _install_mode(directive: str | Architecture, x64: bool) -> InstallMode:
         return InstallMode(False)
     try:
         holds = expressions.decide(directive, lambda name: architecture(name, x64))
-    except expressions.ExpressionError as error:
+    except InternalError as error:
         return InstallMode(None, str(error))
     except RecursionError:
         return InstallMode(None, 'the expression nests deeper than Python can follow')

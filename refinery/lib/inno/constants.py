@@ -9,7 +9,7 @@ import re
 
 from typing import Any, Callable, Generator, Mapping, NamedTuple, Protocol
 
-from refinery.lib.inno.delphi.errors import DelphiException
+from refinery.lib.inno.emulation import InternalError
 from refinery.lib.inno.release import SetupRelease
 
 _HEX_DIGITS = frozenset('0123456789abcdefABCDEF')
@@ -123,13 +123,10 @@ Before Setup renamed it, each old name is a constant of its own with the value o
 _AUTO_SINCE: _Version = (6, 0, 0)
 
 
-class ConstantError(DelphiException):
+class ConstantError(InternalError):
     """
-    The error that Setup raises for a constant that it cannot expand. Setup raises it as an internal
-    error, whose message starts with the text that the English messages of Setup give it.
+    The internal error that Setup raises for a constant that it cannot expand.
     """
-    def __init__(self, message: str):
-        super().__init__(F'Internal error: {message}')
 
 
 class ConstantHost(Protocol):

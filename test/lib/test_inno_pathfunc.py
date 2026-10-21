@@ -1,5 +1,13 @@
 from refinery.lib.inno.installation import CurrentFolder, InstalledPaths
-from refinery.lib.inno.pathfunc import PATH_FUNC_6, PATH_FUNC_7, PathFuncError, expand_file_name, full_path_name
+from refinery.lib.inno.pathfunc import (
+    PATH_FUNC_6,
+    PATH_FUNC_7,
+    PathFuncError,
+    expand_file_name,
+    full_path_name,
+    valid_dir_name,
+    valid_group_name,
+)
 
 from .. import TestBase
 
@@ -853,3 +861,57 @@ class TestSetupExpandsPathsAsWindowsDoes(TestBase):
         self.assertTrue(paths.directory_exists('c:\\A\\dir.'))
         self.assertTrue(paths.file_exists('C:/a/dir/./FILE.TXT '))
         self.assertTrue(paths.file_exists('..\\a\\dir\\file.txt'))
+
+
+class TestTheWizardChecksFoldersAndGroupsAsSetupDoes(TestBase):
+    """
+    The checks of the wizard's `ValidateCustomDirEdit` and `ValidateGroupEdit` in the source of
+    Inno Setup 6.5.0, on a tidied folder or group; the emulated machine has every drive.
+    """
+
+    def test_a_folder_has_a_drive_and_more_than_its_root_unless_the_root_is_allowed(self):
+        self.assertTrue(valid_dir_name(R'C:\Program Files\App', False, False))
+        self.assertFalse(valid_dir_name('C:\\', False, False))
+        self.assertTrue(valid_dir_name('C:\\', False, True))
+        self.assertFalse(valid_dir_name('C:', False, True))
+        self.assertFalse(valid_dir_name('C:App', False, False))
+        self.assertFalse(valid_dir_name(R'1:\App', False, False))
+        self.assertFalse(valid_dir_name('App', False, False))
+
+    def test_a_folder_on_a_network_share_needs_to_be_allowed_and_a_backslash_after_the_server(self):
+        self.assertFalse(valid_dir_name(R'\\server\share', False, False))
+        self.assertTrue(valid_dir_name(R'\\server\share', True, False))
+        self.assertFalse(valid_dir_name(R'\\server', True, False))
+        self.assertFalse(valid_dir_name(R'\\\share', True, False))
+
+    def test_a_folder_has_at_most_240_characters(self):
+        self.assertTrue(valid_dir_name(F'C:\\{"a" * 237}', False, False))
+        self.assertFalse(valid_dir_name(F'C:\\{"a" * 238}', False, False))
+
+    def test_no_part_of_a_folder_ends_in_a_space_or_is_only_dots_and_spaces(self):
+        self.assertFalse(valid_dir_name(R'C:\a \b', False, False))
+        self.assertFalse(valid_dir_name('C:\\a\\b ', False, False))
+        self.assertFalse(valid_dir_name(R'C:\...\b', False, False))
+        self.assertFalse(valid_dir_name(R'C:\ . \b', False, False))
+        self.assertTrue(valid_dir_name(R'C:\.a\b', False, False))
+        self.assertTrue(valid_dir_name(R'C:\a.\b', False, False))
+
+    def test_a_folder_has_no_control_character_and_none_of_the_characters_that_windows_forbids(self):
+        self.assertFalse(valid_dir_name('C:\\a\x1fb', False, False))
+        for character in '/:*?"<>|':
+            with self.subTest(character=character):
+                self.assertFalse(valid_dir_name(F'C:\\a{character}b', False, False))
+
+    def test_a_group_is_not_empty_and_has_at_most_120_characters(self):
+        self.assertTrue(valid_group_name(R'App\Tools'))
+        self.assertFalse(valid_group_name(''))
+        self.assertTrue(valid_group_name('a' * 120))
+        self.assertFalse(valid_group_name('a' * 121))
+
+    def test_no_part_of_a_group_ends_in_a_space_and_it_has_no_character_that_windows_forbids(self):
+        self.assertFalse(valid_group_name(R'App \Tools'))
+        self.assertFalse(valid_group_name('App\x1f'))
+        self.assertTrue(valid_group_name('...'))
+        for character in '/:*?"<>|':
+            with self.subTest(character=character):
+                self.assertFalse(valid_group_name(F'App{character}'))
