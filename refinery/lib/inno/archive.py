@@ -3100,10 +3100,11 @@ class InnoArchive:
     @cached_property
     def _constants_without_script(self):
         from refinery.lib.inno.host import HostSetup, SetupConstants
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         config = _archive_config()
         setup = HostSetup.of_installer(self, config)
-        return SetupConstants(setup, config, WizardForm(uninstallable=setup.uninstallable.answer is not False))
+        form = WizardForm(StandIns.of(config), uninstallable=setup.uninstallable.answer is not False)
+        return SetupConstants(setup, config, form)
 
     @cached_property
     def emulator(self):

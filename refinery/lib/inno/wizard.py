@@ -27,8 +27,10 @@ from refinery.lib.inno.archive import (
 )
 from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.emulation import EmulatorEndless, EntryField
+from refinery.lib.inno.pathfunc import PathFunc
 
 if TYPE_CHECKING:
+    from refinery.lib.inno.emulator import IFPSEmulatorConfig
     from refinery.lib.inno.ifps import Function
 
 _T = TypeVar('_T')
@@ -59,10 +61,13 @@ class PageID(int, Enum):
     wpFinished = auto()
 
 
+_STANDARD_PAGES = tuple(PageID)
+
+
 class PageEvent(StrEnum):
     """
-    The events of a page that the script creates, named as the properties of the page that hold the
-    functions of the script that handle them.
+    The events of a page, named as the properties of the page that hold the functions of the script
+    that handle them.
     """
     OnActivate = 'OnActivate'
     OnShouldSkipPage = 'OnShouldSkipPage'
@@ -83,8 +88,8 @@ class PageStyle(IntFlag):
 
 class WizardPage:
     """
-    A page of the wizard that the script creates: its ID, its style, and the functions of the
-    script that handle its events.
+    A page of the wizard, a standard page or one that the script creates: its ID, its style, and
+    the functions of the script that handle its events.
     """
     def __init__(self, id: int, style: PageStyle):
         self.id = id
@@ -95,15 +100,119 @@ class WizardPage:
         return F'WizardPage({self.id})'
 
 
-class PasswordBox:
+class TextBox:
     """
-    Stands in for the box on the password page of the wizard and holds its text.
+    A text box of the wizard: its text, its selection as Windows' edit control keeps it, and the
+    handler that runs when its text changes, a function of the script or Setup's own. When the
+    script uses a member that the emulator does not model and that may change the text, the text
+    is unknown and the box reads as its stand-in, the text that names its value; writing the whole
+    text makes it known again.
     """
-    def __init__(self):
-        self.text = ''
+    __slots__ = (
+        'name',
+        'stand_in',
+        '_text',
+        'selection_start',
+        'selection_length',
+        'on_change',
+    )
+
+    def __init__(self, name: str, stand_in: str, text: str | None = ''):
+        self.name = name
+        self.stand_in = stand_in
+        self._text = text
+        self.selection_start = 0
+        self.selection_length = 0
+        self.on_change: object = None
 
     def __repr__(self):
-        return 'PasswordEdit'
+        return self.name
+
+    @property
+    def known(self) -> bool:
+        return self._text is not None
+
+    @property
+    def text(self) -> str:
+        if (text := self._text) is None:
+            return self.stand_in
+        return text
+
+    def set_text(self, text: str) -> bool:
+        """
+        Replaces the text as `WM_SETTEXT` does; the selection is empty at the start. The result
+        tells whether the text changed.
+        """
+        changed = self._text != text
+        self._text = text
+        self.selection_start = 0
+        self.selection_length = 0
+        return changed
+
+    def touched(self):
+        """
+        Notes that the script changed the text in a way that the emulator does not model.
+        """
+        self._text = None
+
+    def select(self, start: int, length: int):
+        """
+        Selects as `EM_SETSEL` does: both ends are clamped to the text, and a negative start
+        removes the selection.
+        """
+        size = len(self.text)
+        if start < 0:
+            self.selection_start = min(self.selection_start + self.selection_length, size)
+            self.selection_length = 0
+            return
+        start = min(start, size)
+        end = size if length < 0 else min(max(start + length, 0), size)
+        self.selection_start = min(start, end)
+        self.selection_length = abs(end - start)
+
+    @property
+    def selected_text(self) -> str:
+        start = self.selection_start
+        return self.text[start:start + self.selection_length]
+
+    def replace_selection(self, text: str) -> bool:
+        """
+        Replaces the selection with the given text as `EM_REPLACESEL` does; the caret follows the
+        new text. An unknown text stays unknown. The result tells whether the text changed.
+        """
+        if self._text is None:
+            return True
+        start = self.selection_start
+        old = self._text
+        self._text = F'{old[:start]}{text}{old[start + self.selection_length:]}'
+        self.selection_start = start + len(text)
+        self.selection_length = 0
+        return self._text != old
+
+
+class MainForm:
+    """
+    Stands in for Setup's main form, which a script of Inno Setup 6.0 to 6.4 finds in its variable
+    `MainForm` once Setup created it.
+    """
+    def __repr__(self):
+        return 'MainForm'
+
+
+class StandIns(NamedTuple):
+    """
+    The values that the emulator gives where Setup's own are unknown: the folder and the program
+    group of the installation.
+    """
+    folder: str
+    group: str
+
+    @classmethod
+    def of(cls, config: IFPSEmulatorConfig) -> StandIns:
+        """
+        The stand-ins of the configured machine.
+        """
+        return cls(config.install_to, config.inno_name)
 
 
 class Control:
@@ -593,21 +702,48 @@ class WizardForm:
     choices are not known. The emulator does not know the choices of a script without its
     installer either. A script can keep the form and pass it to the methods of its controls.
     """
-    def __init__(self, walked: bool = False, entries_known: bool = True, uninstallable: bool = True):
+    def __init__(
+        self,
+        stand_ins: StandIns,
+        walked: bool = False,
+        entries_known: bool = True,
+        uninstallable: bool = True,
+    ):
         self.walked = walked
         self.created = not walked
-        self.pages: list[int] = list(PageID)
-        self.custom: dict[int, WizardPage] = {}
+        self.main = None if walked else MainForm()
+        self.pages: list[int] = list(_STANDARD_PAGES)
+        self.page_objects: dict[int, WizardPage] = {}
         self.current = 0
         self.visible = False
         self.done = False
         self.password_entered = False
-        self.password_box = PasswordBox()
-        self.dir_chosen = not walked
-        self.group_chosen = not walked
-        self.uninstaller_named = not walked and uninstallable
+        self.stand_ins = stand_ins
+        if walked:
+            folder = group = name = organization = serial = ''
+        else:
+            folder, group = stand_ins
+            name = organization = serial = None
+        self.password_box = TextBox('PasswordEdit', 'WizardForm.PasswordEdit.Text')
+        self.dir_edit = TextBox('DirEdit', stand_ins.folder, folder)
+        self.group_edit = TextBox('GroupEdit', stand_ins.group, group)
+        self.user_info_name_edit = TextBox('UserInfoNameEdit', '{userinfoname}', name)
+        self.user_info_org_edit = TextBox('UserInfoOrgEdit', '{userinfoorg}', organization)
+        self.user_info_serial_edit = TextBox('UserInfoSerialEdit', '{userinfoserial}', serial)
+        self.serial_accepted = True
+        if walked:
+            self.folder = self.group = self.uninstaller = ''
+            self.user_info_name = self.user_info_org = self.user_info_serial = ''
+        else:
+            self.folder = stand_ins.folder
+            self.group = stand_ins.group
+            self.user_info_name = '{userinfoname}'
+            self.user_info_org = '{userinfoorg}'
+            self.user_info_serial = '{userinfoserial}'
+            self.uninstaller = F'{PathFunc.add_backslash(stand_ins.folder)}unins000.exe' if uninstallable else ''
         self.needs_restart = False
         self.types: list[SetupType] = []
+        self.type_descriptions: dict[int, str] = {}
         self.type_index = -1
         self.types_combo = Control('TypesCombo')
         self.no_icons_check = Control('NoIconsCheck')
@@ -622,6 +758,42 @@ class WizardForm:
 
     def __repr__(self):
         return 'WizardForm'
+
+    @property
+    def text_boxes(self) -> tuple[TextBox, ...]:
+        return (
+            self.dir_edit,
+            self.group_edit,
+            self.user_info_name_edit,
+            self.user_info_org_edit,
+            self.user_info_serial_edit,
+            self.password_box,
+        )
+
+    @property
+    def user_info_boxes(self) -> tuple[TextBox, TextBox, TextBox]:
+        return (self.user_info_name_edit, self.user_info_org_edit, self.user_info_serial_edit)
+
+    def page(self, id: int) -> WizardPage:
+        """
+        The page with the given ID, as Setup's `PageFromID` finds it; an internal error for an ID
+        that no page has.
+        """
+        if (page := self.page_objects.get(id)) is not None:
+            return page
+        if id not in self.pages:
+            raise DelphiException(F'Internal error: Could not find page with ID {id}')
+        page = self.page_objects[id] = WizardPage(id, PageStyle.Normal)
+        return page
+
+    def page_index(self, id: int) -> int:
+        """
+        The index of the page with the given ID, as Setup's `PageIndexFromID` finds it.
+        """
+        try:
+            return self.pages.index(id)
+        except ValueError:
+            raise DelphiException(F'Internal error: Could not find page with ID {id}') from None
 
     def require(self):
         """
@@ -666,8 +838,15 @@ class WizardForm:
         self._last_id += 1
         page = WizardPage(self._last_id, style)
         self.pages.insert(index, page.id)
-        self.custom[page.id] = page
+        self.page_objects[page.id] = page
         return page
+
+    def type_description(self, entry: SetupType) -> str:
+        """
+        The description of a type as Setup holds it, not expanded: a default type has the message
+        of the active language.
+        """
+        return self.type_descriptions.get(id(entry), entry.Description)
 
     @property
     def setup_type(self) -> SetupType | None:
@@ -795,12 +974,10 @@ class WizardForm:
             elif list_contains(deselect, name):
                 tasks.set_checked(index, False)
 
-    def leave(self, page: int):
+    def take_user_info(self):
         """
-        Notes what Setup records when Next leaves the given page or passes it: the chosen directory
-        and program group.
+        Takes the texts of the boxes of the user information as Setup's values.
         """
-        if page == PageID.wpSelectDir:
-            self.dir_chosen = True
-        elif page == PageID.wpSelectProgramGroup:
-            self.group_chosen = True
+        self.user_info_name = self.user_info_name_edit.text
+        self.user_info_org = self.user_info_org_edit.text
+        self.user_info_serial = self.user_info_serial_edit.text

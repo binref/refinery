@@ -441,7 +441,6 @@ def machine_folders(setup: HostSetup, config: IFPSEmulatorConfig) -> dict[str, s
     cfg = config
     user = RF'C:\Users\{cfg.user_name}'
     map = {
-        'app'               : cfg.install_to,
         'win'               : R'C:\Windows',
         'sys'               : R'C:\Windows\System32',
         'src'               : setup.path_func.extract_dir(cfg.executable),
@@ -450,7 +449,6 @@ def machine_folders(setup: HostSetup, config: IFPSEmulatorConfig) -> dict[str, s
         'dotnet11'          : R'C:\Windows\Microsoft.NET\Framework\v1.1.4322',
         'dotnet2032'        : R'C:\Windows\Microsoft.NET\Framework\v2.0.50727',
         'dotnet4032'        : R'C:\Windows\Microsoft.NET\Framework\v4.0.30319',
-        'group'             : RF'{user}\Start Menu\Programs\{cfg.inno_name}',
         'localappdata'      : RF'{user}\AppData\Local',
         'userappdata'       : RF'{user}\AppData\Roaming',
         'userdesktop'       : RF'{user}\Desktop',
@@ -475,15 +473,11 @@ def machine_folders(setup: HostSetup, config: IFPSEmulatorConfig) -> dict[str, s
         'commontemplates'   : R'C:\ProgramData\Microsoft\Windows\Templates',
         'cmd'               : R'C:\Windows\System32\cmd.exe',
         'computername'      : cfg.host_name,
-        'groupname'         : cfg.inno_name,
         'hwnd'              : '0',
         'wizardhwnd'        : '0',
         'srcexe'            : cfg.executable,
         'sysuserinfoname'   : '{sysuserinfoname}',
         'sysuserinfoorg'    : '{sysuserinfoorg}',
-        'userinfoname'      : '{userinfoname}',
-        'userinfoorg'       : '{userinfoorg}',
-        'userinfoserial'    : '{userinfoserial}',
         'username'          : cfg.user_name,
         'log'               : '',
     }
@@ -551,13 +545,6 @@ class SetupConstants:
         tmp = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=5))
         return RF'C:\Windows\Temp\IS-{tmp}'
 
-    @property
-    def uninstaller_path(self) -> str:
-        """
-        Where Setup installs its uninstaller.
-        """
-        return F'{self.config.install_to}\\unins000.exe'
-
     def _mode_constant(self, name: str) -> str | None:
         """
         The value of a constant that follows the install mode: the folders of programs and of
@@ -576,8 +563,20 @@ class SetupConstants:
     def constant(self, name: str, original: str) -> str:
         form = self.form
         cfg = self.config
-        if name == 'app' and not form.dir_chosen or name in ('group', 'groupname') and not form.group_chosen:
-            raise constants.ConstantError(F'An attempt was made to expand the "{original}" constant before it was initialized')
+        if name == 'app' or name in ('group', 'groupname'):
+            if not (value := form.folder if name == 'app' else form.group):
+                raise constants.ConstantError(F'An attempt was made to expand the "{original}" constant before it was initialized')
+            if name != 'group':
+                return value
+            common = self.admin and not self.setup.always_use_personal_group
+            programs = self.constant('commonprograms' if common else 'userprograms', original)
+            return F'{PathFunc.add_backslash(programs)}{value}'
+        if name == 'userinfoname':
+            return form.user_info_name
+        if name == 'userinfoorg':
+            return form.user_info_org
+        if name == 'userinfoserial':
+            return form.user_info_serial
         if name in ('commonpf64', 'commoncf64', 'dotnet2064', 'dotnet4064') and not cfg.x64:
             raise constants.ConstantError(F'Cannot expand "{original}" constant on this version of Windows')
         if (
@@ -586,9 +585,7 @@ class SetupConstants:
         ):
             raise constants.ConstantError(F'Failed to expand shell folder constant "{original}"')
         if name == 'uninstallexe':
-            if not form.uninstaller_named:
-                return ''
-            return self.uninstaller_path
+            return form.uninstaller
         if name == 'language':
             return self.setup.language_name
         if name == 'tmp':

@@ -451,7 +451,8 @@ class TestIPFSEmulator(TestBase):
         with datapath('winapi.json').open('rb') as stream:
             modules = json.loads(stream.read())
         for namespace, handlers in IFPSEmulator.external_symbols.items():
-            if namespace in modules:
+            # Pascal Script's casts of objects are internal functions that no API declares.
+            if namespace in modules or namespace == 'Class':
                 continue
             declared = IFPSClasses.Classes[namespace].members if namespace else IFPSAPI
             for name, handler in handlers.items():
@@ -716,9 +717,9 @@ class TestIPFSEmulator(TestBase):
         Setup's `ShouldProcessEntry` tests no names for an empty expression, also when the wizard
         knows the selection; this wizard selects nothing.
         """
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         form.created = True
         self.assertTrue(emulator.WizardIsComponentSelected(''))
         self.assertTrue(emulator.WizardIsTaskSelected(''))
@@ -731,9 +732,9 @@ class TestIPFSEmulator(TestBase):
         `Internal error: %1`.
         """
         from refinery.lib.inno.delphi.errors import DelphiException
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         form.created = True
         with self.assertRaises(DelphiException) as raised:
             emulator.WizardIsComponentSelected('a)')
@@ -747,9 +748,9 @@ class TestIPFSEmulator(TestBase):
         """
         from refinery.lib.inno.emulator import Variable
         from refinery.lib.inno.ifps import TC, TPrimitive
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         members = {str(function): function for function in emulator.ifps.functions if function.body is None}
         components = Variable(TPrimitive(TC.Class), data=form.components)
         for name in ('TControl.SetTop', 'TControl.SetHeight', 'TNewCheckListBox.SetBorderStyle', 'TNewCheckListBox.SetAnchors'):
@@ -767,9 +768,9 @@ class TestIPFSEmulator(TestBase):
         """
         from refinery.lib.inno.emulator import Variable
         from refinery.lib.inno.ifps import TC, DeclSpec, DeclSpecParam, Function, TPrimitive
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         components = Variable(TPrimitive(TC.Class), data=form.components)
         resize = Function('IncTopDecHeight', DeclSpec(
             True,
@@ -793,18 +794,13 @@ class TestIPFSEmulator(TestBase):
     def test_reading_the_items_of_a_list_of_the_wizard_keeps_its_choices(self):
         from refinery.lib.inno.emulator import Variable
         from refinery.lib.inno.ifps import TC, TPrimitive
-        from refinery.lib.inno.wizard import WizardForm
+        from refinery.lib.inno.wizard import StandIns, WizardForm
         emulator = self._script_emulator(_SCRIPT_WITH_NESTED_TRY)
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         members = {str(function): function for function in emulator.ifps.functions if function.body is None}
         emulator.unimplemented(members['TCustomListBox.GetItems'], [Variable(TPrimitive(TC.Class), data=form.components)], None)
         self.assertTrue(form.components.known)
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason='these functions are not emulated and answer before Setup creates the wizard',
-    )
     def test_every_support_function_that_setup_runs_through_its_wizard_is_emulated(self):
         """
         Setup runs these support functions through `GetWizardForm`, which fails before Setup has

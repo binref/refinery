@@ -65,6 +65,7 @@ class PSError(enum.IntEnum):
     CouldNotCallProc = 17
     OutOfRecordRange = 18
     Exception = 20
+    NullPointerException = 21
     CustomError = 24
 
     @property
@@ -86,6 +87,7 @@ _PS_ERROR_TEXT = {
     PSError.CouldNotCallProc : 'Could not call proc',
     PSError.OutOfRecordRange : 'Out of Record Fields Range',
     PSError.Exception        : 'Exception: ',
+    PSError.NullPointerException : 'Null Pointer Exception',
     PSError.CustomError      : '',
 }
 

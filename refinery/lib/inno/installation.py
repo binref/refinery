@@ -71,10 +71,12 @@ from refinery.lib.inno.pascal import IFPSException
 from refinery.lib.inno.pathfunc import full_path_name
 from refinery.lib.inno.symbols import IFPSEvents, IFPSSignature, parse_function
 from refinery.lib.inno.wizard import (
+    MainForm,
     PageEvent,
     PageID,
     PageStyle,
     Selection,
+    TextBox,
     WizardForm,
     list_contains,
     same_text,
@@ -120,6 +122,7 @@ class ArgumentKind(enum.Enum):
     Boolean = 'boolean'
     Step = 'tsetupstep'
     Page = 'twizardpage'
+    Object = 'tobject'
 
 
 class SetupCall(NamedTuple):
@@ -371,12 +374,17 @@ class ScriptHost(Protocol):
     def registry_key_exists(self, key: str) -> bool:
         ...
 
+    def text_changed(self, box: TextBox) -> Generator[Any, Any, None]:
+        ...
+
+    machine_folders: dict[str, str]
+
     @property
     def temporary_directory(self) -> str:
         ...
 
     @property
-    def uninstaller_path(self) -> str:
+    def current_folder(self) -> CurrentFolder:
         ...
 
 
@@ -466,6 +474,7 @@ class Installation:
     def run(self) -> Generator[Any, Any, None]:
         wizard = self.wizard
         yield from self.event(SetupEvent.InitializeSetup)
+        wizard.main = MainForm()
         yield from self._load_types_and_components()
         yield from self._measure_external_files()
         yield from self._create_wizard()
@@ -492,12 +501,12 @@ class Installation:
         page = wizard.current
         if page == PageID.wpPassword:
             yield from self._check_password()
-        wizard.leave(page)
+        self._leave(page)
         yield from self.page_event(page, PageEvent.OnNextButtonClick)
         yield from self.event(SetupEvent.NextButtonClick, page)
         index = wizard.pages.index(page)
         while True:
-            wizard.leave(page)
+            self._leave(page)
             if page == PageID.wpFinished:
                 yield from self._run_post_install_entries()
                 yield from self.event(SetupEvent.CurStepChanged, TSetupStep.ssDone)
@@ -540,13 +549,13 @@ class Installation:
         wizard = self.wizard
         box = wizard.password_box
         if self.password:
-            box.text = self.password
+            yield from self._write(box, self.password)
         text = box.text
         test = self.password_test
         accepted = self.setup.header_password and test is not None and bool(text) and test(text)
         if not accepted:
             yield from self.event(SetupEvent.CheckPassword, text)
-        box.text = ''
+        yield from self._write(box, '')
         wizard.password_entered = True
 
     def _set_page(self, page: int):
@@ -568,9 +577,30 @@ class Installation:
             yield from self.event(SetupEvent.CurPageChanged, page)
 
     def _page_style(self, page: int) -> PageStyle:
-        if (custom := self.wizard.custom.get(page)) is None:
+        if (known := self.wizard.page_objects.get(page)) is None:
             return PageStyle.Normal
-        return custom.style
+        return known.style
+
+    def _write(self, box: TextBox, text: str) -> Generator[Any, Any, None]:
+        """
+        Setup writes the text of a box; its handler runs when the text changes.
+        """
+        if box.set_text(text):
+            yield from self.host.text_changed(box)
+
+    def _leave(self, page: int):
+        """
+        Setup's values of a page that Next leaves or passes, as its loop over the skipped pages
+        takes them.
+        """
+        wizard = self.wizard
+        path_func = self.setup.path_func
+        if page == PageID.wpUserInfo:
+            wizard.take_user_info()
+        elif page == PageID.wpSelectDir:
+            wizard.folder = path_func.remove_backslash_unless_root(wizard.dir_edit.text)
+        elif page == PageID.wpSelectProgramGroup:
+            wizard.group = path_func.remove_backslash_unless_root(wizard.group_edit.text)
 
     def _previous_page(self):
         """
@@ -690,7 +720,8 @@ class Installation:
                 where = EntryLocation(EntrySection.UninstallDelete, number)
                 yield from self._process(where, entry, Field(EntryField.Name, entry.Name))
             yield from self._create_directories(entries)
-        wizard.uninstaller_named = uninstallable
+        if uninstallable:
+            wizard.uninstaller = F'{self.setup.path_func.add_backslash(wizard.folder)}unins000.exe'
         if entries is not None:
             for loaded in entries.files:
                 yield from self._copy_file(loaded, uninstallable)
@@ -735,7 +766,7 @@ class Installation:
         Setup's `CreateDirs`: the directory of the application, then each [Dirs] entry.
         """
         installed = self.host.installed
-        installed.add_directory(self.config.install_to)
+        installed.add_directory(self.wizard.folder)
         for number, entry in entries.directories:
             where = EntryLocation(EntrySection.Dirs, number)
             if (texts := (yield from self._process(where, entry, Field(EntryField.Name, entry.Name)))) is not None:
@@ -869,7 +900,7 @@ class Installation:
         number, entry = loaded
         if entry.Type == SetupFileType.UninstExe:
             if uninstallable:
-                self.host.installed.add_file(self.host.uninstaller_path)
+                self.host.installed.add_file(self.wizard.uninstaller)
             return
         if entry.Type != SetupFileType.UserFile:
             return
@@ -1325,10 +1356,15 @@ class Installation:
     def _create_wizard(self):
         """
         The part of creating the wizard that reads the entries: the descriptions of the types and
-        components, the components in their list, and the components of the first type. The form
-        exists afterwards.
+        components, the components in their list, and the components of the first type. The boxes
+        of the folder and the group hold their stand-ins, and those of the user information are
+        unknown. The form exists afterwards.
         """
         wizard = self.wizard
+        wizard.dir_edit.set_text(wizard.stand_ins.folder)
+        wizard.group_edit.set_text(wizard.stand_ins.group)
+        for box in wizard.user_info_boxes:
+            box.touched()
         if self.entries is None:
             wizard.created = True
             return
@@ -1542,13 +1578,13 @@ class Installation:
         created, passing the page. The result is `None` when the page has no such function; a
         script error is reported as a `NewScriptError` and also gives `None`.
         """
-        if (custom := self.wizard.custom.get(page)) is None:
+        if (known := self.wizard.page_objects.get(page)) is None:
             return None
-        if (function := custom.handlers.get(event)) is None:
+        if (function := known.handlers.get(event)) is None:
             return None
         try:
-            return (yield from self.host.call_from_setup(function, (custom,), _PAGE_CALLS[event]))
+            return (yield from self.host.call_from_setup(function, (known,), _PAGE_CALLS[event]))
         except IFPSException as error:
             message = str(error)
-        yield NewScriptError(event, (custom,), message)
+        yield NewScriptError(event, (known,), message)
         return None

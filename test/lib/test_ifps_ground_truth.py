@@ -1264,9 +1264,9 @@ class TestTheEmulatorHandlesErrorsAsInnoSetupDid(_OracleTest):
         read writes it as a list of names.
         """
         from refinery.lib.inno.emulator import IFPSEmulator
-        from refinery.lib.inno.wizard import WizardForm, comma_text
+        from refinery.lib.inno.wizard import StandIns, WizardForm, comma_text
         emulator = self.emulator()
-        form = emulator.wizard_form = WizardForm(walked=True)
+        form = emulator.wizard_form = WizardForm(StandIns.of(emulator.config), walked=True)
         form.created = True
         component = InnoArchive(_archived_file(self, _HOST_ORACLE, 'host-oracle-5.exe')).setup_info.Components[0]
         component.Description = '{code:CodeMessage|m}'
@@ -1352,6 +1352,128 @@ class TestSetupInstallsForAllUsersAsItsSourceSays(TestBase):
                         emulator.expand_constant('{commonappdata}|{commondocs}'),
                         R'C:\ProgramData|C:\Users\Public\Documents',
                     )
+
+
+class _HostOracle6Test(TestBase):
+    """
+    The sixth host oracle ran from a folder on the drive `W:` of 64-bit Windows, installing for the
+    current user; the emulated machine has the variables `WINDIR` and `USERPROFILE` set, as every
+    Windows has, and Setup starts from the drive `W:`.
+    """
+
+    def host_oracle(self) -> InnoArchive:
+        return InnoArchive(_archived_file(self, _HOST_ORACLE_6, 'host-oracle-6.exe'))
+
+    def emulator(self, archive: InnoArchive | IFPSFile | None = None, **config) -> InnoSetupEmulator:
+        if archive is None:
+            archive = self.host_oracle()
+        return InnoSetupEmulator(archive, IFPSEmulatorConfig(
+            log_calls=True,
+            admin=False,
+            executable=R'W:\HostOracle6\host-oracle-6.exe',
+            environment={'WINDIR': R'C:\WINDOWS', 'USERPROFILE': R'C:\Users\Frank'},
+            **config,
+        ))
+
+    def installation(self, archive: InnoArchive | IFPSFile | None = None, silent: bool = False) -> list[object]:
+        return list(self.emulator(archive, wizard_silent=silent).emulate_installation())
+
+    def logged(self, run: str = 'normal') -> list[tuple[str, str]]:
+        """
+        The names and values that a run of the oracle logged, in order.
+        """
+        log = codecs.decode(_archived_file(self, _HOST_ORACLE_6, F'host-oracle-6-{run}.log'), 'utf8')
+        return [(match[1], match[2]) for line in log.splitlines() if (match := _ORACLE_LINE.fullmatch(line))]
+
+    def assertLinesAsLogged(self, *names: str):
+        """
+        The lines with the given names that an emulated installation with the wizard logs are, in
+        order, those that the run with the wizard logged.
+        """
+        def selected(lines: Iterable[tuple[str, str]]):
+            return [line for line in lines if line[0] in names]
+        logged = selected(self.logged())
+        self.assertTrue(logged)
+        self.assertEqual(selected(_logged_lines(self.installation())), logged)
+
+
+class TestTheEmulatorGivesTheScriptTheWizardAsInnoSetupDid(_HostOracle6Test):
+
+    def test_the_variables_of_setups_forms_stay_empty_until_setup_creates_each_form(self):
+        """
+        The oracle probes the variables and the functions of the wizard in `InitializeSetup`, in
+        `InitializeWizard` and on the page of the user information.
+        """
+        self.assertLinesAsLogged(*(
+            F'{when}{what}'
+            for when in ('Setup', 'Wizard', 'UserInfoPage')
+            for what in (
+                'WizardFormVariable',
+                'UninstallProgressFormVariable',
+                'GetWizardForm',
+                'PageIndexFromID',
+                'PageFromID',
+            )
+        ))
+
+    def test_a_property_of_the_empty_wizard_form_fails_past_the_innermost_except_block(self):
+        self.assertLinesAsLogged('NilFormProperty')
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason='an object that the emulator does not model is nil, like an empty variable',
+    )
+    def test_a_method_that_the_wizard_form_inherits_fails_past_the_innermost_except_block_on_the_empty_form(self):
+        self.assertLinesAsLogged('NilFormMethod')
+
+    def test_each_page_of_the_wizard_is_one_object_with_its_id(self):
+        self.assertLinesAsLogged(
+            'ProgressID',
+            'Page1ID',
+            'Page2ID',
+            'PageAfterMissing',
+            'Page3ID',
+            'PageIndexes',
+            'PageFromIDs',
+            'PageFromIDMissing',
+            'PageIndexFromIDMissing',
+            'PageSame',
+        )
+
+    def test_setup_runs_the_handlers_that_the_script_sets_on_a_standard_page(self):
+        self.assertLinesAsLogged('DirActivate', 'DirNextClick')
+
+    def test_the_selection_of_a_text_box_follows_the_edit_control_of_windows(self):
+        """
+        The script sets a handler of its own on the box of the organization, which logs its text
+        whenever it changes.
+        """
+        self.assertLinesAsLogged(
+            'OrgChange',
+            'SelectAfterText',
+            'SelectText',
+            'SelectAfterSelText',
+            'SelectAll',
+            'SelectCleared',
+            'SelectClamped',
+        )
+
+    def test_setup_message_gives_the_message_of_the_active_language(self):
+        """
+        Inno Setup 6.5 removes the arrows from the texts of Back and Next.
+        """
+        self.assertLinesAsLogged(
+            'MessageButtonBack',
+            'MessageButtonNext',
+            'MessageReadyMemoDir',
+            'MessageFullInstallation',
+            'MessageCustomInstallation',
+            'MessageErrorInternal2',
+        )
+
+    def test_a_new_machine_has_no_previous_installation(self):
+        self.assertLinesAsLogged('PrevAppDir', 'PreviousData')
 
 
 class _HostOracleTest(TestBase):

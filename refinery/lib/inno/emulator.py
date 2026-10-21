@@ -21,7 +21,7 @@ import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum, auto
-from functools import cached_property, wraps
+from functools import wraps
 from time import process_time
 from typing import (
     TYPE_CHECKING,
@@ -41,7 +41,7 @@ from typing import (
 
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, expressions, pascal
-from refinery.lib.inno.archive import InnoArchive
+from refinery.lib.inno.archive import InnoArchive, TextDirective
 from refinery.lib.inno.delphi import formatting, numbers, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
@@ -107,13 +107,15 @@ from refinery.lib.inno.installation import (
 )
 from refinery.lib.inno.pascal import IFPSException, PSError, signed32, type_mismatch
 from refinery.lib.inno.pathfunc import PathFuncError, expand_file_name
+from refinery.lib.inno.symbols import parse_function
 from refinery.lib.inno.wizard import (
     CheckList,
     CheckOperation,
     Expander,
     PageEvent,
     PageStyle,
-    PasswordBox,
+    StandIns,
+    TextBox,
     WizardForm,
     WizardPage,
     comma_strings,
@@ -1055,8 +1057,14 @@ class IFPSEmulator:
             self.setup = HostSetup.of_bare_script(ifps.platform, config)
             source = 'The configured Setup version'
         _check_agreement(self.setup, ifps, config, source)
+        self.machine_folders = machine_folders(self.setup, config)
+        self.launch_folder = self.setup.path_func.extract_dir(config.executable)
         self.dialect = ifps.dialect
         self.ifps = ifps
+        self._form_variables = [
+            (index, name) for index, spec in enumerate(ifps.globals)
+            if (name := str(spec).partition(':')[0].upper()) in _FORM_VARIABLES
+        ]
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
         self._globals: list[Variable] | None = None
@@ -1081,12 +1089,13 @@ class IFPSEmulator:
         self.machine = pascal.Machine(self.dialect, self.runtime)
         self.mutexes.clear()
         self.wizard_form = wizard = WizardForm(
+            StandIns.of(self.config),
             walked=walked,
             entries_known=self.setup_info is not None,
             uninstallable=self.setup.uninstallable.answer is not False,
         )
         self.constants = SetupConstants(self.setup, self.config, wizard, self.machine_folders)
-        self.current_folder = CurrentFolder(self.setup.path_func.extract_dir(self.config.executable))
+        self.current_folder = CurrentFolder(self.launch_folder)
         self.installed = InstalledPaths(self.current_folder)
         self.current_file: CurrentFile | None = None
         self._globals = None
@@ -1104,6 +1113,24 @@ class IFPSEmulator:
                 self._reserve_variables(v.type)
             script_globals = self._globals = [Variable(v.type, v.spec) for v in self.ifps.globals]
         return script_globals
+
+    def _refresh_form_variables(self):
+        """
+        Sets the variables in which a script of Inno Setup 6 or later finds Setup's forms, as Setup
+        does before each call into the script: each is empty until Setup created its form, and
+        Setup never shows the form of the uninstaller.
+        """
+        if not (slots := self._form_variables):
+            return
+        form = self.wizard_form
+        values = {
+            'WIZARDFORM': form if form.created else None,
+            'MAINFORM': form.main,
+            'UNINSTALLPROGRESSFORM': None,
+        }
+        script_globals = self.globals
+        for index, name in slots:
+            script_globals[index].set(values[name])
 
     def _reserve_variables(self, type: IFPSType, count: int = 1):
         """
@@ -1206,6 +1233,7 @@ class IFPSEmulator:
         decl = function.decl
         if decl is None:
             raise NotImplementedError(F'Do not know how to call {function!s}.')
+        self._refresh_form_variables()
         if (n := len(decl.parameters)) != (m := len(args)):
             raise ValueError(
                 F'Function {function!s} expects {n} arguments, only {m} were given.')
@@ -1333,7 +1361,10 @@ class IFPSEmulator:
                 if self.config.log_calls:
                     yield NewFunctionCall(str(function), tuple(a.get() for a in args))
 
-                if handler is None:
+                if namespace in _FORM_CLASSES and decl is not None and args and args[0].get() is None:
+                    kind = PSError.NullPointerException if decl.method else PSError.CouldNotCallProc
+                    raised = IFPSException(kind=kind, called=name, failed_call=True)
+                elif handler is None:
                     self.unimplemented(function, args, None if void else stack[-1])
                 elif handler.argc != argc or handler.void and not void:
                     failure = _incompatible_call(handler, argc, void)
@@ -1595,11 +1626,129 @@ class IFPSEmulator:
         return self.wizard_form.password_box
 
     @external()
+    def TWizardForm__GetDirEdit(self, this: object) -> object:
+        return self.wizard_form.dir_edit
+
+    @external()
+    def TWizardForm__GetGroupEdit(self, this: object) -> object:
+        return self.wizard_form.group_edit
+
+    @external()
+    def TWizardForm__GetUserInfoNameEdit(self, this: object) -> object:
+        return self.wizard_form.user_info_name_edit
+
+    @external()
+    def TWizardForm__GetUserInfoOrgEdit(self, this: object) -> object:
+        return self.wizard_form.user_info_org_edit
+
+    @external()
+    def TWizardForm__GetUserInfoSerialEdit(self, this: object) -> object:
+        return self.wizard_form.user_info_serial_edit
+
+    @external()
+    def TWizardForm__GetPrevAppDir(self, this: object) -> str:
+        return ''
+
+    def text_changed(self, box: TextBox) -> Generator[Any, Any, None]:
+        """
+        Runs the handler of a text box whose text changed, as the box's `OnChange` runs: a function
+        of the script. An error reaches the code that changed the text.
+        """
+        if isinstance(handler := box.on_change, Function):
+            yield from self.call_from_setup(handler, (box,), _NOTIFY_CALL)
+
+    def _box_text(self, this: object) -> str:
+        return this.text if isinstance(this, TextBox) else ''
+
+    def _set_box_text(self, this: object, value: str) -> Generator[Any, Any, None]:
+        if isinstance(this, TextBox) and this.set_text(value):
+            yield from self.text_changed(this)
+
+    def _replace_box_selection(self, this: object, value: str) -> Generator[Any, Any, None]:
+        if isinstance(this, TextBox) and this.replace_selection(value):
+            yield from self.text_changed(this)
+
+    @external()
+    def TEdit__GetText(self, this: object) -> str:
+        return self._box_text(this)
+
+    @external()
+    def TCustomEdit__GetText(self, this: object) -> str:
+        return self._box_text(this)
+
+    @external()
+    def TPasswordEdit__GetText(self, this: object) -> str:
+        return self._box_text(this)
+
+    @external()
+    def TEdit__SetText(self, this: object, value: str):
+        yield from self._set_box_text(this, value)
+
+    @external()
+    def TCustomEdit__SetText(self, this: object, value: str):
+        yield from self._set_box_text(this, value)
+
+    @external()
     def TPasswordEdit__SetText(self, this: object, value: str):
-        if isinstance(this, PasswordBox):
-            this.text = value
+        yield from self._set_box_text(this, value)
         if value:
             yield NewPassword(value)
+
+    @external()
+    def TCustomEdit__Clear(self, this: object):
+        yield from self._set_box_text(this, '')
+
+    @external()
+    def TCustomEdit__ClearSelection(self, this: object):
+        yield from self._replace_box_selection(this, '')
+
+    @external()
+    def TCustomEdit__GetSelText(self, this: object) -> str:
+        return this.selected_text if isinstance(this, TextBox) else ''
+
+    @external()
+    def TCustomEdit__SetSelText(self, this: object, value: str):
+        yield from self._replace_box_selection(this, value)
+
+    @external()
+    def TCustomEdit__SelectAll(self, this: object):
+        if isinstance(this, TextBox):
+            this.select(0, -1)
+
+    @external()
+    def TCustomEdit__GetSelStart(self, this: object) -> int:
+        return this.selection_start if isinstance(this, TextBox) else 0
+
+    @external()
+    def TCustomEdit__SetSelStart(self, this: object, value: int):
+        if isinstance(this, TextBox):
+            this.select(value, 0)
+
+    @external()
+    def TCustomEdit__GetSelLength(self, this: object) -> int:
+        return this.selection_length if isinstance(this, TextBox) else 0
+
+    @external()
+    def TCustomEdit__SetSelLength(self, this: object, value: int):
+        if isinstance(this, TextBox):
+            this.select(this.selection_start, value)
+
+    @external()
+    def TEdit__SetCharCase(self, this: object, value: int):
+        if isinstance(this, TextBox) and this.known and value in (1, 2):
+            this.set_text(this.text.upper() if value == 1 else this.text.lower())
+
+    def _set_box_handler(self, this: object, handler: object):
+        if isinstance(this, TextBox):
+            this.on_change = handler if isinstance(handler, Function) else None
+
+    @external()
+    def TEdit__SetOnChange(self, this: object, handler: object):
+        self._set_box_handler(this, handler)
+
+    @external()
+    def TPasswordEdit__SetOnChange(self, this: object, handler: object):
+        self._set_box_handler(this, handler)
 
     @external(alias=['ShellExecuteA', 'ShellExecuteW'])
     def shell32__ShellExecute(self, hwnd: int, operation: str, file: str, args: str, cwd: str, show: int) -> int:
@@ -1802,13 +1951,6 @@ class IFPSEmulator:
     def LoadStringsFromFile(self, path: str, out: Variable[str]) -> bool:
         return True
 
-    @cached_property
-    def machine_folders(self) -> dict[str, str]:
-        """
-        The folders of the emulated machine, which every Setup process of this emulator shares.
-        """
-        return machine_folders(self.setup, self.config)
-
     def code_runner(self, caller: _ScriptRun | None) -> constants.CodeRunner:
         """
         Runs the function of a code constant inside the run of the caller, or in a new run of the
@@ -1982,12 +2124,7 @@ class IFPSEmulator:
 
     @external()
     def SetupMessage(self, id: int) -> str:
-        try:
-            if (setup_info := self.setup_info) is not None:
-                return setup_info.CustomMessages[id].Value
-        except IndexError:
-            pass
-        return ''
+        return self.setup.message(id)
 
     @external()
     def IsWin64(self) -> bool:
@@ -2109,6 +2246,51 @@ class IFPSEmulator:
     @external()
     def TWizardPage__GetID(self, this: object) -> int:
         return _wizard_page(this).id
+
+    @external()
+    def Class__SetNil(self, value: object) -> object:
+        """
+        Pascal Script's assignment of nil to a variable of a class.
+        """
+        return None
+
+    @external()
+    def Class__CastToType(self, source: object) -> object:
+        """
+        A cast of an object to a class; the emulator's objects do not record the classes that the
+        script knows, and the cast keeps the object.
+        """
+        return source
+
+    @external()
+    def GetWizardForm(self) -> object:
+        return self._form()
+
+    @external()
+    def PageFromID(self, id: int) -> object:
+        return self._form().page(id)
+
+    @external()
+    def PageIndexFromID(self, id: int) -> int:
+        return self._form().page_index(id)
+
+    @external()
+    def WizardDirValue(self) -> str:
+        return self.setup.path_func.remove_backslash_unless_root(self._form().dir_edit.text)
+
+    @external()
+    def WizardGroupValue(self) -> str:
+        return self.setup.path_func.remove_backslash_unless_root(self._form().group_edit.text)
+
+    @external()
+    def IsAdminInstallMode(self) -> bool:
+        return self.setup.admin_install_mode
+
+    @external(caller=True)
+    def GetPreviousData(self, name: str, default: str, caller: _ScriptRun | None = None) -> Generator[Any, Any, str]:
+        app_id = '' if (info := self.setup_info) is None else info.Header.text(TextDirective.AppId) or ''
+        yield from self.constants.expand(app_id, self.code_runner(caller))
+        return default
 
     @external()
     def TWizardForm__GetCurPageID(self, this: object) -> int:
@@ -2638,9 +2820,10 @@ class IFPSEmulator:
 
     @external()
     def WizardSetupType(self, descriptions: bool) -> str:
-        if (setup_type := self._form().setup_type) is None:
+        form = self._form()
+        if (setup_type := form.setup_type) is None:
             return ''
-        return setup_type.Description if descriptions else setup_type.Name
+        return form.type_description(setup_type) if descriptions else setup_type.Name
 
     def _field_expander(self, caller: _ScriptRun | None) -> Expander:
         """
@@ -2752,13 +2935,6 @@ class IFPSEmulator:
         return self.constants.registry('', None, key)
 
     @property
-    def uninstaller_path(self) -> str:
-        """
-        Where Setup installs its uninstaller.
-        """
-        return self.constants.uninstaller_path
-
-    @property
     def temporary_directory(self) -> str:
         """
         The temporary directory of Setup, the value of `{tmp}`.
@@ -2783,6 +2959,7 @@ class IFPSEmulator:
             ArgumentKind.Boolean : TC.U08,
             ArgumentKind.Step    : TC.U08,
             ArgumentKind.Page    : TC.Class,
+            ArgumentKind.Object  : TC.Class,
         }
 
     def _fits(self, function: Function, call: SetupCall) -> bool:
@@ -2871,6 +3048,28 @@ class IFPSEmulator:
 
     del external
 
+
+_FORM_CLASSES = frozenset({
+    'TWizardForm',
+    'TMainForm',
+    'TUninstallProgressForm',
+})
+"""
+The classes of Setup's forms, which the emulator holds itself: a member of one called on an empty
+variable fails as Pascal Script fails it, twice, so that the innermost except block does not end
+the error.
+"""
+
+_FORM_VARIABLES = frozenset({
+    'WIZARDFORM',
+    'MAINFORM',
+    'UNINSTALLPROGRESSFORM',
+})
+"""
+The global variables of a script of Inno Setup 6 or later that hold Setup's forms.
+"""
+
+_NOTIFY_CALL = SetupCall.of(parse_function('procedure OnChange(Sender: TObject)'))
 
 _LAYOUT_CLASSES = frozenset({
     'TObject',
