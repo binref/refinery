@@ -42,6 +42,7 @@ from refinery.lib.inno.archive import (
     SetupIconFlags,
     SetupIniEntry,
     SetupIniFlags,
+    SetupMessageName,
     SetupRegistryEntry,
     SetupRegistryFlags,
     SetupRegistryType,
@@ -49,7 +50,6 @@ from refinery.lib.inno.archive import (
     SetupRunFlags,
     SetupTask,
     SetupTaskFlags,
-    SetupMessageName,
     SetupType,
     SetupTypeEnum,
     TextDirective,
@@ -59,6 +59,7 @@ from refinery.lib.inno.archive import (
 )
 from refinery.lib.inno.delphi.errors import DelphiException
 from refinery.lib.inno.delphi.runtime import Platform
+from refinery.lib.inno.delphi.strings import trim
 from refinery.lib.inno.emulation import (
     AbortEmulation,
     EmulatorException,
@@ -72,7 +73,7 @@ from refinery.lib.inno.emulation import (
     SetupEvent,
 )
 from refinery.lib.inno.pascal import IFPSException
-from refinery.lib.inno.pathfunc import full_path_name, trim, valid_dir_name, valid_group_name
+from refinery.lib.inno.pathfunc import full_path_name, valid_dir_name, valid_group_name
 from refinery.lib.inno.symbols import IFPSEvents, IFPSSignature, parse_function
 from refinery.lib.inno.wizard import (
     ControlEvent,
@@ -729,24 +730,27 @@ class Installation:
     def _validate_dir(self) -> Generator[Any, Any, None]:
         """
         Setup's `ValidateDirEdit`: the folder box is tidied and checked, then taken; a folder that
-        Setup refuses becomes the stand-in.
+        Setup refuses becomes the stand-in. A box that holds its stand-in holds a folder that Setup
+        accepted, which its tidying does not change.
         """
         wizard = self.wizard
         setup = self.setup
         box = wizard.dir_edit
-        yield from self._write(box, setup.path_func.tidy_up_dir_name(box.text))
-        if not valid_dir_name(box.text, setup.allow_unc_path, setup.allow_root_directory):
-            box.touched()
+        if box.known:
+            yield from self._write(box, setup.path_func.tidy_up_dir_name(box.text))
+            if not valid_dir_name(box.text, setup.allow_unc_path, setup.allow_root_directory):
+                box.touched()
         wizard.folder = box.text
 
     def _validate_group(self) -> Generator[Any, Any, None]:
         """
         Setup's `ValidateGroupEdit` unless the program group is turned off: the group box is tidied
-        and checked, then taken; a group that Setup refuses becomes the stand-in.
+        and checked, then taken; a group that Setup refuses becomes the stand-in. A box that holds
+        its stand-in holds a group that Setup accepted, which its tidying does not change.
         """
         wizard = self.wizard
         box = wizard.group_edit
-        if not wizard.icons_off:
+        if box.known and not wizard.icons_off:
             yield from self._write(box, self.setup.path_func.tidy_up_group_name(box.text))
             if not valid_group_name(box.text):
                 box.touched()
@@ -963,17 +967,28 @@ class Installation:
         if not wizard.needs_restart:
             yield from self._update_run_list()
 
+    def _full_path(self, directive: TextDirective, text: str) -> Generator[Any, Any, str | None]:
+        """
+        The folder that the text of a directive names, as Setup takes it: expanded, then made a full
+        path in Setup's current folder by `PathExpand`. An error of either is reported and gives
+        `None`.
+        """
+        def full_path() -> Generator[Any, Any, str]:
+            folder = yield from self.host.expand(text)
+            return self.setup.path_func.expand(folder, self.host.current_folder.path)
+        return (yield from self._guarded(directive, None, full_path()))
+
     def _name_uninstaller(self) -> Generator[Any, Any, None]:
         """
-        Setup's `GenerateUninstallInfoFilename`: the folder of the uninstaller and its name.
+        Setup's `GenerateUninstallInfoFilename`: the folder of the uninstaller and its name. A
+        script without its installer has Setup's default folder, `{app}`.
         """
-        path_func = self.setup.path_func
-        folder = '' if (info := self.setup.setup_info) is None else info.Header.text(TextDirective.UninstallFilesDir) or ''
-        expanded = yield from self._guarded(TextDirective.UninstallFilesDir, None, self.host.expand(folder))
-        if expanded is None:
+        text = '{app}'
+        if (info := self.setup.setup_info) is not None and (own := info.Header.text(TextDirective.UninstallFilesDir)) is not None:
+            text = own
+        if (folder := (yield from self._full_path(TextDirective.UninstallFilesDir, text))) is None:
             return
-        folder = path_func.expand(expanded, self.host.current_folder.path)
-        self.wizard.uninstaller = F'{path_func.add_backslash(folder)}unins000.exe'
+        self.wizard.uninstaller = F'{self.setup.path_func.add_backslash(folder)}unins000.exe'
 
     def _register_uninstall_info(self) -> Generator[Any, Any, None]:
         """
@@ -1620,9 +1635,9 @@ class Installation:
                 if (text := (yield from self._text(directive))) is not None:
                     box.set_text(text)
         if header.Flags & Flags.CreateAppDir:
-            if (folder := (yield from self._text(TextDirective.DefaultDirName))) is not None:
-                path_func = setup.path_func
-                wizard.dir_edit.set_text(path_func.remove_backslash_unless_root(path_func.expand(folder, self.host.current_folder.path)))
+            if (text := header.text(TextDirective.DefaultDirName)) is not None:
+                if (folder := (yield from self._full_path(TextDirective.DefaultDirName, text))) is not None:
+                    wizard.dir_edit.set_text(setup.path_func.remove_backslash_unless_root(folder))
         else:
             wizard.dir_edit.set_text(self.host.machine_folders['win'])
         for number, entry in self._loaded_types:
@@ -1728,13 +1743,14 @@ class Installation:
         if setup.always_show_dir_on_ready_page or not setup.dir_page_disabled:
             folder = memo(SetupMessageName.ReadyMemoDir, wizard.dir_edit.text)
         if self.entries is not None and self._loaded_components:
-            text = ''
             if (setup_type := wizard.setup_type) is not None:
                 number = self._loaded_types[wizard.type_index].number
                 where = EntryLocation(EntrySection.Types, number, EntryField.Description)
                 expansion = self.host.expand(wizard.type_description(setup_type))
                 text = (yield from self._guarded(EntryParameter.Field, where, expansion)) or ''
-            description = memo(SetupMessageName.ReadyMemoType, text)
+                description = memo(SetupMessageName.ReadyMemoType, text)
+            elif not wizard.types_combo.known:
+                description = memo(SetupMessageName.ReadyMemoType, '')
             selected = yield from self._read(
                 EntrySection.Components, lambda expand: wizard.selected_components(True, True, expand))
             if selected:

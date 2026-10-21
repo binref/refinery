@@ -42,7 +42,7 @@ from typing import (
 from refinery.lib import json
 from refinery.lib.inno import CaseInsensitiveDict, constants, expressions, pascal
 from refinery.lib.inno.archive import InnoArchive, TextDirective
-from refinery.lib.inno.delphi import formatting, numbers, variants, x87
+from refinery.lib.inno.delphi import formatting, numbers, strings, variants, x87
 from refinery.lib.inno.delphi.errors import DelphiException, EIntOverflow, SysConst, Undefined
 from refinery.lib.inno.delphi.formatting import VarRec, VType
 from refinery.lib.inno.delphi.runtime import Platform
@@ -118,6 +118,7 @@ from refinery.lib.inno.wizard import (
     PageStyle,
     SetupHandler,
     StandIns,
+    TEditCharCase,
     TextBox,
     WizardForm,
     WizardPage,
@@ -263,7 +264,7 @@ class Variable(VariableBase, Generic[_T]):
     def __init__(
         self,
         type: IFPSType,
-        spec: VariableSpec | None = None,
+        spec: VariableSpec | str | None = None,
         path: tuple[int, ...] = (),
         data: _T | list | None = None
     ):
@@ -731,7 +732,7 @@ def _selected(names: list[str] | None, expression: str) -> bool:
 
 def _wizard_page(page: object) -> WizardPage:
     """
-    The page that the script passes; the emulator only models the pages that the script creates.
+    The page that the script passes, which the form gave it.
     """
     if not isinstance(page, WizardPage):
         raise TypeError(F'The emulator does not model the wizard page {page!r}.')
@@ -1065,8 +1066,8 @@ class IFPSEmulator:
         self.dialect = ifps.dialect
         self.ifps = ifps
         self._form_variables = [
-            (index, name) for index, spec in enumerate(ifps.globals)
-            if (name := str(spec).partition(':')[0].upper()) in _FORM_VARIABLES
+            (index, name) for index, variable in enumerate(ifps.globals)
+            if isinstance(variable.spec, str) and (name := variable.spec.upper()) in _FORM_VARIABLES
         ]
         self._stopwatch: _Stopwatch | None = None
         self._variables_held: dict[int, int] = {}
@@ -1671,7 +1672,8 @@ class IFPSEmulator:
             yield from self.text_changed(this)
 
     def _replace_box_selection(self, this: object, value: str) -> Generator[Any, Any, None]:
-        if isinstance(this, TextBox) and this.replace_selection(value):
+        if isinstance(this, TextBox):
+            this.replace_selection(value)
             yield from self.text_changed(this)
 
     @external()
@@ -1702,11 +1704,14 @@ class IFPSEmulator:
 
     @external()
     def TCustomEdit__Clear(self, this: object):
-        yield from self._set_box_text(this, '')
+        if isinstance(this, TextBox):
+            this.clear()
+            yield from self.text_changed(this)
 
     @external()
     def TCustomEdit__ClearSelection(self, this: object):
-        yield from self._replace_box_selection(this, '')
+        if isinstance(this, TextBox) and this.clear_selection():
+            yield from self.text_changed(this)
 
     @external()
     def TCustomEdit__GetSelText(self, this: object) -> str:
@@ -1728,7 +1733,7 @@ class IFPSEmulator:
     @external()
     def TCustomEdit__SetSelStart(self, this: object, value: int):
         if isinstance(this, TextBox):
-            this.select(value, 0)
+            this.select(value, value)
 
     @external()
     def TCustomEdit__GetSelLength(self, this: object) -> int:
@@ -1737,12 +1742,13 @@ class IFPSEmulator:
     @external()
     def TCustomEdit__SetSelLength(self, this: object, value: int):
         if isinstance(this, TextBox):
-            this.select(this.selection_start, value)
+            start = this.selection_start
+            this.select(start, start + value)
 
     @external()
     def TEdit__SetCharCase(self, this: object, value: int):
-        if isinstance(this, TextBox) and this.known and value in (1, 2):
-            this.set_text(this.text.upper() if value == 1 else this.text.lower())
+        if isinstance(this, TextBox) and value in _EDIT_CHAR_CASES:
+            this.set_case(TEditCharCase(value))
 
     def _set_box_handler(self, this: object, handler: object):
         if isinstance(this, TextBox):
@@ -2182,6 +2188,16 @@ class IFPSEmulator:
     def WizardForm(self) -> object:
         return self._form()
 
+    @external()
+    def MainForm(self) -> object:
+        """
+        The function of Inno Setup 5 that gives Setup's main form; before Setup created the form,
+        it raises an internal error.
+        """
+        if (main := self.wizard_form.main) is None:
+            raise InternalError('An attempt was made to access MainForm before it has been created')
+        return main
+
     def _form(self) -> WizardForm:
         """
         The wizard form, for a function that Setup runs through `GetWizardForm`.
@@ -2533,15 +2549,15 @@ class IFPSEmulator:
 
     @external()
     def Trim(self, string: str) -> str:
-        return string.strip()
+        return strings.trim(string)
 
     @external()
     def TrimLeft(self, string: str) -> str:
-        return string.lstrip()
+        return strings.trim_left(string)
 
     @external()
     def TrimRight(self, string: str) -> str:
-        return string.rstrip()
+        return strings.trim_right(string)
 
     @external()
     def StringJoin(self, sep: str, values: list[str]) -> str:
@@ -3076,6 +3092,8 @@ The global variables of a script of Inno Setup 6 or later that hold Setup's form
 """
 
 _NOTIFY_CALL = SetupCall.of(parse_function('procedure OnChange(Sender: TObject)'))
+
+_EDIT_CHAR_CASES = frozenset(TEditCharCase)
 
 _LAYOUT_CLASSES = frozenset({
     'TObject',

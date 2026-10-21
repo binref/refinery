@@ -121,6 +121,7 @@ class IFPSAPI:
     function SizeOf(var P: Variant): Integer;
 
     property WizardForm:  TWizardForm;
+    property MainForm:  TMainForm;
     property UninstallProgressForm:  TUninstallProgressForm;
     function GetCmdTail: String;
     function ParamCount: Integer;

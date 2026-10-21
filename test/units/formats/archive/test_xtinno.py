@@ -267,6 +267,17 @@ class TestInnoExtractor(TestUnitBase):
         setup = json.loads(data | self.load('meta/setup.json') | bytes)
         self.assertEqual(setup['Header']['DefaultDirName'], 'C:\\Program Files (x86)\\InnoZipSample')
 
+    def test_an_installer_whose_setup_cannot_be_described_builds_its_description_once(self):
+        """
+        Building the description of the installer's Setup is made to fail; every file keeps its
+        constants.
+        """
+        data = self.download_sample('0c05247e69030e6c1678d5c1a4cb05e6cc323b79e428d3fe014cb12adf8f502c')
+        with mock.patch('refinery.lib.inno.host.HostSetup.of_installer', side_effect=ValueError) as describe:
+            archive = InnoArchive(data)
+        self.assertEqual(describe.call_count, 1)
+        self.assertIn('data/{app}/abc.py', [file.path for file in archive.files])
+
     def test_an_installer_whose_script_cannot_be_emulated_names_its_files_as_if_it_could(self):
         def paths():
             data = self.download_sample('eeafd3fe2280e065aac87ca8b210be5873be5fe1f51ca4156d12bcf4f0d1eb1e')

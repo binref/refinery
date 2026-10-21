@@ -5,6 +5,7 @@ Inno Setup 7 changed how drives and slashes are read; `PathFunc.of` gives the ru
 """
 from __future__ import annotations
 
+from refinery.lib.inno.delphi.strings import trim
 from refinery.lib.inno.release import SetupRelease
 
 _SLASHES = '\\/'
@@ -22,19 +23,6 @@ _DEVICES = frozenset({
 """
 The names of devices that Windows maps a path to, depending on its version.
 """
-
-
-def trim(text: str) -> str:
-    """
-    Delphi's `Trim`: removes every character up to the space from both ends.
-    """
-    start = 0
-    end = len(text)
-    while start < end and text[start] <= ' ':
-        start += 1
-    while end > start and text[end - 1] <= ' ':
-        end -= 1
-    return text[start:end]
 
 
 def _drive_root(folder: str) -> str:

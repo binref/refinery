@@ -899,16 +899,16 @@ class VariableBase:
     """
     The type of the variable, see `refinery.lib.inno.ifps.IFPSType`.
     """
-    spec: VariableSpec | None
+    spec: VariableSpec | str | None
     """
-    A `refinery.lib.inno.ifps.VariableSpec` that uniquely identifies the base variable. If this
-    property is `None`, the variable is unbound: The `refinery.lib.inno.ifps.Op.SetPtrToCopy`
-    opcode can create such variables.
+    A `refinery.lib.inno.ifps.VariableSpec` that uniquely identifies the base variable, or the
+    name of a global variable that the script exports. If this property is `None`, the variable is
+    unbound: The `refinery.lib.inno.ifps.Op.SetPtrToCopy` opcode can create such variables.
     """
 
     __slots__ = 'type', 'spec'
 
-    def __init__(self, type: IFPSType, spec: VariableSpec):
+    def __init__(self, type: IFPSType, spec: VariableSpec | str | None):
         self.type = type
         self.spec = spec
 

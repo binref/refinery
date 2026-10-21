@@ -41,6 +41,8 @@ if TYPE_CHECKING:
         ClassVar,
         TypeVar,
     )
+
+    from refinery.lib.inno.host import SetupConstants
     _T = TypeVar('_T', bound=Struct)
     _E = TypeVar('_E', bound=enum.IntEnum)
 
@@ -3082,7 +3084,9 @@ class InnoArchive:
         """
         if (emulator := self._script_emulator) is not None:
             return emulator.reset().expand_constant(text)
-        expansion = self._constants_without_script.expand(text)
+        if isinstance(host := self._constants_without_script, Exception):
+            raise host
+        expansion = host.expand(text)
         try:
             while True:
                 next(expansion)
@@ -3098,11 +3102,18 @@ class InnoArchive:
             return None
 
     @cached_property
-    def _constants_without_script(self):
+    def _constants_without_script(self) -> SetupConstants | Exception:
+        """
+        The constants of Setup on the machine that the archive assumes, without the script; the
+        error that keeps them from being built, which every expansion then raises.
+        """
         from refinery.lib.inno.host import HostSetup, SetupConstants
         from refinery.lib.inno.wizard import StandIns, WizardForm
         config = _archive_config()
-        setup = HostSetup.of_installer(self, config)
+        try:
+            setup = HostSetup.of_installer(self, config)
+        except Exception as error:
+            return error
         form = WizardForm(StandIns.of(config), uninstallable=setup.uninstallable.answer is not False)
         return SetupConstants(setup, config, form)
 

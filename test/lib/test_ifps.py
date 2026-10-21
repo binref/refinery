@@ -52,6 +52,10 @@ _SAMPLES_WHOSE_EMULATED_INSTALLATION_HAS_NO_SCRIPT_ERROR = (
     'eeafd3fe2280e065aac87ca8b210be5873be5fe1f51ca4156d12bcf4f0d1eb1e',
     'fb0fc2e3c2059e6159540920a4ff7f75f92212639b318da7eb7fadece4a46ecc',
 )
+_PASCAL_SCRIPT_CASTS = 'Class'
+"""
+The namespace of Pascal Script's casts of objects, internal functions that no API declares.
+"""
 
 
 @contextlib.contextmanager
@@ -409,6 +413,17 @@ class TestIPFSEmulator(TestBase):
         # A reset that rebuilds the 61 global variables of this script makes the ratio about 400.
         self.assertLess(each / once, 10)
 
+    def test_trim_removes_every_character_up_to_the_space_as_delphi_does(self):
+        """
+        Pascal Script calls Delphi's `Trim`, `TrimLeft` and `TrimRight`, which remove the characters
+        from #0 to the space and keep every other character, such as the no-break space.
+        """
+        emulator = self._script_emulator(_SCRIPT_WITH_TRY_FINALLY)
+        self.assertEqual(emulator.Trim('\0\t a b \r\n\0'), 'a b')
+        self.assertEqual(emulator.TrimLeft('\0 a\0'), 'a\0')
+        self.assertEqual(emulator.TrimRight('\0 a\0'), '\0 a')
+        self.assertEqual(emulator.Trim('\xa0a\xa0'), '\xa0a\xa0')
+
     def test_a_compiled_prefix_check_finds_the_prefix_with_pos(self):
         emulator = self._installer_emulator()
         starts_with = emulator.symbols['STARTSWITH']
@@ -451,8 +466,7 @@ class TestIPFSEmulator(TestBase):
         with datapath('winapi.json').open('rb') as stream:
             modules = json.loads(stream.read())
         for namespace, handlers in IFPSEmulator.external_symbols.items():
-            # Pascal Script's casts of objects are internal functions that no API declares.
-            if namespace in modules or namespace == 'Class':
+            if namespace in modules or namespace == _PASCAL_SCRIPT_CASTS:
                 continue
             declared = IFPSClasses.Classes[namespace].members if namespace else IFPSAPI
             for name, handler in handlers.items():

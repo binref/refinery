@@ -36,14 +36,15 @@ from refinery.lib.inno.emulation import (
     EntryLocation,
     EntryParameter,
     EntrySection,
+    InternalError,
     NewEmulationError,
     NewFunctionCall,
     NewScriptError,
 )
-from refinery.lib.inno.emulator import IFPSEmulatorConfig, InnoSetupEmulator
+from refinery.lib.inno.emulator import IFPSEmulator, IFPSEmulatorConfig, InnoSetupEmulator
 from refinery.lib.inno.ifps import TC, AOp, DeclSpecParam, Dialect, Function, IFPSFile, Op, Operand, Value
 from refinery.lib.inno.pascal import IFPSException
-from refinery.lib.inno.wizard import PageID
+from refinery.lib.inno.wizard import PageID, TextBox
 from refinery.lib.types import buf
 from refinery.lib.un7z import SzArchive
 
@@ -1476,6 +1477,98 @@ class TestTheEmulatorGivesTheScriptTheWizardAsInnoSetupDid(_HostOracleTest):
     def test_a_new_machine_has_no_previous_installation(self):
         self.assertLinesAsLogged('PrevAppDir', 'PreviousData')
 
+    def test_the_function_main_form_of_inno_setup_5_fails_until_setup_created_its_main_form(self):
+        """
+        Scripts of Inno Setup 5 find the main form through the function `MainForm`, whose
+        `GetMainForm` raises an internal error while Setup has not created the form; Setup creates
+        it after `InitializeSetup`.
+        """
+        main_form = IFPSEmulator.external_symbols['']['MainForm'].call
+        emulator = self.emulator()
+        self.assertIs(main_form(emulator), emulator.wizard_form.main)
+        self.assertIsNotNone(emulator.wizard_form.main)
+        emulator.reset(walked=True)
+        with self.assertRaisesRegex(InternalError, 'MainForm before it has been created'):
+            main_form(emulator)
+
+
+class TestTheTextBoxesOfTheWizardFollowTheEditControlOfWindows(_HostOracleTest):
+    """
+    The members of a text box as Delphi implements them with the edit control of Windows; the
+    selections, texts and changes that the tests expect were measured with an edit control of
+    Windows 11. The box of the program group is given the script's handler `OrgChange`, which logs
+    the text of the box whenever the box notifies a change.
+    """
+
+    def box(self) -> tuple[InnoSetupEmulator, TextBox]:
+        emulator = self.emulator()
+        box = emulator.wizard_form.group_edit
+        box.on_change = emulator.symbols['ORGCHANGE']
+        return emulator, box
+
+    def write(self, emulator: InnoSetupEmulator, box: TextBox, member: str, *arguments) -> list[str]:
+        """
+        Runs a member of the box that the script writes, and gives the texts that `OrgChange`
+        logged.
+        """
+        namespace, _, name = member.partition('.')
+        events = IFPSEmulator.external_symbols[namespace][name].call(emulator, box, *arguments)
+        return [value for key, value in _logged_lines(events or ()) if key == 'OrgChange']
+
+    def read(self, emulator: InnoSetupEmulator, box: TextBox, member: str):
+        namespace, _, name = member.partition('.')
+        return IFPSEmulator.external_symbols[namespace][name].call(emulator, box)
+
+    def selection(self, emulator: InnoSetupEmulator, box: TextBox) -> tuple[int, int]:
+        return self.read(emulator, box, 'TCustomEdit.GetSelStart'), self.read(emulator, box, 'TCustomEdit.GetSelLength')
+
+    def test_a_negative_length_selects_the_characters_before_the_start(self):
+        """
+        Delphi's `SelLength` sends `EM_SETSEL` from the start to the start plus the length.
+        """
+        emulator, box = self.box()
+        self.write(emulator, box, 'TCustomEdit.SetText', 'abcdef')
+        self.write(emulator, box, 'TCustomEdit.SetSelStart', 3)
+        self.write(emulator, box, 'TCustomEdit.SetSelLength', -1)
+        self.assertEqual(self.selection(emulator, box), (2, 1))
+        self.assertEqual(self.read(emulator, box, 'TCustomEdit.GetSelText'), 'c')
+
+    def test_a_negative_start_other_than_minus_one_puts_the_caret_at_the_end(self):
+        emulator, box = self.box()
+        self.write(emulator, box, 'TCustomEdit.SetText', 'abcdef')
+        self.write(emulator, box, 'TCustomEdit.SetSelStart', -5)
+        self.assertEqual(self.selection(emulator, box), (6, 0))
+
+    def test_a_box_in_upper_case_converts_every_text_that_it_receives_one_character_at_a_time(self):
+        """
+        The edit control keeps a character whose capital has more than one character, such as the
+        German sharp s.
+        """
+        emulator, box = self.box()
+        self.write(emulator, box, 'TEdit.SetCharCase', 1)
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.SetText', 'stra\u00dfe'), ['[STRA\u00dfE]'])
+        self.write(emulator, box, 'TCustomEdit.SetSelStart', 0)
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.SetSelText', 'x'), ['[XSTRA\u00dfE]'])
+
+    def test_clearing_a_box_notifies_a_change_also_when_the_box_is_empty(self):
+        """
+        Delphi's `Text` sends `WM_SETTEXT` only when the text differs; its `Clear` sends it always.
+        """
+        emulator, box = self.box()
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.SetText', ''), ['[]'])
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.SetText', ''), [])
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.Clear'), ['[]'])
+
+    def test_replacing_an_empty_selection_notifies_a_change_but_clearing_it_does_not(self):
+        """
+        `SelText` sends `EM_REPLACESEL` and `ClearSelection` sends `WM_CLEAR`.
+        """
+        emulator, box = self.box()
+        self.write(emulator, box, 'TCustomEdit.SetText', 'abc')
+        self.write(emulator, box, 'TCustomEdit.SetSelStart', 1)
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.ClearSelection'), [])
+        self.assertEqual(self.write(emulator, box, 'TCustomEdit.SetSelText', ''), ['[abc]'])
+
 
 class TestTheEmulatorHostsTheScriptAsInnoSetupDid(_HostOracleTest):
 
@@ -1781,6 +1874,20 @@ class TestTheEmulatorGivesSetupsTextsAsInnoSetupDid(_HostOracleTest):
             for what in ('CurrentDirIsSrc', 'CurrentDirIsSys', 'RelativeExpand')
         ))
 
+    @pytest.mark.xfail(strict=True, raises=AssertionError, reason='SetCurrentDir does not change the current folder')
+    def test_set_current_dir_changes_the_folder_that_get_current_dir_gives(self):
+        """
+        Setup's `SetCurrentDir` makes an existing folder the current folder of the process; the
+        installation created the folder of the application.
+        """
+        emulator = self.emulator()
+        list(emulator.emulate_installation())
+        app = emulator.expand_constant('{app}')
+        handlers = IFPSEmulator.external_symbols['']
+        self.assertIn('SetCurrentDir', handlers)
+        self.assertTrue(handlers['SetCurrentDir'].call(emulator, app))
+        self.assertEqual(handlers['GetCurrentDir'].call(emulator), app)
+
     def test_the_uninstaller_is_named_in_the_folder_of_the_uninstall_files(self):
         self.assertLinesAsLogged('ConstUninstallExeEarly', 'ConstUninstallExeOnInstall', 'ConstUninstallExeAfterInstall')
 
@@ -1818,6 +1925,61 @@ class TestTheEmulatorGivesSetupsTextsAsInnoSetupDid(_HostOracleTest):
         emulated = _logged_values(installation, {})
         self.assertEqual(emulated['WizardDirEdit'], '[]')
         self.assertEqual(emulated['ConstAppOnInstall'], R'[I:\]')
+
+    def test_setup_does_not_tidy_the_folder_that_the_user_entered_after_a_refusal_when_it_installs(self):
+        """
+        The installer is changed in memory as in the test above, so that Setup refuses the folder;
+        the box of the folder is given the script's handler `OrgChange`, which logs the text of the
+        box whenever the box notifies a change. The emulated user then enters a folder that Setup
+        accepts, and tidying it when Setup installs leaves it as it is.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.DefaultDirName = '{code:NoSuchOracleFunction}'
+        archive.setup_info.Header.Flags &= ~Flags.AllowUNCPath
+        emulator = self.emulator(archive)
+        reset = emulator.reset
+
+        def reset_with_a_handler_on_the_folder_box(walked: bool = False):
+            reset(walked)
+            emulator.wizard_form.dir_edit.on_change = emulator.symbols['ORGCHANGE']
+            return emulator
+
+        with mock.patch.object(emulator, 'reset', reset_with_a_handler_on_the_folder_box):
+            changes = [value for name, value in _logged_lines(emulator.emulate_installation()) if name == 'OrgChange']
+        self.assertEqual(emulator.expand_constant('{app}'), 'I:\\')
+        self.assertNotIn('[I:\\]', changes)
+
+    def test_a_default_folder_that_the_emulator_cannot_make_a_full_path_is_reported_and_setup_goes_on(self):
+        """
+        The default folder of the installer is changed in memory to end in the name of a device,
+        which the emulator does not model.
+        """
+        archive = self.host_oracle()
+        archive.setup_info.Header.DefaultDirName = 'C:\\Apps\\CON'
+        installation = self.installation(archive)
+        failures = [error.name for error in installation if isinstance(error, NewEmulationError)]
+        self.assertIn(TextDirective.DefaultDirName, failures)
+        self.assertIn('DeinitializeSetup', self.events(archive))
+
+    def test_the_uninstaller_of_a_script_without_its_installer_is_in_the_folder_of_the_application(self):
+        """
+        Setup's default folder of the uninstall files is `{app}`; the compiled script of the second
+        build of the host oracle runs without its installer.
+        """
+        emulator = self.emulator(IFPSFile.Parse(_archived_file(self, _HOST_ORACLE, 'host-oracle-6-run2.ifps')))
+        list(emulator.emulate_installation())
+        self.assertEqual(emulator.expand_constant('{uninstallexe}'), emulator.expand_constant('{app}\\unins000.exe'))
+
+    def test_the_ready_memo_has_no_text_of_the_type_when_every_type_fails_its_check(self):
+        """
+        Every type of the installer is changed in memory to a check that fails. Setup then has no
+        type, for which its `UpdateReadyPage` gives no text.
+        """
+        archive = self.host_oracle()
+        for setup_type in archive.setup_info.Types:
+            setup_type.Check = 'Chk(\'-type.none\')'
+        emulated = _logged_values(self.installation(archive), {})
+        self.assertEqual(emulated['ReadyMemoType'], '')
 
     def test_a_check_of_the_serial_that_fails_while_setup_trims_the_name_is_reported_and_refuses_the_serial(self):
         """

@@ -115,13 +115,21 @@ class WizardPage:
         return F'WizardPage({self.id})'
 
 
+class TEditCharCase(IntEnum):
+    """
+    Delphi's `TEditCharCase`: the case to which a text box converts every text that it receives.
+    """
+    ecNormal = 0
+    ecUpperCase = 1
+    ecLowerCase = 2
+
+
 class TextBox:
     """
-    A text box of the wizard: its text, its selection as Windows' edit control keeps it, and the
-    handler that runs when its text changes, a function of the script or Setup's own. When the
-    script uses a member that the emulator does not model and that may change the text, the text
-    is unknown and the box reads as its stand-in, the text that names its value; writing the whole
-    text makes it known again.
+    A text box of the wizard: its text, its selection and its case as Windows' edit control keeps
+    them, and the handler that runs when the box notifies a change, a function of the script or
+    Setup's own. Where Setup refused its proposal, the text is unknown and the box reads as its
+    stand-in, the text that names its value; writing the whole text makes it known again.
     """
     __slots__ = (
         'name',
@@ -129,6 +137,7 @@ class TextBox:
         '_text',
         'selection_start',
         'selection_length',
+        'char_case',
         'on_change',
     )
 
@@ -138,6 +147,7 @@ class TextBox:
         self._text = text
         self.selection_start = 0
         self.selection_length = 0
+        self.char_case = TEditCharCase.ecNormal
         self.on_change: Function | SetupHandler | None = None
 
     def __repr__(self):
@@ -153,35 +163,72 @@ class TextBox:
             return self.stand_in
         return text
 
+    def _cased(self, text: str) -> str:
+        """
+        The text in the case of the box. The edit control converts each character on its own, so
+        that a character whose other case has more than one character stays as it is.
+        """
+        if (case := self.char_case) is TEditCharCase.ecNormal:
+            return text
+        convert = str.upper if case is TEditCharCase.ecUpperCase else str.lower
+        return ''.join(c if len(converted := convert(c)) != 1 else converted for c in text)
+
     def set_text(self, text: str) -> bool:
         """
-        Replaces the text as `WM_SETTEXT` does; the selection is empty at the start. The result
-        tells whether the text changed.
+        Writes the text as Delphi's `TControl.SetText` does: nothing happens when the box holds it
+        already; else `WM_SETTEXT` replaces it, in the case of the box, the selection is empty at
+        the start, and the box notifies a change. The result tells whether it did.
         """
-        changed = self._text != text
-        self._text = text
+        if self._text == text:
+            return False
+        self._text = self._cased(text)
         self.selection_start = 0
         self.selection_length = 0
-        return changed
+        return True
+
+    def clear(self):
+        """
+        Delphi's `TCustomEdit.Clear`, which sends `WM_SETTEXT` with an empty text: the box notifies
+        a change, also when it was empty.
+        """
+        self._text = ''
+        self.selection_start = 0
+        self.selection_length = 0
+
+    def set_case(self, case: TEditCharCase):
+        """
+        Delphi's `TEdit.CharCase`: a new case makes the box convert its text and every text that it
+        receives later; the box notifies no change.
+        """
+        if case is self.char_case:
+            return
+        self.char_case = case
+        if (text := self._text) is not None:
+            self._text = self._cased(text)
+            self.selection_start = 0
+            self.selection_length = 0
 
     def touched(self):
         """
-        Notes that the script changed the text in a way that the emulator does not model.
+        Notes that Setup refused the text; the emulated user entered one that Setup accepts, which
+        the emulator does not know.
         """
         self._text = None
 
-    def select(self, start: int, length: int):
+    def select(self, start: int, end: int):
         """
-        Selects as `EM_SETSEL` does: both ends are clamped to the text, and a negative start
-        removes the selection.
+        Selects as `EM_SETSEL` does: the start -1 removes the selection and leaves the caret at its
+        end; else both ends count as unsigned numbers clamped to the text, so that any other
+        negative number stands for the end of the text, and the selection lies between them in
+        either order.
         """
         size = len(self.text)
-        if start < 0:
+        if start == -1:
             self.selection_start = min(self.selection_start + self.selection_length, size)
             self.selection_length = 0
             return
-        start = min(start, size)
-        end = size if length < 0 else min(max(start + length, 0), size)
+        start = size if start < 0 else min(start, size)
+        end = size if end < 0 else min(end, size)
         self.selection_start = min(start, end)
         self.selection_length = abs(end - start)
 
@@ -190,19 +237,29 @@ class TextBox:
         start = self.selection_start
         return self.text[start:start + self.selection_length]
 
-    def replace_selection(self, text: str) -> bool:
+    def replace_selection(self, text: str):
         """
-        Replaces the selection with the given text as `EM_REPLACESEL` does; the caret follows the
-        new text. An unknown text stays unknown. The result tells whether the text changed.
+        Replaces the selection with the given text in the case of the box as `EM_REPLACESEL` does:
+        the caret follows the new text, and the box notifies a change, also when the text stays
+        the same. An unknown text stays unknown.
         """
-        if self._text is None:
-            return True
+        if (old := self._text) is None:
+            return
         start = self.selection_start
-        old = self._text
+        text = self._cased(text)
         self._text = F'{old[:start]}{text}{old[start + self.selection_length:]}'
         self.selection_start = start + len(text)
         self.selection_length = 0
-        return self._text != old
+
+    def clear_selection(self) -> bool:
+        """
+        Removes the selected text as `WM_CLEAR` does: the box notifies a change only when the
+        selection was not empty. The result tells whether it did.
+        """
+        if not self.selection_length:
+            return False
+        self.replace_selection('')
+        return True
 
 
 class MainForm:
