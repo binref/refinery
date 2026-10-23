@@ -310,7 +310,8 @@ def is_vba_container(data: buf) -> bool:
 class VBAContainer(NamedTuple):
     """
     A compound file of an input, which may hold VBA projects. The part is the name under which the
-    input stores the compound file, or `None` when the compound file is the input itself. The
+    input stores the compound file, or `None` when the compound file is the input itself. The part
+    of a zip member has forward slashes in place of backslashes on every platform. The
     compound file is read only when `open` is called, which raises the error of the read when the
     part cannot be read or is no compound file.
     """
@@ -339,7 +340,8 @@ def _zip_containers(data: memoryview) -> list[VBAContainer]:
         except Exception:
             is_ole = True
         if is_ole:
-            containers.append(VBAContainer(info.filename, lambda info=info: OleFile(archive.read(info))))
+            name = info.filename.replace('\\', '/')
+            containers.append(VBAContainer(name, lambda info=info: OleFile(archive.read(info))))
     return containers
 
 

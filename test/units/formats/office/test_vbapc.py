@@ -1,10 +1,8 @@
 import collections
 import inspect
-import io
 import re
 import lzma
 import functools
-import zipfile
 
 from refinery.lib.ole.decompiler import vba_string_literal
 from refinery.lib.ole.vba import copytoken_help
@@ -236,9 +234,7 @@ class TestVBAPC(VBAUnitTestBase):
 
     def test_every_project_of_a_document_that_lists_its_project_twice_is_disassembled(self):
         first = self.download_sample('ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394')
-        other = self.download_sample('6d8a0f5949adf37330348cc9a231958ad8fb3ea3a3d905abe5e72dbfd75a3d1d')
-        with zipfile.ZipFile(io.BytesIO(other)) as archive:
-            second = archive.read('word/vbaProject.bin')
+        second = self._project(STOMPED_DOCM)
         doubled = list_part_twice(first, 'word/vbaProject.bin', lambda _: second)
         expected = collections.Counter(bytes(chunk) for chunk in first | self.load())
         expected.update(bytes(chunk) for chunk in second | self.load())

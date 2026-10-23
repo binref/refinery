@@ -46,6 +46,10 @@ class TestVBAExtractor(VBAUnitTestBase):
         expected.update(bytes(chunk) for chunk in second | self.load())
         self.assertEqual(collections.Counter(bytes(chunk) for chunk in doubled | self.load()), expected)
 
+    def test_a_project_in_a_part_named_with_backslashes_is_located_with_forward_slashes(self):
+        streams = self._streams(self.download_sample(STOMPED_DOCM))
+        self.assertEqual({stream.partition('/VBA/')[0] for stream in streams}, {'word/vbaProject.bin'})
+
     def test_the_modules_of_a_project_come_out_below_the_name_of_the_project(self):
         for sample, paths in [
             (DOC, ['Project/ThisDocument', 'Project/UserForm1', 'Project/Module1']),

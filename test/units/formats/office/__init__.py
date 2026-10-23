@@ -15,6 +15,25 @@ STOMPED_DOCM = '6d8a0f5949adf37330348cc9a231958ad8fb3ea3a3d905abe5e72dbfd75a3d1d
 DOCX = '36c856d2bf531eb27745f04afe89b9a86035fb6808966001cec9fb751e3e90e3'
 
 
+def part_name(info: zipfile.ZipInfo) -> str:
+    """
+    The name of the given zip member with its backslashes read as forward slashes, which the zip
+    reader of the standard library does only on Windows.
+    """
+    return info.filename.replace('\\', '/')
+
+
+def read_part(document: bytes | bytearray, name: str) -> bytes:
+    """
+    The content of the part with the given name in the given document.
+    """
+    with zipfile.ZipFile(io.BytesIO(document)) as archive:
+        for info in archive.infolist():
+            if part_name(info) == name:
+                return archive.read(info)
+    raise KeyError(F'The document has no part named {name}.')
+
+
 def list_part_twice(
     document: bytes | bytearray,
     name: str,
@@ -23,24 +42,29 @@ def list_part_twice(
 ) -> bytes:
     """
     Repacks the given document with the zip writer of the standard library, keeping the order and
-    compression of its parts, and lists the part with the given name a second time right after it,
-    with its content altered by the given function and under the given copy name, if any.
+    compression of its parts and naming them with forward slashes, and lists the part with the given
+    name a second time right after it, with its content altered by the given function and under the
+    given copy name, if any.
     """
     output = io.BytesIO()
+    listed = False
     with zipfile.ZipFile(io.BytesIO(document)) as source, zipfile.ZipFile(output, 'w') as target:
         for info in source.infolist():
             content = source.read(info)
-            copies = [(info.filename, content)]
-            if info.filename == name:
+            copies = [(filename := part_name(info), content)]
+            if filename == name:
                 if (altered := alter(content)) == content:
                     raise ValueError(F'The second copy of {name} does not differ from the first.')
                 copies.append((copy_name or name, altered))
+                listed = True
             for filename, copy in copies:
                 entry = zipfile.ZipInfo(filename, info.date_time)
                 entry.compress_type = info.compress_type
                 with warnings.catch_warnings():
                     warnings.simplefilter('ignore')
                     target.writestr(entry, copy)
+    if not listed:
+        raise KeyError(F'The document has no part named {name}.')
     return output.getvalue()
 
 
@@ -70,8 +94,7 @@ class VBAUnitTestBase(TestUnitBase):
     """
 
     def _project(self, sample: str) -> bytes:
-        with zipfile.ZipFile(io.BytesIO(self.download_sample(sample))) as archive:
-            return archive.read('word/vbaProject.bin')
+        return read_part(self.download_sample(sample), 'word/vbaProject.bin')
 
     def _modules(self, data, *args, **kwargs) -> dict[str, bytes]:
         return {str(chunk.meta['path']): bytes(chunk) for chunk in data | self.load(*args, **kwargs)}
