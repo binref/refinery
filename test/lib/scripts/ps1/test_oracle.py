@@ -4281,9 +4281,7 @@ class TestPs1WordSpellingAgreesWithWindowsPowerShell(Ps1OracleTest):
 class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     """
     The output must run and do the same thing as the input. Every other test of that compares our
-    output against our own expectation of it; this one measures both on a host. A claim is not run
-    again: what it does is its entry in `CLAIM_TRANSCRIPTS`, which
-    `TestPs1CorruptionLedgerRestsOnMeasuredBeliefs` holds against the host.
+    output against our own expectation of it; this one measures both on a host.
 
     The mode measured is the sound one, `ps1 -s`: it is the one whose output this promise is made
     about, because the trusting model the unit runs by default is documented — see
@@ -4292,18 +4290,26 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     cost and not a defect of the rewrite.
     """
 
-    def test_the_output_behaves_like_the_input(self):
+    def test_each_claim_does_what_is_recorded_and_each_output_behaves_like_its_input(self):
+        """
+        Each snippet runs once for both questions: whether a claim writes what `CLAIM_TRANSCRIPTS`
+        records, which `TestPs1CorruptionLedgerRestsOnMeasuredBeliefs` stands for, and whether the
+        output does what the snippet does. The output is compared with the snippet as measured in
+        this run, so a host that answers differently from the record fails only the first question.
+        """
         snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+        measured = dict(zip(snippets, behaviours(snippets)))
+        with self.subTest(law='every belief about what a script does is what powershell does'):
+            self.assertEqual({claim: measured[claim] for claim in corpus.CLAIMS}, CLAIM_TRANSCRIPTS)
         deobfuscated = rewritten_by(self.ldu('ps1', strict=True), snippets)
         rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
-        unmeasured = [snippet for snippet in rewritten if snippet not in CLAIM_TRANSCRIPTS]
-        before = {**CLAIM_TRANSCRIPTS, **dict(zip(unmeasured, behaviours(unmeasured)))}
         changed = sorted(
             snippet
             for snippet, after in zip(rewritten, behaviours(rewritten, deobfuscated))
-            if after != before[snippet]
+            if after != measured[snippet]
         )
-        self.assertEqual(changed, sorted({**BEHAVIOUR_DEFECTS, **BEHAVIOUR_DIVERGENCES}))
+        with self.subTest(law='the output behaves like the input'):
+            self.assertEqual(changed, sorted({**BEHAVIOUR_DEFECTS, **BEHAVIOUR_DIVERGENCES}))
 
     def test_every_behaviour_defect_is_a_snippet_that_is_run(self):
         self.assertEqual(sorted(set(BEHAVIOUR_DEFECTS) - corpus.executable()), [])
@@ -4351,14 +4357,10 @@ class TestPs1ValueTypesRestOnMeasuredBeliefs(Ps1OracleTest):
     The unit answers both from tables and rules we wrote, so every other test of them agrees with us
     wherever we are wrong; these do not.
 
-    The two questions are kept apart. This class asks only what PowerShell does, so that the table it
-    pins is a measurement and not a comparison, and `TestPs1DeobfuscationPreservesValueTypes` asks
-    whether the unit's output still does it.
+    The two questions are kept apart. The table this class stands for is a measurement and not a
+    comparison: `TestPs1DeobfuscationPreservesValueTypes` runs each row once and asks of it whether
+    it does what `TYPE_TRANSCRIPTS` records, apart from asking whether the unit's output does it too.
     """
-
-    def test_every_belief_about_a_value_type_is_what_powershell_does(self):
-        measured = dict(zip(corpus.TYPES, behaviours(corpus.TYPES)))
-        self.assertEqual(measured, TYPE_TRANSCRIPTS)
 
     def test_a_char_and_a_one_character_string_are_told_apart(self):
         """
@@ -4388,18 +4390,27 @@ class TestPs1DeobfuscationPreservesValueTypes(Ps1OracleTest):
     The same promise `TestPs1DeobfuscationPreservesBehaviour` checks, over the rows written to make
     a type observable. They are quantified separately and ledgered separately because they share a
     few root causes rather than being independent defects, and because three of those causes are
-    not about types at all — see `TYPE_DEFECTS`. What a row does is its entry in `TYPE_TRANSCRIPTS`,
-    which `TestPs1ValueTypesRestOnMeasuredBeliefs` holds against the host, so only the output runs.
+    not about types at all — see `TYPE_DEFECTS`.
     """
 
-    def test_the_output_behaves_like_the_row(self):
-        rewrite = rewritten_by(self.ldu('ps1', strict=True), corpus.TYPES)
+    def test_each_row_does_what_is_recorded_and_its_output_does_the_same(self):
+        """
+        Each row runs once for both questions: whether it writes what `TYPE_TRANSCRIPTS` records,
+        which `TestPs1ValueTypesRestOnMeasuredBeliefs` stands for, and whether the output does what
+        the row does. The output is compared with the row as measured in this run, so a host that
+        answers differently from the record fails only the first question.
+        """
         rows = corpus.TYPES
+        measured = dict(zip(rows, behaviours(rows)))
+        with self.subTest(law='every belief about a value type is what powershell does'):
+            self.assertEqual(measured, TYPE_TRANSCRIPTS)
+        rewrite = rewritten_by(self.ldu('ps1', strict=True), rows)
         changed = sorted(
             row for row, after in zip(rows, behaviours(rows, rewrite))
-            if after != TYPE_TRANSCRIPTS[row]
+            if after != measured[row]
         )
-        self.assertEqual(changed, sorted(TYPE_DEFECTS))
+        with self.subTest(law='the output behaves like the row'):
+            self.assertEqual(changed, sorted(TYPE_DEFECTS))
 
     def test_every_type_defect_is_a_row_that_is_run(self):
         self.assertEqual(sorted(set(TYPE_DEFECTS) - set(corpus.TYPES)), [])
@@ -4425,11 +4436,11 @@ class TestPs1CorruptionLedgerRestsOnMeasuredBeliefs(Ps1OracleTest):
     That a native program receives `-in` as text rather than as an abbreviated parameter name cannot
     be shown without running the program: what is measured here is the tokenizer half of it, that
     the spelling reaches the command unaltered.
-    """
 
-    def test_every_belief_about_what_a_script_does_is_what_powershell_does(self):
-        measured = dict(zip(corpus.CLAIMS, behaviours(corpus.CLAIMS)))
-        self.assertEqual(measured, CLAIM_TRANSCRIPTS)
+    What each script writes is asked by `TestPs1DeobfuscationPreservesBehaviour`, which runs each
+    script once and asks of it whether it writes what `CLAIM_TRANSCRIPTS` records, apart from
+    asking whether the unit's output writes it too.
+    """
 
     def test_every_belief_about_where_a_command_name_ends_is_where_powershell_ends_it(self):
         measured = dict(zip(corpus.NAMES, command_names(corpus.NAMES)))
