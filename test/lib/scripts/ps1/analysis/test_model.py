@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import time
+import functools
 
-from test import TestBase
+from test import TestBase, fastest_processor_time, processor_time_ratio
 
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.analysis.arguments import (
@@ -897,6 +897,7 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
     _LONG = 400
     _BUDGET = 20
     _RUNS = 3
+    _BATCH = 50
 
     @staticmethod
     def _chain(length: int) -> str:
@@ -914,15 +915,19 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
         return '\n'.join(lines)
 
     def _cost(self, length: int) -> float:
+        """
+        The fastest of the runs that each build the models of a batch of chains of the given length.
+        """
         source = self._chain(length)
-        costs = []
-        for _ in range(self._RUNS + 1):
-            tree = Ps1Parser(source).parse()
-            start = time.perf_counter()
+        batches = [[Ps1Parser(source).parse() for _ in range(self._BATCH)] for _ in range(self._RUNS)]
+        return fastest_processor_time(functools.partial(self._build_all, batch) for batch in batches)
+
+    @staticmethod
+    def _build_all(trees: list) -> None:
+        for tree in trees:
             build_semantic_model(tree)
-            costs.append(time.perf_counter() - start)
-        return min(costs[1:])
 
     def test_quadrupling_the_chain_does_not_cost_twenty_times_as_much(self):
+        long = self._cost(self._LONG)
         short = self._cost(self._SHORT)
-        self.assertLess(self._cost(self._LONG), self._BUDGET * short)
+        self.assertLess(processor_time_ratio(long, short), self._BUDGET)

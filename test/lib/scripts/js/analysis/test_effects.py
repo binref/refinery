@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import functools
 import inspect
-import time
 
 from dataclasses import replace
 
-from test import TestBase
+from test import TestBase, fastest_processor_time, processor_time_ratio
 
 from refinery.lib.scripts import set_child, tree_version
 from refinery.lib.scripts.js.analysis.conversions import ConversionSettlement
@@ -17,7 +17,7 @@ from refinery.lib.scripts.js.analysis.effects import (
     container_literal_access_is_plain,
     object_member_access_runs_accessor,
 )
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -2868,36 +2868,39 @@ class TestTheConversionScanCostsWhatTheProgramIsLong(TestBase):
     """
 
     @staticmethod
-    def _fastest_build(source: str) -> float:
-        # The fastest of three builds is compared, so a pause of the machine during one build cannot
-        # decide the test.
-        times: list[float] = []
-        for _ in range(3):
-            model = build_semantic_model(JsParser(source).parse())
-            start = time.perf_counter()
+    def _build_repeatedly(model: SemanticModel, count: int):
+        for _ in range(count):
             build_effects(model)
-            times.append(time.perf_counter() - start)
-        return min(times)
 
-    def _assert_build_grows_with_the_program(self, small: str, large: str):
-        small_time = self._fastest_build(small)
-        large_time = self._fastest_build(large)
+    @classmethod
+    def _fastest_build(cls, source: str, batch: int) -> float:
+        """
+        The fastest of three runs that each build the effects of one model of the source the given
+        number of times.
+        """
+        ast = JsParser(source).parse()
+        models = [build_semantic_model(ast) for _ in range(3)]
+        return fastest_processor_time(functools.partial(cls._build_repeatedly, model, batch) for model in models)
+
+    def _assert_build_grows_with_the_program(self, small: str, large: str, batch: int):
+        large_time = self._fastest_build(large, batch)
+        small_time = self._fastest_build(small, batch)
         # A build growing with the square of the program takes about the square of the size ratio,
         # which the bound of three times the size ratio refuses.
-        self.assertLess(large_time / small_time, 3 * len(large) / len(small))
+        self.assertLess(processor_time_ratio(large_time, small_time), 3 * len(large) / len(small))
 
     def test_fields_defined_on_this_in_one_constructor_build_in_time_that_grows_with_the_program(self):
         def program(count: int) -> str:
             fields = ' '.join(F'Object.defineProperty(this, "f{k}", {{ value: {k} }});' for k in range(count))
             return F'function Foo() {{ {fields} }} new Foo();'
-        self._assert_build_grows_with_the_program(program(100), program(800))
+        self._assert_build_grows_with_the_program(program(100), program(800), batch=25)
 
     def test_concatenations_beside_an_install_on_this_build_in_time_that_grows_with_their_length(self):
         def program(length: int) -> str:
             chain = ' + '.join(F'"p{k}"' for k in range(length))
             chains = ' '.join(F'var s{k} = {chain};' for k in range(40))
             return F'function P() {{ this.toString = function () {{ return "p"; }}; }} new P(); {chains}'
-        self._assert_build_grows_with_the_program(program(50), program(500))
+        self._assert_build_grows_with_the_program(program(50), program(500), batch=10)
 
 
 def _call_summary(source: str, name: str = '') -> EffectSummary:
@@ -3149,17 +3152,15 @@ class TestTheEffectModelBuildsForAProgramWithManyNames(TestBase):
             lines.extend(F'n{depth}_{i}.toString = function () {{ return "x"; }};' for i in range(width))
             source = '\n'.join(lines)
             ast = JsParser(source).parse()
-            # The fastest of three builds is compared, so a pause of the machine during one build
-            # cannot decide the test.
-            times: list[float] = []
-            for _ in range(3):
-                start = time.perf_counter()
-                build_effects(build_semantic_model(ast))
-                times.append(time.perf_counter() - start)
-            return min(times), len(source)
 
-        small_time, small_size = build(1)
+            def build_fifteen_times():
+                for _ in range(15):
+                    build_effects(build_semantic_model(ast))
+
+            return fastest_processor_time(build_fifteen_times for _ in range(3)), len(source)
+
         large_time, large_size = build(8)
+        small_time, small_size = build(1)
         # A build growing with the square of the program takes about 49 times as long, which the
         # bound of three times the size ratio refuses with room to spare.
-        self.assertLess(large_time / small_time, 3 * large_size / small_size)
+        self.assertLess(processor_time_ratio(large_time, small_time), 3 * large_size / small_size)

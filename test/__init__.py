@@ -55,19 +55,15 @@ def fastest_processor_time(runs: Iterable[Callable[[], object]]) -> float:
     return fastest
 
 
-def processor_time_ratio(
-    numerator_runs: Iterable[Callable[[], object]],
-    denominator_runs: Iterable[Callable[[], object]],
-) -> float:
+def processor_time_ratio(numerator: float, denominator: float) -> float:
     """
-    The `fastest_processor_time` of the first runs divided by that of the second runs. When the
-    fastest of the second runs takes less than 50 milliseconds, an error is raised: on Windows,
-    processor time advances in steps of about 16 milliseconds, which would decide the ratio.
+    The ratio of two times that `fastest_processor_time` measured. A denominator of less than 50
+    milliseconds raises an error: on Windows, processor time advances in steps of about 16
+    milliseconds, which would decide the ratio.
     """
-    denominator = fastest_processor_time(denominator_runs)
     if denominator < 0.05:
-        raise ValueError(F'The fastest run took {denominator * 1000:.0f} milliseconds, which is too short to divide by.')
-    return fastest_processor_time(numerator_runs) / denominator
+        raise ValueError(F'A time of {denominator * 1000:.0f} milliseconds is too short to divide by.')
+    return numerator / denominator
 
 
 def wontfix(reason: str):

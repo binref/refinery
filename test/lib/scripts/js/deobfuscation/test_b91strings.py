@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import base64
+import functools
 import inspect
 import lzma
-import time
 import unittest
 
+from test import fastest_processor_time, processor_time_ratio
 from test.lib.scripts.js.analysis.differential import (
     completion_values,
     deobfuscate_source,
@@ -1577,18 +1578,11 @@ class TestAFunctionCallingNoDecoderIsNotComparedToTheAccessorTemplate(TestJsDeob
         tree = JsParser(source).parse()
         transformer = JsBase91StringDecoder()
         transformer.options = DeobfuscationOptions(execution=ExecutionModel.module)
-        start = time.perf_counter()
-        transformer.visit(tree)
-        first = time.perf_counter() - start
-        repeated: list[float] = []
-        for _ in range(3):
-            start = time.perf_counter()
-            transformer.visit(tree)
-            repeated.append(time.perf_counter() - start)
+        first = fastest_processor_time([functools.partial(transformer.visit, tree)])
+        repeated = fastest_processor_time(functools.partial(transformer.visit, tree) for _ in range(3))
         # The first run builds the models the later runs reuse, which reads the whole program; a
-        # copy of the large function costs about half as much as that first run. The fastest of the
-        # later runs is compared, so a pause of the machine during one of them cannot decide it.
-        self.assertLess(min(repeated), first / 5)
+        # copy of the large function costs about half as much as that first run.
+        self.assertLess(processor_time_ratio(repeated, first), 1 / 5)
 
 
 class TestTheDecoysOfADefaultedAccessor(TestJsDeobfuscator):

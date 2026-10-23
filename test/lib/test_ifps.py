@@ -10,7 +10,7 @@ from unittest import mock
 from refinery.lib.inno.emulation import EmulatorException
 from refinery.lib.inno.pascal import IFPSException
 
-from .. import TestBase, processor_time_ratio, wontfix
+from .. import TestBase, fastest_processor_time, processor_time_ratio, wontfix
 
 _SCRIPT_WITH_NESTED_TRY = '453b14ee0451b92f390ddacc93d6c4d24fcb8268baf94efa823387a1dba4eedc'
 _SCRIPT_WITH_TRY_FINALLY = 'ccc40b5355ab03d75fb66742558031a452986cfb0110804fd8614f52226ca1bf'
@@ -407,12 +407,10 @@ class TestIPFSEmulator(TestBase):
                     emulator.reset()
                 emulator.expand_constant(string)
 
-        ratio = processor_time_ratio(
-            (functools.partial(expand_all, True) for _ in range(3)),
-            (functools.partial(expand_all, False) for _ in range(3)),
-        )
+        each = fastest_processor_time(functools.partial(expand_all, True) for _ in range(3))
+        once = fastest_processor_time(functools.partial(expand_all, False) for _ in range(3))
         # A reset that rebuilds the 61 global variables of this script makes the ratio about 400.
-        self.assertLess(ratio, 10)
+        self.assertLess(processor_time_ratio(each, once), 10)
 
     def test_trim_removes_every_character_up_to_the_space_as_delphi_does(self):
         """

@@ -15,7 +15,7 @@ import pytest
 from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
 
-from .. import TestBase, without_cycle_collector
+from .. import TestBase, fastest_processor_time, processor_time_ratio, without_cycle_collector
 
 
 class _Lifetimes:
@@ -1069,13 +1069,12 @@ class TestFraming(TestBase):
         self.assertEqual(len(unit.read()), size - 101)
 
     def test_readline_is_linear(self):
-        import time
         from refinery import nop
         line = B'x' * 0x100000 + B'\n'
         unit = line + B'rest' | nop()
-        start = time.perf_counter()
-        self.assertEqual(unit.readline(), line)
-        self.assertLess(time.perf_counter() - start, 1)
+        lines = []
+        self.assertLess(fastest_processor_time([lambda: lines.append(unit.readline())]), 1)
+        self.assertEqual(lines, [line])
         self.assertEqual(unit.readline(), B'rest')
         self.assertEqual(unit.readline(), B'')
         unit = line | nop()
@@ -1171,19 +1170,19 @@ class TestFrameStream(TestBase):
                     _unpacked(stream)
 
     def test_input_that_arrives_in_tiny_pieces_is_read_about_as_fast_as_it_arrives(self):
-        import time
         data = bytes(range(256)) * 0x1000
         piece = bytearray(8)
-        trickle = _Trickle(data)
-        start = time.perf_counter()
-        while trickle.readinto(piece):
-            pass
-        arrival = time.perf_counter() - start
-        start = time.perf_counter()
-        chunk = _unpacked(_Trickle(data))
-        reading = time.perf_counter() - start
-        self.assertLess(reading, arrival * 4)
-        self.assertEqual(chunk, data)
+
+        def arrive():
+            trickle = _Trickle(data)
+            while trickle.readinto(piece):
+                pass
+
+        chunks = []
+        arrival = fastest_processor_time(arrive for _ in range(3))
+        reading = fastest_processor_time((lambda: chunks.append(_unpacked(_Trickle(data)))) for _ in range(3))
+        self.assertLess(processor_time_ratio(reading, arrival), 4)
+        self.assertEqual(chunks, [data] * 3)
 
     def test_input_from_a_pipe_is_read_completely(self):
         import os

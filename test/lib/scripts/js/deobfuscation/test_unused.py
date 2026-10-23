@@ -4,7 +4,7 @@ import functools
 import inspect
 import unittest
 
-from test import processor_time_ratio
+from test import fastest_processor_time, processor_time_ratio
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
@@ -3175,11 +3175,9 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
         """
         small_asts = [JsParser(small).parse() for _ in range(3)]
         large_asts = [JsParser(large).parse() for _ in range(3)]
-        ratio = processor_time_ratio(
-            (functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in large_asts),
-            (functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in small_asts),
-        )
-        return ratio, JsSynthesizer().convert(large_asts[0])
+        large_time = fastest_processor_time(functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in large_asts)
+        small_time = fastest_processor_time(functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in small_asts)
+        return processor_time_ratio(large_time, small_time), JsSynthesizer().convert(large_asts[0])
 
     def test_live_stores_to_two_reused_names_are_kept_in_time_that_grows_with_the_program(self):
         def source(count: int) -> str:
