@@ -43,6 +43,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     PinnedTransformer,
     access_key,
     declares_a_watched_name,
+    denoted_value,
     eval_binary_op,
     fresh_name,
     is_literal,
@@ -55,6 +56,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     sanitize_inlined_body,
     substitute_use_position,
 )
+from refinery.lib.scripts.js.deobfuscation.namespaces import namespace_accesses
 from refinery.lib.scripts.js.deobfuscation.parameters import parameter_list
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
@@ -138,7 +140,7 @@ _UNDEFINED = _Undefined.VALUE
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.analysis.intrinsics import IntrinsicWrites
-    from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+    from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
 
     _StateEnv = dict[str, float]
     _SlotPath = tuple[str, ...]
@@ -166,13 +168,34 @@ class _FlagVariable(NamedTuple):
         return isinstance(node, JsIdentifier) and node.name == self.name
 
 
+class _FlagProperty(NamedTuple):
+    """
+    The flag held by the property *key* of the object a variable *holder* of that function holds,
+    as the recovery of a machine around this one writes a variable of the function it recovers that
+    code from (`_Activation`).
+    """
+    holder: str
+    key: str
+
+    @property
+    def base(self) -> str:
+        return self.holder
+
+    def spelled_by(self, node: Node | None) -> bool:
+        return isinstance(node, JsMemberExpression) and _slot_path(node) == (self.holder, self.key)
+
+
+_Flag = _FlagVariable | _FlagProperty
+
+
 class _CallSiteInfo(NamedTuple):
     initial_state: list[int | float]
-    flag: _FlagVariable | None
+    flag: _Flag | None
     result_var: str | None
     scaffolding_end: int
     returns_value: bool
     guarded: bool
+    undefined_reads: list[Expression]
 
 
 class _WrapperFunctionInfo(NamedTuple):
@@ -238,7 +261,8 @@ class _SMBlock:
 @dataclass
 class _GeneratorCFFMatch:
     generator_name: str
-    generator: JsFunctionDeclaration
+    generator: JsFunctionNode
+    generator_names: frozenset[str]
     state_var_names: list[str]
     initial_state: list[int | float]
     end_state: int | float
@@ -247,7 +271,7 @@ class _GeneratorCFFMatch:
     switch_label: str | None
     scope_param_name: str | None
     arg_var_name: str | None
-    flag: _FlagVariable | None
+    flag: _Flag | None
     result_var: str | None
     gen_decl_index: int
     scaffolding_end: int
@@ -260,6 +284,7 @@ class _GeneratorCFFMatch:
     scope_prop_names: set[str] = field(default_factory=set)
     namespaces: set[str] = field(default_factory=set)
     namespace_homes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    undefined_reads: list[Expression] = field(default_factory=list)
 
     @property
     def qualifies_namespaces(self) -> bool:
@@ -628,17 +653,18 @@ def _redirect_assignment_target(
 
 def _scope_arg_object(
     node: Node,
-    generator_name: str,
+    generator_names: frozenset[str],
     num_state_vars: int,
 ) -> JsObjectExpression | None:
     """
-    If *node* is a call `generator_name(states…, scopeObj, …)` whose argument at the scope position
-    (index *num_state_vars*) is an object literal, return that object literal. This is the
-    structural scope argument threaded through the shared generator by its wrapper functions.
+    If *node* is a call `generator(states…, scopeObj, …)` of the generator under one of
+    *generator_names* whose argument at the scope position (index *num_state_vars*) is an object
+    literal, return that object literal. This is the structural scope argument threaded through
+    the shared generator by its wrapper functions.
     """
     if not isinstance(node, JsCallExpression):
         return None
-    if not isinstance(node.callee, JsIdentifier) or node.callee.name != generator_name:
+    if not isinstance(node.callee, JsIdentifier) or node.callee.name not in generator_names:
         return None
     args = node.arguments
     if len(args) <= num_state_vars:
@@ -654,7 +680,7 @@ def _collect_namespaces(
     scope_param_name: str | None,
     scope_default_props: list[str],
     redirect_var: str | None,
-    generator_name: str,
+    generator_names: frozenset[str],
     num_state_vars: int,
 ) -> set[str] | None:
     """
@@ -673,7 +699,7 @@ def _collect_namespaces(
             target = _redirect_assignment_target(node, scope_param_name, redirect_var)
             if target is not None:
                 namespaces.add(target)
-        scope_arg = _scope_arg_object(node, generator_name, num_state_vars)
+        scope_arg = _scope_arg_object(node, generator_names, num_state_vars)
         if scope_arg is None:
             continue
         if (properties := _scope_object_properties(scope_arg)) is None:
@@ -720,14 +746,13 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     that it is strict, so `_hoisted_names` would give such a function the Annex B copy only sloppy
     code makes.
     """
-    stmt = body[idx]
-    if not isinstance(stmt, JsFunctionDeclaration):
+    if (held := _held_generator(body[idx])) is None:
         return None
+    stmt, holder = held
     if not is_generator_function(stmt) or is_async_function(stmt):
         return None
-    if stmt.id is None:
-        return None
-    gen_name = stmt.id.name
+    gen_name = holder.name
+    gen_names = frozenset({gen_name, *_own_name(stmt)})
     if stmt.body is None:
         return None
     params = stmt.params
@@ -823,7 +848,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
             scope_param_name,
             scope_default_props,
             with_redirect_var,
-            gen_name,
+            gen_names,
             len(state_var_names),
         )
         if collected is None:
@@ -841,6 +866,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     return _GeneratorCFFMatch(
         generator_name=gen_name,
         generator=stmt,
+        generator_names=gen_names,
         state_var_names=state_var_names,
         initial_state=call_info.initial_state,
         end_state=end_state,
@@ -851,6 +877,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         arg_var_name=arg_var_name,
         flag=call_info.flag,
         result_var=call_info.result_var,
+        undefined_reads=call_info.undefined_reads,
         gen_decl_index=idx,
         scaffolding_end=call_info.scaffolding_end,
         with_redirect_var=with_redirect_var,
@@ -864,7 +891,40 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     )
 
 
-def _reads_its_own_invocation(generator: JsFunctionDeclaration) -> bool:
+def _held_generator(
+    stmt: Statement,
+) -> tuple[JsFunctionDeclaration | JsFunctionExpression, JsIdentifier] | None:
+    """
+    The function *stmt* binds to a name, with that name: a function declaration, or the store of
+    a function expression to a variable, as the recovery of a machine around this one writes the
+    declaration of a generator in the function it recovers.
+    """
+    if isinstance(stmt, JsFunctionDeclaration):
+        return None if stmt.id is None else (stmt, stmt.id)
+    if not isinstance(stmt, JsExpressionStatement):
+        return None
+    store = stmt.expression
+    if (
+        isinstance(store, JsAssignmentExpression)
+        and store.operator == '='
+        and isinstance(store.left, JsIdentifier)
+        and isinstance(store.right, JsFunctionExpression)
+    ):
+        return store.right, store.left
+    return None
+
+
+def _own_name(generator: JsFunctionNode) -> tuple[str, ...]:
+    """
+    The name a function expression binds for its own code, which the wrappers of a generator held
+    by a variable call it by, or nothing.
+    """
+    if isinstance(generator, JsFunctionExpression) and generator.id is not None:
+        return (generator.id.name,)
+    return ()
+
+
+def _reads_its_own_invocation(generator: JsFunctionNode) -> bool:
     """
     Whether the code of *generator* reads what its own invocation binds: its receiver `this`, a
     `super` reference, its `arguments` object or `new.target`, or whether it suspends with `yield`.
@@ -976,10 +1036,41 @@ def _an_observed_copy_may_not_be_made(model: SemanticModel, generator: Node) -> 
     return any(model.annex_b_copy_observed(function) for function in _block_functions(generator))
 
 
-def _did_return_reset(stmt: Statement) -> _FlagVariable | None:
+def _flag_spelled(node: Expression | None) -> _Flag | None:
     """
-    The flag *stmt* resets ahead of the generator's call, as `var didReturn;` or as
-    `didReturn = void 0;`, or `None`.
+    The flag *node* spells: a name, or a property of a variable under a static key
+    (`_FlagProperty`).
+    """
+    if node is None:
+        return None
+    if isinstance(node, JsIdentifier):
+        return _FlagVariable(node.name)
+    if (path := _slot_path(node)) is not None and len(path) == 2:
+        return _FlagProperty(*path)
+    return None
+
+
+def _spells_undefined(node: Expression | None) -> list[Expression] | None:
+    """
+    The names the recovery has to find unbound for *node* to spell `undefined`, or `None` where it
+    does not: none for `void` of a number, which means it wherever it stands, and the name itself
+    for `undefined`.
+    """
+    if (
+        isinstance(node, JsUnaryExpression)
+        and node.operator == 'void'
+        and isinstance(node.operand, JsNumericLiteral)
+    ):
+        return []
+    if isinstance(node, JsIdentifier) and node.name == 'undefined':
+        return [node]
+    return None
+
+
+def _did_return_reset(stmt: Statement) -> tuple[_Flag, list[Expression]] | None:
+    """
+    The flag *stmt* resets ahead of the generator's call, as `var didReturn;` or as a store of
+    `undefined` to it (`_spells_undefined`), with the names that store relies on, or `None`.
     """
     if isinstance(stmt, JsVariableDeclaration):
         decls = stmt.declarations
@@ -989,37 +1080,64 @@ def _did_return_reset(stmt: Statement) -> _FlagVariable | None:
             and isinstance(decls[0].id, JsIdentifier)
             and decls[0].init is None
         ):
-            return _FlagVariable(decls[0].id.name)
+            return _FlagVariable(decls[0].id.name), []
     if isinstance(stmt, JsExpressionStatement):
         expr = stmt.expression
         if (
             isinstance(expr, JsAssignmentExpression)
             and expr.operator == '='
-            and isinstance(expr.left, JsIdentifier)
-            and isinstance(expr.right, JsUnaryExpression)
-            and expr.right.operator == 'void'
-            and isinstance(expr.right.operand, JsNumericLiteral)
+            and (flag := _flag_spelled(expr.left)) is not None
+            and (reads := _spells_undefined(expr.right)) is not None
         ):
-            return _FlagVariable(expr.left.name)
+            return flag, reads
     return None
 
 
-def _is_result_guard(stmt: Statement, flag: _FlagVariable, result_var: str) -> bool:
+def _is_result_guard(
+    stmt: Statement,
+    flag: _Flag,
+    result_var: str,
+    ends: bool,
+) -> list[Expression] | None:
     """
-    Whether *stmt* is the guard `if (didReturn) { return result; }` and nothing more.
+    The names spelling `undefined` that *stmt* relies on where it is the guard
+    `if (didReturn) { return result; }` and nothing more, or `None` where it is not. Where it *ends*
+    the body of a function, its `else` may hold the return of `undefined` that ends that body
+    (`_is_implicit_return`).
     """
-    if not isinstance(stmt, JsIfStatement) or stmt.alternate is not None:
-        return False
-    if not flag.spelled_by(stmt.test):
-        return False
+    if not isinstance(stmt, JsIfStatement) or not flag.spelled_by(stmt.test):
+        return None
+    reads: list[Expression] = []
+    if (otherwise := stmt.alternate) is not None:
+        if isinstance(otherwise, JsBlockStatement) and len(otherwise.body) == 1:
+            otherwise = otherwise.body[0]
+        if not ends or (implicit := _is_implicit_return(otherwise)) is None:
+            return None
+        reads = implicit
     consequent = stmt.consequent
     if isinstance(consequent, JsBlockStatement) and len(consequent.body) == 1:
         consequent = consequent.body[0]
-    return (
+    if not (
         isinstance(consequent, JsReturnStatement)
         and isinstance(consequent.argument, JsIdentifier)
         and consequent.argument.name == result_var
-    )
+    ):
+        return None
+    return reads
+
+
+def _is_implicit_return(stmt: Statement | None) -> list[Expression] | None:
+    """
+    The names spelling `undefined` that *stmt* relies on where it returns `undefined`, as the
+    obfuscator ends the body of every function whose code it puts into the machine of the function
+    around it, or `None`: that body ends in the call of its own machine, and the recovery of the
+    machine around it writes the return behind the guard or as its `else`.
+    """
+    if not isinstance(stmt, JsReturnStatement):
+        return None
+    if stmt.argument is None:
+        return []
+    return _spells_undefined(stmt.argument)
 
 
 def _find_generator_call_site(
@@ -1042,8 +1160,10 @@ def _find_generator_call_site(
     `None`.
     """
     pos = gen_idx + 1
-    flag: _FlagVariable | None = None
-    if pos < len(body) and (flag := _did_return_reset(body[pos])) is not None:
+    undefined_reads: list[Expression] = []
+    flag: _Flag | None = None
+    if pos < len(body) and (reset := _did_return_reset(body[pos])) is not None:
+        flag, undefined_reads = reset
         pos += 1
     if pos >= len(body):
         return None
@@ -1058,14 +1178,26 @@ def _find_generator_call_site(
             return None
         initial_state.append(val)
     scaffolding_end = pos
-    guarded = (
-        flag is not None
-        and result_var is not None
-        and scaffolding_end + 1 < len(body)
-        and _is_result_guard(body[scaffolding_end + 1], flag, result_var)
-    )
-    if guarded:
+    ends_a_function = (owner := body[gen_idx].parent) is not None and _is_a_function_body(owner)
+    guard_reads = None
+    if flag is not None and result_var is not None and scaffolding_end + 1 < len(body):
+        guard_reads = _is_result_guard(
+            body[scaffolding_end + 1],
+            flag,
+            result_var,
+            ends_a_function and scaffolding_end + 2 == len(body),
+        )
+    guarded = guard_reads is not None
+    if guard_reads is not None:
+        undefined_reads.extend(guard_reads)
         scaffolding_end += 1
+        if (
+            ends_a_function
+            and scaffolding_end + 2 == len(body)
+            and (implicit := _is_implicit_return(body[-1])) is not None
+        ):
+            undefined_reads.extend(implicit)
+            scaffolding_end += 1
     return _CallSiteInfo(
         initial_state,
         flag,
@@ -1073,6 +1205,7 @@ def _find_generator_call_site(
         scaffolding_end,
         isinstance(body[pos], JsReturnStatement),
         guarded,
+        undefined_reads,
     )
 
 
@@ -1154,13 +1287,15 @@ def _unwrap_next_value(node: Expression) -> JsCallExpression | None:
 
 def _detect_wrapper_function(
     node: Expression,
-    gen_name: str,
+    gen_names: frozenset[str],
     num_state_vars: int,
 ) -> _WrapperFunctionInfo | None:
     """
     Test whether *node* is a wrapper function expression of the form:
 
         function(...rest) { return gen(states..., scope, rest)["next"]()["value"]; }
+
+    where `gen` is one of the names the generator is called by, *gen_names*.
 
     The argument handed on after the scope has to be the wrapper's own last parameter, which is
     what the recovered body reads the generator's argument holder as. Returns a
@@ -1181,7 +1316,7 @@ def _detect_wrapper_function(
         return None
     if not isinstance(gen_call.callee, JsIdentifier):
         return None
-    if gen_call.callee.name != gen_name:
+    if gen_call.callee.name not in gen_names:
         return None
     args = gen_call.arguments
     if len(args) < num_state_vars + 1:
@@ -2942,7 +3077,7 @@ def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
     ):
         if name is not None:
             exempt.add(name)
-    if match.flag is not None:
+    if isinstance(match.flag, _FlagVariable):
         exempt.add(match.flag.name)
     return exempt
 
@@ -3185,7 +3320,7 @@ class _RunReturns(NamedTuple):
     intercepted: bool
 
 
-def _raises_the_flag(expr: Expression | None, flag: _FlagVariable | None) -> bool:
+def _raises_the_flag(expr: Expression | None, flag: _Flag | None) -> bool:
     """
     Whether *expr* is the store `didReturn = true` the obfuscator writes ahead of the value of a
     return.
@@ -3220,7 +3355,7 @@ def _own_returns(stmt: Statement, name: str) -> Iterator[tuple[JsReturnStatement
         )
 
 
-def _recover_returns(stmts: list[Statement], flag: _FlagVariable | None) -> _RunReturns:
+def _recover_returns(stmts: list[Statement], flag: _Flag | None) -> _RunReturns:
     """
     Rewrite each return of the code of a run that raises the flag,
 
@@ -3537,6 +3672,7 @@ def _resolve_shared_wrappers(
     made when it is called, which the recovered code can only share with the creator.
     """
     gen_name = match.generator_name
+    gen_names = match.generator_names
     num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
     entries: dict[int, list[int | float]] = {}
@@ -3549,7 +3685,7 @@ def _resolve_shared_wrappers(
             node_id = id(node)
             if node_id in activations:
                 continue
-            wrapper_info = _detect_wrapper_function(node, gen_name, num_vars)
+            wrapper_info = _detect_wrapper_function(node, gen_names, num_vars)
             if wrapper_info is None or node.body is None:
                 continue
             if _reenters(node, wrapper_info.initial_state, entries):
@@ -3570,6 +3706,7 @@ def _resolve_shared_wrappers(
             synthetic = _GeneratorCFFMatch(
                 generator_name=gen_name,
                 generator=match.generator,
+                generator_names=gen_names,
                 state_var_names=match.state_var_names,
                 initial_state=wrapper_info.initial_state,
                 end_state=match.end_state,
@@ -4161,21 +4298,28 @@ def _scaffolding_is_private(
     model: SemanticModel,
     body: list[Statement],
     match: _GeneratorCFFMatch,
+    absent: Callable[[str], bool],
 ) -> bool:
     """
     Whether nothing but the scaffolding the recovery removes can reach a binding it removes: the
     generator, and the flag and the result of its call (`_reached_only_from`), each a `var` of the
-    function holding the call, as the obfuscator writes them, or a function declaration.
+    function holding the call, as the obfuscator writes them, or a function declaration. The flag
+    lives as long as one call of that function does: a variable it declares, or a property of an
+    object it makes for each call (`_property_flag_is_private`). A flag every call shares could be
+    raised by a call the recovered code makes before the guard reads it. Every name that spells
+    `undefined` in the scaffolding has to denote it.
     """
     removed = body[match.gen_decl_index:match.scaffolding_end + 1]
     inside = {id(node) for statement in removed for node in statement.walk()}
-    generator = removed[0]
-    assert isinstance(generator, JsFunctionDeclaration) and generator.id is not None
+    home = model.scope_of(body[match.scaffolding_end])
+    if (holder := _held_generator(removed[0])) is None or home is None:
+        return False
+    flag = match.flag
     names = {match.result_var}
-    if match.flag is not None:
-        names.add(match.flag.name)
+    if isinstance(flag, _FlagVariable):
+        names.add(flag.name)
     anchors: dict[str, Binding] = {}
-    for anchor in [generator.id, *(
+    for anchor in [holder[1], *(
         node for statement in removed[1:] for node in statement.walk()
         if isinstance(node, JsIdentifier) and node.name in names
     )]:
@@ -4183,7 +4327,65 @@ def _scaffolding_is_private(
         if binding is None or binding.is_lexical:
             return False
         anchors.setdefault(anchor.name, binding)
-    return all(_reached_only_from(model, binding, inside) for binding in anchors.values())
+    if isinstance(flag, _FlagVariable) and (
+        (binding := anchors.get(flag.name)) is None or not binding.declared_within(home.node)
+    ):
+        return False
+    if isinstance(flag, _FlagProperty) and not _property_flag_is_private(
+        model, body, match, flag, home, inside, absent
+    ):
+        return False
+    if not all(_reached_only_from(model, binding, inside) for binding in anchors.values()):
+        return False
+    return all(denoted_value(read, model) == (True, None) for read in match.undefined_reads)
+
+
+def _property_flag_is_private(
+    model: SemanticModel,
+    body: list[Statement],
+    match: _GeneratorCFFMatch,
+    flag: _FlagProperty,
+    home: Scope,
+    inside: set[int],
+    absent: Callable[[str], bool],
+) -> bool:
+    """
+    Whether the property *flag* is a variable of one call of the function whose scope is *home*,
+    which only the nodes whose ids are *inside* reach. Its holder is a `var` of that function,
+    declared once, with an empty object literal, by a statement of *body* ahead of the generator,
+    so it holds an object of its own whenever the call runs. Every reference to the holder reaches
+    that object as a namespace
+    (`refinery.lib.scripts.js.deobfuscation.namespaces.namespace_accesses`) under keys *absent*
+    proves no prototype supplies, so each of them is a property of data. What reaches the flag's
+    key, and every reflective surface that could name the holder, stands inside.
+    """
+    anchor = next((
+        node for statement in body[match.gen_decl_index + 1:match.scaffolding_end + 1]
+        for node in statement.walk()
+        if isinstance(node, JsIdentifier) and node.name == flag.holder and is_reference(node)
+    ), None)
+    if anchor is None or (binding := model.binding_of(anchor) or model.resolve(anchor)) is None:
+        return False
+    if binding.scope is not home or binding.is_lexical:
+        return False
+    declarations = list(binding.declarations)
+    if len(declarations) != 1:
+        return False
+    declarator = declarations[0].parent
+    if not (
+        isinstance(declarator, JsVariableDeclarator)
+        and declarator.id is declarations[0]
+        and isinstance(declarator.init, JsObjectExpression)
+        and not declarator.init.properties
+        and any(declarator.parent is statement for statement in body[:match.gen_decl_index])
+    ):
+        return False
+    accesses = namespace_accesses([*model.references(binding), *binding.dynamic_refs])
+    if accesses is None or not all(absent(key) for key in accesses):
+        return False
+    if not all(id(access) in inside for access in accesses.get(flag.key, ())):
+        return False
+    return all(id(node) in inside for node in model.reflection_surface_sites(binding))
 
 
 def _reached_only_from(model: SemanticModel, binding: Binding, inside: set[int]) -> bool:
@@ -4267,21 +4469,33 @@ def _declares_only_its_own_names(
 
 def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch) -> bool:
     """
-    Whether *recovered* still refers to a binding the recovery removes: the generator, its
-    parameters, or the scaffolding variables of its call. Such a reference would be left to resolve
-    to whatever the code around it binds under that name, or to nothing.
+    Whether *recovered* still refers to a binding the recovery removes: the generator under any of
+    its names, its parameters, or the scaffolding variables of its call. Such a reference would be
+    left to resolve to whatever the code around it binds under that name, or to nothing. A flag
+    that is a property of a variable is still referred to where the code reads or writes that
+    property.
     """
+    flag = match.flag
     names = {
-        match.generator_name,
         match.scope_param_name,
         match.arg_var_name,
         match.result_var,
         *match.state_var_names,
+        *match.generator_names,
     }
-    if match.flag is not None:
-        names.add(match.flag.name)
+    if isinstance(flag, _FlagVariable):
+        names.add(flag.name)
     names.discard(None)
-    return any(True for _ in _references_to(recovered, frozenset(names)))
+    if any(True for _ in _references_to(recovered, frozenset(names))):
+        return True
+    if not isinstance(flag, _FlagProperty):
+        return False
+    return any(
+        isinstance(access := node.parent, JsMemberExpression)
+        and access.object is node
+        and access_key(access) == flag.key
+        for node in _references_to(recovered, frozenset({flag.holder}))
+    )
 
 
 def _is_a_function_body(node: Node) -> bool:
@@ -4325,7 +4539,7 @@ def _values_the_recovery_binds(
                     yield from _literal_values(node.right)
             elif isinstance(node, JsCallExpression):
                 if any(
-                    isinstance(leaf, JsIdentifier) and leaf.name == match.generator_name
+                    isinstance(leaf, JsIdentifier) and leaf.name in match.generator_names
                     for leaf in denoting_leaves(node.callee)
                 ):
                     for argument in node.arguments:
@@ -4519,10 +4733,10 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
             if self._edited_around(parent, removed):
                 self.renew_models()
             model = models.model
-            if _an_observed_copy_may_not_be_made(model, body[match.gen_decl_index]):
+            if _an_observed_copy_may_not_be_made(model, match.generator):
                 i += 1
                 continue
-            if not _scaffolding_is_private(model, body, match):
+            if not _scaffolding_is_private(model, body, match, self._provably_absent):
                 i += 1
                 continue
             if (

@@ -3,7 +3,7 @@ Flatten empty namespace objects into bare variable declarations.
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import Iterable, Iterator, NamedTuple
 
 from refinery.lib.scripts import (
     BodyEdit,
@@ -51,6 +51,70 @@ from refinery.lib.scripts.js.model import (
     is_generator_function,
     strip_parens,
 )
+
+
+def namespace_accesses(references: Iterable[Node]) -> dict[str, list[Node]] | None:
+    """
+    The member accesses through which *references*, every reference to the object a namespace
+    variable holds, reach that object, by the key each names; `None` where one of them does anything
+    else with the object, which then has to stay whole. Each reference has to be the object of an
+    access under a static key (`access_key`). That access may not be the operand of a `delete`:
+    `delete p` on a bare `var` binding is a no-op (or a strict-mode SyntaxError), not a property
+    removal. And a call through it may not hand the object to a function that can observe it as
+    `this` (`_a_method_may_observe_the_namespace`).
+    """
+    accesses: dict[str, list[Node]] = {}
+    for node in references:
+        access = node.parent
+        if not isinstance(access, JsMemberExpression) or access.object is not node:
+            return None
+        if (key := access_key(access)) is None:
+            return None
+        if (
+            isinstance(grandparent := access.parent, JsUnaryExpression)
+            and grandparent.operator == 'delete'
+        ):
+            return None
+        accesses.setdefault(key, []).append(access)
+    if _a_method_may_observe_the_namespace(accesses):
+        return None
+    return accesses
+
+
+def _a_method_may_observe_the_namespace(accesses: dict[str, list[Node]]) -> bool:
+    """
+    Whether some call binds `this` to the namespace object (`NS.key(...)`, `NS.key` as a template
+    tag) and invokes a value that may observe it. Such a value is handed the object itself, which it
+    can read any key of, return, store, or pass on, so no key can move off the object and the
+    namespace stays whole. A key's value is provably `this`-free only when every write to `NS.key`
+    is a plain `NS.key = rhs` binding a function expression that does not observe its receiver, and
+    at least one such write exists. Anything else — a value observing `this`, a compound
+    assignment, a destructuring or `for-in`/`for-of` target whose value is not written beside it, an
+    arrow (conservatively, though its `this` is lexical), or a key never assigned a function — may
+    observe it.
+    """
+    for nodes in accesses.values():
+        if not any(is_receiver_binding_call(node) for node in nodes):
+            continue
+        values: list[Expression | None] = []
+        for node in nodes:
+            if not is_member_write_target(node):
+                continue
+            governor = enclosing_operator(node)
+            if (
+                isinstance(governor, JsAssignmentExpression)
+                and governor.operator == '='
+                and strip_parens(governor.left) is node
+            ):
+                values.append(governor.right)
+            else:
+                values.append(None)
+        if not values or not all(
+            isinstance(rhs, JsFunctionExpression) and not references_receiver_this(rhs)
+            for rhs in values
+        ):
+            return True
+    return False
 
 
 class _PropertyAssignment(NamedTuple):
@@ -130,11 +194,10 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         decl_stmt: JsVariableDeclaration,
     ) -> _NamespacePlan | None:
         assert self._root is not None
-        if not self._is_safe(scope, name, declarator):
+        accesses = namespace_accesses(self._references(scope, name, declarator))
+        if not accesses:
             return None
-        props = self._collect_properties(scope, name, declarator)
-        if not props:
-            return None
+        props = set(accesses)
         cache = model_cache(self, self._root)
         model = cache.model
         namespace_id = declarator.id
@@ -152,10 +215,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
         if scope_obj is None:
             return None
         conflicts = self._find_conflicting_names(model, scope, scope_obj, props, declarator)
-        references_by_key = self._property_references_by_key(scope, name)
-        if self._a_method_may_observe_the_namespace(references_by_key):
-            return None
-        captured = self._captured_keys(model, scope, scope_obj, references_by_key)
+        captured = self._captured_keys(model, scope, scope_obj, accesses)
         inherited = self._inherited_keys(props, cache.effects)
         flattenable = props - conflicts - captured - inherited
         flattenable = {
@@ -166,7 +226,7 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             return None
         func_assigns = self._detect_function_assignments(body, name, flattenable)
         hoisted_keys = (
-            self._hoistable_functions(func_assigns, references_by_key, cache.dominance)
+            self._hoistable_functions(func_assigns, accesses, cache.dominance)
             if func_assigns else set()
         )
         hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
@@ -240,52 +300,23 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
                 yield decl.id.name, decl, stmt
 
     @staticmethod
-    def _is_safe(scope: Node, name: str, declarator: JsVariableDeclarator) -> bool:
+    def _references(scope: Node, name: str, declarator: JsVariableDeclarator) -> list[Node]:
         """
-        Verify every reference to the namespace variable is a member-expression access with a
-        statically extractable key, and that none is the operand of a `delete`. Identifiers in
-        non-computed property position (e.g. `other.NS`) do not reference the variable and are
-        ignored. A `delete NS.p` cannot survive flattening — `delete p` on a bare `var` binding is a
-        no-op (or a strict-mode SyntaxError), not a property removal — so a namespace whose property
-        is deleted is left intact.
+        Every reference to the namespace variable in the scope subtree: each identifier spelling its
+        name but its declaration, and one in non-computed property position (`other.NS`), which
+        names a property rather than the variable.
         """
-        decl_id = declarator.id
-        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
-            if node is decl_id:
-                continue
-            if not isinstance(node, JsIdentifier) or node.name != name:
-                continue
-            parent = node.parent
-            if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
-                continue
-            if not isinstance(parent, JsMemberExpression) or parent.object is not node:
-                return False
-            if access_key(parent) is None:
-                return False
-            grandparent = parent.parent
-            if isinstance(grandparent, JsUnaryExpression) and grandparent.operator == 'delete':
-                return False
-        return True
-
-    @staticmethod
-    def _collect_properties(
-        scope: Node,
-        name: str,
-        declarator: JsVariableDeclarator,
-    ) -> set[str]:
-        decl_id = declarator.id
-        props: set[str] = set()
-        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
-            if node is decl_id:
-                continue
-            if not isinstance(node, JsIdentifier) or node.name != name:
-                continue
-            parent = node.parent
-            if isinstance(parent, JsMemberExpression) and parent.object is node:
-                key = access_key(parent)
-                if key is not None:
-                    props.add(key)
-        return props
+        return [
+            node for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name)
+            if node is not declarator.id
+            and isinstance(node, JsIdentifier)
+            and node.name == name
+            and not (
+                isinstance(parent := node.parent, JsMemberExpression)
+                and parent.property is node
+                and not parent.computed
+            )
+        ]
 
     @staticmethod
     def _inherited_keys(props: set[str], effects: EffectModel) -> set[str]:
@@ -525,62 +556,6 @@ class JsNamespaceFlattening(BatchedScopeTransformer):
             if dominance.runs_before_all(statement, references):
                 hoistable.add(key)
         return hoistable
-
-    @staticmethod
-    def _property_references_by_key(scope: Node, name: str) -> dict[str, list[Node]]:
-        """
-        Every `NS.<key>` member access in the scope subtree, bucketed by property key, in a single walk.
-        Computed accesses `NS["key"]` are bucketed with the static reads through `access_key`, so a read
-        that spells the property dynamically still blocks an unsound hoist. The initializing write of a
-        property is included here and excluded by the caller, which alone knows which reference it is.
-        """
-        buckets: dict[str, list[Node]] = {}
-        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
-            if not isinstance(node, JsMemberExpression):
-                continue
-            obj = node.object
-            if not isinstance(obj, JsIdentifier) or obj.name != name:
-                continue
-            key = access_key(node)
-            if key is not None:
-                buckets.setdefault(key, []).append(node)
-        return buckets
-
-    @staticmethod
-    def _a_method_may_observe_the_namespace(references_by_key: dict[str, list[Node]]) -> bool:
-        """
-        Whether some call binds `this` to the namespace object (`NS.key(...)`, `NS.key` as a template
-        tag) and invokes a value that may observe it. Such a value is handed the object itself, which
-        it can read any key of, return, store, or pass on, so no key can move off the object and the
-        namespace stays whole. A key's value is provably `this`-free only when every write to `NS.key`
-        is a plain `NS.key = rhs` binding a function expression that does not observe its receiver,
-        and at least one such write exists. Anything else — a value observing `this`, a compound
-        assignment, a destructuring or `for-in`/`for-of` target whose value is not written beside
-        it, an arrow (conservatively, though its `this` is lexical), or a key never assigned a
-        function — may observe it.
-        """
-        for nodes in references_by_key.values():
-            if not any(is_receiver_binding_call(node) for node in nodes):
-                continue
-            values: list[Expression | None] = []
-            for node in nodes:
-                if not is_member_write_target(node):
-                    continue
-                governor = enclosing_operator(node)
-                if (
-                    isinstance(governor, JsAssignmentExpression)
-                    and governor.operator == '='
-                    and strip_parens(governor.left) is node
-                ):
-                    values.append(governor.right)
-                else:
-                    values.append(None)
-            if not values or not all(
-                isinstance(rhs, JsFunctionExpression) and not references_receiver_this(rhs)
-                for rhs in values
-            ):
-                return True
-        return False
 
     @staticmethod
     def _emit_function_declarations(
