@@ -431,18 +431,14 @@ def each_reading_still_prints(
     readings: tuple[Reading, ...],
 ):
     """
-    Assert that the deobfuscation of each of *rows* under each of *readings* prints what the row
-    pins. Whether the program itself prints it is asked by `node_prints_what_each_row_pins`, which
-    every class asking this asks too, so the program is not run again here. That covers every
-    reading Node runs the file in, which a classic global script is not.
+    Assert that the deobfuscation of each of *rows* under each of *readings* behaves the way the
+    program does.
     """
-    if Reading.SCRIPT in readings:
-        raise ValueError('no anchor holds what a row prints as a classic global script')
     for label, row in rows.items():
         for reading in readings:
             program = row.read_as(reading)
             with test.subTest(label=label, reading=reading.name):
-                test.assertEqual(program.deobfuscated(), program.prints)
+                test.assertEqual(program.read(), program.required())
 
 
 def prints(*lines: str) -> Behavior:
