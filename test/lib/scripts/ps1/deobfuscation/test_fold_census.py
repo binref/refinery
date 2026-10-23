@@ -41,34 +41,23 @@ class TestPs1FoldCensus(unittest.TestCase):
     def test_every_fold_the_corpus_takes_is_the_one_recorded(self):
         self.assertEqual(census(), FOLDS)
 
-    def test_a_neutered_pass_is_seen_by_the_census(self):
+    def test_a_neutered_pass_takes_away_the_folds_recorded_for_it_and_adds_none(self):
         """
         The census can only be trusted to catch a lost fold if a lost fold moves it. The rows
         themselves are pinned, so that a pass which drops one fold and picks up another has to say
-        which.
+        which. Neutering a pass may only take folds away: one that *adds* a fold when it is disabled
+        means the passes are fighting, and the census would record whichever won the race.
         """
-        baseline = census()
         for transformer in _folds:
             with self.subTest(transformer.__name__):
                 with unittest.mock.patch.object(transformer, 'visit', lambda self, node: None):
                     without = census()
                 measured = Contribution(
-                    lost=tuple(sorted(set(baseline) - set(without))),
+                    lost=tuple(sorted(set(FOLDS) - set(without))),
                     changed=tuple(sorted(
-                        row for row in set(baseline) & set(without)
-                        if baseline[row] != without[row]
+                        row for row in set(FOLDS) & set(without)
+                        if FOLDS[row] != without[row]
                     )),
                 )
-                self.assertEqual(measured, CONTRIBUTION[transformer.__name__])
-
-    def test_no_pass_folds_a_row_the_census_does_not_hold(self):
-        """
-        Neutering a pass may only take folds away. One that *adds* a fold when it is disabled means
-        the passes are fighting, and the census would record whichever won the race.
-        """
-        baseline = census()
-        for transformer in _folds:
-            with self.subTest(transformer.__name__):
-                with unittest.mock.patch.object(transformer, 'visit', lambda self, node: None):
-                    without = census()
-                self.assertEqual(sorted(set(without) - set(baseline)), [])
+                gained = sorted(set(without) - set(FOLDS))
+                self.assertEqual((measured, gained), (CONTRIBUTION[transformer.__name__], []))
