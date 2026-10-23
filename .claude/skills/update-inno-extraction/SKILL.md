@@ -21,25 +21,31 @@ This skill drives that process.
 
 ## Step 1 — Prompt For the Inno Setup Source Repository
 
-Before anything else, ask the user for the absolute path to their local Inno Setup source checkout
-(the `issrc` repository — the official Pascal/Delphi source). Do not proceed until it is provided.
+Before anything else, establish the absolute path to their local Inno Setup source checkout
+ (the `issrc` repository — the official Pascal/Delphi source).
+Try to recall this location from memory first.
+If you have no memory of the location, prompt the user for the location and commit it to memory.
+Do not proceed until it is provided.
 
-- The location is environment-specific: Always ask, and do not assume a default.
-  The upstream repository is [`jrsoftware/issrc`][issrc]; if the user does not have a local clone, offer to clone it for them.
-- Validate the path: It must be a git repo containing this path:
-  ```
-  Projects/Src/Shared.Struct.pas
-  ```
-  Confirm this with
-  ```
-  git -C {path} rev-parse --is-inside-work-tree
-  ```
-  and that the file exists.
-- Note the repo may be checked out at an older tag than its history;
-  always reference release **tags** (e.g. `is-7_0_1`), not the working tree.
-  List them with `git -C {path} {tag}`.
+Refer to this path as `{issrc}` for the rest of this skill.
+Next, validate the path; the following file must exist:
+```
+{issrc}/Projects/Src/Shared.Struct.pas
+```
+Confirm this with
+```
+git -C {issrc} rev-parse --is-inside-work-tree
+```
+and that the file exists.
+If the path does not validate, remove your existing memory and start Step 1 again.
 
-Refer to the repo as `{issrc}` for the rest of this skill.
+Note the repo may be checked out at an older tag than its history;
+ always reference release **tags** (e.g. `is-7_0_1`), not the working tree.
+List them with `git -C {path} {tag}`.
+
+## Step 2 — Pull the Inno Setup Repository
+
+Run `git -C {issrc} pull` to pull the latest version of the Inno Setup source code.
 
 ## Step 2 — Determine Current Coverage
 
@@ -73,7 +79,8 @@ A real format change can occur **without** a `SetupID` bump — that is exactly 
 
 ## Step 5 — Understand the Serialization Order
 
-`SECompressedBlockRead` (`{issrc}/Projects/Src/Shared.SetupEntFunc.pas`) serializes each record as:
+In `SECompressedBlockRead` (`{issrc}/Projects/Src/Shared.SetupEntFunc.pas`) 
+ each record is serialized as:
 All `String` fields first (declaration order), then `AnsiString`s, then the remaining fixed fields as one packed block.
 The parsing classes read inline in this same order,
  so a new record field is read at its declaration position relative to the strings / fixed block.
