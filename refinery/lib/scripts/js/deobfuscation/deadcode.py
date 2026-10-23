@@ -1,11 +1,12 @@
 """
-Eliminate dead code branches guarded by constant conditions.
+Eliminate dead code branches guarded by constant conditions, and statements that never run.
 
 This transformer prunes unreachable branches from `if`/`else` statements when the test is a
 literal whose truthiness can be determined statically. When the discarded test is not provably
 free of side effects, it is kept as a leading expression statement so that pruning never changes
 observable behavior. Purity of a call inside the test is resolved through the script's effect
 model, so a test that only invokes proven-pure functions or intrinsics is dropped with the branch.
+It also removes the statements control never reaches, such as code behind a `return`.
 """
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from refinery.lib.scripts.js.model import (
     JsIfStatement,
     JsLabeledStatement,
     JsScript,
+    JsSwitchCase,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -110,6 +112,58 @@ def _the_names_a_dropped_branch_still_declares(
     return tuple(names)
 
 
+_STATEMENT_LISTS = (JsScript, JsBlockStatement, JsSwitchCase)
+
+
+def _stays_where_it_never_runs(stmt: Statement) -> bool:
+    """
+    Whether *stmt* stays in its list although it never runs: a declaration scoped to the list
+    (`_is_scoped_to_the_block_holding_it`), whose name means it in the whole list whether or not it
+    runs, and a `var` that stores nothing, which is what a statement that goes leaves behind.
+    """
+    if _is_scoped_to_the_block_holding_it(stmt):
+        return True
+    return (
+        isinstance(stmt, JsVariableDeclaration)
+        and stmt.kind is JsVarKind.VAR
+        and all(
+            isinstance(declarator, JsVariableDeclarator) and declarator.init is None
+            for declarator in stmt.declarations
+        )
+    )
+
+
+class _Removal(NamedTuple):
+    """
+    The statements of one list that never run and go, and the names a `var` written where the
+    first of them stood declares (`_the_names_a_dropped_branch_still_declares`).
+    """
+    gone: frozenset[Statement]
+    still_declared: tuple[str, ...]
+
+
+def _statements_that_never_run(body: list[Statement], cache: ModelCache) -> _Removal | None:
+    """
+    The statements of *body* that never run and can go, or `None` where there are none. Which
+    statements can run is the shared control-flow model's answer
+    (`refinery.lib.scripts.analysis.dominance.DominatorModel.never_runs`). What stays although it
+    never runs stays (`_stays_where_it_never_runs`), and so does a statement where it cannot be said
+    which names it still declares (`_the_names_a_dropped_branch_still_declares`).
+    """
+    gone: set[Statement] = set()
+    names: list[str] = []
+    for stmt in body:
+        if _stays_where_it_never_runs(stmt) or not cache.dominance.never_runs(stmt):
+            continue
+        if (declared := _the_names_a_dropped_branch_still_declares(stmt, cache.model)) is None:
+            continue
+        gone.add(stmt)
+        names.extend(name for name in declared if name not in names)
+    if not gone:
+        return None
+    return _Removal(frozenset(gone), tuple(names))
+
+
 class _Decision(NamedTuple):
     """
     What an `if` statement's test evaluates to, whether the test may go with the dropped branch or
@@ -123,7 +177,7 @@ class _Decision(NamedTuple):
 
 class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
     """
-    Remove unreachable code guarded by constant conditions.
+    Remove unreachable code guarded by constant conditions, and statements that never run.
 
     The pass runs in the batched regime of
     `refinery.lib.scripts.js.deobfuscation.helpers.BatchedTransformer`. One walk over the tree the
@@ -139,32 +193,66 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
     declarations left behind for a dropped branch carry no value. A block that holds a declaration
     scoped to it is kept whole rather than lifted. The values every other test reads are therefore
     the ones they read on the entry tree.
+
+    The same walk decides, for every statement list, which statements never run: those the
+    control-flow graph of the entry tree does not reach. No edit of the run gives control a way it
+    did not have: a statement that never runs makes no jump, a dropped branch takes its ways with
+    it, a lifted branch keeps the jumps it makes and their targets, and a test kept behind runs
+    where the `if` ran. A statement unreached on the entry tree is therefore unreached on the tree
+    the run leaves, and one an edit leaves unreached only now goes in the next run.
     """
 
     def __init__(self):
         super().__init__()
         self._root: JsScript | None = None
         self._decisions: dict[JsIfStatement, _Decision] | None = None
+        self._removals: dict[Node, _Removal] | None = None
 
     def visit_JsScript(self, node: JsScript):
         self._root = node
         self._decisions = None
+        self._removals = None
         if self.batching:
+            cache = model_cache(self, node)
+            lists = [holder for holder in node.walk() if isinstance(holder, _STATEMENT_LISTS)]
             self._decisions = {
-                stmt: decision for stmt in node.walk()
+                stmt: decision for holder in lists for stmt in holder.body
                 if isinstance(stmt, JsIfStatement)
-                and isinstance(stmt.parent, (JsScript, JsBlockStatement))
                 and (decision := self._decide(stmt)) is not None
+            }
+            self._removals = {
+                holder: removal for holder in lists
+                if (removal := _statements_that_never_run(holder.body, cache)) is not None
             }
         try:
             return super().visit_JsScript(node)
         finally:
             self._decisions = None
+            self._removals = None
+
+    def visit_JsSwitchCase(self, node: JsSwitchCase):
+        self.generic_visit(node)
+        self._process_body(node, node.body)
+        return None
 
     def _process_body(self, parent: Node, body: list[Statement]):
         result: list[Statement] = []
         changed = False
+        removal = self._removal(parent, body)
+        declared = False
         for stmt in body:
+            if removal is not None and stmt in removal.gone:
+                if not declared and removal.still_declared:
+                    declared = True
+                    result.append(JsVariableDeclaration(
+                        kind=JsVarKind.VAR,
+                        declarations=[
+                            JsVariableDeclarator(id=JsIdentifier(name=name))
+                            for name in removal.still_declared
+                        ],
+                    ))
+                changed = True
+                continue
             replacement = self._try_prune(stmt)
             if replacement is not None:
                 result.extend(replacement)
@@ -173,6 +261,17 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
                 result.append(stmt)
         if changed:
             self._replace_body(parent, result)
+
+    def _removal(self, parent: Node, body: list[Statement]) -> _Removal | None:
+        """
+        The statements of *body*, the list of *parent*, that never run and go. No statement goes in
+        a run that entered on no script: there is no control-flow graph to ask.
+        """
+        if self._removals is not None:
+            return self._removals.get(parent)
+        if self._root is None:
+            return None
+        return _statements_that_never_run(body, model_cache(self, self._root))
 
     def _try_prune(self, stmt: Statement) -> list[Statement] | None:
         if not isinstance(stmt, JsIfStatement):

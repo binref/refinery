@@ -3593,9 +3593,10 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         transition that ends the body, a branch storing a state variable before its transition,
         from an expression the machine cannot evaluate or where the branch reads it back, a
         condition storing a state variable, a class taking a state variable's name, a payload
-        leaving the switch by a `break` of its own, a function declared behind a `return`, and a
-        variable declared in a body no run reaches: the obfuscator ends every body in one
-        transition and declares nothing in it, and each generator is left as it is.
+        leaving the switch by a `break` of its own, on every way or on one, a function declared
+        behind a `return` or behind the transition, and a variable declared in a body no run
+        reaches: the obfuscator ends every body in one transition and declares nothing in it, and
+        each generator is left as it is.
         """
         for source in (
             self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
@@ -3606,7 +3607,9 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.CONDITION_STORING_A_STATE_VARIABLE_CFF,
             self.CLASS_NAMED_LIKE_A_STATE_VARIABLE_CFF,
             self.BREAK_OUT_OF_A_PAYLOAD_CFF,
+            self.BREAK_ON_ONE_WAY_ONLY_CFF,
             self.HELPER_DECLARED_BEHIND_THE_RETURN_CFF,
+            self.FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF,
             self.VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF,
         ):
             with self.subTest(source):
@@ -4735,6 +4738,182 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertIn('function*', JsSynthesizer().convert(ast))
         self.assertEqual([], detached)
 
+    JUMP_BEHIND_THE_TRANSITION_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log('one');
+                    a = 15, b = 5;
+                    break;
+                    if (a > 1000) { console.log('dead'); a = 25, b = 5; break; }
+                  case 20:
+                    return done = true, n + 1;
+                    a = 0, b = 0;
+                    break;
+                  case 30:
+                    return done = true, 'wrong';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 15, b = 5;
+                    break;
+                    function late() { return 'late'; }
+                  case 20:
+                    return done = true, typeof late;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                    if (a < -1000) { console.log('dead'); a = 0, b = 0; break; }
+                  case 20:
+                    return done = true, 'positive';
+                  case 30:
+                    return done = true, 'other';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    JUMP_BEHIND_A_LABELED_BREAK_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                L: switch (a + b) {
+                  case 10:
+                    console.log('one');
+                    a = 15, b = 5;
+                    break L;
+                    if (b > 1000) { a = 25, b = 5; break L; }
+                  case 20:
+                    return done = true, n * 2;
+                  case 30:
+                    return done = true, 'wrong';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BREAK_ON_ONE_WAY_ONLY_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; }
+                    console.log('on');
+                    a = 25, b = 5;
+                    break;
+                  case 20:
+                    return done = true, 'positive';
+                  case 30:
+                    return done = true, 'other';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_jump_behind_the_transition_never_runs(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  console.log('one');
+                  return n + 1;
+                }
+                """
+            ),
+            self._run_transformer(self.JUMP_BEHIND_THE_TRANSITION_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_jump_behind_a_two_way_transition_never_runs(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  if (n > 0) {
+                    return 'positive';
+                  } else {
+                    return 'other';
+                  }
+                }
+                """
+            ),
+            self._run_transformer(
+                self.JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_jump_behind_a_labeled_break_never_runs(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  console.log('one');
+                  return n * 2;
+                }
+                """
+            ),
+            self._run_transformer(self.JUMP_BEHIND_A_LABELED_BREAK_CFF, JsGeneratorCFFUnflattening),
+        )
+
 
 #: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
 #: appended to the fixture and to its recovery alike. A fixture that already prints on its own
@@ -4875,6 +5054,11 @@ ENTRY_POINTS = {
     'PROTOTYPE_KEPT_IN_A_SLOT_BEFORE_A_SIBLING_READS_IT_CFF': '',
     'PROTOTYPE_WRITTEN_THROUGH_A_NAME_FROM_OUTSIDE_BEFORE_A_SIBLING_READS_IT_CFF': '',
     'RECOVERED_FUNCTION_DECLARING_A_NAME_A_SIBLING_DECLARES_CFF': '',
+    'JUMP_BEHIND_THE_TRANSITION_CFF': 'console.log(outer(1));',
+    'FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF': 'console.log(outer(1));',
+    'JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF': 'console.log(outer(1), outer(-1));',
+    'JUMP_BEHIND_A_LABELED_BREAK_CFF': 'console.log(outer(4));',
+    'BREAK_ON_ONE_WAY_ONLY_CFF': 'console.log(outer(1), outer(-1));',
 }
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

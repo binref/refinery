@@ -354,8 +354,8 @@ A_READ_WHERE_NO_PROLOGUE_IS_READ = {
         "{\n  'a';\n}",
     "switch (1) { case 1: 'abc'[0]; }":
         "switch (1) {\n  case 1:\n    'a';\n}",
-    "try {} catch (e) { 'abc'[0]; }":
-        "try {} catch (e) {\n  'a';\n}",
+    "try { f(); } catch (e) { 'abc'[0]; }":
+        "try {\n  f();\n} catch (e) {\n  'a';\n}",
     "L: { 'abc'[0]; }":
         "L: {\n  'a';\n}",
     "function f() { { 'abc'[0]; } }":

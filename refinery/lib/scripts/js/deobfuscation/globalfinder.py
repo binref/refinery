@@ -404,17 +404,12 @@ class _FinderThrowFreedom:
 
     def _stmts(self, stmts: Sequence[Node]) -> bool:
         """
-        The statements up to and including the first that completes abruptly, since a `return` leaves
-        every following sibling unreachable and a host read there is one no host evaluates. This is what
-        lets the canonical finder fold once `typeof globalThis` has folded its guard away: the body is
-        then a bare `return globalThis` ahead of the host-conditional arms, and those arms never run.
+        The statements that can run, since a host read in one that never runs is one no host
+        evaluates (`refinery.lib.scripts.analysis.dominance.DominatorModel.never_runs`). This is
+        what lets the canonical finder fold once `typeof globalThis` has folded its guard away: the
+        body is then a bare `return globalThis` ahead of the host-conditional arms, which never run.
         """
-        for stmt in stmts:
-            if not self._stmt(stmt):
-                return False
-            if isinstance(stmt, JsReturnStatement):
-                break
-        return True
+        return all(self.dominance.never_runs(stmt) or self._stmt(stmt) for stmt in stmts)
 
     def _stmt(self, stmt: Node | None) -> bool:
         if stmt is None or isinstance(stmt, (

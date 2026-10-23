@@ -361,6 +361,55 @@ class DominatorModel:
         """
         return self.tree_of(graph, projection).reached
 
+    def never_runs(self, statement: Node) -> bool:
+        """
+        Whether no path from the entry of its body reaches any part of *statement*, which is what a
+        pass deleting the statements that cannot run asks. A compound statement runs when its first
+        executable node is reached, so a `do` loop whose tail-tested condition is unreachable still
+        runs its body: the statement never runs only when every control-flow node standing for a
+        part of it in the graph of its body is unreachable. A node of a body nested in it belongs to
+        the graph of that body and says nothing about whether the statement around it runs, so it
+        is not counted, and a statement no node of that graph stands for a part of is not proven
+        never to run.
+        """
+        if (graph := self._graph_around(statement)) is None:
+            return False
+        reachable = self.reached_from_entry(graph, Projection.MAY)
+        saw_node = False
+        for element in statement.walk():
+            if (node := graph.node_of(element)) is None:
+                continue
+            saw_node = True
+            if id(node) in reachable:
+                return False
+        return saw_node
+
+    def completes(self, statement: Node) -> bool:
+        """
+        Whether control may run off the end of *statement*: some node from which normal control
+        falls through past it is reached from the entry of its body
+        (`refinery.lib.scripts.analysis.cfg.ControlFlowGraph.completion_of`). A statement the graph
+        was not built as a member of a sequence of may.
+        """
+        if (graph := self._graph_around(statement)) is None:
+            return True
+        if (completion := graph.completion_of(statement)) is None:
+            return True
+        reachable = self.reached_from_entry(graph, Projection.MAY)
+        return any(id(node) in reachable for node in completion)
+
+    def _graph_around(self, statement: Node) -> ControlFlowGraph | None:
+        """
+        The graph of the body *statement* stands in: that of its nearest ancestor a graph is drawn
+        for.
+        """
+        cursor = statement.parent
+        while cursor is not None:
+            if (graph := self._flow.graph_of(cursor)) is not None:
+                return graph
+            cursor = cursor.parent
+        return None
+
     def reachable(
         self, start: CfgNode, *, forward: bool, projection: Projection,
     ) -> set[int]:

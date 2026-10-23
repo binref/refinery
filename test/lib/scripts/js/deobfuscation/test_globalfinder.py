@@ -352,8 +352,8 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         """
         The canonical UMD/webpack global finder guards each candidate with `typeof x !== 'undefined'`.
         Once `typeof globalThis` folds to `'object'`, the first guard is `true`, dead-code elimination
-        makes the body a bare `return globalThis` ahead of the host-conditional arms, and the finder
-        folds — those arms being unreachable, not throw-free. So `getGlobal()` becomes `globalThis`.
+        makes the body a bare `return globalThis` and removes the host-conditional arms behind it,
+        and the finder folds. So `getGlobal()` becomes `globalThis`.
         """
         source = (
             "function getGlobal() {"
@@ -368,16 +368,6 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
             function getGlobal() {
               return globalThis;
-              if (typeof self !== 'undefined') {
-                return self;
-              }
-              if (typeof window !== 'undefined') {
-                return window;
-              }
-              if (typeof global !== 'undefined') {
-                return global;
-              }
-              throw new Error('no global');
             }
             var g = globalThis;
             console.log(g);

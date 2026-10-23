@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import unittest
+
 from test import TestBase
 
+from refinery.lib.scripts.analysis.cfg import ElementLocator
 from refinery.lib.scripts.js.analysis.cfg import ControlFlowGraph, build_cfg, build_control_flow
 from refinery.lib.scripts.js.model import (
     JsBreakStatement,
@@ -11,6 +14,7 @@ from refinery.lib.scripts.js.model import (
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
+    JsForStatement,
     JsFunctionDeclaration,
     JsIfStatement,
     JsReturnStatement,
@@ -291,3 +295,23 @@ class TestControlFlowGraph(TestBase):
         body_stmt = func.body.body[0]
         self.assertIsNone(script.node_of(body_stmt))
         self.assertIsNotNone(graphs[id(func)].node_of(body_stmt))
+
+
+class TestTheLookupOfAStatementStopsAtTheBodyItIsWrittenIn(TestBase):
+    """
+    No node of the graph of a function's body stands for a loop without a test, so the shared lookup
+    has no place for it: the statement of the body around the function that makes it is not the
+    point the loop runs at.
+    """
+
+    def _place_of_the_loop(self, source: str):
+        root = JsParser(source).parse()
+        loop = next(node for node in root.walk() if isinstance(node, JsForStatement))
+        return ElementLocator(build_control_flow(root)).locate(loop)
+
+    def test_a_loop_in_a_function_expression_has_no_place(self):
+        self.assertIsNone(self._place_of_the_loop('var f = function () { for (;;) { a; } };'))
+
+    @unittest.expectedFailure
+    def test_a_loop_in_a_declared_function_has_no_place(self):
+        self.assertIsNone(self._place_of_the_loop('function f() { for (;;) { a; } }'))

@@ -24,6 +24,9 @@ from refinery.lib.scripts import (
     set_child,
     set_child_list,
 )
+from refinery.lib.scripts.analysis.cfg import ControlFlowModel
+from refinery.lib.scripts.analysis.dominance import DominatorModel
+from refinery.lib.scripts.js.analysis.cfg import build_cfg
 from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
@@ -220,6 +223,7 @@ class _SMBlock:
 @dataclass
 class _GeneratorCFFMatch:
     generator_name: str
+    generator: JsFunctionDeclaration
     state_var_names: list[str]
     initial_state: list[int | float]
     end_state: int | float
@@ -815,6 +819,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         namespace_homes = homes
     return _GeneratorCFFMatch(
         generator_name=gen_name,
+        generator=stmt,
         state_var_names=state_var_names,
         initial_state=call_info.initial_state,
         end_state=end_state,
@@ -1229,9 +1234,10 @@ def _extract_state_blocks(
     absent: Callable[[str], bool],
 ) -> _StateMachine | None:
     """
-    Read the labels of the switch in source order, each with the block it runs (`_read_block`).
-    A case body that declares a state variable's name for the block of the switch gives `None`:
-    that declaration takes the name in every case, test and transition alike.
+    Read the labels of the switch in source order, each with the block it runs (`_read_block`)
+    from the statements of its body that can run on the graph of the generator. A case body that
+    declares a state variable's name for the block of the switch gives `None`: that declaration
+    takes the name in every case, test and transition alike.
     """
     cases: list[JsSwitchCase] = []
     for case in match.switch_stmt.cases:
@@ -1242,6 +1248,7 @@ def _extract_state_blocks(
     if not declared.isdisjoint(match.state_var_names):
         return None
     routing = _routing_paths(cases)
+    flow = DominatorModel(ControlFlowModel({id(match.generator): build_cfg(match.generator)}))
     last_body = max((i for i, case in enumerate(cases) if case.body), default=-1)
     labels: list[_SMCase] = []
     pending: list[Expression | None] = []
@@ -1250,7 +1257,7 @@ def _extract_state_blocks(
         pending.append(case.test)
         if not case.body:
             continue
-        block = _read_block(case.body, match, routing, index == last_body, absent)
+        block = _read_block(case.body, flow, match, routing, index == last_body, absent)
         labels.extend(_SMCase(test, block) for test in pending)
         pending.clear()
         if _declared_names_in_stmts(case.body):
@@ -1282,21 +1289,53 @@ def _routing_paths(cases: list[JsSwitchCase]) -> frozenset[_SlotPath]:
     return frozenset(paths)
 
 
+class _RunningBody(NamedTuple):
+    """
+    The statements of a case body that can run, and whether control never runs off the end of the
+    last of them (`closed`).
+    """
+    statements: list[Statement]
+    closed: bool
+
+
+def _running_statements(stmts: list[Statement], flow: DominatorModel) -> _RunningBody | None:
+    """
+    The statements of a case body that can run, as the shared control-flow model of the generator
+    answers it (`refinery.lib.scripts.analysis.dominance.DominatorModel.never_runs`): the
+    obfuscator leaves the transition of a block behind a `return` and puts jumps it never takes
+    behind a transition. A statement that never runs declares its names all the same, so a body
+    where one declares a name gives `None`. Whether control runs off the end of the body is the same
+    model's answer (`refinery.lib.scripts.analysis.dominance.DominatorModel.completes`).
+    """
+    runs: list[Statement] = []
+    dead: list[Statement] = []
+    for stmt in stmts:
+        (dead if flow.never_runs(stmt) else runs).append(stmt)
+    if dead and _declared_names_in_stmts(dead):
+        return None
+    return _RunningBody(runs, bool(runs) and not flow.completes(runs[-1]))
+
+
 def _read_block(
     stmts: list[Statement],
+    flow: DominatorModel,
     match: _GeneratorCFFMatch,
     routing: frozenset[_SlotPath],
     last: bool,
     absent: Callable[[str], bool],
 ) -> _SMBlock | None:
     """
-    The block a case body makes (`_parse_case_body`) with the stores it makes to routing slots
-    (`_routing_stores`), or `None` where the recovery cannot read either.
+    The block the statements of a case body that can run make (`_running_statements`, asked of
+    *flow*; `_parse_case_body`) with the stores they make to routing slots (`_routing_stores`), or
+    `None` where the recovery cannot read either.
     """
-    parsed = _parse_case_body(stmts, match.state_var_names, match.switch_label, last)
+    if (body := _running_statements(stmts, flow)) is None:
+        return None
+    runs = body.statements
+    parsed = _parse_case_body(runs, match.state_var_names, match.switch_label, last, body.closed)
     if parsed is None:
         return None
-    stores = _routing_stores(stmts, match.scope_param_name, routing, absent)
+    stores = _routing_stores(runs, match.scope_param_name, routing, absent)
     if stores is None:
         return None
     payload, transition = parsed
@@ -1470,20 +1509,19 @@ def _parse_case_body(
     var_names: list[str],
     switch_label: str | None,
     last: bool,
+    closed: bool,
 ) -> tuple[list[Statement], _SMTransition] | None:
     """
-    Separate a case body into payload statements and the state transition the obfuscator ends it
-    with (`_split_case_body`). A body whose code stores a state variable anywhere but in its
-    transition (`_writes_a_state_variable`), or whose payload leaves the switch or the loop of the
-    machine (`_leaves_the_block`), gives `None`. Code behind a `return` or `throw` never runs, and
-    the obfuscator leaves the transition of such a block there.
+    Separate the statements of a case body that run into payload statements and the state
+    transition the obfuscator ends them with (`_split_case_body`). A body that stores a state
+    variable anywhere but in its transition (`_writes_a_state_variable`), or whose payload leaves
+    the switch or the loop of the machine (`_leaves_the_block`), gives `None`.
     """
-    parsed = _split_case_body(stmts, var_names, switch_label, last)
+    parsed = _split_case_body(stmts, var_names, switch_label, last, closed)
     if parsed is None:
         return None
     payload, transition = parsed
-    runs = payload if isinstance(transition, _SMExitTransition) else stmts
-    if _writes_a_state_variable(runs, var_names, _transition_assignments(transition)):
+    if _writes_a_state_variable(stmts, var_names, _transition_assignments(transition)):
         return None
     if isinstance(transition, _SMConditionalTransition):
         payload = [*payload, *transition.true_prefix, *transition.false_prefix]
@@ -1497,21 +1535,34 @@ def _split_case_body(
     var_names: list[str],
     switch_label: str | None,
     last: bool,
+    closed: bool,
 ) -> tuple[list[Statement], _SMTransition] | None:
     """
-    Separate a case body into payload statements and a state transition. A `return` or `throw` at
-    the top level ends the block, and nothing behind it runs; but what it declares is declared all
-    the same, and a body whose code behind that statement declares a name gives `None`. Any other
-    body ends in the assignments of its transition, directly or in both branches of a final `if`
-    statement, and then in a `break` of the switch, which only the *last* body may leave out: every
-    other body runs on into the next one without it. A body with no transition, which would
-    dispatch the same state again forever, gives `None`.
+    Separate the statements of a case body that run into payload statements and a state
+    transition. A body that ends in a `return` or `throw` leaves the machine, and so does a *closed*
+    one whose end control never reaches, such as one ending in a `switch` every case of which
+    returns: nothing of it stores the next state. Any other body ends in the assignments of its
+    transition, directly or in both branches of a final `if` statement, and then in a `break` of
+    the switch, which only the *last* body may leave out: every other body runs on into the next
+    one without it. A body with no transition, which would dispatch the same state again forever,
+    gives `None`.
     """
-    for index, stmt in enumerate(stmts):
-        if isinstance(stmt, (JsReturnStatement, JsThrowStatement)):
-            if _declared_names_in_stmts(stmts[index + 1:]):
-                return None
-            return (stmts[:index + 1], _SMExitTransition())
+    if stmts and isinstance(stmts[-1], (JsReturnStatement, JsThrowStatement)):
+        return (stmts, _SMExitTransition())
+    if (split := _split_transition_at_the_end(stmts, var_names, switch_label, last)) is not None:
+        return split
+    return (stmts, _SMExitTransition()) if closed else None
+
+
+def _split_transition_at_the_end(
+    stmts: list[Statement],
+    var_names: list[str],
+    switch_label: str | None,
+    last: bool,
+) -> tuple[list[Statement], _SMTransition] | None:
+    """
+    The payload of a case body and the transition it ends in (`_split_case_body`), or `None`.
+    """
     stmts, terminated = _strip_trailing_break(stmts, switch_label)
     transition: _SMTransition
     if stmts and isinstance(final := stmts[-1], JsIfStatement) and final.alternate is not None:
@@ -3409,6 +3460,7 @@ def _resolve_shared_wrappers(
                 )
             synthetic = _GeneratorCFFMatch(
                 generator_name=gen_name,
+                generator=match.generator,
                 state_var_names=match.state_var_names,
                 initial_state=wrapper_info.initial_state,
                 end_state=match.end_state,

@@ -2353,12 +2353,11 @@ A_KEPT_CALL_WHOSE_BODY_CANNOT_RETURN: dict[str, str] = {
 #: writes for them. These are the controls against over-refusal: a read the definite-assignment
 #: model vouches a completed creating write for is droppable with its store, so the first program
 #: still reduces to its print, the call whose body cannot throw is still written as its value, and
-#: the `try` around a store that cannot throw still empties.
+#: the `try` around a store that cannot throw still empties, which leaves its `catch` unreachable.
 AN_ESTABLISHED_STORE_STILL_REDUCES: dict[str, str] = {
     'X = 5;\ny = X;\nconsole.log(1);\n': 'console.log(1);',
     'function f() {\n  var x = 1;\n  return 7;\n}\nconsole.log(f());\n': 'console.log(7);',
-    'try {\n  var x = 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n':
-        'try {} catch (e) {\n  console.log(2);\n}\nconsole.log(3);',
+    'try {\n  var x = 1;\n} catch (e) {\n  console.log(2);\n}\nconsole.log(3);\n': 'console.log(3);',
     'N = function () {};\ny = N();\nconsole.log(1);\n': 'console.log(1);',
     'function N() {}\ny = N();\nconsole.log(1);\n': 'console.log(1);',
 }

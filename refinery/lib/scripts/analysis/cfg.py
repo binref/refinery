@@ -374,6 +374,7 @@ class ControlFlowGraph:
         self._resuming = False
         self._fallback: dict[int, CfgNode] = {}
         self._reached_after: dict[tuple[int, bool], frozenset[int]] = {}
+        self._completions: dict[int, tuple[Node, list[CfgNode]]] = {}
         self.entry = CfgNode(self, None)
         self.exit = CfgNode(self, None)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
@@ -384,6 +385,16 @@ class ControlFlowGraph:
         a node the graph does not represent on its own such as a plain expression inside a statement.
         """
         return self._node_of.get(id(element))
+
+    def completion_of(self, statement: Node) -> list[CfgNode] | None:
+        """
+        The nodes from which normal control falls through past *statement*, a member of a statement
+        sequence this graph was built from (`CfgBuilder.sequence`), or `None` for any other element.
+        An empty list is a statement control never runs off the end of.
+        """
+        if (found := self._completions.get(id(statement))) is None or found[0] is not statement:
+            return None
+        return found[1]
 
     def fallback_of(self, handler: CfgNode) -> CfgNode | None:
         """
@@ -926,6 +937,7 @@ class CfgBuilder:
     def sequence(self, statements: Sequence[Node], frontier: list[CfgNode]) -> list[CfgNode]:
         for statement in statements:
             frontier = self.statement(statement, frontier)
+            self.cfg._completions[id(statement)] = (statement, list(frontier))
         return frontier
 
     def opaque(self, element: Node, frontier: list[CfgNode]) -> list[CfgNode]:
