@@ -312,6 +312,7 @@ _IS_AMBIGUOUS = {
     _I(6, 7,  1, 0, IVF.UTF_16): False, # noqa
     _I(6, 7,  2, 0, IVF.UTF_16): False, # noqa
     _I(6, 7,  3, 0, IVF.UTF_16): False, # noqa
+    _I(7, 0,  0, 1, IVF.UTF_16): False, # noqa
     _I(7, 0,  0, 3, IVF.UTF_16): False, # noqa
     _I(7, 0,  1, 0, IVF.UTF_16): False, # noqa
 }
@@ -2350,7 +2351,7 @@ class SetupRunEntry(InnoStruct):
 
         self.Condition = SetupCondition(reader, version, parent)
 
-        if version >= (7, 0, 0, 3):
+        if version >= (7, 0, 0, 1):
             self.OnLog = self._read_string()
         else:
             self.OnLog = None
