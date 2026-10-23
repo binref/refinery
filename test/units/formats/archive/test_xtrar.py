@@ -541,7 +541,7 @@ class TestRarSamples(TestUnitBase):
         })
 
     def test_ppm_decompression_leaves_nothing_to_the_collector(self):
-        data = self.download_sample('1a1af0d6b8caf1dd5f56dc2c6a02a768a1c27960171dc21ddbac244e02fd25c1')
+        data = self.download_sample('0623048c3fd16ad3376d3df28fec9f2e474c58b9583583df652f3b7717e766c9')
         unit = self.load()
         self.assertCollectorFreesLessThan(0x40000, lambda: bytearray(data) | unit | [])
 
