@@ -229,8 +229,22 @@ def before_and_after(
     """
     return (
         behavior(source, module=module),
-        behavior(deobfuscate_source(source, execution=execution, environment=environment), module=module),
+        deobfuscated_behavior(source, module=module, execution=execution, environment=environment),
     )
+
+
+def deobfuscated_behavior(
+    source: str,
+    *,
+    module: bool = False,
+    execution: ExecutionModel = ExecutionModel.module,
+    environment: HostEnvironment = HostEnvironment.universal,
+) -> Behavior:
+    """
+    What Node makes of the text `refinery.js` deobfuscates *source* to: the second half of what
+    `before_and_after` reports, without running *source* itself.
+    """
+    return behavior(deobfuscate_source(source, execution=execution, environment=environment), module=module)
 
 
 def before_and_after_in_a_host(
@@ -248,7 +262,18 @@ def before_and_after_in_a_host(
     `refinery.js` writes under `-s`, the only model whose output is equivalent to its input; the
     unit's own default is the trusting model, which folds more and guarantees nothing.
     """
-    return (host_behavior(source), host_behavior(folded(source, environment=environment)))
+    return (host_behavior(source), deobfuscated_host_behavior(source, environment))
+
+
+def deobfuscated_host_behavior(
+    source: str,
+    environment: HostEnvironment = HostEnvironment.universal,
+) -> Behavior:
+    """
+    What a host running a classic global script makes of the text `refinery.js` writes for *source*:
+    the second half of what `before_and_after_in_a_host` reports, without running *source* itself.
+    """
+    return host_behavior(folded(source, environment=environment))
 
 
 def each_program_still_prints(
@@ -299,11 +324,7 @@ class Reading(Enum):
         `refinery.js` deobfuscates it to for the host *environment*, reported together because the
         law is that the two agree.
         """
-        if self is Reading.SCRIPT:
-            return before_and_after_in_a_host(source, environment)
-        if self is Reading.COMMONJS:
-            return before_and_after(source, execution=ExecutionModel.commonjs, environment=environment)
-        return before_and_after(source, module=self is Reading.ES_MODULE, environment=environment)
+        return (self.behaves(source), self.deobfuscated(source, environment))
 
     def behaves(self, source: str) -> Behavior:
         """
@@ -316,6 +337,22 @@ class Reading(Enum):
         if self is Reading.SCRIPT:
             return host_behavior(source)
         return behavior(source, module=self is Reading.ES_MODULE)
+
+    def deobfuscated(
+        self,
+        source: str,
+        environment: HostEnvironment = HostEnvironment.universal,
+    ) -> Behavior:
+        """
+        What an engine makes under this model of the text `refinery.js` deobfuscates *source* to for
+        the host *environment* — the second half of what `read` returns, computed without running
+        *source* itself.
+        """
+        if self is Reading.SCRIPT:
+            return deobfuscated_host_behavior(source, environment)
+        if self is Reading.COMMONJS:
+            return deobfuscated_behavior(source, execution=ExecutionModel.commonjs, environment=environment)
+        return deobfuscated_behavior(source, module=self is Reading.ES_MODULE, environment=environment)
 
 
 class Program(NamedTuple):
@@ -339,6 +376,9 @@ class Program(NamedTuple):
 
     def behaves(self) -> Behavior:
         return self.reading.behaves(self.text)
+
+    def deobfuscated(self) -> Behavior:
+        return self.reading.deobfuscated(self.text, self.environment)
 
     def required(self) -> tuple[Behavior, Behavior]:
         return (self.prints, self.prints)
@@ -391,14 +431,18 @@ def each_reading_still_prints(
     readings: tuple[Reading, ...],
 ):
     """
-    Assert that the deobfuscation of each of *rows* under each of *readings* behaves the way the
-    program does.
+    Assert that the deobfuscation of each of *rows* under each of *readings* prints what the row
+    pins. Whether the program itself prints it is asked by `node_prints_what_each_row_pins`, which
+    every class asking this asks too, so the program is not run again here. That covers every
+    reading Node runs the file in, which a classic global script is not.
     """
+    if Reading.SCRIPT in readings:
+        raise ValueError('no anchor holds what a row prints as a classic global script')
     for label, row in rows.items():
         for reading in readings:
             program = row.read_as(reading)
             with test.subTest(label=label, reading=reading.name):
-                test.assertEqual(program.read(), program.required())
+                test.assertEqual(program.deobfuscated(), program.prints)
 
 
 def prints(*lines: str) -> Behavior:
@@ -415,14 +459,15 @@ def one_expected_failure_per_program(
     """
     Install on the class one expected-failure test per program of *rows*, each named for the shape
     its key labels and each asserting the one law every ledger entry asserts: the deobfuscation of
-    a program behaves the way the program does.
+    a program behaves the way the program does. Next to it goes a test that the program itself
+    behaves as pinned, so the expected failure runs only the deobfuscation.
     """
     def install(entry: type) -> type:
         for label, row in rows.items():
             slug = label.replace(' ', '_').replace('-', '_')
 
             def test(self, row=row):
-                self.assertEqual(row.read(), row.required())
+                self.assertEqual(row.deobfuscated(), row.prints)
             test.__name__ = F'test_{slug}_still_behaves_so'
             if hasattr(entry, test.__name__):
                 raise AssertionError(F'{entry.__name__} already holds {test.__name__}')
