@@ -46,6 +46,10 @@ from samples import refuse_script_host_near_a_sample
 
 _ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
 
+#: The seconds a run of Node.js may take before it counts as one that never ends. A loaded test
+#: machine can stall a run that needs a fraction of a second for more than a quarter of a minute.
+NODE_TIMEOUT = 60.0
+
 
 def node_executable() -> str | None:
     """
@@ -213,7 +217,7 @@ def host_behavior(
     source: str,
     *,
     calls: tuple[str, ...] = (),
-    timeout: float = 15.0,
+    timeout: float = NODE_TIMEOUT,
 ) -> tuple[str, str | None]:
     """
     The observable behavior of *source* run as a classic global script, including the results of the
@@ -222,7 +226,7 @@ def host_behavior(
     return behavior(_as_global_script(source, calls), timeout=timeout)
 
 
-def behavior(source: str, *, module: bool = False, timeout: float = 15.0) -> tuple[str, str | None]:
+def behavior(source: str, *, module: bool = False, timeout: float = NODE_TIMEOUT) -> tuple[str, str | None]:
     """
     Execute *source* in Node.js and return its observable behavior as a pair: the captured standard
     output, and the error type (`TypeError`, `ReferenceError`, …) when execution terminated with an
@@ -253,7 +257,7 @@ def module_graph_behavior(
     files: Mapping[str, str],
     entry: str,
     *,
-    timeout: float = 15.0,
+    timeout: float = NODE_TIMEOUT,
 ) -> tuple[str, str | None]:
     """
     The observable behavior of running *entry* with every file of *files* written beside it, in the
@@ -305,7 +309,7 @@ function enc(x) {
 '''
 
 
-def code_units(expressions: Sequence[str], *, timeout: float = 15.0) -> list[str]:
+def code_units(expressions: Sequence[str], *, timeout: float = NODE_TIMEOUT) -> list[str]:
     """
     Node's value for each expression in *expressions*, rendered as the structure its UTF-16 code
     units give it: a string as `S[...codes...]`, an array as `A[...elements...]`, and everything
@@ -379,7 +383,7 @@ def completion_values(
     programs: Sequence[str],
     evaluation: JsEvaluation = JsEvaluation.EVAL,
     *,
-    timeout: float = 15.0,
+    timeout: float = NODE_TIMEOUT,
 ) -> list[str]:
     """
     The value each program in *programs* evaluates to under *evaluation*, named the way a reader can

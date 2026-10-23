@@ -39,7 +39,7 @@ from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsFunctionDeclaration
 from refinery.lib.scripts.js.parser import JsParser
 
-from test.lib.scripts.js.analysis.differential import behavior
+from test.lib.scripts.js.analysis.differential import NODE_TIMEOUT, behavior
 
 _CHECK_PREFIX = '__CHK__'
 _CHECK_RE = re.compile(F'^{_CHECK_PREFIX}(.*)$', re.MULTILINE)
@@ -166,7 +166,7 @@ def run_text(probe: ProbeProgram) -> str:
     )
 
 
-def observed_changes(probe: ProbeProgram, *, timeout: float = 15.0) -> set[str]:
+def observed_changes(probe: ProbeProgram, *, timeout: float = NODE_TIMEOUT) -> set[str]:
     """
     The set of outer variables of *probe* whose identity changed when `f()` ran in Node.js.
     """
