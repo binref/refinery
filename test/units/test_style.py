@@ -38,6 +38,13 @@ _TESTS = os.path.join('test', 'lib', 'scripts', 'ps1', 'deobfuscation')
 #: excludes is how one starts watching an analysis the other broke.
 _EXCLUDED = 'test_witnessed'
 
+#: The censuses quantify over a fixed population of sources many times over: the fold census once
+#: more for every folding pass it switches off, the domain gap once for every operator. A pass that
+#: is switched off is a deliberately broken analysis, as in the witness suite, and the reruns cost
+#: more than ten times the rest of the directory. The watched run deobfuscates each source of their
+#: populations once instead.
+_CENSUSES = ('test_fold_census', 'test_domain_gap')
+
 
 def _project_root() -> str:
     """
@@ -245,10 +252,22 @@ def _deobfuscation_suite() -> unittest.TestSuite:
     names = []
     for path in sorted(glob(os.path.join(_project_root(), _TESTS, 'test_*.py'))):
         stem = os.path.splitext(os.path.basename(path))[0]
-        if stem != _EXCLUDED:
+        if stem != _EXCLUDED and stem not in _CENSUSES:
             names.append(F"{_TESTS.replace(os.sep, '.')}.{stem}")
     assert names, F'no test modules under {_TESTS}'
     return unittest.defaultTestLoader.loadTestsFromNames(names)
+
+
+def _census_population() -> list[str]:
+    """
+    Every source that one of the excluded censuses quantifies over.
+    """
+    from refinery.lib.scripts.ps1.data import operand_witnesses
+    from ..lib.scripts.ps1.corpus import oracle_corpus
+    return [
+        *oracle_corpus(),
+        *(spelling for spellings in operand_witnesses().values() for spelling in spellings),
+    ]
 
 
 class _Observations(NamedTuple):
@@ -263,11 +282,12 @@ class _Observations(NamedTuple):
 def _watched_run() -> _Observations:
     """
     Run the ps1 deobfuscation suite once, watching the fault veto and recording every source the
-    suite hands to the parser.
+    suite hands to the parser. The censuses are not run; each source they quantify over is
+    deobfuscated once in their place.
 
     One run rather than two, because the checks below would otherwise each carry their own copy of
-    the module glob and the `test_witnessed` exclusion, and a divergence between those copies is how
-    one of them starts observing an analysis the other deliberately broke.
+    the module glob and the exclusions, and a divergence between those copies is how one of them
+    starts observing an analysis the other deliberately broke.
 
     The pass a veto fired for is read off a stack of the `visit` calls in flight rather than from
     the plan, since a plan is told nothing about who built it and this must not become a reason to
@@ -288,6 +308,7 @@ def _watched_run() -> _Observations:
     the same reason the string-matching reading did — a proxy that fires where the thing does not.
     """
     from refinery.lib.scripts.ps1.parser import Ps1Parser
+    from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
     from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, _removes_a_handler
 
     active: list[str] = []
@@ -332,6 +353,8 @@ def _watched_run() -> _Observations:
             pass_type = _pass_type(name)
             stack.enter_context(patch.object(pass_type, 'visit', entered(name, pass_type.visit)))
         _deobfuscation_suite().run(unittest.TestResult())
+        for source in _census_population():
+            deobfuscate(Ps1Parser(source).parse())
     return _Observations(frozenset(fired), tuple(sorted(set(parsed))))
 
 
