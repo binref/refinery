@@ -321,6 +321,25 @@ def _cells(values: dict[str, str], left_out: frozenset[tuple[str, int]]) -> dict
     }
 
 
+def _contents(script: IFPSFile) -> tuple:
+    """
+    The types, globals and functions of the script, and every instruction of every function with its
+    operands, as they stand. Reading them changes nothing, which a disassembly does not promise: it
+    traces the stack of every function and records the depth on each instruction.
+    """
+    return (
+        tuple(script.types),
+        tuple(script.globals),
+        tuple(
+            (function, function.symbol, tuple(
+                (instruction.offset, instruction.opcode, instruction.operator, tuple(instruction.operands))
+                for instruction in function.body or ()
+            ))
+            for function in script.functions
+        ),
+    )
+
+
 class _ScriptOracleTest(TestBase):
     """
     Inno Setup ran a script whose procedures log what they compute; the tests emulate the script.
@@ -394,17 +413,17 @@ class _ValueOracleTest(_ScriptOracleTest):
     defects: frozenset[tuple[str, int]] = frozenset()
 
     #: The script of the build as parsed for the first test of the class that needs it, and its
-    #: disassembly at that time. The tests of the class share it; a test that changes the script
-    #: works on a parse of its own, see `emulator_with_a_constant_replaced`.
-    _shared: tuple[IFPSFile, str] | None = None
+    #: contents at that time. The tests of the class share it; a test that changes the script works
+    #: on a parse of its own, see `emulator_with_a_constant_replaced`.
+    _shared: tuple[IFPSFile, tuple] | None = None
 
     @classmethod
     def tearDownClass(cls):
         shared, cls._shared = cls._shared, None
         super().tearDownClass()
         if shared is not None:
-            script, disassembly = shared
-            if script.disassembly() != disassembly:
+            script, contents = shared
+            if _contents(script) != contents:
                 raise AssertionError(F'a test of {cls.__name__} changed the shared script')
 
     def log(self) -> dict[str, str]:
@@ -417,7 +436,7 @@ class _ValueOracleTest(_ScriptOracleTest):
     def script(self) -> IFPSFile:
         if (shared := type(self)._shared) is None:
             script = IFPSFile.Parse(_value_oracle_file(self, self.build, 'ifps'))
-            shared = type(self)._shared = script, script.disassembly()
+            shared = type(self)._shared = script, _contents(script)
         return shared[0]
 
     def emulator(self, script: IFPSFile | None = None, **config):
