@@ -54,7 +54,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     property_key,
     sanitize_inlined_body,
     substitute_use_position,
-    walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.parameters import parameter_list
 from refinery.lib.scripts.js.model import (
@@ -104,6 +103,7 @@ from refinery.lib.scripts.js.model import (
     JsTaggedTemplateExpression,
     JsThisExpression,
     JsThrowStatement,
+    JsTryStatement,
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
@@ -151,9 +151,24 @@ The most blocks the recovery reads for one run of a machine; it leaves a larger 
 """
 
 
+class _FlagVariable(NamedTuple):
+    """
+    The flag the call of a machine resets and its guard reads, held by a variable of the function
+    that holds the call.
+    """
+    name: str
+
+    @property
+    def base(self) -> str:
+        return self.name
+
+    def spelled_by(self, node: Node | None) -> bool:
+        return isinstance(node, JsIdentifier) and node.name == self.name
+
+
 class _CallSiteInfo(NamedTuple):
     initial_state: list[int | float]
-    did_return_var: str | None
+    flag: _FlagVariable | None
     result_var: str | None
     scaffolding_end: int
     returns_value: bool
@@ -232,7 +247,7 @@ class _GeneratorCFFMatch:
     switch_label: str | None
     scope_param_name: str | None
     arg_var_name: str | None
-    did_return_var: str | None
+    flag: _FlagVariable | None
     result_var: str | None
     gen_decl_index: int
     scaffolding_end: int
@@ -792,7 +807,8 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     if not _is_discriminant_sum(inner.discriminant, state_var_names):
         return None
     switch_stmt = inner
-    if not routed and _spells_a_slot_bare(switch_stmt, scope_param_name, scope_default_props):
+    slots = _scope_slots(switch_stmt, scope_param_name, scope_default_props)
+    if not routed and _spells_a_slot_bare(switch_stmt, slots):
         return None
     call_info = _find_generator_call_site(body, idx, gen_name)
     if call_info is None:
@@ -817,6 +833,11 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         if homes is None:
             return None
         namespace_homes = homes
+    if (
+        call_info.flag is not None
+        and call_info.flag.base in {*slots, *namespaces, *namespace_homes}
+    ):
+        return None
     return _GeneratorCFFMatch(
         generator_name=gen_name,
         generator=stmt,
@@ -828,7 +849,7 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         switch_label=switch_label,
         scope_param_name=scope_param_name,
         arg_var_name=arg_var_name,
-        did_return_var=call_info.did_return_var,
+        flag=call_info.flag,
         result_var=call_info.result_var,
         gen_decl_index=idx,
         scaffolding_end=call_info.scaffolding_end,
@@ -862,21 +883,29 @@ def _reads_its_own_invocation(generator: JsFunctionDeclaration) -> bool:
     return False
 
 
-def _spells_a_slot_bare(
+def _scope_slots(
     switch_stmt: JsSwitchStatement,
     scope_param_name: str | None,
     defaults: list[str],
-) -> bool:
+) -> set[str]:
     """
-    Whether the code of a generator that reads its scope object through no `with` body spells the
-    name of a slot of that object bare. There the bare name means some other binding, and once the
-    strip turns `scope.K` into `K` it would name the slot instead.
+    The names of the slots of a generator's scope object: its defaults and every key its code reads
+    or writes on it.
     """
     slots = set(defaults)
     if scope_param_name is not None:
         for member in _scope_members(switch_stmt, scope_param_name):
             if (name := _deepest_property_name(member)) is not None:
                 slots.add(name)
+    return slots
+
+
+def _spells_a_slot_bare(switch_stmt: JsSwitchStatement, slots: set[str]) -> bool:
+    """
+    Whether the code of a generator that reads its scope object through no `with` body spells the
+    name of one of its *slots* bare (`_scope_slots`). There the bare name means some other binding,
+    and once the strip turns `scope.K` into `K` it would name the slot instead.
+    """
     return any(
         isinstance(node, JsIdentifier) and node.name in slots and is_use_position(node)
         for node in switch_stmt.walk()
@@ -947,7 +976,7 @@ def _an_observed_copy_may_not_be_made(model: SemanticModel, generator: Node) -> 
     return any(model.annex_b_copy_observed(function) for function in _block_functions(generator))
 
 
-def _did_return_reset(stmt: Statement) -> str | None:
+def _did_return_reset(stmt: Statement) -> _FlagVariable | None:
     """
     The flag *stmt* resets ahead of the generator's call, as `var didReturn;` or as
     `didReturn = void 0;`, or `None`.
@@ -960,7 +989,7 @@ def _did_return_reset(stmt: Statement) -> str | None:
             and isinstance(decls[0].id, JsIdentifier)
             and decls[0].init is None
         ):
-            return decls[0].id.name
+            return _FlagVariable(decls[0].id.name)
     if isinstance(stmt, JsExpressionStatement):
         expr = stmt.expression
         if (
@@ -971,17 +1000,17 @@ def _did_return_reset(stmt: Statement) -> str | None:
             and expr.right.operator == 'void'
             and isinstance(expr.right.operand, JsNumericLiteral)
         ):
-            return expr.left.name
+            return _FlagVariable(expr.left.name)
     return None
 
 
-def _is_result_guard(stmt: Statement, did_return_var: str, result_var: str) -> bool:
+def _is_result_guard(stmt: Statement, flag: _FlagVariable, result_var: str) -> bool:
     """
     Whether *stmt* is the guard `if (didReturn) { return result; }` and nothing more.
     """
     if not isinstance(stmt, JsIfStatement) or stmt.alternate is not None:
         return False
-    if not isinstance(stmt.test, JsIdentifier) or stmt.test.name != did_return_var:
+    if not flag.spelled_by(stmt.test):
         return False
     consequent = stmt.consequent
     if isinstance(consequent, JsBlockStatement) and len(consequent.body) == 1:
@@ -1013,8 +1042,8 @@ def _find_generator_call_site(
     `None`.
     """
     pos = gen_idx + 1
-    did_return_var: str | None = None
-    if pos < len(body) and (did_return_var := _did_return_reset(body[pos])) is not None:
+    flag: _FlagVariable | None = None
+    if pos < len(body) and (flag := _did_return_reset(body[pos])) is not None:
         pos += 1
     if pos >= len(body):
         return None
@@ -1030,16 +1059,16 @@ def _find_generator_call_site(
         initial_state.append(val)
     scaffolding_end = pos
     guarded = (
-        did_return_var is not None
+        flag is not None
         and result_var is not None
         and scaffolding_end + 1 < len(body)
-        and _is_result_guard(body[scaffolding_end + 1], did_return_var, result_var)
+        and _is_result_guard(body[scaffolding_end + 1], flag, result_var)
     )
     if guarded:
         scaffolding_end += 1
     return _CallSiteInfo(
         initial_state,
-        did_return_var,
+        flag,
         result_var,
         scaffolding_end,
         isinstance(body[pos], JsReturnStatement),
@@ -2909,11 +2938,12 @@ def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
         match.generator_name,
         match.scope_param_name,
         match.arg_var_name,
-        match.did_return_var,
         match.with_redirect_var,
     ):
         if name is not None:
             exempt.add(name)
+    if match.flag is not None:
+        exempt.add(match.flag.name)
     return exempt
 
 
@@ -3144,62 +3174,81 @@ def _collect_binding_names(pattern: Expression | None, out: set[str]) -> None:
                 _collect_binding_names(prop.value, out)
 
 
-def _is_did_return_assignment(expr: Expression, did_return_var: str | None) -> bool:
+class _RunReturns(NamedTuple):
     """
-    Check whether an expression is `didReturnVar = true`.
+    What the returns of the code of one run say: whether one returns without raising the flag
+    (`plain`), and whether one that raises it stands in a `try` statement (`intercepted`). The flag
+    is raised before the value of such a return is computed: the value may throw into a `catch`, and
+    a `finally` may end the run another way, so the run may go on with the flag raised.
     """
-    if did_return_var is None:
-        return False
-    if not isinstance(expr, JsAssignmentExpression):
-        return False
-    if not isinstance(expr.left, JsIdentifier):
-        return False
-    return expr.left.name == did_return_var and expr.operator == '='
+    plain: bool
+    intercepted: bool
 
 
-def _recover_returns(stmts: list[Statement], did_return_var: str | None) -> list[Statement]:
+def _raises_the_flag(expr: Expression | None, flag: _FlagVariable | None) -> bool:
     """
-    Rewrite each return that raises the flag,
+    Whether *expr* is the store `didReturn = true` the obfuscator writes ahead of the value of a
+    return.
+    """
+    return (
+        flag is not None
+        and isinstance(expr, JsAssignmentExpression)
+        and expr.operator == '='
+        and flag.spelled_by(expr.left)
+        and isinstance(expr.right, JsBooleanLiteral)
+        and expr.right.value is True
+    )
+
+
+def _own_returns(stmt: Statement, name: str) -> Iterator[tuple[JsReturnStatement, bool, bool]]:
+    """
+    Each `return` of the code *stmt* belongs to, not of a function inside it, with whether something
+    between *stmt* and it binds *name* anew (`_scoped_children`) and whether it stands in a `try`
+    statement.
+    """
+    stack: list[tuple[Node, bool, bool]] = [(stmt, False, False)]
+    while stack:
+        node, hidden, guarded = stack.pop()
+        if isinstance(node, JsReturnStatement):
+            yield node, hidden, guarded
+        if isinstance(node, FUNCTION_NODES):
+            continue
+        guarded = guarded or isinstance(node, JsTryStatement)
+        stack.extend(
+            (child, hidden or name in bound, guarded)
+            for child, bound in reversed(list(_scoped_children(node)))
+        )
+
+
+def _recover_returns(stmts: list[Statement], flag: _FlagVariable | None) -> _RunReturns:
+    """
+    Rewrite each return of the code of a run that raises the flag,
 
         return didReturn = true, value;
 
-    to the return of its value. Recurses into if/else branches and while bodies; a flagged return
-    anywhere else keeps its flag, which `_leaves_the_generator` then refuses.
+    to the return of its value, wherever in that code it stands; a function inside keeps its own
+    returns. A store under the flag's spelling where something between binds its name anew stores
+    to that binding, and the return does not raise the flag.
     """
-    if did_return_var is None:
-        return stmts
-    result: list[Statement] = []
+    plain = intercepted = False
     for stmt in stmts:
-        if isinstance(stmt, JsReturnStatement) and stmt.argument is not None:
-            arg = stmt.argument
-            if isinstance(arg, JsSequenceExpression) and len(arg.expressions) >= 2:
-                if _is_did_return_assignment(arg.expressions[0], did_return_var):
-                    ret_val = (
-                        arg.expressions[1] if len(arg.expressions) == 2
-                        else JsSequenceExpression(expressions=arg.expressions[1:])
-                    )
-                    result.append(JsReturnStatement(argument=ret_val))
-                    continue
-            result.append(stmt)
-            continue
-        if isinstance(stmt, JsIfStatement):
-            if stmt.consequent is not None and isinstance(stmt.consequent, JsBlockStatement):
-                set_child_list(stmt.consequent, 'body', _recover_returns(
-                    stmt.consequent.body, did_return_var
-                ))
-            if stmt.alternate is not None and isinstance(stmt.alternate, JsBlockStatement):
-                set_child_list(stmt.alternate, 'body', _recover_returns(
-                    stmt.alternate.body, did_return_var
-                ))
-            elif isinstance(stmt.alternate, JsIfStatement):
-                recovered = _recover_returns([stmt.alternate], did_return_var)
-                if recovered:
-                    set_child(stmt, 'alternate', recovered[0])
-        elif isinstance(stmt, JsWhileStatement):
-            if stmt.body is not None and isinstance(stmt.body, JsBlockStatement):
-                set_child_list(stmt.body, 'body', _recover_returns(stmt.body.body, did_return_var))
-        result.append(stmt)
-    return result
+        for node, hidden, guarded in list(_own_returns(stmt, flag.base if flag else '')):
+            argument = node.argument
+            if (
+                hidden
+                or not isinstance(argument, JsSequenceExpression)
+                or len(argument.expressions) < 2
+                or not _raises_the_flag(argument.expressions[0], flag)
+            ):
+                plain = True
+                continue
+            intercepted = intercepted or guarded
+            value = (
+                argument.expressions[1] if len(argument.expressions) == 2
+                else JsSequenceExpression(expressions=argument.expressions[1:])
+            )
+            set_child(node, 'argument', value)
+    return _RunReturns(plain, intercepted)
 
 
 def _is_direct_scope_member(node: Node, scope_param_name: str) -> bool:
@@ -3290,18 +3339,27 @@ def _rewrite_comma_parts(
     return result
 
 
+class _Run(NamedTuple):
+    """
+    The code recovered for one run of the machine, what its routing slots hold once it has entered
+    the machine (`_build_cfg`), and what its returns say (`_RunReturns`).
+    """
+    statements: list[Statement]
+    settled: _Slots
+    returns: _RunReturns
+
+
 def _execute_machine(
     machine: _StateMachine,
     match: _GeneratorCFFMatch,
     slots: _Slots,
     main: bool,
-) -> tuple[list[Statement], _Slots] | None:
+) -> _Run | None:
     """
     Recover structured code for a run of the machine whose routing slots start out holding *slots*,
     using CFG-based structural analysis: builds a control flow graph, identifies loops via dominator
-    analysis, and emits structured control flow (while, if/else, break). Returns the code and what
-    the routing slots hold once the run has entered the machine (`_build_cfg`), for the *main* run
-    or a wrapper's.
+    analysis, and emits structured control flow (while, if/else, break). Returns the run (`_Run`),
+    the *main* run or a wrapper's.
     """
     entry = _Env(_apply_initial_state(match.state_var_names, match.initial_state), slots)
     cfg_result = _build_cfg(machine, entry, match, main)
@@ -3312,8 +3370,7 @@ def _execute_machine(
     idom = _compute_idom(cfg)
     if (stmts := _Structuring(cfg, idom).run(_find_loops(cfg, idom))) is None:
         return None
-    recovered = _recover_returns(stmts, match.did_return_var)
-    return (recovered, settled)
+    return _Run(stmts, settled, _recover_returns(stmts, match.flag))
 
 
 def _build_js_if(
@@ -3521,7 +3578,7 @@ def _resolve_shared_wrappers(
                 switch_label=match.switch_label,
                 scope_param_name=match.scope_param_name,
                 arg_var_name=match.arg_var_name,
-                did_return_var=match.did_return_var,
+                flag=match.flag,
                 result_var=None,
                 gen_decl_index=0,
                 scaffolding_end=0,
@@ -3536,7 +3593,7 @@ def _resolve_shared_wrappers(
             activation.props |= synthetic.scope_prop_names
             activations[node_id] = activation
             entries[node_id] = wrapper_info.initial_state
-            recovered, _ = result
+            recovered = result.statements
             target = _wrapper_arg_param_name(match, wrapper_info, recovered)
             if match.arg_var_name and target and match.arg_var_name != target:
                 recovered = _rebind_free_arg_var(recovered, match.arg_var_name, target)
@@ -4073,6 +4130,7 @@ def _settle_returns(
     match: _GeneratorCFFMatch,
     trailing: list[Statement],
     wrapped: bool,
+    returns: _RunReturns,
 ) -> list[Statement] | None:
     """
     The recovered code with every `return` of the generator doing what it did, or `None` where
@@ -4085,25 +4143,17 @@ def _settle_returns(
     the flag a return of the function and lets any other one fall through to what follows, which
     only a return at the end of the recovered code could be written as. A wrapper's run raises the
     same flag when it returns, so where the call has *wrapped* one and *trailing* is not empty, a
-    wrapper called during the call would make the guard return where the recovered code runs on.
+    wrapper called during the call would make the guard return where the recovered code runs on,
+    and so does a return that raises the flag where the run may go on (`_RunReturns.intercepted`).
     Without either, every return falls through, and `sanitize_inlined_body` writes the one at the
     end as the expression it returns.
     """
-    plain = False
-    for node in walk_scope(match.switch_stmt):
-        if not isinstance(node, JsReturnStatement):
-            continue
-        argument = node.argument
-        if not (
-            isinstance(argument, JsSequenceExpression)
-            and argument.expressions
-            and _is_did_return_assignment(argument.expressions[0], match.did_return_var)
-        ):
-            plain = True
     if match.returns_value:
         return None if trailing else recovered
     if match.guarded:
-        return None if plain or (wrapped and trailing) else recovered
+        if returns.plain or (trailing and (wrapped or returns.intercepted)):
+            return None
+        return recovered
     return sanitize_inlined_body(recovered)
 
 
@@ -4114,24 +4164,26 @@ def _scaffolding_is_private(
 ) -> bool:
     """
     Whether nothing but the scaffolding the recovery removes can reach a binding it removes: the
-    generator, and the flag and the result of its call (`_reached_only_from`).
+    generator, and the flag and the result of its call (`_reached_only_from`), each a `var` of the
+    function holding the call, as the obfuscator writes them, or a function declaration.
     """
     removed = body[match.gen_decl_index:match.scaffolding_end + 1]
     inside = {id(node) for statement in removed for node in statement.walk()}
     generator = removed[0]
     assert isinstance(generator, JsFunctionDeclaration) and generator.id is not None
-    names = {match.did_return_var, match.result_var}
-    anchors = [generator.id]
-    for statement in removed[1:]:
-        anchors.extend(
-            node for node in statement.walk()
-            if isinstance(node, JsIdentifier) and node.name in names
-        )
-    for anchor in anchors:
+    names = {match.result_var}
+    if match.flag is not None:
+        names.add(match.flag.name)
+    anchors: dict[str, Binding] = {}
+    for anchor in [generator.id, *(
+        node for statement in removed[1:] for node in statement.walk()
+        if isinstance(node, JsIdentifier) and node.name in names
+    )]:
         binding = model.binding_of(anchor) or model.resolve(anchor)
-        if binding is None or not _reached_only_from(model, binding, inside):
+        if binding is None or binding.is_lexical:
             return False
-    return True
+        anchors.setdefault(anchor.name, binding)
+    return all(_reached_only_from(model, binding, inside) for binding in anchors.values())
 
 
 def _reached_only_from(model: SemanticModel, binding: Binding, inside: set[int]) -> bool:
@@ -4223,10 +4275,11 @@ def _leaves_the_generator(recovered: list[Statement], match: _GeneratorCFFMatch)
         match.generator_name,
         match.scope_param_name,
         match.arg_var_name,
-        match.did_return_var,
         match.result_var,
         *match.state_var_names,
     }
+    if match.flag is not None:
+        names.add(match.flag.name)
     names.discard(None)
     return any(True for _ in _references_to(recovered, frozenset(names)))
 
@@ -4494,12 +4547,12 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
             if result is None:
                 i += 1
                 continue
-            recovered, settled = result
+            recovered = result.statements
             main = _Activation(
                 None,
                 match.scope_default_inits,
                 props=match.scope_prop_names,
-                routing=settled,
+                routing=result.settled,
             )
             wrappers = _resolve_shared_wrappers(
                 recovered, machine, match, main, self._provably_absent
@@ -4522,6 +4575,7 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
                 match,
                 body[match.scaffolding_end + 1:],
                 bool(wrappers),
+                result.returns,
             )
             if settled is None:
                 i += 1

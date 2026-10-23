@@ -3589,17 +3589,18 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_recovery_declines_a_body_the_obfuscator_does_not_write(self):
         """
-        A body that runs on into the next case, a state variable stored and read before the
-        transition that ends the body, a branch storing a state variable before its transition,
-        from an expression the machine cannot evaluate or where the branch reads it back, a
-        condition storing a state variable, a class taking a state variable's name, a payload
-        leaving the switch by a `break` of its own, on every way or on one, a function declared
-        behind a `return` or behind the transition, and a variable declared in a body no run
-        reaches: the obfuscator ends every body in one transition and declares nothing in it, and
-        each generator is left as it is.
+        A body that runs on into the next case, directly or off the end of a `switch` it ends in, a
+        state variable stored and read before the transition that ends the body, a branch storing a
+        state variable before its transition, from an expression the machine cannot evaluate or
+        where the branch reads it back, a condition storing a state variable, a class taking a state
+        variable's name, a payload leaving the switch by a `break` of its own, on every way or on
+        one, a function declared behind a `return` or behind the transition, and a variable declared
+        in a body no run reaches: the obfuscator ends every body in one transition and declares
+        nothing in it, and each generator is left as it is.
         """
         for source in (
             self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
+            self.BODY_ENDING_IN_A_SWITCH_THAT_RUNS_ON_CFF,
             self.STATE_READ_BETWEEN_TRANSITION_STORES_CFF,
             self.STATE_STORED_BEFORE_THE_PAYLOAD_READS_IT_CFF,
             self.BRANCH_STORING_A_STATE_IT_CANNOT_READ_CFF,
@@ -5930,6 +5931,518 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         )
 
 
+    RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF = inspect.cleandoc(
+        """
+        function outer(items) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    for (const item of items) {
+                      if (item > 5) {
+                        return done = true, item;
+                      }
+                    }
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, -1;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RETURN_IN_A_TRY_WITH_A_FINALLY_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    try {
+                      if (n > 0) {
+                        return done = true, 'early';
+                      }
+                    } finally {
+                      console.log('finally');
+                    }
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, 'late';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RETURN_IN_A_SWITCH_AND_A_LABELED_BLOCK_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    switch (n) {
+                      case 1:
+                        return done = true, 'one';
+                    }
+                    block: {
+                      if (n === 2) {
+                        return done = true, 'two';
+                      }
+                      break block;
+                    }
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, 'many';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    WRAPPER_RETURNING_WITHOUT_THE_FLAG_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.helper = function(...rest) {
+                      return gen(40, 10, { L: {} }, rest)["next"]()["value"];
+                    };
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, helper(n) + helper(n + 1);
+                  case 50:
+                    [L.x] = args;
+                    a = 50, b = 10;
+                    break;
+                  case 60:
+                    return L.x * 10;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BODY_ENDING_IN_A_SWITCH_THAT_RETURNS_CFF = inspect.cleandoc(
+        """
+        function outer(k) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log('start', k);
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    switch (k) {
+                      case 1: return done = true, 'one';
+                      case 2: return done = true, 'two';
+                      default: return done = true, 'many';
+                    }
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(10, 0)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RETURN_WITHOUT_THE_FLAG_IN_THE_MAIN_RUN_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    return 'plain';
+                  case 30:
+                    return done = true, 'flagged';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'after';
+        }
+        """
+    )
+
+    BODY_ENDING_IN_A_SWITCH_THAT_RUNS_ON_CFF = inspect.cleandoc(
+        """
+        function outer(k) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log('start', k);
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    switch (k) {
+                      case 1: return done = true, 'one';
+                      case 2: return done = true, 'two';
+                    }
+                  case 30:
+                    console.log('fell into the next case', k);
+                    return done = true, 'fell';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(10, 0)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    FLAGGED_RETURN_A_FINALLY_OVERRIDES_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    for (;;) {
+                      try { return done = true, 'returned'; } finally { break; }
+                    }
+                    console.log('after the loop');
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'trailing';
+        }
+        """
+    )
+
+    RETURN_STORING_FALSE_TO_THE_FLAG_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    return done = false, 'unflagged';
+                  case 30:
+                    return done = true, 'flagged';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'after';
+        }
+        """
+    )
+
+    FLAG_DECLARED_BY_A_LET_CFF = inspect.cleandoc(
+        """
+        function outer(p) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (p > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    return done = true, 'flagged';
+                  case 30:
+                    return done = true, 'other';
+                }
+              }
+            }
+          }
+          done = void 0;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          let done;
+        }
+        """
+    )
+
+    SLOT_NAMED_LIKE_THE_FLAG_CFF = inspect.cleandoc(
+        """
+        function outer(p) {
+          function* gen(a, b, scope = { done: 0 }) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (p > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    return done = true, 'flagged';
+                  case 30:
+                    return done = true, 'other';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'after';
+        }
+        """
+    )
+
+    FLAG_NAME_BOUND_IN_A_BLOCK_CFF = inspect.cleandoc(
+        """
+        function outer(p) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (p > 0) { let done; return done = true, 'shadowed'; }
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, 'flagged';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'after';
+        }
+        """
+    )
+
+    FLAG_NAME_BOUND_BY_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer(p) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    for (let done = 0; done < 1; done++) { if (p > 0) { return done = true, 'shadowed'; } }
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    return done = true, 'flagged';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'after';
+        }
+        """
+    )
+
+    FLAGGED_RETURN_WHOSE_VALUE_THROWS_IN_A_TRY_CFF = inspect.cleandoc(
+        """
+        function outer(text) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    try { return done = true, JSON.parse(text); } catch (e) { console.log('bad input'); }
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'default';
+        }
+        """
+    )
+
+    def test_generator_cff_return_in_a_loop_of_the_payload_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(items) {
+                  for (const item of items) {
+                    if (item > 5) {
+                      return item;
+                    }
+                  }
+                  return -1;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_return_in_a_try_with_a_finally_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  try {
+                    if (n > 0) {
+                      return 'early';
+                    }
+                  } finally {
+                    console.log('finally');
+                  }
+                  return 'late';
+                }
+                """
+            ),
+            self._run_transformer(
+                self.RETURN_IN_A_TRY_WITH_A_FINALLY_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_return_in_a_switch_and_a_labeled_block_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  switch (n) {
+                    case 1:
+                      return 'one';
+                  }
+                  block: {
+                    if (n === 2) {
+                      return 'two';
+                    }
+                    break block;
+                  }
+                  return 'many';
+                }
+                """
+            ),
+            self._run_transformer(
+                self.RETURN_IN_A_SWITCH_AND_A_LABELED_BLOCK_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_wrapper_returning_without_the_flag_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  var helper;
+                  helper = function(x_1) {
+                    var L = {};
+                    L.x = x_1;
+                    return L.x * 10;
+                  };
+                  return helper(n) + helper(n + 1);
+                }
+                """
+            ),
+            self._run_transformer(
+                self.WRAPPER_RETURNING_WITHOUT_THE_FLAG_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_body_ending_in_a_switch_that_returns_leaves_the_machine(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(k) {
+                  console.log('start', k);
+                  switch (k) {
+                    case 1:
+                      return 'one';
+                    case 2:
+                      return 'two';
+                    default:
+                      return 'many';
+                  }
+                }
+                """
+            ),
+            self._run_transformer(
+                self.BODY_ENDING_IN_A_SWITCH_THAT_RETURNS_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_return_the_guard_cannot_tell_apart_is_declined(self):
+        """
+        Where the guard behind the call cannot tell the returns of the generator that end the
+        function from those that fall through, the generator is left as it is: a return of the main
+        run that stores nothing or `false` to the flag; a flagged return in a `try` whose `finally`
+        ends the run another way, or whose value may throw into its `catch`, with code behind the
+        guard; and a flag declared by a `let`, or whose name a slot of the scope object, a block or
+        a loop of the run binds anew.
+        """
+        for source in (
+            self.RETURN_WITHOUT_THE_FLAG_IN_THE_MAIN_RUN_CFF,
+            self.RETURN_STORING_FALSE_TO_THE_FLAG_CFF,
+            self.FLAGGED_RETURN_A_FINALLY_OVERRIDES_CFF,
+            self.FLAGGED_RETURN_WHOSE_VALUE_THROWS_IN_A_TRY_CFF,
+            self.FLAG_DECLARED_BY_A_LET_CFF,
+            self.SLOT_NAMED_LIKE_THE_FLAG_CFF,
+            self.FLAG_NAME_BOUND_IN_A_BLOCK_CFF,
+            self.FLAG_NAME_BOUND_BY_A_LOOP_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
+
 #: The statements that run each fixture of `TestGeneratorCFFUnflattening` and print what it did,
 #: appended to the fixture and to its recovery alike. A fixture that already prints on its own
 #: needs none; every other one is called with arguments that reach the paths its machine recovers,
@@ -6123,6 +6636,22 @@ ENTRY_POINTS = {
         ' console.log(m, outer(x).join(","));'
         ' }'
     ),
+    'RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF': 'console.log(outer([1, 7, 9]), outer([1]));',
+    'RETURN_IN_A_TRY_WITH_A_FINALLY_CFF': 'console.log(outer(1), outer(0));',
+    'RETURN_IN_A_SWITCH_AND_A_LABELED_BLOCK_CFF': 'console.log(outer(1), outer(2), outer(3));',
+    'WRAPPER_RETURNING_WITHOUT_THE_FLAG_CFF': 'console.log(outer(1));',
+    'BODY_ENDING_IN_A_SWITCH_THAT_RETURNS_CFF': 'console.log(outer(1), outer(2), outer(3));',
+    'RETURN_WITHOUT_THE_FLAG_IN_THE_MAIN_RUN_CFF': 'console.log(outer(1), outer(-1));',
+    'BODY_ENDING_IN_A_SWITCH_THAT_RUNS_ON_CFF': 'console.log(outer(1), outer(2), outer(3));',
+    'FLAGGED_RETURN_A_FINALLY_OVERRIDES_CFF': 'console.log(outer(1));',
+    'RETURN_STORING_FALSE_TO_THE_FLAG_CFF': 'console.log(outer(1), outer(-1));',
+    'FLAG_DECLARED_BY_A_LET_CFF': (
+        'try { console.log(outer(1)); } catch (e) { console.log(e.name); }'
+    ),
+    'SLOT_NAMED_LIKE_THE_FLAG_CFF': 'console.log(outer(1), outer(-1));',
+    'FLAG_NAME_BOUND_IN_A_BLOCK_CFF': 'console.log(outer(1), outer(-1));',
+    'FLAG_NAME_BOUND_BY_A_LOOP_CFF': 'console.log(outer(1), outer(-1));',
+    'FLAGGED_RETURN_WHOSE_VALUE_THROWS_IN_A_TRY_CFF': "console.log(outer('1'), outer('{'));",
 }
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
