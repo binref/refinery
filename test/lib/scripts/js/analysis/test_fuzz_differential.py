@@ -16,11 +16,11 @@ from test.lib.scripts.js.analysis.jsgen import (
     generate,
 )
 
-#: The seeds whose programs the sweep deobfuscates.
+#: The seeds whose programs the sweep deobfuscates, once it has seen each of them run cleanly.
 _SWEPT_SEEDS = range(176)
 
-#: The seeds whose programs must run cleanly in Node, the swept ones among them.
-_CLEAN_SEEDS = range(256)
+#: The seeds beyond the sweep whose programs must run cleanly too.
+_UNSWEPT_SEEDS = range(_SWEPT_SEEDS.stop, 256)
 
 
 class TestFuzzGenerator(TestBase):
@@ -85,13 +85,12 @@ class TestFuzzGeneratorRunsInNode(TestBase):
     only if it is deterministic, so comparing an original against its deobfuscation is meaningful. A
     failure here is a generator regression to fix before the fuzzer can be trusted, never a
     deobfuscator bug. The sweep runs every program it deobfuscates and asserts that it ran cleanly,
-    so the programs of the swept seeds are not run here again.
+    each seed on its own whatever became of the others, so the programs of the swept seeds are not
+    run here again.
     """
 
     def test_generated_programs_beyond_the_sweep_run_cleanly(self):
-        for seed in _CLEAN_SEEDS:
-            if seed in _SWEPT_SEEDS:
-                continue
+        for seed in _UNSWEPT_SEEDS:
             source = generate(seed)
             self.assertIsNone(
                 behavior(source)[1],
@@ -128,18 +127,19 @@ class TestDeobfuscationFuzzSweep(TestBase):
     def test_deobfuscation_preserves_behavior_across_seeds(self):
         for seed in _SWEPT_SEEDS:
             source = generate(seed)
-            original = behavior(source)
-            self.assertIsNone(
-                original[1],
-                F'seed {seed} did not run cleanly in node:\n{source}',
-            )
-            deobfuscated = deobfuscate_source(source)
-            self.assertEqual(
-                original,
-                behavior(deobfuscated),
-                F'seed {seed}: deobfuscation changed observable behavior\n'
-                F'--- source ---\n{source}\n--- deobfuscated ---\n{deobfuscated}',
-            )
+            with self.subTest(seed=seed):
+                original = behavior(source)
+                self.assertIsNone(
+                    original[1],
+                    F'seed {seed} did not run cleanly in node:\n{source}',
+                )
+                deobfuscated = deobfuscate_source(source)
+                self.assertEqual(
+                    original,
+                    behavior(deobfuscated),
+                    F'seed {seed}: deobfuscation changed observable behavior\n'
+                    F'--- source ---\n{source}\n--- deobfuscated ---\n{deobfuscated}',
+                )
 
 
 _PROGRAMS_THAT_ONCE_DIVERGED: dict[int, str] = {
