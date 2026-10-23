@@ -393,6 +393,20 @@ class _ValueOracleTest(_ScriptOracleTest):
     setup_version: tuple[int, int, int]
     defects: frozenset[tuple[str, int]] = frozenset()
 
+    #: The script of the build as parsed for the first test of the class that needs it, and its
+    #: disassembly at that time. The tests of the class share it; a test that changes the script
+    #: works on a parse of its own, see `emulator_with_a_constant_replaced`.
+    _shared: tuple[IFPSFile, str] | None = None
+
+    @classmethod
+    def tearDownClass(cls):
+        shared, cls._shared = cls._shared, None
+        super().tearDownClass()
+        if shared is not None:
+            script, disassembly = shared
+            if script.disassembly() != disassembly:
+                raise AssertionError(F'a test of {cls.__name__} changed the shared script')
+
     def log(self) -> dict[str, str]:
         values = {}
         for line in codecs.decode(_value_oracle_file(self, self.build, 'log'), 'utf8').splitlines():
@@ -400,8 +414,15 @@ class _ValueOracleTest(_ScriptOracleTest):
                 values[match[1]] = match[2]
         return _resolved(values)
 
-    def emulator(self, **config):
-        script = IFPSFile.Parse(_value_oracle_file(self, self.build, 'ifps'))
+    def script(self) -> IFPSFile:
+        if (shared := type(self)._shared) is None:
+            script = IFPSFile.Parse(_value_oracle_file(self, self.build, 'ifps'))
+            shared = type(self)._shared = script, script.disassembly()
+        return shared[0]
+
+    def emulator(self, script: IFPSFile | None = None, **config):
+        if script is None:
+            script = self.script()
         config.setdefault('setup_version', self.setup_version)
         return InnoSetupEmulator(script, IFPSEmulatorConfig(
             log_calls=True,
@@ -410,6 +431,29 @@ class _ValueOracleTest(_ScriptOracleTest):
             max_opcodes=2_000_000,
             **config,
         ))
+
+    def emulator_with_a_constant_replaced(
+        self,
+        procedure: str,
+        constant: str | int,
+        replacement: str | int,
+        **config,
+    ) -> tuple[InnoSetupEmulator, Function]:
+        """
+        An emulator on a parse of the script of its own, in which the one operand of the procedure
+        that holds the constant holds the replacement instead, and the procedure.
+        """
+        script = IFPSFile.Parse(_value_oracle_file(self, self.build, 'ifps'))
+        emulator = self.emulator(script, **config)
+        function = emulator.symbols[procedure]
+        replaced = 0
+        for instruction in function.body or ():
+            for k, operand in enumerate(instruction.operands):
+                if isinstance(operand, Operand) and (value := operand.value) and value.value == constant:
+                    instruction.operands[k] = operand._replace(value=Value(value.type, replacement))
+                    replaced += 1
+        self.assertEqual(replaced, 1)
+        return emulator, function
 
     def emulated(self, emulator: InnoSetupEmulator, procedure: str) -> dict[str, str]:
         logged = {}
@@ -782,15 +826,9 @@ class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
         go on to 41 digits. Setup raised an error for every width of 11 to 40 digits and crashed
         for one of 5000 digits.
         """
-        emulator = self.emulator(max_string_length=40_000_000)
-        procedure = emulator.symbols['ORACLELONGSTRINGS']
-        replaced = 0
-        for instruction in procedure.body or ():
-            for k, operand in enumerate(instruction.operands):
-                if isinstance(operand, Operand) and (constant := operand.value) and constant.value == 40:
-                    instruction.operands[k] = operand._replace(value=Value(constant.type, 41))
-                    replaced += 1
-        self.assertEqual(replaced, 1)
+        emulator, procedure = self.emulator_with_a_constant_replaced(
+            'ORACLELONGSTRINGS', 40, 41, max_string_length=40_000_000
+        )
         logged = {}
         with self.assertRaises(EmulatorUndefined):
             _logged_values(emulator.emulate_function(procedure), logged)
@@ -802,15 +840,9 @@ class TestTheEmulatorLogsWhatInnoSetup6Logged(_EveryBuild, _A32BitBuild):
         as -2**31. Delphi then scales by a power of ten from after the end of its table: two runs
         of the oracle parsed this text to NaN and to 2.38E+4756.
         """
-        emulator = self.emulator()
-        procedure = emulator.symbols['ORACLEPARSINGPOWERS']
-        replaced = 0
-        for instruction in procedure.body or ():
-            for k, operand in enumerate(instruction.operands):
-                if isinstance(operand, Operand) and (constant := operand.value) and constant.value == '1e4932':
-                    instruction.operands[k] = operand._replace(value=Value(constant.type, '1e2147483648'))
-                    replaced += 1
-        self.assertEqual(replaced, 1)
+        emulator, procedure = self.emulator_with_a_constant_replaced(
+            'ORACLEPARSINGPOWERS', '1e4932', '1e2147483648'
+        )
         with self.assertRaises(EmulatorUndefined):
             for _ in emulator.emulate_function(procedure):
                 pass
