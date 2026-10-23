@@ -285,4 +285,3 @@ def decide(text: str, identifier: Callable[[str], bool], rules: Rules = NAMES) -
     except ExpressionError as error:
         raise InternalError(F'Expression error \'{error}\'') from error
     raise RuntimeError(F'The expression {text!r} asked for more than a value.')
-

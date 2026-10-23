@@ -32,7 +32,7 @@ from refinery.lib.inno.release import ReleaseRange, SetupRelease, next_release
 from refinery.lib.lcid import DEFAULT_CODEPAGE, LCID
 from refinery.lib.solid import SolidStream, SolidStreamTruncated
 from refinery.lib.structures import Struct, StructReader, StructReaderBits
-from refinery.lib.tools import exception_to_string, one
+from refinery.lib.tools import copy_exception, exception_to_string, one
 from refinery.lib.types import buf
 from refinery.units import Unit
 
@@ -3085,7 +3085,7 @@ class InnoArchive:
         if (emulator := self._script_emulator) is not None:
             return emulator.reset().expand_constant(text)
         if isinstance(host := self._constants_without_script, Exception):
-            raise host
+            raise copy_exception(host)
         expansion = host.expand(text)
         try:
             while True:
@@ -3113,7 +3113,7 @@ class InnoArchive:
         try:
             setup = HostSetup.of_installer(self, config)
         except Exception as error:
-            return error
+            return copy_exception(error)
         form = WizardForm(StandIns.of(config), uninstallable=setup.uninstallable.answer is not False)
         return SetupConstants(setup, config, form)
 

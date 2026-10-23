@@ -1563,7 +1563,7 @@ class IFPSEmulator:
                     else:
                         raise RuntimeError(F'Function contains invalid opcode at 0x{ip:X}.')
                 except IFPSException as EE:
-                    raised = EE
+                    raised = copy_exception(EE)
                     break
                 except EmulatorException:
                     raise
