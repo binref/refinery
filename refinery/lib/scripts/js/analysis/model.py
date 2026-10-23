@@ -2416,6 +2416,8 @@ class SemanticModel:
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
+        self._dynamic_rebind_sites: dict[Binding, list[Node] | None] = {}
+        self._built = False
         self._spells_caller: bool | None = None
         self._constructors_escape: bool | None = None
         self._values_through_calls: dict[Binding, tuple[list[Node], bool]] = {}
@@ -2425,6 +2427,7 @@ class SemanticModel:
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
         self._deleted_host_globals: frozenset[str] = self._scan_deleted_host_globals()
+        self._built = True
 
     def scope_of(self, node: Node) -> Scope | None:
         """
@@ -3840,8 +3843,18 @@ class SemanticModel:
         (a global is not frozen on a global-scope surface, and a binding of the top scope that may
         be absent is a local of the CommonJS wrapper where it exists), and the unread-source leg
         reaches a global from anywhere in the file but a local only from its own function. An
-        empty list is a binding no dynamic scope can rebind.
+        empty list is a binding no dynamic scope can rebind. Memoized per binding once the model is
+        built: while it is, the references made through objects aliasing a binding are still being
+        recorded, and an answer taken then would depend on how far that had got.
         """
+        if binding in self._dynamic_rebind_sites:
+            return self._dynamic_rebind_sites[binding]
+        sites = self._dynamic_rebind_sites_of(binding)
+        if self._built:
+            self._dynamic_rebind_sites[binding] = sites
+        return sites
+
+    def _dynamic_rebind_sites_of(self, binding: Binding) -> list[Node] | None:
         if binding.written_at_entry:
             return None
         owner = binding.scope.var_scope
