@@ -4281,7 +4281,9 @@ class TestPs1WordSpellingAgreesWithWindowsPowerShell(Ps1OracleTest):
 class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     """
     The output must run and do the same thing as the input. Every other test of that compares our
-    output against our own expectation of it; this one measures both on a host.
+    output against our own expectation of it; this one measures both on a host. A claim is not run
+    again: what it does is its entry in `CLAIM_TRANSCRIPTS`, which
+    `TestPs1CorruptionLedgerRestsOnMeasuredBeliefs` holds against the host.
 
     The mode measured is the sound one, `ps1 -s`: it is the one whose output this promise is made
     about, because the trusting model the unit runs by default is documented — see
@@ -4294,11 +4296,12 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
         snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
         deobfuscated = rewritten_by(self.ldu('ps1', strict=True), snippets)
         rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
+        unmeasured = [snippet for snippet in rewritten if snippet not in CLAIM_TRANSCRIPTS]
+        before = {**CLAIM_TRANSCRIPTS, **dict(zip(unmeasured, behaviours(unmeasured)))}
         changed = sorted(
             snippet
-            for snippet, before, after in zip(
-                rewritten, behaviours(rewritten), behaviours(rewritten, deobfuscated))
-            if before != after
+            for snippet, after in zip(rewritten, behaviours(rewritten, deobfuscated))
+            if after != before[snippet]
         )
         self.assertEqual(changed, sorted({**BEHAVIOUR_DEFECTS, **BEHAVIOUR_DIVERGENCES}))
 
@@ -4385,15 +4388,16 @@ class TestPs1DeobfuscationPreservesValueTypes(Ps1OracleTest):
     The same promise `TestPs1DeobfuscationPreservesBehaviour` checks, over the rows written to make
     a type observable. They are quantified separately and ledgered separately because they share a
     few root causes rather than being independent defects, and because three of those causes are
-    not about types at all — see `TYPE_DEFECTS`.
+    not about types at all — see `TYPE_DEFECTS`. What a row does is its entry in `TYPE_TRANSCRIPTS`,
+    which `TestPs1ValueTypesRestOnMeasuredBeliefs` holds against the host, so only the output runs.
     """
 
     def test_the_output_behaves_like_the_row(self):
         rewrite = rewritten_by(self.ldu('ps1', strict=True), corpus.TYPES)
         rows = corpus.TYPES
         changed = sorted(
-            row for row, before, after in zip(rows, behaviours(rows), behaviours(rows, rewrite))
-            if before != after
+            row for row, after in zip(rows, behaviours(rows, rewrite))
+            if after != TYPE_TRANSCRIPTS[row]
         )
         self.assertEqual(changed, sorted(TYPE_DEFECTS))
 
