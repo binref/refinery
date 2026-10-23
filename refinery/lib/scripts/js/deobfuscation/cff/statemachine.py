@@ -12,7 +12,7 @@ import math
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple, Sequence, TypeVar
 
 from refinery.lib.scripts import (
     Expression,
@@ -1890,6 +1890,8 @@ def _process_payload(
 
 _VIRTUAL_EXIT: int = -1
 
+_N = TypeVar('_N', bound=Node)
+
 
 @dataclass
 class _CFGNode:
@@ -1902,6 +1904,7 @@ class _CFGNode:
     payload: list[Statement]
     condition: Expression | None
     successors: list[int] = field(default_factory=list)
+    leaves: bool = False
     predecessors: list[int] = field(default_factory=list)
     true_prefix_payload: list[Statement] = field(default_factory=list)
     false_prefix_payload: list[Statement] = field(default_factory=list)
@@ -2016,6 +2019,7 @@ def _build_cfg(
             successors=successors,
             true_prefix_payload=true_prefix_payload,
             false_prefix_payload=false_prefix_payload,
+            leaves=isinstance(transition, _SMExitTransition),
         )
         nodes[node_id] = node
 
@@ -2115,37 +2119,21 @@ def _dominates(idom: dict[int, int | None], a: int, b: int) -> bool:
     return False
 
 
-def _compute_ipdom(
-    cfg: _CFG,
-    exit_id: int,
-    region: set[int] | None = None,
-) -> dict[int, int | None]:
+def _post_dominators(successors: dict[int, list[int]], exit_id: int) -> dict[int, int]:
     """
-    Compute immediate post-dominators using Cooper-Harvey-Kennedy on the reverse CFG.
-    Post-dominator of X = first node Y that ALL paths from X to exit must pass through.
+    The immediate post-dominator of every block of the graph *successors* describes that has a way
+    to *exit_id*: the nearest block every way from it to *exit_id* passes, computed as dominators
+    of the reversed graph (Cooper, Harvey and Kennedy). Neither *exit_id* nor a block without such
+    a way has one.
     """
-    exit_preds: list[int] = []
-    if exit_id not in cfg.nodes:
-        for nid, node in cfg.nodes.items():
-            if region is not None and nid not in region:
-                continue
-            if exit_id in node.successors:
-                exit_preds.append(nid)
+    predecessors: dict[int, list[int]] = {exit_id: []}
+    for disc, succs in successors.items():
+        predecessors.setdefault(disc, [])
+        for succ in succs:
+            predecessors.setdefault(succ, []).append(disc)
 
     visited: set[int] = set()
     rpo: list[int] = []
-
-    def _get_reverse_succs(nid: int) -> list[int]:
-        node = cfg.nodes.get(nid)
-        if node is None:
-            if nid == exit_id:
-                return exit_preds
-            return []
-        preds = node.predecessors
-        if region is not None:
-            preds = [p for p in preds if p in region]
-        return preds
-
     stack: list[tuple[int, int]] = [(exit_id, 0)]
     while stack:
         current, idx = stack.pop()
@@ -2153,29 +2141,24 @@ def _compute_ipdom(
             if current in visited:
                 continue
             visited.add(current)
-        preds = _get_reverse_succs(current)
+        preds = predecessors.get(current, [])
         if idx < len(preds):
             stack.append((current, idx + 1))
-            p = preds[idx]
-            if p not in visited:
-                stack.append((p, 0))
+            if (pred := preds[idx]) not in visited:
+                stack.append((pred, 0))
         else:
             rpo.append(current)
 
     rpo.reverse()
-    node_to_idx = {d: i for i, d in enumerate(rpo)}
-    ipdom: dict[int, int | None] = {exit_id: None}
+    position = {disc: index for index, disc in enumerate(rpo)}
+    ipdom: dict[int, int] = {exit_id: exit_id}
 
     def intersect(a: int, b: int) -> int:
-        ai: int = node_to_idx[a]
-        bi: int = node_to_idx[b]
-        while ai != bi:
-            while ai > bi:
-                a = ipdom[a]  # type: ignore
-                ai = node_to_idx[a]
-            while bi > ai:
-                b = ipdom[b]  # type: ignore
-                bi = node_to_idx[b]
+        while a != b:
+            while position[a] > position[b]:
+                a = ipdom[a]
+            while position[b] > position[a]:
+                b = ipdom[b]
         return a
 
     changed = True
@@ -2184,21 +2167,17 @@ def _compute_ipdom(
         for disc in rpo:
             if disc == exit_id:
                 continue
-            node = cfg.nodes.get(disc)
-            if node is None:
-                continue
-            succs = [s for s in node.successors if s in ipdom]
-            if region is not None:
-                succs = [s for s in succs if s in region or s == exit_id]
+            succs = [succ for succ in successors.get(disc, []) if succ in ipdom]
             if not succs:
                 continue
             new_ipdom = succs[0]
-            for s in succs[1:]:
-                new_ipdom = intersect(new_ipdom, s)
+            for succ in succs[1:]:
+                new_ipdom = intersect(new_ipdom, succ)
             if ipdom.get(disc) != new_ipdom:
                 ipdom[disc] = new_ipdom
                 changed = True
 
+    del ipdom[exit_id]
     return ipdom
 
 
@@ -2263,358 +2242,431 @@ def _compute_loop_body(cfg: _CFG, header: int, tail: int) -> set[int]:
     return body
 
 
-def _structural_analysis(
-    cfg: _CFG,
-    idom: dict[int, int | None],
-    loops: list[_NaturalLoop],
-) -> list[Statement]:
+def _block_code(node: _CFGNode) -> list[Node]:
     """
-    Recover structured control flow from the CFG using region-based structural analysis.
-    Process loops innermost-first, then structure acyclic regions.
+    The code the structuring writes for the block *node*: its payload, the condition of its
+    transition, and what each branch of it runs first.
     """
-    sorted_loops = _sort_loops_innermost_first(loops)
-    collapsed: dict[int, list[Statement]] = {}
-    loop_headers: set[int] = set()
-
-    for loop in sorted_loops:
-        loop_headers.add(loop.header)
-        body_stmts = _structure_loop(cfg, loop, idom, collapsed)
-        collapsed[loop.header] = body_stmts
-        for body_node in loop.body:
-            if body_node != loop.header and body_node not in collapsed:
-                collapsed[body_node] = []
-
-    return _structure_acyclic_region(cfg, cfg.entry, cfg.exit, idom, collapsed, loop_headers)
+    code: list[Node] = [*node.payload, *node.true_prefix_payload, *node.false_prefix_payload]
+    if node.condition is not None:
+        code.append(node.condition)
+    return code
 
 
-def _sort_loops_innermost_first(loops: list[_NaturalLoop]) -> list[_NaturalLoop]:
+class _NodeParts(NamedTuple):
     """
-    Sort loops so that inner (smaller body) loops are processed before outer ones.
+    What the structuring writes for one block: its payload, the condition of its transition, and
+    the statements each branch of that transition runs first.
     """
-    return sorted(loops, key=lambda lp: len(lp.body))
+    payload: list[Statement]
+    condition: Expression | None
+    true_prefix: list[Statement]
+    false_prefix: list[Statement]
 
 
-def _structure_loop(
-    cfg: _CFG,
-    loop: _NaturalLoop,
-    idom: dict[int, int | None],
-    collapsed: dict[int, list[Statement]],
-) -> list[Statement]:
+class _Region:
     """
-    Structure a single natural loop into a while/do-while statement.
+    The blocks one walk of the structuring places, up to its *exit*: the end of the machine for the
+    walk over the run, the header of the loop for a walk over that loop's body (*members*, `None`
+    for the run). A block that has a way to the exit not passing a block that leaves the machine is
+    steady, and the join of a steady conditional is its post-dominator over those ways (`ipdom`). A
+    block without such a way (`tails`) only leaves the machine or the loop, and the structuring
+    writes it wherever control reaches it. `reach` holds the blocks each block reaches and
+    `dominated` the blocks each block dominates, as bits by their position in the order the graph
+    runs (`order`); `leaving_ipdom` holds post-dominators over every way, each way out of the
+    region ending at the exit.
     """
-    header = loop.header
-    header_node = cfg.nodes[header]
 
-    if (
-        header_node.condition is not None
-        and len(header_node.successors) == 2
-        and not header_node.payload
+    def __init__(
+        self,
+        cfg: _CFG,
+        order: dict[int, int],
+        dominated: dict[int, int],
+        exit_disc: int,
+        members: set[int] | None,
     ):
-        true_succ, false_succ = header_node.successors
-        if true_succ not in loop.body and true_succ in cfg.nodes:
-            body_entry = false_succ
-            condition = JsUnaryExpression(operator='!', operand=header_node.condition, prefix=True)
-            body_prefix = header_node.false_prefix_payload
-            exit_prefix = header_node.true_prefix_payload
-        elif false_succ not in loop.body and false_succ in cfg.nodes:
-            body_entry = true_succ
-            condition = header_node.condition
-            body_prefix = header_node.true_prefix_payload
-            exit_prefix = header_node.false_prefix_payload
+        nodes = {disc for disc in (cfg.nodes if members is None else members) if disc != exit_disc}
+        steady = {disc for disc in nodes if not cfg.nodes[disc].leaves}
+        self.exit = exit_disc
+        self.members = members
+        self.dominated = dominated
+        self.ipdom = _post_dominators({
+            disc: [
+                succ for succ in cfg.nodes[disc].successors if succ in steady or succ == exit_disc
+            ] for disc in steady
+        }, exit_disc)
+        self.tails = {disc for disc in nodes if disc not in self.ipdom}
+        self.leaving_ipdom = _post_dominators({
+            disc: [
+                succ if succ in nodes else exit_disc for succ in cfg.nodes[disc].successors
+            ] for disc in nodes
+        }, exit_disc)
+        self.at_position = {order[disc]: disc for disc in nodes}
+        self.reach = {disc: 1 << order[disc] for disc in nodes}
+        ordered = sorted(nodes, key=order.__getitem__, reverse=True)
+        changed = True
+        while changed:
+            changed = False
+            for disc in ordered:
+                reached = self.reach[disc]
+                for succ in cfg.nodes[disc].successors:
+                    reached |= self.reach.get(succ, 0)
+                if reached != self.reach[disc]:
+                    self.reach[disc] = reached
+                    changed = True
+
+    def holds(self, disc: int) -> bool:
+        """
+        Whether the block *disc* lies in the region rather than where the loop it is the body of
+        is left to.
+        """
+        return self.members is None or disc in self.members
+
+    def join(self, cfg: _CFG, disc: int) -> int:
+        """
+        Where the branches of the conditional *disc* meet again. For a steady conditional, the
+        nearest block that every way on from it not leaving the machine passes: a branch that always
+        leaves stands in the conditional, and the code after the conditional is the other branch's.
+        For one that only leaves: the block both branches reach that dominates every block both
+        reach, so that both run into the code after the conditional through it; else the nearest
+        block every way on from it passes; else, where the branches leave the region apart, the
+        false successor: the true branch then runs on into it or leaves.
+        """
+        if disc == self.exit:
+            return self.exit
+        if (found := self.ipdom.get(disc)) is not None:
+            return found
+        true_succ, false_succ = cfg.nodes[disc].successors
+        if common := self.reach.get(true_succ, 0) & self.reach.get(false_succ, 0):
+            first = self.at_position[(common & -common).bit_length() - 1]
+            if not common & ~self.dominated[first]:
+                return first
+        if (found := self.leaving_ipdom.get(disc)) is not None and found != self.exit:
+            return found
+        return false_succ
+
+
+class _CopiesOutgrowTheRun(Exception):
+    """
+    Raised where the copies the structuring writes would hold more code than the blocks of the run
+    (`_Structuring.allowance`).
+    """
+
+
+def _code_size(code: Sequence[Node]) -> int:
+    """
+    The number of syntax nodes in *code*.
+    """
+    return sum(1 for part in code for _ in part.walk())
+
+
+class _Structuring:
+    """
+    The recovery of structured code from the graph of one run: loops innermost first, each written
+    once and then standing for its header (`collapsed`), then the run itself, by walks over regions
+    (`_Region`) that place blocks in the order the graph runs them. A block that only leaves is
+    placed wherever control reaches it; where a block is placed a second time, the walk writes a
+    copy of its code (`_parts`, `_collapsed`), since a tree holds a node in one place. Blocks whose
+    ways part and share blocks without meeting again make every level of them double what the
+    levels below write, so the copies may hold at most as much code as the blocks of the run
+    (`allowance`); beyond that, the run is not written.
+
+    A loop is written only where every way out of it goes to one block. A `break` goes to where the
+    code after the loop continues, and nothing else can be said with one.
+    """
+
+    def __init__(self, cfg: _CFG, idom: dict[int, int | None]):
+        self.cfg = cfg
+        self.idom = idom
+        self.collapsed: dict[int, list[Statement]] = {}
+        self.placed: set[int] = set()
+        self.placed_loops: set[int] = set()
+        self.allowance = sum(_code_size(_block_code(node)) for node in cfg.nodes.values())
+        self.order = {disc: index for index, disc in enumerate(_reverse_postorder(cfg))}
+        self.dominated = {disc: 1 << index for disc, index in self.order.items()}
+        for disc in sorted(self.order, key=self.order.__getitem__, reverse=True):
+            if (parent := idom.get(disc)) is not None:
+                self.dominated[parent] |= self.dominated[disc]
+
+    def run(self, loops: list[_NaturalLoop]) -> list[Statement] | None:
+        try:
+            for loop in sorted(loops, key=lambda lp: len(lp.body)):
+                if (body := self._loop(loop)) is None:
+                    return None
+                self.collapsed[loop.header] = body
+                for body_node in loop.body:
+                    if body_node != loop.header and body_node not in self.collapsed:
+                        self.collapsed[body_node] = []
+            region = _Region(self.cfg, self.order, self.dominated, self.cfg.exit, None)
+            return self._acyclic(region, self.cfg.entry, self.cfg.exit, set())
+        except _CopiesOutgrowTheRun:
+            return None
+
+    def _copy(self, code: Sequence[_N]) -> list[_N]:
+        """
+        A copy of *code*, charged to what the copies may hold in all (`allowance`).
+        """
+        self.allowance -= _code_size(code)
+        if self.allowance < 0:
+            raise _CopiesOutgrowTheRun
+        return [_clone_node(part) for part in code]
+
+    def _parts(self, disc: int) -> _NodeParts:
+        """
+        The code of the block *disc* as a walk places it: the block's own the first time, a copy
+        every other time.
+        """
+        node = self.cfg.nodes[disc]
+        if disc not in self.placed:
+            self.placed.add(disc)
+            parts = _NodeParts(
+                list(node.payload),
+                node.condition,
+                list(node.true_prefix_payload),
+                list(node.false_prefix_payload),
+            )
         else:
-            return _structure_loop_infinite(cfg, loop, idom, collapsed)
+            parts = _NodeParts(
+                self._copy(node.payload),
+                self._copy([node.condition])[0] if node.condition is not None else None,
+                self._copy(node.true_prefix_payload),
+                self._copy(node.false_prefix_payload),
+            )
+        return parts
 
-        body_stmts = _structure_acyclic_region(
-            cfg, body_entry, header, idom, collapsed, set(),
-            loop_body=loop.body,
-        )
-        body_stmts = list(header_node.payload) + list(body_prefix) + body_stmts
-        while_stmt = JsWhileStatement(
-            test=condition,
-            body=JsBlockStatement(body=body_stmts),
-        )
-        return [while_stmt] + list(exit_prefix)
+    def _collapsed(self, disc: int) -> list[Statement]:
+        """
+        The code the loop whose header is *disc* was written as, or a copy of it where it was placed
+        before; nothing for another block of a loop, whose code the loop's holds.
+        """
+        code = self.collapsed[disc]
+        if disc in self.placed_loops:
+            return self._copy(code)
+        self.placed_loops.add(disc)
+        return list(code)
 
-    return _structure_loop_infinite(cfg, loop, idom, collapsed)
+    def _loop(self, loop: _NaturalLoop) -> list[Statement] | None:
+        """
+        One natural loop as a `while` statement: tested at its header where it is left from there
+        alone, else `while (true)` left with a `break`. `None` where the loop is left to more than
+        one block.
+        """
+        nodes = self.cfg.nodes
+        targets = {
+            succ for disc in loop.body for succ in nodes[disc].successors if succ not in loop.body
+        }
+        if len(targets) > 1:
+            return None
+        region = _Region(self.cfg, self.order, self.dominated, loop.header, loop.body)
+        header = nodes[loop.header]
+        if (
+            header.condition is not None
+            and len(header.successors) == 2
+            and not header.payload
+            and not any(
+                succ not in loop.body
+                for disc in loop.body if disc != loop.header
+                for succ in nodes[disc].successors
+            )
+        ):
+            true_succ, false_succ = header.successors
+            if true_succ not in loop.body and true_succ in nodes:
+                parts = self._parts(loop.header)
+                assert parts.condition is not None
+                body_entry = false_succ
+                condition: Expression = JsUnaryExpression(
+                    operator='!',
+                    operand=parts.condition,
+                    prefix=True,
+                )
+                body_prefix, exit_prefix = parts.false_prefix, parts.true_prefix
+            elif false_succ not in loop.body and false_succ in nodes:
+                parts = self._parts(loop.header)
+                assert parts.condition is not None
+                body_entry = true_succ
+                condition = parts.condition
+                body_prefix, exit_prefix = parts.true_prefix, parts.false_prefix
+            else:
+                return self._infinite_loop(loop, region)
+            body = self._acyclic(region, body_entry, loop.header, set())
+            return [
+                JsWhileStatement(
+                    test=condition,
+                    body=JsBlockStatement(body=[*body_prefix, *body]),
+                ),
+                *exit_prefix,
+            ]
+        return self._infinite_loop(loop, region)
 
+    def _infinite_loop(self, loop: _NaturalLoop, region: _Region) -> list[Statement]:
+        """
+        A loop without a simple test at its header as `while (true)`, left with `break`.
+        """
+        return [JsWhileStatement(
+            test=JsBooleanLiteral(value=True),
+            body=JsBlockStatement(body=self._loop_body(loop.header, region)),
+        )]
 
-def _structure_loop_infinite(
-    cfg: _CFG,
-    loop: _NaturalLoop,
-    idom: dict[int, int | None],
-    collapsed: dict[int, list[Statement]],
-) -> list[Statement]:
-    """
-    Structure a loop that doesn't have a simple while-condition as `while(true)` with breaks.
-    """
-    header = loop.header
-    body_stmts = _structure_region_nodes(cfg, header, idom, collapsed, loop.body)
-    while_stmt = JsWhileStatement(
-        test=JsBooleanLiteral(value=True),
-        body=JsBlockStatement(body=body_stmts),
-    )
-    return [while_stmt]
+    def _branches(
+        self,
+        region: _Region,
+        disc: int,
+        parts: _NodeParts,
+        join: int,
+        visited: set[int],
+    ) -> Statement:
+        """
+        The `if` statement of the conditional *disc*, each branch running from its successor up to
+        *join*. A block either branch places counts as placed for what follows.
+        """
+        true_succ, false_succ = self.cfg.nodes[disc].successors
+        true_visited = set(visited)
+        true_stmts = list(parts.true_prefix)
+        if true_succ != join:
+            true_stmts.extend(self._acyclic(region, true_succ, join, true_visited))
+        false_visited = set(visited)
+        false_stmts = list(parts.false_prefix)
+        if false_succ != join:
+            false_stmts.extend(self._acyclic(region, false_succ, join, false_visited))
+        visited.update(true_visited)
+        visited.update(false_visited)
+        assert parts.condition is not None
+        return _build_js_if(parts.condition, true_stmts, false_stmts)
 
-
-def _structure_acyclic_region(
-    cfg: _CFG,
-    entry: int,
-    exit_disc: int,
-    idom: dict[int, int | None],
-    collapsed: dict[int, list[Statement]],
-    loop_headers: set[int],
-    loop_body: set[int] | None = None,
-    _visited: set[int] | None = None,
-) -> list[Statement]:
-    """
-    Structure an acyclic region from `entry` to `exit_disc` into a statement sequence.
-    Handles if/else patterns using post-dominator-based join detection.
-    """
-    result: list[Statement] = []
-    visited: set[int] = _visited if _visited is not None else set()
-    worklist: deque[int] = deque([entry])
-
-    while worklist:
-        disc = worklist.popleft()
-        if disc == exit_disc or disc == _VIRTUAL_EXIT:
-            continue
-        if disc in visited:
-            continue
-        if loop_body is not None and disc not in loop_body:
-            continue
-        visited.add(disc)
-
-        if disc in collapsed:
-            result.extend(collapsed[disc])
-            node = cfg.nodes[disc]
-            for s in node.successors:
-                if s not in visited and s != exit_disc and s != _VIRTUAL_EXIT:
-                    if loop_body is None or s in loop_body:
-                        worklist.append(s)
-            continue
-
-        node = cfg.nodes.get(disc)
-        if node is None:
-            continue
-
-        if node.condition is not None and len(node.successors) == 2:
-            result.extend(node.payload)
-            true_succ, false_succ = node.successors
-            join = _find_acyclic_join(cfg, disc, exit_disc, loop_body)
-
-            true_stmts: list[Statement] = list(node.true_prefix_payload)
-            true_visited = set(visited)
-            if true_succ != join and true_succ not in visited:
-                true_stmts.extend(_structure_acyclic_region(
-                    cfg, true_succ, join, idom, collapsed, loop_headers, loop_body, true_visited,
-                ))
-            false_stmts: list[Statement] = list(node.false_prefix_payload)
-            false_visited = set(visited)
-            if false_succ != join and false_succ not in visited:
-                false_stmts.extend(_structure_acyclic_region(
-                    cfg, false_succ, join, idom, collapsed, loop_headers, loop_body, false_visited,
-                ))
-            visited.update(true_visited)
-            visited.update(false_visited)
-
-            result.append(_build_js_if(node.condition, true_stmts, false_stmts))
-
-            if join != _VIRTUAL_EXIT and join != exit_disc and join not in visited:
+    def _acyclic(
+        self,
+        region: _Region,
+        entry: int,
+        exit_disc: int,
+        visited: set[int],
+    ) -> list[Statement]:
+        """
+        The blocks of *region* from *entry* up to *exit_disc* as a statement sequence, with an `if`
+        for each conditional whose branches run up to its join (`_Region.join`). A block another
+        walk placed is placed again only where it only leaves (`_Region.tails`); a block outside the
+        loop the region is the body of is where the loop is left, a `break`.
+        """
+        result: list[Statement] = []
+        here: set[int] = set()
+        worklist: deque[int] = deque([entry])
+        while worklist:
+            disc = worklist.popleft()
+            if disc == exit_disc or disc == _VIRTUAL_EXIT or disc in here:
+                continue
+            here.add(disc)
+            if not region.holds(disc):
+                result.append(JsBreakStatement())
+                continue
+            if disc in visited and disc not in region.tails:
+                continue
+            visited.add(disc)
+            node = self.cfg.nodes[disc]
+            if disc in self.collapsed:
+                result.extend(self._collapsed(disc))
+                worklist.extend(node.successors)
+                continue
+            parts = self._parts(disc)
+            result.extend(parts.payload)
+            if node.condition is not None and len(node.successors) == 2:
+                join = region.join(self.cfg, disc)
+                result.append(self._branches(region, disc, parts, join, visited))
                 worklist.appendleft(join)
-        else:
-            result.extend(node.payload)
-            for s in node.successors:
-                if s == exit_disc or s == _VIRTUAL_EXIT:
-                    continue
-                if s in visited:
-                    continue
-                if loop_body is not None and s not in loop_body:
-                    result.append(JsBreakStatement())
-                    continue
-                worklist.append(s)
+            else:
+                worklist.extend(node.successors)
+        return result
 
-    return result
-
-
-def _find_acyclic_join(
-    cfg: _CFG,
-    cond_disc: int,
-    region_exit: int,
-    loop_body: set[int] | None,
-) -> int:
-    """
-    Find the join point of a conditional by computing its immediate post-dominator within
-    the region. The ipdom is the first node where ALL paths from both successors converge.
-    """
-    region: set[int] = set()
-    queue: deque[int] = deque([cond_disc])
-    while queue:
-        d = queue.popleft()
-        if d in region or d == _VIRTUAL_EXIT:
-            continue
-        if d == region_exit:
-            region.add(d)
-            continue
-        if loop_body is not None and d not in loop_body:
-            continue
-        region.add(d)
-        node = cfg.nodes.get(d)
-        if node is not None:
-            for s in node.successors:
-                if s not in region:
-                    queue.append(s)
-
-    if not region or cond_disc not in region:
-        return region_exit
-
-    region.add(region_exit)
-    ipdom = _compute_ipdom(cfg, region_exit, region)
-    join = ipdom.get(cond_disc)
-    if join is None or (loop_body is not None and join not in loop_body and join != region_exit):
-        return region_exit
-    return join
-
-
-def _structure_region_nodes(
-    cfg: _CFG,
-    header: int,
-    idom: dict[int, int | None],
-    collapsed: dict[int, list[Statement]],
-    loop_body: set[int],
-) -> list[Statement]:
-    """
-    Structure a set of CFG nodes that form a loop body, starting from the header.
-    """
-    result: list[Statement] = []
-    visited: set[int] = set()
-    worklist: deque[int] = deque([header])
-
-    while worklist:
-        disc = worklist.popleft()
-        if disc in visited:
-            continue
-        if disc not in loop_body:
-            result.append(JsBreakStatement())
-            continue
-        visited.add(disc)
-
-        if disc in collapsed:
-            result.extend(collapsed[disc])
-            node = cfg.nodes[disc]
-            for s in node.successors:
-                if s not in visited and s in loop_body:
-                    worklist.append(s)
-            continue
-
-        node = cfg.nodes.get(disc)
-        if node is None:
-            continue
-
-        if node.condition is not None and len(node.successors) == 2:
-            result.extend(node.payload)
+    def _loop_body(self, header: int, region: _Region) -> list[Statement]:
+        """
+        The body of the loop whose header is *header*, for `while (true)`: a branch back to the
+        header is a `continue`, and one out of the loop a `break`.
+        """
+        result: list[Statement] = []
+        visited: set[int] = set()
+        here: set[int] = set()
+        worklist: deque[int] = deque([header])
+        while worklist:
+            disc = worklist.popleft()
+            if disc in here:
+                continue
+            here.add(disc)
+            if not region.holds(disc):
+                result.append(JsBreakStatement())
+                continue
+            if disc in visited and disc not in region.tails:
+                continue
+            visited.add(disc)
+            node = self.cfg.nodes[disc]
+            if disc in self.collapsed:
+                result.extend(self._collapsed(disc))
+                worklist.extend(succ for succ in node.successors if succ != header)
+                continue
+            parts = self._parts(disc)
+            result.extend(parts.payload)
+            if node.condition is None or len(node.successors) != 2:
+                for succ in node.successors:
+                    if succ != header:
+                        worklist.append(succ)
+                continue
+            assert parts.condition is not None
             true_succ, false_succ = node.successors
+            true_in_loop = region.holds(true_succ)
+            false_in_loop = region.holds(false_succ)
+            condition = parts.condition
 
-            true_in_loop = true_succ in loop_body
-            false_in_loop = false_succ in loop_body
+            def negated() -> Expression:
+                return JsUnaryExpression(operator='!', operand=condition, prefix=True)
 
-            if true_succ == header:
-                if false_succ not in loop_body:
-                    neg = JsUnaryExpression(operator='!', operand=node.condition, prefix=True)
-                    break_body = list(node.false_prefix_payload) + [JsBreakStatement()]
+            if true_succ == header or false_succ == header:
+                back_on_true = true_succ == header
+                other = false_succ if back_on_true else true_succ
+                back_prefix = parts.true_prefix if back_on_true else parts.false_prefix
+                other_prefix = parts.false_prefix if back_on_true else parts.true_prefix
+                if not region.holds(other):
                     result.append(JsIfStatement(
-                        test=neg,
-                        consequent=JsBlockStatement(body=break_body),
+                        test=negated() if back_on_true else condition,
+                        consequent=JsBlockStatement(body=[*other_prefix, JsBreakStatement()]),
                     ))
-                    result.extend(node.true_prefix_payload)
+                    result.extend(back_prefix)
                 else:
-                    continue_body = list(node.true_prefix_payload) + [JsContinueStatement()]
                     result.append(JsIfStatement(
-                        test=node.condition,
-                        consequent=JsBlockStatement(body=continue_body),
+                        test=condition if back_on_true else negated(),
+                        consequent=JsBlockStatement(body=[*back_prefix, JsContinueStatement()]),
                     ))
-                    result.extend(node.false_prefix_payload)
-                    worklist.append(false_succ)
+                    result.extend(other_prefix)
+                    worklist.append(other)
                 continue
-            elif false_succ == header:
-                if true_succ not in loop_body:
-                    break_body = list(node.true_prefix_payload) + [JsBreakStatement()]
-                    result.append(JsIfStatement(
-                        test=node.condition,
-                        consequent=JsBlockStatement(body=break_body),
-                    ))
-                    result.extend(node.false_prefix_payload)
-                else:
-                    neg = JsUnaryExpression(operator='!', operand=node.condition, prefix=True)
-                    continue_body = list(node.false_prefix_payload) + [JsContinueStatement()]
-                    result.append(JsIfStatement(
-                        test=neg,
-                        consequent=JsBlockStatement(body=continue_body),
-                    ))
-                    result.extend(node.true_prefix_payload)
-                    worklist.append(true_succ)
-                continue
-
             if not true_in_loop and not false_in_loop:
-                if node.true_prefix_payload or node.false_prefix_payload:
-                    true_body = list(node.true_prefix_payload) + [JsBreakStatement()]
-                    false_body = list(node.false_prefix_payload) + [JsBreakStatement()]
-                    result.append(_build_js_if(node.condition, true_body, false_body))
+                if parts.true_prefix or parts.false_prefix:
+                    result.append(_build_js_if(
+                        parts.condition,
+                        [*parts.true_prefix, JsBreakStatement()],
+                        [*parts.false_prefix, JsBreakStatement()],
+                    ))
                 else:
-                    result.append(_build_js_if(node.condition, [], []))
+                    result.append(_build_js_if(parts.condition, [], []))
                     result.append(JsBreakStatement())
                 continue
             if not true_in_loop:
-                break_body = list(node.true_prefix_payload) + [JsBreakStatement()]
                 result.append(JsIfStatement(
-                    test=node.condition,
-                    consequent=JsBlockStatement(body=break_body),
+                    test=parts.condition,
+                    consequent=JsBlockStatement(body=[*parts.true_prefix, JsBreakStatement()]),
                 ))
-                result.extend(node.false_prefix_payload)
+                result.extend(parts.false_prefix)
                 worklist.append(false_succ)
                 continue
             if not false_in_loop:
-                neg = JsUnaryExpression(operator='!', operand=node.condition, prefix=True)
-                break_body = list(node.false_prefix_payload) + [JsBreakStatement()]
                 result.append(JsIfStatement(
-                    test=neg,
-                    consequent=JsBlockStatement(body=break_body),
+                    test=negated(),
+                    consequent=JsBlockStatement(body=[*parts.false_prefix, JsBreakStatement()]),
                 ))
-                result.extend(node.true_prefix_payload)
+                result.extend(parts.true_prefix)
                 worklist.append(true_succ)
                 continue
-
-            join = _find_acyclic_join(cfg, disc, header, loop_body)
-            true_stmts: list[Statement] = list(node.true_prefix_payload)
-            true_visited = set(visited)
-            if true_succ != join and true_succ not in visited:
-                true_stmts.extend(_structure_acyclic_region(
-                    cfg, true_succ, join, idom, collapsed, set(), loop_body, true_visited,
-                ))
-            false_stmts: list[Statement] = list(node.false_prefix_payload)
-            false_visited = set(visited)
-            if false_succ != join and false_succ not in visited:
-                false_stmts.extend(_structure_acyclic_region(
-                    cfg, false_succ, join, idom, collapsed, set(), loop_body, false_visited,
-                ))
-            visited.update(true_visited)
-            visited.update(false_visited)
-            result.append(_build_js_if(node.condition, true_stmts, false_stmts))
-            if join != header and join in loop_body and join not in visited:
+            join = region.join(self.cfg, disc)
+            result.append(self._branches(region, disc, parts, join, visited))
+            if join != header:
                 worklist.appendleft(join)
-        else:
-            result.extend(node.payload)
-            for s in node.successors:
-                if s == header:
-                    continue
-                if s not in loop_body:
-                    result.append(JsBreakStatement())
-                    continue
-                if s in visited:
-                    continue
-                worklist.append(s)
-
-    return result
+        return result
 
 
 def _substitute_state_vars(stmts: list[Statement], env: _StateEnv) -> list[Statement]:
@@ -3258,8 +3310,8 @@ def _execute_machine(
 
     cfg, settled = cfg_result
     idom = _compute_idom(cfg)
-    loops = _find_loops(cfg, idom)
-    stmts = _structural_analysis(cfg, idom, loops)
+    if (stmts := _Structuring(cfg, idom).run(_find_loops(cfg, idom))) is None:
+        return None
     recovered = _recover_returns(stmts, match.did_return_var)
     return (recovered, settled)
 

@@ -6,7 +6,7 @@ import unittest
 
 from unittest import mock
 
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.analysis.differential import behavior, deobfuscate_within, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts import TREE_RECURSION_DEPTH
@@ -4890,9 +4890,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 function outer(n) {
                   if (n > 0) {
                     return 'positive';
-                  } else {
-                    return 'other';
                   }
+                  return 'other';
                 }
                 """
             ),
@@ -4912,6 +4911,1022 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._run_transformer(self.JUMP_BEHIND_A_LABELED_BREAK_CFF, JsGeneratorCFFUnflattening),
+        )
+
+
+    BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 35, b = 5; break; }
+                  case 20:
+                    if (n > 100) { a = 25, b = 5; break; } else { a = 35, b = 5; break; }
+                  case 30:
+                    return done = true, 'huge';
+                  case 40:
+                    console.log('tail', n);
+                    a = 45, b = 5;
+                    break;
+                  case 50:
+                    return done = true, 'end ' + n;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    IF_AND_ELSE_THAT_BOTH_RETURN_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log('head');
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    return done = true, 'yes';
+                  case 30:
+                    return done = true, 'no';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF = inspect.cleandoc(
+        """
+        function outer(n, m) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 45, b = 5; break; }
+                  case 20:
+                    if (m > 0) { a = 25, b = 5; break; } else { a = 35, b = 5; break; }
+                  case 30:
+                    return done = true, 'early';
+                  case 40:
+                    console.log('then');
+                    a = 55, b = 5;
+                    break;
+                  case 50:
+                    console.log('else');
+                    a = 55, b = 5;
+                    break;
+                  case 60:
+                    console.log('after');
+                    return done = true, n + m;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    BRANCH_REACHING_THE_END_BESIDE_ONE_THAT_RUNS_ON_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    console.log('then');
+                    a = 0, b = 0;
+                    break;
+                  case 30:
+                    console.log('else');
+                    a = 35, b = 5;
+                    break;
+                  case 40:
+                    console.log('after');
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          gen(5, 5)["next"]()["value"];
+          console.log('done');
+        }
+        """
+    )
+
+    BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF = inspect.cleandoc(
+        """
+        function outer(n, m) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    if (m > 0) { a = 35, b = 5; break; } else { a = 45, b = 5; break; }
+                  case 30:
+                    console.log('else');
+                    a = 35, b = 5;
+                    break;
+                  case 40:
+                    console.log('meet');
+                    a = 45, b = 5;
+                    break;
+                  case 50:
+                    return done = true, 'last';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF = inspect.cleandoc(
+        """
+        function outer(n, m) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    console.log('T');
+                    a = 35, b = 5;
+                    break;
+                  case 30:
+                    console.log('F');
+                    if (m > 0) { a = 35, b = 5; break; } else { a = 45, b = 5; break; }
+                  case 40:
+                    return done = true, 'K ' + n;
+                  case 50:
+                    console.log('H');
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF = inspect.cleandoc(
+        """
+        function outer(n, m, k) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (n > 0) { a = 15, b = 5; break; } else { a = 25, b = 5; break; }
+                  case 20:
+                    if (m > 0) { a = 35, b = 5; break; } else { a = 20, b = 5; break; }
+                  case 25:
+                    if (k > 0) { a = 45, b = 5; break; } else { a = 75, b = 5; break; }
+                  case 30:
+                    console.log('F');
+                    a = 35, b = 5;
+                    break;
+                  case 40:
+                    console.log('meet');
+                    a = 45, b = 5;
+                    break;
+                  case 50:
+                    console.log('K');
+                    if (k > 5) { a = 55, b = 5; break; } else { a = 65, b = 5; break; }
+                  case 60:
+                    return done = true, 'sixty';
+                  case 70:
+                    return done = true, 'seventy';
+                  case 80:
+                    return done = true, 'eighty';
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF = inspect.cleandoc(
+        """
+        function wrapper(n, stop) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.i < n) {
+                      a = 30, b = 0;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    if (scope.i === stop) {
+                      a = 50, b = 0;
+                    } else {
+                      a = 40, b = 0;
+                    }
+                    break;
+                  case 40:
+                    console.log(scope.i);
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    return x = true, scope.i;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
+        }
+        """
+    )
+
+    LOOP_WITHOUT_A_TEST_LEFT_FROM_ITS_BODY_CFF = inspect.cleandoc(
+        """
+        function wrapper(n, stop) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    console.log(scope.i);
+                    a = 30, b = 0;
+                    break;
+                  case 30:
+                    if (scope.i === stop) {
+                      a = 50, b = 0;
+                    } else {
+                      a = 40, b = 0;
+                    }
+                    break;
+                  case 40:
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    console.log('after', scope.i);
+                    return x = true, scope.i;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
+        }
+        """
+    )
+
+    BRANCHES_PARTING_AND_MEETING_AGAIN_CFF = inspect.cleandoc(
+        """
+        function outer(x) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 101: out.push(101); if (x[0]) { a = 102, b = 0; break; } else { a = 103, b = 0; break; }
+        case 102: out.push(102); if (x[1]) { a = 104, b = 0; break; } else { a = 201, b = 0; break; }
+        case 103: out.push(103); if (x[2]) { a = 104, b = 0; break; } else { a = 201, b = 0; break; }
+        case 104: out.push(104); a = 201, b = 0; break;
+        case 201: out.push(201); if (x[4]) { a = 202, b = 0; break; } else { a = 203, b = 0; break; }
+        case 202: out.push(202); if (x[5]) { a = 204, b = 0; break; } else { a = 301, b = 0; break; }
+        case 203: out.push(203); if (x[6]) { a = 204, b = 0; break; } else { a = 301, b = 0; break; }
+        case 204: out.push(204); a = 301, b = 0; break;
+        case 301: return done = true, out;
+            } } }
+          }
+          var done;
+          var result = gen(101, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    LADDER_OF_THREE_LEVELS_CFF = inspect.cleandoc(
+        """
+        function outer(x) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 101: out.push(101); if (x[0]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 102: out.push(102); if (x[1]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 201: out.push(201); if (x[2]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 202: out.push(202); if (x[3]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 301: out.push(301); if (x[4]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 302: out.push(302); if (x[5]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 401: out.push(0); a = 0, b = 0; break;
+        case 402: out.push(0); a = 0, b = 0; break;
+            } } }
+          }
+          var done;
+          var result = gen(101, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF = inspect.cleandoc(
+        """
+        function outer(x) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 101: out.push(101); if (x[0]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 102: out.push(102); if (x[1]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 201: out.push(201); if (x[2]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 202: out.push(202); if (x[3]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 301: out.push(301); if (x[4]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 302: out.push(302); if (x[5]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 401: return done = true, out;
+        case 402: return done = true, out;
+            } } }
+          }
+          var done;
+          var result = gen(101, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF = inspect.cleandoc(
+        """
+        function outer(x, k) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 151: out.push(151); if (k[101]-- > 0) { a = 151, b = 0; break; } else { a = 101, b = 0; break; }
+        case 101: out.push(101); if (x[0]) { a = 251, b = 0; break; } else { a = 252, b = 0; break; }
+        case 152: out.push(152); if (k[102]-- > 0) { a = 152, b = 0; break; } else { a = 102, b = 0; break; }
+        case 102: out.push(102); if (x[1]) { a = 251, b = 0; break; } else { a = 252, b = 0; break; }
+        case 251: out.push(251); if (k[201]-- > 0) { a = 251, b = 0; break; } else { a = 201, b = 0; break; }
+        case 201: out.push(201); if (x[2]) { a = 351, b = 0; break; } else { a = 352, b = 0; break; }
+        case 252: out.push(252); if (k[202]-- > 0) { a = 252, b = 0; break; } else { a = 202, b = 0; break; }
+        case 202: out.push(202); if (x[3]) { a = 351, b = 0; break; } else { a = 352, b = 0; break; }
+        case 351: out.push(351); if (k[301]-- > 0) { a = 351, b = 0; break; } else { a = 301, b = 0; break; }
+        case 301: out.push(301); if (x[4]) { a = 451, b = 0; break; } else { a = 452, b = 0; break; }
+        case 352: out.push(352); if (k[302]-- > 0) { a = 352, b = 0; break; } else { a = 302, b = 0; break; }
+        case 302: out.push(302); if (x[5]) { a = 451, b = 0; break; } else { a = 452, b = 0; break; }
+        case 451: return done = true, out;
+        case 452: return done = true, out;
+            } } }
+          }
+          var done;
+          var result = gen(151, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    LOOP_LEFT_TO_TWO_BLOCKS_CFF = inspect.cleandoc(
+        """
+        function wrapper(n, stop) {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.i < n) {
+                      a = 30, b = 0;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    if (scope.i === stop) {
+                      a = 60, b = 0;
+                    } else {
+                      a = 40, b = 0;
+                    }
+                    break;
+                  case 40:
+                    console.log(scope.i);
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    console.log('after', scope.i);
+                    return x = true, scope.i;
+                  case 60:
+                    return x = true, -1;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
+        }
+        """
+    )
+
+    LADDER_OF_FOUR_LEVELS_CFF = inspect.cleandoc(
+        """
+        function outer(x) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 101: out.push(101); if (x[0]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 102: out.push(102); if (x[1]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 201: out.push(201); if (x[2]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 202: out.push(202); if (x[3]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 301: out.push(301); if (x[4]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 302: out.push(302); if (x[5]) { a = 401, b = 0; break; } else { a = 402, b = 0; break; }
+        case 401: out.push(401); if (x[6]) { a = 501, b = 0; break; } else { a = 502, b = 0; break; }
+        case 402: out.push(402); if (x[7]) { a = 501, b = 0; break; } else { a = 502, b = 0; break; }
+        case 501: out.push(0); a = 0, b = 0; break;
+        case 502: out.push(0); a = 0, b = 0; break;
+            } } }
+          }
+          var done;
+          var result = gen(101, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    def test_generator_cff_branch_returning_early_runs_on_into_the_code_after_the_if(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  if (n > 0) {
+                    if (n > 100) {
+                      return 'huge';
+                    }
+                  }
+                  console.log('tail', n);
+                  return 'end ' + n;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_if_and_else_that_both_return_are_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  console.log('head');
+                  if (n > 0) {
+                    return 'yes';
+                  }
+                  return 'no';
+                }
+                """
+            ),
+            self._run_transformer(
+                self.IF_AND_ELSE_THAT_BOTH_RETURN_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_early_return_in_an_if_and_else_that_meet_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n, m) {
+                  if (n > 0) {
+                    if (m > 0) {
+                      return 'early';
+                    }
+                    console.log('then');
+                  } else {
+                    console.log('else');
+                  }
+                  console.log('after');
+                  return n + m;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_branch_reaching_the_end_beside_one_that_runs_on_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  if (n > 0) {
+                    console.log('then');
+                  } else {
+                    console.log('else');
+                    console.log('after');
+                  }
+                  console.log('done');
+                }
+                """
+            ),
+            self._run_transformer(
+                self.BRANCH_REACHING_THE_END_BESIDE_ONE_THAT_RUNS_ON_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_branch_bypassing_the_first_place_both_reach_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n, m) {
+                  if (n > 0) {
+                    if (m > 0) {
+                      console.log('meet');
+                    }
+                  } else {
+                    console.log('else');
+                    console.log('meet');
+                  }
+                  return 'last';
+                }
+                """
+            ),
+            self._run_transformer(
+                self.BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_return_through_a_block_the_other_branch_reaches_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n, m) {
+                  if (n > 0) {
+                    console.log('T');
+                    return 'K ' + n;
+                  }
+                  console.log('F');
+                  if (m > 0) {
+                    return 'K ' + n;
+                  }
+                  console.log('H');
+                }
+                """
+            ),
+            self._run_transformer(
+                self.RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_return_behind_the_first_place_both_reach_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n, m, k) {
+                  if (n > 0) {
+                    if (m > 0) {
+                      console.log('meet');
+                    } else {
+                      if (k > 0) {
+                        console.log('K');
+                        if (k > 5) {
+                          return 'sixty';
+                        }
+                        return 'seventy';
+                      }
+                      return 'eighty';
+                    }
+                    console.log('K');
+                    if (k > 5) {
+                      return 'sixty';
+                    }
+                    return 'seventy';
+                  }
+                  console.log('F');
+                  console.log('meet');
+                  console.log('K');
+                  if (k > 5) {
+                    return 'sixty';
+                  }
+                  return 'seventy';
+                }
+                """
+            ),
+            self._run_transformer(
+                self.RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_loop_left_by_a_break_from_its_body_keeps_the_break(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper(n, stop) {
+                  var i;
+                  i = 0;
+                  while (true) {
+                    if (!(i < n)) {
+                      break;
+                    }
+                    if (i === stop) {
+                      break;
+                    }
+                    console.log(i);
+                    i = i + 1;
+                  }
+                  return i;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_loop_without_a_test_left_from_its_body_is_recovered(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper(n, stop) {
+                  var i;
+                  i = 0;
+                  while (true) {
+                    console.log(i);
+                    if (i === stop) {
+                      break;
+                    }
+                    i = i + 1;
+                  }
+                  console.log('after', i);
+                  return i;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.LOOP_WITHOUT_A_TEST_LEFT_FROM_ITS_BODY_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_branches_parting_and_meeting_again_are_written_with_copies(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(x) {
+                  var out = [];
+                  out.push(101);
+                  if (x[0]) {
+                    out.push(102);
+                    if (x[1]) {
+                      out.push(104);
+                    }
+                  } else {
+                    out.push(103);
+                    if (x[2]) {
+                      out.push(104);
+                    }
+                  }
+                  out.push(201);
+                  if (x[4]) {
+                    out.push(202);
+                    if (x[5]) {
+                      out.push(204);
+                    }
+                  } else {
+                    out.push(203);
+                    if (x[6]) {
+                      out.push(204);
+                    }
+                  }
+                  return out;
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.BRANCHES_PARTING_AND_MEETING_AGAIN_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_ladder_of_three_levels_is_written_with_copies(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(x) {
+                  var out = [];
+                  out.push(101);
+                  if (x[0]) {
+                    out.push(201);
+                    if (x[2]) {
+                      out.push(301);
+                      if (x[4]) {
+                        out.push(0);
+                      } else {
+                        out.push(0);
+                      }
+                    } else {
+                      out.push(302);
+                      if (x[5]) {
+                        out.push(0);
+                      } else {
+                        out.push(0);
+                      }
+                    }
+                  } else {
+                    out.push(202);
+                    if (x[3]) {
+                      out.push(301);
+                      if (x[4]) {
+                        out.push(0);
+                      } else {
+                        out.push(0);
+                      }
+                    } else {
+                      out.push(302);
+                      if (x[5]) {
+                        out.push(0);
+                      } else {
+                        out.push(0);
+                      }
+                    }
+                  }
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(self.LADDER_OF_THREE_LEVELS_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_ladder_of_blocks_that_only_leave_is_written_with_copies(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(x) {
+                  var out = [];
+                  out.push(101);
+                  if (x[0]) {
+                    out.push(201);
+                    if (x[2]) {
+                      out.push(301);
+                      if (x[4]) {
+                        return out;
+                      }
+                      return out;
+                    }
+                    out.push(302);
+                    if (x[5]) {
+                      return out;
+                    }
+                    return out;
+                  }
+                  out.push(202);
+                  if (x[3]) {
+                    out.push(301);
+                    if (x[4]) {
+                      return out;
+                    }
+                    return out;
+                  }
+                  out.push(302);
+                  if (x[5]) {
+                    return out;
+                  }
+                  return out;
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_ladder_with_a_loop_ahead_of_every_block_copies_the_loops(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(x, k) {
+                  var out = [];
+                  while (true) {
+                    out.push(151);
+                    if (!(k[101]-- > 0)) {
+                      break;
+                    }
+                  }
+                  out.push(101);
+                  if (x[0]) {
+                    while (true) {
+                      out.push(251);
+                      if (!(k[201]-- > 0)) {
+                        break;
+                      }
+                    }
+                    out.push(201);
+                    if (x[2]) {
+                      while (true) {
+                        out.push(351);
+                        if (!(k[301]-- > 0)) {
+                          break;
+                        }
+                      }
+                      out.push(301);
+                      if (x[4]) {
+                        return out;
+                      }
+                      return out;
+                    }
+                    while (true) {
+                      out.push(352);
+                      if (!(k[302]-- > 0)) {
+                        break;
+                      }
+                    }
+                    out.push(302);
+                    if (x[5]) {
+                      return out;
+                    }
+                    return out;
+                  }
+                  while (true) {
+                    out.push(252);
+                    if (!(k[202]-- > 0)) {
+                      break;
+                    }
+                  }
+                  out.push(202);
+                  if (x[3]) {
+                    while (true) {
+                      out.push(351);
+                      if (!(k[301]-- > 0)) {
+                        break;
+                      }
+                    }
+                    out.push(301);
+                    if (x[4]) {
+                      return out;
+                    }
+                    return out;
+                  }
+                  while (true) {
+                    out.push(352);
+                    if (!(k[302]-- > 0)) {
+                      break;
+                    }
+                  }
+                  out.push(302);
+                  if (x[5]) {
+                    return out;
+                  }
+                  return out;
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_structure_the_recovery_cannot_write_is_declined(self):
+        """
+        A loop of the machine left to two blocks, which no `break` can say, and a ladder whose
+        copies would hold more code than the blocks of the machine: each generator is left as it is.
+        """
+        for source in (
+            self.LOOP_LEFT_TO_TWO_BLOCKS_CFF,
+            self.LADDER_OF_FOUR_LEVELS_CFF,
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    self._run_transformers(source),
+                    self._run_transformer(source, JsGeneratorCFFUnflattening),
+                )
+
+    def test_generator_cff_recovered_code_holds_every_node_in_one_place(self):
+        """
+        Where the structuring writes a block a second time, it writes a copy: no node of the
+        recovered code stands under two parents.
+        """
+        for source in (
+            self.BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF,
+            self.EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF,
+            self.BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF,
+            self.RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF,
+            self.RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF,
+            self.BRANCHES_PARTING_AND_MEETING_AGAIN_CFF,
+            self.LADDER_OF_THREE_LEVELS_CFF,
+            self.LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF,
+            self.LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF,
+        ):
+            with self.subTest(source):
+                ast = JsParser(source).parse()
+                JsGeneratorCFFUnflattening().visit(ast)
+                held = [(node, child) for node in ast.walk() for child in node.children()]
+                self.assertNotIn('function*', JsSynthesizer().convert(ast))
+                self.assertEqual(len(held), len({id(child) for _, child in held}))
+                self.assertEqual([], [child for node, child in held if child.parent is not node])
+
+    def test_generator_cff_machine_of_nearly_a_thousand_early_returns_is_recovered(self):
+        """
+        A machine of 990 conditionals, each returning on one branch and going on to the next on the
+        other, so that the code nests no deeper than one `if` but every conditional asks where its
+        branches meet; it is recovered under the recursion depth the unit runs with.
+        """
+        cases = []
+        for index in range(990):
+            state, early = 10 * (index + 1), 100000 + index
+            after = 10 * (index + 2) if index < 989 else 0
+            cases.append(
+                F'case {state}: if (x > {index}) {{ a = {early}, b = 0; break; }}'
+                F' else {{ a = {after}, b = 0; break; }}'
+            )
+            cases.append(F'case {early}: return done = true, {index};')
+        source = self._machine(cases, 10)
+        with RecursionDepth(TREE_RECURSION_DEPTH):
+            result = self._run_transformer(source, JsGeneratorCFFUnflattening)
+        self.assertNotIn('function*', result)
+
+    def test_generator_cff_ladder_of_twenty_levels_is_declined_in_time(self):
+        """
+        A ladder of 20 levels, each block of which goes to both blocks of the next level: written
+        out, every level would double the code below it. The copies outgrow the machine, and the
+        deobfuscation leaves the generator as it is within a minute.
+        """
+        cases = []
+        for level in range(1, 21):
+            for side in (1, 2):
+                state = 100 * level + side
+                cases.append(
+                    F'case {state}: out.push({state}); if (x[{2 * level + side}])'
+                    F' {{ a = {100 * level + 101}, b = 0; break; }}'
+                    F' else {{ a = {100 * level + 102}, b = 0; break; }}'
+                )
+        cases.append('case 2101: return done = true, out;')
+        cases.append('case 2102: return done = true, out;')
+        result = deobfuscate_within(self._machine(cases, 101), 60)
+        self.assertIsNotNone(result)
+        self.assertIn('function*', result or '')
+
+    @staticmethod
+    def _machine(cases: list[str], start: int) -> str:
+        body = '\n'.join(cases)
+        return (
+            'function outer(x) {\n'
+            '  var out = [];\n'
+            '  function* gen(a, b, scope = {}) {\n'
+            '    while (a + b !== 0) { with (scope) { switch (a + b) {\n'
+            F'{body}\n'
+            '    } } }\n'
+            '  }\n'
+            '  var done;\n'
+            F'  var result = gen({start}, 0)["next"]()["value"];\n'
+            '  if (done) { return result; }\n'
+            '}\n'
         )
 
 
@@ -5059,6 +6074,55 @@ ENTRY_POINTS = {
     'JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF': 'console.log(outer(1), outer(-1));',
     'JUMP_BEHIND_A_LABELED_BREAK_CFF': 'console.log(outer(4));',
     'BREAK_ON_ONE_WAY_ONLY_CFF': 'console.log(outer(1), outer(-1));',
+    'BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF': 'console.log(outer(-1), outer(7), outer(500));',
+    'IF_AND_ELSE_THAT_BOTH_RETURN_CFF': 'console.log(outer(1), outer(-1));',
+    'EARLY_RETURN_IN_AN_IF_AND_ELSE_THAT_MEET_CFF': (
+        'console.log(outer(1, 1), outer(1, -1), outer(-1, 1));'
+    ),
+    'BRANCH_REACHING_THE_END_BESIDE_ONE_THAT_RUNS_ON_CFF': 'outer(1); outer(-1);',
+    'BRANCH_BYPASSING_THE_FIRST_PLACE_BOTH_REACH_CFF': (
+        'console.log(outer(1, 1), outer(1, -1), outer(-1, 1));'
+    ),
+    'RETURN_THROUGH_A_BLOCK_THE_OTHER_BRANCH_REACHES_CFF': (
+        'console.log(outer(1, 1), outer(-1, 1), outer(-1, -1));'
+    ),
+    'RETURN_BEHIND_THE_FIRST_PLACE_BOTH_REACH_CFF': (
+        'console.log(outer(1, 1, 1), outer(-1, 1, 1), outer(1, -1, 9), outer(1, -1, -1));'
+    ),
+    'LOOP_LEFT_BY_A_BREAK_FROM_ITS_BODY_CFF': 'console.log(wrapper(5, 2), wrapper(5, 9));',
+    'LOOP_WITHOUT_A_TEST_LEFT_FROM_ITS_BODY_CFF': 'console.log(wrapper(5, 2));',
+    'BRANCHES_PARTING_AND_MEETING_AGAIN_CFF': (
+        'for (let m = 0; m < 128; m++) {'
+        ' const x = Array.from({ length: 7 }, (_, i) => (m >> i) & 1);'
+        ' console.log(m, outer(x).join(","));'
+        ' }'
+    ),
+    'LADDER_OF_THREE_LEVELS_CFF': (
+        'for (let m = 0; m < 64; m++) {'
+        ' const x = Array.from({ length: 6 }, (_, i) => (m >> i) & 1);'
+        ' console.log(m, outer(x).join(","));'
+        ' }'
+    ),
+    'LADDER_OF_BLOCKS_THAT_ONLY_LEAVE_CFF': (
+        'for (let m = 0; m < 64; m++) {'
+        ' const x = Array.from({ length: 6 }, (_, i) => (m >> i) & 1);'
+        ' console.log(m, outer(x).join(","));'
+        ' }'
+    ),
+    'LADDER_WITH_A_LOOP_AHEAD_OF_EVERY_BLOCK_CFF': (
+        'for (let m = 0; m < 64; m++) {'
+        ' const x = Array.from({ length: 6 }, (_, i) => (m >> i) & 1);'
+        ' const k = { 101: 2, 102: 1, 201: 0, 202: 3, 301: 1, 302: 2 };'
+        ' console.log(m, outer(x, k).join(","));'
+        ' }'
+    ),
+    'LOOP_LEFT_TO_TWO_BLOCKS_CFF': 'console.log(wrapper(5, 2), wrapper(5, 9));',
+    'LADDER_OF_FOUR_LEVELS_CFF': (
+        'for (let m = 0; m < 256; m++) {'
+        ' const x = Array.from({ length: 8 }, (_, i) => (m >> i) & 1);'
+        ' console.log(m, outer(x).join(","));'
+        ' }'
+    ),
 }
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
