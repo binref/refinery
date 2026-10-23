@@ -44,8 +44,7 @@ def fastest_processor_time(runs: Iterable[Callable[[], object]]) -> float:
     The fewest seconds that one of the given runs takes, counted in processor time of the process
     and with the cycle collector off. Processor time does not count the time that the process waits
     for a processor while other processes run, and the pauses of the collector grow with all that
-    the process holds, not with the run. A run of less than 50 milliseconds raises an error: on
-    Windows, processor time advances in steps of about 16 milliseconds.
+    the process holds, not with the run.
     """
     fastest = float('inf')
     with without_cycle_collector():
@@ -53,9 +52,22 @@ def fastest_processor_time(runs: Iterable[Callable[[], object]]) -> float:
             start = time.process_time()
             run()
             fastest = min(fastest, time.process_time() - start)
-    if fastest < 0.05:
-        raise ValueError(F'A run took {fastest * 1000:.0f} milliseconds, which is too short to be timed.')
     return fastest
+
+
+def processor_time_ratio(
+    numerator_runs: Iterable[Callable[[], object]],
+    denominator_runs: Iterable[Callable[[], object]],
+) -> float:
+    """
+    The `fastest_processor_time` of the first runs divided by that of the second runs. When the
+    fastest of the second runs takes less than 50 milliseconds, an error is raised: on Windows,
+    processor time advances in steps of about 16 milliseconds, which would decide the ratio.
+    """
+    denominator = fastest_processor_time(denominator_runs)
+    if denominator < 0.05:
+        raise ValueError(F'The fastest run took {denominator * 1000:.0f} milliseconds, which is too short to divide by.')
+    return fastest_processor_time(numerator_runs) / denominator
 
 
 def wontfix(reason: str):

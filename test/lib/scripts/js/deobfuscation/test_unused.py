@@ -4,7 +4,7 @@ import functools
 import inspect
 import unittest
 
-from test import fastest_processor_time
+from test import processor_time_ratio
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
@@ -3168,10 +3168,18 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
     """
 
     @staticmethod
-    def _fastest_of_three(source: str) -> tuple[float, str]:
-        asts = [JsParser(source).parse() for _ in range(3)]
-        seconds = fastest_processor_time(functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in asts)
-        return seconds, JsSynthesizer().convert(asts[0])
+    def _cost_ratio(small: str, large: str) -> tuple[float, str]:
+        """
+        The cost of three removals from the large program over the cost of three removals from the
+        small one, and the output of a removal from the large program.
+        """
+        small_asts = [JsParser(small).parse() for _ in range(3)]
+        large_asts = [JsParser(large).parse() for _ in range(3)]
+        ratio = processor_time_ratio(
+            (functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in large_asts),
+            (functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in small_asts),
+        )
+        return ratio, JsSynthesizer().convert(large_asts[0])
 
     def test_live_stores_to_two_reused_names_are_kept_in_time_that_grows_with_the_program(self):
         def source(count: int) -> str:
@@ -3181,12 +3189,11 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
             return '\n'.join(lines)
 
         small, large = source(1000), source(8000)
-        small_time, _ = self._fastest_of_three(small)
-        large_time, output = self._fastest_of_three(large)
+        ratio, output = self._cost_ratio(small, large)
         self.assertEqual(output, JsSynthesizer().convert(JsParser(large).parse()))
         # Work growing with the square of the program takes up to 64 times as long; the bound is
         # twice the size ratio, about 17.
-        self.assertLess(large_time / small_time, 2 * len(large) / len(small))
+        self.assertLess(ratio, 2 * len(large) / len(small))
 
     def test_dead_stores_between_calls_are_removed_in_time_that_grows_with_the_function(self):
         def source(count: int) -> str:
@@ -3196,10 +3203,9 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
             return '\n'.join(lines)
 
         small, large = source(1000), source(8000)
-        small_time, _ = self._fastest_of_three(small)
-        large_time, output = self._fastest_of_three(large)
+        ratio, output = self._cost_ratio(small, large)
         calls = ''.join(F'  SINK({i});\n' for i in range(8000))
         self.assertEqual(output, F'(function() {{\n{calls}}})();')
         # Work growing with the square of the function takes up to 64 times as long; the bound is
         # twice the size ratio, about 17.
-        self.assertLess(large_time / small_time, 2 * len(large) / len(small))
+        self.assertLess(ratio, 2 * len(large) / len(small))

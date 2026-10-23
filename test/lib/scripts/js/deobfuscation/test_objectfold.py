@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import functools
 import inspect
-import time
 import unittest
 
-from test import TestBase, a_property_of_the_pin_itself
+from test import TestBase, a_property_of_the_pin_itself, fastest_processor_time
 from test.lib.scripts.js.analysis.differential import node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import (
@@ -1669,10 +1669,9 @@ class TestObjectFoldingCostsWhatAConcatenationIsLong(TestJsDeobfuscator):
     def test_four_hundred_copied_pieces_of_one_concatenation_fold_within_a_second(self):
         pieces = ', '.join(F'p{k}: "c{k}"' for k in range(400))
         chain = ' + '.join(F'O.p{k}' for k in range(400))
-        start = time.perf_counter()
-        folded = self._objectfold(F'function f() {{ var O = {{{pieces}}}; return {chain}; }} f();')
-        self.assertLess(time.perf_counter() - start, 1.0)
-        self.assertNotIn('O.', folded)
+        source = F'function f() {{ var O = {{{pieces}}}; return {chain}; }} f();'
+        self.assertLess(fastest_processor_time(functools.partial(self._objectfold, source) for _ in range(3)), 1.0)
+        self.assertNotIn('O.', self._objectfold(source))
 
 #: Programs that call a method on an object literal, one the object owns or one every object
 #: inherits, each with what Node makes of it as a CommonJS file and as an ES module. An inherited
