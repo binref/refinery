@@ -79,9 +79,10 @@ def _unreadable() -> list[str]:
 def _gap() -> collections.Counter:
     interpreter = _Ps1Interpreter()
     counted: collections.Counter = collections.Counter()
+    facts = witnesses()
     for operator in sorted(binary_operators()):
-        for name, lefts in witnesses().items():
-            for rights in witnesses().values():
+        for name, lefts in facts.items():
+            for rights in facts.values():
                 for left in lefts:
                     for right in rights:
                         spelled_left, spelled_right = render(left), render(right)
