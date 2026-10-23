@@ -341,9 +341,9 @@ class _Builder(CfgBuilder):
         escapes = True
         enclosing = self._trap_body
         outer_targets = self._targets
-        outer_label = self._pending_label
+        outer_labels = self._pending_labels
         self._targets = []
-        self._pending_label = None
+        self._pending_labels = frozenset()
         self._handlers.append(self.unwinding())
         for trap, handler in zip(traps, entries):
             self._trap_body = built = _TrapBody()
@@ -355,7 +355,7 @@ class _Builder(CfgBuilder):
         self._handlers.pop()
         self._trap_body = enclosing
         self._targets = outer_targets
-        self._pending_label = outer_label
+        self._pending_labels = outer_labels
         self.close_handler_set(entries, escapes=escapes)
         self._handlers.append(entries[0])
         if not resumes:

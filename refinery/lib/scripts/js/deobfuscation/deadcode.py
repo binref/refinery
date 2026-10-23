@@ -18,6 +18,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     _walk_skipping_functions,
     annex_b_var_home,
+    is_unread_source,
     pattern_identifiers,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -28,10 +29,14 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsClassDeclaration,
+    JsExportAllDeclaration,
+    JsExportDefaultDeclaration,
+    JsExportNamedDeclaration,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsIfStatement,
+    JsImportDeclaration,
     JsLabeledStatement,
     JsScript,
     JsSwitchCase,
@@ -76,6 +81,8 @@ def _the_names_a_dropped_branch_still_declares(
 
     What the branch binds lexically is not among them, and neither is a `var` inside a function it
     holds: the first goes with the block it was scoped to, and the second belongs to that function.
+    Source the model never read (`refinery.lib.scripts.js.analysis.model.is_unread_source`) may
+    declare anything, so a branch holding some stays.
 
     Where the file may be an ES module, the `var` half of a function declared in a block exists in
     the CommonJS reading only, so a `var` left behind would be wrong in one reading and its absence
@@ -88,6 +95,8 @@ def _the_names_a_dropped_branch_still_declares(
     names: list[str] = []
     seen: set[str] = set()
     for node in _walk_skipping_functions([branch]):
+        if is_unread_source(node):
+            return None
         if isinstance(node, JsVariableDeclaration) and node.kind is JsVarKind.VAR:
             found = [
                 ident.name
@@ -112,16 +121,35 @@ def _the_names_a_dropped_branch_still_declares(
     return tuple(names)
 
 
+def _declaring(names: tuple[str, ...]) -> JsVariableDeclaration:
+    """
+    The `var` left where code went that declared *names*
+    (`_the_names_a_dropped_branch_still_declares`), which declares them and stores nothing.
+    """
+    return JsVariableDeclaration(
+        kind=JsVarKind.VAR,
+        declarations=[JsVariableDeclarator(id=JsIdentifier(name=name)) for name in names],
+    )
+
+
 _STATEMENT_LISTS = (JsScript, JsBlockStatement, JsSwitchCase)
+
+_MODULE_DECLARATIONS = (
+    JsImportDeclaration,
+    JsExportNamedDeclaration,
+    JsExportDefaultDeclaration,
+    JsExportAllDeclaration,
+)
 
 
 def _stays_where_it_never_runs(stmt: Statement) -> bool:
     """
     Whether *stmt* stays in its list although it never runs: a declaration scoped to the list
     (`_is_scoped_to_the_block_holding_it`), whose name means it in the whole list whether or not it
-    runs, and a `var` that stores nothing, which is what a statement that goes leaves behind.
+    runs, an `import` or `export` declaration, which links the module before any of its code runs,
+    and a `var` that stores nothing, which is what a statement that goes leaves behind.
     """
-    if _is_scoped_to_the_block_holding_it(stmt):
+    if _is_scoped_to_the_block_holding_it(stmt) or isinstance(stmt, _MODULE_DECLARATIONS):
         return True
     return (
         isinstance(stmt, JsVariableDeclaration)
@@ -244,13 +272,7 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
             if removal is not None and stmt in removal.gone:
                 if not declared and removal.still_declared:
                     declared = True
-                    result.append(JsVariableDeclaration(
-                        kind=JsVarKind.VAR,
-                        declarations=[
-                            JsVariableDeclarator(id=JsIdentifier(name=name))
-                            for name in removal.still_declared
-                        ],
-                    ))
+                    result.append(_declaring(removal.still_declared))
                 changed = True
                 continue
             replacement = self._try_prune(stmt)
@@ -285,13 +307,7 @@ class JsDeadCodeElimination(BatchedTransformer, BodyProcessingTransformer):
         taken = stmt.consequent if decision.test_is_truthy else stmt.alternate
         result = self._unwrap_branch(taken)
         if decision.still_declared:
-            result.insert(0, JsVariableDeclaration(
-                kind=JsVarKind.VAR,
-                declarations=[
-                    JsVariableDeclarator(id=JsIdentifier(name=name))
-                    for name in decision.still_declared
-                ],
-            ))
+            result.insert(0, _declaring(decision.still_declared))
         if not decision.test_may_go:
             result.insert(0, JsExpressionStatement(expression=stmt.test))
         return result

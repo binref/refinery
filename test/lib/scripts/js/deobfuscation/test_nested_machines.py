@@ -3,13 +3,13 @@ The recovery of a machine of control-flow flattening that stands in a function w
 recovery of the machine around it wrote: the generator held by a variable, the flag a property of an
 object the function makes for each call, and the return of `undefined` that ends the function behind
 the guard. Each program below holds such a machine, written by hand in that shape, and each row says
-what Node prints for it run as a CommonJS file; the deobfuscation prints the same. Where the recovery
-takes a machine apart, the text it writes is pinned; where something outside the scaffolding may
-reach the flag, the generator or the result, it leaves the machine as it is. A function the
-obfuscation declares in a block of a flattened function reads a copy of the block's scope object,
-made when it is called, where the recovered code shares one variable; the recovery goes ahead where
-every store to it runs before the function is made. Two files the obfuscation wrote for one program,
-every function of which it flattened, are read as text and never run.
+what Node prints for it run as a CommonJS file; the deobfuscation prints the same. Where the
+recovery takes a machine apart, the text it writes is pinned; where something outside the
+scaffolding may reach the flag, the generator or the result, it leaves the machine as it is. A
+function the obfuscation declares in a block of a flattened function reads a copy of the block's
+scope object, made when it is called, where the recovered code shares one variable; the recovery
+goes ahead where every store to it runs before the function is made. Two files the obfuscation
+wrote for one program, every function of which it flattened, are read as text and never run.
 """
 from __future__ import annotations
 
@@ -657,7 +657,9 @@ NESTED: dict[str, Program] = {
             function outer(p) {
               var G, R;
               var NS = {};
-              Object.defineProperty(NS.constructor.prototype, 'flag', { set(v) { console.log('set', v); }, get() { return 0; }, configurable: true });
+              Object.defineProperty(NS.constructor.prototype, 'flag', {
+                set(v) { console.log('set', v); }, get() { return 0; }, configurable: true,
+              });
               G = function* g(a, b, scope = {}) {
                 while (a + b !== 0) {
                   with (scope) {
@@ -892,6 +894,7 @@ NESTED_KEPT = [
     'the object of the flag made in a branch the call does not always take',
     'the object of the flag made only after the call, in a loop behind the guard',
 ]
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestANestedMachineBehavesAsItDid(TestBase):
@@ -1278,8 +1281,8 @@ HANDED_ON: dict[str, Program] = {
     ),
 }
 
-#: The rows of `HANDED_ON` the recovery takes apart, mapped to the text it writes: every store to the
-#: scope object runs before the function is made, and never after.
+#: The rows of `HANDED_ON` the recovery takes apart, mapped to the text it writes: every store to
+#: the scope object runs before the function is made, and never after.
 HANDED_ON_RECOVERED: dict[str, str] = {
     'a block scope object stored once before the function it hands on is made': inspect.cleandoc(
         """
@@ -1352,6 +1355,7 @@ HANDED_ON_KEPT = [
     'a block scope object stored by eval after a closure of the function it hands on kept it',
     'a block scope object stored by a class field initializer that runs after the function it hands on',
 ]
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAHandedOnScopeObjectBehavesAsItDid(TestBase):

@@ -253,6 +253,7 @@ class DominatorModel:
     def __init__(self, flow: ControlFlowModel):
         self._flow = flow
         self._trees: dict[tuple[int, Projection], DominanceTree] = {}
+        self._reached: dict[tuple[int, Projection], frozenset[int]] = {}
 
     def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
         """
@@ -344,22 +345,38 @@ class DominatorModel:
         nearly every script, and it is what keeps a second consumer asking the forward reading from
         doubling the dominance work of the whole run.
         """
-        key = (id(graph), projection if graph.carries_resumption else Projection.MAY)
+        key = self._key(graph, projection)
         found = self._trees.get(key)
         if found is None:
             found = self._trees[key] = DominanceTree(graph, key[1])
         return found
 
+    @staticmethod
+    def _key(graph: ControlFlowGraph, projection: Projection) -> tuple[int, Projection]:
+        """
+        The key the answers about *graph* under *projection* are memoized under: a graph that
+        `carries_resumption` reports nothing of draws the same edges under both projections.
+        """
+        return id(graph), projection if graph.carries_resumption else Projection.MAY
+
     def reached_from_entry(self, graph: ControlFlowGraph, projection: Projection) -> Set[int]:
         """
-        The ids of the nodes of *graph* the body's entry reaches under *projection*.
+        The ids of the nodes of *graph* the body's entry reaches under *projection*, memoized per
+        graph. A caller deciding which statements of a body can run asks this rather than
+        `reachable` from the entry: a script's bodies share one graph per function, and a pass
+        asking per body pays one flood per body for an answer that does not vary within a graph.
 
-        Answered from the dominance tree, which is the same walk and is memoized per graph. A
-        caller deciding which statements of a body can run asks this rather than `reachable` from
-        the entry: a script's bodies share one graph per function, and a pass asking per body pays
-        one flood per body for an answer that does not vary within a graph.
+        Where the dominance tree of the graph exists, it holds that set already. Otherwise one
+        flood answers it, which costs a fraction of building the tree: a pass asking this of every
+        body of a script would otherwise build a tree for every one of them.
         """
-        return self.tree_of(graph, projection).reached
+        key = self._key(graph, projection)
+        if (tree := self._trees.get(key)) is not None:
+            return tree.reached
+        if (reached := self._reached.get(key)) is None:
+            reached = frozenset(flood([graph.entry], forward=True, projection=key[1]))
+            self._reached[key] = reached
+        return reached
 
     def never_runs(self, statement: Node) -> bool:
         """
@@ -370,11 +387,13 @@ class DominatorModel:
         part of it in the graph of its body is unreachable. A node of a body nested in it belongs to
         the graph of that body and says nothing about whether the statement around it runs, so it
         is not counted, and a statement no node of that graph stands for a part of is not proven
-        never to run.
+        never to run. In a graph whose every node is reached, nothing is.
         """
         if (graph := self._graph_around(statement)) is None:
             return False
         reachable = self.reached_from_entry(graph, Projection.MAY)
+        if len(reachable) == len(graph.nodes):
+            return False
         saw_node = False
         for element in statement.walk():
             if (node := graph.node_of(element)) is None:

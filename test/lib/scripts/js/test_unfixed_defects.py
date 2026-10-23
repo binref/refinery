@@ -991,16 +991,13 @@ A_STORE_SKIPPED_BEFORE_A_CATCH_LEAVES_FOR_THE_FINALLY = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAStoreSkippedBeforeACatchLeavesIsNotDoneInTheFinally(TestBase):
     """
-    The control-flow graph builds the body of a `catch` clause after it closes the guarded block's
-    handler, so a throw out of the clause goes to the handlers around the statement or to the exit,
-    and a `return` goes to the exit, and neither enters the `finally`. The `finally` is then reached
-    only from the end of the `try` block, where every store of the block has completed, and the
-    constant inliner folds the store the throw skipped into what the `finally` reads. A correct
-    graph routes every abrupt exit of the block and of its clauses through the finalizer. The
+    The control-flow graph builds the body of a `catch` clause with the `finally` as its handler, so
+    a throw or a `return` out of the clause enters the `finally` as well. The `finally` is then not
+    reached only from the end of the `try` block, where every store of the block has completed, and
+    the constant inliner leaves the store the throw skipped out of what the `finally` reads. The
     builder is shared with PowerShell, whose traps route through the same method.
     """
 
-    @unittest.expectedFailure
     def test_the_finally_reads_the_value_from_before_the_store(self):
         rows = A_STORE_SKIPPED_BEFORE_A_CATCH_LEAVES_FOR_THE_FINALLY
         self.assertEqual(

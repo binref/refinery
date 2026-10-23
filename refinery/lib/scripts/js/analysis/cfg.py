@@ -81,6 +81,20 @@ def _label_name(statement: Node) -> str | None:
     return label.name if label is not None else None
 
 
+def _label_chain(statement: JsLabeledStatement) -> tuple[list[str], Node | None]:
+    """
+    The labels written in front of a statement, outermost first, and the statement they label. In
+    `a: b: while (…)` both name the loop, and `continue a` continues it.
+    """
+    labels: list[str] = []
+    body: Node | None = statement
+    while isinstance(body, JsLabeledStatement):
+        if (name := _label_name(body)) is not None:
+            labels.append(name)
+        body = body.body
+    return labels, body
+
+
 class _Builder(CfgBuilder):
     """
     The JavaScript dispatch over `refinery.lib.scripts.analysis.cfg.CfgBuilder`.
@@ -133,11 +147,12 @@ class _Builder(CfgBuilder):
                 escapes=_catch_may_rethrow(handler),
             )
         if isinstance(statement, JsLabeledStatement):
+            labels, body = _label_chain(statement)
             return self.labelled(
-                _label_name(statement),
-                statement.body,
+                labels,
+                body,
                 frontier,
-                binds_to_body=isinstance(statement.body, (*LOOP_NODES, JsSwitchStatement)),
+                binds_to_body=isinstance(body, (*LOOP_NODES, JsSwitchStatement)),
             )
         if isinstance(statement, JsReturnStatement):
             return self.terminate(statement, frontier, exceptional=False)

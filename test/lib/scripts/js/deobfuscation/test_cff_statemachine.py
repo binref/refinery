@@ -3594,9 +3594,9 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         state variable before its transition, from an expression the machine cannot evaluate or
         where the branch reads it back, a condition storing a state variable, a class taking a state
         variable's name, a payload leaving the switch by a `break` of its own, on every way or on
-        one, a function declared behind a `return` or behind the transition, and a variable declared
-        in a body no run reaches: the obfuscator ends every body in one transition and declares
-        nothing in it, and each generator is left as it is.
+        one, a function declared behind a `return` or behind the transition, under a label or not,
+        and a variable declared in a body no run reaches: the obfuscator ends every body in one
+        transition and declares nothing in it, and each generator is left as it is.
         """
         for source in (
             self.BODY_RUNNING_ON_INTO_THE_NEXT_CASE_CFF,
@@ -3611,6 +3611,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.BREAK_ON_ONE_WAY_ONLY_CFF,
             self.HELPER_DECLARED_BEHIND_THE_RETURN_CFF,
             self.FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF,
+            self.LABELED_FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF,
             self.VAR_DECLARED_IN_A_BODY_NO_RUN_REACHES_CFF,
         ):
             with self.subTest(source):
@@ -4792,6 +4793,30 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    LABELED_FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    a = 15, b = 5;
+                    break;
+                    L: function late() { return 'late'; }
+                  case 20:
+                    return done = true, typeof late;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
     JUMP_BEHIND_A_TWO_WAY_TRANSITION_CFF = inspect.cleandoc(
         """
         function outer(n) {
@@ -4913,7 +4938,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             ),
             self._run_transformer(self.JUMP_BEHIND_A_LABELED_BREAK_CFF, JsGeneratorCFFUnflattening),
         )
-
 
     BRANCH_RETURNING_EARLY_AND_RUNNING_ON_CFF = inspect.cleandoc(
         """
@@ -5915,21 +5939,22 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     @staticmethod
     def _machine(cases: list[str], start: int) -> str:
-        body = '\n'.join(cases)
-        return (
-            'function outer(x) {\n'
-            '  var out = [];\n'
-            '  function* gen(a, b, scope = {}) {\n'
-            '    while (a + b !== 0) { with (scope) { switch (a + b) {\n'
-            F'{body}\n'
-            '    } } }\n'
-            '  }\n'
-            '  var done;\n'
-            F'  var result = gen({start}, 0)["next"]()["value"];\n'
-            '  if (done) { return result; }\n'
-            '}\n'
+        machine = inspect.cleandoc(
+            """
+            function outer(x) {
+              var out = [];
+              function* gen(a, b, scope = {}) {
+                while (a + b !== 0) { with (scope) { switch (a + b) {
+            CASES
+                } } }
+              }
+              var done;
+              var result = gen(START, 0)["next"]()["value"];
+              if (done) { return result; }
+            }
+            """
         )
-
+        return machine.replace('CASES', '\n'.join(cases)).replace('START', str(start))
 
     RETURN_IN_A_LOOP_OF_THE_PAYLOAD_CFF = inspect.cleandoc(
         """
@@ -6311,6 +6336,222 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
     )
 
+    FLAG_NAME_DECLARED_BY_THE_GENERATOR_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var done;
+                    console.log('one');
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    if (n > 0) { return done = true, 'pos'; }
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'fell through';
+        }
+        """
+    )
+
+    FLAGGED_RETURN_IN_A_WITH_OF_THE_PAYLOAD_CFF = inspect.cleandoc(
+        """
+        function outer(o) {
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    console.log('one');
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    with (o) { return done = true, 'v'; }
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return 'fell through';
+        }
+        """
+    )
+
+    END_OF_THE_MACHINE_IN_A_BRANCH_OF_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer(x, k) {
+          var out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    out.push('pre');
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    out.push('H');
+                    if (x.shift()) { a = 30, b = 0; break; } else { a = 40, b = 0; break; }
+                  case 30:
+                    out.push('T');
+                    if (k.shift()) { a = 0, b = 0; break; } else { a = 20, b = 0; break; }
+                  case 40:
+                    out.push('F');
+                    a = 20, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(10, 0)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    LOOP_IN_A_LOOP_CFF = inspect.cleandoc(
+        """
+        function outer(n) {
+          var i, j, out = [];
+          function* gen(a, b, scope = {}) {
+            while (a + b !== 0) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    i = 0;
+                    a = 15, b = 5;
+                    break;
+                  case 20:
+                    if (i < n) { a = 55, b = 5; break; } else { a = 65, b = 5; break; }
+                  case 60:
+                    j = 0;
+                    a = 25, b = 5;
+                    break;
+                  case 30:
+                    if (j < i) { a = 35, b = 5; break; } else { a = 45, b = 5; break; }
+                  case 40:
+                    out.push(i + ':' + j);
+                    j++;
+                    a = 25, b = 5;
+                    break;
+                  case 50:
+                    i++;
+                    a = 15, b = 5;
+                    break;
+                  case 70:
+                    out.push('done');
+                    a = 0, b = 0;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+          return out;
+        }
+        """
+    )
+
+    WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF = inspect.cleandoc(
+        """
+        function outer(x) {
+          var out = [];
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 0) { with (scope) { switch (a + b) {
+        case 101: out.push(101); if (x[0]) { a = 201, b = 0; break; } else { a = 202, b = 0; break; }
+        case 201: out.push(201); if (x[1]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 202: out.push(202); if (x[2]) { a = 301, b = 0; break; } else { a = 302, b = 0; break; }
+        case 301: out.push(function (...rest) { return gen(901, 0, {}, rest)["next"]()["value"]; }); return done = true, out;
+        case 302: return done = true, out;
+        case 901: return done = true, args.length;
+            } } }
+          }
+          var done;
+          var result = gen(101, 0)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_end_of_the_machine_in_a_branch_of_a_loop_leaves_the_loop(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(x, k) {
+                  var out = [];
+                  out.push('pre');
+                  while (true) {
+                    out.push('H');
+                    if (x.shift()) {
+                      out.push('T');
+                      if (k.shift()) {
+                        break;
+                      }
+                    } else {
+                      out.push('F');
+                    }
+                  }
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(
+                self.END_OF_THE_MACHINE_IN_A_BRANCH_OF_A_LOOP_CFF, JsGeneratorCFFUnflattening
+            ),
+        )
+
+    def test_generator_cff_loop_in_a_loop_is_written_once(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer(n) {
+                  var i, j, out = [];
+                  i = 0;
+                  while (i < n) {
+                    j = 0;
+                    while (j < i) {
+                      out.push(i + ':' + j);
+                      j++;
+                    }
+                    i++;
+                  }
+                  out.push('done');
+                  return out;
+                }
+                """
+            ),
+            self._run_transformer(self.LOOP_IN_A_LOOP_CFF, JsGeneratorCFFUnflattening),
+        )
+
+    def test_generator_cff_wrapper_made_in_a_block_placed_twice_is_declined(self):
+        """
+        A copy of the block that makes a wrapper would make a second wrapper, which the recovery
+        would take apart as a run of its own, beyond what the bound on copies counts.
+        """
+        source = self.WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF
+        self.assertEqual(
+            self._run_transformers(source),
+            self._run_transformer(source, JsGeneratorCFFUnflattening),
+        )
+
     def test_generator_cff_return_in_a_loop_of_the_payload_is_recovered(self):
         self.assertEqual(
             inspect.cleandoc(
@@ -6424,7 +6665,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         run that stores nothing or `false` to the flag; a flagged return in a `try` whose `finally`
         ends the run another way, or whose value may throw into its `catch`, with code behind the
         guard; and a flag declared by a `let`, or whose name a slot of the scope object, a block or
-        a loop of the run binds anew.
+        a loop of the run, or the generator itself binds anew, or the object of a `with` statement
+        of the run may hold.
         """
         for source in (
             self.RETURN_WITHOUT_THE_FLAG_IN_THE_MAIN_RUN_CFF,
@@ -6435,6 +6677,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self.SLOT_NAMED_LIKE_THE_FLAG_CFF,
             self.FLAG_NAME_BOUND_IN_A_BLOCK_CFF,
             self.FLAG_NAME_BOUND_BY_A_LOOP_CFF,
+            self.FLAG_NAME_DECLARED_BY_THE_GENERATOR_CFF,
+            self.FLAGGED_RETURN_IN_A_WITH_OF_THE_PAYLOAD_CFF,
         ):
             with self.subTest(source):
                 self.assertEqual(
@@ -6652,7 +6896,18 @@ ENTRY_POINTS = {
     'FLAG_NAME_BOUND_IN_A_BLOCK_CFF': 'console.log(outer(1), outer(-1));',
     'FLAG_NAME_BOUND_BY_A_LOOP_CFF': 'console.log(outer(1), outer(-1));',
     'FLAGGED_RETURN_WHOSE_VALUE_THROWS_IN_A_TRY_CFF': "console.log(outer('1'), outer('{'));",
+    'LABELED_FUNCTION_DECLARED_BEHIND_THE_TRANSITION_CFF': 'console.log(outer(1));',
+    'FLAG_NAME_DECLARED_BY_THE_GENERATOR_CFF': 'console.log(outer(1), outer(-1));',
+    'FLAGGED_RETURN_IN_A_WITH_OF_THE_PAYLOAD_CFF': 'console.log(outer({ done: 0 }));',
+    'END_OF_THE_MACHINE_IN_A_BRANCH_OF_A_LOOP_CFF': (
+        'console.log(outer([1, 1], [0, 1]).join(), outer([0, 1], [1]).join());'
+    ),
+    'LOOP_IN_A_LOOP_CFF': 'console.log(outer(3).join(), outer(0).join());',
+    'WRAPPER_MADE_IN_A_BLOCK_PLACED_TWICE_CFF': (
+        'console.log(outer([1, 1, 0]).length, outer([0, 0, 1])[2](7, 8, 9));'
+    ),
 }
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestNodePrintsTheSameForEachRecoveredFixture(TestJsDeobfuscator):

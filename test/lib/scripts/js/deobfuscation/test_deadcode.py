@@ -900,7 +900,10 @@ NEVER_RUNS: dict[str, Program] = {
     ),
     'a class behind a throw inside a try, read by the catch': Program(
         a_program("""
-            function f() { try { const g = () => typeof C; throw g; class C {} } catch (e) { try { return e(); } catch (x) { return x.name; } } }
+            function f() {
+              try { const g = () => typeof C; throw g; class C {} }
+              catch (e) { try { return e(); } catch (x) { return x.name; } }
+            }
             console.log(f());
             """),
         prints('ReferenceError'),
@@ -909,10 +912,55 @@ NEVER_RUNS: dict[str, Program] = {
     ),
     'statements behind a break of a labeled block in a switch case block': Program(
         a_program("""
-            function f(n) { switch (n) { case 1: { L: { console.log('in'); break L; console.log('never'); } console.log('out'); break; console.log('never'); } } return n; }
+            function f(n) {
+              switch (n) {
+                case 1: {
+                  L: { console.log('in'); break L; console.log('never'); }
+                  console.log('out'); break; console.log('never');
+                }
+              }
+              return n;
+            }
             console.log(f(1));
             """),
         prints('in', 'out', '1'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a finally behind a try and a catch that both leave': Program(
+        a_program("""
+            function f(x) {
+              try { return x.y; } catch (e) { return null; } finally { console.log('cleanup'); }
+            }
+            console.log(f({ y: 1 }), f(null));
+            """),
+        prints('cleanup', 'cleanup', '1 null'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a finally whose break overrides the returns of its try and catch': Program(
+        a_program("""
+            function f() {
+              L: { try { return 1; } catch (e) { return 2; } finally { break L; } }
+              console.log('after');
+              return 3;
+            }
+            console.log(f());
+            """),
+        prints('after', '3'),
+        Reading.COMMONJS,
+        HostEnvironment.node,
+    ),
+    'a continue naming the outer of two labels of a loop': Program(
+        a_program("""
+            function f(n) {
+              var i = 0;
+              a: b: do { i++; if (i < n) continue a; return 'early'; } while (i < 3);
+              return 'after';
+            }
+            console.log(f(5), f(1));
+            """),
+        prints('after early'),
         Reading.COMMONJS,
         HostEnvironment.node,
     ),
@@ -1372,6 +1420,54 @@ NEVER_RUNS_DEOBFUSCATED: dict[str, str] = {
             console.log(f(1));
         """
     ),
+    'a finally behind a try and a catch that both leave': inspect.cleandoc(
+        """
+            function f(x) {
+              try {
+                return x.y;
+              } catch (e) {
+                return null;
+              } finally {
+                console.log('cleanup');
+              }
+            }
+            console.log(f({ y: 1 }), f(null));
+        """
+    ),
+    'a finally whose break overrides the returns of its try and catch': inspect.cleandoc(
+        """
+            function f() {
+              L: {
+                try {
+                  return 1;
+                } catch (e) {
+                  return 2;
+                } finally {
+                  break L;
+                }
+              }
+              console.log('after');
+              return 3;
+            }
+            console.log(f());
+        """
+    ),
+    'a continue naming the outer of two labels of a loop': inspect.cleandoc(
+        """
+            function f(n) {
+              var i = 0;
+              a: b: do {
+                i++;
+                if (i < n) {
+                  continue a;
+                }
+                return 'early';
+              } while (i < 3);
+              return 'after';
+            }
+            console.log(f(5), f(1));
+        """
+    ),
 }
 
 
@@ -1396,3 +1492,30 @@ class TestAStatementThatNeverRunsGoes(TestBase):
             {label: deobfuscated(row.text) for label, row in NEVER_RUNS.items()},
             NEVER_RUNS_DEOBFUSCATED,
         )
+
+
+class TestWhatNeverRunsButIsNotCodeThatRunsStays(TestJsDeobfuscator):
+
+    def test_the_imports_and_exports_of_a_module_behind_a_throw_stay(self):
+        source = inspect.cleandoc(
+            """
+            throw new Error('stop');
+            import './side-effect.js';
+            export function f() {
+              return 1;
+            }
+            export var v = 2;
+            """
+        )
+        self.assertEqual(self._deadcode(source), source)
+
+    def test_source_the_parser_could_not_read_behind_a_return_stays(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              return g;
+              using r = open();
+            }
+            """
+        )
+        self.assertEqual(self._deadcode(source), source)

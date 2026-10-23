@@ -57,14 +57,17 @@ def namespace_accesses(references: Iterable[Node]) -> dict[str, list[Node]] | No
     """
     The member accesses through which *references*, every reference to the object a namespace
     variable holds, reach that object, by the key each names; `None` where one of them does anything
-    else with the object, which then has to stay whole. Each reference has to be the object of an
-    access under a static key (`access_key`). That access may not be the operand of a `delete`:
-    `delete p` on a bare `var` binding is a no-op (or a strict-mode SyntaxError), not a property
-    removal. And a call through it may not hand the object to a function that can observe it as
-    `this` (`_a_method_may_observe_the_namespace`).
+    else with the object, which then has to stay whole. Each reference has to be the variable
+    itself, not an object aliasing it as `this.NS` does a global, and the object of an access under
+    a static key (`refinery.lib.scripts.js.deobfuscation.helpers.access_key`). That access may not
+    be the operand of a `delete`: `delete p` on a bare `var` binding is a no-op (or a strict-mode
+    SyntaxError), not a property removal. And a call through it may not hand the object to a
+    function that can observe it as `this` (`_a_method_may_observe_the_namespace`).
     """
     accesses: dict[str, list[Node]] = {}
     for node in references:
+        if not isinstance(node, JsIdentifier):
+            return None
         access = node.parent
         if not isinstance(access, JsMemberExpression) or access.object is not node:
             return None

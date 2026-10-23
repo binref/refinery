@@ -296,6 +296,24 @@ class TestControlFlowGraph(TestBase):
         self.assertIsNone(script.node_of(body_stmt))
         self.assertIsNotNone(graphs[id(func)].node_of(body_stmt))
 
+    def test_a_finally_runs_behind_a_block_and_a_catch_that_both_leave(self):
+        for source in [
+            'try { return a; } catch (e) { return b; } finally { c; }',
+            'try { throw a; } catch (e) { throw b; } finally { c; }',
+            'for (;;) { try { break; } catch (e) { continue; } finally { c; } }',
+        ]:
+            with self.subTest(source):
+                ast, cfg = self._cfg(source)
+                cleanup = cfg.node_of(self._first(ast, JsExpressionStatement))
+                assert cleanup is not None
+                self.assertIn(id(cleanup), self._reachable(cfg))
+
+    def test_a_continue_naming_the_outer_of_two_labels_of_a_loop_continues_it(self):
+        ast, cfg = self._cfg('a: b: do { continue a; } while (x); y;')
+        after = cfg.node_of(self._first(ast, JsExpressionStatement))
+        assert after is not None
+        self.assertIn(id(after), self._reachable(cfg))
+
 
 class TestTheLookupOfAStatementStopsAtTheBodyItIsWrittenIn(TestBase):
     """

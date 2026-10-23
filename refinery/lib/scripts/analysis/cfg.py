@@ -620,7 +620,7 @@ class _Target:
     exists once the body has been built. Wiring them to the exit instead would drop the back-edge
     the loop is made of.
     """
-    label: str | None
+    labels: frozenset[str]
     breaks: list[CfgNode]
     continue_to: CfgNode | None
     is_continuable: bool
@@ -686,7 +686,7 @@ class CfgBuilder:
         self._handlers: list[CfgNode] = []
         self._targets: list[_Target] = []
         self._resumptions: list[Resumption] = []
-        self._pending_label: str | None = None
+        self._pending_labels: frozenset[str] = frozenset()
 
     def build(self) -> ControlFlowGraph:
         frontier = [self.cfg.entry]
@@ -977,24 +977,25 @@ class CfgBuilder:
                 return node.successors[count], exits
         return None, exits
 
-    def park_label(self, label: str | None) -> None:
+    def park_label(self, *labels: str | None) -> None:
         """
-        Park *label* for the construct about to be built, for `take_label` to consume.
+        Park *labels* for the construct about to be built, for `take_labels` to consume.
 
         `labelled` calls this for a language whose label is a statement wrapping the construct. A
         language whose label is a field *of* the construct calls it directly, because there is no
         wrapping statement to recognise — and a construct built without it carries no label, so
-        every jump naming it misses and leaves the body instead.
+        every jump naming it misses and leaves the body instead. A construct may carry several
+        labels, as `a: b: while (…)` does, and a jump naming any of them targets it.
         """
-        self._pending_label = label
+        self._pending_labels = frozenset(label for label in labels if label is not None)
 
-    def take_label(self) -> str | None:
+    def take_labels(self) -> frozenset[str]:
         """
-        The label parked for the construct about to be built, consumed once.
+        The labels parked for the construct about to be built, consumed once.
         """
-        label = self._pending_label
-        self._pending_label = None
-        return label
+        labels = self._pending_labels
+        self._pending_labels = frozenset()
+        return labels
 
     def branch_on(
         self,
@@ -1028,7 +1029,7 @@ class CfgBuilder:
         """
         head = self.node(element)
         self.link(frontier, head)
-        target = _Target(self.take_label(), [], head, is_continuable=True, is_breakable=True)
+        target = _Target(self.take_labels(), [], head, is_continuable=True, is_breakable=True)
         self._targets.append(target)
         body_exits = self._branch(body, head)
         self._targets.pop()
@@ -1056,7 +1057,7 @@ class CfgBuilder:
             frontier = [start]
         head = self.node(element)
         self.link(frontier, head)
-        loop = _Target(self.take_label(), [], head, is_continuable=True, is_breakable=True)
+        loop = _Target(self.take_labels(), [], head, is_continuable=True, is_breakable=True)
         self._targets.append(loop)
         entry = head
         if target is not None:
@@ -1075,7 +1076,7 @@ class CfgBuilder:
         back-edge targets the body's own entry rather than the test.
         """
         test = self.node(element)
-        target = _Target(self.take_label(), [], test, is_continuable=True, is_breakable=True)
+        target = _Target(self.take_labels(), [], test, is_continuable=True, is_breakable=True)
         self._targets.append(target)
         entry, body_exits = self._capture_body(body, frontier)
         self._targets.pop()
@@ -1096,7 +1097,7 @@ class CfgBuilder:
         each given its own node. Any of the three may be absent; a loop with no test has no exit
         other than the jumps out of it, and its back-edge targets the body entry.
         """
-        label = self.take_label()
+        labels = self.take_labels()
         if initializer is not None:
             start = self.node(initializer)
             self.link(frontier, start)
@@ -1108,7 +1109,7 @@ class CfgBuilder:
         else:
             body_frontier = list(frontier)
         step = self.node(update) if update is not None else None
-        target = _Target(label, [], step or head, is_continuable=True, is_breakable=True)
+        target = _Target(labels, [], step or head, is_continuable=True, is_breakable=True)
         self._targets.append(target)
         entry, body_exits = self._capture_body(body, body_frontier)
         self._targets.pop()
@@ -1183,7 +1184,7 @@ class CfgBuilder:
         head = self.node(element)
         self.link(frontier, head)
         target = _Target(
-            self.take_label(),
+            self.take_labels(),
             [],
             head if iterated else None,
             is_continuable=iterated,
@@ -1244,7 +1245,9 @@ class CfgBuilder:
 
         The finalizer is entered from the block's normal exits and from every handler's, and itself
         carries an exceptional edge outward, because a finalizer runs on the exceptional path too and
-        control leaves the construct from it either way.
+        control leaves the construct from it either way. It also guards every handler body: a
+        handler that throws, returns or jumps out of the construct runs the finalizer on its way, so
+        where the block and every handler end that way, the finalizer is still reached.
         """
         handlers = list(handlers)
         entries = [self.detached_node(handler) for handler, _ in handlers]
@@ -1256,11 +1259,15 @@ class CfgBuilder:
         if guard is not None:
             self._handlers.pop()
         normal_exits = list(block_exits)
+        if finalizer_entry is not None:
+            self._handlers.append(finalizer_entry)
         for index, ((_, body), entry) in enumerate(zip(handlers, entries)):
             if index:
                 self.exceptional_edge(entries[index - 1], entry)
             normal_exits += (
                 self.statement(body, [entry]) if body is not None else [entry])
+        if finalizer_entry is not None:
+            self._handlers.pop()
         self.close_handler_set(entries, escapes=escapes)
         if finalizer_entry is not None and finalizer is not None:
             self.link(normal_exits, finalizer_entry)
@@ -1271,21 +1278,22 @@ class CfgBuilder:
 
     def labelled(
         self,
-        label: str | None,
+        labels: Sequence[str],
         body: Node | None,
         frontier: list[CfgNode],
         *,
         binds_to_body: bool,
     ) -> list[CfgNode]:
         """
-        A labelled statement. When the label names a construct a jump can target directly —
-        `binds_to_body` — it is parked for that construct to consume through `take_label`; otherwise
-        the label names this statement itself and only a break can leave it.
+        A statement *body* with every label written in front of it, *labels*. When they name a
+        construct a jump can target directly — `binds_to_body` — they are parked for that construct
+        to consume through `take_labels`; otherwise they name this statement itself and only a break
+        can leave it.
         """
         if binds_to_body:
-            self.park_label(label)
+            self.park_label(*labels)
             return self.statement(body, frontier) if body is not None else list(frontier)
-        target = _Target(label, [], None, is_continuable=False, is_breakable=False)
+        target = _Target(frozenset(labels), [], None, is_continuable=False, is_breakable=False)
         self._targets.append(target)
         exits = self.statement(body, frontier) if body is not None else list(frontier)
         self._targets.pop()
@@ -1364,7 +1372,7 @@ class CfgBuilder:
             if label is None:
                 if target.is_breakable:
                     return target
-            elif target.label == label:
+            elif label in target.labels:
                 return target
         return None
 
@@ -1372,7 +1380,7 @@ class CfgBuilder:
         for target in reversed(self._targets):
             if not target.is_continuable:
                 continue
-            if label is None or target.label == label:
+            if label is None or label in target.labels:
                 return target
         return None
 

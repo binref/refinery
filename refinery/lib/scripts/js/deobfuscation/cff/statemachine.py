@@ -262,7 +262,6 @@ class _SMBlock:
 
 @dataclass
 class _GeneratorCFFMatch:
-    generator_name: str
     generator: JsFunctionNode
     generator_names: frozenset[str]
     state_var_names: list[str]
@@ -659,10 +658,13 @@ def _scope_arg_object(
     num_state_vars: int,
 ) -> JsObjectExpression | None:
     """
-    If *node* is a call `generator(states…, scopeObj, …)` of the generator under one of
-    *generator_names* whose argument at the scope position (index *num_state_vars*) is an object
-    literal, return that object literal. This is the structural scope argument threaded through
-    the shared generator by its wrapper functions.
+    If *node* is a call of the generator under one of *generator_names*,
+
+        generator(states…, scopeObj, …)
+
+    whose argument at the scope position (index *num_state_vars*) is an object literal, return that
+    object literal. This is the structural scope argument threaded through the shared generator by
+    its wrapper functions.
     """
     if not isinstance(node, JsCallExpression):
         return None
@@ -834,14 +836,18 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
     if not _is_discriminant_sum(inner.discriminant, state_var_names):
         return None
     switch_stmt = inner
-    slots = _scope_slots(switch_stmt, scope_param_name, scope_default_props)
-    if not routed and _spells_a_slot_bare(switch_stmt, slots):
-        return None
     call_info = _find_generator_call_site(body, idx, gen_name)
     if call_info is None:
         return None
     if len(call_info.initial_state) != len(state_var_names):
         return None
+    flag = call_info.flag
+    if not routed or flag is not None:
+        slots = _scope_slots(switch_stmt, scope_param_name, scope_default_props)
+        if not routed and _spells_a_slot_bare(switch_stmt, slots):
+            return None
+        if flag is not None and flag.base in slots:
+            return None
     namespaces: set[str] = set()
     namespace_homes: dict[str, tuple[str, ...]] = {}
     if with_redirect_var is not None and len(scope_default_props) == 1:
@@ -860,13 +866,9 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         if homes is None:
             return None
         namespace_homes = homes
-    if (
-        call_info.flag is not None
-        and call_info.flag.base in {*slots, *namespaces, *namespace_homes}
-    ):
+    if flag is not None and (flag.base in namespaces or flag.base in namespace_homes):
         return None
     return _GeneratorCFFMatch(
-        generator_name=gen_name,
         generator=stmt,
         generator_names=gen_names,
         state_var_names=state_var_names,
@@ -1103,9 +1105,11 @@ def _is_result_guard(
 ) -> list[Expression] | None:
     """
     The names spelling `undefined` that *stmt* relies on where it is the guard
-    `if (didReturn) { return result; }` and nothing more, or `None` where it is not. Where it *ends*
-    the body of a function, its `else` may hold the return of `undefined` that ends that body
-    (`_is_implicit_return`).
+
+        if (didReturn) { return result; }
+
+    and nothing more, or `None` where it is not. Where it *ends* the body of a function, its `else`
+    may hold the return of `undefined` that ends that body (`_is_implicit_return`).
     """
     if not isinstance(stmt, JsIfStatement) or not flag.spelled_by(stmt.test):
         return None
@@ -2456,17 +2460,19 @@ class _Region:
         self.exit = exit_disc
         self.members = members
         self.dominated = dominated
-        self.ipdom = _post_dominators({
+        steady_ways = {
             disc: [
                 succ for succ in cfg.nodes[disc].successors if succ in steady or succ == exit_disc
             ] for disc in steady
-        }, exit_disc)
-        self.tails = {disc for disc in nodes if disc not in self.ipdom}
-        self.leaving_ipdom = _post_dominators({
+        }
+        every_way = {
             disc: [
                 succ if succ in nodes else exit_disc for succ in cfg.nodes[disc].successors
             ] for disc in nodes
-        }, exit_disc)
+        }
+        self.ipdom = _post_dominators(steady_ways, exit_disc)
+        self.tails = {disc for disc in nodes if disc not in self.ipdom}
+        self.leaving_ipdom = _post_dominators(every_way, exit_disc)
         self.at_position = {order[disc]: disc for disc in nodes}
         self.reach = {disc: 1 << order[disc] for disc in nodes}
         ordered = sorted(nodes, key=order.__getitem__, reverse=True)
@@ -2515,7 +2521,8 @@ class _Region:
 class _CopiesOutgrowTheRun(Exception):
     """
     Raised where the copies the structuring writes would hold more code than the blocks of the run
-    (`_Structuring.allowance`).
+    (`_Structuring.allowance`), or would make a wrapper: a copy of a wrapper is a function of its
+    own, which the recovery resolves as a run of its own, and the allowance does not count that run.
     """
 
 
@@ -2524,6 +2531,17 @@ def _code_size(code: Sequence[Node]) -> int:
     The number of syntax nodes in *code*.
     """
     return sum(1 for part in code for _ in part.walk())
+
+
+def _refers_to_one_of(code: Sequence[Node], names: frozenset[str]) -> bool:
+    """
+    Whether *code* refers to one of *names* anywhere below it.
+    """
+    return any(
+        isinstance(node, JsIdentifier) and node.name in names and is_reference(node)
+        for part in code
+        for node in part.walk()
+    )
 
 
 class _Structuring:
@@ -2535,15 +2553,21 @@ class _Structuring:
     copy of its code (`_parts`, `_collapsed`), since a tree holds a node in one place. Blocks whose
     ways part and share blocks without meeting again make every level of them double what the
     levels below write, so the copies may hold at most as much code as the blocks of the run
-    (`allowance`); beyond that, the run is not written.
+    (`allowance`), and none of them may call the generator under one of its *generator_names*;
+    beyond that, the run is not written.
 
     A loop is written only where every way out of it goes to one block. A `break` goes to where the
     code after the loop continues, and nothing else can be said with one.
     """
 
-    def __init__(self, cfg: _CFG, idom: dict[int, int | None]):
+    def __init__(
+        self,
+        cfg: _CFG,
+        idom: dict[int, int | None],
+        generator_names: frozenset[str],
+    ):
         self.cfg = cfg
-        self.idom = idom
+        self.generator_names = generator_names
         self.collapsed: dict[int, list[Statement]] = {}
         self.placed: set[int] = set()
         self.placed_loops: set[int] = set()
@@ -2562,7 +2586,7 @@ class _Structuring:
                     return None
                 self.collapsed[loop.header] = body
                 for body_node in loop.body:
-                    if body_node != loop.header and body_node not in self.collapsed:
+                    if body_node != loop.header:
                         self.collapsed[body_node] = []
             region = _Region(self.cfg, self.order, self.dominated, self.cfg.exit, None)
             return self._acyclic(region, self.cfg.entry, self.cfg.exit, set())
@@ -2571,10 +2595,11 @@ class _Structuring:
 
     def _copy(self, code: Sequence[_N]) -> list[_N]:
         """
-        A copy of *code*, charged to what the copies may hold in all (`allowance`).
+        A copy of *code*, charged to what the copies may hold in all (`allowance`). Code that calls
+        the generator, as the code making a wrapper does, is not copied (`_CopiesOutgrowTheRun`).
         """
         self.allowance -= _code_size(code)
-        if self.allowance < 0:
+        if self.allowance < 0 or _refers_to_one_of(code, self.generator_names):
             raise _CopiesOutgrowTheRun
         return [_clone_node(part) for part in code]
 
@@ -2721,7 +2746,7 @@ class _Structuring:
         worklist: deque[int] = deque([entry])
         while worklist:
             disc = worklist.popleft()
-            if disc == exit_disc or disc == _VIRTUAL_EXIT or disc in here:
+            if disc == exit_disc or disc in here:
                 continue
             here.add(disc)
             if not region.holds(disc):
@@ -2918,6 +2943,8 @@ def _block_bound_names(statements: list[Statement]) -> set[str]:
     """
     names = set(lexically_declared_names(statements))
     for statement in statements:
+        while isinstance(statement, JsLabeledStatement):
+            statement = statement.body
         if isinstance(statement, JsFunctionDeclaration) and statement.id is not None:
             names.add(statement.id.name)
     return names
@@ -3075,8 +3102,8 @@ def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
     identifiers (generator, scope parameter, argument holder, return flag, redirect variable).
     """
     exempt: set[str] = set(match.state_var_names) | _JS_BUILTIN_GLOBALS | set(match.namespaces)
+    exempt |= match.generator_names
     for name in (
-        match.generator_name,
         match.scope_param_name,
         match.arg_var_name,
         match.with_redirect_var,
@@ -3341,13 +3368,19 @@ def _raises_the_flag(expr: Expression | None, flag: _Flag | None) -> bool:
     )
 
 
-def _own_returns(stmt: Statement, name: str) -> Iterator[tuple[JsReturnStatement, bool, bool]]:
+def _own_returns(
+    stmt: Statement,
+    name: str,
+    hidden: bool,
+) -> Iterator[tuple[JsReturnStatement, bool, bool]]:
     """
-    Each `return` of the code *stmt* belongs to, not of a function inside it, with whether something
-    between *stmt* and it binds *name* anew (`_scoped_children`) and whether it stands in a `try`
-    statement.
+    Each `return` of the code *stmt* belongs to, not of a function inside it, with whether *name*
+    may mean another binding there than the one it means around *stmt*, and whether the return
+    stands in a `try` statement. It may where it does at *stmt* already (*hidden*), where something
+    between *stmt* and the return binds it anew (`_scoped_children`), and in the body of a `with`
+    statement, whose object may hold a property of that name.
     """
-    stack: list[tuple[Node, bool, bool]] = [(stmt, False, False)]
+    stack: list[tuple[Node, bool, bool]] = [(stmt, hidden, False)]
     while stack:
         node, hidden, guarded = stack.pop()
         if isinstance(node, JsReturnStatement):
@@ -3355,28 +3388,33 @@ def _own_returns(stmt: Statement, name: str) -> Iterator[tuple[JsReturnStatement
         if isinstance(node, FUNCTION_NODES):
             continue
         guarded = guarded or isinstance(node, JsTryStatement)
+        scoped = node.body if isinstance(node, JsWithStatement) else None
         stack.extend(
-            (child, hidden or name in bound, guarded)
+            (child, hidden or name in bound or child is scoped, guarded)
             for child, bound in reversed(list(_scoped_children(node)))
         )
 
 
-def _recover_returns(stmts: list[Statement], flag: _Flag | None) -> _RunReturns:
+def _recover_returns(stmts: list[Statement], match: _GeneratorCFFMatch) -> _RunReturns:
     """
-    Rewrite each return of the code of a run that raises the flag,
+    Rewrite each return of the code of a run of the machine of *match* that raises the flag,
 
         return didReturn = true, value;
 
     to the return of its value, wherever in that code it stands; a function inside keeps its own
-    returns. A store under the flag's spelling where something between binds its name anew stores
-    to that binding, and the return does not raise the flag.
+    returns. A store under the flag's spelling where the generator binds its name for the code of
+    the switch (`_names_bound_for_the_switch`), or where something between binds it anew, stores to
+    that binding, and the return does not raise the flag.
     """
+    flag = match.flag
+    name = flag.base if flag is not None else ''
+    hidden = flag is not None and name in _names_bound_for_the_switch(match)
     plain = intercepted = False
     for stmt in stmts:
-        for node, hidden, guarded in list(_own_returns(stmt, flag.base if flag else '')):
+        for node, hidden_here, guarded in list(_own_returns(stmt, name, hidden)):
             argument = node.argument
             if (
-                hidden
+                hidden_here
                 or not isinstance(argument, JsSequenceExpression)
                 or len(argument.expressions) < 2
                 or not _raises_the_flag(argument.expressions[0], flag)
@@ -3390,6 +3428,19 @@ def _recover_returns(stmts: list[Statement], flag: _Flag | None) -> _RunReturns:
             )
             set_child(node, 'argument', value)
     return _RunReturns(plain, intercepted)
+
+
+def _names_bound_for_the_switch(match: _GeneratorCFFMatch) -> set[str]:
+    """
+    The names the generator of *match* binds for the code of the cases of its switch: its parameters
+    and its own name, what its body declares (`_function_bound_names`), and what the cases declare
+    for the block of the switch.
+    """
+    statements = [
+        statement for case in match.switch_stmt.cases if isinstance(case, JsSwitchCase)
+        for statement in case.body
+    ]
+    return _function_bound_names(match.generator) | _block_bound_names(statements)
 
 
 def _is_direct_scope_member(node: Node, scope_param_name: str) -> bool:
@@ -3561,13 +3612,13 @@ def _execute_machine(
 
     cfg, settled = cfg_result
     idom = _compute_idom(cfg)
-    structuring = _Structuring(cfg, idom)
+    structuring = _Structuring(cfg, idom, match.generator_names)
     if (stmts := structuring.run(_find_loops(cfg, idom))) is None:
         return None
     return _Run(
         stmts,
         settled,
-        _recover_returns(stmts, match.flag),
+        _recover_returns(stmts, match),
         _RunOrder(cfg, idom, structuring.homes),
     )
 
@@ -3736,7 +3787,6 @@ def _resolve_shared_wrappers(
     could leave the copy the wrapper's scope object holds apart from the creator's value, which the
     recovered code can only share (`_stores_precede_the_wrappers`).
     """
-    gen_name = match.generator_name
     gen_names = match.generator_names
     num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
@@ -3770,7 +3820,6 @@ def _resolve_shared_wrappers(
                     absent,
                 )
             synthetic = _GeneratorCFFMatch(
-                generator_name=gen_name,
                 generator=match.generator,
                 generator_names=gen_names,
                 state_var_names=match.state_var_names,
@@ -4449,23 +4498,22 @@ def _scaffolding_is_private(
     names = {match.result_var}
     if isinstance(flag, _FlagVariable):
         names.add(flag.name)
-    anchors: dict[str, Binding] = {}
-    for anchor in [holder[1], *(
+    named = [
         node for statement in removed[1:] for node in statement.walk()
         if isinstance(node, JsIdentifier) and node.name in names
-    )]:
+    ]
+    anchors: dict[str, Binding] = {}
+    for anchor in [holder[1], *named]:
         binding = model.binding_of(anchor) or model.resolve(anchor)
         if binding is None or binding.is_lexical:
             return False
         anchors.setdefault(anchor.name, binding)
-    if isinstance(flag, _FlagVariable) and (
-        (binding := anchors.get(flag.name)) is None or not binding.declared_within(home.node)
-    ):
-        return False
-    if isinstance(flag, _FlagProperty) and not _property_flag_is_private(
-        model, body, match, flag, home, inside, absent
-    ):
-        return False
+    if isinstance(flag, _FlagVariable):
+        if (binding := anchors.get(flag.name)) is None or not binding.declared_within(home.node):
+            return False
+    elif isinstance(flag, _FlagProperty):
+        if not _property_flag_is_private(model, body, match, flag, home, inside, absent):
+            return False
     if not all(_reached_only_from(model, binding, inside) for binding in anchors.values()):
         return False
     return all(denoted_value(read, model) == (True, None) for read in match.undefined_reads)
@@ -4490,11 +4538,12 @@ def _property_flag_is_private(
     proves no prototype supplies, so each of them is a property of data. What reaches the flag's
     key, and every reflective surface that could name the holder, stands inside.
     """
-    anchor = next((
+    references = (
         node for statement in body[match.gen_decl_index + 1:match.scaffolding_end + 1]
         for node in statement.walk()
         if isinstance(node, JsIdentifier) and node.name == flag.holder and is_reference(node)
-    ), None)
+    )
+    anchor = next(references, None)
     if anchor is None or (binding := model.binding_of(anchor) or model.resolve(anchor)) is None:
         return False
     if binding.scope is not home or binding.is_lexical:
