@@ -13,6 +13,8 @@ from typing import NamedTuple, TypeGuard
 from unittest.mock import patch
 
 from . import TestBase, TestUnitBase
+from ..lib.scripts.ps1.deobfuscation.test_domain_gap import witnesses
+from ..lib.scripts.ps1.deobfuscation.test_fold_census import census
 
 import refinery.lib.scripts as scripts
 
@@ -41,9 +43,9 @@ _EXCLUDED = 'test_witnessed'
 #: The censuses quantify over a fixed population of sources many times over: the fold census once
 #: more for every folding pass it switches off, the domain gap once for every operator. A pass that
 #: is switched off is a deliberately broken analysis, as in the witness suite, and the reruns cost
-#: more than ten times the rest of the directory. The watched run deobfuscates each source of their
-#: populations once instead.
-_CENSUSES = ('test_fold_census', 'test_domain_gap')
+#: more than ten times the rest of the directory. The watched run makes, for each census, the one
+#: reading of its population that the census makes with nothing switched off, and nothing else.
+_CENSUSES = (census, witnesses)
 
 
 def _project_root() -> str:
@@ -249,25 +251,23 @@ def _pass_types() -> dict[str, type]:
 
 
 def _deobfuscation_suite() -> unittest.TestSuite:
-    names = []
-    for path in sorted(glob(os.path.join(_project_root(), _TESTS, 'test_*.py'))):
-        stem = os.path.splitext(os.path.basename(path))[0]
-        if stem != _EXCLUDED and stem not in _CENSUSES:
-            names.append(F"{_TESTS.replace(os.sep, '.')}.{stem}")
-    assert names, F'no test modules under {_TESTS}'
-    return unittest.defaultTestLoader.loadTestsFromNames(names)
-
-
-def _census_population() -> list[str]:
     """
-    Every source that one of the excluded censuses quantifies over.
+    Every test module under `_TESTS` except the excluded ones, and the one reading of each census.
+    An excluded module that is not there is an error: after a rename, the exclusion would otherwise
+    end without anything failing.
     """
-    from refinery.lib.scripts.ps1.data import operand_witnesses
-    from ..lib.scripts.ps1.corpus import oracle_corpus
-    return [
-        *oracle_corpus(),
-        *(spelling for spellings in operand_witnesses().values() for spelling in spellings),
+    stems = [
+        os.path.splitext(os.path.basename(path))[0]
+        for path in sorted(glob(os.path.join(_project_root(), _TESTS, 'test_*.py')))
     ]
+    excluded = {_EXCLUDED, *(reading.__module__.rpartition('.')[2] for reading in _CENSUSES)}
+    missing = sorted(excluded - set(stems))
+    assert not missing, F'excluded modules missing under {_TESTS}: {missing}'
+    names = [F"{_TESTS.replace(os.sep, '.')}.{stem}" for stem in stems if stem not in excluded]
+    assert names, F'no test modules under {_TESTS}'
+    suite = unittest.defaultTestLoader.loadTestsFromNames(names)
+    suite.addTests(unittest.FunctionTestCase(reading) for reading in _CENSUSES)
+    return suite
 
 
 class _Observations(NamedTuple):
@@ -282,8 +282,7 @@ class _Observations(NamedTuple):
 def _watched_run() -> _Observations:
     """
     Run the ps1 deobfuscation suite once, watching the fault veto and recording every source the
-    suite hands to the parser. The censuses are not run; each source they quantify over is
-    deobfuscated once in their place.
+    suite hands to the parser. Of each census, only its reading with nothing switched off is run.
 
     One run rather than two, because the checks below would otherwise each carry their own copy of
     the module glob and the exclusions, and a divergence between those copies is how one of them
@@ -308,7 +307,6 @@ def _watched_run() -> _Observations:
     the same reason the string-matching reading did — a proxy that fires where the thing does not.
     """
     from refinery.lib.scripts.ps1.parser import Ps1Parser
-    from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
     from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlan, _removes_a_handler
 
     active: list[str] = []
@@ -353,8 +351,6 @@ def _watched_run() -> _Observations:
             pass_type = _pass_type(name)
             stack.enter_context(patch.object(pass_type, 'visit', entered(name, pass_type.visit)))
         _deobfuscation_suite().run(unittest.TestResult())
-        for source in _census_population():
-            deobfuscate(Ps1Parser(source).parse())
     return _Observations(frozenset(fired), tuple(sorted(set(parsed))))
 
 

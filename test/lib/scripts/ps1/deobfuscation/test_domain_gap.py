@@ -41,7 +41,7 @@ UNREADABLE_WITNESSES: tuple[str, ...] = (
 )
 
 
-def _witnesses() -> dict[str, tuple]:
+def witnesses() -> dict[str, tuple]:
     """
     The shipped operand witnesses as facts, keyed by the row they were captured for. Read out of
     the resource through the ordinary reader rather than written out again here, so that the census
@@ -80,8 +80,8 @@ def _gap() -> collections.Counter:
     interpreter = _Ps1Interpreter()
     counted: collections.Counter = collections.Counter()
     for operator in sorted(binary_operators()):
-        for name, lefts in _witnesses().items():
-            for rights in _witnesses().values():
+        for name, lefts in witnesses().items():
+            for rights in witnesses().values():
                 for left in lefts:
                     for right in rights:
                         spelled_left, spelled_right = render(left), render(right)

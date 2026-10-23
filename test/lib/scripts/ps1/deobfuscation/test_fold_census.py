@@ -48,16 +48,19 @@ class TestPs1FoldCensus(unittest.TestCase):
         which. Neutering a pass may only take folds away: one that *adds* a fold when it is disabled
         means the passes are fighting, and the census would record whichever won the race.
         """
+        baseline = census()
         for transformer in _folds:
-            with self.subTest(transformer.__name__):
+            with self.subTest(neutered=transformer.__name__):
                 with unittest.mock.patch.object(transformer, 'visit', lambda self, node: None):
                     without = census()
                 measured = Contribution(
-                    lost=tuple(sorted(set(FOLDS) - set(without))),
+                    lost=tuple(sorted(set(baseline) - set(without))),
                     changed=tuple(sorted(
-                        row for row in set(FOLDS) & set(without)
-                        if FOLDS[row] != without[row]
+                        row for row in set(baseline) & set(without)
+                        if baseline[row] != without[row]
                     )),
                 )
-                gained = sorted(set(without) - set(FOLDS))
-                self.assertEqual((measured, gained), (CONTRIBUTION[transformer.__name__], []))
+                with self.subTest(law='the folds it takes away are the recorded ones'):
+                    self.assertEqual(measured, CONTRIBUTION[transformer.__name__])
+                with self.subTest(law='it adds no fold'):
+                    self.assertEqual(sorted(set(without) - set(baseline)), [])
