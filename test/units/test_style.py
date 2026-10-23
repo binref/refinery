@@ -1062,62 +1062,46 @@ class TestCycleDiscipline(TestBase):
         return False
 
     @classmethod
-    @functools.lru_cache(maxsize=None)
     def _all_offenders(cls) -> dict[str, list[str]]:
-        offenders: dict[str, set[str]] = {
-            'closure cycle': set(),
-            'class in function': set(),
-            'kept exception': set(),
-            'raised parameter': set(),
-            'raised attribute': set(),
-            'raised local': set(),
-            'stored closure': set(),
-        }
+        offenders: dict[str, set[str]] = {}
         for path, tree, table in cls._checked_sources():
             shapes = _ModuleShapes(tree)
             found = {
-                'closure cycle': cls._closure_cycles(table, shapes.lambdas),
-                'class in function': shapes.classes,
-                'kept exception': shapes.kept,
-                'raised parameter': shapes.raised_parameters,
-                'raised attribute': shapes.raised_attributes,
-                'raised local': shapes.raised_locals,
-                'stored closure': shapes.stored_closures,
+                'a function or class defined in a function refers to itself':
+                    cls._closure_cycles(table, shapes.lambdas),
+                'a class is built in a function other than by a cached call to type':
+                    shapes.classes,
+                'a handler keeps its exception':
+                    shapes.kept,
+                'a function raises an exception it was given':
+                    shapes.raised_parameters,
+                'a function raises an exception kept in an attribute':
+                    shapes.raised_attributes,
+                'a function raises an exception that a local variable keeps':
+                    shapes.raised_locals,
+                'a function stores a closure on a variable it captures':
+                    shapes.stored_closures,
             }
             for shape, lines in found.items():
-                offenders[shape].update(F'{path}:{line}' for line in lines)
+                offenders.setdefault(shape, set()).update(F'{path}:{line}' for line in lines)
         return {shape: sorted(places) for shape, places in offenders.items()}
 
-    def _offenders(self, shape: str) -> list[str]:
+    def test_the_shapes_that_form_a_cycle_occur_only_in_the_unratcheted_packages(self):
+        """
+        All shapes are checked by one test because finding them reads every source, and a run that
+        spreads several tests over its processes would have each process read every source again.
+        """
+        offenders = self._all_offenders()
         unratcheted = tuple(self._unratcheted_prefix(name) for name in self.UNRATCHETED)
-        return [place for place in self._all_offenders()[shape] if not place.startswith(unratcheted)]
-
-    def test_no_function_or_class_defined_in_a_function_refers_to_itself(self):
-        self.assertListEqual(self._offenders('closure cycle'), [])
-
-    def test_no_class_is_built_in_a_function_except_by_a_cached_call_to_type(self):
-        self.assertListEqual(self._offenders('class in function'), [])
-
-    def test_no_handler_keeps_its_exception(self):
-        self.assertListEqual(self._offenders('kept exception'), [])
-
-    def test_no_function_raises_an_exception_it_was_given(self):
-        self.assertListEqual(self._offenders('raised parameter'), [])
-
-    def test_no_function_raises_an_exception_kept_in_an_attribute(self):
-        self.assertListEqual(self._offenders('raised attribute'), [])
-
-    def test_no_function_raises_an_exception_that_a_local_variable_keeps(self):
-        self.assertListEqual(self._offenders('raised local'), [])
-
-    def test_no_function_stores_a_closure_on_a_variable_it_captures(self):
-        self.assertListEqual(self._offenders('stored closure'), [])
-
-    def test_the_unratcheted_packages_are_still_unratcheted(self):
-        places = [place for shape in self._all_offenders().values() for place in shape]
+        for shape, places in offenders.items():
+            with self.subTest(shape=shape):
+                outside = [place for place in places if not place.startswith(unratcheted)]
+                self.assertListEqual(outside, [])
+        everywhere = [place for places in offenders.values() for place in places]
         for name in self.UNRATCHETED:
-            if not any(place.startswith(self._unratcheted_prefix(name)) for place in places):
-                self.fail(F'{name} no longer needs the exemption; drop it from UNRATCHETED')
+            with self.subTest(unratcheted=name):
+                if not any(place.startswith(self._unratcheted_prefix(name)) for place in everywhere):
+                    self.fail(F'{name} no longer needs the exemption; drop it from UNRATCHETED')
 
 
 class TestStyleGuides(TestUnitBase):
