@@ -31,6 +31,7 @@ from refinery.lib.scripts.js.analysis.environment import FileKind
 from refinery.lib.scripts.js.analysis.intrinsics import denoting_leaves
 from refinery.lib.scripts.js.analysis.model import (
     annex_b_function_home,
+    is_direct_eval_call,
     is_member_write_target,
     is_simple_assignment_target,
     is_use_position,
@@ -72,6 +73,7 @@ from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsCallExpression,
     JsCatchClause,
+    JsClassBody,
     JsClassDeclaration,
     JsClassExpression,
     JsContinueStatement,
@@ -2545,6 +2547,7 @@ class _Structuring:
         self.collapsed: dict[int, list[Statement]] = {}
         self.placed: set[int] = set()
         self.placed_loops: set[int] = set()
+        self.homes: dict[Node, tuple[int, int]] = {}
         self.allowance = sum(_code_size(_block_code(node)) for node in cfg.nodes.values())
         self.order = {disc: index for index, disc in enumerate(_reverse_postorder(cfg))}
         self.dominated = {disc: 1 << index for disc, index in self.order.items()}
@@ -2578,7 +2581,8 @@ class _Structuring:
     def _parts(self, disc: int) -> _NodeParts:
         """
         The code of the block *disc* as a walk places it: the block's own the first time, a copy
-        every other time.
+        every other time. Each statement of its payload is recorded with the block and its position
+        there (`homes`).
         """
         node = self.cfg.nodes[disc]
         if disc not in self.placed:
@@ -2596,6 +2600,8 @@ class _Structuring:
                 self._copy(node.true_prefix_payload),
                 self._copy(node.false_prefix_payload),
             )
+        for index, stmt in enumerate(parts.payload):
+            self.homes[stmt] = (disc, index)
         return parts
 
     def _collapsed(self, disc: int) -> list[Statement]:
@@ -3474,14 +3480,66 @@ def _rewrite_comma_parts(
     return result
 
 
+class _RunOrder:
+    """
+    When the statements of the code recovered for one run run, read off the graph of the run: the
+    block whose payload each statement is and its position there (`homes`), the dominators of the
+    blocks, and the blocks each block reaches.
+    """
+
+    def __init__(self, cfg: _CFG, idom: dict[int, int | None], homes: dict[Node, tuple[int, int]]):
+        self.cfg = cfg
+        self.idom = idom
+        self.homes = homes
+        self._reached: dict[int, set[int]] = {}
+
+    def _reaches(self, disc: int) -> set[int]:
+        """
+        The blocks a way of at least one step from the block *disc* reaches.
+        """
+        if (found := self._reached.get(disc)) is None:
+            found = set()
+            stack = list(self.cfg.nodes[disc].successors)
+            while stack:
+                if (succ := stack.pop()) in found or succ not in self.cfg.nodes:
+                    continue
+                found.add(succ)
+                stack.extend(self.cfg.nodes[succ].successors)
+            self._reached[disc] = found
+        return found
+
+    def _home(self, node: Node) -> tuple[int, int] | None:
+        cursor: Node | None = node
+        while cursor is not None:
+            if (home := self.homes.get(cursor)) is not None:
+                return home
+            cursor = cursor.parent
+        return None
+
+    def runs_only_before(self, first: Node, then: Node) -> bool:
+        """
+        Whether *first* runs before *then* on every way to it and never again once *then* has run,
+        both standing in the code of this run: the payload statement holding *first* comes earlier
+        in a block that holds both and that no loop holds, or its block dominates the block of
+        *then*, which does not reach it.
+        """
+        if (early := self._home(first)) is None or (late := self._home(then)) is None:
+            return False
+        if early[0] == late[0]:
+            return early[1] < late[1] and early[0] not in self._reaches(early[0])
+        return _dominates(self.idom, early[0], late[0]) and early[0] not in self._reaches(late[0])
+
+
 class _Run(NamedTuple):
     """
     The code recovered for one run of the machine, what its routing slots hold once it has entered
-    the machine (`_build_cfg`), and what its returns say (`_RunReturns`).
+    the machine (`_build_cfg`), what its returns say (`_RunReturns`), and when its statements run
+    (`_RunOrder`).
     """
     statements: list[Statement]
     settled: _Slots
     returns: _RunReturns
+    order: _RunOrder
 
 
 def _execute_machine(
@@ -3503,9 +3561,15 @@ def _execute_machine(
 
     cfg, settled = cfg_result
     idom = _compute_idom(cfg)
-    if (stmts := _Structuring(cfg, idom).run(_find_loops(cfg, idom))) is None:
+    structuring = _Structuring(cfg, idom)
+    if (stmts := structuring.run(_find_loops(cfg, idom))) is None:
         return None
-    return _Run(stmts, settled, _recover_returns(stmts, match.flag))
+    return _Run(
+        stmts,
+        settled,
+        _recover_returns(stmts, match.flag),
+        _RunOrder(cfg, idom, structuring.homes),
+    )
 
 
 def _build_js_if(
@@ -3652,6 +3716,7 @@ def _resolve_shared_wrappers(
     machine: _StateMachine,
     match: _GeneratorCFFMatch,
     main: _Activation,
+    main_order: _RunOrder,
     absent: Callable[[str], bool],
 ) -> list[_Activation] | None:
     """
@@ -3667,14 +3732,15 @@ def _resolve_shared_wrappers(
     wrapper shares its scope object, or `None` where a wrapper cannot be resolved: it would be left
     calling the generator the recovery removes. So is a wrapper nested in the recovered body of one
     that enters the machine at the same state, whose resolution would recover the same wrapper again
-    without end, and a key a wrapper hands on from its creator (`_wrapper_activation`) that any run
-    stores to (`_stores_to_any`): the wrapper's scope object holds a copy of the creator's value
-    made when it is called, which the recovered code can only share with the creator.
+    without end, and a key a wrapper hands on from its creator (`_wrapper_activation`) whose stores
+    could leave the copy the wrapper's scope object holds apart from the creator's value, which the
+    recovered code can only share (`_stores_precede_the_wrappers`).
     """
     gen_name = match.generator_name
     gen_names = match.generator_names
     num_vars = len(match.state_var_names)
     activations: dict[int, _Activation] = {}
+    orders: dict[int, _RunOrder] = {}
     entries: dict[int, list[int | float]] = {}
 
     while True:
@@ -3729,6 +3795,7 @@ def _resolve_shared_wrappers(
                 return None
             activation.props |= synthetic.scope_prop_names
             activations[node_id] = activation
+            orders[node_id] = result.order
             entries[node_id] = wrapper_info.initial_state
             recovered = result.statements
             target = _wrapper_arg_param_name(match, wrapper_info, recovered)
@@ -3745,10 +3812,90 @@ def _resolve_shared_wrappers(
             break
 
     resolved = list({id(activation): activation for activation in activations.values()}.values())
-    inherited = frozenset(name for activation in resolved for name in activation.inherited)
-    if inherited and _stores_to_any(stmts, inherited):
+    if not _stores_precede_the_wrappers(stmts, activations, orders, main, main_order):
         return None
     return resolved
+
+
+def _stores_precede_the_wrappers(
+    stmts: list[Statement],
+    activations: dict[int, _Activation],
+    orders: dict[int, _RunOrder],
+    main: _Activation,
+    main_order: _RunOrder,
+) -> bool:
+    """
+    Whether every store in *stmts* to a key a resolved wrapper hands on from the run that creates it
+    (`_Activation.inherited`) leaves what the wrapper's runs read as it was. A wrapper's scope
+    object holds a copy of the creator's value, made when the wrapper is called, which the recovered
+    code shares with the creator. They read the same as long as the run that holds the key as its
+    own stores to it only before it makes the wrapper that hands it on, directly or through
+    wrappers that hand it on again: the store and the statement making that wrapper both stand in
+    the own code of that run (`_own_run`), and the store runs before it on every way to it and never
+    again afterwards (`_RunOrder.runs_only_before`). The obfuscator stores the scope object of a
+    block that way, once, where the block starts, before the functions the block declares. A direct
+    `eval` can store to the key where no store is written, so none may stand in the code.
+    """
+    wrappers = [
+        activation for activation in activations.values()
+        if activation.function is not None and activation.inherited
+    ]
+    names = frozenset(name for activation in wrappers for name in activation.inherited)
+    if not names:
+        return True
+    if any(is_direct_eval_call(node) for stmt in stmts for node in stmt.walk()):
+        return False
+    for stmt in stmts:
+        for node, shadowed in _walk_scoped(stmt, names):
+            if not (
+                isinstance(node, JsIdentifier)
+                and node.name in names
+                and node.name not in shadowed
+                and is_reference(node)
+                and is_member_write_target(node)
+            ):
+                continue
+            if (owner := _own_run(node, activations)) is None:
+                return False
+            for activation in wrappers:
+                if node.name not in activation.inherited:
+                    continue
+                wrapper = activation.function
+                assert wrapper is not None
+                creator = _creating_activation(wrapper, activations, main)
+                while creator.function is not None and node.name in creator.inherited:
+                    wrapper = creator.function
+                    creator = _creating_activation(wrapper, activations, main)
+                if _own_run(wrapper, activations) != owner:
+                    return False
+                order = main_order if owner == _MAIN_RUN else orders[owner]
+                if creator is not (main if owner == _MAIN_RUN else activations[owner]):
+                    return False
+                if not order.runs_only_before(node, wrapper):
+                    return False
+    return True
+
+
+_MAIN_RUN = 0
+"""
+The key `_own_run` gives the code of the main run, which no wrapper's `id` can be.
+"""
+
+
+def _own_run(node: Node, activations: dict[int, _Activation]) -> int | None:
+    """
+    The run whose own code holds *node*: the `id` of the innermost resolved wrapper whose body holds
+    it, or `_MAIN_RUN`; `None` where another function or a class body holds it first, whose code
+    runs whenever it is called or constructed.
+    """
+    cursor: Node | None = node.parent
+    while cursor is not None:
+        if isinstance(cursor, FUNCTION_NODES):
+            return id(cursor) if id(cursor) in activations else None
+        if isinstance(cursor, JsClassBody):
+            return None
+        cursor = cursor.parent
+    return _MAIN_RUN
 
 
 def _reenters(
@@ -3766,22 +3913,6 @@ def _reenters(
             return True
         cursor = cursor.parent
     return False
-
-
-def _stores_to_any(stmts: list[Statement], names: frozenset[str]) -> bool:
-    """
-    Whether *stmts* store to one of *names* where nothing between the statement and the store binds
-    the name anew.
-    """
-    return any(
-        isinstance(node, JsIdentifier)
-        and node.name in names
-        and node.name not in shadowed
-        and is_reference(node)
-        and is_member_write_target(node)
-        for stmt in stmts
-        for node, shadowed in _walk_scoped(stmt, names)
-    )
 
 
 def _is_activation_slot(target: Node | None, activation: _Activation) -> bool:
@@ -4769,7 +4900,7 @@ class JsGeneratorCFFUnflattening(PinnedTransformer, BodyProcessingTransformer):
                 routing=result.settled,
             )
             wrappers = _resolve_shared_wrappers(
-                recovered, machine, match, main, self._provably_absent
+                recovered, machine, match, main, result.order, self._provably_absent
             )
             if wrappers is None or not _bind_main_arguments(recovered, match):
                 i += 1
