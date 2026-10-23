@@ -16,6 +16,12 @@ from test.lib.scripts.js.analysis.jsgen import (
     generate,
 )
 
+#: The seeds whose programs the sweep deobfuscates.
+_SWEPT_SEEDS = range(176)
+
+#: The seeds whose programs must run cleanly in Node, the swept ones among them.
+_CLEAN_SEEDS = range(256)
+
 
 class TestFuzzGenerator(TestBase):
     """
@@ -78,11 +84,14 @@ class TestFuzzGeneratorRunsInNode(TestBase):
     exception, so a future divergence cannot be a spurious `SyntaxError` or `ReferenceError`, and
     only if it is deterministic, so comparing an original against its deobfuscation is meaningful. A
     failure here is a generator regression to fix before the fuzzer can be trusted, never a
-    deobfuscator bug.
+    deobfuscator bug. The sweep runs every program it deobfuscates and asserts that it ran cleanly,
+    so the programs of the swept seeds are not run here again.
     """
 
-    def test_generated_programs_run_cleanly(self):
-        for seed in range(256):
+    def test_generated_programs_beyond_the_sweep_run_cleanly(self):
+        for seed in _CLEAN_SEEDS:
+            if seed in _SWEPT_SEEDS:
+                continue
             source = generate(seed)
             self.assertIsNone(
                 behavior(source)[1],
@@ -111,12 +120,13 @@ class TestDeobfuscationFuzzSweep(TestBase):
     must behave identically in Node.js, and deobfuscation must not raise. Node is the oracle — no
     expected output is asserted. This is the permanent regression gate that keeps the three fixed
     semantics-preservation P0s closed (an effectful `if` test, negative zero, and an effectful call
-    dropped with a dead store). Generator soundness is the precondition checked above, so a failure
-    here is a deobfuscator bug, not a spurious input.
+    dropped with a dead store). Generator soundness is the precondition: a program that does not run
+    cleanly is a generator regression, reported as such before its deobfuscation is compared, and
+    any other failure here is a deobfuscator bug, not a spurious input.
     """
 
     def test_deobfuscation_preserves_behavior_across_seeds(self):
-        for seed in range(176):
+        for seed in _SWEPT_SEEDS:
             source = generate(seed)
             original = behavior(source)
             self.assertIsNone(
