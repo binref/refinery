@@ -419,12 +419,17 @@ class _ValueOracleTest(_ScriptOracleTest):
 
     @classmethod
     def tearDownClass(cls):
-        shared, cls._shared = cls._shared, None
+        cls._shared = None
         super().tearDownClass()
-        if shared is not None:
-            script, contents = shared
-            if _contents(script) != contents:
-                raise AssertionError(F'a test of {cls.__name__} changed the shared script')
+
+    def tearDown(self):
+        super().tearDown()
+        if (shared := type(self)._shared) is None:
+            return
+        script, contents = shared
+        if _contents(script) != contents:
+            type(self)._shared = None
+            raise AssertionError(F'{self.id()} changed the shared script')
 
     def log(self) -> dict[str, str]:
         values = {}
