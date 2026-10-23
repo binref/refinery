@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import functools
 import inspect
-import time
 import unittest
 
+from test import fastest_processor_time
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 from test.lib.scripts.js.ledger import before_and_after, each_program_still_prints, printed
@@ -3168,15 +3169,9 @@ class TestUnusedCodeRemovalTakesTimeThatGrowsWithTheProgram(TestJsDeobfuscator):
 
     @staticmethod
     def _fastest_of_three(source: str) -> tuple[float, str]:
-        # The fastest of three runs is compared, so a pause of the machine during one run cannot
-        # decide the test.
         asts = [JsParser(source).parse() for _ in range(3)]
-        times: list[float] = []
-        for ast in asts:
-            start = time.perf_counter()
-            JsUnusedCodeRemoval().visit(ast)
-            times.append(time.perf_counter() - start)
-        return min(times), JsSynthesizer().convert(asts[0])
+        seconds = fastest_processor_time(functools.partial(JsUnusedCodeRemoval().visit, ast) for ast in asts)
+        return seconds, JsSynthesizer().convert(asts[0])
 
     def test_live_stores_to_two_reused_names_are_kept_in_time_that_grows_with_the_program(self):
         def source(count: int) -> str:

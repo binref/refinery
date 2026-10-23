@@ -6,10 +6,11 @@ import string
 import unittest
 import contextlib
 import os
+import time
 import tracemalloc
 
 from samples import SampleStore
-from typing import Callable
+from typing import Callable, Iterable
 
 
 @contextlib.contextmanager
@@ -36,6 +37,25 @@ def without_cycle_collector():
     finally:
         if enabled:
             gc.enable()
+
+
+def fastest_processor_time(runs: Iterable[Callable[[], object]]) -> float:
+    """
+    The fewest seconds that one of the given runs takes, counted in processor time of the process
+    and with the cycle collector off. Processor time does not count the time that the process waits
+    for a processor while other processes run, and the pauses of the collector grow with all that
+    the process holds, not with the run. A run of less than 50 milliseconds raises an error: on
+    Windows, processor time advances in steps of about 16 milliseconds.
+    """
+    fastest = float('inf')
+    with without_cycle_collector():
+        for run in runs:
+            start = time.process_time()
+            run()
+            fastest = min(fastest, time.process_time() - start)
+    if fastest < 0.05:
+        raise ValueError(F'A run took {fastest * 1000:.0f} milliseconds, which is too short to be timed.')
+    return fastest
 
 
 def wontfix(reason: str):
