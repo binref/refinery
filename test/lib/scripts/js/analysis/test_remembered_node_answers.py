@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 
@@ -103,7 +104,7 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
                     self.assertEqual(os.listdir(folder), [])
 
 
-class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):
+class TestTheFolderOfKeptAnswers(TestBase):
 
     FIRST = 'v1.0.0-0123456789abcdef'
     OTHER = 'v2.0.0-0123456789abcdef'
@@ -135,6 +136,20 @@ class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):
                 kept, = answers.folder.iterdir()
                 kept.write_bytes(damage(kept.read_bytes()))
                 self.assertIsNone(answers.answer(self.QUESTION))
+
+    def test_an_answer_unused_for_a_month_is_dropped_unless_a_run_asks_for_it(self):
+        asked = ((('snippet.js', 'console.log(2);'),), 'snippet.js', NODE_TIMEOUT)
+        a_month_ago = time.time() - 31 * 24 * 60 * 60
+        with tempfile.TemporaryDirectory() as folder:
+            answers = NodeAnswers(Path(folder), self.FIRST)
+            answers.keep(self.QUESTION, '1\n')
+            answers.keep(asked, '2\n')
+            for kept in answers.folder.iterdir():
+                os.utime(kept, (a_month_ago, a_month_ago))
+            self.assertEqual(answers.answer(asked), '2\n')
+            reopened = NodeAnswers(Path(folder), self.FIRST)
+            self.assertIsNone(reopened.answer(self.QUESTION))
+            self.assertEqual(reopened.answer(asked), '2\n')
 
     def test_opening_the_answers_leaves_whatever_else_the_folder_holds(self):
         with tempfile.TemporaryDirectory() as folder:

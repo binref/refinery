@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from contextlib import suppress
 from enum import Enum
@@ -326,6 +327,10 @@ def module_graph_behavior(
     return _remembered_node_behavior(node, graph, entry, timeout)
 
 
+#: How long a kept answer may go without being asked for before it is removed: thirty days.
+_UNUSED_FOR = 30 * 24 * 60 * 60
+
+
 class NodeAnswers:
     """
     What one version of Node printed for programs that ran without an error, kept in a folder so
@@ -342,6 +347,9 @@ class NodeAnswers:
     and write the folder at the same time: a file is written beside its name and moved onto it, and
     no reader can find it half written. The file begins with a digest of the answer it holds, so
     that one a crash left empty or garbled is no answer rather than a wrong one.
+
+    Giving an answer marks it as used, and opening the store removes every answer that has not been
+    used for `_UNUSED_FOR` seconds, so that it does not keep answers to programs no test contains.
     """
 
     def __init__(self, folder: Path, identity: str):
@@ -353,6 +361,11 @@ class NodeAnswers:
                 shutil.rmtree(other, ignore_errors=True)
         self.folder = folder / identity
         self.folder.mkdir(exist_ok=True)
+        unused = time.time() - _UNUSED_FOR
+        for kept in self.folder.iterdir():
+            with suppress(OSError):
+                if kept.stat().st_mtime < unused:
+                    kept.unlink()
 
     def _path(self, question: tuple) -> Path:
         return self.folder / hashlib.sha256(json.dumps(question).encode('ascii')).hexdigest()
@@ -368,6 +381,8 @@ class NodeAnswers:
         digest, answer = kept[:32], kept[32:]
         if hashlib.sha256(answer).digest() != digest:
             return None
+        with suppress(OSError):
+            os.utime(self._path(question))
         return answer.decode('utf-8')
 
     def keep(self, question: tuple, stdout: str) -> None:
