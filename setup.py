@@ -293,11 +293,14 @@ def get_config():
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 
-    try:
-        import Cython.Build as cy
-        ext = cy.cythonize(EXTENSION_LIST, nthreads=os.cpu_count() or 1)
-    except Exception:
+    if os.getenv('REFINERY_NO_EXTENSIONS'):
         ext = []
+    else:
+        try:
+            import Cython.Build as cy
+            ext = cy.cythonize(EXTENSION_LIST, nthreads=os.cpu_count() or 1)
+        except Exception:
+            ext = []
 
     config.update(
         name=refinery.__distribution__,

@@ -34,6 +34,8 @@ runs:
         git reset --hard
     - name: Install Dependencies
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      env:
+        REFINERY_NO_EXTENSIONS: 1
       run: |
         python -m pip install --upgrade pip
         pip -v install .[all]

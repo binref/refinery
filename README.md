@@ -114,6 +114,8 @@ pip install -U binary-refinery
 ```
 Specifying the special prefix `!` will have the effect that no shell commands are created at all,
 and binary refinery will be installed only as a library.
+Setting the environment variable `REFINERY_NO_EXTENSIONS` to a non-empty value installs refinery without compiling its Cython extensions;
+it then uses the slower pure Python implementations of the same algorithms.
 If you want to install the current refinery `HEAD`, you can repeat all of the above steps, specifying this repository instead of the pip package.
 For example, the following will install the very latest refinery commit:
 ```
