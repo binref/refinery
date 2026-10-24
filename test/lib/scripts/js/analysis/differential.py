@@ -413,6 +413,26 @@ console.log(JSON.stringify([process.version, options.locale, options.timeZone]))
 
 _NODE_VERSION = re.compile(r'v\d+\.\d+\.\d+')
 
+#: The variables of the environment, besides those whose name begins with `LC_`, that decide the
+#: locale and time zone Node runs in.
+_SURROUNDING_VARIABLES = frozenset({
+    'LANG',
+    'LANGUAGE',
+    'TZ',
+})
+
+
+def _surroundings() -> tuple[tuple[str, str], ...]:
+    """
+    The variables of this process's environment that decide the locale and time zone Node runs in.
+    Nothing else of the environment changes which answers apply, and the rest changes all the time:
+    pytest names the current test in it.
+    """
+    return tuple(sorted(
+        (key, value) for key, value in os.environ.items()
+        if key.upper() in _SURROUNDING_VARIABLES or key.upper().startswith('LC_')
+    ))
+
 #: The name of a folder of kept answers: the version of the Node that gave them, and a digest of
 #: the surroundings it gave them in.
 _KEPT_ANSWERS_FOLDER = re.compile(F'{_NODE_VERSION.pattern}-[0-9a-f]{{16}}')
@@ -422,11 +442,11 @@ _KEPT_ANSWERS_FOLDER = re.compile(F'{_NODE_VERSION.pattern}-[0-9a-f]{{16}}')
 def _kept_answers(
     node: str,
     folder: str,
-    environment: tuple[tuple[str, str], ...],
+    surroundings: tuple[tuple[str, str], ...],
 ) -> NodeAnswers | None:
     """
-    The answers kept in *folder* for the Node at *node* started with *environment*, or `None` when
-    *folder* is empty or Node cannot say what it is. Answers are kept apart by the version of Node,
+    The answers kept in *folder* for the Node at *node* in *surroundings*, or `None` when *folder*
+    is empty or Node cannot say what it is. Answers are kept apart by the version of Node,
     by the locale and time zone it runs in, and by the code of this module, which decides how Node
     is asked: a change to any of them starts the answers over.
     """
@@ -438,7 +458,7 @@ def _kept_answers(
             capture_output=True,
             text=True,
             timeout=NODE_TIMEOUT,
-            env=dict(environment),
+            env=_node_environment(),
         )
         version, locale, time_zone = json.loads(asked.stdout)
     except (OSError, subprocess.SubprocessError, TypeError, ValueError):
@@ -446,9 +466,10 @@ def _kept_answers(
     if asked.returncode != 0 or not isinstance(version, str) or not _NODE_VERSION.fullmatch(version):
         return None
     code = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    surroundings = hashlib.sha256(json.dumps([locale, time_zone, code]).encode('utf-8')).hexdigest()
+    identity = json.dumps([locale, time_zone, surroundings, code])
+    digest = hashlib.sha256(identity.encode('utf-8')).hexdigest()
     try:
-        return NodeAnswers(Path(folder), F'{version}-{surroundings[:16]}')
+        return NodeAnswers(Path(folder), F'{version}-{digest[:16]}')
     except OSError:
         return None
 
@@ -464,7 +485,7 @@ def _remembered_node_behavior(
     kept = _kept_answers(
         node,
         os.environ.get('REFINERY_TEST_NODE_ANSWERS', ''),
-        tuple(sorted(_node_environment().items())),
+        _surroundings(),
     )
     if kept is not None and (stdout := kept.answer(question)) is not None:
         return stdout, None

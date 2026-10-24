@@ -99,9 +99,30 @@ class TestNoAnswerIsKeptForANodeThatCannotSayWhatItIs(TestBase):
                 ('impostor', impostor),
             ]:
                 with self.subTest(node=name), tempfile.TemporaryDirectory() as folder:
-                    environment = tuple(os.environ.items())
-                    self.assertIsNone(differential._kept_answers(executable, folder, environment))
+                    surroundings = differential._surroundings()
+                    self.assertIsNone(differential._kept_answers(executable, folder, surroundings))
                     self.assertEqual(os.listdir(folder), [])
+
+
+class TestTheKeptAnswersDependOnlyOnTheLocaleAndTimeZoneOfTheEnvironment(TestBase):
+
+    def test_another_test_or_variable_changes_nothing_but_the_time_zone_does(self):
+        with unittest.mock.patch.dict(os.environ, {'TZ': 'UTC', 'PYTEST_CURRENT_TEST': 'one'}):
+            first = differential._surroundings()
+            os.environ['PYTEST_CURRENT_TEST'] = 'two'
+            os.environ['REFINERY_UNRELATED'] = 'set'
+            self.assertEqual(differential._surroundings(), first)
+            os.environ['TZ'] = 'Asia/Tokyo'
+            self.assertNotEqual(differential._surroundings(), first)
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_the_answers_are_opened_once_for_all_the_tests_of_a_run(self):
+        with tempfile.TemporaryDirectory() as folder, a_run_keeping_answers_in(folder):
+            opened = differential._kept_answers.cache_info().misses
+            for test, program in [('one', 'console.log(1);'), ('two', 'console.log(2);')]:
+                with unittest.mock.patch.dict(os.environ, {'PYTEST_CURRENT_TEST': test}):
+                    behavior(program)
+            self.assertEqual(differential._kept_answers.cache_info().misses - opened, 1)
 
 
 class TestTheFolderOfKeptAnswers(TestBase):
