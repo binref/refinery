@@ -1,4 +1,5 @@
 [run]
+core = sysmon
 omit =
     refinery/lib/thirdparty/*
     refinery/lib/annotations.py
