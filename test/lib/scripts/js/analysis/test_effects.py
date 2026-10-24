@@ -1466,6 +1466,47 @@ class TestEffectModel(TestBase):
     def test_parenthesized_method_call_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; (a.sort)(); SINK(a[0]);'))
 
+    def test_array_read_by_slice_is_immutable(self):
+        self.assertTrue(self._container('var a = [1, 2, 3]; SINK(a.slice(1)); SINK(a[0]);'))
+
+    def test_array_read_by_any_method_that_only_reads_it_is_immutable(self):
+        for call in [
+            'a.at(0)',
+            'a.includes(2)',
+            'a.indexOf(2)',
+            'a.join("")',
+            'a.lastIndexOf(2)',
+            'a.slice(1, 2)',
+        ]:
+            with self.subTest(call=call):
+                self.assertTrue(self._container(F'var a = [1, 2, 3]; SINK({call}); SINK(a[0]);'))
+
+    def test_array_read_by_slice_and_stored_to_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; SINK(a.slice(0)); a[0] = 9;'))
+
+    def test_array_read_by_slice_and_sorted_through_another_name_is_mutable(self):
+        self.assertFalse(self._container('var a = [2, 1]; var b = a; SINK(a.slice(0)); b.sort();'))
+
+    def test_array_read_by_slice_and_handed_to_a_function_sorting_it_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(x){ x.sort(); } var a = [2, 1]; SINK(a.slice(0)); f(a);'))
+
+    def test_array_read_by_join_whose_separator_writes_it_is_mutable(self):
+        self.assertFalse(self._container(
+            'var a = [1, 2]; var s = {toString: function () { a[0] = 9; return ""; }};'
+            ' SINK(a.join(s)); SINK(a[0]);'))
+
+    def test_array_read_by_slice_where_the_program_replaces_slice_is_mutable(self):
+        self.assertFalse(self._container(
+            'Array.prototype.slice = function () { this[0] = 9; }; var a = [1, 2]; SINK(a.slice(0));'))
+
+    def test_object_with_its_own_slice_is_mutable(self):
+        self.assertFalse(self._container(
+            'var a = {f: 1, slice: function () { this.f = 2; }}; a.slice(); SINK(a.f);'))
+
+    def test_value_of_unknown_kind_read_by_slice_is_mutable(self):
+        self.assertFalse(self._container('var a = make(); SINK(a.slice(0)); SINK(a[0]);'))
+
     @staticmethod
     def _summaries_by_round_robin(effects: EffectModel) -> dict[int, EffectSummary]:
         """

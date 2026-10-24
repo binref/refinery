@@ -1966,15 +1966,24 @@ class TestABuiltinTheProgramReplacedIsNotFoldedAsTheIntrinsic(TestBase):
         self.assertEqual(Reading.SCRIPT.read(source), (prints('1-2-3'), prints('1-2-3')))
 
 
-#: Programs that reach `Object.prototype` through a name the file bound the receiver to, rather than
-#: through the literal itself, mapped to what Node prints for each. Reading `__proto__` off a
+#: Programs that reach an intrinsic prototype through a name the file bound the receiver to, rather
+#: than through the literal itself, mapped to what Node prints for each. Reading `__proto__` off a
 #: binding, and handing that binding to a `getPrototypeOf` the file also bound, are the same gadget
 #: written one indirection further out: what the spelling reaches is decided by the value the
-#: binding holds, which the syntax at the write does not show.
+#: binding holds, which the syntax at the write does not show. The last two reach `Array.prototype`
+#: through a parameter, which holds the array its call hands it: one replaces `join`, which a call
+#: on an array literal then runs as the built-in, and one replaces `slice` with a method writing its
+#: receiver, which an array the program reads only through `slice` is then taken to be safe from.
 A_PROTOTYPE_REACHED_THROUGH_A_BINDING = {
     'var a = {}; a.__proto__.z = 9; var o = {}; console.log(o.z);':
         '9\n',
     'var a = {}; var g = Object.getPrototypeOf; g(a).z = 9; var o = {}; console.log(o.z);':
+        '9\n',
+    'function f(b) { b.__proto__.join = function () { return "X"; }; }'
+    ' f([]); console.log([1, 2].join("-"));':
+        'X\n',
+    'function f(b) { b.__proto__.slice = function () { this[0] = 9; return this; }; }'
+    ' f([]); var a = [1, 2]; a.slice(0); console.log(a[0]);':
         '9\n',
 }
 
@@ -1990,7 +1999,9 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
 
     Closing it needs the value the binding holds rather than new machinery — the model already
     answers what a binding is assigned, and the pass would consult it where the receiver is a name.
-    The same is true of the callee: `g` is `Object.getPrototypeOf` and the file said so.
+    The same is true of the callee: `g` is `Object.getPrototypeOf` and the file said so. A
+    parameter holds what the calls of its function hand it, which the model answers where it sees
+    every call.
 
     Off the release gate deliberately: the one prototype write real obfuscation spells is the
     literal `X.prototype.m = f`, which is read; a write that reaches the prototype through
@@ -2000,9 +2011,11 @@ class TestAPrototypeReachedThroughABindingIsStillWritten(TestBase):
     @unittest.expectedFailure
     def test_a_prototype_reached_through_a_binding_answers_the_read(self):
         """
-        Node prints `9` for both programs of `A_PROTOTYPE_REACHED_THROUGH_A_BINDING`, each of which
-        reaches `Object.prototype` through a name rather than through a literal. Each deobfuscation
-        prints `undefined`, and comes back having replaced the read with a variable nothing writes.
+        Node prints `9`, `9`, `X` and `9` for the programs of
+        `A_PROTOTYPE_REACHED_THROUGH_A_BINDING`, each of which reaches an intrinsic prototype
+        through a name rather than through a literal. The first two deobfuscations print
+        `undefined`, and come back having replaced the read with a variable nothing writes; the
+        third prints `1-2` and the fourth `1`, each answering as if `Array.prototype` were unwritten.
         """
         rows = A_PROTOTYPE_REACHED_THROUGH_A_BINDING
         self.assertEqual(

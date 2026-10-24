@@ -154,6 +154,24 @@ the guarantee holds only for a receiver whose prototype and `constructor` the pr
 half; the interpreter additionally refuses to model a named property write on an array at all.
 """
 
+_ARRAY_READING_METHODS = frozenset({
+    'at',
+    'includes',
+    'indexOf',
+    'join',
+    'lastIndexOf',
+    'slice',
+})
+"""
+`Array.prototype` methods a call of which leaves its receiver as it was: the method neither writes
+the receiver nor hands it to code of the program, as `map` hands it to its callback. Code of the
+program may still run during the call, converting an argument (`valueOf`, `toString`), an element
+`join` converts, or the constructor `slice` creates its result with, but none of it is handed the
+receiver: it reaches the array only through a reference of its own, which the container question
+judges like every other. Unlike `_FRESH_ARRAY_RESULT_METHODS`, membership says nothing about the
+result.
+"""
+
 _PURE_CONSTRUCTOR_ROOTS = frozenset({'Array'})
 """
 Intrinsic roots whose `new`-construction has no observable effect when its arguments are safe. Only
@@ -899,6 +917,19 @@ def _method_call_is_inert(reference: Node, methods: frozenset[str] | None) -> bo
     return static_property_key(member) in methods
 
 
+def _method_call_reads_an_array(reference: Node) -> bool:
+    """
+    Whether *reference* is the receiver of a call of one of `_ARRAY_READING_METHODS`,
+    `reference.slice(...)` or the tag `` reference.join`...` ``.
+    """
+    member = enclosing_operator(reference)
+    if not isinstance(member, JsMemberExpression) or strip_parens(member.object) is not reference:
+        return False
+    if not is_invocation_target(member):
+        return False
+    return static_property_key(member) in _ARRAY_READING_METHODS
+
+
 def _result_goes_nowhere(node: Node) -> bool:
     """
     Whether the value of *node* is thrown away: it is the value of a statement, an operand of a
@@ -1323,7 +1354,9 @@ class EffectModel:
         the name (`obj = ...`, whose value the caller resolves by domination); a write through the
         container (`obj.k = v`, `obj[i]++`, `delete obj[i]`, a `for-of` or destructuring target)
         makes it mutable. A method invoked on the container (`obj.m(...)`) may mutate it — an
-        array's `sort`/`push`/`splice` and so on — so by default it too counts as mutable; a caller
+        array's `sort`/`push`/`splice` and so on — so by default it too counts as mutable, except
+        a method of `Array.prototype` that only reads its receiver (`_ARRAY_READING_METHODS`)
+        called on an array literal while the program leaves that prototype trusted; a caller
         that knows some of the container's own methods cannot mutate it (an object literal with no
         `this`-bound property) names their keys in *inert_methods*: a call of one of those on the
         container is permitted, and so is a call on a value it holds (`obj.k.split(...)`), which
@@ -1394,7 +1427,7 @@ class EffectModel:
             role = container_reference_role(ref)
             if role is ContainerRole.MEMBER_WRITE:
                 return False
-            if role is ContainerRole.MEMBER_CALL and not _method_call_is_inert(ref, inert_methods):
+            if role is ContainerRole.MEMBER_CALL and not self._call_keeps_container(binding, ref, inert_methods):
                 return False
             if role is ContainerRole.ESCAPE:
                 if not isinstance(ref, JsIdentifier):
@@ -1402,6 +1435,26 @@ class EffectModel:
                 if not self._escape_keeps_container(ref, visiting, inert_methods):
                     return False
         return True
+
+    def _call_keeps_container(
+        self,
+        binding: Binding,
+        reference: Node,
+        inert_methods: frozenset[str] | None,
+    ) -> bool:
+        """
+        Whether the method call *reference* begins leaves the container *binding* holds as it was:
+        a call its caller vouches for (`_method_call_is_inert`), or a call of one of
+        `_ARRAY_READING_METHODS` where the one value of the binding is an array literal and the
+        program leaves `Array.prototype` trusted, so that the method called is the built-in.
+        """
+        if _method_call_is_inert(reference, inert_methods):
+            return True
+        return (
+            _method_call_reads_an_array(reference)
+            and isinstance(self.model.singular_value(binding), JsArrayExpression)
+            and self.trusted_prototype(list)
+        )
 
     def _dynamic_scope_mutates(
         self,
