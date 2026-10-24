@@ -330,14 +330,19 @@ def module_graph_behavior(
 #: How long a kept answer may go without being asked for before it is removed: thirty days.
 _UNUSED_FOR = 30 * 24 * 60 * 60
 
+#: How long the answers of another Node may go unopened before they are removed: a day, which no run
+#: of the test suite lasts, so that two runs with different Nodes never remove what the other uses.
+_UNOPENED_FOR = 24 * 60 * 60
+
 
 class NodeAnswers:
     """
     What one version of Node printed for programs that ran without an error, kept in a folder so
     that a later run of the test suite starts Node only for the programs it has not seen. The folder
-    holds one subfolder per identity that `_kept_answers` gives, and opening it for one identity
-    removes the subfolders of all others, because an answer is only ever the answer of the Node that
-    gave it. Nothing else in the folder is touched: its name is a setting, and it may hold more.
+    holds one subfolder per identity that `_kept_answers` gives, because an answer is only ever the
+    answer of the Node that gave it. Opening the store for one identity marks its subfolder as
+    opened and removes those of other identities that went unopened for `_UNOPENED_FOR` seconds.
+    Nothing else in the folder is touched: its name is a setting, and it may hold more.
 
     An answer that ends in an error is not kept. A run that fails for a reason unrelated to the
     program, such as a machine that ran out of memory, can then never be given again as what the
@@ -355,12 +360,16 @@ class NodeAnswers:
     def __init__(self, folder: Path, identity: str):
         if not _KEPT_ANSWERS_FOLDER.fullmatch(identity):
             raise ValueError(F'not the identity of a Node: {identity!r}')
-        folder.mkdir(parents=True, exist_ok=True)
-        for other in folder.iterdir():
-            if other.name != identity and _KEPT_ANSWERS_FOLDER.fullmatch(other.name):
-                shutil.rmtree(other, ignore_errors=True)
         self.folder = folder / identity
-        self.folder.mkdir(exist_ok=True)
+        self.folder.mkdir(parents=True, exist_ok=True)
+        os.utime(self.folder)
+        unopened = time.time() - _UNOPENED_FOR
+        for other in folder.iterdir():
+            if other.name == identity or not _KEPT_ANSWERS_FOLDER.fullmatch(other.name):
+                continue
+            with suppress(OSError):
+                if other.stat().st_mtime < unopened:
+                    shutil.rmtree(other, ignore_errors=True)
         unused = time.time() - _UNUSED_FOR
         for kept in self.folder.iterdir():
             with suppress(OSError):

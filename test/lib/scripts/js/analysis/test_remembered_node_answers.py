@@ -133,12 +133,30 @@ class TestTheFolderOfKeptAnswers(TestBase):
     OTHER = 'v2.0.0-0123456789abcdef'
     QUESTION = ((('snippet.js', 'console.log(1);'),), 'snippet.js', NODE_TIMEOUT)
 
-    def test_opening_the_answers_for_another_version_drops_those_of_the_first(self):
+    def test_the_answers_of_one_node_are_not_given_for_another_nor_removed_by_it(self):
         with tempfile.TemporaryDirectory() as folder:
             NodeAnswers(Path(folder), self.FIRST).keep(self.QUESTION, '1\n')
-            self.assertEqual(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION), '1\n')
             self.assertIsNone(NodeAnswers(Path(folder), self.OTHER).answer(self.QUESTION))
-            self.assertIsNone(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION))
+            self.assertEqual(NodeAnswers(Path(folder), self.FIRST).answer(self.QUESTION), '1\n')
+
+    def test_the_answers_of_another_node_unopened_for_a_day_are_removed(self):
+        two_days_ago = time.time() - 2 * 24 * 60 * 60
+        with tempfile.TemporaryDirectory() as folder:
+            first = NodeAnswers(Path(folder), self.FIRST)
+            first.keep(self.QUESTION, '1\n')
+            os.utime(first.folder, (two_days_ago, two_days_ago))
+            NodeAnswers(Path(folder), self.OTHER)
+            self.assertFalse(first.folder.exists())
+
+    def test_the_answers_a_run_opened_are_not_removed_however_long_ago_they_were_kept(self):
+        two_days_ago = time.time() - 2 * 24 * 60 * 60
+        with tempfile.TemporaryDirectory() as folder:
+            first = NodeAnswers(Path(folder), self.FIRST)
+            first.keep(self.QUESTION, '1\n')
+            os.utime(first.folder, (two_days_ago, two_days_ago))
+            NodeAnswers(Path(folder), self.FIRST)
+            NodeAnswers(Path(folder), self.OTHER)
+            self.assertEqual(first.answer(self.QUESTION), '1\n')
 
     def test_an_answer_that_cannot_be_kept_is_only_not_kept(self):
         with tempfile.TemporaryDirectory() as folder:
