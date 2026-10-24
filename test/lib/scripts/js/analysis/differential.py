@@ -340,7 +340,8 @@ class NodeAnswers:
 
     Each answer is one file named by a hash of its question, so that the workers of a run can read
     and write the folder at the same time: a file is written beside its name and moved onto it, and
-    no reader can find it half written.
+    no reader can find it half written. The file begins with a digest of the answer it holds, so
+    that one a crash left empty or garbled is no answer rather than a wrong one.
     """
 
     def __init__(self, folder: Path, identity: str):
@@ -361,9 +362,13 @@ class NodeAnswers:
         The standard output kept for *question*, or `None` when none is kept.
         """
         try:
-            return self._path(question).read_bytes().decode('utf-8')
+            kept = self._path(question).read_bytes()
         except OSError:
             return None
+        digest, answer = kept[:32], kept[32:]
+        if hashlib.sha256(answer).digest() != digest:
+            return None
+        return answer.decode('utf-8')
 
     def keep(self, question: tuple, stdout: str) -> None:
         """
@@ -374,9 +379,10 @@ class NodeAnswers:
             stream = tempfile.NamedTemporaryFile(dir=self.folder, delete=False)
         except OSError:
             return
+        answer = stdout.encode('utf-8')
         try:
             with stream:
-                stream.write(stdout.encode('utf-8'))
+                stream.write(hashlib.sha256(answer).digest() + answer)
             os.replace(stream.name, self._path(question))
         except OSError:
             with suppress(OSError):

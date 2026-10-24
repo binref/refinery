@@ -123,6 +123,19 @@ class TestTheAnswersOfOneVersionOfNodeAreNotGivenForAnother(TestBase):
             answers.keep(self.QUESTION, '1\n')
             self.assertIsNone(answers.answer(self.QUESTION))
 
+    def test_a_kept_answer_whose_file_was_emptied_or_garbled_is_no_answer(self):
+        for name, damage in [
+            ('emptied', lambda _: b''),
+            ('zeroed', lambda kept: bytes(len(kept))),
+            ('garbled', lambda kept: kept[:-1] + b'2'),
+        ]:
+            with self.subTest(damage=name), tempfile.TemporaryDirectory() as folder:
+                answers = NodeAnswers(Path(folder), self.FIRST)
+                answers.keep(self.QUESTION, '1\n')
+                kept, = answers.folder.iterdir()
+                kept.write_bytes(damage(kept.read_bytes()))
+                self.assertIsNone(answers.answer(self.QUESTION))
+
     def test_opening_the_answers_leaves_whatever_else_the_folder_holds(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder, 'notes').mkdir()
