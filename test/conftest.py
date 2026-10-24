@@ -15,6 +15,11 @@ Two differentials, each an option that runs a whole test selection under a cost 
   fails only under one of the two modes has found a pass whose batch diverges from its sequential
   self. Tests that count builds or edits measure what the batch itself buys and skip themselves
   through the `REFINERY_TEST_NO_BATCH` environment variable this option sets before collection.
+
+Node's answers to the JavaScript oracle are kept between runs in pytest's cache folder, which this
+module names in the `REFINERY_TEST_NODE_ANSWERS` environment variable unless that is set already:
+`--cache-clear` empties it, and without the cache provider nothing is kept. Which answers are kept,
+and when they are dropped, is `test.lib.scripts.js.analysis.differential.NodeAnswers`.
 """
 from __future__ import annotations
 
@@ -41,6 +46,8 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
+    if (cache := getattr(config, 'cache', None)) is not None:
+        os.environ.setdefault('REFINERY_TEST_NODE_ANSWERS', str(cache.mkdir('node-answers')))
     if config.getoption('--no-pin'):
         os.environ['REFINERY_TEST_NO_PIN'] = '1'
         from refinery.lib.scripts.modelcache import ModelCacheBase

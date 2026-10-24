@@ -25,6 +25,7 @@ those is forbidden.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 
+from contextlib import suppress
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -288,7 +290,12 @@ def module_graph_behavior(
     and timeout are asked about: tests often ask about the same program a few questions apart, and
     starting Node costs far more than running the program. The bound keeps a process that asks
     about many programs only once, like a fuzzing sweep, from holding all of them. A test whose
-    question is whether two runs of a program agree passes *fresh*, which runs Node again.
+    question is whether two runs of a program agree passes *fresh*, which runs Node again and keeps
+    nothing.
+
+    When the environment variable `REFINERY_TEST_NODE_ANSWERS` names a folder, as the configuration
+    of the test suite makes it do, the answers that end without an error also outlive the process:
+    `NodeAnswers` says how they are kept.
     """
     refuse_script_host_near_a_sample('node')
     node = node_executable()
@@ -300,6 +307,73 @@ def module_graph_behavior(
     return _remembered_node_behavior(node, graph, entry, timeout)
 
 
+class NodeAnswers:
+    """
+    What one version of Node printed for programs that ran without an error, kept in a folder so
+    that a later run of the test suite starts Node only for the programs it has not seen. The folder
+    holds one subfolder per version, and opening it for one version removes all others, because an
+    answer is only ever the answer of the version that gave it.
+
+    An answer that ends in an error is not kept. A run that fails for a reason unrelated to the
+    program, such as a machine that ran out of memory, can then never be given again as what the
+    program does, at the price of running every program that throws each time it is asked about.
+
+    Each answer is one file named by a hash of its question, so that the workers of a run can read
+    and write the folder at the same time: a file is written beside its name and moved onto it, and
+    no reader can find it half written.
+    """
+
+    def __init__(self, folder: Path, version: str):
+        folder.mkdir(parents=True, exist_ok=True)
+        for other in folder.iterdir():
+            if other.name != version:
+                shutil.rmtree(other, ignore_errors=True)
+        self.folder = folder / version
+        self.folder.mkdir(exist_ok=True)
+
+    def _path(self, question: tuple) -> Path:
+        return self.folder / hashlib.sha256(json.dumps(question).encode('ascii')).hexdigest()
+
+    def answer(self, question: tuple) -> str | None:
+        """
+        The standard output kept for *question*, or `None` when none is kept.
+        """
+        try:
+            return self._path(question).read_bytes().decode('utf-8')
+        except OSError:
+            return None
+
+    def keep(self, question: tuple, stdout: str) -> None:
+        """
+        Keep *stdout* as the answer to *question*, which ran without an error.
+        """
+        with tempfile.NamedTemporaryFile(dir=self.folder, delete=False) as stream:
+            stream.write(stdout.encode('utf-8'))
+        try:
+            os.replace(stream.name, self._path(question))
+        except OSError:
+            with suppress(OSError):
+                os.remove(stream.name)
+
+
+@functools.lru_cache(maxsize=None)
+def _kept_answers(node: str) -> NodeAnswers | None:
+    """
+    The answers kept for the version of *node* in the folder that `REFINERY_TEST_NODE_ANSWERS`
+    names, or `None` when it names none.
+    """
+    if not (folder := os.environ.get('REFINERY_TEST_NODE_ANSWERS')):
+        return None
+    version = subprocess.run(
+        [node, '--version'],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=NODE_TIMEOUT,
+    ).stdout.strip()
+    return NodeAnswers(Path(folder), version)
+
+
 @functools.lru_cache(maxsize=1024)
 def _remembered_node_behavior(
     node: str,
@@ -307,7 +381,14 @@ def _remembered_node_behavior(
     entry: str,
     timeout: float,
 ) -> tuple[str, str | None]:
-    return _node_behavior(node, graph, entry, timeout)
+    question = (graph, entry, timeout)
+    kept = _kept_answers(node)
+    if kept is not None and (stdout := kept.answer(question)) is not None:
+        return stdout, None
+    stdout, error = _node_behavior(node, graph, entry, timeout)
+    if kept is not None and error is None:
+        kept.keep(question, stdout)
+    return stdout, error
 
 
 def _node_behavior(
