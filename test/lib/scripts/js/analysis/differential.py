@@ -51,9 +51,11 @@ _ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
 NODE_TIMEOUT = 60.0
 
 
+@functools.lru_cache(maxsize=None)
 def node_executable() -> str | None:
     """
-    The path to the Node.js executable, or `None` when it is not installed.
+    The path to the Node.js executable, or `None` when it is not installed. It is looked up once per
+    process: searching a long `PATH` takes milliseconds, far more than giving a remembered answer.
     """
     return shutil.which('node')
 
