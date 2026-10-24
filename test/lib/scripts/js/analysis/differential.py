@@ -444,14 +444,14 @@ _SURROUNDING_VARIABLES = frozenset({
 def _surroundings() -> tuple[tuple[str, str], ...]:
     """
     The variables of this process's environment that decide the locale, time zone and locale data of
-    Node.
-    Nothing else of the environment changes which answers apply, and the rest changes all the time:
-    pytest names the current test in it.
+    Node. Nothing else of the environment changes which answers apply, and the rest changes all the
+    time: pytest names the current test in it.
     """
     return tuple(sorted(
         (key, value) for key, value in os.environ.items()
         if key.upper() in _SURROUNDING_VARIABLES or key.upper().startswith('LC_')
     ))
+
 
 #: The name of a folder of kept answers: the version of the Node that gave them, and a digest of
 #: the surroundings it gave them in.
